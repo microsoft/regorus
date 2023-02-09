@@ -1,0 +1,96 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: valid
+    rego: "\n\t\r\n "
+    tokens: [""]
+    kinds: [Eof]
+
+  # Lock down unicode whitespace chars other than above.
+  # https://en.wikipedia.org/wiki/Whitespace_character#Unicode
+  - note: invalid/\u000b
+    rego: "\u000b"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u000c
+    rego: "\u000c"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u0085
+    rego: "\u0085"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u00a0
+    rego: "\u00a0"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u1680
+    rego: "\u1680"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u2000
+    rego: "\u2000"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u2001
+    rego: "\u2001"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u2002
+    rego: "\u2002"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u2003
+    rego: "\u2003"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u2004
+    rego: "\u2004"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u2005
+    rego: "\u2005"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u2006
+    rego: "\u2006"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u2007
+    rego: "\u2007"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u2008
+    rego: "\u2008"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u2009
+    rego: "\u2009"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u200a
+    rego: "\u200a"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u2028
+    rego: "\u2028"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u2029
+    rego: "\u2029"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u202f
+    rego: "\u202f"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u205f
+    rego: "\u205f"
+    tokens: []
+    error: invalid character
+  - note: invalid/\u3000
+    rego: "\u3000"
+    tokens: []
+    error: invalid character
+    

@@ -1,0 +1,8 @@
+#!/bin/bash
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+set -e
+
+rego=$(realpath -e $1)
+cargo test parser::one_file -- --include-ignored --nocapture "$rego"

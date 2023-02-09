@@ -1,0 +1,53 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: basic
+    rego: |
+      package test
+      import future.keywords.in
+
+      # key, value in collection
+      x = 0, 5 in [5]
+
+      # Chained in-exprs
+      y = 0, 5 in c in d
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+              assign:
+                op: "="
+                value:
+                  inexpr:
+                    key:
+                      number: 0
+                    value:
+                      number: 5
+                    collection:
+                      array:
+                        - number: 5
+          bodies: []
+      - spec:
+          head:
+            compr:
+              refr:
+                var: y
+              assign:
+                op: "="
+                value:
+                  inexpr:
+                    key:
+                      inexpr:
+                        key:
+                          number: 0
+                        value:
+                          number: 5
+                        collection:
+                          var: c
+                    collection:
+                      var: d
+          bodies: []
+      

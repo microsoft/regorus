@@ -1,0 +1,250 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: no-query
+    rego: |
+      package test
+
+      x = 10 else {
+        true
+      }
+    error: unexpected keyword `else`
+
+  - note: no-query
+    rego: |
+      package test
+
+      x = 10 {
+        false
+      } {
+        true
+      }
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+              assign:
+                op: "="
+                value:
+                  number: 10
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        false
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        true
+    
+  - note: no-else
+    rego: |
+      package test
+
+      x = 10 {
+        false
+      } {
+        true
+      }
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+              assign:
+                op: "="
+                value:
+                  number: 10
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        false
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        true
+
+  - note: if-no-else
+    rego: |
+      package test
+      import future.keywords.if
+      
+      x = 10 if {
+        false
+      } {
+        true
+      }
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+              assign:
+                op: "="
+                value:
+                  number: 10
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        false
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        true
+
+  - note: rule-named-if
+    rego: |
+      package test
+      
+      x = 10 if {
+        false
+      } {
+        true
+      }
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+              assign:
+                op: "="
+                value:
+                  number: 10
+          bodies: []
+      - spec:
+          head:
+            compr:
+              refr:
+                var: if
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        false
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                         true
+                        
+  - note: query-else
+    rego: |
+      package test
+      
+      x = 10 {
+        false
+      } else {
+        true
+      }
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+              assign:
+                op: "="
+                value:
+                  number: 10
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        false
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        true
+ 
+  - note: if-literal-else
+    rego: |
+      package test
+      import future.keywords.if
+      
+      x = 10 if 1 < 0 else {
+        true
+      }
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+              assign:
+                op: "="
+                value:
+                  number: 10
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        boolexpr:
+                          op: "<"
+                          lhs:
+                            number: 1
+                          rhs:
+                            number: 0
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        true
+
+  - note: if-literal-else-assign
+    rego: |
+      package test
+      import future.keywords.if
+      
+      # This will evaluate to 10
+      x = 10 if 1 < 0 else := 20 {
+        true
+      }
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+              assign:
+                op: "="
+                value:
+                  number: 10
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        boolexpr:
+                          op: "<"
+                          lhs:
+                            number: 1
+                          rhs:
+                            number: 0
+            - assign:
+                op: ":="
+                value:
+                  number: 20
+              query:
+                stmts:
+                  - literal:
+                      expr:
+                        true
+                        

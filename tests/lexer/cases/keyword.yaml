@@ -1,0 +1,10 @@
+cases:
+  # Keywords are parsed as identifiers.
+  # It is up to the parser to handle them as appropriate.
+  - note: keywords/all
+    rego: as default else false import package not null some true with
+    tokens: [ "as", "default", "else", "false", "import",
+    "package", "not", "null", "some", "true", "with",
+    "" ]
+    kinds: [Ident, Ident, Ident, Ident, Ident, Ident, Ident, Ident,
+    Ident, Ident, Ident, Eof]

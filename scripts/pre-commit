@@ -1,0 +1,25 @@
+#!/bin/bash
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+set -eo pipefail
+
+if [ -f Cargo.toml ]; then
+    # Ensure that all targets can be built.
+    scripts/coverage --no-run
+
+    #Ensure that code is correctly formatted.
+    cargo fmt --check || (echo "Run cargo fmt to fix formatting" && exit 1)
+
+    # Ensure that clippy warnings are addressed.
+    cargo clippy --all-targets --no-deps -- -Dwarnings
+
+    # Ensure that all modifications are included.
+    # TODO refine status checking.
+    if git status -s | grep -e "MM " -e "??" -e "AM " -e " M "  > /dev/null; then
+	printf "\nUnstaged changes found:\n"
+	git status -s | grep -e "MM " -e "??" -e "AM " -e " M "
+	echo "Stage them and try again"
+	exit 1
+    fi
+fi

@@ -1,0 +1,108 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: all
+    rego: |
+      package test
+      # One item
+      x = {1}
+
+      # Multiple items
+       y = [
+          2.5, "abc", [ 4, `raw`, # Trailing comma
+          ],
+          # Empty array
+          [],
+          # Nested empty
+          [[[[[]]]]]
+      ]
+
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+              assign:
+                span: = {1}
+                op: "="
+                value:
+                  set:
+                    - number: 1
+          bodies: --skip--
+
+      - spec:
+          head:
+            compr:
+              refr:
+                var: y
+              assign:
+                op: "="
+                value:
+                  array:
+                    - number: 2.5
+                    - string: abc
+                    - array:
+                        - number: 4
+                        - rawstring: raw
+                    - array: []
+                    - array:
+                        - array:
+                            - array:
+                              - array:
+                                - array: []
+          bodies: []
+
+  - note: trailing-comma
+    rego: |
+      package test
+      x = [1,]
+      y = [1,2
+      ,]
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+              assign:
+                op: "="
+                value:
+                  array:
+                    span: "[1,]"
+                    values:
+                      - number: 1
+          bodies: []
+      - spec:
+          head:
+            compr:
+              refr:
+                var: y
+              assign:
+                op: "="
+                value:
+                  array:
+                    span: "[1,2\n,]"
+                    values:
+                      - number: 1
+                      - number: 2
+          bodies: []
+
+  - note: no-comma
+    rego: |
+      package test
+      x = [1 2]
+    error: expecting `]` while parsing array
+
+  - note: two-trailing-commas
+    rego: |
+      package test
+      x = [1,2,,]
+    error: expecting expression
+
+  - note: unclosed
+    rego: |
+      package test
+      x = [ 1
+    error: expecting `]` while parsing array

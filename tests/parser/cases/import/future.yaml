@@ -1,0 +1,154 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: namespace
+    rego: |
+      package test
+      import future.keywords
+    imports:
+      - span: import future.keywords
+        refr:
+          refdot:
+            span: future.keywords
+            refr:
+              var: future
+            field: keywords
+
+  - note: all
+    rego: |
+      package test
+      import              future.keywords.contains import future.keywords.every
+      import              future.keywords.if
+      import
+      future.keywords.in
+    imports:
+      - span: import              future.keywords.contains
+        refr:
+          refdot:
+            span: future.keywords.contains
+            refr:
+              refdot:
+                span: future.keywords
+                refr:
+                  var: future
+                field: keywords
+            field: contains
+      - span: import future.keywords.every
+        refr:
+          refdot:
+            span: future.keywords.every
+            refr:
+              refdot:
+                span: future.keywords
+                refr:
+                  var: future
+                field: keywords
+            field: every
+      - span: import              future.keywords.if
+        refr:
+          refdot:
+            span: future.keywords.if
+            refr:
+              refdot:
+                span: future.keywords
+                refr:
+                  var: future
+                field: keywords
+            field: if
+      - span: "import\nfuture.keywords.in"
+        refr:
+          refdot:
+            span: future.keywords.in
+            refr:
+              refdot:
+                span: future.keywords
+                refr:
+                  var: future
+                field: keywords
+            field: in
+
+  - note: bracket
+    rego: |
+      package test
+      import              future["keywords"]["contains"] import future.keywords["every"]
+      import
+      future["keywords"].if
+    imports:
+      - span: import              future["keywords"]["contains"]
+        refr:
+          refbrack:
+            span: future["keywords"]["contains"]
+            refr:
+              refbrack:
+                span: future["keywords"]
+                refr:
+                  var: future
+                index:
+                  string: keywords
+            index:
+              string: contains
+      - span: import future.keywords["every"]
+        refr:
+          refbrack:
+            span: future.keywords["every"]
+            refr:
+              refdot:
+                span: future.keywords
+                refr:
+                  var: future
+                field: keywords
+            index:
+              string: every
+      - span: "import\nfuture[\"keywords\"].if"
+        refr:
+          refdot:
+            span: future["keywords"].if
+            refr:
+              refbrack:
+                span: future["keywords"]
+                refr:
+                  var: future
+                index:
+                  string: keywords
+            field: if
+
+  - note: as
+    rego: |
+      package test
+      import future.keywords.in as on
+    error: "`future` imports cannot be aliased"
+
+  - note: shadow
+    rego: |
+      package test
+      import future.keywords
+      import future["keywords"]
+    error: "this import shadows previous import of `contains`"
+
+  - note: shadow/1
+    rego: |
+      package test
+      import future.keywords
+      import future.keywords.if
+    error: "this import shadows previous import of `if`"
+
+  - note: shadow/2
+    rego: |
+      package test
+      import future.keywords.if
+      import future.keywords
+    error: "this import shadows previous import of `if`"
+
+  - note: in-as-var
+    rego: |
+      package test
+      import future.keywords.if
+      in = 5
+
+  - note: in-as-var-imported
+    rego: |
+      package test
+      import future.keywords.in
+      in = 5
+    error: unexpected keyword `in`

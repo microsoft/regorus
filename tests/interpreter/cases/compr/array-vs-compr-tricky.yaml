@@ -1,0 +1,132 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+# Captures tricky cases where similar looking expressions will be
+# treated as arrays or array-comprs.
+cases:
+  - note: case1-compr
+    data: {}
+    modules:
+      - |
+        package test
+        x = {1}
+        y = {2}
+        # If there is one term and the term has an | operator, it will be parsed
+        # as a compr.
+        z = [ x | y ] #, 5] # in {5}, 6]
+    query: data.test
+    sort_bindings: true
+    want_result:
+      x:
+        set!: [1]
+      y:
+        set!: [2]
+      z:
+        - set!: [1]
+
+  - note: case2-array
+    data: {}
+    modules:
+      - |
+        package test
+        x = {1}
+        y = {2}
+        # If there is a comma following the expression to the right of |
+        # ie "y ," then enclosing expression will be parsed as array.
+        z = [ x | y, 5] # in {5}, 6]
+    query: data.test
+    sort_bindings: true
+    want_result:
+      x:
+        set!: [1]
+      y:
+        set!: [2]
+      z:
+        - set!: [2, 1]
+        - 5
+
+  - note: case3-compr
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords.in
+        x = {1}
+        y = {2}
+        # In the following case, the "y, 5 in {5}" which is to the right of |
+        # will be parsed as a membership expression. Since this expression is not
+        # followed by a ",", the enclosing expression will be parsed as a compr.
+        z = [ x | y, 5 in {5}] #, 6]
+    query: data.test
+    sort_bindings: true
+    want_result:
+      x:
+        set!: [1]
+      y:
+        set!: [2]
+      z: []
+
+  - note: case4-array
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords.in
+        x = {1}
+        y = {2}
+        # Unlike the previous case, the "y, 5 in {5}" is followed by a ",".
+        # Therefore, the enclosing expression will be parsed as an array.
+        z = [ x | y, 5 in {5}, 6]
+    query: data.test
+    sort_bindings: true
+    want_result:
+      x:
+        set!: [1]
+      y:
+        set!: [2]
+      z:
+        - set!: [2, 1]
+        - true
+        - 6
+
+  - note: case5-array
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords.in
+        x = {1}
+        y = {2}
+        # If the first expression "x - {10}"is something higher than an in-expr
+        # (e.g arithexpr) then the enclosing expression will be parsed as an array.
+        z = [ x - {10} | y, 5 in {5}] #, 6]
+    query: data.test
+    sort_bindings: true
+    want_result:
+      x:
+        set!: [1]
+      y:
+        set!: [2]
+      z:
+        - set!: [2, 1]
+        - true
+
+  - note: case6-compr
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords.in
+        x = {1}
+        y = {2}
+        # The way to get the previous case parsed as a compr is to enclose the first
+        # expression in parentheses.
+        z = [ (x - {10}) | y, 5 in {5}] #, 6]
+    query: data.test
+    sort_bindings: true
+    want_result:
+      x:
+        set!: [1]
+      y:
+        set!: [2]
+      z: []

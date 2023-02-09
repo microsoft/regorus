@@ -1,0 +1,209 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: case1-compr
+    rego: |
+      package test
+      x = {1}
+      y = {2}
+      z = [ x | y ] #, 5] # in {5}, 6]
+    policy:
+      - --skip--
+      - --skip--
+      - spec:
+          head:
+            compr:
+              refr:
+                var: z
+              assign:
+                op: =
+                value:
+                  arraycompr:
+                    term:
+                      var: x
+                    query:
+                      stmts:
+                        - span: y
+                          literal:
+                            expr:
+                              var: y
+          bodies: []
+          
+  - note: case2-array
+    rego: |
+      package test
+      x = {1}
+      y = {2}
+      z = [ x | y, 5] # in {5}, 6]
+    policy:
+      - --skip--
+      - --skip--
+      - spec:
+          head:
+            compr:
+              refr:
+                var: z
+              assign:
+                op: =
+                value:
+                  array:
+                    - binexpr:
+                        op: "|"
+                        lhs:
+                          var: x
+                        rhs:
+                          var: y
+                    - number: 5
+          bodies: []
+          
+  - note: case3-compr
+    rego: |
+      package test
+      import future.keywords.in
+      x = {1}
+      y = {2}
+      z = [ x | y, 5 in {5}] #, 6]
+    policy:
+      - --skip--
+      - --skip--
+      - spec:
+          head:
+            compr:
+              refr:
+                var: z
+              assign:
+                op: =
+                value:
+                  arraycompr:
+                    term:
+                      var: x
+                    query:
+                      stmts:
+                        - span: y, 5 in {5}
+                          literal:
+                            expr:
+                              inexpr:
+                                key:
+                                  var: y
+                                value:
+                                  number: 5
+                                collection:
+                                  set:
+                                    - number: 5
+          bodies: []
+          
+  - note: case4-array
+    rego: |
+      package test
+      import future.keywords.in
+      x = {1}
+      y = {2}
+      z = [ x | y, 5 in {5}, 6]
+    policy:
+      - --skip--
+      - --skip--
+      - spec:
+          head:
+            compr:
+              refr:
+                var: z
+              assign:
+                op: =
+                value:
+                  array:
+                    - binexpr:
+                        op: "|"
+                        lhs:
+                          var: x
+                        rhs:
+                          var: y
+                    - inexpr:
+                        key:
+                          number: 5
+                        collection:
+                          set:
+                            - number: 5
+                    - number: 6                      
+          bodies: []
+                  
+  - note: case5-array
+    rego: |
+      package test
+      import future.keywords.in
+      x = {1}
+      y = {2}
+      z = [ x - {10} | y, 5 in {5}] #, 6]
+    policy:
+      - --skip--
+      - --skip--
+      - spec:
+          head:
+            compr:
+              refr:
+                var: z
+              assign:
+                op: =
+                value:
+                  array:
+                    - binexpr:
+                        op: "|"
+                        lhs:
+                          arithexpr:
+                            op: "-"
+                            lhs:
+                              var: x
+                            rhs:
+                              set:
+                                - number: 10
+                        rhs:
+                          var: y
+                    - inexpr:
+                        key:
+                          number: 5
+                        collection:
+                          set:
+                            - number: 5
+          bodies: []
+
+  - note: case6-compr
+    rego: |
+      package test
+      import future.keywords.in
+      x = {1}
+      y = {2}
+      z = [ (x - {10}) | y, 5 in {5}] #, 6]
+    policy:
+      - --skip--
+      - --skip--
+      - spec:
+          head:
+            compr:
+              refr:
+                var: z
+              assign:
+                op: =
+                value:
+                  arraycompr:
+                    term:
+                      arithexpr:
+                        op: "-"
+                        lhs:
+                          var: x
+                        rhs:
+                          set:
+                            - number: 10
+                    query:
+                      stmts:
+                        - literal:
+                            expr:
+                              inexpr:
+                                key:
+                                  var: y
+                                value:
+                                  number: 5
+                                collection:
+                                  set:
+                                    - number: 5
+          bodies: []
+          

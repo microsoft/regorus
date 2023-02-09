@@ -1,0 +1,23 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  # Two single char symbols in a row must be parsed correctly.
+  - note: single-char-two-in-a-row
+    rego: |
+      ++--**//&&||{{}}(())[[]];;,,..::<<>>
+    tokens: [
+    "+", "+", "-", "-", "*", "*", "/", "/", "&", "&",
+    "|", "|", "{", "{", "}", "}", "(", "(", ")", ")",
+    "[", "[", "]", "]", ";", ";", ",", ",", ".", ".",
+    ":", ":", "<", "<", ">", ">",
+    ""]
+    
+  # Multi char operators must be correctly parsed.
+  - note: multi-char-in-a-row
+    rego: ">====<== ==="
+    tokens: [
+    ">=", "==", "=", "<=", "=", "==", "=",
+    ""]
+      
+      

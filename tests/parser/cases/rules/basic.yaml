@@ -1,0 +1,44 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: same-line-no-body
+    rego: |
+      package test
+      add(x, y) := 5 sub(x, y) = 5
+    package: --skip--
+    imports:
+    policy:
+      - spec:
+          span: add(x, y) := 5
+          head:
+            func:
+              span: add(x, y) := 5
+              refr:
+                var: add
+              args:
+                - var: x
+                - var: y
+              assign:
+                span: := 5
+                op: :=
+                value:
+                  number: 5
+          bodies: []
+      - spec:
+          span: sub(x, y) = 5
+          head:
+            func:
+              span: sub(x, y) = 5
+              refr:
+                var: sub
+              args:
+                - var: x
+                - var: y
+              assign:
+                span: = 5
+                op: =
+                value:
+                  number: 5
+          bodies: []
+      

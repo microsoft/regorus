@@ -1,0 +1,37 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: positive
+    rego: |
+      #Empty
+      ``
+      # Multiline
+      ` This is m
+        u
+        lti
+      line`
+
+      `"String within rawstring"`
+      
+      # Comment retained
+      `
+      Hello #retained comment!
+      `
+      # Utf-8
+      `Hello, சிக்கி
+      `
+    tokens: [ "", " This is m\n  u\n  lti\nline",
+    "\"String within rawstring\"",
+    "\nHello #retained comment!\n",
+    "Hello, சிக்கி\n",
+    ""]
+
+    kinds: [RawString, RawString, RawString, RawString, RawString, Eof]
+
+  - note: unclosed
+    rego: |
+      `
+      Peekoo Maharaaj ki jai ho
+    tokens: []
+    error: unmatched `

@@ -1,0 +1,32 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+  cases:
+    - data: {}
+      modules:
+        - |
+          package test
+
+          add {
+          1 + 2 == 3
+          }
+
+          sub {
+          5 - 1 == 4
+          }
+
+          mul {
+          3 * 4 == 12
+          }
+
+          # Lock down float operation.
+          div {
+          21 / 5 == 4.2
+          }
+      note: arithmetic/basic
+      query: data.test
+      sort_bindings: true
+      want_result:
+        add: true
+        sub: true
+        mul: true
+        div: true

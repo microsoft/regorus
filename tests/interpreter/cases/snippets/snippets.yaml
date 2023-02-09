@@ -1,0 +1,249 @@
+cases:
+  - note: snippet1
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := [ 1 | {3} ]
+
+        q:= {4}
+
+        e1 := q & {1} | {true}
+        e2 := (q & {1}) | {true}
+
+        e3 := [ q & {1} | {true}  ]
+        e4 := [ (q & {1}) | {true}  ]
+    query: data.test
+    want_result:
+      a: [1]
+      e1:
+        set!: [true]
+      e2:
+        set!: [true]
+      e3:
+        - set!: [true]
+      e4:
+        - set!: []
+      q:
+        set!: [4]
+
+  - note: snippet2.1
+    data: {}
+    modules:
+      - |
+        package test
+
+        import future.keywords
+
+        b = 15
+
+        get_b(a) := v { v := b }
+
+        x = a {
+          a = b with data.test.b as 10
+        }
+    query: data.test
+    want_result:
+      b: 15
+      x: 10
+        
+  - note: snippet2
+    data: {}
+    skip: true
+    modules:
+      - |
+        package test
+        
+        a := {4}
+        
+        mydoc(x) := path {
+          path := "data.test.a"
+        }
+        
+        x := [ y |
+          y := data.test.a | data.test.b with data.test.a as {5} with data.test.b as {6}
+        ]
+
+        r := [ m | m := data.test.p with data.test.p as 5 + 6; true  ]
+
+        
+        allow {
+          input.x 
+        == 5 
+    
+        input.y == 5
+        input.y 
+        == 5
+        }
+    query: data.test
+    want_result:
+      a:
+        set!: [4]
+      r: [11]
+      x:
+        - set!: [5, 6]
+            
+        
+  - note: snippet3
+    data: {}
+    modules:
+      - |
+        package test
+
+        a(b) { true }
+        b(a) { false }
+
+        p := 5
+
+        allow {
+          # TODO: ude data.test
+          q := 5 #data.test["p"]
+          y := data.test.a(
+        5)
+          q == 5
+          y
+        }
+
+        r := allow
+        x = a(5)
+        y = b(5)
+
+    query: data.test
+    want_result:
+      allow: true
+      p: 5
+      r: true
+      x: true
+
+  - note: snippet4
+    data: {}
+    modules:
+      - |
+        package test
+
+        sum (a,b) := c {
+          c := a + b
+        }
+
+        obj(v) := o {
+          o := { "a" : 5 + v }
+        }
+        p := sum(5, 6) # There must not be space between sum and (
+        #q := { "a" : "sum"}[a](5, 6)
+        q := obj(1).a
+    query: data.test
+    want_result:
+      p: 11
+      q: 6
+
+  - note: snippet5
+    data: {}
+    modules:
+      - |
+        package test
+
+        import future.keywords.if
+        import future.keywords.in
+
+        b := {2, 3}
+
+        double(x) := y { y := [x, x] }
+
+        # Membership needs to be enclosed in parens
+        x := [ (y in {2,3}) |
+          y := 5 in { "z" : 5}
+        ]
+    query: data.test
+    want_result:
+      b:
+        set!: [2, 3]
+      x: [false]
+
+  - note: snippet6
+    data: {}
+    modules:
+      - |
+        package test
+
+        import future.keywords.in
+        import future.keywords.every
+        import future.keywords.if
+        import future.keywords.contains
+
+        # expr top; membership
+        x := false in {a, b} {
+          a := 1
+          b := 0, 2 in [5, 6]
+          0, 2 in [5, 6]
+        }
+
+        a.y(a) := b { b := a }
+
+        p["q"](a1) := b { b:= a1 }
+
+        c := a.y(5)
+        d := p.q(5)
+
+        r["s"] p1 {
+          s1 := "1"
+          p1 := s1
+        }
+    query: data.test
+    want_result:
+      a: {}
+      c: 5
+      d: 5
+      p: {}
+      p1: true
+      r:
+        set!: ["s"]
+
+  - note: snippet8
+    data: {}
+    modules:
+      - |
+        package test
+
+        import future.keywords.if
+        import future.keywords.in
+        import future.keywords.contains
+
+        # Try removing parenthesis below
+        ref["p"] contains [(x | {5})] # [a]
+        # Uncomment [a]. Why doesn't rego complain?
+        # Then add a := 5 to the body.
+        {
+          x:= {6}
+        }
+
+        arg := 5
+        ref1[arg] {
+          arg := {5, 6}
+        }
+
+        ref2.arg := {5, 6}
+
+        a[b] {
+          b := {5,6}[_]
+        }
+
+        #x["b"] := b {
+        #  b := {5,6}[_]
+        #}
+    query: data.test
+    want_result:
+      a:
+        set!: [5, 6]
+      arg: 5
+      ref:
+        p:
+          set!:
+          -
+            - set!: [5, 6]
+      ref1:
+        set!:
+          - set!: [5, 6]
+      ref2:
+        arg:
+          set!: [5, 6]

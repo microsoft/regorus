@@ -1,0 +1,32 @@
+cases:
+  - note: simple-no-cross-ref
+    data: {}
+    modules:
+      - |
+        package a
+        b = 1
+      - |
+        package b
+        c = 1
+    query: data
+    want_result:
+      a:
+        b: 1
+      b:
+        c: 1
+        
+  - note: simple-cross-ref-in-order
+    data: {}
+    modules:
+      - |
+        package a
+        b = 1
+      - |
+        package b
+        c = data.a.b
+    query: data
+    want_result:
+      a:
+        b: 1
+      b:
+        c: 1

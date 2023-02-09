@@ -1,0 +1,13 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: carriage-return/ok
+    rego: "\n\n\r\n\n\n		"
+    tokens: [""]
+
+  - note: carriage-return/ok
+    rego: "\r \n"
+    tokens: [""]
+    error: \r must be followed by \n
+    

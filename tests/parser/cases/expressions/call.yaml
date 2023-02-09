@@ -1,0 +1,48 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: basic
+    rego: |
+      package test
+
+      # A call in rule-ref. This creates an object.
+      deny[sprintf("Hello %v", ["world"])] = 1
+
+      # Trailing comma
+      x = inc(5,)
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                refbrack:
+                  refr:
+                    var: deny
+                  index:
+                    call:
+                      fcn:
+                        var: sprintf
+                      params:
+                        - string: "Hello %v"
+                        - array:
+                            - string: "world"
+              assign:
+                op: =
+                value:
+                  number: 1
+          bodies: []
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+              assign:
+                op: "="
+                value:
+                  call:
+                    fcn:
+                      var: inc
+                    params:
+                      - number: 5
+          bodies: []

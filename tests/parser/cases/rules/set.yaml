@@ -1,0 +1,135 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: contains
+    rego: |
+      package test
+      import future.keywords
+
+      deny.a contains  0, "bar" in ["bar1"] if true
+    policy:
+      - spec:
+          head:
+            set:
+              refr:
+                refdot:
+                  refr:
+                    var: deny
+                  field: a
+              key:
+                inexpr:
+                  key:
+                    number: 0
+                  value:
+                    string: bar
+                  collection:
+                    array:
+                      - string: bar1
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        true
+  - note: old-syntax
+    rego: |
+      package test
+      import future.keywords.if
+      
+      # The following are not sets
+      x1 if true
+      x2 { true }
+
+      # The following are sets
+      y.a { true }
+      y["b"] { true }
+
+      # The following are not sets
+      z.a if { true }
+      z["b"] if { true }
+      
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x1
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        true
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x2
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        true
+                    
+      - spec:
+          head:
+            set:
+              refr:
+                refdot:
+                  refr:
+                    var: y
+                  field: a
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        true
+                        
+      - spec:
+          head:
+            set:
+              refr:
+                  var: y
+              key:
+                string: b
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        true
+
+      - spec:
+          head:
+            compr:
+              refr:
+                refdot:
+                  refr:
+                    var: z
+                  field: a
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        true
+
+      - spec:
+          head:
+            compr:
+              refr:
+                refbrack:
+                  refr:
+                    var: z
+                  index:
+                    string: b
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      expr:
+                        true
+                        

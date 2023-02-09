@@ -1,0 +1,163 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: all
+    rego: |
+      package test
+      import future.keywords.in
+
+      # Empty object
+      x = {}
+
+      # Single field
+      y = {
+        "a" : 5
+      }
+
+      # Multiple fields
+      z = {
+        "a" : 5,
+        "b" : [ 1, 2, 3 ],
+        "c" : { 4, 5, 6 },
+        "d" : {
+          "a" : 5,
+          "b" : set()
+          }
+        # array as key
+        , [1,
+        2,
+        3] : 4,
+
+        # set as key
+        { 1 } : 2,
+
+        # Object as key
+        {
+            "a" : 1,
+            "b" : 2, # Trailing comma
+        } : `hello,
+        world`
+
+        # Null, boolean
+        , null: false,
+        true : true,
+
+        # Only single var in is supported as value
+        "p" : "q", "r" in "d" : "e"
+
+      }
+    policy:
+      - spec:
+          span: x = {}
+          head:
+            compr:
+              span: x = {}
+              refr:
+                var: x
+              assign:
+                span: = {}
+                op: =
+                value:
+                  object:
+                    fields: []
+          bodies: []
+      - spec:
+          head:
+            compr:
+              refr:
+                var: y
+              assign:
+                op: =
+                value:
+                  object:
+                    fields:
+                      - key:
+                          string: a
+                        value:
+                          number: 5
+          bodies: []
+      - spec:
+          head:
+            compr:
+              refr:
+                var: z
+              assign:
+                op: =
+                value:
+                  object:
+                    fields:
+                      - key:
+                          string: a
+                        value:
+                          number: 5
+                      - key:
+                          string: b
+                        value:
+                          array:
+                            - number: 1
+                            - number: 2
+                            - number: 3
+                      - key:
+                          string: c
+                        value:
+                          set:
+                            - number: 4
+                            - number: 5
+                            - number : 6
+                      - key:
+                          string: d
+                        value:
+                          object:
+                            fields:
+                              - key:
+                                  string: a
+                                value:
+                                  number: 5
+                              - key:
+                                  string: b
+                                value:
+                                  set: []
+                      - key:
+                          array:
+                            - number: 1
+                            - number: 2
+                            - number: 3
+                        value:
+                          number: 4
+                      - key:
+                          set:
+                            - number: 1
+                        value:
+                          number: 2
+                      - key:
+                          object:
+                            fields:
+                              - key:
+                                  string: a
+                                value:
+                                  number: 1
+                              - key:
+                                  string: b
+                                value:
+                                  number: 2
+                        value:
+                          rawstring: "hello,\n  world"
+                      - key: null
+                        value: false
+                      - key: true
+                        value: true
+                      - key:
+                          string: p
+                        value:
+                          string: q
+                      - key:
+                          inexpr:
+                            key:
+                              string: r
+                            collection:
+                              string: d
+                        value:
+                          string: e
+                              
+          bodies: []

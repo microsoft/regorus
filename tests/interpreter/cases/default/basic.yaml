@@ -1,0 +1,56 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: basic
+    data: {}
+    modules:
+      - |
+        package test
+
+        default x = 5
+
+        a = b
+
+        default b = 6
+
+        c = d
+
+        d {
+          x == 3
+        }
+
+        d {
+          x == 4
+        }
+
+        default d = "has_default"
+
+        default object["key"] = "string"
+
+        default complex[true] = "bool_true"
+
+        default complex[false] = "bool_false"
+
+        complex["hello"] = "world"
+
+    query: data.test
+    want_result:
+      x: 5
+      a: 6
+      b: 6
+      c: "has_default"
+      d: "has_default"
+      object:
+        object!:
+        - key: "key"
+          value: "string"
+      complex:
+        object!:
+        - key: true
+          value: "bool_true"
+        - key: false
+          value: "bool_false"
+        - key: "hello"
+          value: "world"
+      

@@ -1,0 +1,13 @@
+#!/bin/bash
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+set -e
+rego=$(realpath -e $1)
+
+if [ ! -z  "$2"  ]; then
+    input=$(realpath -e $2)
+    cargo test interpreter::one_file -- --include-ignored --nocapture "$rego" "$input"
+else
+    cargo test interpreter::one_file -- --include-ignored --nocapture "$rego"    
+fi

@@ -1,0 +1,10 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  # To Booleans are parsed as identifiers.
+  # It is up to the parser to handle them as appropriate.
+  - note: boolean/all
+    rego: true false
+    tokens: [ "true", "false", "" ]
+    kinds: [Ident, Ident, Eof]

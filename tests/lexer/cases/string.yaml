@@ -1,0 +1,114 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: positive
+    rego: |
+      "Hello, World\n"
+
+      # Correctly parse double-quote
+      "\""
+      
+      #Escape sequences
+      "\"\\\/\b\f\n\r\t"
+
+      # UTF-8 codes
+      "\u0060\u012a\u12AB"
+
+      # Surrogate pairs
+      "\uD801\udc37\ud83d\ude39\ud83d\udc8d\uDBFF\uDFFF"
+      
+      # This shouldn't be parsed as an invalid escape.
+      "\\upqrs"
+
+      # Control char
+      "\u0012"
+
+      # Lowest possible code followed by chars.
+      "\u0000 a"
+      
+      # Largest possible code
+      "\uFFFF" "\uffff"
+
+      # Unicode escape
+      "\u0061\u30af\u30EA\u30b9"
+
+      "சிக்கி π, €𝄞㈴ é"
+    tokens: [
+    "Hello, World\\n",
+    "\\\"",
+    "\\\"\\\\\\/\\b\\f\\n\\r\\t",
+    "\\u0060\\u012a\\u12AB",
+    "\\uD801\\udc37\\ud83d\\ude39\\ud83d\\udc8d\\uDBFF\\uDFFF",
+    "\\\\upqrs",
+    "\\u0012",
+    "\\u0000 a",
+    "\\uFFFF", "\\uffff",
+    "\\u0061\\u30af\\u30EA\\u30b9",
+    #"\\uDADA",
+    "சிக்கி π, €𝄞㈴ é",
+    ""]
+
+  - note: invalid-char
+    rego: |
+      "world\n\r\b		"
+    tokens: [""]
+    error: invalid character in string
+    
+  - note: unmatched
+    rego: "\"Chikki Kuttiiii"
+    tokens: []
+    error: unmatched "
+
+  - note: newline
+    rego: "\"Chikki Kuttiiii\n"
+    tokens: []
+    error: invalid character in string
+
+  - note: invalid/capital-U
+    rego: |
+      "\U1234"
+    tokens: []
+    error: invalid escape sequence
+
+  - note: invalid/unclosed-escape
+    rego: "\"\\"
+    tokens: []
+    error: invalid escape sequence
+
+  - note: invalid/solo-double-quote
+    rego: "\""
+    tokens: []
+    error: unmatched "
+
+  - note: invalid/unicode-escape
+    rego: |
+      "\uabcg"
+    tokens: []
+    error: invalid hex escape sequence
+
+  - note: invalid/ascii-escape
+    rego: |
+      "\a"
+    tokens: []
+    error: invalid escape sequence
+
+  - note: invalid/hex-escape
+    rego: |
+      "\uabc"
+    tokens: []
+    error: invalid hex escape sequence
+
+  - note: invalid/escape-slash
+    rego: |
+      "\\\ a"
+    tokens: []
+    error: invalid escape sequence
+
+  - note: unparsable
+    rego: |
+      "\uD805"
+    tokens: [""]
+    error: serde_json cannot parse string
+    
+      
