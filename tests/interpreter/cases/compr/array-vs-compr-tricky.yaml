@@ -1,5 +1,5 @@
-# Copyright (c) Rego-Rs Authors.
-# Licensed under the Apache 2.0 license.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 # Captures tricky cases where similar looking expressions will be
 # treated as arrays or array-comprs.
