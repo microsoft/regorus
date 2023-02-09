@@ -1,0 +1,59 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: basic
+    rego: |
+      package test
+      import future.keywords.in
+
+      x = 5 in [4, 5]
+
+      # in-exprs are left associative and ahve lower-precedence than bin-expr.
+      # The following will be parsed as
+      # (5 in [4, 5]) in (set() | {true})
+      z = 5 in [4, 5] in set() | {true}
+
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+              assign:
+                op: "="
+                value:
+                  inexpr:
+                    key:
+                      number: 5
+                    collection:
+                      array:
+                        - number: 4
+                        - number: 5
+          bodies: []
+      - spec:
+          head:
+            compr:
+              refr:
+                var: z
+              assign:
+                op: "="
+                value:
+                  inexpr:
+                    key:
+                      inexpr:
+                        key:
+                          number: 5
+                        collection:
+                          array:
+                            - number: 4
+                            - number: 5
+                    collection:
+                      binexpr:
+                        op: "|"
+                        lhs:
+                          set: []
+                        rhs:
+                          set:
+                            - true
+          bodies: []

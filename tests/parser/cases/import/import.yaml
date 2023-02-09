@@ -1,0 +1,308 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: data
+    rego: |
+      package test
+      import data
+      import input
+    imports:
+      - span: import data
+        refr:
+          var: data
+      - span: import input
+        refr:
+          var: input
+
+  - note: input
+    rego: |
+      package test
+      import input
+    imports:
+      - span: import input
+        refr:
+          var: input
+
+  - note: dot
+    rego: |
+      package test
+      import input.a
+      import data.b
+    imports:
+      - span: import input.a
+        refr:
+          refdot:
+            refr:
+              var: input
+            field: a
+      - span: import data.b
+        refr:
+          refdot:
+            refr:
+              var: data
+            field: b
+
+  - note: bracket
+    rego: |
+      package test
+      import input["a"]
+      import data["b"]
+    imports:
+      - span: import input["a"]
+        refr:
+          refbrack:
+            refr:
+              var: input
+            index:
+              string: a
+      - span: import data["b"]
+        refr:
+          refbrack:
+            refr:
+              var: data
+            index:
+              string: b
+
+  - note: multi-dot
+    rego: |
+      package test
+      import input.a.b
+      import data.c.d
+    imports:
+      - span: import input.a.b
+        refr:
+          refdot:
+            span: input.a.b
+            refr:
+              refdot:
+                span: input.a
+                refr:
+                  var: input
+                field: a
+            field: b
+      - span: import data.c.d
+        refr:
+          refdot:
+            span: data.c.d
+            refr:
+              refdot:
+                span: data.c
+                refr:
+                  var: data
+                field: c
+            field: d
+    policy: []
+
+
+  - note: complex
+    rego: |
+      package test
+      import    input["b.c"].d["e.f"].g
+      import      data.a["b.c"].d["e.f"]
+    package: --skip--
+    imports:
+      - span: import    input["b.c"].d["e.f"].g
+        refr:
+          refdot:
+            span: input["b.c"].d["e.f"].g
+            refr:
+              refbrack:
+                span: input["b.c"].d["e.f"]
+                refr:
+                  refdot:
+                    span: input["b.c"].d
+                    refr:
+                      refbrack:
+                        span: input["b.c"]
+                        refr:
+                          var: input
+                        index:
+                          string: b.c
+                    field: d
+                index:
+                  string: e.f
+            field: g
+      - span: import      data.a["b.c"].d["e.f"]
+        refr:
+          refbrack:
+            span: data.a["b.c"].d["e.f"]
+            refr:
+              refdot:
+                span: data.a["b.c"].d
+                refr:
+                  refbrack:
+                    span: data.a["b.c"]
+                    refr:
+                      refdot:
+                        span: data.a
+                        refr:
+                          var: data
+                        field: a
+                    index:
+                      string: b.c
+                field: d
+            index:
+              string: e.f
+
+  - note:  same-line
+    rego: package test import input.a["b"] import data["c"].d
+    package:
+      span: package test
+      refr:
+        var: test
+    imports:
+      - span: import input.a["b"]
+        refr:
+          refbrack:
+            span: input.a["b"]
+            refr:
+              refdot:
+                span: input.a
+                refr:
+                  var: input
+                field: a
+            index:
+              string: b
+      - span: import data["c"].d
+        refr:
+          refdot:
+            span: data["c"].d
+            refr:
+              refbrack:
+                span: data["c"]
+                refr:
+                  var: data
+                index:
+                  string: c
+            field: d
+
+  - note: as
+    rego: |
+      package test
+      import input.x as y
+    imports:
+      - span: import input.x as y
+        refr:
+          refdot:
+            span: input.x
+            refr:
+              var: input
+            field: x
+        as: y
+
+  - note: as/newline
+    rego: |
+      package test
+      import
+      input.x
+      as
+      y
+    imports:
+      - span: "import\ninput.x\nas\ny"
+        refr:
+          refdot:
+            span: input.x
+            refr:
+              var: input
+            field: x
+        as: y
+
+  - note: missing-ref
+    rego: |
+      package test
+      import ( a)
+    error: expecting identifier
+
+  - note: missing-ref-1
+    rego: |
+      package test
+      import ["a"]
+    error: expecting identifier
+
+  - note: invalid-beginning
+    rego: |
+      package test
+      import foo
+    error: "import path must begin with one of: {data, future, input}"
+
+  - note: invalid-beginning-1
+    rego: |
+      package test
+      import foo.bar
+    error: "import path must begin with one of: {data, future, input}"
+
+  - note: missing-field-1
+    rego: |
+      package test
+      import data.a.
+    error: expecting identifier
+
+  - note: missing-field-2
+    rego: |
+      package test
+      import data.a.b.
+    error: expecting identifier
+
+  - note: space-after-dot
+    rego: |
+      package test
+      import input. a
+    error: invalid whitespace between . and identifier
+
+  - note: space-before-dot
+    rego: |
+      package test
+      import input .a.b
+    error: invalid whitespace before .
+
+  - note: space-after-lbracket
+    rego: package test import a ["b"]
+    error: invalid whitespace before [
+
+  - note: non-string-index
+    rego: package test import a[1]
+    error: expected string
+
+  - note: shadow
+    rego:
+      package test
+      import data.x import data.y import data["x"]
+    error: import shadows following import defined earlier
+
+  - note: keyword/else
+    rego:
+      package test
+      import data.x as else
+    error: "unexpected keyword `else`"
+
+  - note: keyword/as
+    rego:
+      package test
+      import data.x as as
+    error: "unexpected keyword `as`"
+
+  - note: as/_
+    rego:
+      package test
+      import data.x as _
+    error: "`_` cannot be used as alias"
+
+  - note: as/_
+    rego:
+      package test
+      import data.x as 1
+    error: expecting identifier
+
+  - note: as/eof
+    rego:
+      package test
+      import data.x as
+    error: expecting identifier
+
+  - note: as/multiple
+    rego:
+      package test
+      import data.x as y
+      import data.y as y
+    error: import shadows following import defined earlier

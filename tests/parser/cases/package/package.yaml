@@ -1,0 +1,129 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: single-char
+    rego: package a
+    package:
+      span: package a
+      refr:
+        var: a
+
+  - note: simple
+    rego: package test
+    package:
+      span: package test
+      refr:
+        var: test
+
+  - note: dot
+    rego: package a.b
+    package:
+      span: package a.b
+      refr:
+        refdot:
+          span: a.b
+          refr:
+            var: a
+          field: b
+
+  - note: multi-dot
+    rego: package a.b.c
+    package:
+      span: package a.b.c
+      refr:
+        refdot:
+          span: a.b.c
+          refr:
+            refdot:
+              span: a.b
+              refr:
+                var: a
+              field: b
+          field: c
+
+  - note: bracket
+    rego: package a["b"]
+    package:
+      span: package a["b"]
+      refr:
+        refbrack:
+          span: a["b"]
+          refr:
+            var: a
+          index:
+            string: b
+
+  - note: multi-bracket
+    rego: package a["b"]["c.d"]
+    package:
+      span: package a["b"]["c.d"]
+      refr:
+        refbrack:
+          span: a["b"]["c.d"]
+          refr:
+            refbrack:
+              span: a["b"]
+              refr:
+                var: a
+              index:
+                string: b
+          index:
+            string: c.d
+
+  - note: complex
+    rego: package a["b.c"].d["e.f"].g
+    package:
+      span: package a["b.c"].d["e.f"].g
+      refr:
+        refdot:
+          span: a["b.c"].d["e.f"].g
+          refr:
+             refbrack:
+               span: a["b.c"].d["e.f"]
+               refr:
+                 refdot:
+                   span: a["b.c"].d
+                   refr:
+                     refbrack:
+                       span: a["b.c"]
+                       refr:
+                         var: a
+                       index:
+                         string: "b.c"
+                   field: d
+               index:
+                 string: e.f
+          field: g
+
+  - note: missing-package-keyword
+    rego: packge a
+    error: expecting `package`
+
+  - note: missing-var
+    rego: package 5
+    error: expecting identifier
+
+  - note: missing-var-1
+    rego: package (
+    error: expecting identifier
+
+  - note: missing-field
+    rego: package a.b.
+    error: expecting identifier
+
+  - note: space-after-dot
+    rego: package a. b
+    error: invalid whitespace between . and identifier
+
+  - note: space-before-dot
+    rego: package a .b
+    error: invalid whitespace before .
+
+  - note: space-after-lbracket
+    rego: package a ["b"]
+    error: invalid whitespace before [
+
+  - note: non-string-index
+    rego: package a[1]
+    error: expected string

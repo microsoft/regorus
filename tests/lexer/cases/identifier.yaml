@@ -1,0 +1,38 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: all
+    rego: a ab abc a1 a1b1 a1b1c _  _a _ab _1 _abc1
+    tokens: ["a", "ab", "abc", "a1", "a1b1", "a1b1c",
+    "_", "_a", "_ab", "_1", "_abc1",
+    ""]
+
+  - note: placeholder
+    rego: _
+    tokens: ["_", ""]
+    
+  # Identifiers can only be accii.
+  - note: invalid-char/1
+    rego: சிக்கி
+    tokens:
+    error: invalid character
+  - note: invalid-char/2
+    rego: aசி_க்கி
+    tokens:
+    error: invalid character
+
+  # set( is a special case.
+  - note: set(
+    rego: |
+      # This is a function call.
+      set ()
+      # This is lexed as "set(" ")"
+      set()
+      # This is lexed as a function call.
+      set(5)
+    tokens: [
+    "set", "(", ")",
+    "set(", ")",
+    "set", "(", "5", ")",    
+    ""]

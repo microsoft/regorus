@@ -1,0 +1,226 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: all
+    rego: |
+      package test
+      import future.keywords.in
+
+      x = y {
+          # Empty set. This evaluates to false.
+          some a in {1}
+
+          # Key, value combo
+          some a
+          , b in r
+
+          # Key, value combo can be non-vars
+          some 5, x in array
+
+          some "hello", "world" in map
+
+          some p, q in { r |
+             some a, b in d
+          }
+      }
+
+    policy:
+      - spec:
+          head: --skip--
+          bodies:
+            - query:
+                stmts:
+                  - span: some a in {1}
+                    literal:
+                      some-decl:
+                        key:
+                          var: a
+                        collection:
+                          set:
+                            - number: 1
+                  - span: "some a\n    , b in r"
+                    literal:
+                      some-decl:
+                        key:
+                          var: a
+                        value:
+                          var: b
+                        collection:
+                          var: r
+                  - span: "some 5, x in array"
+                    literal:
+                      some-decl:
+                        key:
+                          number: 5
+                        value:
+                          var: x
+                        collection:
+                          var: array
+                  - span: "some \"hello\", \"world\" in map"
+                    literal:
+                      some-decl:
+                        key:
+                          string: hello
+                        value:
+                          string: world
+                        collection:
+                          var: map
+                  - literal:
+                      some-decl:
+                        key:
+                          var: p
+                        value:
+                          var: q
+                        collection:
+                          setcompr:
+                            term:
+                              var: r
+                            query:
+                              stmts:
+                                - literal:
+                                    some-decl:
+                                      key:
+                                        var: a
+                                      value:
+                                        var: b
+                                      collection:
+                                        var: d
+
+
+  - note: unimported-in
+    rego: |
+      package test
+      x = y {
+          some a in b
+      }
+    error: expecting `}` while parsing query
+
+  - note: more-refs
+    rego: |
+      package test
+      import future.keywords.in
+      x = y {
+         some a, b, c in d
+      }
+    error: encountered `c` while expecting `in`
+
+  - note: eof
+    rego: |
+      package test
+      import future.keywords.in
+      x = y {
+          some a, b in
+    error: expecting expression
+
+  - note: missing-expr
+    rego: |
+      package test
+      import future.keywords.in
+      x = y {
+          some a, b in
+      }
+    error: expecting expression
+
+  - note: missing-comma
+    rego: |
+      package test
+      import future.keywords.in
+      x = y {
+          some a b in c
+      }
+    error: expecting `}` while parsing query
+
+  - note: same-line
+    rego: |
+      package test
+      x = y{
+          some a b in {4, 5}
+          [1, 2, 3][a] == 3
+          y = a
+      }
+    error: expecting `}` while parsing query
+    
+  - note: multi-line-parsed as membership
+    rego: |
+      package test
+      import future.keywords.in
+      b := 5
+      x = y{
+          some a
+          b in {4, 5}
+          # The following [ starting a line ought to get
+          # parsed as a literal statement and not raise errors
+          # regarding gap from previous refr.
+          [1, 2, 3][a] == 3
+          y = a
+      }
+    policy:
+      - spec:
+          head:
+            compr:
+              span: b := 5
+              refr:
+                var: b
+              assign:
+                op: :=
+                value:
+                  number: 5                  
+          bodies: []
+      - spec:
+          head:
+            compr:
+              span: x = y
+              refr:
+                var: x
+              assign:
+                op: =
+                value:
+                  var: y
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      some-vars:
+                        span: some a
+                        vars:
+                          - a
+                  - literal:
+                      expr:
+                        inexpr:
+                          span: b in {4, 5}
+                          key:
+                            var: b
+                          collection:
+                            set:
+                            - number: 4
+                            - number: 5
+                  - literal:
+                      expr:
+                        boolexpr:
+                          span: "[1, 2, 3][a] == 3"
+                          op: ==
+                          lhs:
+                            refbrack:
+                              span: "[1, 2, 3][a]"
+                              refr:
+                                array:
+                                  - number: 1
+                                  - number: 2
+                                  - number: 3
+                              index:
+                                var: a
+                          rhs:
+                            number: 3
+                  - literal:
+                      expr:
+                        assignexpr:
+                          span: y = a
+                          op: =
+                          lhs:
+                            var: y
+                          rhs:
+                            var: a
+                        
+
+    

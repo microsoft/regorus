@@ -1,0 +1,32 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: simple
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords
+        tbl contains name if {
+          name = ["a", "b", "c"][_]
+        }
+    query: data.test
+    want_result:
+      tbl:
+        set!: ["c", "b", "a"]
+
+  - note: arithmetic
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords
+        tbl contains x + 10 if {
+          x = [1, 2, 3][_]
+        }
+    query: data.test
+    want_result:
+      tbl:
+        set!: [11, 12, 13]
+      

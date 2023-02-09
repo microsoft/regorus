@@ -1,0 +1,35 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: simple
+    data: {}
+    modules:
+      - |
+        package test
+
+        x[a] = b {
+          a = "hello"
+          b = "world"
+        }
+    query: data.test
+    want_result:
+      x:
+        "hello": "world"
+
+  - note: loop
+    data: {}
+    modules:
+      - |
+        package test
+
+        x[a] = b {
+          a = ["hello", "world"][_]
+          b = 1
+        }
+    query: data.test
+    want_result:
+      x:
+        "hello": 1
+        "world": 1
+        

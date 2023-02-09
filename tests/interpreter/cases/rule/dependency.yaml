@@ -1,0 +1,41 @@
+cases:
+  - note: forward-ref
+    data: {}
+    modules:
+      - |
+        package test
+        a = b
+        b = 5
+    query: data.test
+    want_result:
+      a: 5
+      b: 5
+
+  - note: recursive
+    data: {}
+    modules:
+      - |
+        package test
+        a = b
+        b = c
+        c = a
+    query: data.test
+    error: recursion detected
+
+  - note: cross-module
+    data: {}
+    modules:
+      - |
+        package a
+        x = data.b.y * 2
+      - |
+        package b
+        y = 10
+        z = data.a.x + 5
+    query: data
+    want_result:
+      a:
+        x: 20
+      b:
+        y: 10
+        z: 25

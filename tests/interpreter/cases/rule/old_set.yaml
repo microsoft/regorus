@@ -1,0 +1,31 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: index-syntax
+    data: {}
+    modules:
+      - |
+        package test
+        x[a] {
+          a = ["hello", "world"][_]
+        }
+    query: data.test
+    want_result:
+      x:
+        set!: ["hello", "world"]
+
+  - note: special-case-field-syntax
+    data: {}
+    modules:
+      - |
+        package test
+        x.a {
+          a = ["hello", "world"][_]
+          true
+        }
+    query: data.test
+    want_result:
+      x:
+        set!: ["a"]
+        

@@ -1,0 +1,71 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: comments-immediately-following/1
+    rego: |
+      #This is a comment #Nested comment
+      ident#a
+      123.4e5#c
+      6#c
+      +#c
+      -#c
+      *#c
+      /#c
+      &#c
+      |#c
+      [#c
+      ]#c
+      (#c
+      )#c
+      {#c
+      }#c
+      ,#c
+      ;#c
+      .#c
+      :#c
+      <#c
+      <=#c
+      >#c
+      >=#c
+      =#c
+      ==#c
+      # Ensure that <, =, > are read separately.
+      <#c
+      =#c
+      >#c
+      =#c
+      =#c
+    tokens: ["ident", "123.4e5", "6", "+", "-", "*", "/", "&", "|",
+    "[", "]", "(", ")", "{", "}", ",", ";", ".", ":",
+    "<", "<=", ">", ">=", "=", "==",
+    "<", "=", ">", "=", "=",
+    ""]
+
+  # Non-ascii chars can appear in comments.
+  - note: comments-non-ascii
+    rego: # சிக்கி
+    tokens: [""]
+    
+  - note: comments-within-raw-string
+    rego: |
+      #Comments aren't lexed within raw strings.
+      `raw#This is not a comment
+      string`#c
+    tokens: ["raw#This is not a comment\nstring", ""]
+
+  - note: comments-within-rstring
+    rego: |
+      #Comments aren't allowed within strings,
+      "#This is not a comment
+      "#c
+    tokens:
+    error: unmatched "
+
+  - note: comment-integer-break
+    rego: |
+      12#
+      .3
+    tokens:
+    error: invalid number
+      

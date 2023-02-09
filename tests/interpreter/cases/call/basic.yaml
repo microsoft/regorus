@@ -1,0 +1,44 @@
+cases:
+  - note: basic
+    data: {}
+    modules:
+      - |
+        package test
+
+        inc(x) = x + 1
+
+        a1 = inc(5)
+    query: data.test
+    want_result:
+      a1: 6
+
+  - note: call-in-arg
+    data: {}
+    modules:
+      - |
+        package test
+
+        inc(x) = x + 1
+
+        a1 = inc(inc(5))
+    query: data.test
+    want_result:
+      a1: 7
+
+  - note: call-nested
+    data: {}
+    modules:
+      - |
+        package test
+        
+        sub(a, b) := a - b
+
+        foo(a, b) := r {
+        r =(a + b) * sub(a, b)
+        }
+
+        a = foo(5, 6)
+    query: data.test
+    want_result:
+      a: -11
+      

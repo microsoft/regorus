@@ -1,0 +1,49 @@
+#!/bin/bash
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+set -e
+
+if ! command -v grcov > /dev/null; then
+  cargo install grcov
+fi
+
+if ! command -v llvm-profdata > /dev/null; then
+  rustup component add llvm-tools-preview
+fi
+
+#export LLVM_PROFILE_FILE='target/cargo-test-%p-%m.profraw'
+#export CARGO_INCREMENTAL=1
+#export RUSTFLAGS='-Cinstrument-coverage'
+
+echo "Building with instrumentation"
+cargo build --all-targets
+
+if [ "$1" == "--no-run" ]; then
+    exit 0
+fi
+
+# Remove existing coverage information.
+rm -f target/*.profraw
+rm -rf target/coverage
+mkdir -p target/coverage
+
+echo "Running tests"
+cargo test
+
+# Generate html
+grcov target/ --binary-path ./target/x86_64-unknown-linux-musl/debug/deps -s src/ -t html \
+--branch --ignore-not-existing --ignore '../*' --ignore "/*" -o target/coverage/html
+
+if [ "$1" == "--show" ]; then
+    echo "Opening report in browser"
+    xdg-open target/coverage/html/src/index.html 2>/dev/null
+    echo "Done"
+fi
+
+# Generate markdown
+grcov target/ --binary-path ./target/x86_64-unknown-linux-musl/debug/deps -s src/ -t markdown \
+--branch --ignore-not-existing --ignore '../*' --ignore "/*" -o target/coverage/markdown
+cat target/coverage/markdown
+
+#TODO: Maybe use coveralls format (json) and query data to lockdown code coverage.

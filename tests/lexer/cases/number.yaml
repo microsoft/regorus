@@ -1,0 +1,184 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  # Valid integers
+  - note: integers
+    rego: |
+      # Integers
+      0 1 11 22 12345678
+      0 -1 -11 -22 -12345678
+    tokens:
+      [ "0", "1", "11", "22", "12345678",
+      "0", "-1", "-11", "-22", "-12345678",
+      ""]
+
+  # Large integers are supported.
+  # Note, currently integers that can't fit in an f64 may nto evaluate correctly.
+  - note: large-integers
+    rego: |
+      12345678901234567890123456789012345678901234567890123456789012345678901234567890
+      -12345678901234567890123456789012345678901234567890123456789012345678901234567890
+    tokens:
+      ["12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+      "-12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+      ""]
+
+  # Negative zero seems to be supported in json.
+  # - followed by a space and digit will be parsed as two tokens.
+  - note: negative-zero
+    rego: -0 - 0
+    tokens: [ "-0", "-", "0", "" ]
+
+  # 0 cannot be followed by 0 or other digits.
+  - note: invalid-leading-0/a
+    rego: 00
+    tokens:
+    error: invalid number
+  - note: invalid-leading-0/b
+    rego: 01
+    tokens:
+    error: invalid number
+
+  # Number cannot be followed by . _ or alphanumeric
+  - note: invalid-suffix/0.
+    rego: 0.
+    tokens:
+    error: invalid number
+  - note: invalid-suffix/1_
+    rego: 1_
+    tokens:
+    error: invalid number
+  - note: invalid-suffix/9a
+    rego: 9a
+    tokens:
+    error: invalid number
+  - note: invalid-suffix/0.1.
+    rego: 0.1.
+    tokens:
+    error: invalid number
+
+  # Floats
+  - note: floats
+    rego: |
+      0.1 1.09 11.000000001 22.333 12345678.6789
+      0.1 -1.09 -11.000000001 -22.3333 -12345678.6789
+    tokens: ["0.1", "1.09", "11.000000001", "22.333", 12345678.6789,
+    "0.1", "-1.09", "-11.000000001", "-22.3333", "-12345678.6789",
+    ""]
+
+  # Large integers are supported.
+  # Note, currently integers that can't fit in an f64 may not evaluate correctly.
+  - note: large-floats
+    rego: |
+      12345678901234567890123456789012345678901234567890123456789012345678901234567890.12345678901234567890123456789012345678901234567890123456789012345678901234567890
+      -12345678901234567890123456789012345678901234567890123456789012345678901234567890.12345678901234567890123456789012345678901234567890123456789012345678901234567890
+    tokens:
+      ["12345678901234567890123456789012345678901234567890123456789012345678901234567890.12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+      "-12345678901234567890123456789012345678901234567890123456789012345678901234567890.12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+      ""]
+
+  # Specific floats
+  - note: specific-floats
+    rego: |
+      123.456e-789 0.4e0066 -1e+308 -123456e303 123456e303
+      123456e-10000000 -123456789123456789123456789123
+      900000000000000000000
+      -237462374673276894279832749832423479823246327846
+      123e65 0e9 -0 -1 2E34 2E-3 2E+3
+      -0.000000000000000000000000000000000000000000000000000000000000000000000000000009
+    tokens: ["123.456e-789", "0.4e0066", "-1e+308",
+    "-123456e303", "123456e303", "123456e-10000000",
+    "-123456789123456789123456789123",
+    "900000000000000000000",
+    "-237462374673276894279832749832423479823246327846",
+    "123e65", "0e9", "-0", "-1", "2E34", "2E-3", "2E+3",
+    "-0.000000000000000000000000000000000000000000000000000000000000000000000000000009",
+    ""]
+
+  # + sign is parsed as separate token
+  - note: plus-number
+    rego: +1 +1.2 +1e2 +1E2
+    tokens: [ "+", "1", "+", "1.2", "+", "1e2", "+", "1E2", "" ]
+
+  # Bunch of invalid numbers
+  - note: invalid-number/0.1.1
+    rego: 0.1.1
+    tokens:
+    error: invalid number
+  - note: invalid-number/0e1.1
+    rego: 0e1.1
+    tokens:
+    error: invalid number
+  - note: invalid-number/01
+    rego: 01
+    tokens:
+    error: invalid number
+  - note: invalid-number/0.4e
+    rego: 0.4e
+    tokens:
+    error: invalid number
+  - note: invalid-number/0.4E
+    rego: 0.4E
+    tokens:
+    error: invalid number
+  - note: invalid-number/0.4e-
+    rego: 0.4e-
+    tokens:
+    error: invalid number
+  - note: invalid-number/0.Ee-
+    rego: 0.4E-
+    tokens:
+    error: invalid number
+  - note: invalid-number/0.4e+
+    rego: 0.4e+
+    tokens:
+    error: invalid number
+  - note: invalid-number/0.Ee+
+    rego: 0.4E+
+    tokens:
+    error: invalid number
+  - note: invalid-number/8a
+    rego: 8a
+    tokens:
+    error: invalid number
+  - note: invalid-number/8eA
+    rego: 8eA
+    tokens:
+    error: invalid number
+  - note: invalid-hex-number/0x1
+    rego: 0x1
+    tokens:
+    error: invalid number
+  - note: invalid-octal-number/01
+    rego: 01
+    tokens:
+    error: invalid number
+  - note: invalid-number/8_
+    rego: 8_
+    tokens:
+    error: invalid number
+  - note: invalid-number/8.1_
+    rego: 8.1_
+    tokens:
+    error: invalid number
+  - note: invalid-number/.8
+    rego: .8
+    tokens:
+    error: invalid number
+  - note: invalid-number/8.
+    rego: 8.
+    tokens:
+    error: invalid number
+  - note: invalid-number/2.e3
+    rego: 2.e3
+    tokens:
+    error: invalid number
+  - note: invalid-number/2.e+3
+    rego: 2.e3
+    tokens:
+    error: invalid number
+  - note: invalid-number/2.e-3
+    rego: 2.e3
+    tokens:
+    error: invalid number

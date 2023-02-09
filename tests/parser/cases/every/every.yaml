@@ -1,0 +1,60 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: basic
+    rego: |      
+      package test
+      import future.keywords
+
+      y = 8 {
+        every x in [2] {
+          x > 0
+          every a, b in vals { check(a) }
+        }
+      }
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: y
+              assign:
+                op: "="
+                value:
+                  number: 8
+          bodies:
+            - query:
+                stmts:
+                  - literal:
+                      every:
+                        key: x
+                        domain:
+                          array:
+                            - number: 2
+                        query:
+                          stmts:
+                            - literal:
+                                expr:
+                                  boolexpr:
+                                    op: ">"
+                                    lhs:
+                                      var: x
+                                    rhs:
+                                      number: 0
+                            - literal:
+                                every:
+                                  key: a
+                                  value: b
+                                  domain:
+                                    var: vals
+                                  query:
+                                    stmts:
+                                      - literal:
+                                          expr:
+                                            call:
+                                              fcn:
+                                                var: check
+                                              params:
+                                                - var: a
+                            

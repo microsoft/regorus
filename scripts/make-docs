@@ -1,0 +1,15 @@
+#!/bin/bash
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+git stash
+cargo doc --no-deps
+git checkout docs
+rm -rf docs
+cp -r target/x86_64-unknown-linux-musl/doc ./docs
+echo "<meta http-equiv=\"refresh\" content=\"0; url=rego_rs/index.html\">" > docs/index.html
+git add docs
+git commit -s
+git push
+git checkout -
+git stash pop

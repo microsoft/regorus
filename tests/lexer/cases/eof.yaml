@@ -1,0 +1,35 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  # All other yamls lock down eof.
+  # Specific eof tests:
+  # Empty file.
+  - note: empty-file
+    rego:
+    tokens: [""]
+    kinds: [Eof]
+
+  # File with comments.
+  - note: only-comments
+    rego: |
+      # This is a comment.
+      # This is another comment.      
+    tokens: [""]
+    kinds: [Eof]
+
+  # File with eof and trailing chars.
+  # Trailing chars are ignored.
+  - note: eof-trailing-chars
+    rego: "true (\x0000false + hello"
+    tokens: ["true", "(", ""]
+    kinds: [Ident, Symbol, Eof]
+    
+  # Empty string must be distinguishable from Eof eventhough
+  # both result in an empty string as the span.
+  - note: empty-string-eof
+    rego: "\"\""
+    tokens: ["", ""]
+    kinds: [String, Eof]
+
+  

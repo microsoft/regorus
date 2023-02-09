@@ -1,0 +1,27 @@
+#!/bin/bash
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+set -e
+
+usage="usage: rego-lex <policy.rego> [-v]"
+
+if [ -z "$1" ]; then
+    echo "$usage"
+    exit 1
+fi
+
+rego=$(realpath -e $1)
+
+case "$2" in
+    "-v")
+	verbose="verbose"
+	;;
+    *)
+	if [ ! -z "$2" ]; then
+	   echo "$usage"
+	   exit 1
+	fi
+esac
+	
+eval "cargo test lexer::one_file -- --include-ignored --nocapture $rego $verbose"

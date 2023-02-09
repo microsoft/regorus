@@ -1,0 +1,234 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: number-equals
+    data: {}
+    modules:
+      - |
+        package test
+
+        v = 1
+        r = [
+        # Comparison with number
+        v == 1,
+        v == 2,
+        
+        # Comparison with primitives
+        v == null, 
+        v == "hello",
+        v == true,
+        v == false,
+          
+        # Comparison with arrays
+        v == [],
+        v == [v],
+        
+        # Comparison with sets
+        v == set(),
+        v == { v },
+        
+        # Comparison with objects
+        v == {},
+        v == { "a": v},
+        ]           
+    sort_bindings: false
+    query: data.test
+    want_result:
+      v: 1
+      r: [ true, false, false, false, false, false,
+           false, false, false, false, false, false]
+  
+  - note: null-equals
+    data: {}
+    modules:
+      - |
+        package test
+
+        v = null
+        r = [
+        # Comparison with number
+        v == 1,
+        v == 2,
+        
+        # Comparison with primitives
+        v == null, 
+        v == "hello",
+        v == true,
+        v == false,
+          
+        # Comparison with arrays
+        v == [],
+        v == [v],
+        
+        # Comparison with sets
+        v == set(),
+        v == { v },
+        
+        # Comparison with objects
+        v == {},
+        v == { "a": v},
+        ]           
+    sort_bindings: false
+    query: data.test
+    want_result:
+      v: null
+      r: [ false, false, true, false, false, false,
+           false, false, false, false, false, false]
+           
+  - note: string-equals
+    data: {}
+    modules:
+      - |
+        package test
+
+        v = "hello"
+        r = [
+        # Comparison with number
+        v == 1,
+        v == 2,
+        
+        # Comparison with primitives
+        v == null, 
+        v == "hello",
+        v == true,
+        v == false,
+          
+        # Comparison with arrays
+        v == [],
+        v == [v],
+        
+        # Comparison with sets
+        v == set(),
+        v == { v },
+        
+        # Comparison with objects
+        v == {},
+        v == { "a": v},
+        ]           
+    sort_bindings: false
+    query: data.test
+    want_result:
+      v: "hello"
+      r: [ false, false, false, true, false, false,
+           false, false, false, false, false, false]
+
+  - note: true-equals
+    data: {}
+    modules:
+      - |
+        package test
+
+        v = true
+        r = [
+        # Comparison with number
+        v == 1,
+        v == 2,
+        
+        # Comparison with primitives
+        v == null, 
+        v == "hello",
+        v == true,
+        v == false,
+          
+        # Comparison with arrays
+        v == [],
+        v == [v],
+        
+        # Comparison with sets
+        v == set(),
+        v == { v },
+        
+        # Comparison with objects
+        v == {},
+        v == { "a": v},
+        ]           
+    sort_bindings: false
+    query: data.test
+    want_result:
+      v: true
+      r: [ false, false, false, false, true, false,
+           false, false, false, false, false, false]
+  
+           
+  - note: false-equals
+    data: {}
+    modules:
+      - |
+        package test
+
+        v = false
+        r = [
+        # Comparison with number
+        v == 1, # true
+        v == 1, # false
+        
+        # Comparison with primitives
+        v == null, 
+        v == "hello",
+        v == true,
+        v == false,
+          
+        # Comparison with arrays
+        v == [],
+        v == [v],
+        
+        # Comparison with sets
+        v == set(),
+        v == { v },
+        
+        # Comparison with objects
+        v == {},
+        v == { "a": v},
+        ]           
+    sort_bindings: false
+    query: data.test
+    want_result:
+      v: false
+      r: [ false, false, false, false, false, true,
+           false, false, false, false, false, false]
+
+  - note: undefined-equals
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords
+
+        v = 1 if false
+        r = [
+        # Comparison with number
+        v == 1,
+        v == 2,
+        
+        # Comparison with primitives
+        v == null, 
+        v == "hello",
+        v == true,
+        v == false,
+          
+        # Comparison with arrays
+        v == [],
+        v == [v],
+        
+        # Comparison with sets
+        v == set(),
+        v == { v },
+        
+        # Comparison with objects
+        v == {},
+        v == { "a": v},
+        ]
+
+        r2 = 1 if v
+
+        # This variable should appear in output since it is not undefined.
+        ok = true
+        
+    sort_bindings: false
+    query: data.test
+    want_result:
+      ok: true
+
+  
+           

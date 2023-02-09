@@ -1,0 +1,64 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: basic
+    rego: |
+      package test
+
+      # & has higher precedence than |.
+      # If not the following expressions would evaluate to empty set.
+      x = {1, 2, 3} | {2} & {4}
+      y = {2} & {4} | {1, 2, 3}
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+              assign:
+                op: =
+                value:
+                  binexpr:
+                    op: "|"
+                    lhs:
+                      set:
+                        - number: 1
+                        - number: 2
+                        - number: 3
+                    rhs:
+                      binexpr:
+                        op: "&"
+                        lhs:
+                          set:
+                            - number: 2
+                        rhs:
+                          set:
+                            - number: 4
+          bodies: []
+      - spec:
+          head:
+            compr:
+              refr:
+                var: y
+              assign:
+                op: =
+                value:
+                  binexpr:
+                    op: "|"
+                    rhs:
+                      set:
+                        - number: 1
+                        - number: 2
+                        - number: 3
+                    lhs:
+                      binexpr:
+                        op: "&"
+                        lhs:
+                          set:
+                            - number: 2
+                        rhs:
+                          set:
+                            - number: 4
+          bodies: []
+    

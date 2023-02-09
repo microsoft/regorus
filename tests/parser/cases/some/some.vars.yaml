@@ -1,0 +1,74 @@
+# Copyright (c) Rego-Rs Authors.
+# Licensed under the Apache 2.0 license.
+
+cases:
+  - note: single-multi-vars
+    rego: |
+      package test
+      x = y {
+         # Single var
+         some a
+         # Multiple var. With and without spaces.
+         some
+         d,e,
+         f
+      }
+    policy:
+      - spec:
+          head: --skip--
+          bodies:
+            - query:
+                stmts:
+                  - span: some a
+                    literal:
+                      some-vars:
+                        span: some a
+                        vars:
+                          - a
+                  - span: "some\n   d,e,\n   f"
+                    literal:
+                      some-vars:
+                        span: "some\n   d,e,\n   f"
+                        vars: [d, e, f]
+
+  - note: same-line-error
+    rego: |
+      package test
+      x = y {
+          some a some b
+      }
+    error: expecting `}` while parsing query
+
+  - note: keyword
+    rego: |
+      package test
+      x = y {
+          some as
+      }
+    error: unexpected keyword `as`
+
+  - note: top-level
+    rego: |
+      package test
+      x = some y
+    error: unexpected keyword `some`
+
+  - note: top-level1
+    rego: |
+      package test
+      some y
+    error: unexpected keyword `some`
+    
+  - note: some-in-set
+    rego: |
+      package test
+      x = { some y }
+    error: unexpected keyword `some`
+
+  - note: non-var
+    rego: |
+       package test
+       x = y {
+           some a, 5
+       }
+    error: encountered `5` while expecting identifier
