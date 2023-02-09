@@ -1,5 +1,6 @@
-// Copyright (c) Rego-Rs Authors.
-// Licensed under the Apache 2.0 license.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::ast::*;
 use crate::builtins;
 use crate::lexer::Span;
