@@ -47,7 +47,7 @@ fn one_file() -> Result<()> {
     };
     let mut parser = Parser::new(&source)?;
     let ast = parser.parse()?;
-    println!("{:#?}", ast);
+    println!("{ast:#?}");
     Ok(())
 }
 
@@ -364,7 +364,7 @@ fn match_bin_op(s: &Span, op: &BinOp, v: &Value) -> Result<()> {
                 s.line,
                 s.col,
                 "mismatch-error",
-                format!("left = {:?}\nright = {:?}\n", op, v).as_str()
+                format!("left = {op:?}\nright = {v:?}\n").as_str()
             )
         ),
     }
@@ -382,7 +382,7 @@ fn match_arith_op(s: &Span, op: &ArithOp, v: &Value) -> Result<()> {
                 s.line,
                 s.col,
                 "mismatch-error",
-                format!("left = {:?}\nright = {:?}\n", op, v).as_str()
+                format!("left = {op:?}\nright = {v:?}\n").as_str()
             )
         ),
     }
@@ -401,7 +401,7 @@ fn match_bool_op(s: &Span, op: &BoolOp, v: &Value) -> Result<()> {
                 s.line,
                 s.col,
                 "mismatch-error",
-                format!("left = {:?}\nright = {:?}\n", op, v).as_str()
+                format!("left = {op:?}\nright = {v:?}\n").as_str()
             )
         ),
     }
@@ -417,7 +417,7 @@ fn match_assign_op(s: &Span, op: &AssignOp, v: &Value) -> Result<()> {
                 s.line,
                 s.col,
                 "mismatch-error",
-                format!("left = {:?}\nright = {:?}\n", op, v).as_str()
+                format!("left = {op:?}\nright = {v:?}\n").as_str()
             )
         ),
     }
@@ -653,7 +653,7 @@ struct YamlTest {
 }
 
 fn yaml_test_impl(file: &str) -> Result<()> {
-    println!("\nrunning {}", file);
+    println!("\nrunning {file}");
 
     let yaml_str = std::fs::read_to_string(file)?;
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;

@@ -21,7 +21,7 @@ impl<'source> Source<'source> {
             return format!("{}: invalid line {} specified", self.file, line);
         }
 
-        let line_str = format!("{}", line);
+        let line_str = format!("{line}");
         let line_num_width = line_str.len() + 1;
         let col_spaces = col as usize - 1;
 

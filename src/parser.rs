@@ -46,7 +46,7 @@ impl<'source> Parser<'source> {
         if self.tok.1.text() == text {
             self.next_token()
         } else {
-            let msg = format!("expecting `{}` {}", text, context);
+            let msg = format!("expecting `{text}` {context}");
             Err(self.source.error(self.tok.1.line, self.tok.1.col, &msg))
         }
     }
@@ -801,7 +801,7 @@ impl<'source> Parser<'source> {
                         return Err(self.source.error(
                             span.line,
                             span.col,
-                            format!("Failed to parse `every` statement.\n{}", e).as_str(),
+                            format!("Failed to parse `every` statement.\n{e}").as_str(),
                         ))
                     }
                 }

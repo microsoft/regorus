@@ -270,7 +270,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     let yaml_str = std::fs::read_to_string(file)?;
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
-    println!("running {}", file);
+    println!("running {file}");
     for case in test.cases {
         print!("case {} ", case.note);
         if case.skip == Some(true) {
