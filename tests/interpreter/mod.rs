@@ -6,7 +6,7 @@
 use std::env;
 
 use anyhow::{bail, Result};
-use rego_rs::*;
+use regorus::*;
 use serde::{Deserialize, Serialize};
 use test_generator::test_resources;
 //use walkdir::WalkDir;
