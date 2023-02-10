@@ -92,7 +92,7 @@ fn one_file() -> Result<()> {
         if verbose {
             println!("{}", tok.1.source.message(tok.1.line, tok.1.col, "", ""));
         }
-        println!("{:?}", tok);
+        println!("{tok:?}");
     }
 
     Ok(())
@@ -113,7 +113,7 @@ struct Test {
 }
 
 fn yaml_test_impl(file: &str) -> Result<()> {
-    println!("\nrunning {}", file);
+    println!("\nrunning {file}");
 
     let yaml = std::fs::read_to_string(file)?;
     let test: Test = serde_yaml::from_str(&yaml)?;
@@ -163,15 +163,13 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                 assert_eq!(
                     tokens.len(),
                     case.tokens.len(),
-                    "\n. Token count mismatch.\nLexed tokens:{:?}",
-                    tokens
+                    "\n. Token count mismatch.\nLexed tokens:{tokens:?}"
                 );
                 if let Some(k) = &case.kinds {
                     assert_eq!(
                         tokens.len(),
                         k.len(),
-                        "\n. Kind count mismatch.\nLexed tokens:{:?}",
-                        tokens
+                        "\n. Kind count mismatch.\nLexed tokens:{tokens:?}"
                     );
                 }
             }
@@ -179,11 +177,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                 Some(expected) => {
                     let actual = actual.to_string();
                     if !actual.contains(expected) {
-                        bail!(
-                            "Error message\n`{}\n`\ndoes not contain `{}`",
-                            actual,
-                            expected
-                        );
+                        bail!("Error message\n`{actual}\n`\ndoes not contain `{expected}`");
                     }
                 }
                 _ => return Err(actual),

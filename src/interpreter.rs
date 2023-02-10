@@ -941,7 +941,7 @@ impl<'source> Interpreter<'source> {
             Value::Set(s) if !s.is_empty() => Err(span.source.error(
                 span.line,
                 span.col,
-                format!("function produced multiple outputs {:?}", value).as_str(),
+                format!("function produced multiple outputs {value:?}").as_str(),
             )),
             // If the function successfully executed, but did not return any value, then return true.
             Value::Set(s) if s.is_empty() && output_expr.is_none() => Ok(Value::Bool(true)),
@@ -1040,7 +1040,7 @@ impl<'source> Interpreter<'source> {
                 Err(e) => Err(span.source.error(
                     span.line,
                     span.col,
-                    format!("could not parse number. {}", e).as_str(),
+                    format!("could not parse number. {e}").as_str(),
                 )),
             },
             // TODO: Handle string vs rawstring

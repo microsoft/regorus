@@ -18,7 +18,13 @@ jobs:
     - uses: actions/checkout@v3
     - name: Add musl target
       run: rustup target add x86_64-unknown-linux-musl
+    - name: Format Check
+      run: cargo fmt --check
     - name: Build
       run: cargo build --verbose
+    - name: Build Tests
+      run: cargo build --all-targets --verbose
+    - name: Clippy
+      run: cargo clippy --all-targets --no-deps -- -Dwarnings
     - name: Run tests
       run: cargo test --verbose

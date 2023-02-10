@@ -37,7 +37,7 @@ fn non_string_key() -> Result<()> {
     obj.as_object_mut()?.insert(key_obj, Value::Null);
 
     let json = serde_json::to_string_pretty(&obj)?;
-    println!("{}", json);
+    println!("{json}");
 
     let expected = r#"{
   "null": null,
