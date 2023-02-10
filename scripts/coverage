@@ -37,7 +37,7 @@ grcov target/ --binary-path ./target/x86_64-unknown-linux-musl/debug/deps -s src
 
 if [ "$1" == "--show" ]; then
     echo "Opening report in browser"
-    xdg-open target/coverage/html/src/index.html 2>/dev/null
+    xdg-open target/coverage/html/index.html 2>/dev/null
     echo "Done"
 fi
 

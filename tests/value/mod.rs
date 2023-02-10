@@ -4,7 +4,7 @@
 #![cfg(test)]
 
 use anyhow::Result;
-use rego_rs::*;
+use regorus::*;
 
 #[test]
 fn non_string_key() -> Result<()> {

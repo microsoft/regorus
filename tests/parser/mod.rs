@@ -4,7 +4,7 @@
 #![cfg(test)]
 
 use anyhow::{anyhow, bail, Result};
-use rego_rs::*;
+use regorus::*;
 use serde::{Deserialize, Serialize};
 use std::env;
 use test_generator::test_resources;
