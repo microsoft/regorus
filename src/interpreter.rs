@@ -474,6 +474,7 @@ impl<'source> Interpreter<'source> {
                     panic!();
                 }
             }
+            Literal::NotExpr { expr, .. } => matches!(self.eval_expr(expr)?, Value::Bool(false)),
             _ => unimplemented!(),
         });
 
@@ -1347,6 +1348,108 @@ impl<'source> Interpreter<'source> {
         }
     }
 
+    fn check_default_value(&self, expr: &'source Expr<'source>) -> Result<()> {
+        use Expr::*;
+        let (kind, span) = match expr {
+            // Scalars are supported
+            String(_) | RawString(_) | Number(_) | True(_) | False(_) | Null(_) => return Ok(()),
+
+            // Uminus of number is treated as a single expression,
+            UnaryExpr { expr, .. } if matches!(expr.as_ref(), Number(_)) => return Ok(()),
+
+            Var(span) => ("var", span),
+
+            // Check each item in array/set.
+            Array { items, .. } | Set { items, .. } => {
+                for item in items {
+                    self.check_default_value(item)?;
+                }
+                return Ok(());
+            }
+
+            // Check each field in object
+            Object { fields, .. } => {
+                for (_, key, value) in fields {
+                    self.check_default_value(key)?;
+                    self.check_default_value(value)?;
+                }
+                return Ok(());
+            }
+
+            // Check each statement in comprehensions
+            ArrayCompr { term, query, .. } | SetCompr { term, query, .. } => {
+                self.check_default_value(term)?;
+                for stmt in &query.stmts {
+                    self.check_default_value_in_stmt(stmt)?;
+                }
+                return Ok(());
+            }
+
+            ObjectCompr {
+                key, value, query, ..
+            } => {
+                self.check_default_value(key)?;
+                self.check_default_value(value)?;
+                for stmt in &query.stmts {
+                    self.check_default_value_in_stmt(stmt)?;
+                }
+                return Ok(());
+            }
+
+            Call { span, .. } => ("call", span),
+            UnaryExpr { span, .. } => ("unaryexpr", span),
+            RefDot { span, .. } => ("ref", span),
+            RefBrack { span, .. } => ("ref", span),
+            BinExpr { span, .. } => ("binexpr", span),
+            BoolExpr { span, .. } => ("boolexpr", span),
+            ArithExpr { span, .. } => ("arithexpr", span),
+            AssignExpr { span, .. } => ("assignexpr", span),
+            Membership { span, .. } => ("membership", span),
+        };
+
+        Err(span.error(format!("invalid `{kind}` in default value").as_str()))
+    }
+
+    fn check_default_value_in_stmt(&self, stmt: &'source LiteralStmt<'source>) -> Result<()> {
+        for m in &stmt.with_mods {
+            self.check_default_value(&m.refr)?;
+            self.check_default_value(&m.r#as)?;
+        }
+
+        match &stmt.literal {
+            Literal::SomeVars { span, .. } => {
+                Err(span.error("invalid `some vars` in default value"))
+            }
+            Literal::SomeIn {
+                key,
+                value,
+                collection,
+                ..
+            } => {
+                self.check_default_value(key)?;
+                if let Some(value) = &value {
+                    self.check_default_value(value)?;
+                }
+                self.check_default_value(collection)
+            }
+            Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => {
+                self.check_default_value(expr)
+            }
+            Literal::Every { span, .. } => Err(span.error("invalid `every` in default value")),
+        }
+    }
+
+    fn check_default_rules(&self) -> Result<()> {
+        for module in &self.modules {
+            for rule in &module.policy {
+                if let Rule::Default { value, .. } = rule {
+                    self.check_default_value(value)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn eval_default_rule(&mut self, rule: &'source Rule<'source>) -> Result<()> {
         // Skip reprocessing rule.
         if self.processed.contains(rule) {
@@ -1368,12 +1471,7 @@ impl<'source> Interpreter<'source> {
                 Parser::get_path_ref_components_into(refr, &mut path)?;
                 let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
 
-                if matches!(
-                    value,
-                    Expr::Var(_) | Expr::RefBrack { .. } | Expr::RefDot { .. }
-                ) {
-                    bail!("illegal default rule (value contains a variable or reference)");
-                }
+                self.check_default_value(value)?;
                 let value = self.eval_expr(value)?;
 
                 // Assume at this point that all the non-default rules have been evaluated.
@@ -1495,6 +1593,7 @@ impl<'source> Interpreter<'source> {
             self.data = data.clone();
         }
 
+        self.check_default_rules()?;
         self.update_function_table()?;
         self.gather_rules()?;
 

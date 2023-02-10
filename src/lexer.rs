@@ -61,6 +61,14 @@ impl<'source> Span<'source> {
     pub fn text(&self) -> &'source str {
         &self.source.contents[self.start as usize..self.end as usize]
     }
+
+    pub fn message(&self, kind: &str, msg: &str) -> String {
+        self.source.message(self.line, self.col, kind, msg)
+    }
+
+    pub fn error(&self, msg: &str) -> anyhow::Error {
+        self.source.error(self.line, self.col, msg)
+    }
 }
 
 impl<'source> Debug for Span<'source> {
