@@ -15,7 +15,6 @@ pub struct Parser<'source> {
     line: u16,
     end: u16,
     future_keywords: BTreeMap<&'source str, Span<'source>>,
-    in_default_value: bool,
 }
 
 const FUTURE_KEYWORDS: [&str; 4] = ["contains", "every", "if", "in"];
@@ -31,7 +30,6 @@ impl<'source> Parser<'source> {
             line: 0,
             end: 0,
             future_keywords: BTreeMap::new(),
-            in_default_value: false,
         })
     }
 
@@ -547,22 +545,6 @@ impl<'source> Parser<'source> {
                     possible_fcn = false;
                 }
                 _ => break,
-            }
-        }
-
-        if self.in_default_value {
-            if let Some((kind, span)) = match &term {
-                Expr::Var(v) => Some(("var", v)),
-                Expr::RefDot { span, .. } => Some(("ref", span)),
-                Expr::Call { span, .. } => Some(("call", span)),
-                Expr::RefBrack { span, .. } => Some(("ref", span)),
-                _ => None,
-            } {
-                return Err(self.source.error(
-                    span.line,
-                    span.col,
-                    format!("invalid {kind} in default value").as_str(),
-                ));
             }
         }
 
@@ -1418,9 +1400,7 @@ impl<'source> Parser<'source> {
 
         // todo: Rego errors for binary expressions here, but they are
         // somehow valid in a comprehension
-        self.in_default_value = true;
         let value = self.parse_term()?;
-        self.in_default_value = false;
         span.end = self.end;
         Ok(Rule::Default {
             span,
