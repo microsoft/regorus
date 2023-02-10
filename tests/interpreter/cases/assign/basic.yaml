@@ -1,0 +1,54 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: basic
+    data: {}
+    modules:
+      - |
+        package test
+
+        default x = 5
+
+        y := "string"
+
+        assign_rule_forward = v {
+          v = [1, 2, 3]
+        }
+
+        assign_rule_reverse = w {
+          {9, 8, 7} = w
+        }
+
+        assign_rule_shadowing = x {
+          x := 10
+        }
+
+        assign_comparison_true {
+          x = 100
+        }
+
+        assign_comparison_reverse_true {
+          100 = x
+        }
+
+        assign_comparison_false {
+          x = 20
+        }
+  
+        assign_comparison_reverse_false {
+          20 = x
+        }
+
+        x = 100
+
+    query: data.test
+    want_result:
+      x: 100
+      y: "string"
+      assign_rule_forward: [1, 2, 3]
+      assign_rule_reverse:
+        set!: [9, 8, 7]
+      assign_rule_shadowing: 10
+      assign_comparison_true: true
+      assign_comparison_reverse_true: true
