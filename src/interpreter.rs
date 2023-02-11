@@ -12,7 +12,7 @@ use log::info;
 use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
-type Scope = BTreeMap<String, Variable>;
+type Scope = BTreeMap<String, Value>;
 
 pub struct Interpreter<'source> {
     modules: Vec<&'source Module<'source>>,
@@ -29,13 +29,6 @@ pub struct Interpreter<'source> {
     default_rules: HashMap<String, Vec<(&'source Rule<'source>, Option<String>)>>,
     processed: BTreeSet<&'source Rule<'source>>,
     active_rules: Vec<&'source Rule<'source>>,
-}
-
-#[derive(Debug)]
-struct Variable {
-    value: Value,
-    partial: bool,
-    _has_default: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -79,55 +72,30 @@ impl<'source> Interpreter<'source> {
     }
 
     #[inline(always)]
-    fn add_variable(
-        &mut self,
-        name: &str,
-        partial: bool,
-        default: Option<Value>,
-    ) -> Result<(String, Value)> {
+    fn add_variable(&mut self, name: &str) -> Result<Value> {
         let name = name.to_string();
 
         // Only add the variable if the key is not "_"
-        let value = if name != "_" {
-            let (value, _has_default) = if let Some(default) = default {
-                (default, true)
-            } else {
-                (Value::Undefined, false)
-            };
-
-            let variable = Variable {
-                value: value.clone(),
-                partial,
-                _has_default,
-            };
-
+        if name != "_" {
             match self.scopes.last_mut() {
                 Some(scope) => {
-                    scope.insert(name.to_string(), variable);
+                    scope.insert(name, Value::Undefined);
                 }
                 _ => bail!("internal error: no active scope"),
             }
-            value
-        } else {
-            Value::Undefined
-        };
-        Ok((name, value))
+        }
+
+        Ok(Value::Undefined)
     }
 
-    fn add_variable_or(
-        &mut self,
-        name: &str,
-        partial: bool,
-        default: Option<Value>,
-    ) -> Result<(String, Value, bool)> {
+    fn add_variable_or(&mut self, name: &str) -> Result<Value> {
         for scope in self.scopes.iter().rev() {
             if let Some(variable) = scope.get(&name.to_string()) {
-                return Ok((name.to_string(), variable.value.clone(), variable.partial));
+                return Ok(variable.clone());
             }
         }
 
-        let (name, value) = self.add_variable(name, partial, default)?;
-        Ok((name, value, partial))
+        self.add_variable(name)
     }
 
     // TODO: optimize this
@@ -135,7 +103,7 @@ impl<'source> Interpreter<'source> {
         match self.scopes.last_mut() {
             Some(scope) => {
                 if let Some(variable) = scope.get_mut(name) {
-                    variable.value = value.clone();
+                    *variable = value.clone();
                 } else {
                     return Err(anyhow!("variable {} is undefined", name));
                 }
@@ -376,23 +344,89 @@ impl<'source> Interpreter<'source> {
         lhs: &'source Expr<'source>,
         rhs: &'source Expr<'source>,
     ) -> Result<Value> {
-        let lhs = if let Expr::Var(span) = lhs {
-            span.text()
-        } else {
-            return Err(anyhow!("expect a variable, got: {:?}", lhs));
+        let (name, value) = match op {
+            AssignOp::Eq => {
+                if matches!(lhs, Expr::Var(_)) && !matches!(rhs, Expr::Var(_)) {
+                    let (name, var) = if let Expr::Var(span) = lhs {
+                        (span.text(), self.eval_expr(lhs)?)
+                    } else {
+                        unreachable!();
+                    };
+
+                    // TODO: Check this
+                    // Allow variable overwritten inside a loop
+                    if !matches!(var, Value::Undefined) && self.loop_var_values.get(rhs).is_none() {
+                        return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
+                    }
+
+                    (name, self.eval_expr(rhs)?)
+                } else if !matches!(lhs, Expr::Var(_)) && matches!(rhs, Expr::Var(_)) {
+                    let (name, var) = if let Expr::Var(span) = rhs {
+                        (span.text(), self.eval_expr(rhs)?)
+                    } else {
+                        unreachable!();
+                    };
+
+                    // TODO: Check this
+                    // Allow variable overwritten inside a loop
+                    if !matches!(var, Value::Undefined) && self.loop_var_values.get(lhs).is_none() {
+                        return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
+                    }
+
+                    (name, self.eval_expr(lhs)?)
+                } else if matches!(lhs, Expr::Var(_)) && matches!(rhs, Expr::Var(_)) {
+                    let (lhs_name, lhs_var) = if let Expr::Var(span) = lhs {
+                        (span.text(), self.eval_expr(lhs)?)
+                    } else {
+                        unreachable!();
+                    };
+
+                    let (rhs_name, rhs_var) = if let Expr::Var(span) = rhs {
+                        (span.text(), self.eval_expr(rhs)?)
+                    } else {
+                        unreachable!();
+                    };
+
+                    if matches!(lhs_var, Value::Undefined) && !matches!(rhs_var, Value::Undefined) {
+                        (lhs_name, rhs_var)
+                    } else if !matches!(lhs_var, Value::Undefined)
+                        && matches!(rhs_var, Value::Undefined)
+                    {
+                        (rhs_name, lhs_var)
+                    } else if !matches!(lhs_var, Value::Undefined)
+                        && !matches!(rhs_var, Value::Undefined)
+                    {
+                        return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
+                    } else {
+                        bail!("both operators are unsafe");
+                    }
+                } else {
+                    // Treat the assignment as comparison if neither lhs nor rhs is a variable
+                    return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
+                }
+            }
+            AssignOp::ColEq => {
+                let name = if let Expr::Var(span) = lhs {
+                    span.text()
+                } else {
+                    bail!("internal error: unexpected");
+                };
+
+                // TODO: Check this
+                // Allow variable overwritten inside a loop
+                if self.lookup_local_var(name).is_some() && self.loop_var_values.get(rhs).is_none()
+                {
+                    bail!("redefinition for variable {}", name);
+                }
+
+                (name, self.eval_expr(rhs)?)
+            }
         };
 
-        let (_, variable, _) = self.add_variable_or(lhs, false, None)?;
-
-        let rhs = self.eval_expr(rhs)?;
-
-        // TODO: handle iterations
-        if variable[0] != Value::Undefined {
-            return Err(anyhow!("Redefinition for variable {:?}", lhs));
-        }
+        self.add_variable_or(name)?;
 
         // TODO: optimize this
-        self.variables_assignment(lhs, &rhs)?;
+        self.variables_assignment(name, &value)?;
 
         info!(
             "eval_assign_expr before, op: {:?}, lhs: {:?}, rhs: {:?}",
@@ -450,7 +484,7 @@ impl<'source> Interpreter<'source> {
             Literal::SomeVars { vars, .. } => {
                 for var in vars {
                     let name = var.text();
-                    if let Ok((_, variable, _)) = self.add_variable_or(name, false, None) {
+                    if let Ok(variable) = self.add_variable_or(name) {
                         if variable != Value::Undefined {
                             return Err(anyhow!(
                                 "duplicated definition of local variable {}",
@@ -914,14 +948,7 @@ impl<'source> Interpreter<'source> {
                 _ => unimplemented!("destructuring function arguments"),
             };
             //TODO: check call in params
-            args_scope.insert(
-                a.to_string(),
-                Variable {
-                    value: self.eval_expr(&params[idx])?,
-                    partial: false,
-                    _has_default: false,
-                },
-            );
+            args_scope.insert(a.to_string(), self.eval_expr(&params[idx])?);
         }
 
         let ctx = Context {
@@ -957,11 +984,11 @@ impl<'source> Interpreter<'source> {
         result
     }
 
-    fn get_var_value(&self, name: &str) -> Option<Value> {
+    fn lookup_local_var(&self, name: &str) -> Option<Value> {
         // Lookup local variables and arguments.
         for scope in self.scopes.iter().rev() {
             if let Some(v) = scope.get(name) {
-                return Some(v.value.clone());
+                return Some(v.clone());
             }
         }
         None
@@ -992,7 +1019,7 @@ impl<'source> Interpreter<'source> {
 
     fn lookup_var(&mut self, name: &str, fields: &[&str]) -> Result<Value> {
         // Return local variable/argument.
-        if let Some(v) = self.get_var_value(name) {
+        if let Some(v) = self.lookup_local_var(name) {
             return Ok(Self::get_value_chained(v, fields));
         }
 
@@ -1456,52 +1483,50 @@ impl<'source> Interpreter<'source> {
             return Ok(());
         }
 
-        match rule {
-            Rule::Default {
-                span, refr, value, ..
-            } => {
-                let mut path = Parser::get_path_ref_components(&self.module.unwrap().package.refr)?;
+        if let Rule::Default {
+            span, refr, value, ..
+        } = rule
+        {
+            let mut path = Parser::get_path_ref_components(&self.module.unwrap().package.refr)?;
 
-                let (refr, index) = match refr {
-                    Expr::RefBrack { refr, index, .. } => (refr.as_ref(), Some(index.as_ref())),
-                    Expr::Var(_) => (refr, None),
-                    _ => bail!("invalid token {:?} with the default keyword", refr),
-                };
+            let (refr, index) = match refr {
+                Expr::RefBrack { refr, index, .. } => (refr.as_ref(), Some(index.as_ref())),
+                Expr::Var(_) => (refr, None),
+                _ => bail!("invalid token {:?} with the default keyword", refr),
+            };
 
-                Parser::get_path_ref_components_into(refr, &mut path)?;
-                let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
+            Parser::get_path_ref_components_into(refr, &mut path)?;
+            let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
 
-                self.check_default_value(value)?;
-                let value = self.eval_expr(value)?;
+            self.check_default_value(value)?;
+            let value = self.eval_expr(value)?;
 
-                // Assume at this point that all the non-default rules have been evaluated.
-                // Merge the default value only if
-                // 1. The corresponding variable does not have value yet
-                // 2. The corresponding index in the object does not have value yet
-                if let Some(index) = index {
-                    let index = self.eval_expr(index)?;
-                    let mut object = Value::new_object();
-                    object.as_object_mut()?.insert(index.clone(), value);
+            // Assume at this point that all the non-default rules have been evaluated.
+            // Merge the default value only if
+            // 1. The corresponding variable does not have value yet
+            // 2. The corresponding index in the object does not have value yet
+            if let Some(index) = index {
+                let index = self.eval_expr(index)?;
+                let mut object = Value::new_object();
+                object.as_object_mut()?.insert(index.clone(), value);
 
-                    let vref = Self::make_or_get_value_mut(&mut self.data, &paths)?;
+                let vref = Self::make_or_get_value_mut(&mut self.data, &paths)?;
 
-                    if let Value::Object(btree) = &vref {
-                        if !btree.contains_key(&index) {
-                            Self::merge_value(span, vref, object)?;
-                        }
-                    } else if let Value::Undefined = vref {
+                if let Value::Object(btree) = &vref {
+                    if !btree.contains_key(&index) {
                         Self::merge_value(span, vref, object)?;
                     }
-                } else {
-                    let vref = Self::make_or_get_value_mut(&mut self.data, &paths)?;
-                    if let Value::Undefined = &vref {
-                        Self::merge_value(span, vref, value)?;
-                    }
-                };
+                } else if let Value::Undefined = vref {
+                    Self::merge_value(span, vref, object)?;
+                }
+            } else {
+                let vref = Self::make_or_get_value_mut(&mut self.data, &paths)?;
+                if let Value::Undefined = &vref {
+                    Self::merge_value(span, vref, value)?;
+                }
+            };
 
-                self.processed.insert(rule);
-            }
-            _ => println!("not a default rule"),
+            self.processed.insert(rule);
         }
 
         Ok(())
@@ -1629,7 +1654,7 @@ impl<'source> Interpreter<'source> {
                     let map = r.as_object_mut()?;
                     // Capture each binding.
                     for (name, v) in scope {
-                        map.insert(Value::String(name), v.value);
+                        map.insert(Value::String(name), v);
                     }
                     Ok(r)
                 } else {

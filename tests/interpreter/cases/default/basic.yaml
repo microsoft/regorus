@@ -24,6 +24,14 @@ cases:
           x == 4
         }
 
+        default y = 10
+
+        z = y {
+          y
+        }
+
+        y = 20
+
         default d = "has_default"
 
         default object["key"] = "string"
@@ -51,6 +59,8 @@ cases:
       x: 5
       a: -6
       b: -6
+      y: 20
+      z: 20
       c: "has_default"
       d: "has_default"
       object:
