@@ -2,233 +2,568 @@
 # Licensed under the MIT License.
 
 cases:
-  - note: number-equals
+  - note: undefined
     data: {}
     modules:
       - |
         package test
+        import future.keywords.if
+        # All the following rules will be undefined.
+        x if false
 
-        v = 1
-        r = [
-        # Comparison with number
-        v == 1,
-        v == 2,
-        
-        # Comparison with primitives
-        v == null, 
-        v == "hello",
-        v == true,
-        v == false,
-          
-        # Comparison with arrays
-        v == [],
-        v == [v],
-        
-        # Comparison with sets
-        v == set(),
-        v == { v },
-        
-        # Comparison with objects
-        v == {},
-        v == { "a": v},
-        ]           
-    sort_bindings: false
+        v1 = x == 1
+        v2 = 1 == x
+
+        v3 = x != 1
+        v4 = 1 != x
+
+        v5 = x < 1
+        v6 = 1 < x
+
+        v7 = x <= 1
+        v8 = 1 <= x
+
+        v9 = x > 1
+        v10 = 1 > x
+
+        v11 = x >= 1
+        v12 = 1 >= x
     query: data.test
-    want_result:
-      v: 1
-      r: [ true, false, false, false, false, false,
-           false, false, false, false, false, false]
-  
-  - note: null-equals
+    want_result: {}
+
+  - note: eq
     data: {}
     modules:
       - |
         package test
 
-        v = null
-        r = [
-        # Comparison with number
-        v == 1,
-        v == 2,
-        
-        # Comparison with primitives
-        v == null, 
-        v == "hello",
-        v == true,
-        v == false,
-          
-        # Comparison with arrays
-        v == [],
-        v == [v],
-        
-        # Comparison with sets
-        v == set(),
-        v == { v },
-        
-        # Comparison with objects
-        v == {},
-        v == { "a": v},
-        ]           
-    sort_bindings: false
-    query: data.test
-    want_result:
-      v: null
-      r: [ false, false, true, false, false, false,
-           false, false, false, false, false, false]
-           
-  - note: string-equals
-    data: {}
-    modules:
-      - |
-        package test
-
-        v = "hello"
-        r = [
-        # Comparison with number
-        v == 1,
-        v == 2,
-        
-        # Comparison with primitives
-        v == null, 
-        v == "hello",
-        v == true,
-        v == false,
-          
-        # Comparison with arrays
-        v == [],
-        v == [v],
-        
-        # Comparison with sets
-        v == set(),
-        v == { v },
-        
-        # Comparison with objects
-        v == {},
-        v == { "a": v},
-        ]           
-    sort_bindings: false
-    query: data.test
-    want_result:
-      v: "hello"
-      r: [ false, false, false, true, false, false,
-           false, false, false, false, false, false]
-
-  - note: true-equals
-    data: {}
-    modules:
-      - |
-        package test
-
-        v = true
-        r = [
-        # Comparison with number
-        v == 1,
-        v == 2,
-        
-        # Comparison with primitives
-        v == null, 
-        v == "hello",
-        v == true,
-        v == false,
-          
-        # Comparison with arrays
-        v == [],
-        v == [v],
-        
-        # Comparison with sets
-        v == set(),
-        v == { v },
-        
-        # Comparison with objects
-        v == {},
-        v == { "a": v},
-        ]           
-    sort_bindings: false
-    query: data.test
-    want_result:
-      v: true
-      r: [ false, false, false, false, true, false,
-           false, false, false, false, false, false]
-  
-           
-  - note: false-equals
-    data: {}
-    modules:
-      - |
-        package test
-
-        v = false
-        r = [
-        # Comparison with number
-        v == 1, # true
-        v == 1, # false
-        
-        # Comparison with primitives
-        v == null, 
-        v == "hello",
-        v == true,
-        v == false,
-          
-        # Comparison with arrays
-        v == [],
-        v == [v],
-        
-        # Comparison with sets
-        v == set(),
-        v == { v },
-        
-        # Comparison with objects
-        v == {},
-        v == { "a": v},
-        ]           
-    sort_bindings: false
-    query: data.test
-    want_result:
-      v: false
-      r: [ false, false, false, false, false, true,
-           false, false, false, false, false, false]
-
-  - note: undefined-equals
-    data: {}
-    modules:
-      - |
-        package test
-        import future.keywords
-
-        v = 1 if false
-        r = [
-        # Comparison with number
-        v == 1,
-        v == 2,
-        
-        # Comparison with primitives
-        v == null, 
-        v == "hello",
-        v == true,
-        v == false,
-          
-        # Comparison with arrays
-        v == [],
-        v == [v],
-        
-        # Comparison with sets
-        v == set(),
-        v == { v },
-        
-        # Comparison with objects
-        v == {},
-        v == { "a": v},
+        # true
+        values = [
+          1,
+          -1,
+          null,
+          "hello",
+          `hello`,
+          true,
+          false,
+          [],
+          [1, 2, 3],
+          [4,"abc", null],
+          set(),
+          {1, 2, 3},
+          {4, "abc", null},
+          {},
+          {"a" : 1},
         ]
 
-        r2 = 1 if v
-
-        # This variable should appear in output since it is not undefined.
-        ok = true
-        
-    sort_bindings: false
-    query: data.test
+        values_1 = values
+        # Evaluate rule so that rule[x] = [ values equal to x ]
+        results[x] = y {
+          x = values[_]
+          y = [ z |
+            z := values_1[_]
+            x == z
+          ]
+        }
+    query: data.test.results
     want_result:
-      ok: true
+      object!:
+        - key: 1
+          value: [ 1 ]
+        - key: -1
+          value: [ -1 ]
+        - key: null
+          value: [null]
+        - key: "hello"
+          value: ["hello", "hello"]
+        - key: true
+          value: [true]
+        - key: false
+          value: [false]
+        - key: []
+          value: [[]]
+        - key: [1, 2, 3]
+          value: [[1, 2, 3]]
+        - key: [4, "abc", null]
+          value: [[4, "abc", null]]
+        - key:
+            set!: []
+          value:
+            - set!: []
+        - key:
+            set!: [ 1, 2, 3]
+          value:
+            - set!: [1, 2, 3]
+        - key:
+            set!: [4, "abc", null]
+          value:
+            - set!: [4, "abc", null]
+        - key:
+            object!: []
+          value:
+            - object!: []
+        - key:
+            object!:
+              - key: a
+                value: 1
+          value:
+            - a: 1
 
-  
-           
+  - note: eq-undefined
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords.if
+        # All the following rules will be undefined.
+        x if false
+        y = x == 1
+        z = 1 == x
+    query: data.test
+    want_result: {}
+
+  - note: ne
+    data: {}
+    modules:
+      - |
+        package test
+
+        # true
+        values = [
+          1,
+          -1,
+          null,
+          "hello",
+          `hello`,
+          true,
+          false,
+          [],
+          [1, 2, 3],
+          [4,"abc", null],
+          set(),
+          {1, 2, 3},
+          {4, "abc", null},
+          {},
+          {"a" : 1},
+        ]
+
+        values_1 = values
+        # Evaluate rule so that rule[x] = [ values equal to x ]
+        results[x] = y {
+          x = values[_]
+          y = [ z |
+            z := values_1[_]
+            # Use != and ne
+            not x != z
+          ]
+        }
+    query: data.test.results
+    want_result:
+      object!:
+        - key: 1
+          value: [ 1 ]
+        - key: -1
+          value: [ -1 ]
+        - key: null
+          value: [null]
+        - key: "hello"
+          value: ["hello", "hello"]
+        - key: true
+          value: [true]
+        - key: false
+          value: [false]
+        - key: []
+          value: [[]]
+        - key: [1, 2, 3]
+          value: [[1, 2, 3]]
+        - key: [4, "abc", null]
+          value: [[4, "abc", null]]
+        - key:
+            set!: []
+          value:
+            - set!: []
+        - key:
+            set!: [ 1, 2, 3]
+          value:
+            - set!: [1, 2, 3]
+        - key:
+            set!: [4, "abc", null]
+          value:
+            - set!: [4, "abc", null]
+        - key:
+            object!: []
+          value:
+            - object!: []
+        - key:
+            object!:
+              - key: a
+                value: 1
+          value:
+            - a: 1
+
+
+  - note: order
+    data: {}
+    modules:
+      - |
+        package test
+
+        v = [
+          null,
+          false,
+          0,
+          "",
+          [],
+          {},
+          set()
+        ]
+
+        results = {
+          "lt" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x < z]
+          },
+          "le" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x <= z]
+          },
+          "gt" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x > z]
+          },
+          "ge" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x >= z]
+          }
+        }
+    query: data.test.results
+    want_result:
+      lt:
+        object!:
+          - key: null
+            value: [false, 0, "", [], {}, {"set!":[]}]
+          - key: false
+            value: [0, "", [], {}, {"set!":[]}]
+          - key: 0
+            value: ["", [], {}, {"set!":[]}]
+          - key: ""
+            value: [[], {}, {"set!":[]}]
+          - key: []
+            value: [{}, {"set!":[]}]
+          - key: {}
+            value: [{"set!":[]}]
+          - key: {"set!":[]}
+            value: []
+      le:
+        object!:
+          - key: null
+            value: [null, false, 0, "", [], {}, {"set!":[]}]
+          - key: false
+            value: [false, 0, "", [], {}, {"set!":[]}]
+          - key: 0
+            value: [0, "", [], {}, {"set!":[]}]
+          - key: ""
+            value: ["", [], {}, {"set!":[]}]
+          - key: []
+            value: [[], {}, {"set!":[]}]
+          - key: {}
+            value: [{}, {"set!":[]}]
+          - key: {"set!":[]}
+            value: [{"set!":[]}]
+      gt:
+        object!:
+          - key: null
+            value: []
+          - key: false
+            value: [null]
+          - key: 0
+            value: [null, false]
+          - key: ""
+            value: [null, false, 0]
+          - key: []
+            value: [null, false, 0, ""]
+          - key: {}
+            value: [null, false, 0, "", []]
+          - key: {"set!":[]}
+            value: [null, false, 0, "", [], {}]
+      ge:
+        object!:
+          - key: null
+            value: [null]
+          - key: false
+            value: [null, false]
+          - key: 0
+            value: [null, false, 0]
+          - key: ""
+            value: [null, false, 0, ""]
+          - key: []
+            value: [null, false, 0, "", []]
+          - key: {}
+            value: [null, false, 0, "", [], {}]
+          - key: {"set!":[]}
+            value: [null, false, 0, "", [], {}, {"set!":[]}]
+
+  - note: arrays
+    data: {}
+    modules:
+      - |
+        package test
+
+        v = [ [], [1, 2], [0, 1, 2], [1, 2, 3]]
+
+        results = {
+          "lt" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x < z]
+          },
+          "le" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x <= z]
+          },
+          "gt" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x > z]
+          },
+          "ge" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x >= z]
+          }
+        }
+    query: data.test.results
+    want_result:
+      lt:
+        object!:
+          - key: []
+            value: [[1,2], [0, 1, 2], [1, 2, 3]]
+          - key: [1, 2]
+            value: [[1, 2, 3]]
+          - key: [0, 1, 2]
+            value: [ [1,2], [1, 2, 3]]
+          - key: [1, 2, 3]
+            value: []
+      le:
+        object!:
+          - key: []
+            value: [[], [1,2], [0, 1, 2], [1, 2, 3]]
+          - key: [1, 2]
+            value: [[1, 2], [1, 2, 3]]
+          - key: [0, 1, 2]
+            value: [[1,2], [0, 1, 2], [1, 2, 3]]
+          - key: [1, 2, 3]
+            value: [[1, 2, 3]]
+      gt:
+        object!:
+          - key: []
+            value: []
+          - key: [1, 2]
+            value: [[], [0, 1, 2]]
+          - key: [0, 1, 2]
+            value: [[]]
+          - key: [1, 2, 3]
+            value: [[], [1, 2], [0, 1, 2]]
+      ge:
+        object!:
+          - key: []
+            value: [[]]
+          - key: [1, 2]
+            value: [[], [1, 2], [0, 1, 2]]
+          - key: [0, 1, 2]
+            value: [[], [0, 1, 2]]
+          - key: [1, 2, 3]
+            value: [[], [1, 2], [0, 1, 2], [1, 2, 3]]
+
+  - note: sets
+    data: {}
+    modules:
+      - |
+        package test
+
+        v = [ set(), {1, 2}, {0, 1, 2}, {1, 2, 3}]
+
+        results = {
+          "lt" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x < z]
+          },
+          "le" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x <= z]
+          },
+          "gt" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x > z]
+          },
+          "ge" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x >= z]
+          }
+        }
+    query: data.test.results
+    want_result:
+      lt:
+        object!:
+          - key:
+              set!: []
+            value:
+              - set!: [1,2]
+              - set!: [0, 1, 2]
+              - set!: [1, 2, 3]
+          - key:
+              set!: [1, 2]
+            value:
+              - set!: [1, 2, 3]
+          - key:
+              set!: [0, 1, 2]
+            value:
+              - set!: [1,2]
+              - set!: [1, 2, 3]
+          - key:
+              set!: [1, 2, 3]
+            value: []
+      le:
+        object!:
+          - key:
+              set!: []
+            value:
+              - set!: []
+              - set!: [1,2]
+              - set!: [0, 1, 2]
+              - set!: [1, 2, 3]
+          - key:
+              set!: [1, 2]
+            value:
+              - set!: [1, 2]
+              - set!: [1, 2, 3]
+          - key:
+              set!: [0, 1, 2]
+            value:
+              - set!: [1,2]
+              - set!: [0, 1, 2]
+              - set!: [1, 2, 3]
+          - key:
+              set!: [1, 2, 3]
+            value:
+              - set!: [1, 2, 3]
+      gt:
+        object!:
+          - key:
+              set!: []
+            value: []
+          - key:
+              set!: [1, 2]
+            value:
+              - set!: []
+              - set!: [0, 1, 2]
+          - key:
+              set!: [0, 1, 2]
+            value:
+              - set!: []
+          - key:
+              set!: [1, 2, 3]
+            value:
+              - set!: []
+              - set!: [1, 2]
+              - set!: [0, 1, 2]
+      ge:
+        object!:
+          - key:
+              set!: []
+            value:
+              - set!: []
+          - key:
+              set!: [1, 2]
+            value:
+              - set!: []
+              - set!: [1, 2]
+              - set!: [0, 1, 2]
+          - key:
+              set!: [0, 1, 2]
+            value:
+              - set!: []
+              - set!: [0, 1, 2]
+          - key:
+              set!: [1, 2, 3]
+            value:
+              - set!: []
+              - set!: [1, 2]
+              - set!: [0, 1, 2]
+              - set!: [1, 2, 3]
+
+  - note: objects
+    data: {}
+    modules:
+      - |
+        package test
+
+        v = [{}, {"a":1}, {"a":2}, {"a":1, "b":0}, {"b":0}]
+
+        results = {
+          "lt" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x < z]
+          },
+          "le" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x <= z]
+          },
+          "gt" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x > z]
+          },
+          "ge" : { x : y |
+            x = v[_]
+            y = [z | z = v[_]; x >= z]
+          }
+        }
+    query: data.test.results
+    want_result:
+      lt:
+        object!:
+          - key: {}
+            value: [ {"a":1}, {"a":2}, {"a":1, "b":0}, {"b":0}]
+          - key: {"a":1}
+            value: [{"a":2}, {"a":1, "b":0}, {"b":0}]
+          - key: {"a":2}
+            value: [{"b":0}]
+          - key: {"a":1, "b":0}
+            value: [{"a":2}, {"b":0}]
+          - key: {"b":0}
+            value: []
+      le:
+        object!:
+          - key: {}
+            value: [ {}, {"a":1}, {"a":2}, {"a":1, "b":0}, {"b":0}]
+          - key: {"a":1}
+            value: [{"a":1}, {"a":2}, {"a":1, "b":0}, {"b":0}]
+          - key: {"a":2}
+            value: [{"a":2}, {"b":0}]
+          - key: {"a":1, "b":0}
+            value: [{"a":2}, {"a":1, "b":0}, {"b":0}]
+          - key: {"b":0}
+            value: [{"b":0}]
+      gt:
+        object!:
+          - key: {}
+            value: []
+          - key: {"a":1}
+            value: [{}]
+          - key: {"a":2}
+            value: [{}, {"a":1}, {"a":1, "b":0}]
+          - key: {"a":1, "b":0}
+            value: [{}, {"a":1}]
+          - key: {"b":0}
+            value: [ {}, {"a":1}, {"a":2}, {"a":1, "b":0}]
+      ge:
+        object!:
+          - key: {}
+            value: [{}]
+          - key: {"a":1}
+            value: [{}, {"a":1}]
+          - key: {"a":2}
+            value: [{}, {"a":1}, {"a":2}, {"a":1, "b":0}]
+          - key: {"a":1, "b":0}
+            value: [{}, {"a":1}, {"a":1, "b":0}]
+          - key: {"b":0}
+            value: [ {}, {"a":1}, {"a":2}, {"a":1, "b":0}, {"b":0}]
+                
+        
