@@ -262,7 +262,7 @@ impl<'source> Interpreter<'source> {
     ) -> Result<Value> {
         let lhs = self.eval_expr(lhs_expr)?;
         let rhs = self.eval_expr(rhs_expr)?;
-        Ok(builtins::compare(op, &lhs, &rhs))
+        builtins::compare(op, &lhs, &rhs)
     }
 
     fn eval_bin_expr(
@@ -531,10 +531,23 @@ impl<'source> Interpreter<'source> {
         if loops.is_empty() {
             if !stmts.is_empty() {
                 // Evaluate the current statement whose loop expressions have been hoisted.
-                if !self.eval_stmt(&stmts[0])? {
-                    return Ok(false);
-                }
-                self.eval_stmts(&stmts[1..])
+                // Save the current scope and restore it after evaluating the statements so
+                // that the effects of the current loop iteration are cleared.
+                let scope_saved = match self.scopes.last() {
+                    Some(scope) => scope.clone(),
+                    _ => bail!("internal error: missing scope"),
+                };
+                let result = if self.eval_stmt(&stmts[0])? {
+                    self.eval_stmts(&stmts[1..])
+                } else {
+                    Ok(false)
+                };
+
+                match self.scopes.last_mut() {
+                    Some(scope) => *scope = scope_saved,
+                    _ => bail!("internal error: missing scope"),
+                };
+                result
             } else {
                 self.eval_stmts(stmts)
             }
@@ -568,7 +581,7 @@ impl<'source> Interpreter<'source> {
                     ));
                 }
             }
-            self.loop_var_values.remove(loop_expr.expr);
+
             // Return true if at least on iteration returned true
             Ok(result)
         }
@@ -1616,6 +1629,15 @@ impl<'source> Interpreter<'source> {
         }
         if let Some(data) = data {
             self.data = data.clone();
+        }
+        // Ensure that each module has an empty object
+        for m in &self.modules {
+            let path = Parser::get_path_ref_components(&m.package.refr)?;
+            let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+            let vref = Self::make_or_get_value_mut(&mut self.data, &path[..])?;
+            if *vref == Value::Undefined {
+                *vref = Value::new_object();
+            }
         }
 
         self.check_default_rules()?;

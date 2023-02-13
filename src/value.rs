@@ -87,8 +87,8 @@ pub enum Value {
     // Json data types. serde will automatically map json to these variants.
     Null,
     Bool(bool),
-    String(String),
     Number(Number),
+    String(String),
     Array(Rc<Vec<Value>>),
     Object(Rc<BTreeMap<Value, Value>>),
 

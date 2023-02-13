@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-mod compare;
+mod comparison;
 
-pub use self::compare::*;
+pub use self::comparison::*;
