@@ -1,0 +1,144 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: abs
+    data: {}
+    modules:
+      - |
+        package test
+        x = abs(-9)
+    query: data.test.x
+    want_result: 9
+    
+  - note: abs-extra-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = abs(-9, 10)
+    query: data.test.x
+    error: "`abs` expects 1 argument"
+  
+  - note: abs-invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+        x = abs("-9")
+    query: data.test.x
+    error: "`abs` expects numeric argument"
+
+  - note: ceil
+    data: {}
+    modules:
+      - |
+        package test
+        x = [ceil(9.1), ceil(-9.1)]
+    query: data.test.x
+    want_result: [10, -9]
+    
+  - note: ceil-extra-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = ceil(-9, 10)
+    query: data.test.x
+    error: "`ceil` expects 1 argument"
+  
+  - note: ceil-invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+        x = ceil("-9")
+    query: data.test.x
+    error: "`ceil` expects numeric argument"
+    
+  - note: floor
+    data: {}
+    modules:
+      - |
+        package test
+        x = [floor(9.1), floor(-9.1)]
+    query: data.test.x
+    want_result: [9, -10]
+    
+  - note: floor-extra-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = floor(-9, 10)
+    query: data.test.x
+    error: "`floor` expects 1 argument"
+  
+  - note: floor-invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+        x = floor("-9")
+    query: data.test.x
+    error: "`floor` expects numeric argument"
+    
+  - note: numbers.range
+    data: {}
+    modules:
+      - |
+        package test
+        r1 = numbers.range(1, 5)
+        r2 = numbers.range(5, 1)
+        r3 = numbers.range(-1, -5)
+        r4 = numbers.range(-5, -1)
+
+        # Non-integer start and end result in Undefined.
+        r5 = numbers.range(1.01, 5)
+        r6 = numbers.range(1, 5.01)
+
+        # Single item range
+        r7 = numbers.range(8, 8)
+    query: data.test
+    want_result:
+      r1: [1, 2, 3, 4, 5]
+      r2: [5, 4, 3, 2, 1]
+      r3: [-1, -2, -3, -4, -5]
+      r4: [-5, -4, -3, -2, -1]
+      r7: [8]
+
+  - note: numbers.range-less-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range(1)
+    query: data.test.x
+    error: "`numbers.range` expects 2 arguments"
+    
+  - note: numbers.range-more-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range(1, 2, 3)
+    query: data.test.x
+    error: "`numbers.range` expects 2 arguments"
+    
+  - note: numbers.range-invalid-start
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range("1", 2)
+    query: data.test.x
+    error: "`numbers.range` expects numeric argument"
+    
+  - note: numbers.range-invalid-end
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range(1, "2")
+    query: data.test.x
+    error: "`numbers.range` expects numeric argument"
