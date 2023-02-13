@@ -12,6 +12,8 @@ use serde::de::{self, Deserializer};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
 
+pub type Float = f64;
+
 // TODO: rego uses BigNum which has arbitrary precision. But there seems
 // to be some bugs with it e.g ((a + b) -a) == b doesn't return true for large
 // values of a and b.
@@ -21,23 +23,23 @@ use serde::{Deserialize, Serialize};
 // For now we use OrderedFloat<f64>. We can't use f64 directly since it doesn't
 // implement Ord trait.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Number(pub OrderedFloat<f64>);
+pub struct Number(pub OrderedFloat<Float>);
 
 impl Serialize for Number {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let n_f64 = self.0 .0;
-        let n_i64 = n_f64 as i64;
-        let n_u64 = n_f64 as u64;
+        let n_float = self.0 .0;
+        let n_i64 = n_float as i64;
+        let n_u64 = n_float as u64;
 
-        if n_u64 as f64 == n_f64 {
+        if n_u64 as f64 == n_float {
             serializer.serialize_u64(n_u64)
-        } else if n_i64 as f64 == n_f64 {
+        } else if n_i64 as f64 == n_float {
             serializer.serialize_i64(n_i64)
         } else {
-            serializer.serialize_f64(n_f64)
+            serializer.serialize_f64(n_float)
         }
     }
 }
@@ -166,7 +168,7 @@ impl Value {
 }
 
 impl Value {
-    pub fn from_f64(v: f64) -> Value {
+    pub fn from_float(v: Float) -> Value {
         Value::Number(Number(OrderedFloat(v)))
     }
 

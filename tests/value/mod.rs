@@ -13,12 +13,12 @@ fn non_string_key() -> Result<()> {
     obj.as_object_mut()?.insert(Value::Null, Value::Null);
     obj.as_object_mut()?.insert(Value::Bool(false), Value::Null);
     obj.as_object_mut()?
-        .insert(Value::from_f64(std::f64::consts::PI), Value::Null);
+        .insert(Value::from_float(std::f64::consts::PI), Value::Null);
     obj.as_object_mut()?.insert(
         Value::from_array(vec![
             Value::Bool(true),
             Value::Null,
-            Value::from_f64(std::f64::consts::PI),
+            Value::from_float(std::f64::consts::PI),
         ]),
         Value::Null,
     );
@@ -28,7 +28,7 @@ fn non_string_key() -> Result<()> {
     set.as_set_mut()?.insert(Value::Bool(false));
     set.as_set_mut()?.insert(Value::Bool(true));
     set.as_set_mut()?
-        .insert(Value::from_f64(std::f64::consts::PI));
+        .insert(Value::from_float(std::f64::consts::PI));
     obj.as_object_mut()?.insert(set, Value::Null);
 
     obj.as_object_mut()?.insert(Value::Undefined, Value::Null);
@@ -57,13 +57,19 @@ fn non_string_key() -> Result<()> {
 #[test]
 fn serialize_number() -> Result<()> {
     // Check that integer values are serialized without fractional part
-    assert_eq!(serde_json::to_string_pretty(&Value::from_f64(1.0))?, "1");
-    assert_eq!(serde_json::to_string_pretty(&Value::from_f64(-1.0))?, "-1");
+    assert_eq!(serde_json::to_string_pretty(&Value::from_float(1.0))?, "1");
+    assert_eq!(
+        serde_json::to_string_pretty(&Value::from_float(-1.0))?,
+        "-1"
+    );
 
     // Ensure that fractional parts are also serialized.
-    assert_eq!(serde_json::to_string_pretty(&Value::from_f64(1.1))?, "1.1");
     assert_eq!(
-        serde_json::to_string_pretty(&Value::from_f64(-1.1))?,
+        serde_json::to_string_pretty(&Value::from_float(1.1))?,
+        "1.1"
+    );
+    assert_eq!(
+        serde_json::to_string_pretty(&Value::from_float(-1.1))?,
         "-1.1"
     );
 
@@ -95,18 +101,18 @@ fn constructors() -> Result<()> {
 
 #[test]
 fn value_as_index() -> Result<()> {
-    let idx = Value::from_f64(2.0);
+    let idx = Value::from_float(2.0);
 
     let mut item = Value::new_array();
-    item.as_array_mut()?.push(Value::from_f64(3.0));
-    item.as_array_mut()?.push(Value::from_f64(4.0));
-    item.as_array_mut()?.push(Value::from_f64(5.0));
+    item.as_array_mut()?.push(Value::from_float(3.0));
+    item.as_array_mut()?.push(Value::from_float(4.0));
+    item.as_array_mut()?.push(Value::from_float(5.0));
 
     // Check case of item present.
     assert_eq!(&Value::from_json_str("[1, 2, [3, 4, 5]]")?[&idx], &item);
 
     // Check case of item not present.
-    let idx = Value::from_f64(5.0);
+    let idx = Value::from_float(5.0);
     assert_eq!(
         &Value::from_json_str("[1, 2, [3, 4, 5]]")?[&idx],
         &Value::Undefined
@@ -125,8 +131,8 @@ fn value_as_index() -> Result<()> {
 #[test]
 fn string_as_index() -> Result<()> {
     let obj = Value::from_json_str(r#"{ "a" : 5, "b" : 6 }"#)?;
-    assert_eq!(&obj["a"], &Value::from_f64(5.0));
-    assert_eq!(&obj[&"b".to_owned()], &Value::from_f64(6.0));
+    assert_eq!(&obj["a"], &Value::from_float(5.0));
+    assert_eq!(&obj[&"b".to_owned()], &Value::from_float(6.0));
     Ok(())
 }
 
@@ -134,7 +140,7 @@ fn string_as_index() -> Result<()> {
 fn usize_as_index() -> Result<()> {
     assert_eq!(
         &Value::from_json_str("[1, 2, 3]")?[0],
-        &Value::from_f64(1.0)
+        &Value::from_float(1.0)
     );
     assert_eq!(&Value::from_json_str("[1, 2, 3]")?[5], &Value::Undefined);
     Ok(())
@@ -145,8 +151,8 @@ fn api() -> Result<()> {
     assert!(&Value::from_json_str("{}")?.as_object()?.is_empty());
     let mut v = Value::new_object();
     v.as_object_mut()?
-        .insert(Value::String("a".to_owned()), Value::from_f64(3.145));
-    assert_eq!(v["a"], Value::from_f64(3.145));
+        .insert(Value::String("a".to_owned()), Value::from_float(3.145));
+    assert_eq!(v["a"], Value::from_float(3.145));
     assert_eq!(v.as_object()?.len(), 1);
 
     // Null
@@ -171,7 +177,7 @@ fn api() -> Result<()> {
     assert!(matches!(Value::new_object().as_number(), Err(_)));
     assert!(matches!(Value::new_object().as_number_mut(), Err(_)));
 
-    assert!(matches!(Value::from_f64(5.6).as_bool(), Err(_)));
-    assert!(matches!(Value::from_f64(5.6).as_bool_mut(), Err(_)));
+    assert!(matches!(Value::from_float(5.6).as_bool(), Err(_)));
+    assert!(matches!(Value::from_float(5.6).as_bool_mut(), Err(_)));
     Ok(())
 }

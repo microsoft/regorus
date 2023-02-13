@@ -917,6 +917,19 @@ impl<'source> Interpreter<'source> {
         }
     }
 
+    fn eval_builtin_call(
+        &mut self,
+        span: &'source Span<'source>,
+        builtin: builtins::BuiltinFcn,
+        params: &'source Vec<Expr<'source>>,
+    ) -> Result<Value> {
+        let mut args = vec![];
+        for p in params {
+            args.push(self.eval_expr(p)?);
+        }
+        builtin(span, &params[..], &args[..])
+    }
+
     fn eval_call(
         &mut self,
         span: &'source Span<'source>,
@@ -926,9 +939,17 @@ impl<'source> Interpreter<'source> {
         let fcn_rule = match self.lookup_function(fcn) {
             Ok(r) => r,
             _ => {
+                // Look up builtin function.
+                // TODO: handle with modifier
+                if let Ok(path) = Self::get_path_string(fcn, None) {
+                    if let Some(builtin) = builtins::BUILTINS.get(path.as_str()) {
+                        return self.eval_builtin_call(span, *builtin, params);
+                    }
+                }
+
                 return Err(span
                     .source
-                    .error(span.line, span.col, "could not find function"))
+                    .error(span.line, span.col, "could not find function"));
             }
         };
 
