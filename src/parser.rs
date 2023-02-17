@@ -555,7 +555,7 @@ impl<'source> Parser<'source> {
         self.parse_ref()
     }
 
-    fn parse_mul_div_expr(&mut self) -> Result<Expr<'source>> {
+    fn parse_mul_div_mod_expr(&mut self) -> Result<Expr<'source>> {
         let start = self.tok.1.start;
         let mut expr = self.parse_term()?;
 
@@ -565,6 +565,7 @@ impl<'source> Parser<'source> {
             let op = match self.tok.1.text() {
                 "*" => ArithOp::Mul,
                 "/" => ArithOp::Div,
+                "%" => ArithOp::Mod,
                 _ => return Ok(expr),
             };
             self.next_token()?;
@@ -581,7 +582,7 @@ impl<'source> Parser<'source> {
 
     fn parse_arith_expr(&mut self) -> Result<Expr<'source>> {
         let start = self.tok.1.start;
-        let mut expr = self.parse_mul_div_expr()?;
+        let mut expr = self.parse_mul_div_mod_expr()?;
 
         loop {
             let mut span = self.tok.1.clone();
@@ -592,7 +593,7 @@ impl<'source> Parser<'source> {
                 _ => return Ok(expr),
             };
             self.next_token()?;
-            let right = self.parse_mul_div_expr()?;
+            let right = self.parse_mul_div_mod_expr()?;
             span.end = self.end;
             expr = Expr::ArithExpr {
                 span,

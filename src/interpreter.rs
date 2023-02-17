@@ -29,6 +29,7 @@ pub struct Interpreter<'source> {
     default_rules: HashMap<String, Vec<(&'source Rule<'source>, Option<String>)>>,
     processed: BTreeSet<&'source Rule<'source>>,
     active_rules: Vec<&'source Rule<'source>>,
+    intns: BTreeMap<Vec<Value>, Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +62,7 @@ impl<'source> Interpreter<'source> {
             default_rules: HashMap::new(),
             processed: BTreeSet::new(),
             active_rules: vec![],
+            intns: BTreeMap::new(),
         })
     }
 
@@ -262,7 +264,7 @@ impl<'source> Interpreter<'source> {
     ) -> Result<Value> {
         let lhs = self.eval_expr(lhs_expr)?;
         let rhs = self.eval_expr(rhs_expr)?;
-        builtins::compare(op, &lhs, &rhs)
+        builtins::comparison::compare(op, &lhs, &rhs)
     }
 
     fn eval_bin_expr(
@@ -303,39 +305,15 @@ impl<'source> Interpreter<'source> {
         lhs: &'source Expr<'source>,
         rhs: &'source Expr<'source>,
     ) -> Result<Value> {
-        let lhs = self.eval_expr(lhs)?;
-        let rhs = self.eval_expr(rhs)?;
+        let lhs_value = self.eval_expr(lhs)?;
+        let rhs_value = self.eval_expr(rhs)?;
 
-        // Handle special case for set difference.
-        if let (Value::Set(lhs), ArithOp::Sub, Value::Set(rhs)) = (&lhs, op, &rhs) {
-            return Ok(Value::from_set(lhs.difference(rhs).cloned().collect()));
+        match (op, &lhs_value, &rhs_value) {
+            (ArithOp::Sub, Value::Set(_), _) | (ArithOp::Sub, _, Value::Set(_)) => {
+                builtins::sets::difference(lhs, rhs, lhs_value, rhs_value)
+            }
+            _ => builtins::numbers::arithmetic_operation(op, lhs, rhs, lhs_value, rhs_value),
         }
-
-        let lhs = if let Value::Number(number) = lhs {
-            number.0
-        } else {
-            return Err(anyhow!("expect {:?} to be a number", lhs));
-        };
-
-        let rhs = if let Value::Number(number) = rhs {
-            number.0
-        } else {
-            return Err(anyhow!("expect {:?} to be a number", rhs));
-        };
-
-        let result = match op {
-            ArithOp::Add => lhs + rhs,
-            ArithOp::Sub => lhs - rhs,
-            ArithOp::Mul => lhs * rhs,
-            ArithOp::Div => lhs / rhs,
-        };
-
-        info!(
-            "eval_arith_expr, op: {:?}, lhs: {:?}, rhs: {:?}",
-            op, lhs, rhs
-        );
-
-        Ok(Value::Number(Number(result)))
     }
 
     fn eval_assign_expr(
@@ -920,6 +898,7 @@ impl<'source> Interpreter<'source> {
     fn eval_builtin_call(
         &mut self,
         span: &'source Span<'source>,
+        name: String,
         builtin: builtins::BuiltinFcn,
         params: &'source Vec<Expr<'source>>,
     ) -> Result<Value> {
@@ -927,7 +906,13 @@ impl<'source> Interpreter<'source> {
         for p in params {
             args.push(self.eval_expr(p)?);
         }
-        builtin(span, &params[..], &args[..])
+
+        let is_randn = name == "rand.intn";
+        let v = builtin(span, &params[..], &args[..])?;
+        if is_randn {
+            self.intns.insert(args, v.clone());
+        }
+        Ok(v)
     }
 
     fn eval_call(
@@ -943,7 +928,7 @@ impl<'source> Interpreter<'source> {
                 // TODO: handle with modifier
                 if let Ok(path) = Self::get_path_string(fcn, None) {
                     if let Some(builtin) = builtins::BUILTINS.get(path.as_str()) {
-                        return self.eval_builtin_call(span, *builtin, params);
+                        return self.eval_builtin_call(span, path, *builtin, params);
                     }
                 }
 
