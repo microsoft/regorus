@@ -415,7 +415,7 @@ impl<'source> Lexer<'source> {
 	    // grouping characters
 	    '{' | '}' | '[' | ']' | '(' | ')' |
 	    // arith operator
-	    '+' | '-' | '*' | '/' |
+	    '+' | '-' | '*' | '/' | '%' |
 	    // bin operator
 	    '&' | '|' |
 	    // separators

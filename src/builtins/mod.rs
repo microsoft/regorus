@@ -1,10 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-mod comparison;
-mod numbers;
-
-pub use self::comparison::compare;
+pub mod comparison;
+pub mod numbers;
+pub mod sets;
 
 use crate::ast::Expr;
 use crate::lexer::Span;

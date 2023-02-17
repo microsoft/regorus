@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr;
+use crate::ast::{ArithOp, Expr};
 use crate::lexer::Span;
 use crate::value::{Float, Value};
 
@@ -28,12 +28,14 @@ fn ensure_args_count(
     Ok(())
 }
 
-fn ensure_numeric(fcn: &'static str, arg: &Expr, v: &Value) -> Result<Float> {
-    Ok(match v {
+fn ensure_numeric(fcn: &str, arg: &Expr, v: &Value) -> Result<Float> {
+    Ok(match &v {
         Value::Number(n) => n.0 .0,
         _ => {
             let span = arg.span();
-            bail!(span.error(format!("`{fcn}` expects numeric argument").as_str()))
+            bail!(
+                span.error(format!("`{fcn}` expects numeric argument. Got `{v}` instead").as_str())
+            )
         }
     })
 }
@@ -61,8 +63,8 @@ pub fn floor(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
 
 pub fn range(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "numbers.range", params, args, 2)?;
-    let v1 = ensure_numeric("numbers.range", &params[0], &args[0])?;
-    let v2 = ensure_numeric("numbers.range", &params[1], &args[1])?;
+    let v1 = ensure_numeric("numbers.range", &params[0], &args[0].clone())?;
+    let v2 = ensure_numeric("numbers.range", &params[1], &args[1].clone())?;
 
     if v1 != v1.floor() || v2 != v2.floor() {
         // TODO: OPA returns undefined here.
@@ -88,4 +90,30 @@ pub fn round(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::from_float(
         ensure_numeric("round", &params[0], &args[0])?.round(),
     ))
+}
+
+pub fn arithmetic_operation(
+    op: &ArithOp,
+    expr1: &Expr,
+    expr2: &Expr,
+    v1: Value,
+    v2: Value,
+) -> Result<Value> {
+    if v1 == Value::Undefined || v2 == Value::Undefined {
+        return Ok(Value::Undefined);
+    }
+
+    let op_name = format!("{:?}", op).to_lowercase();
+    let v1 = ensure_numeric(op_name.as_str(), expr1, &v1)?;
+    let v2 = ensure_numeric(op_name.as_str(), expr2, &v2)?;
+
+    Ok(Value::from_float(match op {
+        ArithOp::Add => v1 + v2,
+        ArithOp::Sub => v1 - v2,
+        ArithOp::Mul => v1 * v2,
+        ArithOp::Div if v2 == 0.0 => return Ok(Value::Undefined),
+        ArithOp::Div => v1 / v2,
+        ArithOp::Mod if v2 == 0.0 => return Ok(Value::Undefined),
+        ArithOp::Mod => v1 % v2,
+    }))
 }
