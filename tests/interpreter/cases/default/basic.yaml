@@ -131,68 +131,80 @@ cases:
     query: data
     error: invalid `var` in default value
 
-  - note: invalid-var-in-array-compr-output
+  - note: valid-var-in-array-compr-output
     data: {}
     modules:
       - |
         package t
+        x = 5
         default a = [ x | 1 ]
-    query: data
-    error: invalid `var` in default value
+    query: data.t.a
+    want_result: [5]
 
-  - note: invalid-var-in-array-compr-query
+  - note: valid-var-in-array-compr-query
     data: {}
     modules:
       - |
         package t
+        x = 5
         default a = [ 1 | true; x ]
-    query: data
-    error: invalid `var` in default value
+    query: data.t.a
+    want_result: [1]
 
-  - note: invalid-var-in-set-compr-output
+  - note: valid-var-in-set-compr-output
     data: {}
     modules:
       - |
         package t
+        x = 5
         default a = { x | 1 }
-    query: data
-    error: invalid `var` in default value
+    query: data.t.a
+    want_result:
+      set!: [5]
 
-  - note: invalid-var-in-array-compr-query
+  - note: valid-var-in-array-compr-query
     data: {}
     modules:
       - |
         package t
+        x = 5
         default a = { 1 | true; x }
-    query: data
-    error: invalid `var` in default value
+    query: data.t.a
+    want_result:
+      set!: [1]
 
-  - note: invalid-var-in-object-compr-key
+  - note: valid-var-in-object-compr-key
     data: {}
     modules:
       - |
         package t
+        x = "a"
         default a = { x : 5 | true }
-    query: data
-    error: invalid `var` in default value
+    query: data.t.a
+    want_result:
+      a: 5
 
-  - note: invalid-var-in-object-compr-value
+  - note: valid-var-in-object-compr-value
     data: {}
     modules:
       - |
         package t
+        x = 5
         default a = { "x" : x | true }
-    query: data
-    error: invalid `var` in default value
+    query: data.t.a
+    want_result:
+      x: 5
 
-  - note: invalid-var-in-object-compr-query
+  - note: valid-var-in-object-compr-query
     data: {}
     modules:
       - |
         package t
+        x = 5
         default a = { "a" : 5 | x }
-    query: data
-    error: invalid `var` in default value
+    query: data.t.a
+    want_result:
+      a: 5
 
   - note: invalid-call
     data: {}
@@ -278,54 +290,48 @@ cases:
     query: data
     error: unexpected keyword `in`
 
-  - note: invalid-some-vars
+  - note: valid-some-vars
     data: {}
     modules:
       - |
         package t
-        default a = [5 | some a]
-    query: data
-    error: invalid `some vars` in default value
+        default a = [5 | some a; a = 5]
+    query: data.t.a
+    want_result: [5]
 
-  - note: invalid-some-vars
-    data: {}
-    modules:
-      - |
-        package t
-        default a = [5 | some a]
-    query: data
-    error: invalid `some vars` in default value
-    
-  - note: invalid-every
+  - note: valid-every
     data: {}
     modules:
       - |
         package t
         import future.keywords
         default a = [5 | every x in [1,2,3] { true }]
-    query: data
-    error: invalid `every` in default value
+    query: data.t.a
+    want_result: [5]
+    skip: true
 
-  - note: invalid-var-in-some-in-key
+  - note: valid-var-in-some-in-key
     data: {}
     modules:
       - |
         package t
         import future.keywords
         default a = [5 | some x in {5}]
-    query: data
-    error: invalid `var` in default value
+    query: data.t.a
+    skip: true
+    want_result: [5]
 
-  - note: invalid-var-in-some-in-value
+  - note: valid-var-in-some-in-value
     data: {}
     modules:
       - |
         package t
         import future.keywords
         default a = [5 | some 5, x in {5}]
-    query: data
-    error: invalid `var` in default value
-    
+    query: data.t.a
+    want_result: [5]
+    skip: true
+
   - note: invalid-var-in-some-in-collection
     data: {}
     modules:
@@ -333,26 +339,27 @@ cases:
         package t
         import future.keywords
         default a = [5 | some 5, 5 in x]
-    query: data
-    error: invalid `var` in default value
+    query: data.t.a
+    want_result: []
+    skip: true
 
-  - note: invalid-var-in-not-expr
+  - note: valid-var-in-not-expr
     data: {}
     modules:
       - |
         package t
         import future.keywords
         default a = [5 | not x]
-    query: data
-    error: invalid `var` in default value
+    query: data.t.a
+    want_result: []
 
-  - note: invalid-var-in-expr
+  - note: valid-var-in-expr
     data: {}
     modules:
       - |
         package t
         import future.keywords
+        x = true
         default a = [5 | x]
-    query: data
-    error: invalid `var` in default value
-    
+    query: data.t.a
+    want_result: [5]
