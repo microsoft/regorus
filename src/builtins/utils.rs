@@ -53,6 +53,16 @@ pub fn ensure_string(fcn: &str, arg: &Expr, v: &Value) -> Result<String> {
     })
 }
 
+pub fn ensure_array(fcn: &str, arg: &Expr, v: Value) -> Result<Rc<Vec<Value>>> {
+    Ok(match v {
+        Value::Array(a) => a,
+        _ => {
+            let span = arg.span();
+            bail!(span.error(format!("`{fcn}` expects array argument. Got `{v}` instead").as_str()))
+        }
+    })
+}
+
 pub fn ensure_set(fcn: &str, arg: &Expr, v: Value) -> Result<Rc<BTreeSet<Value>>> {
     Ok(match v {
         Value::Set(s) => s,
