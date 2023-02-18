@@ -524,6 +524,12 @@ impl<'source> Parser<'source> {
                 }
                 "(" if possible_fcn => {
                     self.next_token()?;
+                    if self.tok.1.text() == ")" {
+                        return Err(self
+                            .tok
+                            .1
+                            .error("at least one argument required for function calls"));
+                    }
                     let mut args = vec![self.parse_in_expr()?];
                     while self.tok.1.text() == "," {
                         self.next_token()?;

@@ -2,43 +2,12 @@
 // Licensed under the MIT License.
 
 use crate::ast::{ArithOp, Expr};
+use crate::builtins::utils::{ensure_args_count, ensure_numeric, ensure_string};
 use crate::lexer::Span;
 use crate::value::{Float, Value};
 
-use anyhow::{bail, Result};
-
-fn ensure_args_count(
-    span: &Span,
-    fcn: &'static str,
-    params: &[Expr],
-    args: &[Value],
-    expected: usize,
-) -> Result<()> {
-    if args.len() != expected {
-        let span = match args.len() > expected {
-            false => span,
-            true => params[args.len() - 1].span(),
-        };
-        if expected == 1 {
-            bail!(span.error(format!("`{fcn}` expects 1 argument").as_str()))
-        } else {
-            bail!(span.error(format!("`{fcn}` expects {expected} arguments").as_str()))
-        }
-    }
-    Ok(())
-}
-
-fn ensure_numeric(fcn: &str, arg: &Expr, v: &Value) -> Result<Float> {
-    Ok(match &v {
-        Value::Number(n) => n.0 .0,
-        _ => {
-            let span = arg.span();
-            bail!(
-                span.error(format!("`{fcn}` expects numeric argument. Got `{v}` instead").as_str())
-            )
-        }
-    })
-}
+use anyhow::Result;
+use rand::{thread_rng, Rng};
 
 pub fn abs(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "abs", params, args, 1)?;
@@ -92,6 +61,25 @@ pub fn round(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ))
 }
 
+pub fn intn(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+    let fcn = "rand.intn";
+    ensure_args_count(span, fcn, params, args, 2)?;
+    let _ = ensure_string(fcn, &params[0], &args[0])?;
+    let n = ensure_numeric(fcn, &params[0], &args[1])?;
+    if n != n.floor() || n < 0 as Float {
+        return Ok(Value::Undefined);
+    }
+
+    if n == 0.0 {
+        return Ok(Value::from_float(0 as Float));
+    }
+
+    // TODO: bounds checking; arbitrary precision
+    let mut rng = thread_rng();
+    let v = rng.gen_range(0..n as u64);
+    Ok(Value::from_float(v as f64))
+}
+
 pub fn arithmetic_operation(
     op: &ArithOp,
     expr1: &Expr,
@@ -99,10 +87,6 @@ pub fn arithmetic_operation(
     v1: Value,
     v2: Value,
 ) -> Result<Value> {
-    if v1 == Value::Undefined || v2 == Value::Undefined {
-        return Ok(Value::Undefined);
-    }
-
     let op_name = format!("{:?}", op).to_lowercase();
     let v1 = ensure_numeric(op_name.as_str(), expr1, &v1)?;
     let v2 = ensure_numeric(op_name.as_str(), expr2, &v2)?;
@@ -114,6 +98,8 @@ pub fn arithmetic_operation(
         ArithOp::Div if v2 == 0.0 => return Ok(Value::Undefined),
         ArithOp::Div => v1 / v2,
         ArithOp::Mod if v2 == 0.0 => return Ok(Value::Undefined),
+        ArithOp::Mod if v1.floor() != v1 => return Ok(Value::Undefined),
+        ArithOp::Mod if v2.floor() != v2 => return Ok(Value::Undefined),
         ArithOp::Mod => v1 % v2,
     }))
 }
