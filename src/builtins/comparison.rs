@@ -41,11 +41,6 @@ use anyhow::Result;
 /// * `v1` - The first value.
 /// * `v2` - The second value.
 pub fn compare(op: &BoolOp, v1: &Value, v2: &Value) -> Result<Value> {
-    // Handle undefined values.
-    if v1 == &Value::Undefined || v2 == &Value::Undefined {
-        return Ok(Value::Undefined);
-    }
-
     // Rely on generated comparison operators.
     // The variants of Value enum are specified in the order necessary to
     // obtain the desired semantics.

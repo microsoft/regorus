@@ -29,7 +29,7 @@ pub struct Interpreter<'source> {
     default_rules: HashMap<String, Vec<(&'source Rule<'source>, Option<String>)>>,
     processed: BTreeSet<&'source Rule<'source>>,
     active_rules: Vec<&'source Rule<'source>>,
-    intns: BTreeMap<Vec<Value>, Value>,
+    builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,7 +62,7 @@ impl<'source> Interpreter<'source> {
             default_rules: HashMap::new(),
             processed: BTreeSet::new(),
             active_rules: vec![],
-            intns: BTreeMap::new(),
+            builtins_cache: BTreeMap::new(),
         })
     }
 
@@ -264,6 +264,11 @@ impl<'source> Interpreter<'source> {
     ) -> Result<Value> {
         let lhs = self.eval_expr(lhs_expr)?;
         let rhs = self.eval_expr(rhs_expr)?;
+
+        if lhs == Value::Undefined || rhs == Value::Undefined {
+            return Ok(Value::Undefined);
+        }
+
         builtins::comparison::compare(op, &lhs, &rhs)
     }
 
@@ -273,30 +278,17 @@ impl<'source> Interpreter<'source> {
         lhs: &'source Expr<'source>,
         rhs: &'source Expr<'source>,
     ) -> Result<Value> {
-        let lhs = self.eval_expr(lhs)?;
-        let rhs = self.eval_expr(rhs)?;
+        let lhs_value = self.eval_expr(lhs)?;
+        let rhs_value = self.eval_expr(rhs)?;
 
-        let lhs = if let Value::Set(set) = lhs {
-            set
-        } else {
-            return Err(anyhow!("expect {:?} to be a set", lhs));
-        };
+        if lhs_value == Value::Undefined || rhs_value == Value::Undefined {
+            return Ok(Value::Undefined);
+        }
 
-        let rhs = if let Value::Set(set) = rhs {
-            set
-        } else {
-            return Err(anyhow!("expect {:?} to be a set", rhs));
-        };
-
-        info!(
-            "eval_bin_expr, op: {:?}, lhs: {:?}, rhs: {:?}",
-            op, lhs, rhs
-        );
-
-        Ok(Value::from_set(match op {
-            BinOp::Or => lhs.union(&rhs).cloned().collect(),
-            BinOp::And => lhs.intersection(&rhs).cloned().collect(),
-        }))
+        match op {
+            BinOp::Or => builtins::sets::union(lhs, rhs, lhs_value, rhs_value),
+            BinOp::And => builtins::sets::intersection(lhs, rhs, lhs_value, rhs_value),
+        }
     }
 
     fn eval_arith_expr(
@@ -307,6 +299,10 @@ impl<'source> Interpreter<'source> {
     ) -> Result<Value> {
         let lhs_value = self.eval_expr(lhs)?;
         let rhs_value = self.eval_expr(rhs)?;
+
+        if lhs_value == Value::Undefined || rhs_value == Value::Undefined {
+            return Ok(Value::Undefined);
+        }
 
         match (op, &lhs_value, &rhs_value) {
             (ArithOp::Sub, Value::Set(_), _) | (ArithOp::Sub, _, Value::Set(_)) => {
@@ -904,13 +900,23 @@ impl<'source> Interpreter<'source> {
     ) -> Result<Value> {
         let mut args = vec![];
         for p in params {
-            args.push(self.eval_expr(p)?);
+            match self.eval_expr(p)? {
+                // If any argument is undefined, then the call is undefined.
+                Value::Undefined => return Ok(Value::Undefined),
+                p => args.push(p),
+            }
         }
 
-        let is_randn = name == "rand.intn";
+        let cache = builtins::must_cache(name.as_str());
+        if let Some(name) = &cache {
+            if let Some(v) = self.builtins_cache.get(&(name, args.clone())) {
+                return Ok(v.clone());
+            }
+        }
+
         let v = builtin(span, &params[..], &args[..])?;
-        if is_randn {
-            self.intns.insert(args, v.clone());
+        if let Some(name) = cache {
+            self.builtins_cache.insert((name, args), v.clone());
         }
         Ok(v)
     }
