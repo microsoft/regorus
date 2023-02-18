@@ -1400,7 +1400,7 @@ impl<'source> Interpreter<'source> {
         }
     }
 
-    fn check_default_value(&self, expr: &'source Expr<'source>) -> Result<()> {
+    fn check_default_value(expr: &'source Expr<'source>) -> Result<()> {
         use Expr::*;
         let (kind, span) = match expr {
             // Scalars are supported
@@ -1409,12 +1409,13 @@ impl<'source> Interpreter<'source> {
             // Uminus of number is treated as a single expression,
             UnaryExpr { expr, .. } if matches!(expr.as_ref(), Number(_)) => return Ok(()),
 
-            Var(span) => ("var", span),
+            // Comprehensions are supported since they won't evaluate to undefined.
+            ArrayCompr { .. } | SetCompr { .. } | ObjectCompr { .. } => return Ok(()),
 
             // Check each item in array/set.
             Array { items, .. } | Set { items, .. } => {
                 for item in items {
-                    self.check_default_value(item)?;
+                    Self::check_default_value(item)?;
                 }
                 return Ok(());
             }
@@ -1422,32 +1423,14 @@ impl<'source> Interpreter<'source> {
             // Check each field in object
             Object { fields, .. } => {
                 for (_, key, value) in fields {
-                    self.check_default_value(key)?;
-                    self.check_default_value(value)?;
+                    Self::check_default_value(key)?;
+                    Self::check_default_value(value)?;
                 }
                 return Ok(());
             }
 
-            // Check each statement in comprehensions
-            ArrayCompr { term, query, .. } | SetCompr { term, query, .. } => {
-                self.check_default_value(term)?;
-                for stmt in &query.stmts {
-                    self.check_default_value_in_stmt(stmt)?;
-                }
-                return Ok(());
-            }
-
-            ObjectCompr {
-                key, value, query, ..
-            } => {
-                self.check_default_value(key)?;
-                self.check_default_value(value)?;
-                for stmt in &query.stmts {
-                    self.check_default_value_in_stmt(stmt)?;
-                }
-                return Ok(());
-            }
-
+            // The following may evaluate to undefined.
+            Var(span) => ("var", span),
             Call { span, .. } => ("call", span),
             UnaryExpr { span, .. } => ("unaryexpr", span),
             RefDot { span, .. } => ("ref", span),
@@ -1462,40 +1445,11 @@ impl<'source> Interpreter<'source> {
         Err(span.error(format!("invalid `{kind}` in default value").as_str()))
     }
 
-    fn check_default_value_in_stmt(&self, stmt: &'source LiteralStmt<'source>) -> Result<()> {
-        for m in &stmt.with_mods {
-            self.check_default_value(&m.refr)?;
-            self.check_default_value(&m.r#as)?;
-        }
-
-        match &stmt.literal {
-            Literal::SomeVars { span, .. } => {
-                Err(span.error("invalid `some vars` in default value"))
-            }
-            Literal::SomeIn {
-                key,
-                value,
-                collection,
-                ..
-            } => {
-                self.check_default_value(key)?;
-                if let Some(value) = &value {
-                    self.check_default_value(value)?;
-                }
-                self.check_default_value(collection)
-            }
-            Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => {
-                self.check_default_value(expr)
-            }
-            Literal::Every { span, .. } => Err(span.error("invalid `every` in default value")),
-        }
-    }
-
     fn check_default_rules(&self) -> Result<()> {
         for module in &self.modules {
             for rule in &module.policy {
                 if let Rule::Default { value, .. } = rule {
-                    self.check_default_value(value)?;
+                    Self::check_default_value(value)?;
                 }
             }
         }
@@ -1523,7 +1477,7 @@ impl<'source> Interpreter<'source> {
             Parser::get_path_ref_components_into(refr, &mut path)?;
             let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
 
-            self.check_default_value(value)?;
+            Self::check_default_value(value)?;
             let value = self.eval_expr(value)?;
 
             // Assume at this point that all the non-default rules have been evaluated.
