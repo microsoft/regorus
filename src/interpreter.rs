@@ -44,6 +44,7 @@ struct LoopExpr<'source> {
     span: &'source Span<'source>,
     expr: &'source Expr<'source>,
     value: &'source Expr<'source>,
+    index: &'source str,
 }
 
 impl<'source> Interpreter<'source> {
@@ -74,20 +75,20 @@ impl<'source> Interpreter<'source> {
     }
 
     #[inline(always)]
-    fn add_variable(&mut self, name: &str) -> Result<Value> {
+    fn add_variable(&mut self, name: &str, value: Value) -> Result<()> {
         let name = name.to_string();
 
         // Only add the variable if the key is not "_"
         if name != "_" {
             match self.scopes.last_mut() {
                 Some(scope) => {
-                    scope.insert(name, Value::Undefined);
+                    scope.insert(name, value);
                 }
                 _ => bail!("internal error: no active scope"),
             }
         }
 
-        Ok(Value::Undefined)
+        Ok(())
     }
 
     fn add_variable_or(&mut self, name: &str) -> Result<Value> {
@@ -97,7 +98,8 @@ impl<'source> Interpreter<'source> {
             }
         }
 
-        self.add_variable(name)
+        self.add_variable(name, Value::Undefined)?;
+        Ok(Value::Undefined)
     }
 
     // TODO: optimize this
@@ -154,10 +156,21 @@ impl<'source> Interpreter<'source> {
         }
     }
 
-    fn is_loop_var(&self, ident: &str) -> bool {
+    fn is_loop_index_var(&self, ident: &str) -> bool {
         // TODO: check for vars that are declared using some-vars
-        // TODO: check for vars that are not declared and dont exist in any scope including global.
-        ident == "_"
+        match ident {
+            "_" => true,
+            _ => match self.lookup_local_var(ident) {
+                // If ident is a local var (in current or parent scopes),
+                // then it is not a loop var.
+                Some(_) => false,
+                None => {
+                    // Check if ident is a rule.
+                    let path = self.current_module_path.clone() + "." + ident;
+                    self.rules.get(&path).is_none()
+                }
+            },
+        }
     }
 
     fn hoist_loops_impl(&self, expr: &'source Expr<'source>, loops: &mut Vec<LoopExpr<'source>>) {
@@ -169,11 +182,11 @@ impl<'source> Interpreter<'source> {
 
                 // Then hoist the current bracket operation.
                 match index.as_ref() {
-                    Var(ident) if self.is_loop_var(ident.text()) => loops.push(LoopExpr {
+                    Var(ident) if self.is_loop_index_var(ident.text()) => loops.push(LoopExpr {
                         span,
                         expr,
-                        //var: ident.text(),
                         value: refr,
+                        index: ident.text(),
                     }),
                     _ => {
                         // hoist any loops in index expression.
@@ -505,46 +518,57 @@ impl<'source> Interpreter<'source> {
         if loops.is_empty() {
             if !stmts.is_empty() {
                 // Evaluate the current statement whose loop expressions have been hoisted.
-                // Save the current scope and restore it after evaluating the statements so
-                // that the effects of the current loop iteration are cleared.
-                let scope_saved = match self.scopes.last() {
-                    Some(scope) => scope.clone(),
-                    _ => bail!("internal error: missing scope"),
-                };
-                let result = if self.eval_stmt(&stmts[0])? {
+                if self.eval_stmt(&stmts[0])? {
                     self.eval_stmts(&stmts[1..])
                 } else {
                     Ok(false)
-                };
-
-                match self.scopes.last_mut() {
-                    Some(scope) => *scope = scope_saved,
-                    _ => bail!("internal error: missing scope"),
-                };
-                result
+                }
             } else {
                 self.eval_stmts(stmts)
             }
         } else {
             let loop_expr = &loops[0];
             let mut result = false;
+
+            // Save the current scope and restore it after evaluating the statements so
+            // that the effects of the current loop iteration are cleared.
+            let scope_saved = match self.scopes.last() {
+                Some(scope) => scope.clone(),
+                _ => bail!("internal error: missing scope"),
+            };
+
             match self.eval_expr(loop_expr.value)? {
                 Value::Array(items) => {
-                    for v in items.iter() {
+                    for (idx, v) in items.iter().enumerate() {
                         self.loop_var_values.insert(loop_expr.expr, v.clone());
+                        self.add_variable(loop_expr.index, Value::from_float(idx as Float))?;
+
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        if let Some(s) = self.scopes.last_mut() {
+                            *s = scope_saved.clone();
+                        }
                     }
                 }
                 Value::Set(items) => {
                     for v in items.iter() {
                         self.loop_var_values.insert(loop_expr.expr, v.clone());
+                        // For sets, index is also the value.
+                        self.add_variable(loop_expr.index, v.clone())?;
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        if let Some(s) = self.scopes.last_mut() {
+                            *s = scope_saved.clone();
+                        }
                     }
                 }
                 Value::Object(obj) => {
-                    for (_, v) in obj.iter() {
+                    for (k, v) in obj.iter() {
                         self.loop_var_values.insert(loop_expr.expr, v.clone());
+                        // For objects, index is key.
+                        self.add_variable(loop_expr.index, k.clone())?;
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        if let Some(s) = self.scopes.last_mut() {
+                            *s = scope_saved.clone();
+                        }
                     }
                 }
                 _ => {
