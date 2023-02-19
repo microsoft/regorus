@@ -2,18 +2,18 @@
 // Licensed under the MIT License.
 
 use crate::ast::Expr;
+use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_set};
 use crate::lexer::Span;
 use crate::value::Value;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{bail, Result};
 
-pub fn difference(expr1: &Expr, expr2: &Expr, v1: Value, v2: Value) -> Result<Value> {
-    let s1 = ensure_set("difference", expr1, v1)?;
-    let s2 = ensure_set("difference", expr2, v2)?;
-    Ok(Value::from_set(s1.difference(&s2).cloned().collect()))
+pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+    m.insert("intersection", intersection_of_set_of_sets);
+    m.insert("union", union_of_set_of_sets);
 }
 
 pub fn intersection(expr1: &Expr, expr2: &Expr, v1: Value, v2: Value) -> Result<Value> {
@@ -28,7 +28,13 @@ pub fn union(expr1: &Expr, expr2: &Expr, v1: Value, v2: Value) -> Result<Value> 
     Ok(Value::from_set(s1.union(&s2).cloned().collect()))
 }
 
-pub fn intersection_of_set_of_sets(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+pub fn difference(expr1: &Expr, expr2: &Expr, v1: Value, v2: Value) -> Result<Value> {
+    let s1 = ensure_set("difference", expr1, v1)?;
+    let s2 = ensure_set("difference", expr2, v2)?;
+    Ok(Value::from_set(s1.difference(&s2).cloned().collect()))
+}
+
+fn intersection_of_set_of_sets(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     let name = "intersection";
     ensure_args_count(span, name, params, args, 1)?;
     let set = ensure_set(name, &params[0], args[0].clone())?;
@@ -55,7 +61,7 @@ pub fn intersection_of_set_of_sets(span: &Span, params: &[Expr], args: &[Value])
     Ok(Value::from_set(res))
 }
 
-pub fn union_of_set_of_sets(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn union_of_set_of_sets(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     let name = "union";
     ensure_args_count(span, name, params, args, 1)?;
     let set = ensure_set(name, &params[0], args[0].clone())?;
