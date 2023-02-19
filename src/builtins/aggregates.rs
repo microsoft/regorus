@@ -2,13 +2,25 @@
 // Licensed under the MIT License.
 
 use crate::ast::Expr;
+use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_numeric};
 use crate::lexer::Span;
 use crate::value::{Float, Value};
 
+use std::collections::HashMap;
+
 use anyhow::{bail, Result};
 
-pub fn count(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+    m.insert("count", count);
+    m.insert("max", max);
+    m.insert("min", min);
+    m.insert("product", product);
+    m.insert("sort", sort);
+    m.insert("sum", sum);
+}
+
+fn count(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "count", params, args, 1)?;
 
     Ok(Value::from_float(match &args[0] {
@@ -25,7 +37,7 @@ pub fn count(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     }))
 }
 
-pub fn max(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn max(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "max", params, args, 1)?;
 
     Ok(match &args[0] {
@@ -40,7 +52,7 @@ pub fn max(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     })
 }
 
-pub fn min(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn min(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "min", params, args, 1)?;
 
     Ok(match &args[0] {
@@ -55,7 +67,7 @@ pub fn min(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     })
 }
 
-pub fn product(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn product(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "min", params, args, 1)?;
 
     let mut v = 1 as Float;
@@ -80,7 +92,7 @@ pub fn product(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     })
 }
 
-pub fn sort(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn sort(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "sort", params, args, 1)?;
     Ok(match &args[0] {
         Value::Array(a) => {
@@ -96,7 +108,7 @@ pub fn sort(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     })
 }
 
-pub fn sum(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn sum(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "sum", params, args, 1)?;
 
     let mut v = 0 as Float;
