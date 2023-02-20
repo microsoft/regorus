@@ -233,10 +233,10 @@ impl<'source> Interpreter<'source> {
                 collection,
                 ..
             } => {
-                self.hoist_loops_impl(key, loops);
-                if let Some(value) = value.as_ref() {
-                    self.hoist_loops_impl(value, loops);
+                if let Some(key) = key.as_ref() {
+                    self.hoist_loops_impl(key, loops);
                 }
+                self.hoist_loops_impl(value, loops);
                 self.hoist_loops_impl(collection, loops);
             }
 
@@ -258,10 +258,10 @@ impl<'source> Interpreter<'source> {
                 collection,
                 ..
             } => {
-                self.hoist_loops_impl(key, &mut loops);
-                if let Some(value) = value {
-                    self.hoist_loops_impl(value, &mut loops);
+                if let Some(key) = key {
+                    self.hoist_loops_impl(key, &mut loops);
                 }
+                self.hoist_loops_impl(value, &mut loops);
                 self.hoist_loops_impl(collection, &mut loops);
             }
             Every {
@@ -548,18 +548,8 @@ impl<'source> Interpreter<'source> {
                 }
                 true
             }
-            Literal::SomeIn {
-                key,
-                value,
-                collection,
-                ..
-            } => {
-                let value = self.eval_membership(key, value, collection)?;
-                if let Value::Bool(bool) = value {
-                    bool
-                } else {
-                    panic!();
-                }
+            Literal::SomeIn { .. } => {
+                unimplemented!()
             }
             Literal::NotExpr { expr, .. } => matches!(self.eval_expr(expr)?, Value::Bool(false)),
             Literal::Every {
@@ -861,37 +851,35 @@ impl<'source> Interpreter<'source> {
 
     fn eval_membership(
         &mut self,
-        key: &'source Expr<'source>,
-        value: &'source Option<Expr<'source>>,
+        key: &'source Option<Expr<'source>>,
+        value: &'source Expr<'source>,
         collection: &'source Expr<'source>,
     ) -> Result<Value> {
-        let key = self.eval_expr(key)?;
-
+        let value = self.eval_expr(value)?;
         let collection = self.eval_expr(collection)?;
 
         let result = match &collection {
             Value::Array(array) => {
-                if let Some(value) = value {
-                    let value = self.eval_expr(value)?;
+                if let Some(key) = key {
+                    let key = self.eval_expr(key)?;
                     collection[&key] == value
                 } else {
-                    array.iter().any(|item| *item == key)
+                    array.iter().any(|item| *item == value)
                 }
             }
             Value::Object(object) => {
-                if let Some(value) = value {
-                    let value = self.eval_expr(value)?;
+                if let Some(key) = key {
+                    let key = self.eval_expr(key)?;
                     collection[&key] == value
                 } else {
-                    object.values().into_iter().any(|item| *item == key)
+                    object.values().into_iter().any(|item| *item == value)
                 }
             }
             Value::Set(set) => {
-                if value.is_some() {
+                if key.is_some() {
                     false
-                    //return Err(anyhow!("key-value pair is not supported for set"));
                 } else {
-                    set.contains(&key)
+                    set.contains(&value)
                 }
             }
             _ => {

@@ -24,7 +24,7 @@ cases:
                 op: "="
                 value:
                   inexpr:
-                    key:
+                    value:
                       number: 5
                     collection:
                       array:
@@ -40,9 +40,9 @@ cases:
                 op: "="
                 value:
                   inexpr:
-                    key:
+                    value:
                       inexpr:
-                        key:
+                        value:
                           number: 5
                         collection:
                           array:

@@ -226,8 +226,8 @@ fn match_expr_impl(e: &Expr, v: &Value) -> Result<()> {
             collection,
         } => {
             match_span_opt(span, &v["inexpr"]["span"])?;
-            match_expr(key, &v["inexpr"]["key"])?;
-            match_expr_opt(span, value, &v["inexpr"]["value"])?;
+            match_expr_opt(span, key, &v["inexpr"]["key"])?;
+            match_expr(value, &v["inexpr"]["value"])?;
             match_expr(collection, &v["inexpr"]["collection"])
         }
     }
@@ -494,8 +494,8 @@ fn match_literal(l: &Literal, v: &Value) -> Result<()> {
         } => {
             let v = &v["some-decl"];
             match_span_opt(span, &v["span"])?;
-            match_expr(key, &v["key"])?;
-            match_expr_opt(span, value, &v["value"])?;
+            match_expr(value, &v["value"])?;
+            match_expr_opt(span, key, &v["key"])?;
             match_expr(collection, &v["collection"])
         }
         Literal::Expr { expr, .. } => match_expr(expr, &v["expr"]),

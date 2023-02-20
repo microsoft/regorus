@@ -29,7 +29,7 @@ cases:
                             expr:
                               var: y
           bodies: []
-          
+
   - note: case2-array
     rego: |
       package test
@@ -56,7 +56,7 @@ cases:
                           var: y
                     - number: 5
           bodies: []
-          
+
   - note: case3-compr
     rego: |
       package test
@@ -92,7 +92,7 @@ cases:
                                   set:
                                     - number: 5
           bodies: []
-          
+
   - note: case4-array
     rego: |
       package test
@@ -119,14 +119,14 @@ cases:
                         rhs:
                           var: y
                     - inexpr:
-                        key:
+                        value:
                           number: 5
                         collection:
                           set:
                             - number: 5
-                    - number: 6                      
+                    - number: 6
           bodies: []
-                  
+
   - note: case5-array
     rego: |
       package test
@@ -159,7 +159,7 @@ cases:
                         rhs:
                           var: y
                     - inexpr:
-                        key:
+                        value:
                           number: 5
                         collection:
                           set:
@@ -206,4 +206,3 @@ cases:
                                   set:
                                     - number: 5
           bodies: []
-          

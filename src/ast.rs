@@ -136,8 +136,8 @@ pub enum Expr<'source> {
 
     Membership {
         span: Span<'source>,
-        key: Box<Expr<'source>>,
-        value: Box<Option<Expr<'source>>>,
+        key: Box<Option<Expr<'source>>>,
+        value: Box<Expr<'source>>,
         collection: Box<Expr<'source>>,
     },
 }
@@ -174,8 +174,8 @@ pub enum Literal<'source> {
     },
     SomeIn {
         span: Span<'source>,
-        key: Expr<'source>,
-        value: Option<Expr<'source>>,
+        key: Option<Expr<'source>>,
+        value: Expr<'source>,
         collection: Expr<'source>,
     },
     Expr {
