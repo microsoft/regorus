@@ -489,7 +489,131 @@ impl<'source> Interpreter<'source> {
         Ok(r)
     }
 
-    fn eval_stmt(&mut self, stmt: &'source LiteralStmt<'source>) -> Result<bool> {
+    fn make_bindings(
+        &mut self,
+        cache: &mut BTreeMap<&'source Expr<'source>, Value>,
+        expr: &'source Expr<'source>,
+        v: &Value,
+    ) -> Result<bool> {
+        if v == &Value::Undefined {
+            return Ok(false);
+        }
+        match expr {
+            Expr::Var(ident) => {
+                self.add_variable(ident.text(), v.clone())?;
+                Ok(true)
+            }
+            Expr::Array { .. } => {
+                let expr_v = self.eval_expr(expr)?;
+                if expr_v == Value::Undefined {
+                    return Ok(false);
+                }
+                Ok(&expr_v == v)
+            }
+            Expr::Object { .. } => {
+                let expr_v = self.eval_expr(expr)?;
+                if expr_v == Value::Undefined {
+                    return Ok(false);
+                }
+                Ok(&expr_v == v)
+            }
+            _ => {
+                let expr_v = match cache.get(expr) {
+                    Some(v) => v.clone(),
+                    None => {
+                        let v = self.eval_expr(expr)?;
+                        cache.insert(expr, v.clone());
+                        v
+                    }
+                };
+                if expr_v == Value::Undefined {
+                    return Ok(false);
+                }
+                // TODO: type checking
+                Ok(&expr_v == v)
+            }
+        }
+    }
+
+    fn eval_some_in(
+        &mut self,
+        _span: &'source Span<'source>,
+        key: &'source Option<Expr<'source>>,
+        value: &'source Expr<'source>,
+        collection: &'source Expr<'source>,
+        stmts: &'source [LiteralStmt<'source>],
+    ) -> Result<bool> {
+        let scope_saved = self.current_scope()?.clone();
+        let mut cache = BTreeMap::new();
+        let mut count = 0;
+        match self.eval_expr(collection)? {
+            Value::Array(a) => {
+                for (k, v) in a.iter().enumerate() {
+                    if let Some(key) = key {
+                        if !self.make_bindings(&mut cache, key, &Value::from_float(k as Float))? {
+                            continue;
+                        }
+                    }
+                    if !self.make_bindings(&mut cache, value, v)? {
+                        continue;
+                    }
+                    let r = self.eval_stmts(stmts)?;
+                    *self.current_scope_mut()? = scope_saved.clone();
+                    if r {
+                        count += 1;
+                    }
+                }
+            }
+            Value::Set(s) => {
+                for v in s.iter() {
+                    if !self.make_bindings(&mut cache, value, v)? {
+                        continue;
+                    }
+                    if let Some(key) = key {
+                        if !self.make_bindings(&mut cache, key, v)? {
+                            continue;
+                        }
+                    }
+                    let r = self.eval_stmts(stmts)?;
+                    *self.current_scope_mut()? = scope_saved.clone();
+                    if r {
+                        count += 1;
+                    }
+                }
+            }
+            Value::Object(o) => {
+                for (k, v) in o.iter() {
+                    if !self.make_bindings(&mut cache, value, v)? {
+                        continue;
+                    }
+                    if let Some(key) = key {
+                        if !self.make_bindings(&mut cache, key, k)? {
+                            continue;
+                        }
+                    }
+                    let r = self.eval_stmts(stmts)?;
+                    *self.current_scope_mut()? = scope_saved.clone();
+                    if r {
+                        count += 1;
+                    }
+                }
+            }
+            v => {
+                let span = collection.span();
+                bail!(span.error(
+                    format!("`some .. in collection` expects a collection. Got {v}").as_str()
+                ))
+            }
+        }
+
+        Ok(count > 0)
+    }
+
+    fn eval_stmt(
+        &mut self,
+        stmt: &'source LiteralStmt<'source>,
+        stmts: &'source [LiteralStmt<'source>],
+    ) -> Result<bool> {
         let mut to_restore = vec![];
         for wm in &stmt.with_mods {
             // Evaluate value and ref
@@ -548,9 +672,12 @@ impl<'source> Interpreter<'source> {
                 }
                 true
             }
-            Literal::SomeIn { .. } => {
-                unimplemented!()
-            }
+            Literal::SomeIn {
+                span,
+                key,
+                value,
+                collection,
+            } => self.eval_some_in(span, key, value, collection, stmts)?,
             Literal::NotExpr { expr, .. } => matches!(self.eval_expr(expr)?, Value::Bool(false)),
             Literal::Every {
                 span,
@@ -580,8 +707,12 @@ impl<'source> Interpreter<'source> {
         if loops.is_empty() {
             if !stmts.is_empty() {
                 // Evaluate the current statement whose loop expressions have been hoisted.
-                if self.eval_stmt(&stmts[0])? {
-                    self.eval_stmts(&stmts[1..])
+                if self.eval_stmt(&stmts[0], &stmts[1..])? {
+                    if !matches!(&stmts[0].literal, Literal::SomeIn { .. }) {
+                        self.eval_stmts(&stmts[1..])
+                    } else {
+                        Ok(true)
+                    }
                 } else {
                     Ok(false)
                 }
@@ -787,12 +918,17 @@ impl<'source> Interpreter<'source> {
                 // within loops.
                 return self.eval_stmts_in_loop(&stmts[idx..], &loop_exprs[..]);
             }
-            result = self.eval_stmt(stmt)?;
+
+            result = self.eval_stmt(stmt, &stmts[idx + 1..])?;
+            if matches!(&stmt.literal, Literal::SomeIn { .. }) {
+                return Ok(result);
+            }
         }
 
         if result {
             result = self.eval_output_expr()?;
         }
+
         Ok(result)
     }
 
