@@ -1,0 +1,25 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: array
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords
+
+        r1 = y {
+           y1 =  [x | some x in [1, 2, 3]; x >= 2]
+           y2 = [y | some x, y in [1, 2, 3]; x >= 2]
+           y = [y1, y2]
+        }
+
+        r2[x] {
+          some x, "l" in ["h", "e", "l", "l", "o"]
+        }
+
+    query: data.test
+    want_result:
+      r1: [ [2, 3], [3]]
+      r2:
+        set!: [2, 3]
