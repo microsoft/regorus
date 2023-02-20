@@ -39,7 +39,7 @@ cases:
                 op: "="
                 value:
                   inexpr:
-                    key:
+                    value:
                       inexpr:
                         key:
                           number: 0
@@ -50,4 +50,3 @@ cases:
                     collection:
                       var: d
           bodies: []
-      

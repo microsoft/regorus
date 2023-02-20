@@ -690,10 +690,14 @@ impl<'source> Parser<'source> {
             self.parse_future_keyword("in", false, "while parsing membership expression")?;
             let expr3 = self.parse_bool_expr()?;
             span.end = self.end;
+            let (key, value) = match expr2 {
+                Some(e) => (Box::new(Some(expr1)), Box::new(e)),
+                None => (Box::new(None), Box::new(expr1)),
+            };
             expr1 = Expr::Membership {
                 span,
-                key: Box::new(expr1),
-                value: Box::new(expr2),
+                key,
+                value,
                 collection: Box::new(expr3),
             };
             expr2 = None;
@@ -856,8 +860,8 @@ impl<'source> Parser<'source> {
         }
 
         let (key, value) = match refs.len() {
-            2 => (refs[0].clone(), Some(refs[1].clone())),
-            1 => (refs[0].clone(), None),
+            2 => (Some(refs[0].clone()), refs[1].clone()),
+            1 => (None, refs[0].clone()),
             _ => {
                 let span = &vars[2];
                 return Err(anyhow!(

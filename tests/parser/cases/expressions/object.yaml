@@ -153,11 +153,11 @@ cases:
                           string: q
                       - key:
                           inexpr:
-                            key:
+                            value:
                               string: r
                             collection:
                               string: d
                         value:
                           string: e
-                              
+
           bodies: []

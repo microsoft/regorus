@@ -34,7 +34,7 @@ cases:
                   - span: some a in {1}
                     literal:
                       some-decl:
-                        key:
+                        value:
                           var: a
                         collection:
                           set:
@@ -140,8 +140,8 @@ cases:
           y = a
       }
     error: expecting `}` while parsing query
-    
-  - note: multi-line-parsed as membership
+
+  - note: multi-line-parsed-as-membership
     rego: |
       package test
       import future.keywords.in
@@ -165,7 +165,7 @@ cases:
               assign:
                 op: :=
                 value:
-                  number: 5                  
+                  number: 5
           bodies: []
       - spec:
           head:
@@ -189,7 +189,7 @@ cases:
                       expr:
                         inexpr:
                           span: b in {4, 5}
-                          key:
+                          value:
                             var: b
                           collection:
                             set:
@@ -221,6 +221,3 @@ cases:
                             var: y
                           rhs:
                             var: a
-                        
-
-    
