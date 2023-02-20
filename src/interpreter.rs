@@ -74,18 +74,27 @@ impl<'source> Interpreter<'source> {
         }
     }
 
+    fn current_scope(&mut self) -> Result<&Scope> {
+        match self.scopes.last() {
+            Some(scope) => Ok(scope),
+            _ => bail!("internal error: no active scope"),
+        }
+    }
+
+    fn current_scope_mut(&mut self) -> Result<&mut Scope> {
+        match self.scopes.last_mut() {
+            Some(scope) => Ok(scope),
+            _ => bail!("internal error: no active scope"),
+        }
+    }
+
     #[inline(always)]
     fn add_variable(&mut self, name: &str, value: Value) -> Result<()> {
         let name = name.to_string();
 
         // Only add the variable if the key is not "_"
         if name != "_" {
-            match self.scopes.last_mut() {
-                Some(scope) => {
-                    scope.insert(name, value);
-                }
-                _ => bail!("internal error: no active scope"),
-            }
+            self.current_scope_mut()?.insert(name, value);
         }
 
         Ok(())
@@ -104,18 +113,12 @@ impl<'source> Interpreter<'source> {
 
     // TODO: optimize this
     fn variables_assignment(&mut self, name: &str, value: &Value) -> Result<()> {
-        match self.scopes.last_mut() {
-            Some(scope) => {
-                if let Some(variable) = scope.get_mut(name) {
-                    *variable = value.clone();
-                } else {
-                    return Err(anyhow!("variable {} is undefined", name));
-                }
-            }
-            _ => bail!("internal error: no active scope"),
+        if let Some(variable) = self.current_scope_mut()?.get_mut(name) {
+            *variable = value.clone();
+            Ok(())
+        } else {
+            Err(anyhow!("variable {} is undefined", name))
         }
-
-        Ok(())
     }
 
     fn eval_chained_ref_dot_or_brack(&mut self, mut expr: &'source Expr<'source>) -> Result<Value> {
@@ -423,6 +426,69 @@ impl<'source> Interpreter<'source> {
         Ok(Value::Bool(true))
     }
 
+    fn eval_every(
+        &mut self,
+        _span: &'source Span<'source>,
+        key: &'source Option<Span<'source>>,
+        value: &'source Span<'source>,
+        domain: &'source Expr<'source>,
+        query: &'source Query<'source>,
+    ) -> Result<bool> {
+        let domain = self.eval_expr(domain)?;
+
+        self.scopes.push(Scope::new());
+        self.contexts.push(Context {
+            key_expr: None,
+            output_expr: None,
+            value: Value::new_set(),
+        });
+        let mut r = true;
+        match domain {
+            Value::Array(a) => {
+                for (idx, v) in a.iter().enumerate() {
+                    self.add_variable(value.text(), v.clone())?;
+                    if let Some(key) = key {
+                        self.add_variable(key.text(), Value::from_float(idx as Float))?;
+                    }
+                    if !self.eval_query(query)? {
+                        r = false;
+                        break;
+                    }
+                }
+            }
+            Value::Set(s) => {
+                for v in s.iter() {
+                    self.add_variable(value.text(), v.clone())?;
+                    if let Some(key) = key {
+                        self.add_variable(key.text(), v.clone())?;
+                    }
+                    if !self.eval_query(query)? {
+                        r = false;
+                        break;
+                    }
+                }
+            }
+            Value::Object(o) => {
+                for (k, v) in o.iter() {
+                    self.add_variable(value.text(), v.clone())?;
+                    if let Some(key) = key {
+                        self.add_variable(key.text(), k.clone())?;
+                    }
+                    if !self.eval_query(query)? {
+                        r = false;
+                        break;
+                    }
+                }
+            }
+            // Other types cause every to evaluate to true even though
+            // it is supposed to happen only for empty domain.
+            _ => (),
+        };
+        self.contexts.pop();
+        self.scopes.pop();
+        Ok(r)
+    }
+
     fn eval_stmt(&mut self, stmt: &'source LiteralStmt<'source>) -> Result<bool> {
         let mut to_restore = vec![];
         for wm in &stmt.with_mods {
@@ -496,7 +562,13 @@ impl<'source> Interpreter<'source> {
                 }
             }
             Literal::NotExpr { expr, .. } => matches!(self.eval_expr(expr)?, Value::Bool(false)),
-            _ => unimplemented!(),
+            Literal::Every {
+                span,
+                key,
+                value,
+                domain,
+                query,
+            } => self.eval_every(span, key, value, domain, query)?,
         });
 
         for (path, value) in to_restore.into_iter().rev() {
@@ -532,10 +604,7 @@ impl<'source> Interpreter<'source> {
 
             // Save the current scope and restore it after evaluating the statements so
             // that the effects of the current loop iteration are cleared.
-            let scope_saved = match self.scopes.last() {
-                Some(scope) => scope.clone(),
-                _ => bail!("internal error: missing scope"),
-            };
+            let scope_saved = self.current_scope()?.clone();
 
             match self.eval_expr(loop_expr.value)? {
                 Value::Array(items) => {
@@ -544,9 +613,7 @@ impl<'source> Interpreter<'source> {
                         self.add_variable(loop_expr.index, Value::from_float(idx as Float))?;
 
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
-                        if let Some(s) = self.scopes.last_mut() {
-                            *s = scope_saved.clone();
-                        }
+                        *self.current_scope_mut()? = scope_saved.clone();
                     }
                 }
                 Value::Set(items) => {
@@ -555,9 +622,7 @@ impl<'source> Interpreter<'source> {
                         // For sets, index is also the value.
                         self.add_variable(loop_expr.index, v.clone())?;
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
-                        if let Some(s) = self.scopes.last_mut() {
-                            *s = scope_saved.clone();
-                        }
+                        *self.current_scope_mut()? = scope_saved.clone();
                     }
                 }
                 Value::Object(obj) => {
@@ -566,9 +631,7 @@ impl<'source> Interpreter<'source> {
                         // For objects, index is key.
                         self.add_variable(loop_expr.index, k.clone())?;
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
-                        if let Some(s) = self.scopes.last_mut() {
-                            *s = scope_saved.clone();
-                        }
+                        *self.current_scope_mut()? = scope_saved.clone();
                     }
                 }
                 _ => {
