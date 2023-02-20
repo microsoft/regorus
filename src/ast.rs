@@ -188,8 +188,8 @@ pub enum Literal<'source> {
     },
     Every {
         span: Span<'source>,
-        key: Span<'source>,
-        value: Option<Span<'source>>,
+        key: Option<Span<'source>>,
+        value: Span<'source>,
         domain: Expr<'source>,
         query: Query<'source>,
     },

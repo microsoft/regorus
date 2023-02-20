@@ -525,19 +525,19 @@ fn match_literal(l: &Literal, v: &Value) -> Result<()> {
             query,
         } => {
             match_span_opt(span, &v["every"]["span"])?;
-            match_span(key, &v["every"]["key"])?;
-            match value {
-                Some(s) => match_span(s, &v["every"]["value"])?,
+            match_span(value, &v["every"]["value"])?;
+            match key {
+                Some(s) => match_span(s, &v["every"]["key"])?,
                 None => {
                     my_assert_eq!(
                         &Value::Undefined,
-                        &v["value"],
+                        &v["key"],
                         "{}",
                         span.source.message(
                             span.line,
                             span.col,
                             "mismatch-error",
-                            "could not match `value``"
+                            "could not match `key``"
                         )
                     );
                 }

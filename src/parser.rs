@@ -780,12 +780,12 @@ impl<'source> Parser<'source> {
         let context = "Failed to parse `every` statement.";
         self.parse_future_keyword("every", false, context)?;
 
-        let key = self.parse_var()?;
-        let value = match self.tok.1.text() {
+        let ident = self.parse_var()?;
+        let (key, value) = match self.tok.1.text() {
             "," => {
                 self.next_token()?;
                 match self.parse_var() {
-                    Ok(v) => Some(v),
+                    Ok(v) => (Some(ident), v),
                     Err(e) => {
                         return Err(self.source.error(
                             span.line,
@@ -795,7 +795,7 @@ impl<'source> Parser<'source> {
                     }
                 }
             }
-            _ => None,
+            _ => (None, ident),
         };
 
         self.parse_future_keyword("in", false, context)?;

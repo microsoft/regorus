@@ -1,0 +1,130 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords
+
+        # Array
+        x1 = y {
+          # Only value
+          every x in [1, 2, 3] {
+            x > 0
+          }
+
+          # Key and value
+          every key, x in [1, 2, 3] {
+            x == key + 1
+          }
+
+          key = 5
+          x = 95
+          # Key and value can shadow (local) variables.
+          every key, x in [1, 2, 3] {
+            x == key + 1
+          }
+          
+          y = x + key
+        }
+        
+        # Set
+        x2 = y {
+          # Only value
+          every x in {1, 2, 3} {
+            x > 0
+          }
+
+          # Key and value are same.
+          every key, x in {1, 2, 3} {
+            x == key
+          }
+
+          key = 5
+          x = 95
+          # Key and value can shadow (local) variables.
+          every key, x in {1, 2, 3} {
+            x == key
+          }
+          
+          y = x + key
+        }
+
+        # Object
+        x3 = y {
+          # Only value
+          every x in {1:2, 3:4} {
+            x >= 2
+            x % 2 == 0
+          }
+
+          # Key and value.
+          every key, x in {1:2, 3:4} {
+            x == key + 1
+          }
+
+          key = 5
+          x = 95
+          # Key and value can shadow (local) variables.
+          every key, x in {1:2, 3:4} {
+            x == key + 1
+          }
+          
+          y = x + key
+        }
+
+        # Non aggregate types
+        x4 = y {
+          every _, _ in 1 {
+            false
+          }
+          every _, _ in null {
+            false
+          }
+          every _, _ in false {
+            false
+          }
+          every _ in "abc" {
+            false
+          }
+          every _ in `abc` {
+            undefined_var
+          }  
+          y = 100
+        }
+    query: data.test
+    want_result:
+      x1: 100
+      x2: 100
+      x3: 100
+      x4: 100
+
+  - note: negative
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords
+
+        x1 = y {
+           y = 100
+           every _ in [1] {
+             false
+           }
+        }
+    
+        x2 = y {
+           y = 100
+           every _ in [1] {
+             p
+           }
+        }
+    query: data.test
+    want_result: {}
+
+  #TODO:
+  # every vars must be used
+    
+  
