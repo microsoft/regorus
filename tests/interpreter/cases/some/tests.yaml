@@ -9,17 +9,106 @@ cases:
         import future.keywords
 
         r1 = y {
+           # value
            y1 =  [x | some x in [1, 2, 3]; x >= 2]
+           # key and value
            y2 = [y | some x, y in [1, 2, 3]; x >= 2]
            y = [y1, y2]
         }
 
         r2[x] {
+          # Constant value
           some x, "l" in ["h", "e", "l", "l", "o"]
         }
 
+        r3[x] {
+          # Constant value
+          some 1, x in ["h", "e", "l", "l", "o"]
+        }
+
+        r4[x] {
+          # Extract array element
+          some [5, x] in [[0, 1], [5, 1], [5, 2]]
+        }
+
+        r5[x+y] {
+          # Extract multiple array elements 
+          some [5, x, y, 9] in [[0, 1], [5, 1, 2, 9], [5, 2, 8, 9]]
+        }
+
+        # Undefined
+        r6 {
+          some x in []
+        }
+
+        r7 {
+          some x in r6
+        }
     query: data.test
     want_result:
       r1: [ [2, 3], [3]]
       r2:
         set!: [2, 3]
+      r3:
+        set!: ["e"]
+      r4:
+        set!: [1, 2]
+      r5:
+        set!: [3, 10]
+
+  - note: type-mismatch
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords
+        x { some [1] in [1] }
+    query: data.test
+    error: "Cannot bind pattern of type `array`"
+        
+  - note: array-length-mismatch
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords
+        x { some [1] in [[1, 2]] }
+    query: data.test
+    error: "array length mismatch. Expected 1 got 2."
+
+  - note: array-length-mismatch-skipped
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords
+        x { some [1] in [[1, 2], [1]] }
+    query: data.test
+    want_result:
+      x: true
+    
+  - note: invalid-null
+    data: {}
+    modules: ["package test\nimport future.keywords\nx { some _ in null}"]
+    query: data.test
+    error: "`some .. in collection` expects array/set/object."
+    
+  - note: invalid-bool
+    data: {}
+    modules: ["package test\nimport future.keywords\nx { some _ in false}"]
+    query: data.test
+    error: "`some .. in collection` expects array/set/object."
+    
+  - note: invalid-number
+    data: {}
+    modules: ["package test\nimport future.keywords\nx { some _ in 0}"]
+    query: data.test
+    error: "`some .. in collection` expects array/set/object."
+
+  - note: invalid-string
+    data: {}
+    modules: ["package test\nimport future.keywords\nx { some _ in \"\"}"]
+    query: data.test
+    error: "`some .. in collection` expects array/set/object."
+    
+    

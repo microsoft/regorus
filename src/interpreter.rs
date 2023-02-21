@@ -30,6 +30,7 @@ pub struct Interpreter<'source> {
     processed: BTreeSet<&'source Rule<'source>>,
     active_rules: Vec<&'source Rule<'source>>,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
+    no_rules_lookup: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +65,7 @@ impl<'source> Interpreter<'source> {
             processed: BTreeSet::new(),
             active_rules: vec![],
             builtins_cache: BTreeMap::new(),
+            no_rules_lookup: false,
         })
     }
 
@@ -129,7 +131,7 @@ impl<'source> Interpreter<'source> {
                 // Stop path collection upon encountering the leading variable.
                 Expr::Var(v) => {
                     path.reverse();
-                    return self.lookup_var(v.text(), &path[..]);
+                    return self.lookup_var(v, &path[..]);
                 }
                 // Accumulate chained . field accesses.
                 Expr::RefDot { refr, field, .. } => {
@@ -489,119 +491,212 @@ impl<'source> Interpreter<'source> {
         Ok(r)
     }
 
-    fn make_bindings(
+    fn lookup_or_eval_expr(
         &mut self,
         cache: &mut BTreeMap<&'source Expr<'source>, Value>,
         expr: &'source Expr<'source>,
-        v: &Value,
+    ) -> Result<Value> {
+        match cache.get(expr) {
+            Some(v) => Ok(v.clone()),
+            _ => {
+                let v = self.eval_expr(expr)?;
+                cache.insert(expr, v.clone());
+                Ok(v)
+            }
+        }
+    }
+
+    fn make_bindings_impl(
+        &mut self,
+        is_last: bool,
+        type_match: &mut BTreeSet<&'source Expr<'source>>,
+        cache: &mut BTreeMap<&'source Expr<'source>, Value>,
+        expr: &'source Expr<'source>,
+        value: &Value,
     ) -> Result<bool> {
-        if v == &Value::Undefined {
+        // Propagate undefined.
+        if value == &Value::Undefined {
             return Ok(false);
         }
-        match expr {
-            Expr::Var(ident) => {
-                self.add_variable(ident.text(), v.clone())?;
+        let span = expr.span();
+        let raise_error = is_last && type_match.get(expr).is_none();
+
+        match (expr, value) {
+            (Expr::Var(ident), _) => {
+                self.add_variable(ident.text(), value.clone())?;
                 Ok(true)
             }
-            Expr::Array { .. } => {
-                let expr_v = self.eval_expr(expr)?;
-                if expr_v == Value::Undefined {
+
+            // Destructure arrays
+            (Expr::Array { items, .. }, Value::Array(a)) => {
+                if items.len() != a.len() {
+                    if raise_error {
+                        return Err(span.error(
+                            format!(
+                                "array length mismatch. Expected {} got {}.",
+                                items.len(),
+                                a.len()
+                            )
+                            .as_str(),
+                        ));
+                    }
                     return Ok(false);
                 }
-                Ok(&expr_v == v)
+                type_match.insert(expr);
+
+                for (idx, item) in items.iter().enumerate() {
+                    self.make_bindings(is_last, type_match, cache, item, &a[idx])?;
+                }
+
+                Ok(true)
             }
-            Expr::Object { .. } => {
-                let expr_v = self.eval_expr(expr)?;
-                if expr_v == Value::Undefined {
-                    return Ok(false);
+
+            // Destructure objects
+            (Expr::Object { fields, .. }, Value::Object(_)) => {
+                for (_, key_expr, value_expr) in fields.iter() {
+                    // Rego does not support bindings in keys.
+                    // Therefore, just eval key_expr.
+                    let key = self.lookup_or_eval_expr(cache, key_expr)?;
+                    let field_value = &value[&key];
+
+                    if field_value == &Value::Undefined {
+                        if raise_error {}
+                        return Ok(false);
+                    }
+
+                    // Match patterns in value_expr
+                    self.make_bindings(is_last, type_match, cache, value_expr, field_value)?;
                 }
-                Ok(&expr_v == v)
+                Ok(true)
             }
             _ => {
-                let expr_v = match cache.get(expr) {
-                    Some(v) => v.clone(),
-                    None => {
-                        let v = self.eval_expr(expr)?;
-                        cache.insert(expr, v.clone());
-                        v
-                    }
-                };
-                if expr_v == Value::Undefined {
+                let expr_value = self.lookup_or_eval_expr(cache, expr)?;
+                if expr_value == Value::Undefined {
                     return Ok(false);
                 }
-                // TODO: type checking
-                Ok(&expr_v == v)
+
+                if raise_error {
+                    let expr_t = builtins::types::get_type(&expr_value);
+                    let value_t = builtins::types::get_type(value);
+
+                    if expr_t != value_t {
+                        return Err(span.error(
+			format!("Cannot bind pattern of type `{expr_t}` with value of type `{value_t}`. Value is {value}.").as_str()));
+                    }
+                }
+                type_match.insert(expr);
+
+                Ok(&expr_value == value)
             }
         }
+    }
+
+    fn make_bindings(
+        &mut self,
+        is_last: bool,
+        type_match: &mut BTreeSet<&'source Expr<'source>>,
+        cache: &mut BTreeMap<&'source Expr<'source>, Value>,
+        expr: &'source Expr<'source>,
+        value: &Value,
+    ) -> Result<bool> {
+        let prev = self.no_rules_lookup;
+        self.no_rules_lookup = true;
+        let r = self.make_bindings_impl(is_last, type_match, cache, expr, value);
+        self.no_rules_lookup = prev;
+        r
+    }
+
+    fn make_key_value_bindings(
+        &mut self,
+        is_last: bool,
+        type_match: &mut BTreeSet<&'source Expr<'source>>,
+        cache: &mut BTreeMap<&'source Expr<'source>, Value>,
+        exprs: (&'source Option<Expr<'source>>, &'source Expr<'source>),
+        values: (&Value, &Value),
+    ) -> Result<bool> {
+        let (key_expr, value_expr) = exprs;
+        let (key, value) = values;
+        if let Some(key_expr) = key_expr {
+            if !self.make_bindings(is_last, type_match, cache, key_expr, key)? {
+                return Ok(false);
+            }
+        }
+        self.make_bindings(is_last, type_match, cache, value_expr, value)
     }
 
     fn eval_some_in(
         &mut self,
         _span: &'source Span<'source>,
-        key: &'source Option<Expr<'source>>,
-        value: &'source Expr<'source>,
+        key_expr: &'source Option<Expr<'source>>,
+        value_expr: &'source Expr<'source>,
         collection: &'source Expr<'source>,
         stmts: &'source [LiteralStmt<'source>],
     ) -> Result<bool> {
         let scope_saved = self.current_scope()?.clone();
+        let mut type_match = BTreeSet::new();
         let mut cache = BTreeMap::new();
         let mut count = 0;
         match self.eval_expr(collection)? {
             Value::Array(a) => {
-                for (k, v) in a.iter().enumerate() {
-                    if let Some(key) = key {
-                        if !self.make_bindings(&mut cache, key, &Value::from_float(k as Float))? {
-                            continue;
-                        }
-                    }
-                    if !self.make_bindings(&mut cache, value, v)? {
+                for (idx, value) in a.iter().enumerate() {
+                    if !self.make_key_value_bindings(
+                        idx == a.len() - 1,
+                        &mut type_match,
+                        &mut cache,
+                        (key_expr, value_expr),
+                        (&Value::from_float(idx as Float), value),
+                    )? {
                         continue;
                     }
-                    let r = self.eval_stmts(stmts)?;
-                    *self.current_scope_mut()? = scope_saved.clone();
-                    if r {
+
+                    if self.eval_stmts(stmts)? {
                         count += 1;
                     }
+                    *self.current_scope_mut()? = scope_saved.clone();
                 }
             }
             Value::Set(s) => {
-                for v in s.iter() {
-                    if !self.make_bindings(&mut cache, value, v)? {
+                for (idx, value) in s.iter().enumerate() {
+                    if !self.make_key_value_bindings(
+                        idx == s.len() - 1,
+                        &mut type_match,
+                        &mut cache,
+                        (key_expr, value_expr),
+                        (value, value),
+                    )? {
                         continue;
                     }
-                    if let Some(key) = key {
-                        if !self.make_bindings(&mut cache, key, v)? {
-                            continue;
-                        }
-                    }
-                    let r = self.eval_stmts(stmts)?;
-                    *self.current_scope_mut()? = scope_saved.clone();
-                    if r {
+
+                    if self.eval_stmts(stmts)? {
                         count += 1;
                     }
+                    *self.current_scope_mut()? = scope_saved.clone();
                 }
             }
+
             Value::Object(o) => {
-                for (k, v) in o.iter() {
-                    if !self.make_bindings(&mut cache, value, v)? {
+                for (idx, (key, value)) in o.iter().enumerate() {
+                    if !self.make_key_value_bindings(
+                        idx == o.len() - 1,
+                        &mut type_match,
+                        &mut cache,
+                        (key_expr, value_expr),
+                        (key, value),
+                    )? {
                         continue;
                     }
-                    if let Some(key) = key {
-                        if !self.make_bindings(&mut cache, key, k)? {
-                            continue;
-                        }
-                    }
-                    let r = self.eval_stmts(stmts)?;
-                    *self.current_scope_mut()? = scope_saved.clone();
-                    if r {
+
+                    if self.eval_stmts(stmts)? {
                         count += 1;
                     }
+                    *self.current_scope_mut()? = scope_saved.clone();
                 }
             }
+            Value::Undefined => (),
             v => {
                 let span = collection.span();
                 bail!(span.error(
-                    format!("`some .. in collection` expects a collection. Got {v}").as_str()
+                    format!("`some .. in collection` expects array/set/object. Got `{v}`").as_str()
                 ))
             }
         }
@@ -1253,7 +1348,9 @@ impl<'source> Interpreter<'source> {
         Ok(())
     }
 
-    fn lookup_var(&mut self, name: &str, fields: &[&str]) -> Result<Value> {
+    fn lookup_var(&mut self, span: &'source Span<'source>, fields: &[&str]) -> Result<Value> {
+        let name = span.text();
+
         // Return local variable/argument.
         if let Some(v) = self.lookup_local_var(name) {
             return Ok(Self::get_value_chained(v, fields));
@@ -1262,6 +1359,11 @@ impl<'source> Interpreter<'source> {
         // Handle input.
         if name == "input" {
             return Ok(Self::get_value_chained(self.input.clone(), fields));
+        }
+
+        // TODO: should we return before checking for input?
+        if self.no_rules_lookup {
+            return Err(span.error("undefined var"));
         }
 
         // Ensure that rules are evaluated
