@@ -57,19 +57,20 @@ fn is_string(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::Bool(matches!(&args[0], Value::String(_))))
 }
 
-fn type_name(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+pub fn get_type(value: &Value) -> &str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+        Value::Set(_) => "set",
+        Value::Undefined => "undefined",
+    }
+}
+
+pub fn type_name(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "type_name", params, args, 1)?;
-    Ok(Value::String(
-        match &args[0] {
-            Value::Null => "null",
-            Value::Bool(_) => "boolean",
-            Value::Number(_) => "number",
-            Value::String(_) => "string",
-            Value::Array(_) => "array",
-            Value::Object(_) => "object",
-            Value::Set(_) => "set",
-            Value::Undefined => "undefined",
-        }
-        .to_string(),
-    ))
+    Ok(Value::String(get_type(&args[0]).to_string()))
 }
