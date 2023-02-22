@@ -44,6 +44,28 @@ fi
 # Generate markdown
 grcov target/ --binary-path ./target/x86_64-unknown-linux-musl/debug/deps -s src/ -t markdown \
 --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o target/coverage/markdown
+
 cat target/coverage/markdown
+
+# Print small-form table of files without 100% coverage.
+echo "Files without 100% coverage"
+while read p; do
+    file=$(echo "$p" | cut -f 2 -d '|')
+    percent=$(echo "$p" | cut -f 3 -d '|')
+    missing=$(echo "$p" | cut -f 5 -d '|')
+
+    if [ -z "$file" ]; then
+	break
+    fi
+
+    # Trim percentage using xargs.
+    case $(echo "$percent" | xargs) in
+	 "100%")
+		continue
+    esac
+
+
+    echo "| $file | $percent |"
+done < target/coverage/markdown
 
 #TODO: Maybe use coveralls format (json) and query data to lockdown code coverage.
