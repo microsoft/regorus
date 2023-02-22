@@ -1,0 +1,56 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        x = [
+           sum([-1, 3, 2]),
+           sum([1, 2, -1]),
+           sum([1, -1, 2, -1]),           
+           sum([]),
+           sum([0]),
+           sum({3, 2, 1}),
+           sum(set()),
+           sum({0}),
+        ]
+
+        r {false}
+        u1 = sum(r)
+    query: data.test
+    want_result:
+      x: [4, 2, 1, 0, 0, 6, 0, 0]
+      
+  - note: invalid-null
+    data: {}
+    modules: ["package test\n x= sum(null)"]
+    query: data.test
+    error: "`sum` requires array/set argument."
+        
+  - note: invalid-bool
+    data: {}
+    modules: ["package test\n x= sum(true)"]
+    query: data.test
+    error: "`sum` requires array/set argument."
+
+  - note: invalid-number
+    data: {}
+    modules: ["package test\n x= sum(5)"]
+    query: data.test
+    error: "`sum` requires array/set argument."
+    
+  - note: invalid-string
+    data: {}
+    modules: ["package test\n x= sum(`abc`)"]
+    query: data.test
+    error: "`sum` requires array/set argument."
+    
+  - note: invalid-object
+    data: {}
+    modules: ["package test\n x= sum({})"]
+    query: data.test
+    error: "`sum` requires array/set argument."

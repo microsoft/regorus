@@ -1,0 +1,58 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        x = [
+          count([]),
+          count([1]),
+          count([1, 2, 3]),
+
+          count({}),
+          count({"a":1}),
+          count({"a":1, "b":2}),
+
+          count(set()),
+          count({1}),
+          count({1,1}),
+          count({1,2}),
+
+          count(""),
+          count("abc")
+        ]
+
+        # Undefined
+        r { false }
+        z = count(r)
+    query: data.test
+    want_result:
+      x: [
+        0, 1, 3,
+        0, 1, 2,
+        0, 1, 1, 2,
+        0, 3
+      ]
+
+  - note: invalid-null
+    data: {}
+    modules: ["package test\n x= count(null)"]
+    query: data.test
+    error: "`count` requires array/object/set/string argument."
+        
+  - note: invalid-bool
+    data: {}
+    modules: ["package test\n x= count(true)"]
+    query: data.test
+    error: "`count` requires array/object/set/string argument."
+
+  - note: invalid-number
+    data: {}
+    modules: ["package test\n x= count(5)"]
+    query: data.test
+    error: "`count` requires array/object/set/string argument."
+    

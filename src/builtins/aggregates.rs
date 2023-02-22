@@ -100,7 +100,8 @@ fn sort(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
             ac.sort();
             Value::from_array(ac)
         }
-        Value::Set(a) => Value::from_set(a.iter().cloned().collect()),
+        // Sorting a set produces array.
+        Value::Set(a) => Value::from_array(a.iter().cloned().collect()),
         a => {
             let span = params[0].span();
             bail!(span.error(format!("`sort` requires array/set argument. Got `{a}`.").as_str()))
