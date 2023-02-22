@@ -1,0 +1,56 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        x = [
+           product([-1, 3, 2]),
+           product([1, 2, -1]),
+           product([1, -1, 2, -1]),           
+           product([]),
+           product([0]),
+           product({3, 2, 1}),
+           product(set()),
+           product({0}),
+        ]
+
+        r {false}
+        u1 = product(r)
+    query: data.test
+    want_result:
+      x: [-6, -2, 2, 1, 0, 6, 1, 0]
+      
+  - note: invalid-null
+    data: {}
+    modules: ["package test\n x= product(null)"]
+    query: data.test
+    error: "`product` requires array/set argument."
+        
+  - note: invalid-bool
+    data: {}
+    modules: ["package test\n x= product(true)"]
+    query: data.test
+    error: "`product` requires array/set argument."
+
+  - note: invalid-number
+    data: {}
+    modules: ["package test\n x= product(5)"]
+    query: data.test
+    error: "`product` requires array/set argument."
+    
+  - note: invalid-string
+    data: {}
+    modules: ["package test\n x= product(`abc`)"]
+    query: data.test
+    error: "`product` requires array/set argument."
+    
+  - note: invalid-object
+    data: {}
+    modules: ["package test\n x= product({})"]
+    query: data.test
+    error: "`product` requires array/set argument."
