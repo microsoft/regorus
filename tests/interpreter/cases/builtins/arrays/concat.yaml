@@ -1,0 +1,63 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        x = [
+          array.concat([1, 2, 3], [4, 5, 6]),
+          array.concat([], [1]),
+          array.concat([1], []),
+          array.concat([], []),
+        ]
+        # Undefined
+        r { false }
+        u1 = array.concat([1], r)
+        u2 = array.concat(r, r)
+    query: data.test
+    want_result:
+      x :
+        - [1, 2, 3, 4, 5, 6]
+        - [1]
+        - [1]
+        - []
+
+  - note: concat-invalid-arg1
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.concat(1, [2])
+    query: data.test
+    error: "`array.concat` expects array argument."
+
+  - note: concat-invalid-arg2
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.concat([2], 1)
+    query: data.test
+    error: "`array.concat` expects array argument."
+
+  - note: concat-less-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.concat([2])
+    query: data.test
+    error: "`array.concat` expects 2 arguments"
+
+  - note: concat-more-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.concat([2], [3], [4])
+    query: data.test
+    error: "`array.concat` expects 2 arguments"

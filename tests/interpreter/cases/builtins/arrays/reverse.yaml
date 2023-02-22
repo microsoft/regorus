@@ -1,0 +1,51 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+        y = [
+          array.reverse([1, 2, 3]),
+          array.reverse([]),
+          array.reverse(array.reverse([1, 2, 3])),
+        ]
+
+        # Undefined
+        r { false }
+        u3 = array.reverse(r)
+    query: data.test
+    want_result:
+      y :
+        - [3, 2,1]
+        - []
+        - [1, 2, 3]
+
+  - note: reverse-invalid-arg
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.reverse(1)
+    query: data.test
+    error: "`array.reverse` expects array argument."
+
+  - note: reverse-less-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.reverse()
+    query: data.test
+    error: "at least one argument required for function calls"
+
+  - note: reverse-more-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.reverse([2], [3])
+    query: data.test
+    error: "`array.reverse` expects 1 argument"
