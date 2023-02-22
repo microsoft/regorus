@@ -27,7 +27,8 @@ lazy_static! {
 
 	numbers::register(&mut m);
 	aggregates::register(&mut m);
-	arrays::register(&mut m);	
+	arrays::register(&mut m);
+	types::register(&mut m);
 
 	m
     };

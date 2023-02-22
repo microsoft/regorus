@@ -350,37 +350,6 @@ fn one_yaml() -> Result<()> {
     yaml_test(file.as_str())
 }
 
-/*
-fn run_yaml_tests_in(folder: &str) -> Result<()> {
-    let mut total = 0;
-
-    for entry in WalkDir::new(folder)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry
-            .path()
-            .to_str()
-            .ok_or_else(|| anyhow!("failed to convert path to utf8 {:?}", entry.path()))?;
-        if !path.ends_with(".yaml") {
-            continue;
-        }
-
-        total += 1;
-        yaml_test(path)?;
-    }
-
-    println!("{} yaml tests passed.", total);
-    Ok(())
-}
-
-#[test]
-fn run_yaml_tests() -> Result<()> {
-    run_yaml_tests_in("tests/interpreter")
-}
-*/
-
 #[test_resources("tests/interpreter/**/*.yaml")]
 fn run(path: &str) {
     yaml_test(path).unwrap()
