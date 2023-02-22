@@ -1,0 +1,86 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        z = [
+           array.slice([1, 2, 3], 0, 1),
+           array.slice([1, 2, 3], 0, 2),
+           array.slice([1, 2, 3], 2, 3),
+           array.slice([1, 2, 3], 0, 5),
+           array.slice([1, 2, 3], 5, 5),
+           array.slice([1, 2, 3], -5, 5),
+           array.slice([1, 2, 3], -5, 0),
+           array.slice([1, 2, 3], -5, 1),
+           array.slice([], -5, 1),
+        ]        
+
+        # Undefined
+        r { false }
+        u1 = array.slice(r, 1, 2)
+        u2 = array.slice([1], r, 2)
+        u3 = array.slice([1], 1, r)
+        u4 = array.slice([5], 1.1, 2)
+        u5 = array.slice([5], 1, 2.1)        
+    query: data.test
+    want_result:
+      z :
+        - [1]
+        - [1, 2]
+        - [3]
+        - [1, 2, 3]
+        - []
+        - [1, 2, 3]
+        - []
+        - [1]
+        - []
+
+  - note: invalid-arg1
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.slice(1, 2, 3)
+    query: data.test
+    error: "`array.slice` expects array argument."
+
+  - note: invalid-arg2
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.slice([2], "1", 2)
+    query: data.test
+    error: "`array.slice` expects numeric argument."
+
+  - note: invalid-arg3
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.slice([2], 1,  "2")
+    query: data.test
+    error: "`array.slice` expects numeric argument."
+
+  - note: less-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.slice([2], 1)
+    query: data.test
+    error: "`array.slice` expects 3 arguments"
+
+  - note: more-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.slice([2], 1, 2, 3)
+    query: data.test
+    error: "`array.slice` expects 3 arguments"
