@@ -70,24 +70,20 @@ impl<'source> Interpreter<'source> {
     }
 
     fn current_module(&self) -> Result<&'source Module<'source>> {
-        match &self.module {
-            Some(m) => Ok(m),
-            _ => bail!("internal error: current module not set"),
-        }
+        self.module
+            .ok_or_else(|| anyhow!("internal error: current module not set"))
     }
 
     fn current_scope(&mut self) -> Result<&Scope> {
-        match self.scopes.last() {
-            Some(scope) => Ok(scope),
-            _ => bail!("internal error: no active scope"),
-        }
+        self.scopes
+            .last()
+            .ok_or_else(|| anyhow!("internal error: no active scope"))
     }
 
     fn current_scope_mut(&mut self) -> Result<&mut Scope> {
-        match self.scopes.last_mut() {
-            Some(scope) => Ok(scope),
-            _ => bail!("internal error: no active scope"),
-        }
+        self.scopes
+            .last_mut()
+            .ok_or_else(|| anyhow!("internal error: no active scope"))
     }
 
     #[inline(always)]
@@ -119,7 +115,7 @@ impl<'source> Interpreter<'source> {
             *variable = value.clone();
             Ok(())
         } else {
-            Err(anyhow!("variable {} is undefined", name))
+            bail!("variable {} is undefined", name)
         }
     }
 
@@ -338,63 +334,49 @@ impl<'source> Interpreter<'source> {
     ) -> Result<Value> {
         let (name, value) = match op {
             AssignOp::Eq => {
-                if matches!(lhs, Expr::Var(_)) && !matches!(rhs, Expr::Var(_)) {
-                    let (name, var) = if let Expr::Var(span) = lhs {
-                        (span.text(), self.eval_expr(lhs)?)
-                    } else {
-                        unreachable!();
-                    };
+                match (lhs, rhs) {
+                    (Expr::Var(lhs_span), Expr::Var(rhs_span)) => {
+                        let (lhs_name, lhs_var) = (lhs_span.text(), self.eval_expr(lhs)?);
+                        let (rhs_name, rhs_var) = (rhs_span.text(), self.eval_expr(rhs)?);
 
-                    // TODO: Check this
-                    // Allow variable overwritten inside a loop
-                    if !matches!(var, Value::Undefined) && self.loop_var_values.get(rhs).is_none() {
-                        return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
+                        match (&lhs_var, &rhs_var) {
+                            (Value::Undefined, Value::Undefined) => {
+                                bail!("both operators are unsafe")
+                            }
+                            (Value::Undefined, _) => (lhs_name, rhs_var),
+                            (_, Value::Undefined) => (rhs_name, lhs_var),
+                            // TODO: avoid reeval
+                            _ => return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs),
+                        }
                     }
+                    (Expr::Var(lhs_span), _) => {
+                        let (name, var) = (lhs_span.text(), self.eval_expr(lhs)?);
 
-                    (name, self.eval_expr(rhs)?)
-                } else if !matches!(lhs, Expr::Var(_)) && matches!(rhs, Expr::Var(_)) {
-                    let (name, var) = if let Expr::Var(span) = rhs {
-                        (span.text(), self.eval_expr(rhs)?)
-                    } else {
-                        unreachable!();
-                    };
+                        // TODO: Check this
+                        // Allow variable overwritten inside a loop
+                        if !matches!(var, Value::Undefined)
+                            && self.loop_var_values.get(rhs).is_none()
+                        {
+                            return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
+                        }
 
-                    // TODO: Check this
-                    // Allow variable overwritten inside a loop
-                    if !matches!(var, Value::Undefined) && self.loop_var_values.get(lhs).is_none() {
-                        return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
+                        (name, self.eval_expr(rhs)?)
                     }
+                    (_, Expr::Var(rhs_span)) => {
+                        let (name, var) = (rhs_span.text(), self.eval_expr(rhs)?);
 
-                    (name, self.eval_expr(lhs)?)
-                } else if matches!(lhs, Expr::Var(_)) && matches!(rhs, Expr::Var(_)) {
-                    let (lhs_name, lhs_var) = if let Expr::Var(span) = lhs {
-                        (span.text(), self.eval_expr(lhs)?)
-                    } else {
-                        unreachable!();
-                    };
+                        // TODO: Check this
+                        // Allow variable overwritten inside a loop
+                        if !matches!(var, Value::Undefined)
+                            && self.loop_var_values.get(lhs).is_none()
+                        {
+                            return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
+                        }
 
-                    let (rhs_name, rhs_var) = if let Expr::Var(span) = rhs {
-                        (span.text(), self.eval_expr(rhs)?)
-                    } else {
-                        unreachable!();
-                    };
-
-                    if matches!(lhs_var, Value::Undefined) && !matches!(rhs_var, Value::Undefined) {
-                        (lhs_name, rhs_var)
-                    } else if !matches!(lhs_var, Value::Undefined)
-                        && matches!(rhs_var, Value::Undefined)
-                    {
-                        (rhs_name, lhs_var)
-                    } else if !matches!(lhs_var, Value::Undefined)
-                        && !matches!(rhs_var, Value::Undefined)
-                    {
-                        return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
-                    } else {
-                        bail!("both operators are unsafe");
+                        (name, self.eval_expr(lhs)?)
                     }
-                } else {
                     // Treat the assignment as comparison if neither lhs nor rhs is a variable
-                    return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
+                    _ => return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs),
                 }
             }
             AssignOp::ColEq => {
