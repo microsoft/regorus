@@ -1,0 +1,72 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: rand.intn
+    data: {}
+    modules:
+      - |
+        package test
+        x = rand.intn("x", 50000)
+        y = rand.intn("y", 50000)
+        z = [p |
+           p := rand.intn("x", 50000)
+        ]
+        a = rand.intn("x", 25000)
+
+        results = [
+          x == z[0],
+          x != y,
+          x != a,
+          rand.intn("b", 0)
+        ]
+    query: data.test.results
+    want_result: [true, true, true, 0]
+
+  - note: undefined
+    data: {}
+    modules:
+      - |
+        package test
+        y { false }
+        r1 = rand.intn(y, 10)
+        r2 = rand.intn(10, y)
+        r3 = rand.intn("a", 10.3)
+    query: data.test
+    want_result: {}
+
+  - note: extra-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = rand.intn("abc", 10, 11)
+    query: data.test.x
+    error: "`rand.intn` expects 2 arguments"
+
+  - note: less-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = rand.intn("abc")
+    query: data.test.x
+    error: "`rand.intn` expects 2 arguments"
+
+  - note: invalid-type-1
+    data: {}
+    modules:
+      - |
+        package test
+        x = rand.intn(1, 2)
+    query: data.test.x
+    error: "`rand.intn` expects string argument"
+
+  - note: invalid-type-2
+    data: {}
+    modules:
+      - |
+        package test
+        x = rand.intn("a", "b")
+    query: data.test.x
+    error: "`rand.intn` expects numeric argument"

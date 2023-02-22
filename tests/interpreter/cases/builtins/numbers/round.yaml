@@ -1,0 +1,36 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: round
+    data: {}
+    modules:
+      - |
+        package test
+        x = [round(-9.4), round(-9.5), round(-9.6),
+             round(9.4), round(9.5), round(9.6),
+             round(8), round(-8)]
+
+        # Undefined
+        y { false }
+        z = round(y)
+    query: data.test.x
+    want_result: [-9, -10, -10, 9, 10, 10, 8, -8]
+
+  - note: extra-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = round(-9, 10)
+    query: data.test.x
+    error: "`round` expects 1 argument"
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+        x = round("-9")
+    query: data.test.x
+    error: "`round` expects numeric argument"

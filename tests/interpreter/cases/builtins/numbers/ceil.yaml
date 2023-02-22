@@ -1,0 +1,34 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: ceil
+    data: {}
+    modules:
+      - |
+        package test
+        x = [ceil(9.1), ceil(-9.1), ceil(9), ceil(-9)]
+        # Undefined
+        y { false }
+        z = ceil(y)
+    query: data.test
+    want_result:
+      x: [10, -9, 9, -9]
+
+  - note: extra-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = ceil(-9, 10)
+    query: data.test.x
+    error: "`ceil` expects 1 argument"
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+        x = ceil("-9")
+    query: data.test.x
+    error: "`ceil` expects numeric argument"

@@ -1,0 +1,68 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: numbers.range
+    data: {}
+    modules:
+      - |
+        package test
+        r1 = numbers.range(1, 5)
+        r2 = numbers.range(5, 1)
+        r3 = numbers.range(-1, -5)
+        r4 = numbers.range(-5, -1)
+
+        # Single item range
+        r5 = numbers.range(8, 8)
+
+        # Non-integer start and end result in Undefined.
+        r6 = numbers.range(1.01, 5)
+        r7 = numbers.range(1, 5.01)
+
+        y { false }
+        r8 = numbers.range(y, 10)
+        r9 = numbers.range(10, y)
+
+    query: data.test
+    want_result:
+      r1: [1, 2, 3, 4, 5]
+      r2: [5, 4, 3, 2, 1]
+      r3: [-1, -2, -3, -4, -5]
+      r4: [-5, -4, -3, -2, -1]
+      r5: [8]
+
+  - note: less-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range(1)
+    query: data.test.x
+    error: "`numbers.range` expects 2 arguments"
+
+  - note: more-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range(1, 2, 3)
+    query: data.test.x
+    error: "`numbers.range` expects 2 arguments"
+
+  - note: invalid-start
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range("1", 2)
+    query: data.test.x
+    error: "`numbers.range` expects numeric argument"
+
+  - note: invalid-end
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range(1, "2")
+    query: data.test.x
+    error: "`numbers.range` expects numeric argument"

@@ -1,0 +1,35 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: floor
+    data: {}
+    modules:
+      - |
+        package test
+        x = [floor(9.1), floor(-9.1), floor(9), floor(-9)]
+        # Undefined
+        y { false }
+        z = floor(y)
+    query: data.test
+    want_result:
+      x: [9, -10, 9, -9]
+
+  - note: extra-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = floor(-9, 10)
+    query: data.test.x
+    error: "`floor` expects 1 argument"
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+        x = floor("-9")
+    query: data.test.x
+    error: "`floor` expects numeric argument"
+
