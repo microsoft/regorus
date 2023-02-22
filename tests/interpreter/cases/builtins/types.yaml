@@ -1,0 +1,48 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        items = [
+           [],
+           true,
+           null,
+           0,
+           {},
+           set(),
+           "abc",
+        ]
+
+        results = {
+          "is_array" : [x | x = items[_]; is_array(x)],
+          "is_boolean" : [x | x = items[_]; is_boolean(x)],
+          "is_null" : [x | x = items[_]; is_null(x)],
+          "is_number" : [x | x = items[_]; is_number(x)],
+          "is_object" : [x | x = items[_]; is_object(x)],
+          "is_set" : [x | x = items[_]; is_set(x)],
+          "is_string" : [x | x = items[_]; is_string(x)],
+          "type_names": [n | n = type_name(items[_])],
+        }
+    query: data.test.results
+    want_result:
+      is_array: [[]]
+      is_boolean: [true]
+      is_null: [null]
+      is_number: [0]
+      is_object: [{}]
+      is_set:
+        - set!: []
+      is_string: ["abc"]
+      type_names:
+        - "array"
+        - "boolean"
+        - "null"
+        - "number"
+        - "object"
+        - "set"
+        - "string"
