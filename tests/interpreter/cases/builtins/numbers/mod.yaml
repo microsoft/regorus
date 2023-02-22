@@ -1,0 +1,47 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: mod
+    data: {}
+    modules:
+      - |
+        package test
+        x = 10%3
+
+        # Undefined
+        y { false }
+        a = 1 % 0
+        b = y % 1
+        c = 1 % y
+    query: data.test
+    want_result:
+      x : 1
+
+  - note: non-numeric
+    data: {}
+    modules:
+      - |
+        package test
+        x = "1" % 9
+    query: data.test.x
+    error: "`mod` expects numeric argument."
+
+  - note: undefined
+    data: {}
+    modules:
+      - |
+        package test
+        a { false }
+        x = a % 10
+    query: data.test
+    want_result: {}
+
+  - note: by-zero
+    data: {}
+    modules:
+      - |
+        package test
+        x = 1%0
+    query: data.test
+    want_result: {}

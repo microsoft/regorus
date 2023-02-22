@@ -1,0 +1,35 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: abs
+    data: {}
+    modules:
+      - |
+        package test
+        x = [abs(-9), abs(9), abs(-9.1), abs(9.1)]
+
+        # Undefined
+        y { false }
+        z = abs(y)
+    query: data.test
+    want_result:
+      x: [9, 9, 9.1, 9.1]
+
+  - note: extra-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = abs(-9, 10)
+    query: data.test.x
+    error: "`abs` expects 1 argument"
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+        x = abs("-9")
+    query: data.test.x
+    error: "`abs` expects numeric argument"

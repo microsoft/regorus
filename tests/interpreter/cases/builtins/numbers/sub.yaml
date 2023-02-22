@@ -1,0 +1,36 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: sub
+    data: {}
+    modules:
+      - |
+        package test
+        x = 3 - -1 - 4.5
+        # Undefined
+        y { false }
+        a = 1 - y
+        b = y - 1
+    query: data.test
+    want_result:
+      x: -0.5
+
+  - note: non-numeric
+    data: {}
+    modules:
+      - |
+        package test
+        x = "1" - 9
+    query: data.test.x
+    error: "`sub` expects numeric argument."
+
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+        x = 16 / 2 % 5 / 2
+    query: data.test
+    want_result:
+      x: 1.5
