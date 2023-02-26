@@ -6,6 +6,7 @@ pub mod builtins;
 pub mod interpreter;
 pub mod lexer;
 pub mod parser;
+pub mod scheduler;
 pub mod value;
 
 pub use ast::*;
