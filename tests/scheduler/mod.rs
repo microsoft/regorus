@@ -40,9 +40,9 @@ fn check_result(stmts: &[&str], expected: &[&str], r: SortResult) -> Result<()> 
 fn case1() -> Result<()> {
     let stmts = vec![
         "v = x",
+        "y = [1, 2, 4][_]",
         "x > 10",
         "x = y + z",
-        "y = [1, 2, 4][_]",
         "z = [4, 8][_]",
         "x = 5",
         "v = 1",
@@ -60,9 +60,9 @@ fn case1() -> Result<()> {
 
     let mut infos = vec![
         make_info(&[("v", &["x"]), ("x", &["v"])]),
+        make_info(&[("y", &[])]),
         make_info(&[("", &["x"])]),
         make_info(&[("x", &["y", "z"])]),
-        make_info(&[("y", &[])]),
         make_info(&[("z", &[])]),
         make_info(&[("x", &[])]),
         make_info(&[("v", &[])]),
@@ -72,16 +72,26 @@ fn case1() -> Result<()> {
 }
 
 #[test]
-#[ignore = "destructing needs more thought. Hoist exprs and introduce new assignments?"]
+//#[ignore = "destructing needs more thought. Hoist exprs and introduce new assignments?"]
 fn case2() -> Result<()> {
-    let stmts = vec!["[x, y+1] = [y, p]", "value = x + p", "y = 5"];
+    #[rustfmt::skip]
+    let stmts = vec![
+	"[x, y+1] = [y, p]",
+	"value = x + p",
+	"y = 5"
+    ];
 
-    let expected = vec!["y = 5", "[x, y+1] = [y, p]", "value = x + p"];
+    #[rustfmt::skip]
+    let expected = vec![
+	"y = 5",
+	"[x, y+1] = [y, p]",
+	"value = x + p"
+    ];
 
     let mut infos = vec![
-        make_info(&[("y", &[])]),
-        make_info(&[("value", &["x", "p"])]),
         make_info(&[("x", &["y"]), ("y", &["x"]), ("p", &["y"])]),
+        make_info(&[("value", &["x", "p"])]),
+        make_info(&[("y", &[])]),
     ];
 
     check_result(&stmts[..], &expected[..], schedule(&mut infos)?)
@@ -89,9 +99,20 @@ fn case2() -> Result<()> {
 
 #[test]
 fn case2_rewritten() -> Result<()> {
-    let stmts = vec!["y+1 = p", "x = y", "value = x + p", "y = 5"];
+    #[rustfmt::skip]
+    let stmts = vec![
+	"y+1 = p",
+	"x = y",
+	"value = x + p", "y = 5"
+    ];
 
-    let expected = vec!["y = 5", "y+1 = p", "x = y", "value = x + p"];
+    #[rustfmt::skip]
+    let expected = vec![
+	"y = 5",
+	"y+1 = p",
+	"x = y",
+	"value = x + p"
+    ];
 
     let mut infos = vec![
         make_info(&[("p", &["y"])]),

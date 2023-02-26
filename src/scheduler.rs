@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use anyhow::Result;
 
@@ -57,34 +57,91 @@ pub fn schedule<'a>(infos: &mut [StmtInfo<'a>]) -> Result<SortResult> {
     let mut vars_to_process: Vec<&'a str> = defining_stmts.keys().cloned().collect();
     let mut tmp = vec![];
 
+    let mut queue = VecDeque::new();
+    let mut schedule_stmt = |stmt_idx: usize| {
+        // Check if the statement has already been scheduled.
+        if scheduled[stmt_idx] {
+            return None;
+        }
+
+        let definitions = &infos[stmt_idx].definitions;
+
+        let can_be_scheduled = if definitions.len() == 1 {
+            // Handle the more common case of single definition statements optimally.
+            // Check if all the vars used by the definition are previously assigned.
+            definitions[0]
+                .used_vars
+                .iter()
+                .all(|uv| defined_vars.contains(uv))
+        } else {
+            // Set of vars that can be defined in this statement.
+            let mut defined_in_stmt = BTreeSet::new();
+
+            // Add each definition to processing queue.
+            queue.clear();
+            for defn in definitions {
+                queue.push_back(defn);
+            }
+
+            while !queue.is_empty() {
+                let n = queue.len();
+                for _ in 0..n {
+                    let defn = queue.pop_front().unwrap();
+                    // Check if the vars used by this definition are
+                    //  1) defined via prior assignments (or)
+                    //  2) defined in current statement
+                    if defn
+                        .used_vars
+                        .iter()
+                        .all(|uv| defined_vars.contains(uv) || defined_in_stmt.contains(uv))
+                    {
+                        defined_in_stmt.insert(defn.var);
+                    } else {
+                        // The definiton must be processed again.
+                        queue.push_back(defn);
+                    }
+                }
+                // If no definition became defined, then there is a cycle between
+                // the definitions in this statement. The cycle cannot be broken yet.
+                if n == queue.len() {
+                    break;
+                }
+            }
+
+            // If the vars used by all the definitions are already defined or
+            // can be defined by scheduling this statement, return true.
+            queue.is_empty()
+        };
+
+        // Schedule the var if possible.
+        if can_be_scheduled {
+            order.push(stmt_idx);
+            scheduled[stmt_idx] = true;
+
+            // For each definition in the statement, mark its var as defined.
+            for defn in &infos[stmt_idx].definitions {
+                defined_vars.insert(defn.var);
+            }
+            Some(true)
+        } else {
+            Some(false)
+        }
+    };
+
     let mut process_var = |var| {
         let mut stmt_scheduled = false;
         let mut reprocess_var = false;
         // Loop through each statement that defines the var.
         for stmt_idx in defining_stmts.entry(var).or_default().iter().cloned() {
-            // If the statement has already been scheduled, skip it.
-            if scheduled[stmt_idx] {
-                continue;
-            }
-
-            // In the statement, find the defn for the var.
-            for defn in &infos[stmt_idx].definitions {
-                if defn.var != var {
-                    continue;
-                }
-
-                // If all the vars used by the definition are defined,
-                // then the statement can be scheduled.
-                if defn.used_vars.iter().all(|v| defined_vars.contains(v)) {
-                    // Schedule the statement.
-                    order.push(stmt_idx);
-                    scheduled[stmt_idx] = true;
-
-                    // Mark the var as defined.
-                    defined_vars.insert(var);
+            match schedule_stmt(stmt_idx) {
+                Some(true) => {
                     stmt_scheduled = true;
-                } else {
+                }
+                Some(false) => {
                     reprocess_var = true;
+                }
+                None => {
+                    // Statement has already been scheduled.
                 }
             }
         }
