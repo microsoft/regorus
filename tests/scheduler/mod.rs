@@ -123,3 +123,118 @@ fn case2_rewritten() -> Result<()> {
 
     check_result(&stmts[..], &expected[..], schedule(&mut infos)?)
 }
+
+#[test]
+fn case3() -> Result<()> {
+    #[rustfmt::skip]
+    let stmts = vec![
+	r#"[x, {"p":p}] = [y, t]"#,
+	r#"t = {"p":8, "p":6}"#,
+	"value = x + y + p",
+	"y = 5",
+    ];
+
+    #[rustfmt::skip]
+    let expected = vec![
+	r#"t = {"p":8, "p":6}"#,
+	"y = 5",
+	r#"[x, {"p":p}] = [y, t]"#,
+	"value = x + y + p",
+    ];
+
+    let mut infos = vec![
+        make_info(&[("x", &["y"]), ("p", &["t"])]),
+        make_info(&[("t", &[])]),
+        make_info(&[("value", &["x", "y", "p"])]),
+        make_info(&[("y", &[])]),
+    ];
+
+    check_result(&stmts[..], &expected[..], schedule(&mut infos)?)
+}
+
+#[test]
+fn case4_cycle() -> Result<()> {
+    #[rustfmt::skip]
+    let stmts = vec![
+	r#"[x, {"p":p}] = [y, t]"#,
+	r#"t = {"p":x}"#,
+	"value = x + y + p",
+	"y = 5",
+    ];
+
+    // Rest of the statements cannot be processed due to cycle.
+    #[rustfmt::skip]
+    let expected = vec![
+	"y = 5",
+    ];
+
+    let mut infos = vec![
+        make_info(&[("x", &["y"]), ("p", &["t"])]),
+        make_info(&[("t", &["x"])]),
+        make_info(&[("value", &["x", "y", "p"])]),
+        make_info(&[("y", &[])]),
+    ];
+
+    // TODO: check cycle
+    check_result(&stmts[..], &expected[..], schedule(&mut infos)?)
+}
+
+#[test]
+fn case4_no_cycle() -> Result<()> {
+    #[rustfmt::skip]
+    let stmts = vec![
+	r#"[x, {"p":p}] = [y, {"p":x}]"#,
+	"value = x + y + p",
+	"y = 5",
+    ];
+
+    // Rest of the statements cannot be processed due to cycle.
+    #[rustfmt::skip]
+    let expected = vec![
+	"y = 5",
+	r#"[x, {"p":p}] = [y, {"p":x}]"#,
+	"value = x + y + p",
+    ];
+
+    let mut infos = vec![
+        make_info(&[("x", &["y"]), ("p", &["x"])]),
+        make_info(&[("value", &["x", "y", "p"])]),
+        make_info(&[("y", &[])]),
+    ];
+
+    // TODO: check cycle
+    check_result(&stmts[..], &expected[..], schedule(&mut infos)?)
+}
+
+#[test]
+fn case4_cycle_removed_via_split_multi_assign() -> Result<()> {
+    #[rustfmt::skip]
+    let stmts = vec![
+	r#"x = y"#,
+	r#"{"p":p} = t"#,
+	r#"t = {"p":x}"#,
+	"value = x + y + p",
+	"y = 5",
+    ];
+
+    // Rest of the statements cannot be processed due to cycle.
+    #[rustfmt::skip]
+    let expected = vec![
+	"y = 5",
+	r#"x = y"#,
+	r#"t = {"p":x}"#,
+	r#"{"p":p} = t"#,
+	"value = x + y + p",
+    ];
+
+    let mut infos = vec![
+        make_info(&[("x", &["y"])]),
+        make_info(&[("p", &["t"])]),
+        make_info(&[("t", &["x"])]),
+        make_info(&[("value", &["x", "y", "p"])]),
+        make_info(&[("y", &[])]),
+    ];
+
+    // TODO: check cycle
+    check_result(&stmts[..], &expected[..], schedule(&mut infos)?)
+}
