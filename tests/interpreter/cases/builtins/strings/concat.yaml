@@ -31,6 +31,26 @@ cases:
       s3: ""
       s4: ""
 
+  - note: undefined-delimiter
+    data: {}
+    modules:
+      - |
+        package test
+        x { false }
+        y = concat(x, [])
+    query: data.test
+    want_result: {}
+    
+  - note: undefined-collection
+    data: {}
+    modules:
+      - |
+        package test
+        x { false }
+        y = concat(",", x)
+    query: data.test
+    want_result: {}
+    
   - note: invalid-null-delimiter
     data: {}
     modules: ["package test\nx=concat(null, [])"]
