@@ -53,6 +53,45 @@ pub fn ensure_string(fcn: &str, arg: &Expr, v: &Value) -> Result<String> {
     })
 }
 
+pub fn ensure_string_element<'a>(
+    fcn: &str,
+    arg: &Expr,
+    v: &'a Value,
+    idx: usize,
+) -> Result<&'a str> {
+    Ok(match &v {
+        Value::String(s) => s.as_str(),
+        _ => {
+            let span = arg.span();
+            bail!(span.error(
+                format!("`{fcn}` expects string collection. Element {idx} is not a string.")
+                    .as_str()
+            ))
+        }
+    })
+}
+
+pub fn ensure_string_collection<'a>(fcn: &str, arg: &Expr, v: &'a Value) -> Result<Vec<&'a str>> {
+    let mut collection = vec![];
+    match &v {
+        Value::Array(a) => {
+            for (idx, elem) in a.iter().enumerate() {
+                collection.push(ensure_string_element(fcn, arg, elem, idx)?);
+            }
+        }
+        Value::Set(s) => {
+            for (idx, elem) in s.iter().enumerate() {
+                collection.push(ensure_string_element(fcn, arg, elem, idx)?);
+            }
+        }
+        _ => {
+            let span = arg.span();
+            bail!(span.error(format!("`{fcn}` expects array/set of strings.").as_str()))
+        }
+    }
+    Ok(collection)
+}
+
 pub fn ensure_array(fcn: &str, arg: &Expr, v: Value) -> Result<Rc<Vec<Value>>> {
     Ok(match v {
         Value::Array(a) => a,

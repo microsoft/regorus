@@ -6,6 +6,7 @@ pub mod arrays;
 pub mod comparison;
 pub mod numbers;
 pub mod sets;
+pub mod strings;
 pub mod types;
 pub mod utils;
 
@@ -24,12 +25,15 @@ pub type BuiltinFcn = fn(&Span, &[Expr], &[Value]) -> Result<Value>;
 lazy_static! {
     pub static ref BUILTINS: HashMap<&'static str, BuiltinFcn> = {
 	let mut m : HashMap<&'static str, BuiltinFcn>  = HashMap::new();
-
+	
+	// comparison functions are directly called.
 	numbers::register(&mut m);
 	aggregates::register(&mut m);
 	arrays::register(&mut m);
+	sets::register(&mut m);
 	types::register(&mut m);
-
+	strings::register(&mut m);
+	
 	m
     };
 }

@@ -1,19 +1,24 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use crate::ast::Expr;
+use crate::builtins;
+use crate::builtins::utils::{ensure_args_count, ensure_string, ensure_string_collection};
+use crate::lexer::Span;
 use crate::value::Value;
 
-use anyhow::{bail, Result};
+use std::collections::HashMap;
 
-fn ensure_numeric(fcn: &str, arg: &Expr, v: &Value) -> Result<Float> {
-    Ok(match &v {
-        Value::Number(n) => n.0 .0,
-        _ => {
-            let span = arg.span();
-            bail!(
-                span.error(format!("`{fcn}` expects numeric argument. Got `{v}` instead").as_str())
-            )
-        }
-    })
+use anyhow::Result;
+
+pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+    m.insert("concat", concat);
 }
 
+fn concat(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+    let name = "concat";
+    ensure_args_count(span, name, params, args, 2)?;
+    let delimiter = ensure_string(name, &params[0], &args[0])?;
+    let collection = ensure_string_collection(name, &params[1], &args[1])?;
+    Ok(Value::String(collection.join(&delimiter)))
+}
