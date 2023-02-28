@@ -5,7 +5,7 @@ use crate::ast::Expr;
 use crate::lexer::Span;
 use crate::value::{Float, Value};
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use anyhow::{bail, Result};
@@ -108,6 +108,16 @@ pub fn ensure_set(fcn: &str, arg: &Expr, v: Value) -> Result<Rc<BTreeSet<Value>>
         _ => {
             let span = arg.span();
             bail!(span.error(format!("`{fcn}` expects set argument. Got `{v}` instead").as_str()))
+        }
+    })
+}
+
+pub fn ensure_object(fcn: &str, arg: &Expr, v: Value) -> Result<Rc<BTreeMap<Value, Value>>> {
+    Ok(match v {
+        Value::Object(o) => o,
+        _ => {
+            let span = arg.span();
+            bail!(span.error(format!("`{fcn}` expects object argument. Got `{v}` instead").as_str()))
         }
     })
 }
