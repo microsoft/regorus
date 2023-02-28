@@ -1,0 +1,116 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        v1 = endswith("Hello, world", "ld")
+        v2 = endswith("Hello world", "") # empty substring
+        v3 = endswith("", "ld") # empty string
+        v4 = endswith("", "") # empty substring and string
+
+    query: data.test
+    want_result:
+      v1: true
+      v2: true
+      v3: false
+      v4: true
+
+  - note: undefined-string
+    data: {}
+    modules:
+      - |
+        package test
+        x { false }
+        y = endswith(x, "")
+    query: data.test
+    want_result: {}
+
+  - note: undefined-substring
+    data: {}
+    modules:
+      - |
+        package test
+        x { false }
+        y = endswith(",", x)
+    query: data.test
+    want_result: {}
+
+  - note: invalid-null-string
+    data: {}
+    modules: ["package test\nx=endswith(null, ``)"]
+    query: data.test
+    error: "`endswith` expects string argument."
+
+  - note: invalid-bool-string
+    data: {}
+    modules: ["package test\nx=endswith(true, ``)"]
+    query: data.test
+    error: "`endswith` expects string argument."
+
+  - note: invalid-number-string
+    data: {}
+    modules: ["package test\nx=endswith(1, ``)"]
+    query: data.test
+    error: "`endswith` expects string argument."
+
+  - note: invalid-array-string
+    data: {}
+    modules: ["package test\nx=endswith([], ``)"]
+    query: data.test
+    error: "`endswith` expects string argument."
+
+  - note: invalid-set-string
+    data: {}
+    modules: ["package test\nx=endswith(set(), ``)"]
+    query: data.test
+    error: "`endswith` expects string argument."
+
+  - note: invalid-object-string
+    data: {}
+    modules: ["package test\nx=endswith({}, ``)"]
+    query: data.test
+    error: "`endswith` expects string argument."
+
+
+
+
+  - note: invalid-null-substring
+    data: {}
+    modules: ["package test\nx=endswith(``, null)"]
+    query: data.test
+    error: "`endswith` expects string argument."
+
+  - note: invalid-bool-substring
+    data: {}
+    modules: ["package test\nx=endswith(``, true)"]
+    query: data.test
+    error: "`endswith` expects string argument."
+
+  - note: invalid-number-substring
+    data: {}
+    modules: ["package test\nx=endswith(``, 1)"]
+    query: data.test
+    error: "`endswith` expects string argument."
+
+  - note: invalid-array-substring
+    data: {}
+    modules: ["package test\nx=endswith(``, [])"]
+    query: data.test
+    error: "`endswith` expects string argument."
+
+  - note: invalid-set-substring
+    data: {}
+    modules: ["package test\nx=endswith(``, set())"]
+    query: data.test
+    error: "`endswith` expects string argument."
+
+  - note: invalid-object-substring
+    data: {}
+    modules: ["package test\nx=endswith(``, {})"]
+    query: data.test
+    error: "`endswith` expects string argument."

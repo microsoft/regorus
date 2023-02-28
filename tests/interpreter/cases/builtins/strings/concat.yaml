@@ -9,16 +9,16 @@ cases:
         package test
 
         # Arrays
-        a1 = concat(", ", ["Hello", "world"]) 
+        a1 = concat(", ", ["Hello", "world"])
         a2 = concat("", ["Hello", "world"]) # empty delimiter
         a3 = concat(",", []) # empty array
-        a4 = concat("", []) # empty array and delimiter        
-        
+        a4 = concat("", []) # empty array and delimiter
+
         # Sets
         s1 = concat(", ", {"world", "Hello"})
         s2 = concat("", {"world", "Hello"}) # empty delimiter
         s3 = concat(",", set()) # empty set
-        s4 = concat("", set()) # empty set and delimiter        
+        s4 = concat("", set()) # empty set and delimiter
 
     query: data.test
     want_result:
@@ -40,7 +40,7 @@ cases:
         y = concat(x, [])
     query: data.test
     want_result: {}
-    
+
   - note: undefined-collection
     data: {}
     modules:
@@ -50,7 +50,7 @@ cases:
         y = concat(",", x)
     query: data.test
     want_result: {}
-    
+
   - note: invalid-null-delimiter
     data: {}
     modules: ["package test\nx=concat(null, [])"]
@@ -74,7 +74,7 @@ cases:
     modules: ["package test\nx=concat([], [])"]
     query: data.test
     error: "`concat` expects string argument."
-    
+
   - note: invalid-set-delimiter
     data: {}
     modules: ["package test\nx=concat(set(), [])"]
@@ -86,4 +86,34 @@ cases:
     modules: ["package test\nx=concat({}, [])"]
     query: data.test
     error: "`concat` expects string argument."
-    
+
+
+  - note: invalid-null-collection
+    data: {}
+    modules: ["package test\nx=concat(\"\", null)"]
+    query: data.test
+    error: "`concat` expects array/set of strings."
+
+  - note: invalid-bool-collection
+    data: {}
+    modules: ["package test\nx=concat(\"\", true)"]
+    query: data.test
+    error: "`concat` expects array/set of strings."
+
+  - note: invalid-number-collection
+    data: {}
+    modules: ["package test\nx=concat(\"\", 1)"]
+    query: data.test
+    error: "`concat` expects array/set of strings."
+
+  - note: invalid-string-collection
+    data: {}
+    modules: ["package test\nx=concat(\"\", \"\")"]
+    query: data.test
+    error: "`concat` expects array/set of strings."
+
+  - note: invalid-object-collection
+    data: {}
+    modules: ["package test\nx=concat(\"\", {})"]
+    query: data.test
+    error: "`concat` expects array/set of strings."
