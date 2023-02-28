@@ -1,0 +1,69 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        # Arrays
+        a1 = concat(", ", ["Hello", "world"]) 
+        a2 = concat("", ["Hello", "world"]) # empty delimiter
+        a3 = concat(",", []) # empty array
+        a4 = concat("", []) # empty array and delimiter        
+        
+        # Sets
+        s1 = concat(", ", {"world", "Hello"})
+        s2 = concat("", {"world", "Hello"}) # empty delimiter
+        s3 = concat(",", set()) # empty set
+        s4 = concat("", set()) # empty set and delimiter        
+
+    query: data.test
+    want_result:
+      a1: "Hello, world"
+      a2: "Helloworld"
+      a3: ""
+      a4: ""
+      s1: "Hello, world"
+      s2: "Helloworld"
+      s3: ""
+      s4: ""
+
+  - note: invalid-null-delimiter
+    data: {}
+    modules: ["package test\nx=concat(null, [])"]
+    query: data.test
+    error: "`concat` expects string argument."
+
+  - note: invalid-bool-delimiter
+    data: {}
+    modules: ["package test\nx=concat(true, [])"]
+    query: data.test
+    error: "`concat` expects string argument."
+
+  - note: invalid-number-delimiter
+    data: {}
+    modules: ["package test\nx=concat(1, [])"]
+    query: data.test
+    error: "`concat` expects string argument."
+
+  - note: invalid-array-delimiter
+    data: {}
+    modules: ["package test\nx=concat([], [])"]
+    query: data.test
+    error: "`concat` expects string argument."
+    
+  - note: invalid-set-delimiter
+    data: {}
+    modules: ["package test\nx=concat(set(), [])"]
+    query: data.test
+    error: "`concat` expects string argument."
+
+  - note: invalid-object-delimiter
+    data: {}
+    modules: ["package test\nx=concat({}, [])"]
+    query: data.test
+    error: "`concat` expects string argument."
+    
