@@ -1,0 +1,116 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        v1 = contains("Hello, world", ", ")
+        v2 = contains("Hello world", "") # empty substring
+        v3 = contains("", ",") # empty string
+        v4 = contains("", "") # empty substring and string
+
+    query: data.test
+    want_result:
+      v1: true
+      v2: true
+      v3: false
+      v4: true
+
+  - note: undefined-string
+    data: {}
+    modules:
+      - |
+        package test
+        x { false }
+        y = contains(x, "")
+    query: data.test
+    want_result: {}
+
+  - note: undefined-substring
+    data: {}
+    modules:
+      - |
+        package test
+        x { false }
+        y = contains(",", x)
+    query: data.test
+    want_result: {}
+
+  - note: invalid-null-string
+    data: {}
+    modules: ["package test\nx=contains(null, ``)"]
+    query: data.test
+    error: "`contains` expects string argument."
+
+  - note: invalid-bool-string
+    data: {}
+    modules: ["package test\nx=contains(true, ``)"]
+    query: data.test
+    error: "`contains` expects string argument."
+
+  - note: invalid-number-string
+    data: {}
+    modules: ["package test\nx=contains(1, ``)"]
+    query: data.test
+    error: "`contains` expects string argument."
+
+  - note: invalid-array-string
+    data: {}
+    modules: ["package test\nx=contains([], ``)"]
+    query: data.test
+    error: "`contains` expects string argument."
+
+  - note: invalid-set-string
+    data: {}
+    modules: ["package test\nx=contains(set(), ``)"]
+    query: data.test
+    error: "`contains` expects string argument."
+
+  - note: invalid-object-string
+    data: {}
+    modules: ["package test\nx=contains({}, ``)"]
+    query: data.test
+    error: "`contains` expects string argument."
+
+
+
+
+  - note: invalid-null-substring
+    data: {}
+    modules: ["package test\nx=contains(``, null)"]
+    query: data.test
+    error: "`contains` expects string argument."
+
+  - note: invalid-bool-substring
+    data: {}
+    modules: ["package test\nx=contains(``, true)"]
+    query: data.test
+    error: "`contains` expects string argument."
+
+  - note: invalid-number-substring
+    data: {}
+    modules: ["package test\nx=contains(``, 1)"]
+    query: data.test
+    error: "`contains` expects string argument."
+
+  - note: invalid-array-substring
+    data: {}
+    modules: ["package test\nx=contains(``, [])"]
+    query: data.test
+    error: "`contains` expects string argument."
+
+  - note: invalid-set-substring
+    data: {}
+    modules: ["package test\nx=contains(``, set())"]
+    query: data.test
+    error: "`contains` expects string argument."
+
+  - note: invalid-object-substring
+    data: {}
+    modules: ["package test\nx=contains(``, {})"]
+    query: data.test
+    error: "`contains` expects string argument."
