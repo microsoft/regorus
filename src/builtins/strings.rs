@@ -4,7 +4,7 @@
 use crate::ast::Expr;
 use crate::builtins;
 use crate::builtins::utils::{
-    ensure_args_count, ensure_object, ensure_string, ensure_string_collection,
+    ensure_args_count, ensure_numeric, ensure_object, ensure_string, ensure_string_collection,
 };
 use crate::lexer::Span;
 use crate::value::{Float, Value};
@@ -17,12 +17,19 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("concat", concat);
     m.insert("contains", contains);
     m.insert("endswith", endswith);
+    m.insert("format_int", format_int);
     m.insert("indexof", indexof);
     m.insert("indexof_n", indexof_n);
     m.insert("lower", lower);
+    m.insert("replace", replace);
+    m.insert("split", split);
+    //    m.insert("sprintf", sprintf);
     m.insert("startswith", startswith);
-    m.insert("replace_n", replace_n);
-    m.insert("reverse", reverse);
+    m.insert("strings.any_prefix_match", any_prefix_match);
+    m.insert("strings.any_suffix_match", any_suffix_match);
+    m.insert("strings.replace_n", replace_n);
+    m.insert("strings.reverse", reverse);
+    m.insert("strings.substring", substring);
     m.insert("trim", trim);
     m.insert("trim_left", trim_left);
     m.insert("trim_prefix", trim_prefix);
@@ -54,6 +61,29 @@ fn endswith(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     let s1 = ensure_string(name, &params[0], &args[0])?;
     let s2 = ensure_string(name, &params[1], &args[1])?;
     Ok(Value::Bool(s1.ends_with(&s2)))
+}
+
+fn format_int(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+    let name = "endswith";
+    ensure_args_count(span, name, params, args, 2)?;
+    let mut n = ensure_numeric(name, &params[0], &args[0])?;
+    let mut sign = "";
+    if n < 0.0 {
+        n = n.abs();
+        sign = "-";
+    }
+    let n = n.floor() as u64;
+
+    Ok(Value::String(
+        sign.to_owned()
+            + &match ensure_numeric(name, &params[1], &args[1])? as u64 {
+                2 => format!("{:b}", n),
+                8 => format!("{:o}", n),
+                10 => format!("{}", n),
+                16 => format!("{:x}", n),
+                _ => return Ok(Value::Undefined),
+            },
+    ))
 }
 
 fn indexof(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
@@ -93,6 +123,90 @@ fn lower(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::String(s.to_lowercase()))
 }
 
+fn replace(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+    let name = "replace";
+    ensure_args_count(span, name, params, args, 3)?;
+    let s = ensure_string(name, &params[0], &args[0])?;
+    let old = ensure_string(name, &params[1], &args[1])?;
+    let new = ensure_string(name, &params[2], &args[2])?;
+    Ok(Value::String(s.replace(&old, &new)))
+}
+
+fn split(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+    let name = "replace";
+    ensure_args_count(span, name, params, args, 3)?;
+    let s = ensure_string(name, &params[0], &args[0])?;
+    let delimiter = ensure_string(name, &params[1], &args[1])?;
+
+    Ok(Value::from_array(
+        s.split(&delimiter)
+            .map(|s| Value::String(s.to_string()))
+            .collect(),
+    ))
+}
+
+fn any_prefix_match(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+    let name = "strings.any_prefix_match";
+    ensure_args_count(span, name, params, args, 2)?;
+
+    let search = match &args[0] {
+        Value::String(s) => vec![s.as_str()],
+        Value::Array(_) | Value::Set(_) => ensure_string_collection(name, &params[0], &args[0])?,
+        _ => {
+            let span = params[0].span();
+            bail!(span.error(
+                format!("`{name}` expects string/array[string]/set[string] argument.").as_str()
+            ));
+        }
+    };
+
+    let base = match &args[1] {
+        Value::String(s) => vec![s.as_str()],
+        Value::Array(_) | Value::Set(_) => ensure_string_collection(name, &params[1], &args[1])?,
+        _ => {
+            let span = params[0].span();
+            bail!(span.error(
+                format!("`{name}` expects string/array[string]/set[string] argument.").as_str()
+            ));
+        }
+    };
+
+    Ok(Value::Bool(
+        search.iter().any(|s| base.iter().any(|b| s.starts_with(b))),
+    ))
+}
+
+fn any_suffix_match(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+    let name = "strings.any_suffix_match";
+    ensure_args_count(span, name, params, args, 2)?;
+
+    let search = match &args[0] {
+        Value::String(s) => vec![s.as_str()],
+        Value::Array(_) | Value::Set(_) => ensure_string_collection(name, &params[0], &args[0])?,
+        _ => {
+            let span = params[0].span();
+            bail!(span.error(
+                format!("`{name}` expects string/array[string]/set[string] argument.").as_str()
+            ));
+        }
+    };
+
+    let base = match &args[1] {
+        Value::String(s) => vec![s.as_str()],
+        Value::Array(_) | Value::Set(_) => ensure_string_collection(name, &params[1], &args[1])?,
+        _ => {
+            let span = params[0].span();
+            bail!(span.error(
+                format!("`{name}` expects string/array[string]/set[string] argument.").as_str()
+            ));
+        }
+    };
+
+    Ok(Value::Bool(
+        search.iter().any(|s| base.iter().any(|b| s.ends_with(b))),
+    ))
+}
+
 fn startswith(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     let name = "startswith";
     ensure_args_count(span, name, params, args, 2)?;
@@ -129,6 +243,34 @@ fn reverse(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, name, params, args, 1)?;
     let s = ensure_string(name, &params[0], &args[0])?;
     Ok(Value::String(s.chars().rev().collect()))
+}
+
+fn substring(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+    let name = "substring";
+    ensure_args_count(span, name, params, args, 3)?;
+    let s = ensure_string(name, &params[0], &args[0])?;
+    let offset = ensure_numeric(name, &params[1], &args[1])?;
+    let length = ensure_numeric(name, &params[2], &args[2])?;
+
+    if offset.floor() != offset || length.floor() != length {
+        return Ok(Value::Undefined);
+    }
+
+    if offset < 0.0 || length < 0.0 {
+        return Ok(Value::Undefined);
+    }
+
+    let offset = offset as usize;
+    let length = length as usize;
+
+    // TODO: distinguish between 20.0 and 20
+    // Also: behavior of
+    // x = substring("hello", 20 + 0.0, 25)
+    if offset > s.len() || length <= offset {
+        return Ok(Value::String("".to_string()));
+    }
+
+    Ok(Value::String(s[offset..offset + length].to_string()))
 }
 
 fn trim(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
