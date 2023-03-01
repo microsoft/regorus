@@ -11,5 +11,7 @@ if [ -f Cargo.toml ]; then
 
    # Ensure that all tests pass
    # Also generate coverage information.
-   scripts/coverage
+   if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+       scripts/coverage
+   fi
 fi

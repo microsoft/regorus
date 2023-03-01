@@ -1,11 +1,14 @@
 [build]
-target = "x86_64-unknown-linux-musl"
+#target = "x86_64-unknown-linux-musl"
 
 # Flags to enable code-coverage for all builds.
 # These can be removed later.
-rustflags = ["-Cinstrument-coverage"]
+#rustflags = ["-Cinstrument-coverage"]
 incremental = true
 
 [env]
 # Name of coverage instrumentation log file.
 LLVM_PROFILE_FILE="target/cargo-test-%p-%m.profraw"
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-Cinstrument-coverage"]
