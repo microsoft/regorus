@@ -32,7 +32,7 @@ echo "Running tests"
 cargo test
 
 # Generate html
-grcov target/ --binary-path ./target/x86_64-unknown-linux-musl/debug/deps -s src/ -t html \
+grcov target/ --binary-path ./target/debug/deps -s src/ -t html \
 --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o target/coverage/html
 
 if [ "$1" == "--show" ]; then
@@ -42,7 +42,7 @@ if [ "$1" == "--show" ]; then
 fi
 
 # Generate markdown
-grcov target/ --binary-path ./target/x86_64-unknown-linux-musl/debug/deps -s src/ -t markdown \
+grcov target/ --binary-path ./target/debug/deps -s src/ -t markdown \
 --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o target/coverage/markdown
 
 cat target/coverage/markdown
