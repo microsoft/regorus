@@ -4,10 +4,11 @@
 use crate::ast::Expr;
 use crate::builtins;
 use crate::builtins::utils::{
-    ensure_args_count, ensure_numeric, ensure_object, ensure_string, ensure_string_collection,
+    ensure_args_count, ensure_array, ensure_numeric, ensure_object, ensure_string,
+    ensure_string_collection,
 };
 use crate::lexer::Span;
-use crate::value::{Float, Value};
+use crate::value::{Float, Number, Value};
 
 use std::collections::HashMap;
 
@@ -23,7 +24,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("lower", lower);
     m.insert("replace", replace);
     m.insert("split", split);
-    //    m.insert("sprintf", sprintf);
+    m.insert("sprintf", sprintf);
     m.insert("startswith", startswith);
     m.insert("strings.any_prefix_match", any_prefix_match);
     m.insert("strings.any_suffix_match", any_suffix_match);
@@ -134,7 +135,7 @@ fn replace(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
 
 fn split(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     let name = "replace";
-    ensure_args_count(span, name, params, args, 3)?;
+    ensure_args_count(span, name, params, args, 2)?;
     let s = ensure_string(name, &params[0], &args[0])?;
     let delimiter = ensure_string(name, &params[1], &args[1])?;
 
@@ -143,6 +144,173 @@ fn split(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
             .map(|s| Value::String(s.to_string()))
             .collect(),
     ))
+}
+
+fn sprintf(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+    let name = "sprintf";
+    ensure_args_count(span, name, params, args, 2)?;
+    let fmt = ensure_string(name, &params[0], &args[0])?;
+    let args = ensure_array(name, &params[1], args[1].clone())?;
+
+    let mut s = String::default();
+    let mut args_idx = 0usize;
+    let mut chars = fmt.chars().peekable();
+    let args_span = params[1].span();
+    loop {
+        let verb = match chars.next() {
+            Some('%') => match chars.next() {
+                Some('%') => {
+                    s.push('%');
+                    continue;
+                }
+                Some(c) => c,
+                None => {
+                    let span = params[0].span();
+                    bail!(span.error("missing format verb after `%` at end of format string"));
+                }
+            },
+            Some(c) => {
+                s.push(c);
+                continue;
+            }
+            None => break,
+        };
+
+        if args_idx >= args.len() {
+            bail!(args_span
+                .error(format!("no argument specified for format verb {args_idx}").as_str()));
+        }
+        let arg = &args[args_idx];
+        args_idx += 1;
+
+        // Handle Golang flags.
+        let mut emit_sign = false;
+        let mut leave_space_for_elided_sign = false;
+        match chars.peek() {
+            Some('+') => {
+                emit_sign = true;
+                chars.next();
+            }
+            Some(' ') => {
+                leave_space_for_elided_sign = true;
+                chars.next();
+            }
+            _ => (),
+        }
+
+        let get_sign_value = |f: &Number| match (emit_sign, f.0 .0) {
+            (_, v) if v < 0.0 => ("-", v),
+            (true, v) => ("+", v),
+            (false, v) if leave_space_for_elided_sign => (" ", v),
+            (false, v) => ("", v),
+        };
+
+        // Handle Golang printing verbs.
+        // https://pkg.go.dev/fmt
+        match (verb, arg) {
+            ('v', _) => s += format!("{arg}").as_str(),
+            ('b', Value::Number(f)) if f.0 == f.0.floor() => {
+                let (sign, v) = get_sign_value(f);
+                s += sign;
+                s += format!("{:b}", v as u64).as_str()
+            }
+            ('c', Value::Number(f)) if f.0 == f.0.floor() => {
+                // TODO: range error
+                let ival = f.0 .0 as u32;
+                match char::from_u32(ival) {
+                    Some(c) => s.push(c),
+                    None => {
+                        bail!(args_span.error(
+                            format!("invalid integer value {ival} for format verb c.").as_str()
+                        ))
+                    }
+                }
+            }
+            ('d', Value::Number(f)) if f.0 == f.0.floor() => {
+                let (sign, v) = get_sign_value(f);
+                s += sign;
+                s += format!("{v}").as_str()
+            }
+            ('o', Value::Number(f)) if f.0 == f.0.floor() => {
+                let (sign, v) = get_sign_value(f);
+                s += sign;
+                s += format!("{:o}", v as u64).as_str()
+            }
+            ('O', Value::Number(f)) if f.0 == f.0.floor() => {
+                let (sign, v) = get_sign_value(f);
+                s += sign;
+                s += format!("0o{:o}", v as u64).as_str()
+            }
+            ('x', Value::Number(f)) if f.0 == f.0.floor() => {
+                let (sign, v) = get_sign_value(f);
+                s += sign;
+                s += format!("{:x}", v as u64).as_str()
+            }
+            ('X', Value::Number(f)) if f.0 == f.0.floor() => {
+                let (sign, v) = get_sign_value(f);
+                s += sign;
+                s += format!("{:X}", v as u64).as_str()
+            }
+            ('e', Value::Number(f)) => s += format!("{:e}", f.0).as_str(),
+            ('E', Value::Number(f)) => s += format!("{:E}", f.0).as_str(),
+            ('f' | 'F', Value::Number(f)) => s += format!("{}", f.0).as_str(),
+            ('g', Value::Number(f)) => {
+                let (sign, v) = get_sign_value(f);
+                s += sign;
+                let bits = v.to_bits();
+                let exponent = (bits >> 52) & 0x7ff;
+                // TODO: what is large exponent?
+                if exponent > 32 {
+                    s += format!("{v:e}").as_str()
+                } else {
+                    s += format!("{v}").as_str()
+                }
+            }
+            ('G', Value::Number(f)) => {
+                let (sign, v) = get_sign_value(f);
+                s += sign;
+                let bits = v.to_bits();
+                let exponent = (bits >> 52) & 0x7ff;
+                // TODO: what is large exponent?
+                if exponent > 32 {
+                    s += format!("{v:E}").as_str()
+                } else {
+                    s += format!("{v}").as_str()
+                }
+            }
+            (_, Value::Number(_)) => {
+                // TODO: binary for floating point.
+                bail!(args_span.error("floating-point number specified for format verb {verb}."));
+            }
+
+            ('s', Value::String(sv)) => s += &sv.to_string(),
+            ('s', _) => {
+                bail!(args_span.error("invalid non string argument specified for format verb %s"));
+            }
+
+            ('+', _) if chars.next() == Some('v') => {
+                bail!(args_span.error("Go-syntax fields names format verm %#v is not supported."));
+            }
+            ('T', _) | ('#', _) | ('q', _) | ('p', _) => {
+                bail!(
+                    args_span.error("Go-syntax format verbs %#v. %q, %p and %T are not supported.")
+                );
+            }
+            _ => {}
+        }
+    }
+
+    if args_idx < args.len() {
+        bail!(args_span.error(
+            format!(
+                "extra arguments ({}) specified for {args_idx} format verbs.",
+                args.len()
+            )
+            .as_str()
+        ));
+    }
+
+    Ok(Value::String(s.to_string()))
 }
 
 fn any_prefix_match(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
