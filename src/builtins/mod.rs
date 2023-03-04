@@ -3,6 +3,7 @@
 
 mod aggregates;
 mod arrays;
+mod bitwise;
 pub mod comparison;
 mod debugging;
 pub mod numbers;
@@ -36,7 +37,7 @@ lazy_static! {
 	strings::register(&mut m);
 	//regex::register(&mut m);
 	//glob::register(&mut m);
-	//bitwise::register(&mut m);
+	bitwise::register(&mut m);
 	//conversions::register(&mut m);
 	//units::register(&mut m);
 	types::register(&mut m);
