@@ -170,6 +170,7 @@ pub fn eval_file(
     data: Option<Value>,
     input: Option<Value>,
     query: &str,
+    enable_tracing: bool,
 ) -> Result<Value> {
     let mut files = vec![];
     let mut sources = vec![];
@@ -199,7 +200,7 @@ pub fn eval_file(
 
     // First eval the modules.
     let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
-    interpreter.eval(&data, &input)?;
+    interpreter.eval(&data, &input, enable_tracing)?;
 
     // Now eval the query.
     let source = Source {
@@ -209,7 +210,7 @@ pub fn eval_file(
     };
     let mut parser = Parser::new(&source)?;
     let expr = parser.parse_membership_expr()?;
-    interpreter.eval_query_snippet(&expr)
+    interpreter.eval_query_snippet(&expr, enable_tracing)
 }
 
 #[test]
@@ -243,7 +244,7 @@ fn one_file() -> Result<()> {
     let mut parser = Parser::new(&source)?;
     let tree = parser.parse()?;
     let mut interpreter = interpreter::Interpreter::new(vec![&tree])?;
-    let results = interpreter.eval(&None, &input)?;
+    let results = interpreter.eval(&None, &input, true)?;
     println!("eval results:\n{}", serde_json::to_string_pretty(&results)?);
     Ok(())
 }
@@ -259,6 +260,7 @@ struct TestCase {
     want_result: Option<Value>,
     skip: Option<bool>,
     error: Option<String>,
+    traces: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -283,12 +285,14 @@ fn yaml_test_impl(file: &str) -> Result<()> {
             _ => panic!("either want_result or error must be specified in test case."),
         }
 
+        let enable_tracing = case.traces.is_some() && case.traces.unwrap();
         // First eval the modules.
         match eval_file(
             &case.modules,
             Some(case.data),
             case.input,
             case.query.as_str(),
+            enable_tracing,
         ) {
             Ok(results) => match case.want_result {
                 Some(want_result) => assert_match(results, want_result),

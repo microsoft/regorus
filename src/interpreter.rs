@@ -31,6 +31,7 @@ pub struct Interpreter<'source> {
     active_rules: Vec<&'source Rule<'source>>,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
+    traces: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +67,7 @@ impl<'source> Interpreter<'source> {
             active_rules: vec![],
             builtins_cache: BTreeMap::new(),
             no_rules_lookup: false,
+            traces: None,
         })
     }
 
@@ -1204,6 +1206,14 @@ impl<'source> Interpreter<'source> {
         }
 
         let v = builtin(span, &params[..], &args[..])?;
+
+        // Handle trace function.
+        // TODO: with modifier.
+        if let (Some(traces), Value::String(msg)) = (&mut self.traces, &v) {
+            traces.push(msg.clone());
+            return Ok(Value::Bool(true));
+        };
+
         if let Some(name) = cache {
             self.builtins_cache.insert((name, args), v.clone());
         }
@@ -1883,7 +1893,19 @@ impl<'source> Interpreter<'source> {
         }
     }
 
-    pub fn eval(&mut self, data: &Option<Value>, input: &Option<Value>) -> Result<Value> {
+    pub fn eval(
+        &mut self,
+        data: &Option<Value>,
+        input: &Option<Value>,
+        enable_tracing: bool,
+    ) -> Result<Value> {
+        self.traces = match enable_tracing {
+            true => Some(vec![]),
+            false => None,
+        };
+
+        self.builtins_cache.clear();
+
         if let Some(input) = input {
             self.input = input.clone();
 
@@ -1924,7 +1946,16 @@ impl<'source> Interpreter<'source> {
         Ok(self.data.clone())
     }
 
-    pub fn eval_query_snippet(&mut self, snippet: &'source Expr<'source>) -> Result<Value> {
+    pub fn eval_query_snippet(
+        &mut self,
+        snippet: &'source Expr<'source>,
+        enable_tracing: bool,
+    ) -> Result<Value> {
+        self.traces = match enable_tracing {
+            true => Some(vec![]),
+            false => None,
+        };
+
         // Create a new scope for evaluating the expression.
         self.scopes.push(Scope::new());
         let prev_module = self.set_current_module(self.modules.last().copied())?;

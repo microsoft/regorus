@@ -9,6 +9,7 @@ mod debugging;
 pub mod numbers;
 pub mod sets;
 mod strings;
+mod tracing;
 pub mod types;
 mod utils;
 
@@ -56,7 +57,7 @@ lazy_static! {
 	//rego::register(&mut m);
 	//opa::register(&mut m);
 	debugging::register(&mut m);
-	//tracing::register(&mut m);
+	tracing::register(&mut m);
 	
 	m
     };
