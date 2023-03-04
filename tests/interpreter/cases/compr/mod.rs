@@ -47,7 +47,7 @@ fn basic_array() -> Result<()> {
     )?;
 
     assert_match(
-        eval_file(&[rego.to_owned()], None, None, "data.test")?,
+        eval_file(&[rego.to_owned()], None, None, "data.test", false)?,
         expected,
     );
     Ok(())
@@ -116,7 +116,7 @@ fn basic_set() -> Result<()> {
     )?;
 
     assert_match(
-        eval_file(&[rego.to_owned()], None, None, "data.test")?,
+        eval_file(&[rego.to_owned()], None, None, "data.test", false)?,
         expected,
     );
     Ok(())
