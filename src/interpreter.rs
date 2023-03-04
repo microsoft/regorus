@@ -1187,10 +1187,11 @@ impl<'source> Interpreter<'source> {
         params: &'source Vec<Expr<'source>>,
     ) -> Result<Value> {
         let mut args = vec![];
+        let allow_undefined = name == "print"; // TODO: with modifier
         for p in params {
             match self.eval_expr(p)? {
                 // If any argument is undefined, then the call is undefined.
-                Value::Undefined => return Ok(Value::Undefined),
+                Value::Undefined if !allow_undefined => return Ok(Value::Undefined),
                 p => args.push(p),
             }
         }
