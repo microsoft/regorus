@@ -1,0 +1,37 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {
+          "a": 5,
+          "b": 6,
+          "c": 7,
+          {1}: 8,
+          {"a":5}: 9,
+          true: false,
+          5 : 10,
+          null: 5,
+        }
+
+        results = {
+          "v1": object.keys(obj),
+        }
+    query: data.test.results
+    want_result:
+      v1:
+        set!:
+          - "a"
+          - "b"
+          - "c"
+          - set!: [1]
+          - a: 5
+          - true
+          - 5
+          - null
+        

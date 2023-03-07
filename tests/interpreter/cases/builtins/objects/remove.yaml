@@ -1,0 +1,45 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {
+          "a": 5,
+          "b": 6,
+          "c": 7,
+          {1}: 8,
+          {"a":5}: 9,
+          true: false,
+          5 : 10,
+          null: 5,
+        }
+
+        r1 = object.remove(obj, ["a", "b", {1}])
+
+        results = {
+          "v1": r1,
+          "v2": r1 == object.remove(obj, {"a", "b", {1}}),
+          "v3": r1 ==  object.remove(obj, {"a":1, "b":1, {1}:1}),
+        }
+    query: data.test.results
+    want_result:
+      v1:
+        object!:
+          - key: c
+            value: 7
+          - key:
+              a: 5
+            value: 9
+          - key: true
+            value: false
+          - key: 5
+            value: 10
+          - key: null
+            value: 5
+      v2: true
+      v3: true

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops;
 use std::rc::Rc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use ordered_float::OrderedFloat;
 use serde::de::{self, Deserializer};
 use serde::ser::{SerializeMap, Serializer};
@@ -277,6 +277,37 @@ impl Value {
     }
 }
 
+impl Value {
+    pub fn make_or_get_value_mut<'a>(&'a mut self, paths: &[&str]) -> Result<&'a mut Value> {
+        if paths.is_empty() {
+            return Ok(self);
+        }
+
+        let key = Value::String(paths[0].to_owned());
+        if self == &Value::Undefined {
+            *self = Value::new_object();
+        }
+        if let Value::Object(map) = self {
+            if map.get(&key).is_none() {
+                Rc::make_mut(map).insert(key.clone(), Value::Undefined);
+            }
+        }
+
+        match self {
+            Value::Object(map) => match Rc::make_mut(map).get_mut(&key) {
+                Some(v) if paths.len() == 1 => Ok(v),
+                Some(v) => Self::make_or_get_value_mut(v, &paths[1..]),
+                _ => bail!("internal error: unexpected"),
+            },
+            Value::Undefined if paths.len() > 1 => {
+                *self = Value::new_object();
+                Self::make_or_get_value_mut(self, paths)
+            }
+            Value::Undefined => Ok(self),
+            _ => bail!("make: not an selfect {self:?}"),
+        }
+    }
+}
 impl ops::Index<usize> for Value {
     type Output = Value;
 
