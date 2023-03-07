@@ -8,6 +8,7 @@ pub mod comparison;
 mod conversions;
 mod debugging;
 pub mod numbers;
+mod objects;
 pub mod sets;
 mod strings;
 mod tracing;
@@ -35,7 +36,7 @@ lazy_static! {
 	aggregates::register(&mut m);
 	arrays::register(&mut m);
 	sets::register(&mut m);
-	//objects::register(&mut m);
+	objects::register(&mut m);
 	strings::register(&mut m);
 	//regex::register(&mut m);
 	//glob::register(&mut m);
@@ -51,7 +52,6 @@ lazy_static! {
 	//graphs::register(&mut m);
 	//graphql::register(&mut m);
 	//http::register(&mut m);
-	//cryptography::register(&mut m);
 	//net::register(&mut m);
 	//uuid::register(&mut m);
 	//semantic_versions::register(&mut m);

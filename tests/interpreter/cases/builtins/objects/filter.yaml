@@ -1,0 +1,39 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {
+          "a": 5,
+          "b": 6,
+          "c": 7,
+          {1}: 8,
+          {"a":5}: 9,
+        }
+
+        results = {
+          "o1": object.filter(obj, ["a", {1}]),
+          "o2": object.filter(obj, {"a":1, "c": 0}),
+          "o3": object.filter(obj, {"a", "c"}),         
+        }
+    query: data.test.results
+    want_result:
+      o1:
+        object!:
+          - key: a
+            value: 5
+          - key:
+              set!: [1]
+            value: 8
+      o2:
+        a: 5
+        c: 7
+      o3:
+        a: 5
+        c: 7
+        

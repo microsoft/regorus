@@ -1,0 +1,30 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {
+          "a": 5,
+          "b": {"c":8},
+          "c": 7,
+          {1}: 8,
+          {"a":5}: 9,
+        }
+
+        results = {
+          "v1": object.get(obj, "a", "default"),
+          "v2": object.get(obj, ["b", "c"], "default"),
+          "v3": object.get(obj, ["a", "b"], "default"),         
+          "v4": object.get(obj, {"a":5}, "default"),         
+        }
+    query: data.test.results
+    want_result:
+      v1: 5
+      v2: 8
+      v3: "default"
+      v4: 9

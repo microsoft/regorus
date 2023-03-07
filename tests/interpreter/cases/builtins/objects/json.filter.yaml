@@ -1,0 +1,60 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {
+          "a" : 5,
+          "b" : {
+            "c" : {
+              "d" : 6
+            },
+            "d" : 7
+          },
+          "c" : 8
+        }
+        s = { "a": [[1, [7,8,9], 2], {"a":1, "b":2, "c":3}]}
+        t = { "a": { 1, 2, {"x"}, {8, 9, 10} }}
+        results = {
+          "o1": json.filter(obj, ["a", "b/c"]),
+          "o2": json.filter(obj, {"c", ["b", "d"]}),
+          "o3": json.filter(s, [["a", 1]]),
+          "o4": json.filter(s, ["a/0/1/2", ["a", "0", "2"], "a/0/1/1"]),
+          "o5": json.filter(t, [["a", 1]]),
+          "o6": json.filter(t, [["a", {"x"}]]),
+          "o7": json.filter(t, [["a", {8, 9, 10}, 9]]),
+        }
+
+        #TODO: more filters
+    query: data.test.results
+    want_result:
+      o1:
+        a: 5
+        b:
+          c:
+            d: 6
+      o2:
+        b:
+          d: 7
+        c: 8
+      o3:
+        a: []
+      o4:
+        a: [[[8, 9], 2]]
+      o5:
+        a:
+          set!: [1]
+      o6:
+        a:
+          set!:
+            - set!: ["x"]
+      o7:
+        a:
+          set!:
+            - set!: [9]
+#TODO: Extensive tests
