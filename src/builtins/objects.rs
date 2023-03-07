@@ -75,10 +75,10 @@ fn json_filter_impl(v: &Value, filter: &Value) -> Value {
     }
 }
 
-fn merge_filters<'a>(
+fn merge_filters(
     name: &str,
     param: &Expr,
-    itr: &mut dyn Iterator<Item = &'a Value>,
+    itr: &mut dyn Iterator<Item = &Value>,
     mut filters: Value,
 ) -> Result<Value> {
     loop {
