@@ -1,0 +1,23 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: basic
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords
+
+        r1 = value {
+          value = p + a[0] # p and a are defined later
+          q = p            # q depends on p; p depends on q 
+          q = t[0]         # t is defined at end
+          a = [ t[i] |     # a uses a compr which depends on t
+            i := 1
+          ]
+          t = [8, 4]          
+        }
+        
+    query: data.test
+    want_result:
+      r1: 12

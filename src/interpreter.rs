@@ -5,6 +5,7 @@ use crate::ast::*;
 use crate::builtins;
 use crate::lexer::Span;
 use crate::parser::Parser;
+use crate::scheduler::*;
 use crate::value::*;
 
 use anyhow::{anyhow, bail, Result};
@@ -17,6 +18,7 @@ type Scope = BTreeMap<String, Value>;
 pub struct Interpreter<'source> {
     modules: Vec<&'source Module<'source>>,
     module: Option<&'source Module<'source>>,
+    schedule: Option<&'source Schedule<'source>>,
     current_module_path: String,
     input: Value,
     data: Value,
@@ -54,6 +56,7 @@ impl<'source> Interpreter<'source> {
         Ok(Interpreter {
             modules,
             module: None,
+            schedule: None,
             current_module_path: String::default(),
             input: Value::new_object(),
             data: Value::new_object(),
@@ -614,7 +617,7 @@ impl<'source> Interpreter<'source> {
         key_expr: &'source Option<Expr<'source>>,
         value_expr: &'source Expr<'source>,
         collection: &'source Expr<'source>,
-        stmts: &'source [LiteralStmt<'source>],
+        stmts: &[&'source LiteralStmt<'source>],
     ) -> Result<bool> {
         let scope_saved = self.current_scope()?.clone();
         let mut type_match = BTreeSet::new();
@@ -691,7 +694,7 @@ impl<'source> Interpreter<'source> {
     fn eval_stmt(
         &mut self,
         stmt: &'source LiteralStmt<'source>,
-        stmts: &'source [LiteralStmt<'source>],
+        stmts: &[&'source LiteralStmt<'source>],
     ) -> Result<bool> {
         let mut to_restore = vec![];
         for wm in &stmt.with_mods {
@@ -780,13 +783,13 @@ impl<'source> Interpreter<'source> {
 
     fn eval_stmts_in_loop(
         &mut self,
-        stmts: &'source [LiteralStmt<'source>],
+        stmts: &[&'source LiteralStmt<'source>],
         loops: &[LoopExpr<'source>],
     ) -> Result<bool> {
         if loops.is_empty() {
             if !stmts.is_empty() {
                 // Evaluate the current statement whose loop expressions have been hoisted.
-                if self.eval_stmt(&stmts[0], &stmts[1..])? {
+                if self.eval_stmt(stmts[0], &stmts[1..])? {
                     if !matches!(&stmts[0].literal, Literal::SomeIn { .. }) {
                         self.eval_stmts(&stmts[1..])
                     } else {
@@ -983,7 +986,7 @@ impl<'source> Interpreter<'source> {
         }
     }
 
-    fn eval_stmts(&mut self, stmts: &'source [LiteralStmt<'source>]) -> Result<bool> {
+    fn eval_stmts(&mut self, stmts: &[&'source LiteralStmt<'source>]) -> Result<bool> {
         let mut result = true;
 
         for (idx, stmt) in stmts.iter().enumerate() {
@@ -1014,7 +1017,17 @@ impl<'source> Interpreter<'source> {
     fn eval_query(&mut self, query: &'source Query<'source>) -> Result<bool> {
         // Execute the query in a new scope
         self.scopes.push(Scope::new());
-        let r = self.eval_stmts(&query.stmts);
+        let ordered_stmts: Vec<&'source LiteralStmt<'source>> =
+            if let Some(schedule) = &self.schedule {
+                match schedule.order.get(query) {
+                    Some(ord) => ord.iter().map(|i| &query.stmts[*i as usize]).collect(),
+                    // TODO
+                    _ => bail!("statements not scheduled in query {query:?}"),
+                }
+            } else {
+                query.stmts.iter().collect()
+            };
+        let r = self.eval_stmts(&ordered_stmts);
         self.scopes.pop();
         r
     }
@@ -1087,7 +1100,7 @@ impl<'source> Interpreter<'source> {
                     let key = self.eval_expr(key)?;
                     collection[&key] == value
                 } else {
-                    object.values().into_iter().any(|item| *item == value)
+                    object.values().any(|item| *item == value)
                 }
             }
             Value::Set(set) => {
@@ -1898,7 +1911,9 @@ impl<'source> Interpreter<'source> {
         data: &Option<Value>,
         input: &Option<Value>,
         enable_tracing: bool,
+        schedule: Option<&'source Schedule<'source>>,
     ) -> Result<Value> {
+        self.schedule = schedule;
         self.traces = match enable_tracing {
             true => Some(vec![]),
             false => None,
