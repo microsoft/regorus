@@ -60,7 +60,7 @@ while read p; do
 
     # Trim percentage using xargs.
     case $(echo "$percent" | xargs) in
-	 "100%")
+	 "100%"|"100.00%")
 		continue
     esac
 

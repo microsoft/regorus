@@ -198,9 +198,12 @@ pub fn eval_file(
         modules_ref.push(m);
     }
 
+    let analyzer = Analyzer::new();
+    let schedule = analyzer.analyze(&modules)?;
+
     // First eval the modules.
     let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
-    interpreter.eval(&data, &input, enable_tracing)?;
+    interpreter.eval(&data, &input, enable_tracing, Some(&schedule))?;
 
     // Now eval the query.
     let source = Source {
@@ -242,9 +245,18 @@ fn one_file() -> Result<()> {
         lines: contents.split('\n').collect(),
     };
     let mut parser = Parser::new(&source)?;
-    let tree = parser.parse()?;
-    let mut interpreter = interpreter::Interpreter::new(vec![&tree])?;
-    let results = interpreter.eval(&None, &input, true)?;
+    let modules = vec![parser.parse()?];
+
+    let analyzer = Analyzer::new();
+    let schedule = analyzer.analyze(&modules)?;
+
+    let mut modules_ref = vec![];
+    for m in &modules {
+        modules_ref.push(m);
+    }
+
+    let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
+    let results = interpreter.eval(&None, &input, true, Some(&schedule))?;
     println!("eval results:\n{}", serde_json::to_string_pretty(&results)?);
     Ok(())
 }

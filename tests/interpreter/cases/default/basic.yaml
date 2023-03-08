@@ -349,6 +349,7 @@ cases:
       - |
         package t
         import future.keywords
+        x = true
         default a = [5 | not x]
     query: data.t.a
     want_result: []

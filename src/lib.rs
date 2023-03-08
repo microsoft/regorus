@@ -13,4 +13,5 @@ pub use ast::*;
 pub use interpreter::*;
 pub use lexer::*;
 pub use parser::*;
+pub use scheduler::*;
 pub use value::*;
