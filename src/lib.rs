@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+pub mod analyzer;
 pub mod ast;
 pub mod builtins;
 pub mod interpreter;
