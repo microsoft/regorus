@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 cases:
-  - note: or-error
+  - note: or-error-output
     data: {}
     modules:
       - |
@@ -112,7 +112,7 @@ cases:
     query: data.test
     want_result: {}
 
-  - note: or-error
+  - note: or-one-error
     data: {}
     modules:
       - |
@@ -129,8 +129,26 @@ cases:
         a1 = fcn("world")
         a2 = fcn(5)
     query: data.test
-    # TO DO: the correct result to produce is:
-    # "a1": "hello world",
-    # "a2": 6
-    # it's necessary to handle errors differently for that
+    want_result:
+      a1: 
+        set!: [hello world]
+      a2: 
+        set!: [6]
+
+  - note: or-all-error
+    data: {}
+    modules:
+      - |
+        package test
+
+        fcn(x) = y {
+          y = x + 1
+        }
+
+        fcn(x) = y {
+          y = x + 1
+        }
+
+        a1 = fcn("world")
+    query: data.test
     error: "`add` expects numeric argument. Got `\"world\"` instead"

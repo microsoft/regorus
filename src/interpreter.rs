@@ -1259,6 +1259,7 @@ impl<'source> Interpreter<'source> {
         let fcns = fcns_rules.clone();
 
         let mut results: Vec<Value> = Vec::new();
+        let mut errors: Vec<anyhow::Error> = Vec::new();
         for fcn_rule in fcns {
             let (args, output_expr, bodies) = match fcn_rule {
                 Rule::Spec {
@@ -1304,7 +1305,15 @@ impl<'source> Interpreter<'source> {
 
             // Set the arguments scope.
             self.scopes.push(args_scope);
-            let value = self.eval_rule_bodies(ctx, span, bodies)?;
+            let value = match self.eval_rule_bodies(ctx, span, bodies) {
+                Ok(v) => v,
+                Err(e) => {
+                    // If the rule produces an error, save the error.
+                    errors.push(e);
+                    continue;
+                }
+            };
+
             let result = match &value {
                 Value::Set(s) if s.len() == 1 => s.iter().next().unwrap().clone(),
                 Value::Set(s) if !s.is_empty() => {
@@ -1331,7 +1340,11 @@ impl<'source> Interpreter<'source> {
         }
 
         if results.is_empty() {
-            return Ok(Value::Undefined);
+            if errors.is_empty() {
+                return Ok(Value::Undefined);
+            } else {
+                return Err(anyhow!(errors[0].to_string()));
+            }
         }
 
         // all defined values should be the equal to the same value that should be returned
@@ -1342,7 +1355,6 @@ impl<'source> Interpreter<'source> {
                 "functions must not produce multiple outputs for same inputs",
             ));
         }
-
         Ok(results[0].clone())
     }
 
