@@ -26,7 +26,7 @@ pub struct Interpreter<'source> {
     // TODO: handle recursive calls where same expr could have different values.
     loop_var_values: BTreeMap<&'source Expr<'source>, Value>,
     contexts: Vec<Context<'source>>,
-    functions: HashMap<String, &'source Rule<'source>>,
+    functions: HashMap<String, Vec<&'source Rule<'source>>>,
     rules: HashMap<String, Vec<&'source Rule<'source>>>,
     default_rules: HashMap<String, Vec<(&'source Rule<'source>, Option<String>)>>,
     processed: BTreeSet<&'source Rule<'source>>,
@@ -1180,7 +1180,7 @@ impl<'source> Interpreter<'source> {
         }
     }
 
-    fn lookup_function(&self, fcn: &'source Expr<'source>) -> Result<&'source Rule<'source>> {
+    fn lookup_function(&self, fcn: &'source Expr<'source>) -> Result<&Vec<&'source Rule<'source>>> {
         let mut path = Self::get_path_string(fcn, None)?;
         if !path.starts_with("data.") {
             path = self.current_module_path.clone() + "." + &path;
@@ -1239,7 +1239,7 @@ impl<'source> Interpreter<'source> {
         fcn: &'source Expr<'source>,
         params: &'source Vec<Expr<'source>>,
     ) -> Result<Value> {
-        let fcn_rule = match self.lookup_function(fcn) {
+        let fcns_rules = match self.lookup_function(fcn) {
             Ok(r) => r,
             _ => {
                 // Look up builtin function.
@@ -1256,69 +1256,106 @@ impl<'source> Interpreter<'source> {
             }
         };
 
-        let (args, output_expr, bodies) = match fcn_rule {
-            Rule::Spec {
-                head: RuleHead::Func { args, assign, .. },
-                bodies,
-                ..
-            } => (args, assign.as_ref().map(|a| &a.value), bodies),
-            _ => bail!("internal error not a function"),
-        };
+        let fcns = fcns_rules.clone();
 
-        if args.len() != params.len() {
+        let mut results: Vec<Value> = Vec::new();
+        let mut errors: Vec<anyhow::Error> = Vec::new();
+        for fcn_rule in fcns {
+            let (args, output_expr, bodies) = match fcn_rule {
+                Rule::Spec {
+                    head: RuleHead::Func { args, assign, .. },
+                    bodies,
+                    ..
+                } => (args, assign.as_ref().map(|a| &a.value), bodies),
+                _ => bail!("internal error not a function"),
+            };
+
+            if args.len() != params.len() {
+                return Err(span.source.error(
+                    span.line,
+                    span.col,
+                    format!(
+                        "mismatch in number of arguments. supplied {}, expected {}",
+                        params.len(),
+                        args.len()
+                    )
+                    .as_str(),
+                ));
+            }
+
+            let mut args_scope = Scope::new();
+            for (idx, a) in args.iter().enumerate() {
+                let a = match a {
+                    Expr::Var(s) => s.text(),
+                    _ => unimplemented!("destructuring function arguments"),
+                };
+                //TODO: check call in params
+                args_scope.insert(a.to_string(), self.eval_expr(&params[idx])?);
+            }
+
+            let ctx = Context {
+                key_expr: None,
+                output_expr,
+                value: Value::new_set(),
+            };
+
+            // Back up local variables of current function and empty
+            // the local variables of callee function.
+            let scopes = std::mem::take(&mut self.scopes);
+
+            // Set the arguments scope.
+            self.scopes.push(args_scope);
+            let value = match self.eval_rule_bodies(ctx, span, bodies) {
+                Ok(v) => v,
+                Err(e) => {
+                    // If the rule produces an error, save the error.
+                    errors.push(e);
+                    continue;
+                }
+            };
+
+            let result = match &value {
+                Value::Set(s) if s.len() == 1 => s.iter().next().unwrap().clone(),
+                Value::Set(s) if !s.is_empty() => {
+                    return Err(span.source.error(
+                        span.line,
+                        span.col,
+                        format!("function produced multiple outputs {value:?}").as_str(),
+                    ))
+                }
+                // If the function successfully executed, but did not return any value, then return true.
+                Value::Set(s) if s.is_empty() && output_expr.is_none() => Value::Bool(true),
+
+                // If the function execution resulted in undefined, then propagate it.
+                Value::Undefined => Value::Undefined,
+                _ => bail!("internal error: function did not return set {value:?}"),
+            };
+
+            // Restore local variables for current context.
+            self.scopes = scopes;
+
+            if result != Value::Undefined {
+                results.push(result);
+            }
+        }
+
+        if results.is_empty() {
+            if errors.is_empty() {
+                return Ok(Value::Undefined);
+            } else {
+                return Err(anyhow!(errors[0].to_string()));
+            }
+        }
+
+        // all defined values should be the equal to the same value that should be returned
+        if !results.windows(2).all(|w| w[0] == w[1]) {
             return Err(span.source.error(
                 span.line,
                 span.col,
-                format!(
-                    "mismatch in number of arguments. supplied {}, expected {}",
-                    params.len(),
-                    args.len()
-                )
-                .as_str(),
+                "functions must not produce multiple outputs for same inputs",
             ));
         }
-
-        let mut args_scope = Scope::new();
-        for (idx, a) in args.iter().enumerate() {
-            let a = match a {
-                Expr::Var(s) => s.text(),
-                _ => unimplemented!("destructuring function arguments"),
-            };
-            //TODO: check call in params
-            args_scope.insert(a.to_string(), self.eval_expr(&params[idx])?);
-        }
-
-        let ctx = Context {
-            key_expr: None,
-            output_expr,
-            value: Value::new_set(),
-        };
-
-        // Back up local variables of current function and empty
-        // the local variables of callee function.
-        let scopes = std::mem::take(&mut self.scopes);
-
-        // Set the arguments scope.
-        self.scopes.push(args_scope);
-        let value = self.eval_rule_bodies(ctx, span, bodies)?;
-        let result = match &value {
-            Value::Set(s) if s.len() == 1 => Ok(s.iter().next().unwrap().clone()),
-            Value::Set(s) if !s.is_empty() => Err(span.source.error(
-                span.line,
-                span.col,
-                format!("function produced multiple outputs {value:?}").as_str(),
-            )),
-            // If the function successfully executed, but did not return any value, then return true.
-            Value::Set(s) if s.is_empty() && output_expr.is_none() => Ok(Value::Bool(true)),
-
-            // If the function execution resulted in undefined, then propagate it.
-            Value::Undefined => Ok(Value::Undefined),
-            _ => bail!("internal error: function did not return set {value:?}"),
-        };
-
-        // Restore local variables for current context.
-        self.scopes = scopes;
-        result
+        Ok(results[0].clone())
     }
 
     fn lookup_local_var(&self, name: &str) -> Option<Value> {
@@ -1700,7 +1737,12 @@ impl<'source> Interpreter<'source> {
                     }
 
                     let full_path = Self::get_path_string(refr, Some(module_path.as_str()))?;
-                    self.functions.insert(full_path, rule);
+
+                    if let Some(functions) = self.functions.get_mut(&full_path) {
+                        functions.push(rule);
+                    } else {
+                        self.functions.insert(full_path, vec![rule]);
+                    }
                 }
             }
             self.set_current_module(prev_module)?;

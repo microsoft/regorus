@@ -1,0 +1,154 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: or-error-output
+    data: {}
+    modules:
+      - |
+        package test
+
+        inc(x) = x + 1
+        inc(x) = x + 4
+
+        a1 = inc(5)
+    query: data.test
+    error: functions must not produce multiple outputs for same inputs
+
+  - note: or-ok
+    data: {}
+    modules:
+      - |
+        package test
+
+        inc(x) = x + 1
+        inc(x) = x + 1
+
+        a1 = inc(5)
+    query: data.test
+    want_result:
+      a1: 6
+
+  - note: or-true
+    data: {}
+    modules:
+      - |
+        package test
+
+        inc(x) = 7 == x
+        inc(x) = 7 == x
+
+        a1 = inc(7)
+    query: data.test
+    want_result:
+      a1: true
+
+  - note: or-false
+    data: {}
+    modules:
+      - |
+        package test
+
+        inc(x) = 8 == x
+        inc(x) = 3 == x
+
+        a1 = inc(2)
+    query: data.test
+    want_result:
+      a1: false
+
+  - note: or-undefined
+    data: {}
+    modules:
+      - |
+        package test
+
+        inc(x) = x + 1
+        inc(x) = x + 1
+        inc(x) = y {
+           x > 10 # This will evaluate to false.
+           y = 100 # y will be undefined.
+        }
+
+        a1 = inc(5)
+    query: data.test
+    want_result:
+      a1: 6
+
+  - note: or-first-undefined
+    data: {}
+    modules:
+      - |
+        package test
+
+        inc(x) = y {
+           x > 10 # This will evaluate to false.
+           y = 100 # y will be undefined.
+        }
+        inc(x) = x + 1
+        inc(x) = x + 1
+
+        a1 = inc(5)
+    query: data.test
+    want_result:
+      a1: 6
+
+  - note: or-all-undefined
+    data: {}
+    modules:
+      - |
+        package test
+
+        inc(x1) = y1 {
+           x1 > 10 # This will evaluate to false.
+           y1 = 100 # y will be undefined.
+        }
+        inc(x2) = y2 {
+           x2 > 10 # This will evaluate to false.
+           y2 = 100 # y will be undefined.
+        }
+
+        a1 = inc(5)
+    query: data.test
+    want_result: {}
+
+  - note: or-one-error
+    data: {}
+    modules:
+      - |
+        package test
+
+        fcn(x) = y {
+          y = x + 1
+        }
+
+        fcn(x) = y {
+          y = concat(" ", ["hello", x])
+        }
+
+        a1 = fcn("world")
+        a2 = fcn(5)
+    query: data.test
+    want_result:
+      a1: 
+        set!: [hello world]
+      a2: 
+        set!: [6]
+
+  - note: or-all-error
+    data: {}
+    modules:
+      - |
+        package test
+
+        fcn(x) = y {
+          y = x + 1
+        }
+
+        fcn(x) = y {
+          y = x + 1
+        }
+
+        a1 = fcn("world")
+    query: data.test
+    error: "`add` expects numeric argument. Got `\"world\"` instead"

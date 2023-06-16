@@ -45,3 +45,17 @@ cases:
     want_result:
       a: -11
       
+  - note: call-return-undefined
+    data: {}
+    modules:
+      - |
+        package test
+
+        inc(x) = y {
+           x > 10 # This will evaluate to false.
+           y = 100 # y will be undefined.
+        }
+
+        a1 = inc(5)
+    query: data.test
+    want_result: {}
