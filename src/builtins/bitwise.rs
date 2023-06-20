@@ -14,7 +14,7 @@ use anyhow::Result;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("bits.and", and);
-    m.insert("bits.and", lsh);
+    m.insert("bits.lsh", lsh);
     m.insert("bits.negate", negate);
     m.insert("bits.or", or);
     m.insert("bits.rsh", rsh);
