@@ -1,0 +1,54 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: bits.lsh.error.wrongtype1
+    data: {}
+    modules:
+      - |
+        package test
+
+        x = bits.lsh(1, "str")
+    query: data.test
+    error: "`bits.lsh` expects numeric argument. Got `\"str\"` instead"
+
+  - note: bits.lsh.error.wrongtype2
+    data: {}
+    modules:
+      - |
+        package test
+
+        x = bits.lsh("str", 1)
+    query: data.test
+    error: "`bits.lsh` expects numeric argument. Got `\"str\"` instead"
+
+  - note: bits.lsh.error.morearg
+    data: {}
+    modules:
+      - |
+        package test
+
+        x = bits.lsh(1, 1, 1)
+    query: data.test
+    error: "`bits.lsh` expects 2 arguments"
+
+  - note: bits.lsh.error.lessarg
+    data: {}
+    modules:
+      - |
+        package test
+
+        x = bits.lsh(1)
+    query: data.test
+    error: "`bits.lsh` expects 2 arguments"
+
+  - note: bits.lsh
+    data: {}
+    modules:
+      - |
+        package test
+
+        x = bits.lsh(9, 2)
+    query: data.test
+    want_result:
+      x : 36

@@ -1,0 +1,60 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: bits.xor.error.wrongtype1
+    data: {}
+    modules:
+      - |
+        package test
+
+        x = bits.xor(1, "str")
+    query: data.test
+    error: "`bits.xor` expects numeric argument. Got `\"str\"` instead"
+
+  - note: bits.xor.error.wrongtype2
+    data: {}
+    modules:
+      - |
+        package test
+
+        x = bits.xor("str", 1)
+    query: data.test
+    error: "`bits.xor` expects numeric argument. Got `\"str\"` instead"
+
+  - note: bits.xor.error.morearg
+    data: {}
+    modules:
+      - |
+        package test
+
+        x = bits.xor(1, 1, 1)
+    query: data.test
+    error: "`bits.xor` expects 2 arguments"
+
+  - note: bits.xor.error.lessarg
+    data: {}
+    modules:
+      - |
+        package test
+
+        x = bits.xor(1)
+    query: data.test
+    error: "`bits.xor` expects 2 arguments"
+
+  - note: bits.xor
+    data: {}
+    modules:
+      - |
+        package test
+
+        x1 = bits.xor(1, 0)
+        x2 = bits.xor(1, 1)
+        x3 = bits.xor(0, 0)
+        x4 = bits.xor(0, 1)
+    query: data.test
+    want_result:
+      x1 : 1
+      x2 : 0
+      x3 : 0
+      x4 : 1
