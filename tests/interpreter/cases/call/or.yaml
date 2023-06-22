@@ -130,10 +130,8 @@ cases:
         a2 = fcn(5)
     query: data.test
     want_result:
-      a1: 
-        set!: [hello world]
-      a2: 
-        set!: [6]
+      a1: "hello world"
+      a2: 6
 
   - note: or-all-error
     data: {}

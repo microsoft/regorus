@@ -39,7 +39,6 @@ pub enum SortResult {
 }
 
 pub fn schedule<'a>(infos: &mut [StmtInfo<'a>]) -> Result<SortResult> {
-    println!("infos: {infos:?}");
     let num_statements = infos.len();
 
     // Mapping from each var to the list of statements that define it.
