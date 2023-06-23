@@ -1310,6 +1310,7 @@ impl<'source> Interpreter<'source> {
                 Err(e) => {
                     // If the rule produces an error, save the error.
                     errors.push(e);
+                    self.scopes = scopes;
                     continue;
                 }
             };
@@ -1550,31 +1551,36 @@ impl<'source> Interpreter<'source> {
         span: &'source Span<'source>,
         bodies: &'source Vec<RuleBody<'source>>,
     ) -> Result<Value> {
-        let mut result = true;
-        self.scopes.push(Scope::new());
-
-        if bodies.is_empty() {
+        let result = if bodies.is_empty() {
             self.contexts.push(ctx.clone());
-            result = self.eval_output_expr()?;
+            self.eval_output_expr()
         } else {
+            let mut result = Ok(true);
             for body in bodies {
                 self.contexts.push(ctx.clone());
-                result = self.eval_query(&body.query)?;
+                result = self.eval_query(&body.query);
 
-                // The body evaluated successfully.
-                if result {
+                if matches!(&result, Ok(true) | Err(_)) {
                     break;
                 }
 
+                // TODO: Manage other scoped data.
+                self.scopes.pop();
                 if bodies.len() > 1 {
                     unimplemented!("else bodies");
                 }
             }
-        }
+            result
+        };
 
         let ctx = match self.contexts.pop() {
             Some(ctx) => ctx,
             _ => bail!("internal error: rule's context already popped"),
+        };
+
+        let result = match result {
+            Ok(r) => r,
+            Err(e) => return Err(e),
         };
 
         // Drop local variables and leave the local scope
