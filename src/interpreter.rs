@@ -760,7 +760,10 @@ impl<'source> Interpreter<'source> {
                 value,
                 collection,
             } => self.eval_some_in(span, key, value, collection, stmts)?,
-            Literal::NotExpr { expr, .. } => matches!(self.eval_expr(expr)?, Value::Bool(false)),
+            Literal::NotExpr { expr, .. } => {
+                // https://github.com/open-policy-agent/opa/issues/1622#issuecomment-520547385
+                matches!(self.eval_expr(expr)?, Value::Bool(false) | Value::Undefined)
+            }
             Literal::Every {
                 span,
                 key,

@@ -1,0 +1,66 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: not-false
+    data: {}
+    modules:
+      - |
+        package test
+
+        x[a] {
+          not 1 == 2
+          a := "hello"
+        }
+    query: data.test
+    want_result:
+      x: 
+        set!: [hello]
+
+  - note: not-undefined
+    data: {}
+    modules:
+      - |
+        package test
+
+        myequal(t) {
+          t == 2
+        }
+
+        x[a] {
+          not myequal(1)
+          a := "hello"
+        }
+    query: data.test
+    want_result:
+      x: 
+        set!: [hello]
+
+  # https://github.com/open-policy-agent/opa/issues/1877
+  - note: not-more-undefined-OPA-INCOMPATIBLE
+    data: {}
+    modules:
+      - |
+        package test
+
+        import future.keywords.if
+
+        p if false # undefined value
+
+        q1 {
+          not p # `not undefined` evaluates to true
+        }
+        
+        q2 = [p] # q2 = [undefined] = undefined
+        
+        q3 {
+          not [p] # `not undefined` evaluates to true
+        }
+
+        q4 {
+          not q3 # `not true` making it undefined
+        }
+    query: data.test
+    want_result:
+      q1: true
+      q3: true
