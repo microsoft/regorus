@@ -1933,27 +1933,26 @@ impl<'source> Interpreter<'source> {
                 head: rule_head,
                 bodies: rule_body,
             } => {
-                if matches!(rule_head, RuleHead::Func { .. }) {
-                    return Ok(());
-                }
+                if !matches!(rule_head, RuleHead::Func { .. }) {
+                    let (ctx, mut path) = self.make_rule_context(rule_head)?;
+                    let special_set =
+                        matches!((ctx.output_expr, &ctx.value), (None, Value::Set(_)));
+                    let value = match self.eval_rule_bodies(ctx, span, rule_body)? {
+                        Value::Set(_) if special_set => {
+                            let entry = path[path.len() - 1].text();
+                            let mut s = BTreeSet::new();
+                            s.insert(Value::String(entry.to_owned()));
+                            path = path[0..path.len() - 1].to_vec();
+                            Value::from_set(s)
+                        }
+                        v => v,
+                    };
 
-                let (ctx, mut path) = self.make_rule_context(rule_head)?;
-                let special_set = matches!((ctx.output_expr, &ctx.value), (None, Value::Set(_)));
-                let value = match self.eval_rule_bodies(ctx, span, rule_body)? {
-                    Value::Set(_) if special_set => {
-                        let entry = path[path.len() - 1].text();
-                        let mut s = BTreeSet::new();
-                        s.insert(Value::String(entry.to_owned()));
-                        path = path[0..path.len() - 1].to_vec();
-                        Value::from_set(s)
+                    if value != Value::Undefined {
+                        let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
+                        let vref = Self::make_or_get_value_mut(&mut self.data, &paths[..])?;
+                        Self::merge_value(span, vref, value)?;
                     }
-                    v => v,
-                };
-
-                if value != Value::Undefined {
-                    let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
-                    let vref = Self::make_or_get_value_mut(&mut self.data, &paths[..])?;
-                    Self::merge_value(span, vref, value)?;
                 }
             }
             _ => bail!("internal error: unexpected"),
@@ -1966,29 +1965,42 @@ impl<'source> Interpreter<'source> {
         }
     }
 
-    pub fn eval(
+    pub fn eval_rule_input(
         &mut self,
-        data: &Option<Value>,
+        module: &'source Module<'source>,
+        rule: &'source Rule<'source>,
         input: &Option<Value>,
         enable_tracing: bool,
-        schedule: Option<&'source Schedule<'source>>,
     ) -> Result<Value> {
-        self.schedule = schedule;
+        self.processed.remove(rule);
+
         self.traces = match enable_tracing {
             true => Some(vec![]),
             false => None,
         };
 
-        self.builtins_cache.clear();
-
         if let Some(input) = input {
             self.input = input.clone();
-
             info!("input: {:#?}", self.input);
         }
+
+        self.eval_rule(module, rule)?;
+
+        Ok(self.data.clone())
+    }
+
+    pub fn prepare_for_eval(
+        &mut self,
+        schedule: Option<&'source Schedule<'source>>,
+        data: &Option<Value>,
+    ) -> Result<()> {
+        self.schedule = schedule;
+        self.builtins_cache.clear();
+
         if let Some(data) = data {
             self.data = data.clone();
         }
+
         // Ensure that each module has an empty object
         for m in &self.modules {
             let path = Parser::get_path_ref_components(&m.package.refr)?;
@@ -2002,6 +2014,50 @@ impl<'source> Interpreter<'source> {
         self.check_default_rules()?;
         self.update_function_table()?;
         self.gather_rules()?;
+
+        Ok(())
+    }
+
+    pub fn eval_module(
+        &mut self,
+        module: &'source Module<'source>,
+        input: &Option<Value>,
+        enable_tracing: bool,
+    ) -> Result<Value> {
+        self.traces = match enable_tracing {
+            true => Some(vec![]),
+            false => None,
+        };
+
+        if let Some(input) = input {
+            self.input = input.clone();
+            info!("input: {:#?}", self.input);
+        }
+
+        for rule in &module.policy {
+            self.eval_rule(module, rule)?;
+        }
+
+        // Defer the evaluation of the default rules to here
+        let prev_module = self.set_current_module(Some(module))?;
+        for rule in &module.policy {
+            self.eval_default_rule(rule)?;
+        }
+        self.set_current_module(prev_module)?;
+
+        Ok(self.data.clone())
+    }
+
+    pub fn eval_modules(&mut self, input: &Option<Value>, enable_tracing: bool) -> Result<Value> {
+        self.traces = match enable_tracing {
+            true => Some(vec![]),
+            false => None,
+        };
+
+        if let Some(input) = input {
+            self.input = input.clone();
+            info!("input: {:#?}", self.input);
+        }
 
         for module in self.modules.clone() {
             for rule in &module.policy {
