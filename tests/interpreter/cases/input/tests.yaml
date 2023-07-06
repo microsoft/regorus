@@ -1,0 +1,20 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: input-basic-1
+    data: {}
+    input: {
+      x: 1
+    }
+    modules:
+      - |
+        package test
+
+        x[a] {
+          a = input.x + 5
+        }
+    query: data.test
+    want_result:
+      x:
+        set!: [6]

@@ -165,6 +165,68 @@ pub fn assert_match(computed: Value, expected: Value) {
     }
 }
 
+pub fn eval_file_additional_input(
+    regos: &[String],
+    data: Option<Value>,
+    input: Option<Value>,
+    additional_input: Option<Value>,
+    query: &str,
+    enable_tracing: bool,
+) -> Result<Value> {
+    let mut files = vec![];
+    let mut sources = vec![];
+    let mut modules = vec![];
+    let mut modules_ref = vec![];
+    for (idx, _) in regos.iter().enumerate() {
+        files.push(format!("rego_{idx}"));
+    }
+
+    for (idx, file) in files.iter().enumerate() {
+        let contents = regos[idx].as_str();
+        sources.push(Source {
+            file,
+            contents,
+            lines: contents.split('\n').collect(),
+        });
+    }
+
+    for source in &sources {
+        let mut parser = Parser::new(source)?;
+        modules.push(parser.parse()?);
+    }
+
+    for m in &modules {
+        modules_ref.push(m);
+    }
+
+    let analyzer = Analyzer::new();
+    let schedule = analyzer.analyze(&modules)?;
+
+    // First eval the modules.
+    let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
+    interpreter.prepare_for_eval(Some(&schedule), &data)?;
+    interpreter.eval_modules(&input, enable_tracing)?;
+
+    // Now eval the query.
+    let source = Source {
+        file: "<query.rego>",
+        contents: query,
+        lines: query.split('\n').collect(),
+    };
+    let mut parser = Parser::new(&source)?;
+    let expr = parser.parse_membership_expr()?;
+    let result_eval_snippet = interpreter.eval_query_snippet(&expr, enable_tracing);
+
+    // Now eval the first rule on a specific input
+    if let Some(module) = &modules.get(0) {
+        if let Some(rule) = &module.policy.get(0) {
+            return interpreter.eval_rule_input(module, rule, &additional_input, enable_tracing);
+        }
+    }
+
+    result_eval_snippet
+}
+
 pub fn eval_file(
     regos: &[String],
     data: Option<Value>,
@@ -203,7 +265,8 @@ pub fn eval_file(
 
     // First eval the modules.
     let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
-    interpreter.eval(&data, &input, enable_tracing, Some(&schedule))?;
+    interpreter.prepare_for_eval(Some(&schedule), &data)?;
+    interpreter.eval_modules(&input, enable_tracing)?;
 
     // Now eval the query.
     let source = Source {
@@ -256,7 +319,8 @@ fn one_file() -> Result<()> {
     }
 
     let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
-    let results = interpreter.eval(&None, &input, true, Some(&schedule))?;
+    interpreter.prepare_for_eval(Some(&schedule), &None)?;
+    let results = interpreter.eval_modules(&input, true)?;
     println!("eval results:\n{}", serde_json::to_string_pretty(&results)?);
     Ok(())
 }
