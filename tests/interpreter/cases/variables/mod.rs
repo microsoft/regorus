@@ -31,7 +31,7 @@ fn basic() -> Result<()> {
     set = {1, 2, 3}
 "#;
 
-    let expected = Value::from_json_str(
+    let expected = vec![Value::from_json_str(
         r#" {
     "array": [1, 2, 3],
     "nested_array": [1, [2, 3, 4], 5, 6],
@@ -44,7 +44,7 @@ fn basic() -> Result<()> {
      "local_0": 10,
      "local_1": "test_local"
 }"#,
-    )?;
+    )?];
 
     assert_match(
         eval_file(&[rego.to_owned()], None, None, "data.test", false)?,

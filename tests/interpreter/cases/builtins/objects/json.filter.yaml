@@ -32,7 +32,7 @@ cases:
 
         #TODO: more filters
     query: data.test.results
-    want_result:
+    want_result: !Single
       o1:
         a: 5
         b:

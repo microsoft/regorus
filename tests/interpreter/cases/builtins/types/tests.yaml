@@ -29,7 +29,7 @@ cases:
           "type_names": [n | n = type_name(items[_])],
         }
     query: data.test.results
-    want_result:
+    want_result: !Single
       is_array: [[]]
       is_boolean: [true]
       is_null: [null]

@@ -24,7 +24,7 @@ cases:
         r9 = numbers.range(10, y)
 
     query: data.test
-    want_result:
+    want_result: !Single
       r1: [1, 2, 3, 4, 5]
       r2: [5, 4, 3, 2, 1]
       r3: [-1, -2, -3, -4, -5]

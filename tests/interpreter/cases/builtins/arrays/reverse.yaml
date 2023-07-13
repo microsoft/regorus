@@ -17,7 +17,7 @@ cases:
         r { false }
         u3 = array.reverse(r)
     query: data.test
-    want_result:
+    want_result: !Single
       y :
         - [3, 2,1]
         - []

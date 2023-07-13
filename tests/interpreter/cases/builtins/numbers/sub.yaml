@@ -13,7 +13,7 @@ cases:
         a = 1 - y
         b = y - 1
     query: data.test
-    want_result:
+    want_result: !Single
       x: -0.5
 
   - note: non-numeric
@@ -32,5 +32,5 @@ cases:
         package test
         x = 16 / 2 % 5 / 2
     query: data.test
-    want_result:
+    want_result: !Single
       x: 1.5

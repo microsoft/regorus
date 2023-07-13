@@ -22,7 +22,7 @@ cases:
         r {false}
         u1 = sum(r)
     query: data.test
-    want_result:
+    want_result: !Single
       x: [4, 2, 1, 0, 0, 6, 0, 0]
       
   - note: invalid-null

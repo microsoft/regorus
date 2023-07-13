@@ -43,7 +43,7 @@ cases:
         x = 100
 
     query: data.test
-    want_result:
+    want_result: !Single
       x: 100
       y: "string"
       assign_rule_forward: [1, 2, 3]

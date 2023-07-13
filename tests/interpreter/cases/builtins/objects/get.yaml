@@ -23,7 +23,7 @@ cases:
           "v4": object.get(obj, {"a":5}, "default"),         
         }
     query: data.test.results
-    want_result:
+    want_result: !Single
       v1: 5
       v2: 8
       v3: "default"

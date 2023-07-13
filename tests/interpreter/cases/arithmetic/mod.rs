@@ -29,14 +29,14 @@ fn basic() -> Result<()> {
     }
 "#;
 
-    let expected = Value::from_json_str(
+    let expected = vec![Value::from_json_str(
         r#" {
     "add" : true,
     "sub" : true,
     "mul" : true,
     "div" : true
 }"#,
-    )?;
+    )?];
 
     assert_eq!(
         eval_file(&[rego.to_owned()], None, None, "data.test", false)?,

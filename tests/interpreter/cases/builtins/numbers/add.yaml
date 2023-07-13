@@ -13,7 +13,7 @@ cases:
         a = 1 + y
         b = y + 1
     query: data.test
-    want_result:
+    want_result: !Single
       x: 6.5
 
   - note: non-numeric
