@@ -15,7 +15,7 @@ cases:
         y { false }
         z = round(y)
     query: data.test.x
-    want_result: [-9, -10, -10, 9, 10, 10, 8, -8]
+    want_result: !Single [-9, -10, -10, 9, 10, 10, 8, -8]
 
   - note: extra-args
     data: {}

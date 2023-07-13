@@ -55,7 +55,7 @@ cases:
         default object_compr = {"a":5 | true}
         default empty_array_1 = [1 | not 1]
     query: data.test
-    want_result:
+    want_result: !Single
       x: 5
       a: -6
       b: -6
@@ -139,7 +139,7 @@ cases:
         x = 5
         default a = [ x | 1 ]
     query: data.t.a
-    want_result: [5]
+    want_result: !Single [5]
 
   - note: valid-var-in-array-compr-query
     data: {}
@@ -149,7 +149,7 @@ cases:
         x = 5
         default a = [ 1 | true; x ]
     query: data.t.a
-    want_result: [1]
+    want_result: !Single [1]
 
   - note: valid-var-in-set-compr-output
     data: {}
@@ -159,7 +159,7 @@ cases:
         x = 5
         default a = { x | 1 }
     query: data.t.a
-    want_result:
+    want_result: !Single
       set!: [5]
 
   - note: valid-var-in-array-compr-query
@@ -170,7 +170,7 @@ cases:
         x = 5
         default a = { 1 | true; x }
     query: data.t.a
-    want_result:
+    want_result: !Single
       set!: [1]
 
   - note: valid-var-in-object-compr-key
@@ -181,7 +181,7 @@ cases:
         x = "a"
         default a = { x : 5 | true }
     query: data.t.a
-    want_result:
+    want_result: !Single
       a: 5
 
   - note: valid-var-in-object-compr-value
@@ -192,7 +192,7 @@ cases:
         x = 5
         default a = { "x" : x | true }
     query: data.t.a
-    want_result:
+    want_result: !Single
       x: 5
 
   - note: valid-var-in-object-compr-query
@@ -203,7 +203,7 @@ cases:
         x = 5
         default a = { "a" : 5 | x }
     query: data.t.a
-    want_result:
+    want_result: !Single
       a: 5
 
   - note: invalid-call
@@ -297,7 +297,7 @@ cases:
         package t
         default a = [5 | some a; a = 5]
     query: data.t.a
-    want_result: [5]
+    want_result: !Single [5]
 
   - note: valid-every
     data: {}
@@ -307,7 +307,7 @@ cases:
         import future.keywords
         default a = [5 | every x in [1,2,3] { true }]
     query: data.t.a
-    want_result: [5]
+    want_result: !Single [5]
     skip: true
 
   - note: valid-var-in-some-in-key
@@ -319,7 +319,7 @@ cases:
         default a = [5 | some x in {5}]
     query: data.t.a
     skip: true
-    want_result: [5]
+    want_result: !Single [5]
 
   - note: valid-var-in-some-in-value
     data: {}
@@ -329,7 +329,7 @@ cases:
         import future.keywords
         default a = [5 | some 5, x in {5}]
     query: data.t.a
-    want_result: [5]
+    want_result: !Single [5]
     skip: true
 
   - note: invalid-var-in-some-in-collection
@@ -340,7 +340,7 @@ cases:
         import future.keywords
         default a = [5 | some 5, 5 in x]
     query: data.t.a
-    want_result: []
+    want_result: !Single []
     skip: true
 
   - note: valid-var-in-not-expr
@@ -352,7 +352,7 @@ cases:
         x = true
         default a = [5 | not x]
     query: data.t.a
-    want_result: []
+    want_result: !Single []
 
   - note: valid-var-in-expr
     data: {}
@@ -363,4 +363,4 @@ cases:
         x = true
         default a = [5 | x]
     query: data.t.a
-    want_result: [5]
+    want_result: !Single [5]

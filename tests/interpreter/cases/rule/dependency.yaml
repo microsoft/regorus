@@ -7,7 +7,7 @@ cases:
         a = b
         b = 5
     query: data.test
-    want_result:
+    want_result: !Single
       a: 5
       b: 5
 
@@ -33,7 +33,7 @@ cases:
         y = 10
         z = data.a.x + 5
     query: data
-    want_result:
+    want_result: !Single
       a:
         x: 20
       b:

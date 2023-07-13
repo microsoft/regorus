@@ -32,7 +32,7 @@ fn basic_array() -> Result<()> {
     array_compr_7 = [ 1 | [1, 2, 3][_]; [1, 2][_] >= 2 ]
 "#;
 
-    let expected = Value::from_json_str(
+    let expected = vec![Value::from_json_str(
         r#" {
             "array": [1, 2, 3],
             "array_compr_0": [1],
@@ -44,7 +44,7 @@ fn basic_array() -> Result<()> {
             "array_compr_6": [1, 1, 1, 1, 1, 1],
             "array_compr_7": [1, 1, 1]
 }"#,
-    )?;
+    )?];
 
     assert_match(
         eval_file(&[rego.to_owned()], None, None, "data.test", false)?,
@@ -81,7 +81,7 @@ fn basic_set() -> Result<()> {
     set_compr_7 = { a | a = [1, 2, 3][_]; [1, 2][_] >= 2 }
 "#;
 
-    let expected = Value::from_json_str(
+    let expected = vec![Value::from_json_str(
         r#" {
             "set": {
                 "set!": [1, "string", [2, 3, 4], 567, false]
@@ -113,7 +113,7 @@ fn basic_set() -> Result<()> {
                 "set!": [1, 2, 3]
             }
  }"#,
-    )?;
+    )?];
 
     assert_match(
         eval_file(&[rego.to_owned()], None, None, "data.test", false)?,

@@ -15,7 +15,7 @@ cases:
         b = y % 1
         c = 1 % y
     query: data.test
-    want_result:
+    want_result: !Single
       x : 1
 
   - note: non-numeric
@@ -35,7 +35,7 @@ cases:
         a { false }
         x = a % 10
     query: data.test
-    want_result: {}
+    want_result: !Single {}
 
   - note: by-zero
     data: {}
@@ -44,4 +44,4 @@ cases:
         package test
         x = 1%0
     query: data.test
-    want_result: {}
+    want_result: !Single {}

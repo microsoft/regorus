@@ -30,7 +30,7 @@ cases:
         r { false }
         z = count(r)
     query: data.test
-    want_result:
+    want_result: !Single
       x: [
         0, 1, 3,
         0, 1, 2,

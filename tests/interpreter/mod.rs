@@ -154,90 +154,52 @@ fn match_values(computed: &Value, expected: &Value) -> Result<()> {
     }
 }
 
-pub fn assert_match(computed: Value, expected: Value) {
-    let expected = match process_value(&expected) {
-        Ok(e) => e,
-        _ => panic!("unable to process value :\n {expected:?}"),
-    };
-    match match_values(&computed, &expected) {
-        Ok(()) => (),
-        Err(e) => panic!("{}", e),
-    }
-}
-
-pub fn eval_file_additional_input(
-    regos: &[String],
-    data: Option<Value>,
-    input: Option<Value>,
-    additional_input: Option<Value>,
-    query: &str,
-    enable_tracing: bool,
-) -> Result<Value> {
-    let mut files = vec![];
-    let mut sources = vec![];
-    let mut modules = vec![];
-    let mut modules_ref = vec![];
-    for (idx, _) in regos.iter().enumerate() {
-        files.push(format!("rego_{idx}"));
+pub fn assert_match(computed_results: Vec<Value>, expected_results: Vec<Value>) {
+    if computed_results.len() != expected_results.len() {
+        panic!(
+            "the number of computed results ({}) and expected results ({}) is not equal",
+            computed_results.len(),
+            expected_results.len()
+        );
     }
 
-    for (idx, file) in files.iter().enumerate() {
-        let contents = regos[idx].as_str();
-        sources.push(Source {
-            file,
-            contents,
-            lines: contents.split('\n').collect(),
-        });
-    }
+    for (n, expected_result) in expected_results.into_iter().enumerate() {
+        let expected = match process_value(&expected_result) {
+            Ok(e) => e,
+            _ => panic!("unable to process value :\n {expected_result:?}"),
+        };
 
-    for source in &sources {
-        let mut parser = Parser::new(source)?;
-        modules.push(parser.parse()?);
-    }
-
-    for m in &modules {
-        modules_ref.push(m);
-    }
-
-    let analyzer = Analyzer::new();
-    let schedule = analyzer.analyze(&modules)?;
-
-    // First eval the modules.
-    let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
-    interpreter.prepare_for_eval(Some(&schedule), &data)?;
-    interpreter.eval_modules(&input, enable_tracing)?;
-
-    // Now eval the query.
-    let source = Source {
-        file: "<query.rego>",
-        contents: query,
-        lines: query.split('\n').collect(),
-    };
-    let mut parser = Parser::new(&source)?;
-    let expr = parser.parse_membership_expr()?;
-    let result_eval_snippet = interpreter.eval_query_snippet(&expr, enable_tracing);
-
-    // Now eval the first rule on a specific input
-    if let Some(module) = &modules.get(0) {
-        if let Some(rule) = &module.policy.get(0) {
-            return interpreter.eval_rule_input(module, rule, &additional_input, enable_tracing);
+        if let Some(computed_result) = computed_results.get(n) {
+            match match_values(computed_result, &expected) {
+                Ok(()) => (),
+                Err(e) => panic!("{}", e),
+            }
         }
     }
-
-    result_eval_snippet
 }
 
 pub fn eval_file(
     regos: &[String],
-    data: Option<Value>,
-    input: Option<Value>,
+    data_opt: Option<Value>,
+    input_opt: Option<ValueOrVec>,
     query: &str,
     enable_tracing: bool,
-) -> Result<Value> {
+) -> Result<Vec<Value>> {
+    let mut results = vec![];
     let mut files = vec![];
     let mut sources = vec![];
     let mut modules = vec![];
     let mut modules_ref = vec![];
+
+    // the query is parsed for later
+    let source = Source {
+        file: "<query.rego>",
+        contents: query,
+        lines: query.split('\n').collect(),
+    };
+    let mut parser = Parser::new(&source)?;
+    let expr = parser.parse_membership_expr()?;
+
     for (idx, _) in regos.iter().enumerate() {
         files.push(format!("rego_{idx}"));
     }
@@ -263,20 +225,33 @@ pub fn eval_file(
     let analyzer = Analyzer::new();
     let schedule = analyzer.analyze(&modules)?;
 
-    // First eval the modules.
     let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
-    interpreter.prepare_for_eval(Some(&schedule), &data)?;
-    interpreter.eval_modules(&input, enable_tracing)?;
+    if let Some(input) = input_opt {
+        // if inputs are defined then first the evaluation if prepared
+        interpreter.prepare_for_eval(Some(&schedule), &data_opt)?;
 
-    // Now eval the query.
-    let source = Source {
-        file: "<query.rego>",
-        contents: query,
-        lines: query.split('\n').collect(),
-    };
-    let mut parser = Parser::new(&source)?;
-    let expr = parser.parse_membership_expr()?;
-    interpreter.eval_query_snippet(&expr, enable_tracing)
+        // then all modules are evaluated for each input
+        let mut inputs = vec![];
+        match input {
+            ValueOrVec::Single(single_input) => inputs.push(single_input),
+            ValueOrVec::Many(mut many_input) => inputs.append(&mut many_input),
+        }
+
+        for input in inputs {
+            interpreter.eval_modules(&Some(input), enable_tracing)?;
+
+            // Now eval the query.
+            results.push(interpreter.eval_query_snippet(&expr, enable_tracing)?);
+        }
+    } else {
+        // it no input is defined then one evaluation of all modules is performed
+        interpreter.eval(&data_opt, &None, enable_tracing, Some(&schedule))?;
+
+        // Now eval the query.
+        results.push(interpreter.eval_query_snippet(&expr, enable_tracing)?);
+    }
+
+    Ok(results)
 }
 
 #[test]
@@ -326,14 +301,20 @@ fn one_file() -> Result<()> {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub enum ValueOrVec {
+    Single(Value),
+    Many(Vec<Value>),
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct TestCase {
     data: Value,
-    input: Option<Value>,
+    input: Option<ValueOrVec>,
     modules: Vec<String>,
     note: String,
     query: String,
     sort_bindings: Option<bool>,
-    want_result: Option<Value>,
+    want_result: Option<ValueOrVec>,
     skip: Option<bool>,
     error: Option<String>,
     traces: Option<bool>,
@@ -349,6 +330,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
     println!("running {file}");
+
     for case in test.cases {
         print!("case {} ", case.note);
         if case.skip == Some(true) {
@@ -362,7 +344,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
         }
 
         let enable_tracing = case.traces.is_some() && case.traces.unwrap();
-        // First eval the modules.
+
         match eval_file(
             &case.modules,
             Some(case.data),
@@ -371,7 +353,17 @@ fn yaml_test_impl(file: &str) -> Result<()> {
             enable_tracing,
         ) {
             Ok(results) => match case.want_result {
-                Some(want_result) => assert_match(results, want_result),
+                Some(want_result) => {
+                    let mut expected_results = vec![];
+                    match want_result {
+                        ValueOrVec::Single(single_result) => expected_results.push(single_result),
+                        ValueOrVec::Many(mut many_result) => {
+                            expected_results.append(&mut many_result)
+                        }
+                    }
+
+                    assert_match(results, expected_results);
+                }
                 _ => panic!("eval succeeded and did not produce any errors"),
             },
             Err(actual) => match &case.error {

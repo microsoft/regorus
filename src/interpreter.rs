@@ -22,6 +22,7 @@ pub struct Interpreter<'source> {
     current_module_path: String,
     input: Value,
     data: Value,
+    init_data: Value,
     scopes: Vec<Scope>,
     // TODO: handle recursive calls where same expr could have different values.
     loop_var_values: BTreeMap<&'source Expr<'source>, Value>,
@@ -60,6 +61,7 @@ impl<'source> Interpreter<'source> {
             current_module_path: String::default(),
             input: Value::new_object(),
             data: Value::new_object(),
+            init_data: Value::new_object(),
             scopes: vec![Scope::new()],
             contexts: vec![],
             loop_var_values: BTreeMap::new(),
@@ -1938,25 +1940,25 @@ impl<'source> Interpreter<'source> {
                         }
                         v => v,
                     };
-
                     if value != Value::Undefined {
                         let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
                         let vref = Self::make_or_get_value_mut(&mut self.data, &paths[..])?;
                         Self::merge_value(span, vref, value)?;
                     }
+
+                    self.processed.insert(rule);
                 }
             }
             _ => bail!("internal error: unexpected"),
         }
         self.set_current_module(prev_module)?;
-        self.processed.insert(rule);
         match self.active_rules.pop() {
             Some(r) if r == rule => Ok(()),
             _ => bail!("internal error: current rule not active"),
         }
     }
 
-    pub fn eval_rule_input(
+    pub fn eval_rule_with_input(
         &mut self,
         module: &'source Module<'source>,
         rule: &'source Rule<'source>,
@@ -1974,6 +1976,10 @@ impl<'source> Interpreter<'source> {
             self.input = input.clone();
             info!("input: {:#?}", self.input);
         }
+
+        // we clean the previous evaluation state if any
+        self.data = self.init_data.clone();
+        self.processed.remove(rule);
 
         self.eval_rule(module, rule)?;
 
@@ -2006,6 +2012,8 @@ impl<'source> Interpreter<'source> {
         self.update_function_table()?;
         self.gather_rules()?;
 
+        self.init_data = self.data.clone();
+
         Ok(())
     }
 
@@ -2024,6 +2032,10 @@ impl<'source> Interpreter<'source> {
             self.input = input.clone();
             info!("input: {:#?}", self.input);
         }
+
+        // we clean the previous evaluation state if any
+        self.data = self.init_data.clone();
+        self.processed.clear();
 
         for rule in &module.policy {
             self.eval_rule(module, rule)?;
@@ -2050,6 +2062,10 @@ impl<'source> Interpreter<'source> {
             info!("input: {:#?}", self.input);
         }
 
+        // we clean the previous evaluation state if any
+        self.data = self.init_data.clone();
+        self.processed.clear();
+
         for module in self.modules.clone() {
             for rule in &module.policy {
                 self.eval_rule(module, rule)?;
@@ -2066,6 +2082,17 @@ impl<'source> Interpreter<'source> {
         }
 
         Ok(self.data.clone())
+    }
+
+    pub fn eval(
+        &mut self,
+        data: &Option<Value>,
+        input: &Option<Value>,
+        enable_tracing: bool,
+        schedule: Option<&'source Schedule<'source>>,
+    ) -> Result<Value> {
+        self.prepare_for_eval(schedule, data)?;
+        self.eval_modules(input, enable_tracing)
     }
 
     pub fn eval_query_snippet(

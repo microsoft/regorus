@@ -21,7 +21,7 @@ cases:
         s4 = concat("", set()) # empty set and delimiter
 
     query: data.test
-    want_result:
+    want_result: !Single
       a1: "Hello, world"
       a2: "Helloworld"
       a3: ""
@@ -39,7 +39,7 @@ cases:
         x { false }
         y = concat(x, [])
     query: data.test
-    want_result: {}
+    want_result: !Single {}
 
   - note: undefined-collection
     data: {}
@@ -49,7 +49,7 @@ cases:
         x { false }
         y = concat(",", x)
     query: data.test
-    want_result: {}
+    want_result: !Single {}
 
   - note: invalid-null-delimiter
     data: {}

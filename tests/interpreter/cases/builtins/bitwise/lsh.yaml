@@ -50,5 +50,5 @@ cases:
 
         x = bits.lsh(9, 2)
     query: data.test
-    want_result:
+    want_result: !Single
       x : 36

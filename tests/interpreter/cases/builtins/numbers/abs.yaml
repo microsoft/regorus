@@ -13,7 +13,7 @@ cases:
         y { false }
         z = abs(y)
     query: data.test
-    want_result:
+    want_result: !Single
       x: [9, 9, 9.1, 9.1]
 
   - note: extra-args

@@ -10,7 +10,7 @@ cases:
 
         x = { k:1 | k = ["Hello", "world", 1][_] }
     query: data.test
-    want_result:
+    want_result: !Single
       x:
         object!:
           - key: "Hello"
@@ -29,7 +29,7 @@ cases:
 
         x = { ["Hello", "world", 1][_]:1 | true }
     query: data.test
-    want_result:
+    want_result: !Single
       x:
         object!:
           - key: "Hello"
@@ -46,7 +46,7 @@ cases:
         package test
         x = { k:v | k = ["Hello", "world", 1][_]; v = [1, 1][_] }
     query: data.test
-    want_result:
+    want_result: !Single
       x:
         object!:
           - key: "Hello"
@@ -64,4 +64,3 @@ cases:
         x = { k:v | k = ["Hello", "world", 1][_]; v = [1, 2][_] }
     query: data.test
     error: "value for key `\"Hello\"` generated multiple times: `1` and `2`"
-    want_result:
