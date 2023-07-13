@@ -20,6 +20,7 @@ pub struct Interpreter<'source> {
     module: Option<&'source Module<'source>>,
     schedule: Option<&'source Schedule<'source>>,
     current_module_path: String,
+    prepared: bool,
     input: Value,
     data: Value,
     init_data: Value,
@@ -59,6 +60,7 @@ impl<'source> Interpreter<'source> {
             module: None,
             schedule: None,
             current_module_path: String::default(),
+            prepared: false,
             input: Value::new_object(),
             data: Value::new_object(),
             init_data: Value::new_object(),
@@ -1974,6 +1976,10 @@ impl<'source> Interpreter<'source> {
         input: &Option<Value>,
         enable_tracing: bool,
     ) -> Result<Value> {
+        if !self.prepared {
+            bail!("prepare_for_eval should be called before eval_rule_with_input");
+        }
+
         self.processed.remove(rule);
 
         self.traces = match enable_tracing {
@@ -2022,6 +2028,7 @@ impl<'source> Interpreter<'source> {
         self.gather_rules()?;
 
         self.init_data = self.data.clone();
+        self.prepared = true;
 
         Ok(())
     }
@@ -2032,6 +2039,10 @@ impl<'source> Interpreter<'source> {
         input: &Option<Value>,
         enable_tracing: bool,
     ) -> Result<Value> {
+        if !self.prepared {
+            bail!("prepare_for_eval should be called before eval_module");
+        }
+
         self.traces = match enable_tracing {
             true => Some(vec![]),
             false => None,
@@ -2061,6 +2072,10 @@ impl<'source> Interpreter<'source> {
     }
 
     pub fn eval_modules(&mut self, input: &Option<Value>, enable_tracing: bool) -> Result<Value> {
+        if !self.prepared {
+            bail!("prepare_for_eval should be called before eval_modules");
+        }
+
         self.traces = match enable_tracing {
             true => Some(vec![]),
             false => None,
