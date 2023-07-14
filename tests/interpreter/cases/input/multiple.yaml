@@ -10,14 +10,22 @@ cases:
     modules:
       - |
         package test
-
+        
         x[a] {
-            a = input.x + 5
+          a = y
+        }
+
+        y[a] {
+          a = input.x + 5
         }
 
     query: data.test
     want_result: !Many 
-      - x:
+      - y: 
           set!: [6]
-      - x:
+        x: 
+          set!: [ set!: [6] ]
+      - y: 
           set!: [10]
+        x: 
+          set!: [ set!: [10] ]

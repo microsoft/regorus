@@ -1995,6 +1995,7 @@ impl<'source> Interpreter<'source> {
         // we clean the previous evaluation state if any
         self.data = self.init_data.clone();
         self.processed.remove(rule);
+        self.scopes.push(Scope::new());
 
         self.eval_rule(module, rule)?;
 
@@ -2056,6 +2057,7 @@ impl<'source> Interpreter<'source> {
         // we clean the previous evaluation state if any
         self.data = self.init_data.clone();
         self.processed.clear();
+        self.scopes.push(Scope::new());
 
         for rule in &module.policy {
             self.eval_rule(module, rule)?;
@@ -2089,6 +2091,7 @@ impl<'source> Interpreter<'source> {
         // we clean the previous evaluation state if any
         self.data = self.init_data.clone();
         self.processed.clear();
+        self.scopes.push(Scope::new());
 
         for module in self.modules.clone() {
             for rule in &module.policy {
