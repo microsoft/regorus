@@ -78,6 +78,35 @@ impl<'source> Interpreter<'source> {
         })
     }
 
+    fn clean_internal_evaluation_state(&mut self, rule_opt: Option<&'source Rule<'source>>) {
+        self.data = self.init_data.clone();
+        if let Some(rule) = rule_opt {
+            self.processed.remove(rule);
+        } else {
+            self.processed.clear();
+        }
+
+        self.scopes.push(Scope::new());
+    }
+
+    fn checks_for_eval(&mut self, input: &Option<Value>, enable_tracing: bool) -> Result<()> {
+        if !self.prepared {
+            bail!("prepare_for_eval should be called before eval_modules");
+        }
+
+        self.traces = match enable_tracing {
+            true => Some(vec![]),
+            false => None,
+        };
+
+        if let Some(input) = input {
+            self.input = input.clone();
+            info!("input: {:#?}", self.input);
+        }
+
+        Ok(())
+    }
+
     fn current_module(&self) -> Result<&'source Module<'source>> {
         self.module
             .ok_or_else(|| anyhow!("internal error: current module not set"))
@@ -1976,26 +2005,8 @@ impl<'source> Interpreter<'source> {
         input: &Option<Value>,
         enable_tracing: bool,
     ) -> Result<Value> {
-        if !self.prepared {
-            bail!("prepare_for_eval should be called before eval_rule_with_input");
-        }
-
-        self.processed.remove(rule);
-
-        self.traces = match enable_tracing {
-            true => Some(vec![]),
-            false => None,
-        };
-
-        if let Some(input) = input {
-            self.input = input.clone();
-            info!("input: {:#?}", self.input);
-        }
-
-        // we clean the previous evaluation state if any
-        self.data = self.init_data.clone();
-        self.processed.remove(rule);
-        self.scopes.push(Scope::new());
+        self.checks_for_eval(input, enable_tracing)?;
+        self.clean_internal_evaluation_state(Some(rule));
 
         self.eval_rule(module, rule)?;
 
@@ -2040,24 +2051,8 @@ impl<'source> Interpreter<'source> {
         input: &Option<Value>,
         enable_tracing: bool,
     ) -> Result<Value> {
-        if !self.prepared {
-            bail!("prepare_for_eval should be called before eval_module");
-        }
-
-        self.traces = match enable_tracing {
-            true => Some(vec![]),
-            false => None,
-        };
-
-        if let Some(input) = input {
-            self.input = input.clone();
-            info!("input: {:#?}", self.input);
-        }
-
-        // we clean the previous evaluation state if any
-        self.data = self.init_data.clone();
-        self.processed.clear();
-        self.scopes.push(Scope::new());
+        self.checks_for_eval(input, enable_tracing)?;
+        self.clean_internal_evaluation_state(None);
 
         for rule in &module.policy {
             self.eval_rule(module, rule)?;
@@ -2074,24 +2069,8 @@ impl<'source> Interpreter<'source> {
     }
 
     pub fn eval_modules(&mut self, input: &Option<Value>, enable_tracing: bool) -> Result<Value> {
-        if !self.prepared {
-            bail!("prepare_for_eval should be called before eval_modules");
-        }
-
-        self.traces = match enable_tracing {
-            true => Some(vec![]),
-            false => None,
-        };
-
-        if let Some(input) = input {
-            self.input = input.clone();
-            info!("input: {:#?}", self.input);
-        }
-
-        // we clean the previous evaluation state if any
-        self.data = self.init_data.clone();
-        self.processed.clear();
-        self.scopes.push(Scope::new());
+        self.checks_for_eval(input, enable_tracing)?;
+        self.clean_internal_evaluation_state(None);
 
         for module in self.modules.clone() {
             for rule in &module.policy {
