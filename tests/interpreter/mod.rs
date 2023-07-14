@@ -178,6 +178,86 @@ pub fn assert_match(computed_results: Vec<Value>, expected_results: Vec<Value>) 
     }
 }
 
+pub fn eval_file_first_rule(
+    regos: &[String],
+    data_opt: Option<Value>,
+    input_opt: Option<ValueOrVec>,
+    query: &str,
+    enable_tracing: bool,
+) -> Result<Vec<Value>> {
+    let mut results = vec![];
+    let mut files = vec![];
+    let mut sources = vec![];
+    let mut modules = vec![];
+    let mut modules_ref = vec![];
+
+    // the query is parsed for later
+    let source = Source {
+        file: "<query.rego>",
+        contents: query,
+        lines: query.split('\n').collect(),
+    };
+    let mut parser = Parser::new(&source)?;
+    let expr = parser.parse_membership_expr()?;
+
+    for (idx, _) in regos.iter().enumerate() {
+        files.push(format!("rego_{idx}"));
+    }
+
+    for (idx, file) in files.iter().enumerate() {
+        let contents = regos[idx].as_str();
+        sources.push(Source {
+            file,
+            contents,
+            lines: contents.split('\n').collect(),
+        });
+    }
+
+    for source in &sources {
+        let mut parser = Parser::new(source)?;
+        modules.push(parser.parse()?);
+    }
+
+    for m in &modules {
+        modules_ref.push(m);
+    }
+
+    let analyzer = Analyzer::new();
+    let schedule = analyzer.analyze(&modules)?;
+
+    let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
+    if let Some(input) = input_opt {
+        // if inputs are defined then first the evaluation if prepared
+        interpreter.prepare_for_eval(Some(&schedule), &data_opt)?;
+
+        // then all modules are evaluated for each input
+        let mut inputs = vec![];
+        match input {
+            ValueOrVec::Single(single_input) => inputs.push(single_input),
+            ValueOrVec::Many(mut many_input) => inputs.append(&mut many_input),
+        }
+
+        for input in inputs {
+            if let Some(module) = &modules.get(0) {
+                if let Some(rule) = &module.policy.get(0) {
+                    interpreter.eval_rule_with_input(module, rule, &Some(input), enable_tracing)?;
+                }
+            }
+
+            // Now eval the query.
+            results.push(interpreter.eval_query_snippet(&expr, enable_tracing)?);
+        }
+    } else {
+        // it no input is defined then one evaluation of all modules is performed
+        interpreter.eval(&data_opt, &None, enable_tracing, Some(&schedule))?;
+
+        // Now eval the query.
+        results.push(interpreter.eval_query_snippet(&expr, enable_tracing)?);
+    }
+
+    Ok(results)
+}
+
 pub fn eval_file(
     regos: &[String],
     data_opt: Option<Value>,
