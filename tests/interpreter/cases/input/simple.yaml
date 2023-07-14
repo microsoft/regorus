@@ -12,10 +12,16 @@ cases:
         package test
 
         x[a] {
+          a = y
+        }
+
+        y[a] {
           a = input.x + 5
         }
 
     query: data.test
     want_result: !Single
-      x:
+      y: 
         set!: [6]
+      x: 
+        set!: [ set!: [6] ]
