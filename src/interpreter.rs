@@ -78,14 +78,9 @@ impl<'source> Interpreter<'source> {
         })
     }
 
-    fn clean_internal_evaluation_state(&mut self, rule_opt: Option<&'source Rule<'source>>) {
+    fn clean_internal_evaluation_state(&mut self) {
         self.data = self.init_data.clone();
-        if let Some(rule) = rule_opt {
-            self.processed.remove(rule);
-        } else {
-            self.processed.clear();
-        }
-
+        self.processed.clear();
         self.scopes.push(Scope::new());
     }
 
@@ -1462,6 +1457,7 @@ impl<'source> Interpreter<'source> {
             let module_path =
                 Self::get_path_string(&self.current_module()?.package.refr, Some("data"))?;
             let path = module_path + "." + name;
+
             self.ensure_rule_evaluated(path)?;
 
             let mut path: Vec<&str> =
@@ -1997,7 +1993,7 @@ impl<'source> Interpreter<'source> {
         enable_tracing: bool,
     ) -> Result<Value> {
         self.checks_for_eval(input, enable_tracing)?;
-        self.clean_internal_evaluation_state(Some(rule));
+        self.clean_internal_evaluation_state();
 
         self.eval_rule(module, rule)?;
 
@@ -2043,7 +2039,7 @@ impl<'source> Interpreter<'source> {
         enable_tracing: bool,
     ) -> Result<Value> {
         self.checks_for_eval(input, enable_tracing)?;
-        self.clean_internal_evaluation_state(None);
+        self.clean_internal_evaluation_state();
 
         for rule in &module.policy {
             self.eval_rule(module, rule)?;
@@ -2061,7 +2057,7 @@ impl<'source> Interpreter<'source> {
 
     pub fn eval_modules(&mut self, input: &Option<Value>, enable_tracing: bool) -> Result<Value> {
         self.checks_for_eval(input, enable_tracing)?;
-        self.clean_internal_evaluation_state(None);
+        self.clean_internal_evaluation_state();
 
         for module in self.modules.clone() {
             for rule in &module.policy {
