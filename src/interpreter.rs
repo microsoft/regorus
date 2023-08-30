@@ -78,10 +78,24 @@ impl<'source> Interpreter<'source> {
         })
     }
 
+    pub fn get_modules(&mut self) -> &mut Vec<&'source Module<'source>> {
+        &mut self.modules
+    }
+
+    pub fn set_data(&mut self, data: Value) {
+        self.data = data;
+    }
+
+    pub fn get_data(&mut self) -> &mut Value {
+        &mut self.data
+    }
+
     fn clean_internal_evaluation_state(&mut self) {
         self.data = self.init_data.clone();
         self.processed.clear();
-        self.scopes.push(Scope::new());
+        self.loop_var_values.clear();
+        self.scopes = vec![Scope::new()];
+        self.contexts = vec![];
     }
 
     fn checks_for_eval(&mut self, input: &Option<Value>, enable_tracing: bool) -> Result<()> {
