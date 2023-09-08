@@ -99,7 +99,7 @@ impl<'source> Parser<'source> {
             }
             Expr::Var(v) => comps.push(v.clone()),
             Expr::String(s) => comps.push(s.clone()),
-            _ => bail!("not a simple ref"),
+            _ => bail!("internal error: not a simple ref"),
         }
         Ok(())
     }
@@ -252,7 +252,7 @@ impl<'source> Parser<'source> {
             _ => {
                 // Not a comprehension. Restore state.
                 *self = state;
-                bail!("internal - not a compr");
+                bail!("internal error: not a compr");
             }
         };
 
@@ -268,7 +268,7 @@ impl<'source> Parser<'source> {
                 // No progress was made in parsing the query.
                 // Restore state and try parsing as set, array or object.
                 *self = state;
-                bail!("internal - not a compr");
+                bail!("internal error: not a compr");
             }
             Err(err) => Err(err),
         }

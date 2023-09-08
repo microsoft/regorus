@@ -984,10 +984,16 @@ impl<'a> Analyzer<'a> {
             infos.push(StmtInfo { definitions });
         }
 
-        if let SortResult::Order(ord) = schedule(&mut infos[..])? {
-            self.order.insert(query, ord);
+        let res = schedule(&mut infos[..]);
+        match res {
+            Ok(SortResult::Order(ord)) => {
+                self.order.insert(query, ord);
+            }
+            Err(err) => {
+                bail!(query.span.error(&err.to_string()))
+            }
+            _ => (),
         }
-
         self.locals.insert(query, scope);
 
         Ok(())
