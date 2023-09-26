@@ -162,22 +162,19 @@ fn api() -> Result<()> {
     assert_eq!(v.as_set()?.len(), 0);
 
     // Check invalid api calls.
-    assert!(matches!(Value::Undefined.as_object(), Err(_)));
-    assert!(matches!(Value::Undefined.as_object_mut(), Err(_)));
+    assert!(Value::Undefined.as_object().is_err());
+    assert!(Value::Undefined.as_object_mut().is_err());
 
-    assert!(matches!(Value::Null.as_set(), Err(_)));
-    assert!(matches!(Value::Null.as_set_mut(), Err(_)));
+    assert!(Value::Null.as_set().is_err());
+    assert!(Value::Null.as_set_mut().is_err());
 
-    assert!(matches!(Value::String("anc".to_owned()).as_array(), Err(_)));
-    assert!(matches!(
-        Value::String("anc".to_owned()).as_array_mut(),
-        Err(_)
-    ));
+    assert!(Value::String("anc".to_owned()).as_array().is_err());
+    assert!(Value::String("anc".to_owned()).as_array_mut().is_err());
 
-    assert!(matches!(Value::new_object().as_number(), Err(_)));
-    assert!(matches!(Value::new_object().as_number_mut(), Err(_)));
+    assert!(Value::new_object().as_number().is_err());
+    assert!(Value::new_object().as_number_mut().is_err());
 
-    assert!(matches!(Value::from_float(5.6).as_bool(), Err(_)));
-    assert!(matches!(Value::from_float(5.6).as_bool_mut(), Err(_)));
+    assert!(Value::from_float(5.6).as_bool().is_err());
+    assert!(Value::from_float(5.6).as_bool_mut().is_err());
     Ok(())
 }
