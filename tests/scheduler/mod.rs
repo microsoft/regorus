@@ -40,7 +40,7 @@ fn check_result(stmts: &[&str], expected: &[&str], r: SortResult) -> Result<()> 
 
 #[test]
 fn case1() -> Result<()> {
-    let stmts = vec![
+    let stmts = [
         "v = x",
         "y = [1, 2, 4][_]",
         "x > 10",
@@ -50,7 +50,7 @@ fn case1() -> Result<()> {
         "v = 1",
     ];
 
-    let expected = vec![
+    let expected = [
         "v = 1",
         "v = x",
         "x = 5",
@@ -77,18 +77,14 @@ fn case1() -> Result<()> {
 //#[ignore = "destructing needs more thought. Hoist exprs and introduce new assignments?"]
 fn case2() -> Result<()> {
     #[rustfmt::skip]
-    let stmts = vec![
-	"[x, y+1] = [y, p]",
+    let stmts = ["[x, y+1] = [y, p]",
 	"value = x + p",
-	"y = 5"
-    ];
+	"y = 5"];
 
     #[rustfmt::skip]
-    let expected = vec![
-	"y = 5",
+    let expected = ["y = 5",
 	"[x, y+1] = [y, p]",
-	"value = x + p"
-    ];
+	"value = x + p"];
 
     let mut infos = vec![
         make_info(&[("x", &["y"]), ("y", &["x"]), ("p", &["y"])]),
@@ -102,19 +98,15 @@ fn case2() -> Result<()> {
 #[test]
 fn case2_rewritten() -> Result<()> {
     #[rustfmt::skip]
-    let stmts = vec![
-	"y+1 = p",
+    let stmts = ["y+1 = p",
 	"x = y",
-	"value = x + p", "y = 5"
-    ];
+	"value = x + p", "y = 5"];
 
     #[rustfmt::skip]
-    let expected = vec![
-	"y = 5",
+    let expected = ["y = 5",
 	"y+1 = p",
 	"x = y",
-	"value = x + p"
-    ];
+	"value = x + p"];
 
     let mut infos = vec![
         make_info(&[("p", &["y"])]),
@@ -129,20 +121,16 @@ fn case2_rewritten() -> Result<()> {
 #[test]
 fn case3() -> Result<()> {
     #[rustfmt::skip]
-    let stmts = vec![
-	r#"[x, {"p":p}] = [y, t]"#,
+    let stmts = [r#"[x, {"p":p}] = [y, t]"#,
 	r#"t = {"p":8, "p":6}"#,
 	"value = x + y + p",
-	"y = 5",
-    ];
+	"y = 5"];
 
     #[rustfmt::skip]
-    let expected = vec![
-	r#"t = {"p":8, "p":6}"#,
+    let expected = [r#"t = {"p":8, "p":6}"#,
 	"y = 5",
 	r#"[x, {"p":p}] = [y, t]"#,
-	"value = x + y + p",
-    ];
+	"value = x + y + p"];
 
     let mut infos = vec![
         make_info(&[("x", &["y"]), ("p", &["t"])]),
@@ -158,18 +146,14 @@ fn case3() -> Result<()> {
 #[ignore = "cycle needs to be detected"]
 fn case4_cycle() -> Result<()> {
     #[rustfmt::skip]
-    let stmts = vec![
-	r#"[x, {"p":p}] = [y, t]"#,
+    let stmts = [r#"[x, {"p":p}] = [y, t]"#,
 	r#"t = {"p":x}"#,
 	"value = x + y + p",
-	"y = 5",
-    ];
+	"y = 5"];
 
     // Rest of the statements cannot be processed due to cycle.
     #[rustfmt::skip]
-    let expected = vec![
-	"y = 5",
-    ];
+    let expected = ["y = 5"];
 
     let mut infos = vec![
         make_info(&[("x", &["y"]), ("p", &["t"])]),
@@ -185,19 +169,15 @@ fn case4_cycle() -> Result<()> {
 #[test]
 fn case4_no_cycle() -> Result<()> {
     #[rustfmt::skip]
-    let stmts = vec![
-	r#"[x, {"p":p}] = [y, {"p":x}]"#,
+    let stmts = [r#"[x, {"p":p}] = [y, {"p":x}]"#,
 	"value = x + y + p",
-	"y = 5",
-    ];
+	"y = 5"];
 
     // Rest of the statements cannot be processed due to cycle.
     #[rustfmt::skip]
-    let expected = vec![
-	"y = 5",
+    let expected = ["y = 5",
 	r#"[x, {"p":p}] = [y, {"p":x}]"#,
-	"value = x + y + p",
-    ];
+	"value = x + y + p"];
 
     let mut infos = vec![
         make_info(&[("x", &["y"]), ("p", &["x"])]),
@@ -212,23 +192,19 @@ fn case4_no_cycle() -> Result<()> {
 #[test]
 fn case4_cycle_removed_via_split_multi_assign() -> Result<()> {
     #[rustfmt::skip]
-    let stmts = vec![
-	r#"x = y"#,
+    let stmts = [r#"x = y"#,
 	r#"{"p":p} = t"#,
 	r#"t = {"p":x}"#,
 	"value = x + y + p",
-	"y = 5",
-    ];
+	"y = 5"];
 
     // Rest of the statements cannot be processed due to cycle.
     #[rustfmt::skip]
-    let expected = vec![
-	"y = 5",
+    let expected = ["y = 5",
 	r#"x = y"#,
 	r#"t = {"p":x}"#,
 	r#"{"p":p} = t"#,
-	"value = x + y + p",
-    ];
+	"value = x + y + p"];
 
     let mut infos = vec![
         make_info(&[("x", &["y"])]),

@@ -547,7 +547,9 @@ impl<'source> Interpreter<'source> {
                     let field_value = &value[&key];
 
                     if field_value == &Value::Undefined {
-                        if raise_error {}
+                        if raise_error {
+                            return Err(span.error("Expected value, got undefined."));
+                        }
                         return Ok(false);
                     }
 
