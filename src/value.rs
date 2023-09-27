@@ -304,7 +304,7 @@ impl Value {
                 Self::make_or_get_value_mut(self, paths)
             }
             Value::Undefined => Ok(self),
-            _ => bail!("make: not an selfect {self:?}"),
+            _ => bail!("internal error: make: not an selfect {self:?}"),
         }
     }
 }

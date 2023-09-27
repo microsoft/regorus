@@ -346,7 +346,7 @@ impl<'source> Interpreter<'source> {
 
                         match (&lhs_var, &rhs_var) {
                             (Value::Undefined, Value::Undefined) => {
-                                bail!("both operators are unsafe")
+                                bail!(lhs.span().error("both operators are unsafe"))
                             }
                             (Value::Undefined, _) => (lhs_name, rhs_var),
                             (_, Value::Undefined) => (rhs_name, lhs_var),
@@ -395,7 +395,9 @@ impl<'source> Interpreter<'source> {
                 // Allow variable overwritten inside a loop
                 if self.lookup_local_var(name).is_some() && self.loop_var_values.get(rhs).is_none()
                 {
-                    bail!("redefinition for variable {}", name);
+                    bail!(rhs
+                        .span()
+                        .error(&format!("redefinition for variable {}", name)));
                 }
 
                 (name, self.eval_expr(rhs)?)
@@ -1027,7 +1029,9 @@ impl<'source> Interpreter<'source> {
                 match schedule.order.get(query) {
                     Some(ord) => ord.iter().map(|i| &query.stmts[*i as usize]).collect(),
                     // TODO
-                    _ => bail!("statements not scheduled in query {query:?}"),
+                    _ => bail!(query
+                        .span
+                        .error("statements not scheduled in query {query:?}")),
                 }
             } else {
                 query.stmts.iter().collect()
@@ -1194,7 +1198,7 @@ impl<'source> Interpreter<'source> {
         match self.functions.get(&path) {
             Some(r) => Ok(r),
             _ => {
-                bail!("function not found")
+                bail!(fcn.span().error("function not found"))
             }
         }
     }
@@ -1644,7 +1648,7 @@ impl<'source> Interpreter<'source> {
                 Self::make_or_get_value_mut(obj, paths)
             }
             Value::Undefined => Ok(obj),
-            _ => bail!("make: not an object {obj:?}"),
+            _ => bail!("internal error: make: not an object {obj:?}"),
         }
     }
 
@@ -1674,7 +1678,7 @@ impl<'source> Interpreter<'source> {
                     };
                 }
             }
-            _ => bail!("could not merge value"),
+            _ => bail!("internal error: could not merge value"),
         };
         Ok(())
     }
@@ -1700,7 +1704,7 @@ impl<'source> Interpreter<'source> {
                     comps.push(v.text());
                     expr = None;
                 }
-                _ => bail!("not a simple ref"),
+                _ => bail!("internal error: not a simple ref"),
             }
         }
         if let Some(d) = document {
@@ -1843,7 +1847,10 @@ impl<'source> Interpreter<'source> {
             let (refr, index) = match refr {
                 Expr::RefBrack { refr, index, .. } => (refr.as_ref(), Some(index.as_ref())),
                 Expr::Var(_) => (refr, None),
-                _ => bail!("invalid token {:?} with the default keyword", refr),
+                _ => bail!(refr.span().error(&format!(
+                    "invalid token {:?} with the default keyword",
+                    refr
+                ))),
             };
 
             Parser::get_path_ref_components_into(refr, &mut path)?;
@@ -2086,7 +2093,7 @@ impl<'source> Interpreter<'source> {
                                 Expr::True(_) | Expr::False(_) | Expr::Number(_) | Expr::String(_)
                             ) {
                                 // OPA's behavior is ignoring the non-scalar index
-                                bail!("index is not a scalar value");
+                                bail!(index.span().error("index is not a scalar value"));
                             }
 
                             let index = self.eval_expr(index)?;
@@ -2105,10 +2112,12 @@ impl<'source> Interpreter<'source> {
                                     let old = i.as_ref().unwrap();
                                     let new = index.as_ref().unwrap();
                                     if old == new {
-                                        bail!("multiple default rules for the variable with the same index");
+                                        bail!(refr.span().error("multiple default rules for the variable with the same index"));
                                     }
                                 } else {
-                                    bail!("conflict type with the default rules");
+                                    bail!(refr
+                                        .span()
+                                        .error("conflict type with the default rules"));
                                 }
                             }
                             o.into_mut().push((rule, index));
