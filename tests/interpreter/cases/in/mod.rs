@@ -99,7 +99,7 @@ fn basic() -> Result<()> {
     }
 "#;
 
-    let expected = Value::from_json_str(
+    let expected = vec![Value::from_json_str(
         r#" {
             "array": [1, 2, 3],
             "in_array_key_value": true,
@@ -117,7 +117,7 @@ fn basic() -> Result<()> {
             "in_set_value": true,
             "some_decl_set_value": true
 }"#,
-    )?;
+    )?];
 
     assert_match(
         eval_file(&[rego.to_owned()], None, None, "data.test", false)?,

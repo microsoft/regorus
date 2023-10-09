@@ -20,8 +20,10 @@ pub struct Interpreter<'source> {
     module: Option<&'source Module<'source>>,
     schedule: Option<&'source Schedule<'source>>,
     current_module_path: String,
+    prepared: bool,
     input: Value,
     data: Value,
+    init_data: Value,
     scopes: Vec<Scope>,
     // TODO: handle recursive calls where same expr could have different values.
     loop_var_values: BTreeMap<&'source Expr<'source>, Value>,
@@ -58,8 +60,10 @@ impl<'source> Interpreter<'source> {
             module: None,
             schedule: None,
             current_module_path: String::default(),
+            prepared: false,
             input: Value::new_object(),
             data: Value::new_object(),
+            init_data: Value::new_object(),
             scopes: vec![Scope::new()],
             contexts: vec![],
             loop_var_values: BTreeMap::new(),
@@ -72,6 +76,44 @@ impl<'source> Interpreter<'source> {
             no_rules_lookup: false,
             traces: None,
         })
+    }
+
+    pub fn get_modules(&mut self) -> &mut Vec<&'source Module<'source>> {
+        &mut self.modules
+    }
+
+    pub fn set_data(&mut self, data: Value) {
+        self.data = data;
+    }
+
+    pub fn get_data(&mut self) -> &mut Value {
+        &mut self.data
+    }
+
+    fn clean_internal_evaluation_state(&mut self) {
+        self.data = self.init_data.clone();
+        self.processed.clear();
+        self.loop_var_values.clear();
+        self.scopes = vec![Scope::new()];
+        self.contexts = vec![];
+    }
+
+    fn checks_for_eval(&mut self, input: &Option<Value>, enable_tracing: bool) -> Result<()> {
+        if !self.prepared {
+            bail!("prepare_for_eval should be called before eval_modules");
+        }
+
+        self.traces = match enable_tracing {
+            true => Some(vec![]),
+            false => None,
+        };
+
+        if let Some(input) = input {
+            self.input = input.clone();
+            info!("input: {:#?}", self.input);
+        }
+
+        Ok(())
     }
 
     fn current_module(&self) -> Result<&'source Module<'source>> {
@@ -1435,6 +1477,7 @@ impl<'source> Interpreter<'source> {
             let module_path =
                 Self::get_path_string(&self.current_module()?.package.refr, Some("data"))?;
             let path = module_path + "." + name;
+
             self.ensure_rule_evaluated(path)?;
 
             let mut path: Vec<&str> =
@@ -1933,62 +1976,65 @@ impl<'source> Interpreter<'source> {
                 head: rule_head,
                 bodies: rule_body,
             } => {
-                if matches!(rule_head, RuleHead::Func { .. }) {
-                    return Ok(());
-                }
-
-                let (ctx, mut path) = self.make_rule_context(rule_head)?;
-                let special_set = matches!((ctx.output_expr, &ctx.value), (None, Value::Set(_)));
-                let value = match self.eval_rule_bodies(ctx, span, rule_body)? {
-                    Value::Set(_) if special_set => {
-                        let entry = path[path.len() - 1].text();
-                        let mut s = BTreeSet::new();
-                        s.insert(Value::String(entry.to_owned()));
-                        path = path[0..path.len() - 1].to_vec();
-                        Value::from_set(s)
+                if !matches!(rule_head, RuleHead::Func { .. }) {
+                    let (ctx, mut path) = self.make_rule_context(rule_head)?;
+                    let special_set =
+                        matches!((ctx.output_expr, &ctx.value), (None, Value::Set(_)));
+                    let value = match self.eval_rule_bodies(ctx, span, rule_body)? {
+                        Value::Set(_) if special_set => {
+                            let entry = path[path.len() - 1].text();
+                            let mut s = BTreeSet::new();
+                            s.insert(Value::String(entry.to_owned()));
+                            path = path[0..path.len() - 1].to_vec();
+                            Value::from_set(s)
+                        }
+                        v => v,
+                    };
+                    if value != Value::Undefined {
+                        let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
+                        let vref = Self::make_or_get_value_mut(&mut self.data, &paths[..])?;
+                        Self::merge_value(span, vref, value)?;
                     }
-                    v => v,
-                };
 
-                if value != Value::Undefined {
-                    let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
-                    let vref = Self::make_or_get_value_mut(&mut self.data, &paths[..])?;
-                    Self::merge_value(span, vref, value)?;
+                    self.processed.insert(rule);
                 }
             }
             _ => bail!("internal error: unexpected"),
         }
         self.set_current_module(prev_module)?;
-        self.processed.insert(rule);
         match self.active_rules.pop() {
             Some(r) if r == rule => Ok(()),
             _ => bail!("internal error: current rule not active"),
         }
     }
 
-    pub fn eval(
+    pub fn eval_rule_with_input(
         &mut self,
-        data: &Option<Value>,
+        module: &'source Module<'source>,
+        rule: &'source Rule<'source>,
         input: &Option<Value>,
         enable_tracing: bool,
-        schedule: Option<&'source Schedule<'source>>,
     ) -> Result<Value> {
-        self.schedule = schedule;
-        self.traces = match enable_tracing {
-            true => Some(vec![]),
-            false => None,
-        };
+        self.checks_for_eval(input, enable_tracing)?;
+        self.clean_internal_evaluation_state();
 
+        self.eval_rule(module, rule)?;
+
+        Ok(self.data.clone())
+    }
+
+    pub fn prepare_for_eval(
+        &mut self,
+        schedule: Option<&'source Schedule<'source>>,
+        data: &Option<Value>,
+    ) -> Result<()> {
+        self.schedule = schedule;
         self.builtins_cache.clear();
 
-        if let Some(input) = input {
-            self.input = input.clone();
-
-            info!("input: {:#?}", self.input);
-        }
         if let Some(data) = data {
             self.data = data.clone();
         }
+
         // Ensure that each module has an empty object
         for m in &self.modules {
             let path = Parser::get_path_ref_components(&m.package.refr)?;
@@ -2002,6 +2048,39 @@ impl<'source> Interpreter<'source> {
         self.check_default_rules()?;
         self.update_function_table()?;
         self.gather_rules()?;
+
+        self.init_data = self.data.clone();
+        self.prepared = true;
+
+        Ok(())
+    }
+
+    pub fn eval_module(
+        &mut self,
+        module: &'source Module<'source>,
+        input: &Option<Value>,
+        enable_tracing: bool,
+    ) -> Result<Value> {
+        self.checks_for_eval(input, enable_tracing)?;
+        self.clean_internal_evaluation_state();
+
+        for rule in &module.policy {
+            self.eval_rule(module, rule)?;
+        }
+
+        // Defer the evaluation of the default rules to here
+        let prev_module = self.set_current_module(Some(module))?;
+        for rule in &module.policy {
+            self.eval_default_rule(rule)?;
+        }
+        self.set_current_module(prev_module)?;
+
+        Ok(self.data.clone())
+    }
+
+    pub fn eval_modules(&mut self, input: &Option<Value>, enable_tracing: bool) -> Result<Value> {
+        self.checks_for_eval(input, enable_tracing)?;
+        self.clean_internal_evaluation_state();
 
         for module in self.modules.clone() {
             for rule in &module.policy {
@@ -2019,6 +2098,17 @@ impl<'source> Interpreter<'source> {
         }
 
         Ok(self.data.clone())
+    }
+
+    pub fn eval(
+        &mut self,
+        data: &Option<Value>,
+        input: &Option<Value>,
+        enable_tracing: bool,
+        schedule: Option<&'source Schedule<'source>>,
+    ) -> Result<Value> {
+        self.prepare_for_eval(schedule, data)?;
+        self.eval_modules(input, enable_tracing)
     }
 
     pub fn eval_query_snippet(

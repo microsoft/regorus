@@ -1,0 +1,33 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: input-multiple-1
+    data: {}
+    input:
+      many!: 
+        - { x: 1 }
+        - { x: 5 }
+    modules:
+      - |
+        package test
+        
+        x[a] {
+          a = y
+        }
+
+        y[a] {
+          a = input.x + 5
+        }
+
+    query: data.test
+    want_result:
+      many!:
+        - y: 
+            set!: [6]
+          x: 
+            set!: [ set!: [6] ]
+        - y: 
+            set!: [10]
+          x: 
+            set!: [ set!: [10] ]

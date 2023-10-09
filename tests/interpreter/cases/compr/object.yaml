@@ -64,4 +64,3 @@ cases:
         x = { k:v | k = ["Hello", "world", 1][_]; v = [1, 2][_] }
     query: data.test
     error: "value for key `\"Hello\"` generated multiple times: `1` and `2`"
-    want_result:
