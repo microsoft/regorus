@@ -27,7 +27,7 @@ cases:
           "v3": r1 ==  object.remove(obj, {"a":1, "b":1, {1}:1}),
         }
     query: data.test.results
-    want_result: !Single
+    want_result:
       v1:
         object!:
           - key: c

@@ -12,7 +12,7 @@ cases:
 
         a1 = inc(5)
     query: data.test
-    want_result: !Single
+    want_result:
       a1: 6
 
   - note: call-in-arg
@@ -25,7 +25,7 @@ cases:
 
         a1 = inc(inc(5))
     query: data.test
-    want_result: !Single
+    want_result:
       a1: 7
 
   - note: call-nested
@@ -42,7 +42,7 @@ cases:
 
         a = foo(5, 6)
     query: data.test
-    want_result: !Single
+    want_result:
       a: -11
       
   - note: call-return-undefined
@@ -58,4 +58,4 @@ cases:
 
         a1 = inc(5)
     query: data.test
-    want_result: !Single {}
+    want_result: {}

@@ -97,7 +97,7 @@ cases:
 
         undefined_var { false }
     query: data.test
-    want_result: !Single
+    want_result:
       x1: 100
       x2: 100
       x3: 100
@@ -127,7 +127,7 @@ cases:
            }
         }
     query: data.test
-    want_result: !Single {}
+    want_result: {}
 
   #TODO:
   # every vars must be used

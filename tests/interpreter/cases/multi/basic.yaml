@@ -9,7 +9,7 @@ cases:
         package b
         c = 1
     query: data
-    want_result: !Single
+    want_result:
       a:
         b: 1
       b:
@@ -25,7 +25,7 @@ cases:
         package b
         c = data.a.b
     query: data
-    want_result: !Single
+    want_result:
       a:
         b: 1
       b:

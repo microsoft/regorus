@@ -19,7 +19,7 @@ cases:
         d = 13.3 % 3
         e = 13 % 3.1
     query: data.test
-    want_result: !Single
+    want_result:
       x: 0.3333333333333333
 
   - note: non-numeric

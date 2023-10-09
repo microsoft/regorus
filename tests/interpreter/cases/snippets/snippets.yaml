@@ -15,7 +15,7 @@ cases:
         e3 := [ q & {1} | {true}  ]
         e4 := [ (q & {1}) | {true}  ]
     query: data.test
-    want_result: !Single
+    want_result:
       a: [1]
       e1:
         set!: [true]
@@ -44,7 +44,7 @@ cases:
           a = b with data.test.b as 10
         }
     query: data.test
-    want_result: !Single
+    want_result:
       b: 15
       x: 10
         
@@ -77,7 +77,7 @@ cases:
         == 5
         }
     query: data.test
-    want_result: !Single
+    want_result:
       a:
         set!: [4]
       r: [11]
@@ -110,7 +110,7 @@ cases:
         y = b(5)
 
     query: data.test
-    want_result: !Single
+    want_result:
       allow: true
       p: 5
       r: true
@@ -133,7 +133,7 @@ cases:
         #q := { "a" : "sum"}[a](5, 6)
         q := obj(1).a
     query: data.test
-    want_result: !Single
+    want_result:
       p: 11
       q: 6
 
@@ -155,7 +155,7 @@ cases:
           y := 5 in { "z" : 5}
         ]
     query: data.test
-    want_result: !Single
+    want_result:
       b:
         set!: [2, 3]
       x: [false]
@@ -190,7 +190,7 @@ cases:
           p1 := s1
         }
     query: data.test
-    want_result: !Single
+    want_result:
       a: {}
       c: 5
       d: 5
@@ -232,7 +232,7 @@ cases:
         #  b := {5,6}[_]
         #}
     query: data.test
-    want_result: !Single
+    want_result:
       a:
         set!: [5, 6]
       arg: 5

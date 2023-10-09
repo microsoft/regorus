@@ -29,7 +29,7 @@ cases:
         v11 = x >= 1
         v12 = 1 >= x
     query: data.test
-    want_result: !Single {}
+    want_result: {}
 
   - note: eq
     data: {}
@@ -66,7 +66,7 @@ cases:
           ]
         }
     query: data.test.results
-    want_result: !Single
+    want_result:
       object!:
         - key: 1
           value: [ 1 ]
@@ -120,7 +120,7 @@ cases:
         y = x == 1
         z = 1 == x
     query: data.test
-    want_result: !Single {}
+    want_result: {}
 
   - note: ne
     data: {}
@@ -158,7 +158,7 @@ cases:
           ]
         }
     query: data.test.results
-    want_result: !Single
+    want_result:
       object!:
         - key: 1
           value: [ 1 ]
@@ -237,7 +237,7 @@ cases:
           }
         }
     query: data.test.results
-    want_result: !Single
+    want_result:
       lt:
         object!:
           - key: null
@@ -330,7 +330,7 @@ cases:
           }
         }
     query: data.test.results
-    want_result: !Single
+    want_result:
       lt:
         object!:
           - key: []
@@ -399,7 +399,7 @@ cases:
           }
         }
     query: data.test.results
-    want_result: !Single
+    want_result:
       lt:
         object!:
           - key:
@@ -516,7 +516,7 @@ cases:
           }
         }
     query: data.test.results
-    want_result: !Single
+    want_result:
       lt:
         object!:
           - key: {}

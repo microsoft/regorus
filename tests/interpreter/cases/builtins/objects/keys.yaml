@@ -23,7 +23,7 @@ cases:
           "v1": object.keys(obj),
         }
     query: data.test.results
-    want_result: !Single
+    want_result:
       v1:
         set!:
           - "a"

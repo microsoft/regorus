@@ -33,7 +33,7 @@ cases:
         x3 = bits.negate(9)
         x4 = bits.negate(-50)
     query: data.test
-    want_result: !Single
+    want_result:
       x1 : -2
       x2 : -1
       x3 : -10

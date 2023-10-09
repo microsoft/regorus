@@ -26,7 +26,7 @@ cases:
 
         a1 = inc(5)
     query: data.test
-    want_result: !Single
+    want_result:
       a1: 6
 
   - note: or-true
@@ -40,7 +40,7 @@ cases:
 
         a1 = inc(7)
     query: data.test
-    want_result: !Single
+    want_result:
       a1: true
 
   - note: or-false
@@ -54,7 +54,7 @@ cases:
 
         a1 = inc(2)
     query: data.test
-    want_result: !Single
+    want_result:
       a1: false
 
   - note: or-undefined
@@ -72,7 +72,7 @@ cases:
 
         a1 = inc(5)
     query: data.test
-    want_result: !Single
+    want_result:
       a1: 6
 
   - note: or-first-undefined
@@ -90,7 +90,7 @@ cases:
 
         a1 = inc(5)
     query: data.test
-    want_result: !Single
+    want_result:
       a1: 6
 
   - note: or-all-undefined
@@ -110,7 +110,7 @@ cases:
 
         a1 = inc(5)
     query: data.test
-    want_result: !Single {}
+    want_result: {}
 
   - note: or-one-error
     data: {}
@@ -129,7 +129,7 @@ cases:
         a1 = fcn("world")
         a2 = fcn(5)
     query: data.test
-    want_result: !Single
+    want_result:
       a1: "hello world"
       a2: 6
 

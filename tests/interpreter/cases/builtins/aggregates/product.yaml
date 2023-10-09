@@ -22,7 +22,7 @@ cases:
         r {false}
         u1 = product(r)
     query: data.test
-    want_result: !Single
+    want_result:
       x: [-6, -2, 2, 1, 0, 6, 1, 0]
       
   - note: invalid-null

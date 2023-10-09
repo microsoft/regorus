@@ -12,7 +12,7 @@ cases:
         y { false }
         z = floor(y)
     query: data.test
-    want_result: !Single
+    want_result:
       x: [9, -10, 9, -9]
 
   - note: extra-args

@@ -53,7 +53,7 @@ cases:
         x3 = bits.or(0, 0)
         x4 = bits.or(0, 1)
     query: data.test
-    want_result: !Single
+    want_result:
       x1 : 1
       x2 : 1
       x3 : 0

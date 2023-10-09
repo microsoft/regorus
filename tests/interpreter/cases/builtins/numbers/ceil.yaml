@@ -12,7 +12,7 @@ cases:
         y { false }
         z = ceil(y)
     query: data.test
-    want_result: !Single
+    want_result:
       x: [10, -9, 9, -9]
 
   - note: extra-args

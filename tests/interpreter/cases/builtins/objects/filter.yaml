@@ -22,7 +22,7 @@ cases:
           "o3": object.filter(obj, {"a", "c"}),         
         }
     query: data.test.results
-    want_result: !Single
+    want_result:
       o1:
         object!:
           - key: a

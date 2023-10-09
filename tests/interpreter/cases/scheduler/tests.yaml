@@ -19,5 +19,5 @@ cases:
         }
         
     query: data.test
-    want_result: !Single
+    want_result:
       r1: 12

@@ -28,7 +28,7 @@ cases:
         u4 = array.slice([5], 1.1, 2)
         u5 = array.slice([5], 1, 2.1)        
     query: data.test
-    want_result: !Single
+    want_result:
       z :
         - [1]
         - [1, 2]

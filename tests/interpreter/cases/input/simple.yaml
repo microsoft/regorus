@@ -4,7 +4,7 @@
 cases:
   - note: input-basic-1
     data: {}
-    input: !Single {
+    input:  {
       x: 1
     }
     modules:
@@ -20,7 +20,7 @@ cases:
         }
 
     query: data.test
-    want_result: !Single
+    want_result:
       y: 
         set!: [6]
       x: 

@@ -7,7 +7,7 @@ use std::env;
 
 use anyhow::{bail, Result};
 use regorus::*;
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use test_generator::test_resources;
 //use walkdir::WalkDir;
 
@@ -380,10 +380,40 @@ fn one_file() -> Result<()> {
     Ok(())
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(PartialEq, Debug)]
 pub enum ValueOrVec {
     Single(Value),
     Many(Vec<Value>),
+}
+
+impl Serialize for ValueOrVec {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            ValueOrVec::Single(value) => value.serialize(serializer),
+            ValueOrVec::Many(v) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("many!", v)?;
+                map.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ValueOrVec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+
+        match &value["many!"] {
+            Value::Array(arr) => Ok(ValueOrVec::Many(arr.to_vec())),
+            _ => Ok(ValueOrVec::Single(value)),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]

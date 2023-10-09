@@ -14,7 +14,7 @@ cases:
         v4 = contains("", "") # empty substring and string
 
     query: data.test
-    want_result: !Single
+    want_result:
       v1: true
       v2: true
       v3: false
@@ -28,7 +28,7 @@ cases:
         x { false }
         y = contains(x, "")
     query: data.test
-    want_result: !Single {}
+    want_result: {}
 
   - note: undefined-substring
     data: {}
@@ -38,7 +38,7 @@ cases:
         x { false }
         y = contains(",", x)
     query: data.test
-    want_result: !Single {}
+    want_result: {}
 
   - note: invalid-null-string
     data: {}

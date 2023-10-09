@@ -19,7 +19,7 @@ cases:
         u1 = array.concat([1], r)
         u2 = array.concat(r, r)
     query: data.test
-    want_result: !Single
+    want_result:
       x :
         - [1, 2, 3, 4, 5, 6]
         - [1]

@@ -17,7 +17,7 @@ cases:
           y = [ [a, b] | a = {"p":"q", "r": "s"}[b] ]
         }
     query: data.test
-    want_result: !Single
+    want_result:
       x1: [[1, 0], [2, 1], [3, 2], [4, 3]]
       x2: [[1, 1], [2, 2], [3, 3], [4, 4]]
       x3: [["q", "p"], ["s", "r"]]

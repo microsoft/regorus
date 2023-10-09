@@ -16,7 +16,7 @@ cases:
         z = [ x | y ] #, 5] # in {5}, 6]
     query: data.test
     sort_bindings: true
-    want_result: !Single
+    want_result:
       x:
         set!: [1]
       y:
@@ -36,7 +36,7 @@ cases:
         z = [ x | y, 5] # in {5}, 6]
     query: data.test
     sort_bindings: true
-    want_result: !Single
+    want_result:
       x:
         set!: [1]
       y:
@@ -59,7 +59,7 @@ cases:
         z = [ x | y, 5 in {5}] #, 6]
     query: data.test
     sort_bindings: true
-    want_result: !Single
+    want_result:
       x:
         set!: [1]
       y:
@@ -79,7 +79,7 @@ cases:
         z = [ x | y, 5 in {5}, 6]
     query: data.test
     sort_bindings: true
-    want_result: !Single
+    want_result:
       x:
         set!: [1]
       y:
@@ -102,7 +102,7 @@ cases:
         z = [ x - {10} | y, 5 in {5}] #, 6]
     query: data.test
     sort_bindings: true
-    want_result: !Single
+    want_result:
       x:
         set!: [1]
       y:
@@ -124,7 +124,7 @@ cases:
         z = [ (x - {10}) | y, 5 in {5}] #, 6]
     query: data.test
     sort_bindings: true
-    want_result: !Single
+    want_result:
       x:
         set!: [1]
       y:

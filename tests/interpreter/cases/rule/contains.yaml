@@ -12,7 +12,7 @@ cases:
           name = ["a", "b", "c"][_]
         }
     query: data.test
-    want_result: !Single
+    want_result:
       tbl:
         set!: ["c", "b", "a"]
 
@@ -26,7 +26,7 @@ cases:
           x = [1, 2, 3][_]
         }
     query: data.test
-    want_result: !Single
+    want_result:
       tbl:
         set!: [11, 12, 13]
       

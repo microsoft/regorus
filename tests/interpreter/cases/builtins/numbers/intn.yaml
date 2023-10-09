@@ -21,7 +21,7 @@ cases:
           rand.intn("b", 0)
         ]
     query: data.test.results
-    want_result: !Single [true, true, true, 0]
+    want_result: [true, true, true, 0]
 
   - note: undefined
     data: {}
@@ -33,7 +33,7 @@ cases:
         r2 = rand.intn(10, y)
         r3 = rand.intn("a", 10.3)
     query: data.test
-    want_result: !Single {}
+    want_result: {}
 
   - note: extra-args
     data: {}

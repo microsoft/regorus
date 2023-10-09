@@ -10,7 +10,7 @@ cases:
 
         x = { k:1 | k = ["Hello", "world", 1][_] }
     query: data.test
-    want_result: !Single
+    want_result:
       x:
         object!:
           - key: "Hello"
@@ -29,7 +29,7 @@ cases:
 
         x = { ["Hello", "world", 1][_]:1 | true }
     query: data.test
-    want_result: !Single
+    want_result:
       x:
         object!:
           - key: "Hello"
@@ -46,7 +46,7 @@ cases:
         package test
         x = { k:v | k = ["Hello", "world", 1][_]; v = [1, 1][_] }
     query: data.test
-    want_result: !Single
+    want_result:
       x:
         object!:
           - key: "Hello"

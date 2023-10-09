@@ -13,7 +13,7 @@ cases:
           a := "hello"
         }
     query: data.test
-    want_result: !Single
+    want_result:
       x: 
         set!: [hello]
 
@@ -32,7 +32,7 @@ cases:
           a := "hello"
         }
     query: data.test
-    want_result: !Single
+    want_result:
       x: 
         set!: [hello]
 
@@ -61,6 +61,6 @@ cases:
           not q3 # `not true` making it undefined
         }
     query: data.test
-    want_result: !Single
+    want_result:
       q1: true
       q3: true

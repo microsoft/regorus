@@ -45,7 +45,7 @@ cases:
           some x in r6
         }
     query: data.test
-    want_result: !Single
+    want_result:
       r1: [ [2, 3], [3]]
       r2:
         set!: [2, 3]
@@ -84,7 +84,7 @@ cases:
         import future.keywords
         x { some [1] in [[1, 2], [1]] }
     query: data.test
-    want_result: !Single
+    want_result:
       x: true
     
   - note: invalid-null
