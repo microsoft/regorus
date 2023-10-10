@@ -122,6 +122,9 @@ impl<'source> Interpreter<'source> {
     }
 
     fn current_scope(&mut self) -> Result<&Scope> {
+        if self.scopes.is_empty() {
+            println!("here");
+        }
         self.scopes
             .last()
             .ok_or_else(|| anyhow!("internal error: no active scope"))
@@ -170,6 +173,10 @@ impl<'source> Interpreter<'source> {
         // Collect a chaing of '.field' or '["field"]'
         let mut path = vec![];
         loop {
+            if let Some(v) = self.loop_var_values.get(expr) {
+                path.reverse();
+                return Ok(Self::get_value_chained(v.clone(), &path[..]));
+            }
             match expr {
                 // Stop path collection upon encountering the leading variable.
                 Expr::Var(v) => {
@@ -388,7 +395,7 @@ impl<'source> Interpreter<'source> {
 
                         match (&lhs_var, &rhs_var) {
                             (Value::Undefined, Value::Undefined) => {
-                                bail!(lhs.span().error("both operators are unsafe"))
+                                bail!(lhs.span().error("both operands are unsafe"))
                             }
                             (Value::Undefined, _) => (lhs_name, rhs_var),
                             (_, Value::Undefined) => (rhs_name, lhs_var),
@@ -854,17 +861,30 @@ impl<'source> Interpreter<'source> {
             let loop_expr = &loops[0];
             let mut result = false;
 
+            let loop_expr_value = self.eval_expr(loop_expr.value)?;
+
+            // If the loop's index variable has already been assigned a value
+            // (this can happen if the same index is used for two different collections),
+            // then evaluate statements only if the index applies to this collection.
+            if let Some(idx) = self.lookup_local_var(loop_expr.index) {
+                if loop_expr_value[&idx] != Value::Undefined {
+                    result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                }
+                return Ok(result);
+            }
+
             // Save the current scope and restore it after evaluating the statements so
             // that the effects of the current loop iteration are cleared.
             let scope_saved = self.current_scope()?.clone();
 
-            match self.eval_expr(loop_expr.value)? {
+            match loop_expr_value {
                 Value::Array(items) => {
                     for (idx, v) in items.iter().enumerate() {
                         self.loop_var_values.insert(loop_expr.expr, v.clone());
                         self.add_variable(loop_expr.index, Value::from_float(idx as Float))?;
 
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        self.loop_var_values.remove(loop_expr.expr);
                         *self.current_scope_mut()? = scope_saved.clone();
                     }
                 }
@@ -874,6 +894,7 @@ impl<'source> Interpreter<'source> {
                         // For sets, index is also the value.
                         self.add_variable(loop_expr.index, v.clone())?;
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        self.loop_var_values.remove(loop_expr.expr);
                         *self.current_scope_mut()? = scope_saved.clone();
                     }
                 }
@@ -883,6 +904,7 @@ impl<'source> Interpreter<'source> {
                         // For objects, index is key.
                         self.add_variable(loop_expr.index, k.clone())?;
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        self.loop_var_values.remove(loop_expr.expr);
                         *self.current_scope_mut()? = scope_saved.clone();
                     }
                 }
@@ -930,7 +952,10 @@ impl<'source> Interpreter<'source> {
                             _ => map.insert(key, value),
                         };
                     } else {
-                        ctx.value = Value::Undefined;
+                        match &ctx.value {
+                            Value::Object(_) => (),
+                            _ => ctx.value = Value::Undefined,
+                        }
                     };
                 }
                 (None, Some(oe)) => {
@@ -947,7 +972,10 @@ impl<'source> Interpreter<'source> {
                             _ => bail!("internal error: invalid context value"),
                         }
                     } else {
-                        ctx.value = Value::Undefined;
+                        match &ctx.value {
+                            Value::Set(_) => (),
+                            _ => ctx.value = Value::Undefined,
+                        }
                     }
                 }
                 // No output expression.
@@ -1512,10 +1540,7 @@ impl<'source> Interpreter<'source> {
             // TODO: Handle undefined variables
             Expr::Var(_) => self.eval_chained_ref_dot_or_brack(expr),
             Expr::RefDot { .. } => self.eval_chained_ref_dot_or_brack(expr),
-            Expr::RefBrack { .. } => match self.loop_var_values.get(expr) {
-                Some(v) => Ok(v.clone()),
-                _ => self.eval_chained_ref_dot_or_brack(expr),
-            },
+            Expr::RefBrack { .. } => self.eval_chained_ref_dot_or_brack(expr),
 
             // Expressions with operators
             Expr::ArithExpr { op, lhs, rhs, .. } => self.eval_arith_expr(op, lhs, rhs),
@@ -1603,6 +1628,7 @@ impl<'source> Interpreter<'source> {
         span: &'source Span<'source>,
         bodies: &'source Vec<RuleBody<'source>>,
     ) -> Result<Value> {
+        let n_scopes = self.scopes.len();
         let result = if bodies.is_empty() {
             self.contexts.push(ctx.clone());
             self.eval_output_expr()
@@ -1617,7 +1643,6 @@ impl<'source> Interpreter<'source> {
                 }
 
                 // TODO: Manage other scoped data.
-                self.scopes.pop();
                 if bodies.len() > 1 {
                     unimplemented!("else bodies");
                 }
@@ -1635,8 +1660,7 @@ impl<'source> Interpreter<'source> {
             Err(e) => return Err(e),
         };
 
-        // Drop local variables and leave the local scope
-        self.scopes.pop();
+        assert_eq!(self.scopes.len(), n_scopes);
 
         Ok(match result {
             true => match &ctx.value {
@@ -1651,7 +1675,7 @@ impl<'source> Interpreter<'source> {
                     ))
                 }
                 Value::Set(_) => ctx.value,
-                _ => unimplemented!("todo fix this"),
+                _ => unimplemented!("todo fix this: ctx.value = {:?}", ctx.value),
             },
             false => Value::Undefined,
         })
