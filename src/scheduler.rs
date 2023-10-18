@@ -661,7 +661,7 @@ impl<'a> Analyzer<'a> {
                     )?;
                     self.locals.get(query)
                 }
-                _ => return Ok(()),
+                _ => break,
             };
 
             // Record vars used by the comprehension scope.

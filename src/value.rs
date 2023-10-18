@@ -344,6 +344,10 @@ impl ops::Index<&Value> for Value {
                 Some(v) => v,
                 _ => &Value::Undefined,
             },
+            (Value::Set(s), _) => match s.get(key) {
+                Some(v) => v,
+                _ => &Value::Undefined,
+            },
             (Value::Array(a), Value::Number(n)) => {
                 let index = n.0 .0 as usize;
                 if index < a.len() {

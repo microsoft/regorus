@@ -1,0 +1,152 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: chained
+    data: {}
+    modules:
+      - |
+        package test
+
+        sites := [
+            {
+                "region": "east",
+                "name": "prod",
+                "servers": [
+                    {
+                        "name": "web-0",
+                        "hostname": "hydrogen"
+                    },
+                    {
+                        "name": "web-1",
+                        "hostname": "helium"
+                    },
+                    {
+                        "name": "db-0",
+                        "hostname": "lithium"
+                    }
+                ]
+            },
+            {
+                "region": "west",
+                "name": "smoke",
+                "servers": [
+                    {
+                        "name": "web-1000",
+                        "hostname": "beryllium"
+                    },
+                    {
+                        "name": "web-1001",
+                        "hostname": "boron"
+                    },
+                    {
+                        "name": "db-1000",
+                        "hostname": "carbon"
+                    }
+                ]
+            },
+            {
+                "region": "west",
+                "name": "dev",
+                "servers": [
+                    {
+                        "name": "web-dev",
+                        "hostname": "nitrogen"
+                    },
+                    {
+                        "name": "db-dev",
+                        "hostname": "oxygen"
+                    }
+                ]
+            }
+        ]
+
+        apps := [
+            {
+                "name": "web",
+                "servers": ["web-0", "web-1", "web-1000", "web-1001", "web-dev"]
+            },
+            {
+                "name": "mysql",
+                "servers": ["db-0", "db-1000"]
+            },
+            {
+                "name": "mongodb",
+                "servers": ["db-dev"]
+            }
+        ]
+
+        containers := [
+            {
+                "image": "redis",
+                "ipaddress": "10.0.0.1",
+                "name": "big_stallman"
+            },
+            {
+                "image": "nginx",
+                "ipaddress": "10.0.0.2",
+                "name": "cranky_euclid"
+            }
+        ]
+        
+        x1[y] {
+          y = sites[_].servers[_].hostname
+        }
+
+        x5[y] {
+          y = sites[i].servers[i].hostname
+        }
+
+        obj = {
+         "a" : {
+           "a" : "b",
+           "b" : "c"
+           },
+          "c" : {
+            "c" : "d"
+          }
+        }
+        
+        x6[y] {
+         y = obj[i][i]
+        }
+
+        # Another definition for x6
+        x6[y] {
+         y = obj[i][obj[i][i]]
+        }
+        
+        x7[y] {
+         y = obj[i][obj[i][i]]
+        }
+        
+        results = {
+          "x1" : x1,
+          "x2" : x1 == { y | y = sites[i].servers[_].hostname },
+          "x3" : x1 == { y | y = sites[_].servers[i].hostname },
+          "x4" : x1 == { y | y = sites[i].servers[j].hostname },
+          "x6" : x6,
+          "x7" : x7,
+        }
+
+
+    query: data.test.results
+    want_result:
+      x1:
+        set!: [
+        "beryllium",
+        "boron",
+        "carbon",
+        "helium",
+        "hydrogen",
+        "lithium",
+        "nitrogen",
+        "oxygen",
+        ]
+      x2: true
+      x3: true
+      x4: true
+      x6:
+        set!: ["b", "c", "d"]
+      x7:
+        set!: ["c"]
+
