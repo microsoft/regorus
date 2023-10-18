@@ -31,7 +31,7 @@ fn basic() -> Result<()> {
     set = {1, 2, 3}
 "#;
 
-    let expected = vec![Value::from_json_str(
+    let expected = [Value::from_json_str(
         r#" {
     "array": [1, 2, 3],
     "nested_array": [1, [2, 3, 4], 5, 6],
@@ -46,9 +46,8 @@ fn basic() -> Result<()> {
 }"#,
     )?];
 
-    assert_match(
-        eval_file(&[rego.to_owned()], None, None, "data.test", false)?,
-        expected,
-    );
-    Ok(())
+    check_output(
+        &eval_file(&[rego.to_owned()], None, None, "data.test", false)?,
+        &expected,
+    )
 }

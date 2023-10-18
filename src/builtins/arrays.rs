@@ -13,9 +13,9 @@ use anyhow::Result;
 use std::rc::Rc;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
-    m.insert("array.concat", concat);
-    m.insert("array.reverse", reverse);
-    m.insert("array.slice", slice);
+    m.insert("array.concat", (concat, 2));
+    m.insert("array.reverse", (reverse, 1));
+    m.insert("array.slice", (slice, 3));
 }
 
 fn concat(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {

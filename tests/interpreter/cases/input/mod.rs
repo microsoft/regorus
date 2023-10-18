@@ -25,7 +25,7 @@ fn basic() -> Result<()> {
         Value::from_json_str(r#"{"x": 6}"#)?,
     ]);
 
-    let expected = vec![
+    let expected = [
         Value::from_json_str(
             r#" {
         "y": {"set!": [6]},
@@ -40,9 +40,8 @@ fn basic() -> Result<()> {
         )?,
     ];
 
-    assert_match(
-        eval_file_first_rule(&[rego.to_owned()], None, Some(input), "data.test", false)?,
-        expected,
-    );
-    Ok(())
+    check_output(
+        &eval_file_first_rule(&[rego.to_owned()], None, Some(input), "data.test", false)?,
+        &expected,
+    )
 }

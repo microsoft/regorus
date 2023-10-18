@@ -3,10 +3,10 @@
 
 use crate::ast::Expr::*;
 use crate::ast::*;
-use crate::interpreter::Interpreter;
 use crate::lexer::Span;
+use crate::utils;
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::string::String;
 
 use anyhow::{bail, Result};
@@ -187,7 +187,7 @@ pub fn schedule<'a>(infos: &mut [StmtInfo<'a>]) -> Result<SortResult> {
     }
 
     if order.len() != num_statements {
-        bail!("could not schedule all statements {order:?} {num_statements}");
+        bail!("could not schedule all statements {order:?} {num_statements} {tmp:?}");
     }
 
     // TODO: determine cycles.
@@ -405,7 +405,7 @@ impl<'a> Analyzer<'a> {
 
     pub fn analyze(mut self, modules: &'a [Module<'a>]) -> Result<Schedule> {
         for m in modules {
-            let path = Interpreter::get_path_string(&m.package.refr, Some("data"))?;
+            let path = utils::get_path_string(&m.package.refr, Some("data"))?;
             let scope: &mut Scope = self.packages.entry(path).or_default();
             for r in &m.policy {
                 let var = match r {
@@ -433,7 +433,7 @@ impl<'a> Analyzer<'a> {
     }
 
     fn analyze_module(&mut self, m: &'a Module<'a>) -> Result<()> {
-        let path = Interpreter::get_path_string(&m.package.refr, Some("data"))?;
+        let path = utils::get_path_string(&m.package.refr, Some("data"))?;
         let scope = match self.packages.get(&path) {
             Some(s) => s,
             _ => bail!("internal error: package scope missing"),
@@ -932,7 +932,36 @@ impl<'a> Analyzer<'a> {
                     definitions.push(Definition { var: "", used_vars });
                     // TODO: vars in compr
                 }
-                Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => {
+                Literal::Expr { expr, .. } => {
+                    if let Some(Expr::Var(return_arg)) = utils::get_extra_arg(expr, &HashMap::new())
+                    {
+                        let (mut used_vars, comprs) = Self::gather_used_vars_comprs_index_vars(
+                            expr,
+                            &mut scope,
+                            &mut first_use,
+                            &mut definitions,
+                        )?;
+                        let var = if return_arg.text() != "_" {
+                            // The var in the return argument slot would have been processed as
+                            // an used var. Remove it from used vars and add it as the variable being
+                            // defined.
+                            used_vars.pop();
+                            return_arg.text()
+                        } else {
+                            ""
+                        };
+                        self.process_comprs(
+                            &comprs[..],
+                            &mut scope,
+                            &mut first_use,
+                            &mut used_vars,
+                        )?;
+                        definitions.push(Definition { var, used_vars });
+                    } else {
+                        self.process_expr(expr, &mut scope, &mut first_use, &mut definitions)?;
+                    }
+                }
+                Literal::NotExpr { expr, .. } => {
                     self.process_expr(expr, &mut scope, &mut first_use, &mut definitions)?;
                 }
                 Literal::Every {

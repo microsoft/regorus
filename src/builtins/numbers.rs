@@ -13,12 +13,12 @@ use anyhow::Result;
 use rand::{thread_rng, Rng};
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
-    m.insert("abs", abs);
-    m.insert("ceil", ceil);
-    m.insert("floor", floor);
-    m.insert("numbers.range", range);
-    m.insert("rand.intn", intn);
-    m.insert("round", round);
+    m.insert("abs", (abs, 1));
+    m.insert("ceil", (ceil, 1));
+    m.insert("floor", (floor, 1));
+    m.insert("numbers.range", (range, 2));
+    m.insert("rand.intn", (intn, 2));
+    m.insert("round", (round, 1));
 }
 
 pub fn arithmetic_operation(

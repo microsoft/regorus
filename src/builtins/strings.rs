@@ -15,29 +15,29 @@ use std::collections::HashMap;
 use anyhow::{bail, Result};
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
-    m.insert("concat", concat);
-    m.insert("contains", contains);
-    m.insert("endswith", endswith);
-    m.insert("format_int", format_int);
-    m.insert("indexof", indexof);
-    m.insert("indexof_n", indexof_n);
-    m.insert("lower", lower);
-    m.insert("replace", replace);
-    m.insert("split", split);
-    m.insert("sprintf", sprintf);
-    m.insert("startswith", startswith);
-    m.insert("strings.any_prefix_match", any_prefix_match);
-    m.insert("strings.any_suffix_match", any_suffix_match);
-    m.insert("strings.replace_n", replace_n);
-    m.insert("strings.reverse", reverse);
-    m.insert("strings.substring", substring);
-    m.insert("trim", trim);
-    m.insert("trim_left", trim_left);
-    m.insert("trim_prefix", trim_prefix);
-    m.insert("trim_right", trim_right);
-    m.insert("trim_space", trim_space);
-    m.insert("trim_suffix", trim_suffix);
-    m.insert("upper", upper);
+    m.insert("concat", (concat, 2));
+    m.insert("contains", (contains, 2));
+    m.insert("endswith", (endswith, 2));
+    m.insert("format_int", (format_int, 2));
+    m.insert("indexof", (indexof, 2));
+    m.insert("indexof_n", (indexof_n, 2));
+    m.insert("lower", (lower, 1));
+    m.insert("replace", (replace, 3));
+    m.insert("split", (split, 2));
+    m.insert("sprintf", (sprintf, 2));
+    m.insert("startswith", (startswith, 2));
+    m.insert("strings.any_prefix_match", (any_prefix_match, 2));
+    m.insert("strings.any_suffix_match", (any_suffix_match, 2));
+    m.insert("strings.replace_n", (replace_n, 2));
+    m.insert("strings.reverse", (reverse, 1));
+    m.insert("strings.substring", (substring, 3));
+    m.insert("trim", (trim, 2));
+    m.insert("trim_left", (trim_left, 2));
+    m.insert("trim_prefix", (trim_prefix, 2));
+    m.insert("trim_right", (trim_right, 2));
+    m.insert("trim_space", (trim_space, 1));
+    m.insert("trim_suffix", (trim_suffix, 2));
+    m.insert("upper", (upper, 1));
 }
 
 fn concat(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {

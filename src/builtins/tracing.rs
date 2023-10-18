@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
-    m.insert("trace", trace);
+    m.insert("trace", (trace, 1));
 }
 
 // Symbol analyzer must ensure that vars used by trace are defined before

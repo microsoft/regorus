@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use anyhow::{bail, Result};
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
-    m.insert("to_number", to_number);
+    m.insert("to_number", (to_number, 1));
 }
 
 fn to_number(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
