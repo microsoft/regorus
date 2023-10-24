@@ -12,12 +12,12 @@ use std::collections::HashMap;
 use anyhow::{bail, Result};
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
-    m.insert("count", count);
-    m.insert("max", max);
-    m.insert("min", min);
-    m.insert("product", product);
-    m.insert("sort", sort);
-    m.insert("sum", sum);
+    m.insert("count", (count, 1));
+    m.insert("max", (max, 1));
+    m.insert("min", (min, 1));
+    m.insert("product", (product, 1));
+    m.insert("sort", (sort, 1));
+    m.insert("sum", (sum, 1));
 }
 
 fn count(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
@@ -57,9 +57,9 @@ fn min(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
 
     Ok(match &args[0] {
         Value::Array(a) if a.is_empty() => Value::Undefined,
-        Value::Array(a) => a.iter().max().unwrap().clone(),
+        Value::Array(a) => a.iter().min().unwrap().clone(),
         Value::Set(a) if a.is_empty() => Value::Undefined,
-        Value::Set(a) => a.iter().max().unwrap().clone(),
+        Value::Set(a) => a.iter().min().unwrap().clone(),
         a => {
             let span = params[0].span();
             bail!(span.error(format!("`min` requires array/set argument. Got `{a}`.").as_str()))
@@ -68,7 +68,7 @@ fn min(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
 }
 
 fn product(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
-    ensure_args_count(span, "min", params, args, 1)?;
+    ensure_args_count(span, "product", params, args, 1)?;
 
     let mut v = 1 as Float;
     Ok(match &args[0] {

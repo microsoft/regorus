@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use lazy_static::lazy_static;
 
-pub type BuiltinFcn = fn(&Span, &[Expr], &[Value]) -> Result<Value>;
+pub type BuiltinFcn = (fn(&Span, &[Expr], &[Value]) -> Result<Value>, u8);
 
 #[rustfmt::skip]
 lazy_static! {

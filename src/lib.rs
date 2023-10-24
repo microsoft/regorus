@@ -7,6 +7,7 @@ pub mod interpreter;
 pub mod lexer;
 pub mod parser;
 pub mod scheduler;
+mod utils;
 pub mod value;
 
 pub use ast::*;

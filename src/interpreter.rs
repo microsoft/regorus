@@ -6,6 +6,7 @@ use crate::builtins;
 use crate::lexer::Span;
 use crate::parser::Parser;
 use crate::scheduler::*;
+use crate::utils::*;
 use crate::value::*;
 
 use anyhow::{anyhow, bail, Result};
@@ -163,6 +164,8 @@ impl<'source> Interpreter<'source> {
     fn variables_assignment(&mut self, name: &str, value: &Value) -> Result<()> {
         if let Some(variable) = self.current_scope_mut()?.get_mut(name) {
             *variable = value.clone();
+            Ok(())
+        } else if name == "_" {
             Ok(())
         } else {
             bail!("variable {} is undefined", name)
@@ -783,7 +786,17 @@ impl<'source> Interpreter<'source> {
 
         let r = Ok(match &stmt.literal {
             Literal::Expr { expr, .. } => {
-                let value = self.eval_expr(expr)?;
+                let value = match expr {
+                    Expr::Call { span, fcn, params } => self.eval_call(
+                        span,
+                        fcn,
+                        params,
+                        get_extra_arg(expr, &HashMap::new()),
+                        true,
+                    )?,
+                    _ => self.eval_expr(expr)?,
+                };
+
                 if let Value::Bool(bool) = value {
                     bool
                 } else {
@@ -792,6 +805,21 @@ impl<'source> Interpreter<'source> {
                     // For non-booleans, treat anything other than undefined as true
                     value != Value::Undefined
                 }
+            }
+            Literal::NotExpr { expr, .. } => {
+                let value = match expr {
+                    // Extra parameter is allowed; but a return argument is not allowed.
+                    Expr::Call { span, fcn, params } => self.eval_call(
+                        span,
+                        fcn,
+                        params,
+                        get_extra_arg(expr, &HashMap::new()),
+                        false,
+                    )?,
+                    _ => self.eval_expr(expr)?,
+                };
+                // https://github.com/open-policy-agent/opa/issues/1622#issuecomment-520547385
+                matches!(value, Value::Bool(false) | Value::Undefined)
             }
             Literal::SomeVars { vars, .. } => {
                 for var in vars {
@@ -813,10 +841,6 @@ impl<'source> Interpreter<'source> {
                 value,
                 collection,
             } => self.eval_some_in(span, key, value, collection, stmts)?,
-            Literal::NotExpr { expr, .. } => {
-                // https://github.com/open-policy-agent/opa/issues/1622#issuecomment-520547385
-                matches!(self.eval_expr(expr)?, Value::Bool(false) | Value::Undefined)
-            }
             Literal::Every {
                 span,
                 key,
@@ -1278,7 +1302,7 @@ impl<'source> Interpreter<'source> {
         span: &'source Span<'source>,
         name: String,
         builtin: builtins::BuiltinFcn,
-        params: &'source Vec<Expr<'source>>,
+        params: &'source [Expr<'source>],
     ) -> Result<Value> {
         let mut args = vec![];
         let allow_undefined = name == "print"; // TODO: with modifier
@@ -1297,7 +1321,7 @@ impl<'source> Interpreter<'source> {
             }
         }
 
-        let v = builtin(span, &params[..], &args[..])?;
+        let v = builtin.0(span, params, &args[..])?;
 
         // Handle trace function.
         // TODO: with modifier.
@@ -1312,11 +1336,11 @@ impl<'source> Interpreter<'source> {
         Ok(v)
     }
 
-    fn eval_call(
+    fn eval_call_impl(
         &mut self,
         span: &'source Span<'source>,
         fcn: &'source Expr<'source>,
-        params: &'source Vec<Expr<'source>>,
+        params: &'source [Expr<'source>],
     ) -> Result<Value> {
         let fcns_rules = match self.lookup_function(fcn) {
             Ok(r) => r,
@@ -1436,6 +1460,34 @@ impl<'source> Interpreter<'source> {
             ));
         }
         Ok(results[0].clone())
+    }
+
+    fn eval_call(
+        &mut self,
+        span: &'source Span<'source>,
+        fcn: &'source Expr<'source>,
+        params: &'source Vec<Expr<'source>>,
+        extra_arg: Option<&'source Expr<'source>>,
+        allow_return_arg: bool,
+    ) -> Result<Value> {
+        // TODO: global var check; interop with `some var`
+        match extra_arg {
+            Some(Expr::Var(var))
+                if allow_return_arg && self.lookup_local_var(var.text()).is_none() =>
+            {
+                let value = self.eval_call_impl(span, fcn, &params[..params.len() - 1])?;
+                if var.text() != "_" {
+                    self.add_variable(var.text(), value)?;
+                }
+                Ok(Value::Bool(true))
+            }
+            Some(expr) => {
+                let ret_value = self.eval_call_impl(span, fcn, &params[..params.len() - 1])?;
+                let value = self.eval_expr(expr)?;
+                Ok(Value::Bool(ret_value == value))
+            }
+            None => self.eval_call_impl(span, fcn, params),
+        }
     }
 
     fn lookup_local_var(&self, name: &str) -> Option<Value> {
@@ -1566,7 +1618,7 @@ impl<'source> Interpreter<'source> {
             } => self.eval_object_compr(key, value, query),
             Expr::SetCompr { term, query, .. } => self.eval_set_compr(term, query),
             Expr::UnaryExpr { .. } => unimplemented!("unar expr is umplemented"),
-            Expr::Call { span, fcn, params } => self.eval_call(span, fcn, params),
+            Expr::Call { span, fcn, params } => self.eval_call(span, fcn, params, None, false),
         }
     }
 
@@ -2150,8 +2202,21 @@ impl<'source> Interpreter<'source> {
         let prev_module = self.set_current_module(self.modules.last().copied())?;
         let value = self.eval_expr(snippet)?;
         // Pop the scope.
+
         let scope = self.scopes.pop();
-        let r = match snippet {
+        let r = match scope {
+            Some(scope) if !scope.is_empty() => {
+                let mut r = Value::new_object();
+                let map = r.as_object_mut()?;
+                // Capture each binding.
+                for (name, v) in scope {
+                    map.insert(Value::String(name), v);
+                }
+                Ok(r)
+            }
+            _ => Ok(value),
+        };
+        /*        let r = match snippet {
             Expr::AssignExpr { .. } => {
                 if let Some(scope) = scope {
                     let mut r = Value::new_object();
@@ -2166,7 +2231,7 @@ impl<'source> Interpreter<'source> {
                 }
             }
             _ => Ok(value),
-        };
+        };*/
         self.set_current_module(prev_module)?;
         r
     }

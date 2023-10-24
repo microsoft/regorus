@@ -738,7 +738,7 @@ impl<'source> Parser<'source> {
         Ok(expr)
     }
 
-    fn parse_assign_expr(&mut self) -> Result<Expr<'source>> {
+    pub fn parse_assign_expr(&mut self) -> Result<Expr<'source>> {
         let state = self.clone();
         let start = self.tok.1.start;
         let expr = self.parse_ref()?;

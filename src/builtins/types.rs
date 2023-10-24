@@ -12,14 +12,14 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
-    m.insert("is_array", is_array);
-    m.insert("is_boolean", is_boolean);
-    m.insert("is_null", is_null);
-    m.insert("is_number", is_number);
-    m.insert("is_object", is_object);
-    m.insert("is_set", is_set);
-    m.insert("is_string", is_string);
-    m.insert("type_name", type_name);
+    m.insert("is_array", (is_array, 1));
+    m.insert("is_boolean", (is_boolean, 1));
+    m.insert("is_null", (is_null, 1));
+    m.insert("is_number", (is_number, 1));
+    m.insert("is_object", (is_object, 1));
+    m.insert("is_set", (is_set, 1));
+    m.insert("is_string", (is_string, 1));
+    m.insert("type_name", (type_name, 1));
 }
 
 fn is_array(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {

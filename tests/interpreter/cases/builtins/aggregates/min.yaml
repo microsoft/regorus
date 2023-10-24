@@ -19,7 +19,7 @@ cases:
         u3 = min(set())
     query: data.test
     want_result:
-      x: [ 3, 2 ]
+      x: [ -1, -1 ]
 
   - note: invalid-null
     data: {}

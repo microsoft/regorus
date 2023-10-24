@@ -4,12 +4,13 @@
 #![cfg(test)]
 
 use std::env;
+use std::path::Path;
 
 use anyhow::{bail, Result};
 use regorus::*;
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use test_generator::test_resources;
-//use walkdir::WalkDir;
+use walkdir::WalkDir;
 
 mod cases;
 
@@ -154,28 +155,30 @@ fn match_values(computed: &Value, expected: &Value) -> Result<()> {
     }
 }
 
-pub fn assert_match(computed_results: Vec<Value>, expected_results: Vec<Value>) {
+pub fn check_output(computed_results: &[Value], expected_results: &[Value]) -> Result<()> {
     if computed_results.len() != expected_results.len() {
-        panic!(
+        bail!(
             "the number of computed results ({}) and expected results ({}) is not equal",
             computed_results.len(),
             expected_results.len()
         );
     }
 
-    for (n, expected_result) in expected_results.into_iter().enumerate() {
-        let expected = match process_value(&expected_result) {
+    for (n, expected_result) in expected_results.iter().enumerate() {
+        let expected = match process_value(expected_result) {
             Ok(e) => e,
-            _ => panic!("unable to process value :\n {expected_result:?}"),
+            _ => bail!("unable to process value :\n {expected_result:?}"),
         };
 
         if let Some(computed_result) = computed_results.get(n) {
             match match_values(computed_result, &expected) {
                 Ok(()) => (),
-                Err(e) => panic!("{}", e),
+                Err(e) => bail!("{e}"),
             }
         }
     }
+
+    Ok(())
 }
 
 pub fn eval_file_first_rule(
@@ -198,7 +201,7 @@ pub fn eval_file_first_rule(
         lines: query.split('\n').collect(),
     };
     let mut parser = Parser::new(&source)?;
-    let expr = parser.parse_membership_expr()?;
+    let expr = parser.parse_assign_expr()?;
 
     for (idx, _) in regos.iter().enumerate() {
         files.push(format!("rego_{idx}"));
@@ -278,7 +281,7 @@ pub fn eval_file(
         lines: query.split('\n').collect(),
     };
     let mut parser = Parser::new(&source)?;
-    let expr = parser.parse_membership_expr()?;
+    let expr = parser.parse_assign_expr()?;
 
     for (idx, _) in regos.iter().enumerate() {
         files.push(format!("rego_{idx}"));
@@ -435,7 +438,7 @@ struct YamlTest {
     cases: Vec<TestCase>,
 }
 
-fn yaml_test_impl(file: &str) -> Result<()> {
+fn yaml_test_impl(file: &str, is_opa_test: bool) -> Result<()> {
     let yaml_str = std::fs::read_to_string(file)?;
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
@@ -472,7 +475,14 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                         }
                     }
 
-                    assert_match(results, expected_results);
+                    if is_opa_test {
+                        // Convert value to json compatible representation.
+                        let results =
+                            Value::from_json_str(serde_json::to_string(&results)?.as_str())?;
+                        match_values(&results, &expected_results[0])?;
+                    } else {
+                        check_output(&results, &expected_results)?;
+                    }
                 }
                 _ => panic!("eval succeeded and did not produce any errors"),
             },
@@ -498,8 +508,8 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     Ok(())
 }
 
-fn yaml_test(file: &str) -> Result<()> {
-    match yaml_test_impl(file) {
+fn yaml_test(file: &str, is_opa_test: bool) -> Result<()> {
+    match yaml_test_impl(file, is_opa_test) {
         Ok(_) => Ok(()),
         Err(e) => {
             // If Err is returned, it doesn't always get printed by cargo test.
@@ -511,28 +521,65 @@ fn yaml_test(file: &str) -> Result<()> {
 
 #[test]
 fn yaml_test_basic() -> Result<()> {
-    yaml_test("tests/interpreter/cases/basic_001.yaml")
+    yaml_test("tests/interpreter/cases/basic_001.yaml", false)
 }
 
 #[test]
 #[ignore = "intended for use by scripts/yaml-test-eval"]
 fn one_yaml() -> Result<()> {
     let mut file = String::default();
+    let mut is_opa_test = false;
+
     for a in env::args() {
         if a.ends_with(".yaml") {
             file = a;
-            break;
+        } else if a == "opa-test" {
+            is_opa_test = true;
         }
     }
 
     if file.is_empty() {
-        bail!("missing <policy.rego>");
+        bail!("missing <yaml-file>");
     }
 
-    yaml_test(file.as_str())
+    yaml_test(file.as_str(), is_opa_test)
 }
 
 #[test_resources("tests/interpreter/**/*.yaml")]
 fn run(path: &str) {
-    yaml_test(path).unwrap()
+    yaml_test(path, false).unwrap()
+}
+
+#[test]
+#[ignore = "intended for running opa test suite"]
+fn run_opa_tests() -> Result<()> {
+    let mut failures = vec![];
+    for a in env::args() {
+        if !Path::new(&a).is_dir() {
+            continue;
+        }
+        for entry in WalkDir::new(a)
+            .sort_by_file_name()
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path().to_string_lossy().to_string();
+            if Path::new(&path).is_dir() {
+                continue;
+            }
+            let yaml = path;
+            match yaml_test_impl(yaml.as_str(), true) {
+                Ok(_) => (),
+                Err(e) => {
+                    failures.push((yaml, e));
+                }
+            }
+        }
+    }
+
+    if !failures.is_empty() {
+        dbg!(failures);
+        panic!("failed");
+    }
+    Ok(())
 }

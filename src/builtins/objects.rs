@@ -14,12 +14,12 @@ use std::rc::Rc;
 use anyhow::{bail, Result};
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
-    m.insert("json.filter", json_filter);
-    //    m.insert("json.patch", json_patch);
-    m.insert("object.filter", filter);
-    m.insert("object.get", get);
-    m.insert("object.keys", keys);
-    m.insert("object.remove", remove);
+    m.insert("json.filter", (json_filter, 2));
+    //    m.insert("json.patch", (json_patch));
+    m.insert("object.filter", (filter, 2));
+    m.insert("object.get", (get, 3));
+    m.insert("object.keys", (keys, 1));
+    m.insert("object.remove", (remove, 2));
 }
 
 fn json_filter_impl(v: &Value, filter: &Value) -> Value {

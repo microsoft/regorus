@@ -1,0 +1,19 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: basic
+    data: {}
+    modules:
+      - |
+        package test
+
+        a = [1, 2, 3, 4]
+
+        p = x {
+          count(a, x)
+        }
+
+    query: data.test.p = x
+    want_result:
+      x: 4

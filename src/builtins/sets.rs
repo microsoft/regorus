@@ -12,8 +12,8 @@ use std::collections::{BTreeSet, HashMap};
 use anyhow::{bail, Result};
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
-    m.insert("intersection", intersection_of_set_of_sets);
-    m.insert("union", union_of_set_of_sets);
+    m.insert("intersection", (intersection_of_set_of_sets, 1));
+    m.insert("union", (union_of_set_of_sets, 1));
 }
 
 pub fn intersection(expr1: &Expr, expr2: &Expr, v1: Value, v2: Value) -> Result<Value> {

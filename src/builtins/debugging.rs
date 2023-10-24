@@ -8,16 +8,23 @@ use crate::value::Value;
 
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
+
+// TODO: Should we avoid this limit?
+const MAX_ARGS: u8 = std::u8::MAX;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
-    m.insert("print", print);
+    m.insert("print", (print, MAX_ARGS));
 }
 
 // Symbol analyzer must ensure that vars used by print are defined before
 // the print statement. Scheduler must ensure the above constraint.
 // Additionally interpreter must allow undefined inputs to print.
 fn print(span: &Span, _params: &[Expr], args: &[Value]) -> Result<Value> {
+    if args.len() > MAX_ARGS as usize {
+        bail!(span.error("print supports up to 100 arguments"));
+    }
+
     let mut msg = String::default();
     for a in args {
         match a {
