@@ -192,6 +192,10 @@ impl Value {
         matches!(self, Value::Null)
     }
 
+    pub fn is_empty_object(&self) -> bool {
+        self == &Value::new_object()
+    }
+
     pub fn as_bool(&self) -> Result<&bool> {
         match self {
             Value::Bool(b) => Ok(b),
@@ -306,6 +310,32 @@ impl Value {
             Value::Undefined => Ok(self),
             _ => bail!("internal error: make: not an selfect {self:?}"),
         }
+    }
+
+    pub fn merge(&mut self, mut new: Value) -> Result<()> {
+        match (self, &mut new) {
+            (v @ Value::Undefined, _) => *v = new,
+            (Value::Set(ref mut set), Value::Set(new)) => {
+                Rc::make_mut(set).append(Rc::make_mut(new))
+            }
+            (Value::Object(map), Value::Object(new)) => {
+                for (k, v) in new.iter() {
+                    match map.get(k) {
+                        Some(pv) if *pv != *v => {
+                            bail!(
+                                "value for key `{}` generated multiple times: `{}` and `{}`",
+                                serde_json::to_string_pretty(&k)?,
+                                serde_json::to_string_pretty(&pv)?,
+                                serde_json::to_string_pretty(&v)?,
+                            )
+                        }
+                        _ => Rc::make_mut(map).insert(k.clone(), v.clone()),
+                    };
+                }
+            }
+            _ => bail!("internal error: could not merge value"),
+        };
+        Ok(())
     }
 }
 impl ops::Index<usize> for Value {

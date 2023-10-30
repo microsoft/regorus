@@ -404,6 +404,33 @@ impl<'a> Analyzer<'a> {
     }
 
     pub fn analyze(mut self, modules: &'a [Module<'a>]) -> Result<Schedule> {
+        self.add_rules(modules)?;
+
+        for m in modules {
+            self.analyze_module(m)?;
+        }
+
+        Ok(Schedule {
+            scopes: self.locals,
+            order: self.order,
+        })
+    }
+
+    pub fn analyze_query_snippet(
+        mut self,
+        modules: &'a [Module<'a>],
+        query: &'a Query<'a>,
+    ) -> Result<Vec<u16>> {
+        self.add_rules(modules)?;
+        self.analyze_query(None, None, query, Scope::default())?;
+        Ok(self
+            .order
+            .get(query)
+            .expect("could not schedule user query")
+            .clone())
+    }
+
+    fn add_rules(&mut self, modules: &'a [Module<'a>]) -> Result<()> {
         for m in modules {
             let path = utils::get_path_string(&m.package.refr, Some("data"))?;
             let scope: &mut Scope = self.packages.entry(path).or_default();
@@ -422,14 +449,7 @@ impl<'a> Analyzer<'a> {
             }
         }
 
-        for m in modules {
-            self.analyze_module(m)?;
-        }
-
-        Ok(Schedule {
-            scopes: self.locals,
-            order: self.order,
-        })
+        Ok(())
     }
 
     fn analyze_module(&mut self, m: &'a Module<'a>) -> Result<()> {

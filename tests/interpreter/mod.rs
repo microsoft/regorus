@@ -181,6 +181,20 @@ pub fn check_output(computed_results: &[Value], expected_results: &[Value]) -> R
     Ok(())
 }
 
+fn query_results_to_value(query_results: QueryResults) -> Result<Value> {
+    if let Some(query_result) = query_results.results.last() {
+        if !query_result.bindings.is_empty_object() {
+            return Ok(query_result.bindings.clone());
+        } else {
+            return match query_result.expressions.last() {
+                Some(v) => Ok(v.clone()),
+                _ => bail!("no expressions in query results"),
+            };
+        }
+    }
+    bail!("query result incomplete")
+}
+
 pub fn eval_file_first_rule(
     regos: &[String],
     data_opt: Option<Value>,
@@ -194,15 +208,21 @@ pub fn eval_file_first_rule(
     let mut modules = vec![];
     let mut modules_ref = vec![];
 
-    // the query is parsed for later
-    let source = Source {
+    let query_source = regorus::Source {
         file: "<query.rego>",
         contents: query,
         lines: query.split('\n').collect(),
     };
-    let mut parser = Parser::new(&source)?;
-    let expr = parser.parse_assign_expr()?;
-
+    let query_span = regorus::Span {
+        source: &query_source,
+        line: 1,
+        col: 1,
+        start: 0,
+        end: query.len() as u16,
+    };
+    let mut parser = regorus::Parser::new(&query_source)?;
+    let query_node = parser.parse_query(query_span, "")?;
+    let query_stmt_order = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
     for (idx, _) in regos.iter().enumerate() {
         files.push(format!("rego_{idx}"));
     }
@@ -248,14 +268,22 @@ pub fn eval_file_first_rule(
             }
 
             // Now eval the query.
-            results.push(interpreter.eval_query_snippet(&expr, enable_tracing)?);
+            results.push(query_results_to_value(interpreter.eval_user_query(
+                &query_node,
+                &query_stmt_order,
+                enable_tracing,
+            )?)?);
         }
     } else {
         // it no input is defined then one evaluation of all modules is performed
         interpreter.eval(&data_opt, &None, enable_tracing, Some(&schedule))?;
 
         // Now eval the query.
-        results.push(interpreter.eval_query_snippet(&expr, enable_tracing)?);
+        results.push(query_results_to_value(interpreter.eval_user_query(
+            &query_node,
+            &query_stmt_order,
+            enable_tracing,
+        )?)?);
     }
 
     Ok(results)
@@ -274,14 +302,21 @@ pub fn eval_file(
     let mut modules = vec![];
     let mut modules_ref = vec![];
 
-    // the query is parsed for later
-    let source = Source {
+    let query_source = regorus::Source {
         file: "<query.rego>",
         contents: query,
         lines: query.split('\n').collect(),
     };
-    let mut parser = Parser::new(&source)?;
-    let expr = parser.parse_assign_expr()?;
+    let query_span = regorus::Span {
+        source: &query_source,
+        line: 1,
+        col: 1,
+        start: 0,
+        end: query.len() as u16,
+    };
+    let mut parser = regorus::Parser::new(&query_source)?;
+    let query_node = parser.parse_query(query_span, "")?;
+    let query_stmt_order = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
 
     for (idx, _) in regos.iter().enumerate() {
         files.push(format!("rego_{idx}"));
@@ -324,14 +359,22 @@ pub fn eval_file(
             interpreter.eval_modules(&Some(input), enable_tracing)?;
 
             // Now eval the query.
-            results.push(interpreter.eval_query_snippet(&expr, enable_tracing)?);
+            results.push(query_results_to_value(interpreter.eval_user_query(
+                &query_node,
+                &query_stmt_order,
+                enable_tracing,
+            )?)?);
         }
     } else {
         // it no input is defined then one evaluation of all modules is performed
         interpreter.eval(&data_opt, &None, enable_tracing, Some(&schedule))?;
 
         // Now eval the query.
-        results.push(interpreter.eval_query_snippet(&expr, enable_tracing)?);
+        results.push(query_results_to_value(interpreter.eval_user_query(
+            &query_node,
+            &query_stmt_order,
+            enable_tracing,
+        )?)?);
     }
 
     Ok(results)
@@ -380,6 +423,7 @@ fn one_file() -> Result<()> {
     interpreter.prepare_for_eval(Some(&schedule), &None)?;
     let results = interpreter.eval_modules(&input, true)?;
     println!("eval results:\n{}", serde_json::to_string_pretty(&results)?);
+
     Ok(())
 }
 
@@ -421,7 +465,7 @@ impl<'de> Deserialize<'de> for ValueOrVec {
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct TestCase {
-    data: Value,
+    data: Option<Value>,
     input: Option<ValueOrVec>,
     modules: Vec<String>,
     note: String,
@@ -431,6 +475,8 @@ struct TestCase {
     skip: Option<bool>,
     error: Option<String>,
     traces: Option<bool>,
+    want_error: Option<String>,
+    want_error_code: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -453,6 +499,7 @@ fn yaml_test_impl(file: &str, is_opa_test: bool) -> Result<()> {
 
         match (&case.want_result, &case.error) {
             (Some(_), None) | (None, Some(_)) => (),
+            _ if is_opa_test => (),
             _ => panic!("either want_result or error must be specified in test case."),
         }
 
@@ -460,7 +507,7 @@ fn yaml_test_impl(file: &str, is_opa_test: bool) -> Result<()> {
 
         match eval_file(
             &case.modules,
-            Some(case.data),
+            case.data,
             case.input,
             case.query.as_str(),
             enable_tracing,
@@ -479,13 +526,20 @@ fn yaml_test_impl(file: &str, is_opa_test: bool) -> Result<()> {
                         // Convert value to json compatible representation.
                         let results =
                             Value::from_json_str(serde_json::to_string(&results)?.as_str())?;
+                        dbg!((&results, &expected_results[0]));
                         match_values(&results, &expected_results[0])?;
                     } else {
                         check_output(&results, &expected_results)?;
                     }
                 }
-                _ => panic!("eval succeeded and did not produce any errors"),
+                _ => bail!("eval succeeded and did not produce any errors"),
             },
+            Err(actual) if is_opa_test => {
+                if case.want_error.is_none() && case.want_error_code.is_none() {
+                    return Err(actual);
+                }
+                // opa test expects execution to fail and it did.
+            }
             Err(actual) => match &case.error {
                 Some(expected) => {
                     let actual = actual.to_string();
@@ -564,7 +618,7 @@ fn run_opa_tests() -> Result<()> {
             .filter_map(|e| e.ok())
         {
             let path = entry.path().to_string_lossy().to_string();
-            if Path::new(&path).is_dir() {
+            if !Path::new(&path).is_file() || !path.ends_with(".yaml") {
                 continue;
             }
             let yaml = path;
