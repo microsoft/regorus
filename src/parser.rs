@@ -972,7 +972,9 @@ impl<'source> Parser<'source> {
             literals.push(stmt);
         }
 
-        self.expect(end_delim, "while parsing query")?;
+        if !end_delim.is_empty() {
+            self.expect(end_delim, "while parsing query")?;
+        }
         span.end = self.end;
         Ok(Query {
             span,

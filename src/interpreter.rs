@@ -11,6 +11,7 @@ use crate::value::*;
 
 use anyhow::{anyhow, bail, Result};
 use log::info;
+use serde::Serialize;
 use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
@@ -39,11 +40,35 @@ pub struct Interpreter<'source> {
     traces: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct QueryResult {
+    // Expressions is shown first to match OPA.
+    pub expressions: Vec<Value>,
+    #[serde(skip_serializing_if = "Value::is_empty_object")]
+    pub bindings: Value,
+}
+
+impl Default for QueryResult {
+    fn default() -> Self {
+        Self {
+            bindings: Value::new_object(),
+            expressions: vec![],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct QueryResults {
+    pub results: Vec<QueryResult>,
+}
+
 #[derive(Debug, Clone)]
 struct Context<'source> {
     key_expr: Option<&'source Expr<'source>>,
     output_expr: Option<&'source Expr<'source>>,
     value: Value,
+    result: Option<QueryResult>,
+    results: QueryResults,
 }
 
 #[derive(Debug)]
@@ -123,9 +148,6 @@ impl<'source> Interpreter<'source> {
     }
 
     fn current_scope(&mut self) -> Result<&Scope> {
-        if self.scopes.is_empty() {
-            println!("here");
-        }
         self.scopes
             .last()
             .ok_or_else(|| anyhow!("internal error: no active scope"))
@@ -484,6 +506,8 @@ impl<'source> Interpreter<'source> {
             key_expr: None,
             output_expr: None,
             value: Value::new_set(),
+            result: None,
+            results: QueryResults::default(),
         });
         let mut r = true;
         match domain {
@@ -585,8 +609,9 @@ impl<'source> Interpreter<'source> {
                 }
                 type_match.insert(expr);
 
+                let mut r = false;
                 for (idx, item) in items.iter().enumerate() {
-                    self.make_bindings(is_last, type_match, cache, item, &a[idx])?;
+                    r = self.make_bindings(is_last, type_match, cache, item, &a[idx])? || r;
                 }
 
                 Ok(true)
@@ -594,6 +619,7 @@ impl<'source> Interpreter<'source> {
 
             // Destructure objects
             (Expr::Object { fields, .. }, Value::Object(_)) => {
+                let mut r = true;
                 for (_, key_expr, value_expr) in fields.iter() {
                     // Rego does not support bindings in keys.
                     // Therefore, just eval key_expr.
@@ -608,9 +634,18 @@ impl<'source> Interpreter<'source> {
                     }
 
                     // Match patterns in value_expr
-                    self.make_bindings(is_last, type_match, cache, value_expr, field_value)?;
+                    r = r
+                        && self.make_bindings(
+                            is_last,
+                            type_match,
+                            cache,
+                            value_expr,
+                            field_value,
+                        )?;
                 }
-                Ok(true)
+                type_match.insert(expr);
+
+                Ok(r)
             }
             _ => {
                 let expr_value = self.lookup_or_eval_expr(cache, expr)?;
@@ -797,6 +832,12 @@ impl<'source> Interpreter<'source> {
                     _ => self.eval_expr(expr)?,
                 };
 
+                if let Some(ctx) = self.contexts.last_mut() {
+                    if let Some(result) = &mut ctx.result {
+                        result.expressions.push(value.clone());
+                    }
+                }
+
                 if let Value::Bool(bool) = value {
                     bool
                 } else {
@@ -818,6 +859,11 @@ impl<'source> Interpreter<'source> {
                     )?,
                     _ => self.eval_expr(expr)?,
                 };
+                if let Some(ctx) = self.contexts.last_mut() {
+                    if let Some(result) = &mut ctx.result {
+                        result.expressions.push(Value::Bool(true));
+                    }
+                }
                 // https://github.com/open-policy-agent/opa/issues/1622#issuecomment-520547385
                 matches!(value, Value::Bool(false) | Value::Undefined)
             }
@@ -833,6 +879,11 @@ impl<'source> Interpreter<'source> {
                         }
                     }
                 }
+                if let Some(ctx) = self.contexts.last_mut() {
+                    if let Some(result) = &mut ctx.result {
+                        result.expressions.push(Value::Bool(true));
+                    }
+                }
                 true
             }
             Literal::SomeIn {
@@ -840,14 +891,28 @@ impl<'source> Interpreter<'source> {
                 key,
                 value,
                 collection,
-            } => self.eval_some_in(span, key, value, collection, stmts)?,
+            } => {
+                if let Some(ctx) = self.contexts.last_mut() {
+                    if let Some(result) = &mut ctx.result {
+                        result.expressions.push(Value::Bool(true));
+                    }
+                }
+                self.eval_some_in(span, key, value, collection, stmts)?
+            }
             Literal::Every {
                 span,
                 key,
                 value,
                 domain,
                 query,
-            } => self.eval_every(span, key, value, domain, query)?,
+            } => {
+                if let Some(ctx) = self.contexts.last_mut() {
+                    if let Some(result) = &mut ctx.result {
+                        result.expressions.push(Value::Bool(true));
+                    }
+                }
+                self.eval_every(span, key, value, domain, query)?
+            }
         });
 
         for (path, value) in to_restore.into_iter().rev() {
@@ -901,6 +966,7 @@ impl<'source> Interpreter<'source> {
             // that the effects of the current loop iteration are cleared.
             let scope_saved = self.current_scope()?.clone();
 
+            let query_result = self.get_current_context()?.result.clone();
             match loop_expr_value {
                 Value::Array(items) => {
                     for (idx, v) in items.iter().enumerate() {
@@ -910,6 +976,9 @@ impl<'source> Interpreter<'source> {
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         self.loop_var_values.remove(loop_expr.expr);
                         *self.current_scope_mut()? = scope_saved.clone();
+                        if let Some(ctx) = self.contexts.last_mut() {
+                            ctx.result = query_result.clone();
+                        }
                     }
                 }
                 Value::Set(items) => {
@@ -920,6 +989,9 @@ impl<'source> Interpreter<'source> {
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         self.loop_var_values.remove(loop_expr.expr);
                         *self.current_scope_mut()? = scope_saved.clone();
+                        if let Some(ctx) = self.contexts.last_mut() {
+                            ctx.result = query_result.clone();
+                        }
                     }
                 }
                 Value::Object(obj) => {
@@ -930,6 +1002,9 @@ impl<'source> Interpreter<'source> {
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         self.loop_var_values.remove(loop_expr.expr);
                         *self.current_scope_mut()? = scope_saved.clone();
+                        if let Some(ctx) = self.contexts.last_mut() {
+                            ctx.result = query_result.clone();
+                        }
                     }
                 }
                 _ => {
@@ -1007,8 +1082,21 @@ impl<'source> Interpreter<'source> {
                 _ => (),
             }
 
-            // Push the context back so that it is available to the caller.
-            //            self.contexts.push(ctx);
+            // If a query snippet is being run, gather results.
+            let ctx = self.contexts.last_mut().expect("no current context");
+            if let Some(result) = &ctx.result {
+                let mut result = result.clone();
+                if let Some(scope) = self.scopes.last() {
+                    for (name, value) in scope.iter() {
+                        result
+                            .bindings
+                            .as_object_mut()?
+                            .insert(Value::String(name.to_string()), value.clone());
+                    }
+                }
+                ctx.results.results.push(result);
+            }
+
             return Ok(true);
         }
 
@@ -1214,7 +1302,8 @@ impl<'source> Interpreter<'source> {
                 }
             }
             _ => {
-                return Err(anyhow!("\"{}\" must be array, object, or set", collection));
+                false
+                //bail!(collection_expr.span().error("collection must be array, object or set"));
             }
         };
 
@@ -1231,6 +1320,8 @@ impl<'source> Interpreter<'source> {
             key_expr: None,
             output_expr: Some(term),
             value: Value::new_array(),
+            result: None,
+            results: QueryResults::default(),
         });
 
         // Evaluate body first.
@@ -1252,6 +1343,8 @@ impl<'source> Interpreter<'source> {
             key_expr: None,
             output_expr: Some(term),
             value: Value::new_set(),
+            result: None,
+            results: QueryResults::default(),
         });
 
         self.eval_query(query)?;
@@ -1273,6 +1366,8 @@ impl<'source> Interpreter<'source> {
             key_expr: Some(key),
             output_expr: Some(value),
             value: Value::new_object(),
+            result: None,
+            results: QueryResults::default(),
         });
 
         self.eval_query(query)?;
@@ -1400,6 +1495,8 @@ impl<'source> Interpreter<'source> {
                 key_expr: None,
                 output_expr,
                 value: Value::new_set(),
+                result: None,
+                results: QueryResults::default(),
             };
 
             // Back up local variables of current function and empty
@@ -1646,6 +1743,8 @@ impl<'source> Interpreter<'source> {
                         key_expr,
                         output_expr,
                         value,
+                        result: None,
+                        results: QueryResults::default(),
                     },
                     path,
                 ))
@@ -1657,6 +1756,8 @@ impl<'source> Interpreter<'source> {
                         key_expr: None,
                         output_expr: key.as_ref(),
                         value: Value::new_set(),
+                        result: None,
+                        results: QueryResults::default(),
                     },
                     path,
                 ))
@@ -1771,35 +1872,11 @@ impl<'source> Interpreter<'source> {
         }
     }
 
-    pub fn merge_value(span: &Span<'source>, value: &mut Value, mut new: Value) -> Result<()> {
-        match (value, &mut new) {
-            (v @ Value::Undefined, _) => *v = new,
-            (Value::Set(ref mut set), Value::Set(new)) => {
-                Rc::make_mut(set).append(Rc::make_mut(new))
-            }
-            (Value::Object(map), Value::Object(new)) => {
-                for (k, v) in new.iter() {
-                    match map.get(k) {
-                        Some(pv) if *pv != *v => {
-                            return Err(span.source.error(
-                                span.line,
-                                span.col,
-                                format!(
-                                    "value for key `{}` generated multiple times: `{}` and `{}`",
-                                    serde_json::to_string_pretty(&k)?,
-                                    serde_json::to_string_pretty(&pv)?,
-                                    serde_json::to_string_pretty(&v)?,
-                                )
-                                .as_str(),
-                            ));
-                        }
-                        _ => Rc::make_mut(map).insert(k.clone(), v.clone()),
-                    };
-                }
-            }
-            _ => bail!("internal error: could not merge value"),
-        };
-        Ok(())
+    pub fn merge_value(span: &Span<'source>, value: &mut Value, new: Value) -> Result<()> {
+        match value.merge(new) {
+            Ok(()) => Ok(()),
+            Err(err) => return Err(span.error(format!("{err}").as_str())),
+        }
     }
 
     pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
@@ -2187,11 +2264,12 @@ impl<'source> Interpreter<'source> {
         self.eval_modules(input, enable_tracing)
     }
 
-    pub fn eval_query_snippet(
+    pub fn eval_user_query(
         &mut self,
-        snippet: &'source Expr<'source>,
+        query: &'source Query<'source>,
+        order: &[u16],
         enable_tracing: bool,
-    ) -> Result<Value> {
+    ) -> Result<QueryResults> {
         self.traces = match enable_tracing {
             true => Some(vec![]),
             false => None,
@@ -2200,40 +2278,28 @@ impl<'source> Interpreter<'source> {
         // Create a new scope for evaluating the expression.
         self.scopes.push(Scope::new());
         let prev_module = self.set_current_module(self.modules.last().copied())?;
-        let value = self.eval_expr(snippet)?;
-        // Pop the scope.
 
-        let scope = self.scopes.pop();
-        let r = match scope {
-            Some(scope) if !scope.is_empty() => {
-                let mut r = Value::new_object();
-                let map = r.as_object_mut()?;
-                // Capture each binding.
-                for (name, v) in scope {
-                    map.insert(Value::String(name), v);
-                }
-                Ok(r)
-            }
-            _ => Ok(value),
-        };
-        /*        let r = match snippet {
-            Expr::AssignExpr { .. } => {
-                if let Some(scope) = scope {
-                    let mut r = Value::new_object();
-                    let map = r.as_object_mut()?;
-                    // Capture each binding.
-                    for (name, v) in scope {
-                        map.insert(Value::String(name), v);
-                    }
-                    Ok(r)
-                } else {
-                    bail!("internal error: expression scope not found");
-                }
-            }
-            _ => Ok(value),
-        };*/
+        // Push new context.
+        self.contexts.push(Context {
+            key_expr: None,
+            output_expr: None,
+            value: Value::new_set(),
+            // Request that results be gathered.
+            result: Some(QueryResult::default()),
+            results: QueryResults::default(),
+        });
+
+        let ordered_stmts: Vec<&'source LiteralStmt<'source>> =
+            order.iter().map(|i| &query.stmts[*i as usize]).collect();
+        let _value = self.eval_stmts(&ordered_stmts);
+
+        // Pop the scope.
+        let _scope = self.scopes.pop();
         self.set_current_module(prev_module)?;
-        r
+        match self.contexts.pop() {
+            Some(ctx) => Ok(ctx.results),
+            _ => bail!("internal error: no context"),
+        }
     }
 
     fn gather_rules(&mut self) -> Result<()> {

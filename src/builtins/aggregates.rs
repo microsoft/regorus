@@ -27,7 +27,7 @@ fn count(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
         Value::Array(a) => a.len() as Float,
         Value::Set(a) => a.len() as Float,
         Value::Object(a) => a.len() as Float,
-        Value::String(a) => a.len() as Float,
+        Value::String(a) => a.encode_utf16().count() as Float,
         a => {
             let span = params[0].span();
             bail!(span.error(
