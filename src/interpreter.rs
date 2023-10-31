@@ -20,7 +20,7 @@ type Scope = BTreeMap<String, Value>;
 pub struct Interpreter<'source> {
     modules: Vec<&'source Module<'source>>,
     module: Option<&'source Module<'source>>,
-    schedule: Option<&'source Schedule<'source>>,
+    schedule: Option<Schedule<'source>>,
     current_module_path: String,
     prepared: bool,
     input: Value,
@@ -1218,6 +1218,7 @@ impl<'source> Interpreter<'source> {
             } else {
                 query.stmts.iter().collect()
             };
+
         let r = self.eval_stmts(&ordered_stmts);
         self.scopes.pop();
         r
@@ -1649,7 +1650,7 @@ impl<'source> Interpreter<'source> {
                 }
             }
             Ok(Self::get_value_chained(self.data.clone(), fields))
-        } else {
+        } else if !self.modules.is_empty() {
             // Add module prefix and ensure that any matching rule is evaluated.
             let module_path =
                 Self::get_path_string(&self.current_module()?.package.refr, Some("data"))?;
@@ -1666,6 +1667,8 @@ impl<'source> Interpreter<'source> {
 
             let value = Self::get_value_chained(self.data.clone(), &path[..]);
             Ok(Self::get_value_chained(value, fields))
+        } else {
+            Ok(Value::Undefined)
         }
     }
 
@@ -2178,7 +2181,7 @@ impl<'source> Interpreter<'source> {
 
     pub fn prepare_for_eval(
         &mut self,
-        schedule: Option<&'source Schedule<'source>>,
+        schedule: Option<Schedule<'source>>,
         data: &Option<Value>,
     ) -> Result<()> {
         self.schedule = schedule;
@@ -2258,7 +2261,7 @@ impl<'source> Interpreter<'source> {
         data: &Option<Value>,
         input: &Option<Value>,
         enable_tracing: bool,
-        schedule: Option<&'source Schedule<'source>>,
+        schedule: Option<Schedule<'source>>,
     ) -> Result<Value> {
         self.prepare_for_eval(schedule, data)?;
         self.eval_modules(input, enable_tracing)
@@ -2267,7 +2270,7 @@ impl<'source> Interpreter<'source> {
     pub fn eval_user_query(
         &mut self,
         query: &'source Query<'source>,
-        order: &[u16],
+        schedule: &Schedule<'source>,
         enable_tracing: bool,
     ) -> Result<QueryResults> {
         self.traces = match enable_tracing {
@@ -2275,9 +2278,12 @@ impl<'source> Interpreter<'source> {
             false => None,
         };
 
-        // Create a new scope for evaluating the expression.
-        self.scopes.push(Scope::new());
-        let prev_module = self.set_current_module(self.modules.last().copied())?;
+        // Add schedules for queries.
+        if let Some(self_schedule) = &mut self.schedule {
+            for (k, v) in schedule.order.iter() {
+                self_schedule.order.insert(k, v.clone());
+            }
+        }
 
         // Push new context.
         self.contexts.push(Context {
@@ -2289,16 +2295,28 @@ impl<'source> Interpreter<'source> {
             results: QueryResults::default(),
         });
 
-        let ordered_stmts: Vec<&'source LiteralStmt<'source>> =
-            order.iter().map(|i| &query.stmts[*i as usize]).collect();
-        let _value = self.eval_stmts(&ordered_stmts);
+        let prev_module = self.set_current_module(self.modules.last().copied())?;
 
-        // Pop the scope.
-        let _scope = self.scopes.pop();
+        // Eval the query.
+        let query_r = self.eval_query(query);
+
+        // Restore schedules.
+        if let Some(self_schedule) = &mut self.schedule {
+            for (k, _) in schedule.order.iter() {
+                self_schedule.order.remove(k);
+            }
+        }
+
         self.set_current_module(prev_module)?;
-        match self.contexts.pop() {
+
+        let r = match self.contexts.pop() {
             Some(ctx) => Ok(ctx.results),
             _ => bail!("internal error: no context"),
+        };
+
+        match query_r {
+            Ok(_) => r,
+            Err(e) => Err(e),
         }
     }
 
