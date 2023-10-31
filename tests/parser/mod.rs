@@ -1,14 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#![cfg(test)]
-
 use anyhow::{anyhow, bail, Result};
 use regorus::*;
 use serde::{Deserialize, Serialize};
 use std::env;
 use test_generator::test_resources;
-//use walkdir::WalkDir;
 
 macro_rules! my_assert_eq {
     ($left:expr, $right:expr, $($arg:tt)+) => {
@@ -21,34 +18,6 @@ macro_rules! my_assert_eq {
             }
 	}
     }
-}
-
-#[test]
-#[ignore = "intended for use by scripts/rego-parse"]
-fn one_file() -> Result<()> {
-    let mut file = String::default();
-    for a in env::args() {
-        if a.ends_with(".rego") {
-            file = a;
-            break;
-        }
-    }
-
-    if file.is_empty() {
-        bail!("missing <policy.rego>");
-    }
-
-    let contents = std::fs::read_to_string(&file)?;
-
-    let source = Source {
-        file: file.as_str(),
-        contents: contents.as_str(),
-        lines: contents.split('\n').collect(),
-    };
-    let mut parser = Parser::new(&source)?;
-    let ast = parser.parse()?;
-    println!("{ast:#?}");
-    Ok(())
 }
 
 fn skip_value(v: &Value) -> bool {
@@ -747,48 +716,11 @@ fn one_yaml() -> Result<()> {
     }
 
     if file.is_empty() {
-        bail!("missing <policy.rego>");
+        bail!("missing yaml test file");
     }
 
     yaml_test(file.as_str())
 }
-
-/*
-fn run_yaml_tests_in(folder: &str) -> Result<()> {
-    let mut total = 0;
-
-    for entry in WalkDir::new(folder)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry
-            .path()
-            .to_str()
-            .ok_or_else(|| anyhow!("failed to convert path to utf8 {:?}", entry.path()))?;
-        if !path.ends_with(".yaml") {
-            continue;
-        }
-
-        total += 1;
-        match yaml_test(path) {
-            Ok(_) => (),
-            Err(e) => {
-                bail!("test failed.");
-            }
-        }
-    }
-
-    println!("{} parser yaml tests passed.", total);
-    Ok(())
-}
-
-
-#[test]
-fn parser_yaml_tests() -> Result<()> {
-    run_yaml_tests_in("tests/parser")
-}
-*/
 
 #[test_resources("tests/parser/**/*.yaml")]
 fn run(path: &str) {

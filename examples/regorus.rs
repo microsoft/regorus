@@ -2,34 +2,20 @@
 // Licensed under the MIT License.
 
 use anyhow::{bail, Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
-#[derive(clap::Parser)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    /// Policy or data files. Rego, json or yaml.
-    #[arg(required(true), long, short, value_name = "policy.rego")]
-    data: Vec<String>,
-
-    /// Input file. json or yaml.
-    #[arg(long, short, value_name = "input.rego")]
+fn rego_eval(
+    files: &[String],
     input: Option<String>,
-
-    // Query. Rego expression.
-    #[arg(long, short)]
     query: Option<String>,
-}
-
-fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let enable_tracing = false;
-
+    enable_tracing: bool,
+) -> Result<()> {
     // User specified data.
     let mut data = regorus::Value::new_object();
 
     // Read all policy files.
     let mut policies = vec![];
-    for file in cli.data.iter() {
+    for file in files.iter() {
         let contents =
             std::fs::read_to_string(file).with_context(|| format!("Failed to read {file}"))?;
 
@@ -54,7 +40,7 @@ fn main() -> Result<()> {
     let mut sources = vec![];
     for (idx, rego) in policies.iter().enumerate() {
         sources.push(regorus::Source {
-            file: &cli.data[idx],
+            file: &files[idx],
             contents: rego.as_str(),
             lines: rego.split('\n').collect(),
         });
@@ -67,6 +53,22 @@ fn main() -> Result<()> {
         modules.push(parser.parse()?);
     }
 
+    // Parse input file.
+    let input = if let Some(file) = input {
+        let input_contents = std::fs::read_to_string(file.clone())
+            .with_context(|| format!("Failed to read {file}"))?;
+
+        Some(if file.ends_with(".json") {
+            serde_json::from_str(&input_contents)?
+        } else if file.ends_with(".yaml") {
+            serde_yaml::from_str(&input_contents)?
+        } else {
+            bail!("invalid input file {file}");
+        })
+    } else {
+        None
+    };
+
     // Analyze the modules and determine how statements must be schedules.
     let analyzer = regorus::Analyzer::new();
     let schedule = analyzer.analyze(&modules)?;
@@ -76,13 +78,13 @@ fn main() -> Result<()> {
     let mut interpreter = regorus::Interpreter::new(modules_ref)?;
 
     // Prepare for evalution.
-    interpreter.prepare_for_eval(Some(&schedule), &Some(data))?;
+    interpreter.prepare_for_eval(Some(&schedule), &Some(data.clone()))?;
 
     // Evaluate all the modules.
-    interpreter.eval(&None, &None, false, Some(&schedule))?;
+    interpreter.eval(&Some(data), &input, false, Some(&schedule))?;
 
     // Fetch query string. If none specified, use "data".
-    let query = match &cli.query {
+    let query = match &query {
         Some(query) => query,
         _ => "data",
     };
@@ -108,4 +110,119 @@ fn main() -> Result<()> {
     println!("eval results:\n{}", serde_json::to_string_pretty(&results)?);
 
     Ok(())
+}
+
+fn rego_lex(file: String, verbose: bool) -> Result<()> {
+    let contents =
+        std::fs::read_to_string(file.clone()).with_context(|| format!("Failed to read {file}"))?;
+
+    // Create source.
+    let source = regorus::Source {
+        file: file.as_str(),
+        contents: contents.as_str(),
+        lines: contents.split('\n').collect(),
+    };
+
+    // Create lexer.
+    let mut lexer = regorus::Lexer::new(&source);
+
+    // Read tokens until EOF.
+    loop {
+        let token = lexer.next_token()?;
+        if token.0 == regorus::TokenKind::Eof {
+            break;
+        }
+
+        if verbose {
+            // Print each token's line and mark with with ^.
+            println!("{}", token.1.message("", ""));
+        }
+
+        // Print the token.
+        println!("{token:?}");
+    }
+    Ok(())
+}
+
+fn rego_parse(file: String) -> Result<()> {
+    let contents =
+        std::fs::read_to_string(file.clone()).with_context(|| format!("Failed to read {file}"))?;
+
+    // Create source.
+    let source = regorus::Source {
+        file: file.as_str(),
+        contents: contents.as_str(),
+        lines: contents.split('\n').collect(),
+    };
+
+    // Create a parser and parse the source.
+    let mut parser = regorus::Parser::new(&source)?;
+    let ast = parser.parse()?;
+    println!("{ast:#?}");
+
+    Ok(())
+}
+
+#[derive(Subcommand)]
+enum RegorusCommand {
+    /// Evaluate a Rego Query.
+    Eval {
+        /// Policy or data files. Rego, json or yaml.
+        #[arg(
+            required(true),
+            long,
+            short,
+            value_name = "policy.rego|data.json|data.yaml"
+        )]
+        data: Vec<String>,
+
+        /// Input file. json or yaml.
+        #[arg(long, short, value_name = "input.rego")]
+        input: Option<String>,
+
+        /// Query. Rego query block.
+        query: Option<String>,
+
+        /// Enable tracing.
+        #[arg(long, short)]
+        trace: bool,
+    },
+
+    /// Tokenize a Rego policy.
+    Lex {
+        /// Rego policy file.
+        file: String,
+
+        /// Verbose output.
+        #[arg(long, short)]
+        verbose: bool,
+    },
+
+    /// Parse q Rego policy.
+    Parse {
+        /// Rego policy file.
+        file: String,
+    },
+}
+
+#[derive(clap::Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: RegorusCommand,
+}
+
+fn main() -> Result<()> {
+    // Parse and dispatch command.
+    let cli = Cli::parse();
+    match cli.command {
+        RegorusCommand::Eval {
+            data,
+            input,
+            query,
+            trace,
+        } => rego_eval(&data, input, query, trace),
+        RegorusCommand::Lex { file, verbose } => rego_lex(file, verbose),
+        RegorusCommand::Parse { file } => rego_parse(file),
+    }
 }
