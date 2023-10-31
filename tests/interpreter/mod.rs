@@ -182,12 +182,12 @@ pub fn check_output(computed_results: &[Value], expected_results: &[Value]) -> R
 }
 
 fn query_results_to_value(query_results: QueryResults) -> Result<Value> {
-    if let Some(query_result) = query_results.results.last() {
+    if let Some(query_result) = query_results.result.last() {
         if !query_result.bindings.is_empty_object() {
             return Ok(query_result.bindings.clone());
         } else {
             return match query_result.expressions.last() {
-                Some(v) => Ok(v.clone()),
+                Some(v) => Ok(v["value"].clone()),
                 _ => bail!("no expressions in query results"),
             };
         }

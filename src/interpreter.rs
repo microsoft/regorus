@@ -59,7 +59,7 @@ impl Default for QueryResult {
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct QueryResults {
-    pub results: Vec<QueryResult>,
+    pub result: Vec<QueryResult>,
 }
 
 #[derive(Debug, Clone)]
@@ -782,6 +782,27 @@ impl<'source> Interpreter<'source> {
         Ok(count > 0)
     }
 
+    fn make_expression_result(span: &Span, v: &Value) -> Value {
+        let mut loc = BTreeMap::new();
+        loc.insert(
+            Value::String("row".to_string()),
+            Value::from_float(span.line as f64),
+        );
+        loc.insert(
+            Value::String("col".to_string()),
+            Value::from_float(span.col as f64),
+        );
+
+        let mut expr = BTreeMap::new();
+        expr.insert(Value::String("value".to_string()), v.clone());
+        expr.insert(Value::String("location".to_string()), Value::from_map(loc));
+        expr.insert(
+            Value::String("text".to_string()),
+            Value::String(span.text().to_string()),
+        );
+        Value::from_map(expr)
+    }
+
     fn eval_stmt(
         &mut self,
         stmt: &'source LiteralStmt<'source>,
@@ -820,7 +841,7 @@ impl<'source> Interpreter<'source> {
         }
 
         let r = Ok(match &stmt.literal {
-            Literal::Expr { expr, .. } => {
+            Literal::Expr { span, expr, .. } => {
                 let value = match expr {
                     Expr::Call { span, fcn, params } => self.eval_call(
                         span,
@@ -834,7 +855,9 @@ impl<'source> Interpreter<'source> {
 
                 if let Some(ctx) = self.contexts.last_mut() {
                     if let Some(result) = &mut ctx.result {
-                        result.expressions.push(value.clone());
+                        result
+                            .expressions
+                            .push(Self::make_expression_result(span, &value))
                     }
                 }
 
@@ -847,7 +870,7 @@ impl<'source> Interpreter<'source> {
                     value != Value::Undefined
                 }
             }
-            Literal::NotExpr { expr, .. } => {
+            Literal::NotExpr { span, expr, .. } => {
                 let value = match expr {
                     // Extra parameter is allowed; but a return argument is not allowed.
                     Expr::Call { span, fcn, params } => self.eval_call(
@@ -861,13 +884,15 @@ impl<'source> Interpreter<'source> {
                 };
                 if let Some(ctx) = self.contexts.last_mut() {
                     if let Some(result) = &mut ctx.result {
-                        result.expressions.push(Value::Bool(true));
+                        result
+                            .expressions
+                            .push(Self::make_expression_result(span, &Value::Bool(true)))
                     }
                 }
                 // https://github.com/open-policy-agent/opa/issues/1622#issuecomment-520547385
                 matches!(value, Value::Bool(false) | Value::Undefined)
             }
-            Literal::SomeVars { vars, .. } => {
+            Literal::SomeVars { span, vars, .. } => {
                 for var in vars {
                     let name = var.text();
                     if let Ok(variable) = self.add_variable_or(name) {
@@ -881,7 +906,9 @@ impl<'source> Interpreter<'source> {
                 }
                 if let Some(ctx) = self.contexts.last_mut() {
                     if let Some(result) = &mut ctx.result {
-                        result.expressions.push(Value::Bool(true));
+                        result
+                            .expressions
+                            .push(Self::make_expression_result(span, &Value::Bool(true)))
                     }
                 }
                 true
@@ -894,7 +921,9 @@ impl<'source> Interpreter<'source> {
             } => {
                 if let Some(ctx) = self.contexts.last_mut() {
                     if let Some(result) = &mut ctx.result {
-                        result.expressions.push(Value::Bool(true));
+                        result
+                            .expressions
+                            .push(Self::make_expression_result(span, &Value::Bool(true)))
                     }
                 }
                 self.eval_some_in(span, key, value, collection, stmts)?
@@ -908,7 +937,9 @@ impl<'source> Interpreter<'source> {
             } => {
                 if let Some(ctx) = self.contexts.last_mut() {
                     if let Some(result) = &mut ctx.result {
-                        result.expressions.push(Value::Bool(true));
+                        result
+                            .expressions
+                            .push(Self::make_expression_result(span, &Value::Bool(true)))
                     }
                 }
                 self.eval_every(span, key, value, domain, query)?
@@ -1094,7 +1125,7 @@ impl<'source> Interpreter<'source> {
                             .insert(Value::String(name.to_string()), value.clone());
                     }
                 }
-                ctx.results.results.push(result);
+                ctx.results.result.push(result);
             }
 
             return Ok(true);
@@ -2300,22 +2331,33 @@ impl<'source> Interpreter<'source> {
         // Eval the query.
         let query_r = self.eval_query(query);
 
+        let mut results = match self.contexts.pop() {
+            Some(ctx) => ctx.results,
+            _ => bail!("internal error: no context"),
+        };
+
         // Restore schedules.
         if let Some(self_schedule) = &mut self.schedule {
-            for (k, _) in schedule.order.iter() {
+            for (k, ord) in schedule.order.iter() {
+                if k == &query {
+                    for idx in 0..results.result.len() {
+                        let mut ordered_expressions = vec![Value::Undefined; ord.len()];
+                        for (expr_idx, value) in results.result[idx].expressions.iter().enumerate()
+                        {
+                            let orig_idx = ord[expr_idx] as usize;
+                            ordered_expressions[orig_idx] = value.clone();
+                        }
+                        results.result[idx].expressions = ordered_expressions;
+                    }
+                }
                 self_schedule.order.remove(k);
             }
         }
 
         self.set_current_module(prev_module)?;
 
-        let r = match self.contexts.pop() {
-            Some(ctx) => Ok(ctx.results),
-            _ => bail!("internal error: no context"),
-        };
-
         match query_r {
-            Ok(_) => r,
+            Ok(_) => Ok(results),
             Err(e) => Err(e),
         }
     }

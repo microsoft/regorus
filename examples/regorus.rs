@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 fn rego_eval(
     files: &[String],
     input: Option<String>,
-    query: Option<String>,
+    query: String,
     enable_tracing: bool,
 ) -> Result<()> {
     // User specified data.
@@ -83,16 +83,10 @@ fn rego_eval(
     // Evaluate all the modules.
     interpreter.eval(&Some(data), &input, false, Some(schedule))?;
 
-    // Fetch query string. If none specified, use "data".
-    let query = match &query {
-        Some(query) => query,
-        _ => "data",
-    };
-
     // Parse the query.
     let query_source = regorus::Source {
         file: "<query.rego>",
-        contents: query,
+        contents: &query,
         lines: query.split('\n').collect(),
     };
     let query_span = regorus::Span {
@@ -107,7 +101,7 @@ fn rego_eval(
     let query_schedule = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
 
     let results = interpreter.eval_user_query(&query_node, &query_schedule, enable_tracing)?;
-    println!("eval results:\n{}", serde_json::to_string_pretty(&results)?);
+    println!("{}", serde_json::to_string_pretty(&results)?);
 
     Ok(())
 }
@@ -168,12 +162,7 @@ enum RegorusCommand {
     /// Evaluate a Rego Query.
     Eval {
         /// Policy or data files. Rego, json or yaml.
-        #[arg(
-            required(true),
-            long,
-            short,
-            value_name = "policy.rego|data.json|data.yaml"
-        )]
+        #[arg(long, short, value_name = "policy.rego|data.json|data.yaml")]
         data: Vec<String>,
 
         /// Input file. json or yaml.
@@ -181,7 +170,7 @@ enum RegorusCommand {
         input: Option<String>,
 
         /// Query. Rego query block.
-        query: Option<String>,
+        query: String,
 
         /// Enable tracing.
         #[arg(long, short)]
