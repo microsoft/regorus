@@ -1,14 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#![cfg(test)]
-
 use anyhow::{bail, Result};
 use regorus::*;
 use serde::{Deserialize, Serialize};
 use std::env;
 use test_generator::test_resources;
-//use walkdir::WalkDir;
 
 fn get_tokens<'source>(source: &'source Source<'source>) -> Result<Vec<Token<'source>>> {
     let mut tokens = vec![];
@@ -56,46 +53,6 @@ fn check_loc(tok: &Token) -> Result<()> {
         }
         source_idx += 1;
     }
-}
-
-#[test]
-#[ignore = "intended for use by scripts/lex-file"]
-fn one_file() -> Result<()> {
-    let mut file = String::default();
-    let mut verbose = false;
-    for a in env::args() {
-        if a.ends_with(".rego") {
-            file = a.clone();
-        }
-        if matches!(a.as_str(), "verbose") {
-            verbose = true;
-        }
-    }
-
-    if file.is_empty() {
-        bail!("missing <policy.rego>")
-    }
-
-    let contents = std::fs::read_to_string(&file)?;
-
-    let source = Source {
-        file: file.as_str(),
-        contents: contents.as_str(),
-        lines: contents.split('\n').collect(),
-    };
-
-    for tok in &get_tokens(&source)? {
-        if tok.0 == TokenKind::Eof {
-            break;
-        }
-        check_loc(tok)?;
-        if verbose {
-            println!("{}", tok.1.source.message(tok.1.line, tok.1.col, "", ""));
-        }
-        println!("{tok:?}");
-    }
-
-    Ok(())
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -218,36 +175,6 @@ fn one_yaml() -> Result<()> {
 
     yaml_test(file.as_str())
 }
-
-/*
-fn run_yaml_tests_in(folder: &str) -> Result<()> {
-    let mut total = 0;
-
-    for entry in WalkDir::new(folder)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry
-            .path()
-            .to_str()
-            .ok_or_else(|| anyhow!("failed to convert path to utf8 {:?}", entry.path()))?;
-        if !path.ends_with(".yaml") {
-            continue;
-        }
-
-        total += 1;
-        yaml_test(path)?;
-    }
-
-    println!("{} lexer yaml tests passed.", total);
-    Ok(())
-}
-
-#[test]
-fn lexer_yaml_tests() -> Result<()> {
-    run_yaml_tests_in("tests/lexer")
-}*/
 
 #[test_resources("tests/lexer/**/*.yaml")]
 fn run(path: &str) {

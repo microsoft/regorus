@@ -380,53 +380,6 @@ pub fn eval_file(
     Ok(results)
 }
 
-#[test]
-#[ignore = "intended for use by scripts/rego-eval"]
-fn one_file() -> Result<()> {
-    env_logger::init();
-
-    let mut file = String::default();
-    let mut input = None;
-    for a in env::args() {
-        if a.ends_with(".rego") {
-            file = a;
-        } else if a.ends_with(".json") {
-            let input_json = std::fs::read_to_string(&a)?;
-            let value = Value::from_json_str(input_json.as_str())?;
-            input = Some(value);
-        }
-    }
-
-    if file.is_empty() {
-        bail!("missing <policy.rego>");
-    }
-
-    let contents = std::fs::read_to_string(&file)?;
-
-    let source = Source {
-        file: file.as_str(),
-        contents: contents.as_str(),
-        lines: contents.split('\n').collect(),
-    };
-    let mut parser = Parser::new(&source)?;
-    let modules = vec![parser.parse()?];
-
-    let analyzer = Analyzer::new();
-    let schedule = analyzer.analyze(&modules)?;
-
-    let mut modules_ref = vec![];
-    for m in &modules {
-        modules_ref.push(m);
-    }
-
-    let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
-    interpreter.prepare_for_eval(Some(&schedule), &None)?;
-    let results = interpreter.eval_modules(&input, true)?;
-    println!("eval results:\n{}", serde_json::to_string_pretty(&results)?);
-
-    Ok(())
-}
-
 #[derive(PartialEq, Debug)]
 pub enum ValueOrVec {
     Single(Value),
@@ -526,7 +479,6 @@ fn yaml_test_impl(file: &str, is_opa_test: bool) -> Result<()> {
                         // Convert value to json compatible representation.
                         let results =
                             Value::from_json_str(serde_json::to_string(&results)?.as_str())?;
-                        dbg!((&results, &expected_results[0]));
                         match_values(&results, &expected_results[0])?;
                     } else {
                         check_output(&results, &expected_results)?;

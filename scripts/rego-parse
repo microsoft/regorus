@@ -1,8 +1,0 @@
-#!/bin/bash
-# Copyright (c) Microsoft Corporation.
-# Licensed under the MIT License.
-
-set -e
-
-rego=$(realpath -e $1)
-cargo test parser::one_file -- --include-ignored --nocapture "$rego"
