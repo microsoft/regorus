@@ -208,21 +208,6 @@ pub fn eval_file_first_rule(
     let mut modules = vec![];
     let mut modules_ref = vec![];
 
-    let query_source = regorus::Source {
-        file: "<query.rego>",
-        contents: query,
-        lines: query.split('\n').collect(),
-    };
-    let query_span = regorus::Span {
-        source: &query_source,
-        line: 1,
-        col: 1,
-        start: 0,
-        end: query.len() as u16,
-    };
-    let mut parser = regorus::Parser::new(&query_source)?;
-    let query_node = parser.parse_query(query_span, "")?;
-    let query_stmt_order = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
     for (idx, _) in regos.iter().enumerate() {
         files.push(format!("rego_{idx}"));
     }
@@ -245,13 +230,28 @@ pub fn eval_file_first_rule(
         modules_ref.push(m);
     }
 
+    let query_source = regorus::Source {
+        file: "<query.rego>",
+        contents: query,
+        lines: query.split('\n').collect(),
+    };
+    let query_span = regorus::Span {
+        source: &query_source,
+        line: 1,
+        col: 1,
+        start: 0,
+        end: query.len() as u16,
+    };
+    let mut parser = regorus::Parser::new(&query_source)?;
+    let query_node = parser.parse_query(query_span, "")?;
+    let query_schedule = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
     let analyzer = Analyzer::new();
     let schedule = analyzer.analyze(&modules)?;
 
     let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
     if let Some(input) = input_opt {
         // if inputs are defined then first the evaluation if prepared
-        interpreter.prepare_for_eval(Some(&schedule), &data_opt)?;
+        interpreter.prepare_for_eval(Some(schedule), &data_opt)?;
 
         // then all modules are evaluated for each input
         let mut inputs = vec![];
@@ -270,18 +270,18 @@ pub fn eval_file_first_rule(
             // Now eval the query.
             results.push(query_results_to_value(interpreter.eval_user_query(
                 &query_node,
-                &query_stmt_order,
+                &query_schedule,
                 enable_tracing,
             )?)?);
         }
     } else {
         // it no input is defined then one evaluation of all modules is performed
-        interpreter.eval(&data_opt, &None, enable_tracing, Some(&schedule))?;
+        interpreter.eval(&data_opt, &None, enable_tracing, Some(schedule))?;
 
         // Now eval the query.
         results.push(query_results_to_value(interpreter.eval_user_query(
             &query_node,
-            &query_stmt_order,
+            &query_schedule,
             enable_tracing,
         )?)?);
     }
@@ -302,22 +302,6 @@ pub fn eval_file(
     let mut modules = vec![];
     let mut modules_ref = vec![];
 
-    let query_source = regorus::Source {
-        file: "<query.rego>",
-        contents: query,
-        lines: query.split('\n').collect(),
-    };
-    let query_span = regorus::Span {
-        source: &query_source,
-        line: 1,
-        col: 1,
-        start: 0,
-        end: query.len() as u16,
-    };
-    let mut parser = regorus::Parser::new(&query_source)?;
-    let query_node = parser.parse_query(query_span, "")?;
-    let query_stmt_order = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
-
     for (idx, _) in regos.iter().enumerate() {
         files.push(format!("rego_{idx}"));
     }
@@ -340,13 +324,29 @@ pub fn eval_file(
         modules_ref.push(m);
     }
 
+    let query_source = regorus::Source {
+        file: "<query.rego>",
+        contents: query,
+        lines: query.split('\n').collect(),
+    };
+    let query_span = regorus::Span {
+        source: &query_source,
+        line: 1,
+        col: 1,
+        start: 0,
+        end: query.len() as u16,
+    };
+    let mut parser = regorus::Parser::new(&query_source)?;
+    let query_node = parser.parse_query(query_span, "")?;
+    let query_schedule = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
+
     let analyzer = Analyzer::new();
     let schedule = analyzer.analyze(&modules)?;
 
     let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
     if let Some(input) = input_opt {
         // if inputs are defined then first the evaluation if prepared
-        interpreter.prepare_for_eval(Some(&schedule), &data_opt)?;
+        interpreter.prepare_for_eval(Some(schedule), &data_opt)?;
 
         // then all modules are evaluated for each input
         let mut inputs = vec![];
@@ -361,18 +361,18 @@ pub fn eval_file(
             // Now eval the query.
             results.push(query_results_to_value(interpreter.eval_user_query(
                 &query_node,
-                &query_stmt_order,
+                &query_schedule,
                 enable_tracing,
             )?)?);
         }
     } else {
         // it no input is defined then one evaluation of all modules is performed
-        interpreter.eval(&data_opt, &None, enable_tracing, Some(&schedule))?;
+        interpreter.eval(&data_opt, &None, enable_tracing, Some(schedule))?;
 
         // Now eval the query.
         results.push(query_results_to_value(interpreter.eval_user_query(
             &query_node,
-            &query_stmt_order,
+            &query_schedule,
             enable_tracing,
         )?)?);
     }
@@ -584,7 +584,9 @@ fn run_opa_tests() -> Result<()> {
     }
 
     if !failures.is_empty() {
-        dbg!(failures);
+        for (f, e) in failures {
+            println!("{f} failed.\n{e}");
+        }
         panic!("failed");
     }
     Ok(())

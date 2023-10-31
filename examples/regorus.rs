@@ -78,10 +78,10 @@ fn rego_eval(
     let mut interpreter = regorus::Interpreter::new(modules_ref)?;
 
     // Prepare for evalution.
-    interpreter.prepare_for_eval(Some(&schedule), &Some(data.clone()))?;
+    interpreter.prepare_for_eval(Some(schedule.clone()), &Some(data.clone()))?;
 
     // Evaluate all the modules.
-    interpreter.eval(&Some(data), &input, false, Some(&schedule))?;
+    interpreter.eval(&Some(data), &input, false, Some(schedule))?;
 
     // Fetch query string. If none specified, use "data".
     let query = match &query {
@@ -104,9 +104,9 @@ fn rego_eval(
     };
     let mut parser = regorus::Parser::new(&query_source)?;
     let query_node = parser.parse_query(query_span, "")?;
-    let stmt_order = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
+    let query_schedule = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
 
-    let results = interpreter.eval_user_query(&query_node, &stmt_order, enable_tracing)?;
+    let results = interpreter.eval_user_query(&query_node, &query_schedule, enable_tracing)?;
     println!("eval results:\n{}", serde_json::to_string_pretty(&results)?);
 
     Ok(())

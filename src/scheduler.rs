@@ -382,6 +382,7 @@ pub struct Analyzer<'a> {
     order: BTreeMap<&'a Query<'a>, Vec<u16>>,
 }
 
+#[derive(Clone)]
 pub struct Schedule<'a> {
     pub scopes: BTreeMap<&'a Query<'a>, Scope<'a>>,
     pub order: BTreeMap<&'a Query<'a>, Vec<u16>>,
@@ -420,14 +421,14 @@ impl<'a> Analyzer<'a> {
         mut self,
         modules: &'a [Module<'a>],
         query: &'a Query<'a>,
-    ) -> Result<Vec<u16>> {
+    ) -> Result<Schedule<'a>> {
         self.add_rules(modules)?;
         self.analyze_query(None, None, query, Scope::default())?;
-        Ok(self
-            .order
-            .get(query)
-            .expect("could not schedule user query")
-            .clone())
+
+        Ok(Schedule {
+            scopes: self.locals,
+            order: self.order,
+        })
     }
 
     fn add_rules(&mut self, modules: &'a [Module<'a>]) -> Result<()> {
