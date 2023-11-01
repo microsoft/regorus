@@ -7,6 +7,7 @@ mod bitwise;
 pub mod comparison;
 mod conversions;
 mod debugging;
+mod encoding;
 pub mod numbers;
 mod objects;
 pub mod sets;
@@ -44,7 +45,7 @@ lazy_static! {
 	conversions::register(&mut m);
 	//units::register(&mut m);
 	types::register(&mut m);
-	//encoding::register(&mut m);
+	encoding::register(&mut m);
 	//token_signing::register(&mut m);
 	//token_verification::register(&mut m);
 	//time::register(&mut m);
