@@ -8,7 +8,7 @@ use core::str::CharIndices;
 use crate::value::Value;
 use anyhow::{anyhow, bail, Result};
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Clone)]
 pub struct Source<'source> {
     pub file: &'source str,
     pub contents: &'source str,
@@ -48,7 +48,7 @@ impl<'source> Source<'source> {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Clone)]
 pub struct Span<'source> {
     pub source: &'source Source<'source>,
     pub line: u16,
@@ -98,7 +98,7 @@ pub enum TokenKind {
     Eof,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
 pub struct Token<'source>(pub TokenKind, pub Span<'source>);
 
 #[derive(Clone)]

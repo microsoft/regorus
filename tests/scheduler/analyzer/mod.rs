@@ -56,7 +56,13 @@ fn analyze_file(regos: &[String], expected_scopes: &[Scope]) -> Result<()> {
 
     let analyzer = Analyzer::new();
     let schedule = analyzer.analyze(&modules_ref)?;
-    for (idx, (_, scope)) in schedule.scopes.iter().enumerate() {
+    let mut scopes: Vec<(&Query, &regorus::Scope)> = schedule
+        .scopes
+        .iter()
+        .map(|(r, s)| (r.inner(), s))
+        .collect();
+    scopes.sort_by(|a, b| a.0.span.line.cmp(&b.0.span.line));
+    for (idx, (_, scope)) in scopes.iter().enumerate() {
         if idx > expected_scopes.len() {
             bail!("extra scope generated.")
         }

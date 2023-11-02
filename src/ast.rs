@@ -3,13 +3,13 @@
 
 use crate::lexer::*;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum BinOp {
     And,
     Or,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ArithOp {
     Add,
     Sub,
@@ -18,7 +18,7 @@ pub enum ArithOp {
     Mod,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum BoolOp {
     Lt,
     Le,
@@ -28,13 +28,13 @@ pub enum BoolOp {
     Ne,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum AssignOp {
     Eq,
     ColEq,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone)]
 pub enum Expr<'source> {
     // Simple items that only have a span as content.
     String(Span<'source>),
@@ -166,7 +166,7 @@ impl<'source> Expr<'source> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone)]
 pub enum Literal<'source> {
     SomeVars {
         span: Span<'source>,
@@ -195,41 +195,41 @@ pub enum Literal<'source> {
     },
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone)]
 pub struct WithModifier<'source> {
     pub span: Span<'source>,
     pub refr: Expr<'source>,
     pub r#as: Expr<'source>,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone)]
 pub struct LiteralStmt<'source> {
     pub span: Span<'source>,
     pub literal: Literal<'source>,
     pub with_mods: Vec<WithModifier<'source>>,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone)]
 pub struct Query<'source> {
     pub span: Span<'source>,
     pub stmts: Vec<LiteralStmt<'source>>,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone)]
 pub struct RuleAssign<'source> {
     pub span: Span<'source>,
     pub op: AssignOp,
     pub value: Expr<'source>,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone)]
 pub struct RuleBody<'source> {
     pub span: Span<'source>,
     pub assign: Option<RuleAssign<'source>>,
     pub query: Query<'source>,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone)]
 pub enum RuleHead<'source> {
     Compr {
         span: Span<'source>,
@@ -249,7 +249,7 @@ pub enum RuleHead<'source> {
     },
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone)]
 pub enum Rule<'source> {
     Spec {
         span: Span<'source>,
@@ -264,22 +264,58 @@ pub enum Rule<'source> {
     },
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone)]
 pub struct Package<'source> {
     pub span: Span<'source>,
     pub refr: Expr<'source>,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone)]
 pub struct Import<'source> {
     pub span: Span<'source>,
     pub refr: Expr<'source>,
     pub r#as: Option<Span<'source>>,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone)]
 pub struct Module<'source> {
     pub package: Package<'source>,
     pub imports: Vec<Import<'source>>,
     pub policy: Vec<Rule<'source>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Ref<'a, T> {
+    r: &'a T,
+}
+
+impl<'a, T> Ref<'a, T> {
+    pub fn make(r: &'a T) -> Self {
+        Self { r }
+    }
+
+    pub fn inner(&self) -> &'a T {
+        self.r
+    }
+}
+
+impl<'a, T> Eq for Ref<'a, T> {}
+
+impl<'a, T> PartialEq for Ref<'a, T> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.r, other.r)
+    }
+}
+
+impl<'a, T> PartialOrd for Ref<'a, T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<'a, T> Ord for Ref<'a, T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        //std::ptr::from_ref(self.r).partial_cmp(std::ptr::from_ref(other.r))
+        (self.r as *const T).cmp(&(other.r as *const T))
+    }
 }

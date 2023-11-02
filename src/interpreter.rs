@@ -29,12 +29,12 @@ pub struct Interpreter<'source> {
     with_document: Value,
     scopes: Vec<Scope>,
     // TODO: handle recursive calls where same expr could have different values.
-    loop_var_values: BTreeMap<&'source Expr<'source>, Value>,
+    loop_var_values: BTreeMap<Ref<'source, Expr<'source>>, Value>,
     contexts: Vec<Context<'source>>,
     functions: FunctionTable<'source>,
     rules: HashMap<String, Vec<&'source Rule<'source>>>,
     default_rules: HashMap<String, Vec<(&'source Rule<'source>, Option<String>)>>,
-    processed: BTreeSet<&'source Rule<'source>>,
+    processed: BTreeSet<Ref<'source, Rule<'source>>>,
     active_rules: Vec<&'source Rule<'source>>,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
@@ -205,7 +205,7 @@ impl<'source> Interpreter<'source> {
         // Collect a chaing of '.field' or '["field"]'
         let mut path = vec![];
         loop {
-            if let Some(v) = self.loop_var_values.get(expr) {
+            if let Some(v) = self.loop_var_values.get(&Ref::make(expr)) {
                 path.reverse();
                 return Ok(Self::get_value_chained(v.clone(), &path[..]));
             }
@@ -444,7 +444,7 @@ impl<'source> Interpreter<'source> {
                         // TODO: Check this
                         // Allow variable overwritten inside a loop
                         if !matches!(var, Value::Undefined)
-                            && self.loop_var_values.get(rhs).is_none()
+                            && self.loop_var_values.get(&Ref::make(rhs)).is_none()
                         {
                             return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
                         }
@@ -457,7 +457,7 @@ impl<'source> Interpreter<'source> {
                         // TODO: Check this
                         // Allow variable overwritten inside a loop
                         if !matches!(var, Value::Undefined)
-                            && self.loop_var_values.get(lhs).is_none()
+                            && self.loop_var_values.get(&Ref::make(lhs)).is_none()
                         {
                             return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
                         }
@@ -477,7 +477,8 @@ impl<'source> Interpreter<'source> {
 
                 // TODO: Check this
                 // Allow variable overwritten inside a loop
-                if self.lookup_local_var(name).is_some() && self.loop_var_values.get(rhs).is_none()
+                if self.lookup_local_var(name).is_some()
+                    && self.loop_var_values.get(&Ref::make(rhs)).is_none()
                 {
                     bail!(rhs
                         .span()
@@ -573,14 +574,14 @@ impl<'source> Interpreter<'source> {
 
     fn lookup_or_eval_expr(
         &mut self,
-        cache: &mut BTreeMap<&'source Expr<'source>, Value>,
+        cache: &mut BTreeMap<Ref<'source, Expr<'source>>, Value>,
         expr: &'source Expr<'source>,
     ) -> Result<Value> {
-        match cache.get(expr) {
+        match cache.get(&Ref::make(expr)) {
             Some(v) => Ok(v.clone()),
             _ => {
                 let v = self.eval_expr(expr)?;
-                cache.insert(expr, v.clone());
+                cache.insert(Ref::make(expr), v.clone());
                 Ok(v)
             }
         }
@@ -589,8 +590,8 @@ impl<'source> Interpreter<'source> {
     fn make_bindings_impl(
         &mut self,
         is_last: bool,
-        type_match: &mut BTreeSet<&'source Expr<'source>>,
-        cache: &mut BTreeMap<&'source Expr<'source>, Value>,
+        type_match: &mut BTreeSet<Ref<'source, Expr<'source>>>,
+        cache: &mut BTreeMap<Ref<'source, Expr<'source>>, Value>,
         expr: &'source Expr<'source>,
         value: &Value,
     ) -> Result<bool> {
@@ -599,7 +600,7 @@ impl<'source> Interpreter<'source> {
             return Ok(false);
         }
         let span = expr.span();
-        let raise_error = is_last && type_match.get(expr).is_none();
+        let raise_error = is_last && type_match.get(&Ref::make(expr)).is_none();
 
         match (expr, value) {
             (Expr::Var(ident), _) => {
@@ -622,7 +623,7 @@ impl<'source> Interpreter<'source> {
                     }
                     return Ok(false);
                 }
-                type_match.insert(expr);
+                type_match.insert(Ref::make(expr));
 
                 let mut r = false;
                 for (idx, item) in items.iter().enumerate() {
@@ -658,7 +659,7 @@ impl<'source> Interpreter<'source> {
                             field_value,
                         )?;
                 }
-                type_match.insert(expr);
+                type_match.insert(Ref::make(expr));
 
                 Ok(r)
             }
@@ -677,7 +678,7 @@ impl<'source> Interpreter<'source> {
 			format!("Cannot bind pattern of type `{expr_t}` with value of type `{value_t}`. Value is {value}.").as_str()));
                     }
                 }
-                type_match.insert(expr);
+                type_match.insert(Ref::make(expr));
 
                 Ok(&expr_value == value)
             }
@@ -687,8 +688,8 @@ impl<'source> Interpreter<'source> {
     fn make_bindings(
         &mut self,
         is_last: bool,
-        type_match: &mut BTreeSet<&'source Expr<'source>>,
-        cache: &mut BTreeMap<&'source Expr<'source>, Value>,
+        type_match: &mut BTreeSet<Ref<'source, Expr<'source>>>,
+        cache: &mut BTreeMap<Ref<'source, Expr<'source>>, Value>,
         expr: &'source Expr<'source>,
         value: &Value,
     ) -> Result<bool> {
@@ -702,8 +703,8 @@ impl<'source> Interpreter<'source> {
     fn make_key_value_bindings(
         &mut self,
         is_last: bool,
-        type_match: &mut BTreeSet<&'source Expr<'source>>,
-        cache: &mut BTreeMap<&'source Expr<'source>, Value>,
+        type_match: &mut BTreeSet<Ref<'source, Expr<'source>>>,
+        cache: &mut BTreeMap<Ref<'source, Expr<'source>>, Value>,
         exprs: (&'source Option<Expr<'source>>, &'source Expr<'source>),
         values: (&Value, &Value),
     ) -> Result<bool> {
@@ -1027,11 +1028,12 @@ impl<'source> Interpreter<'source> {
             match loop_expr_value {
                 Value::Array(items) => {
                     for (idx, v) in items.iter().enumerate() {
-                        self.loop_var_values.insert(loop_expr.expr, v.clone());
+                        self.loop_var_values
+                            .insert(Ref::make(loop_expr.expr), v.clone());
                         self.add_variable(loop_expr.index, Value::from_float(idx as Float))?;
 
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
-                        self.loop_var_values.remove(loop_expr.expr);
+                        self.loop_var_values.remove(&Ref::make(loop_expr.expr));
                         *self.current_scope_mut()? = scope_saved.clone();
                         if let Some(ctx) = self.contexts.last_mut() {
                             ctx.result = query_result.clone();
@@ -1040,11 +1042,12 @@ impl<'source> Interpreter<'source> {
                 }
                 Value::Set(items) => {
                     for v in items.iter() {
-                        self.loop_var_values.insert(loop_expr.expr, v.clone());
+                        self.loop_var_values
+                            .insert(Ref::make(loop_expr.expr), v.clone());
                         // For sets, index is also the value.
                         self.add_variable(loop_expr.index, v.clone())?;
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
-                        self.loop_var_values.remove(loop_expr.expr);
+                        self.loop_var_values.remove(&Ref::make(loop_expr.expr));
                         *self.current_scope_mut()? = scope_saved.clone();
                         if let Some(ctx) = self.contexts.last_mut() {
                             ctx.result = query_result.clone();
@@ -1053,16 +1056,20 @@ impl<'source> Interpreter<'source> {
                 }
                 Value::Object(obj) => {
                     for (k, v) in obj.iter() {
-                        self.loop_var_values.insert(loop_expr.expr, v.clone());
+                        self.loop_var_values
+                            .insert(Ref::make(loop_expr.expr), v.clone());
                         // For objects, index is key.
                         self.add_variable(loop_expr.index, k.clone())?;
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
-                        self.loop_var_values.remove(loop_expr.expr);
+                        self.loop_var_values.remove(&Ref::make(loop_expr.expr));
                         *self.current_scope_mut()? = scope_saved.clone();
                         if let Some(ctx) = self.contexts.last_mut() {
                             ctx.result = query_result.clone();
                         }
                     }
+                }
+                Value::Undefined => {
+                    result = false;
                 }
                 _ => {
                     return Err(loop_expr.span.source.error(
@@ -1163,19 +1170,22 @@ impl<'source> Interpreter<'source> {
         match self.eval_expr(loop_expr.value)? {
             Value::Array(items) => {
                 for v in items.iter() {
-                    self.loop_var_values.insert(loop_expr.expr, v.clone());
+                    self.loop_var_values
+                        .insert(Ref::make(loop_expr.expr), v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Set(items) => {
                 for v in items.iter() {
-                    self.loop_var_values.insert(loop_expr.expr, v.clone());
+                    self.loop_var_values
+                        .insert(Ref::make(loop_expr.expr), v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Object(obj) => {
                 for (_, v) in obj.iter() {
-                    self.loop_var_values.insert(loop_expr.expr, v.clone());
+                    self.loop_var_values
+                        .insert(Ref::make(loop_expr.expr), v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
@@ -1187,7 +1197,7 @@ impl<'source> Interpreter<'source> {
                 ));
             }
         }
-        self.loop_var_values.remove(loop_expr.expr);
+        self.loop_var_values.remove(&Ref::make(loop_expr.expr));
         Ok(result)
     }
 
@@ -1265,7 +1275,7 @@ impl<'source> Interpreter<'source> {
         self.scopes.push(Scope::new());
         let ordered_stmts: Vec<&'source LiteralStmt<'source>> =
             if let Some(schedule) = &self.schedule {
-                match schedule.order.get(query) {
+                match schedule.order.get(&Ref::make(query)) {
                     Some(ord) => ord.iter().map(|i| &query.stmts[*i as usize]).collect(),
                     // TODO
                     _ => bail!(query
@@ -1550,7 +1560,8 @@ impl<'source> Interpreter<'source> {
             for (idx, a) in args.iter().enumerate() {
                 let a = match a {
                     Expr::Var(s) => s.text(),
-                    _ => unimplemented!("destructuring function arguments"),
+                    _ => continue,
+                    //                    _ => unimplemented!("destructuring function arguments"),
                 };
                 //TODO: check call in params
                 args_scope.insert(a.to_string(), self.eval_expr(&params[idx])?);
@@ -1665,7 +1676,7 @@ impl<'source> Interpreter<'source> {
     fn ensure_rule_evaluated(&mut self, path: String) -> Result<()> {
         if let Some(rules) = self.rules.get(&path) {
             for r in rules.clone() {
-                if !self.processed.contains(r) {
+                if !self.processed.contains(&Ref::make(r)) {
                     let module = self.get_rule_module(r)?;
                     self.eval_rule(module, r)?;
                 }
@@ -1674,7 +1685,7 @@ impl<'source> Interpreter<'source> {
         // Evaluate the associated default rules after non-default rules
         if let Some(rules) = self.default_rules.get(&path) {
             for (r, _) in rules.clone() {
-                if !self.processed.contains(r) {
+                if !self.processed.contains(&Ref::make(r)) {
                     let module = self.get_rule_module(r)?;
                     let prev_module = self.set_current_module(Some(module))?;
                     self.eval_default_rule(r)?;
@@ -1852,7 +1863,7 @@ impl<'source> Interpreter<'source> {
 
     fn get_rule_module(&self, rule: &'source Rule<'source>) -> Result<&'source Module<'source>> {
         for m in &self.modules {
-            if m.policy.contains(rule) {
+            if m.policy.iter().any(|r| Ref::make(r) == Ref::make(rule)) {
                 return Ok(m);
             }
         }
@@ -2013,46 +2024,6 @@ impl<'source> Interpreter<'source> {
         Ok(m)
     }
 
-    /*    pub fn update_function_table(&mut self) -> Result<()> {
-        for module in self.modules.clone() {
-            let prev_module = self.set_current_module(Some(module))?;
-            let module_path =
-                Self::get_path_string(&self.current_module()?.package.refr, Some("data"))?;
-            for rule in &module.policy {
-                if let Rule::Spec {
-                    head: RuleHead::Func { refr, .. },
-                    ..
-                } = rule
-                {
-                    let mut path =
-                        Parser::get_path_ref_components(&self.current_module()?.package.refr)?;
-
-                    Parser::get_path_ref_components_into(refr, &mut path)?;
-                    let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
-
-                    if path.len() > 1 {
-                        let value =
-                            Self::make_or_get_value_mut(&mut self.data, &path[0..path.len() - 1])?;
-                        if value == &Value::Undefined {
-                            *value = Value::new_object();
-                        }
-                    }
-
-                    let full_path = Self::get_path_string(refr, Some(module_path.as_str()))?;
-
-                    if let Some(functions) = self.functions.get_mut(&full_path) {
-                        // TODO: check function arity.
-                        functions.push(rule);
-                    } else {
-                        self.functions.insert(full_path, vec![rule]);
-                    }
-                }
-            }
-            self.set_current_module(prev_module)?;
-        }
-        Ok(())
-    }*/
-
     fn get_rule_refr(rule: &'source Rule<'source>) -> &'source Expr<'source> {
         match rule {
             Rule::Spec { head, .. } => match &head {
@@ -2122,7 +2093,7 @@ impl<'source> Interpreter<'source> {
 
     fn eval_default_rule(&mut self, rule: &'source Rule<'source>) -> Result<()> {
         // Skip reprocessing rule.
-        if self.processed.contains(rule) {
+        if self.processed.contains(&Ref::make(rule)) {
             return Ok(());
         }
 
@@ -2172,7 +2143,7 @@ impl<'source> Interpreter<'source> {
                 }
             };
 
-            self.processed.insert(rule);
+            self.processed.insert(Ref::make(rule));
         }
 
         Ok(())
@@ -2184,7 +2155,7 @@ impl<'source> Interpreter<'source> {
         rule: &'source Rule<'source>,
     ) -> Result<()> {
         // Skip reprocessing rule
-        if self.processed.contains(rule) {
+        if self.processed.contains(&Ref::make(rule)) {
             return Ok(());
         }
 
@@ -2194,7 +2165,13 @@ impl<'source> Interpreter<'source> {
         }
 
         self.active_rules.push(rule);
-        if self.active_rules.iter().filter(|&r| r == &rule).count() == 2 {
+        if self
+            .active_rules
+            .iter()
+            .filter(|&r| Ref::make(*r) == Ref::make(rule))
+            .count()
+            == 2
+        {
             let mut msg = String::default();
             for r in &self.active_rules {
                 let refr = Self::get_rule_refr(r);
@@ -2215,6 +2192,7 @@ impl<'source> Interpreter<'source> {
         }
 
         let prev_module = self.set_current_module(Some(module))?;
+
         match rule {
             Rule::Spec {
                 span,
@@ -2241,7 +2219,7 @@ impl<'source> Interpreter<'source> {
                         Self::merge_value(span, vref, value)?;
                     }
 
-                    self.processed.insert(rule);
+                    self.processed.insert(Ref::make(rule));
                 } else if let RuleHead::Func { refr, .. } = rule_head {
                     let mut path =
                         Parser::get_path_ref_components(&self.current_module()?.package.refr)?;
@@ -2264,7 +2242,7 @@ impl<'source> Interpreter<'source> {
         }
         self.set_current_module(prev_module)?;
         match self.active_rules.pop() {
-            Some(r) if r == rule => Ok(()),
+            Some(r) if Ref::make(r) == Ref::make(rule) => Ok(()),
             _ => bail!("internal error: current rule not active"),
         }
     }
@@ -2349,7 +2327,6 @@ impl<'source> Interpreter<'source> {
                 self.eval_rule(module, rule)?;
             }
         }
-
         // Defer the evaluation of the default rules to here
         for module in self.modules.clone() {
             let prev_module = self.set_current_module(Some(module))?;
@@ -2387,7 +2364,7 @@ impl<'source> Interpreter<'source> {
         // Add schedules for queries.
         if let Some(self_schedule) = &mut self.schedule {
             for (k, v) in schedule.order.iter() {
-                self_schedule.order.insert(k, v.clone());
+                self_schedule.order.insert(k.clone(), v.clone());
             }
         }
 
@@ -2414,7 +2391,7 @@ impl<'source> Interpreter<'source> {
         // Restore schedules.
         if let Some(self_schedule) = &mut self.schedule {
             for (k, ord) in schedule.order.iter() {
-                if k == &query {
+                if k == &Ref::make(query) {
                     for idx in 0..results.result.len() {
                         let mut ordered_expressions = vec![Value::Undefined; ord.len()];
                         for (expr_idx, value) in results.result[idx].expressions.iter().enumerate()

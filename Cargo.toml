@@ -24,3 +24,7 @@ walkdir = "2.3.2"
 
 [build-dependencies]
 anyhow = "1.0.66"
+
+[profile.release]
+debug = true
+
