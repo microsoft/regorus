@@ -913,8 +913,10 @@ impl<'a> Analyzer<'a> {
                         collection,
                         &mut scope,
                         &mut first_use,
-                        &mut col_definitions, // TODO: handle these definitions
+                        &mut col_definitions,
                     )?;
+                    definitions.append(&mut col_definitions);
+
                     self.process_comprs(
                         &col_comprs[..],
                         &mut scope,

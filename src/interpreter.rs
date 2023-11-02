@@ -26,6 +26,7 @@ pub struct Interpreter<'source> {
     input: Value,
     data: Value,
     init_data: Value,
+    with_document: Value,
     scopes: Vec<Scope>,
     // TODO: handle recursive calls where same expr could have different values.
     loop_var_values: BTreeMap<&'source Expr<'source>, Value>,
@@ -81,6 +82,9 @@ struct LoopExpr<'source> {
 
 impl<'source> Interpreter<'source> {
     pub fn new(modules: Vec<&'source Module<'source>>) -> Result<Interpreter<'source>> {
+        let mut with_document = Value::new_object();
+        *Self::make_or_get_value_mut(&mut with_document, &["data"])? = Value::new_object();
+        *Self::make_or_get_value_mut(&mut with_document, &["input"])? = Value::new_object();
         Ok(Interpreter {
             modules,
             module: None,
@@ -90,6 +94,7 @@ impl<'source> Interpreter<'source> {
             input: Value::new_object(),
             data: Value::new_object(),
             init_data: Value::new_object(),
+            with_document,
             scopes: vec![Scope::new()],
             contexts: vec![],
             loop_var_values: BTreeMap::new(),
@@ -241,6 +246,9 @@ impl<'source> Interpreter<'source> {
         match ident {
             "_" => true,
             _ => match self.lookup_local_var(ident) {
+                // Vars declared using `some v` can be loop vars.
+                // They are initialized to undefined.
+                Some(Value::Undefined) => true,
                 // If ident is a local var (in current or parent scopes),
                 // then it is not a loop var.
                 Some(_) => false,
@@ -477,6 +485,11 @@ impl<'source> Interpreter<'source> {
                 (name, self.eval_expr(rhs)?)
             }
         };
+
+        // Omit recording undefined values.
+        if value == Value::Undefined {
+            return Ok(Value::Bool(false));
+        }
 
         self.add_variable_or(name)?;
 
@@ -803,44 +816,12 @@ impl<'source> Interpreter<'source> {
         Value::from_map(expr)
     }
 
-    fn eval_stmt(
+    fn eval_stmt_impl(
         &mut self,
         stmt: &'source LiteralStmt<'source>,
         stmts: &[&'source LiteralStmt<'source>],
     ) -> Result<bool> {
-        let mut to_restore = vec![];
-        for wm in &stmt.with_mods {
-            // Evaluate value and ref
-            let value = self.eval_expr(&wm.r#as)?;
-            let path = Parser::get_path_ref_components(&wm.refr)?;
-            let mut path: Vec<&str> = path.iter().map(|s| s.text()).collect();
-
-            // TODO: multiple modules and qualified path
-            if path.len() > 2 && format!("{}.{}", path[0], path[1]) == self.current_module_path {
-                path = path[1..].to_vec();
-            }
-
-            // Set new values in modifications table
-            let mut saved = false;
-            for (i, _) in path.iter().enumerate() {
-                let vref = Self::make_or_get_value_mut(&mut self.data, &path[0..i])?;
-                if vref == &Value::Undefined {
-                    to_restore.push((path[0..i].to_vec(), vref.clone()));
-                    saved = false;
-                    break;
-                }
-            }
-
-            // TODO: input
-            let vref = Self::make_or_get_value_mut(&mut self.data, &path[..])?;
-            if !saved {
-                to_restore.push((path, vref.clone()));
-            }
-
-            *vref = value;
-        }
-
-        let r = Ok(match &stmt.literal {
+        Ok(match &stmt.literal {
             Literal::Expr { span, expr, .. } => {
                 let value = match expr {
                     Expr::Call { span, fcn, params } => self.eval_call(
@@ -944,16 +925,59 @@ impl<'source> Interpreter<'source> {
                 }
                 self.eval_every(span, key, value, domain, query)?
             }
-        });
+        })
+    }
 
-        for (path, value) in to_restore.into_iter().rev() {
-            if value == Value::Undefined {
-                unimplemented!("handle undefined restore");
-            } else {
-                let vref = Self::make_or_get_value_mut(&mut self.data, &path[..])?;
-                *vref = value;
+    fn eval_stmt(
+        &mut self,
+        stmt: &'source LiteralStmt<'source>,
+        stmts: &[&'source LiteralStmt<'source>],
+    ) -> Result<bool> {
+        let saved_state = if !stmt.with_mods.is_empty() {
+            // Save state;
+            let with_document = self.with_document.clone();
+            let input = self.input.clone();
+            let data = self.data.clone();
+            let processed = self.processed.clone();
+
+            // Apply with modifiers.
+            for wm in &stmt.with_mods {
+                // Evaluate value and ref
+                let value = self.eval_expr(&wm.r#as)?;
+                let path = Parser::get_path_ref_components(&wm.refr)?;
+                let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+
+                if path[0] == "input" || path[0] == "data" {
+                    *Self::make_or_get_value_mut(&mut self.with_document, &path[..])? = value;
+                } /* else if path.len() == 1 {
+                      // TODO: handle var in current module.
+                  } else {
+                      // TODO: error about input, data
+                  } */
+                // TODO: functions
             }
+
+            self.data = self.with_document["data"].clone();
+            self.input = self.with_document["input"].clone();
+            self.processed.clear();
+
+            (with_document, input, data, processed)
+        } else {
+            (
+                Value::Undefined,
+                Value::Undefined,
+                Value::Undefined,
+                BTreeSet::new(),
+            )
+        };
+
+        let r = self.eval_stmt_impl(stmt, stmts);
+
+        // Restore state.
+        if saved_state.0 != Value::Undefined {
+            (self.with_document, self.input, self.data, self.processed) = saved_state;
         }
+
         r
     }
 
@@ -989,8 +1013,8 @@ impl<'source> Interpreter<'source> {
             if let Some(idx) = self.lookup_local_var(loop_expr.index) {
                 if loop_expr_value[&idx] != Value::Undefined {
                     result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                    return Ok(result);
                 }
-                return Ok(result);
             }
 
             // Save the current scope and restore it after evaluating the statements so
@@ -1672,6 +1696,14 @@ impl<'source> Interpreter<'source> {
 
         // Ensure that rules are evaluated
         if name == "data" {
+            let v = Self::get_value_chained(self.data.clone(), fields);
+
+            // If the rule has already been evaluated or specified via a with modifier,
+            // use that value.
+            if v != Value::Undefined {
+                return Ok(v);
+            }
+
             // Evaluate rule corresponding to longest matching path.
             for i in (1..fields.len() + 1).rev() {
                 let path = "data.".to_owned() + &fields[0..i].join(".");
@@ -1680,21 +1712,30 @@ impl<'source> Interpreter<'source> {
                     break;
                 }
             }
+
             Ok(Self::get_value_chained(self.data.clone(), fields))
         } else if !self.modules.is_empty() {
-            // Add module prefix and ensure that any matching rule is evaluated.
-            let module_path =
-                Self::get_path_string(&self.current_module()?.package.refr, Some("data"))?;
-            let path = module_path + "." + name;
-
-            self.ensure_rule_evaluated(path)?;
-
             let mut path: Vec<&str> =
                 Parser::get_path_ref_components(&self.module.unwrap().package.refr)?
                     .iter()
                     .map(|s| s.text())
                     .collect();
             path.push(name);
+
+            let v = Self::get_value_chained(self.data.clone(), &path);
+
+            // If the rule has already been evaluated or specified via a with modifier,
+            // use that value.
+            if v != Value::Undefined {
+                return Ok(v);
+            }
+
+            // Add module prefix and ensure that any matching rule is evaluated.
+            let module_path =
+                Self::get_path_string(&self.current_module()?.package.refr, Some("data"))?;
+            let rule_path = module_path + "." + name;
+
+            self.ensure_rule_evaluated(rule_path)?;
 
             let value = Self::get_value_chained(self.data.clone(), &path[..]);
             Ok(Self::get_value_chained(value, fields))

@@ -134,6 +134,7 @@ cases:
   - note: same-line
     rego: |
       package test
+      import future.keywords.in
       x = y{
           some a b in {4, 5}
           [1, 2, 3][a] == 3

@@ -181,18 +181,14 @@ pub fn check_output(computed_results: &[Value], expected_results: &[Value]) -> R
     Ok(())
 }
 
-fn query_results_to_value(query_results: QueryResults) -> Result<Value> {
+fn push_query_results(query_results: QueryResults, results: &mut Vec<Value>) {
     if let Some(query_result) = query_results.result.last() {
         if !query_result.bindings.is_empty_object() {
-            return Ok(query_result.bindings.clone());
-        } else {
-            return match query_result.expressions.last() {
-                Some(v) => Ok(v["value"].clone()),
-                _ => bail!("no expressions in query results"),
-            };
+            results.push(query_result.bindings.clone());
+        } else if let Some(v) = query_result.expressions.last() {
+            results.push(v["value"].clone());
         }
     }
-    bail!("query result incomplete")
 }
 
 pub fn eval_file_first_rule(
@@ -268,22 +264,20 @@ pub fn eval_file_first_rule(
             }
 
             // Now eval the query.
-            results.push(query_results_to_value(interpreter.eval_user_query(
-                &query_node,
-                &query_schedule,
-                enable_tracing,
-            )?)?);
+            push_query_results(
+                interpreter.eval_user_query(&query_node, &query_schedule, enable_tracing)?,
+                &mut results,
+            );
         }
     } else {
         // it no input is defined then one evaluation of all modules is performed
         interpreter.eval(&data_opt, &None, enable_tracing, Some(schedule))?;
 
-        // Now eval the query.
-        results.push(query_results_to_value(interpreter.eval_user_query(
-            &query_node,
-            &query_schedule,
-            enable_tracing,
-        )?)?);
+        // Now eval the query
+        push_query_results(
+            interpreter.eval_user_query(&query_node, &query_schedule, enable_tracing)?,
+            &mut results,
+        );
     }
 
     Ok(results)
@@ -359,22 +353,20 @@ pub fn eval_file(
             interpreter.eval_modules(&Some(input), enable_tracing)?;
 
             // Now eval the query.
-            results.push(query_results_to_value(interpreter.eval_user_query(
-                &query_node,
-                &query_schedule,
-                enable_tracing,
-            )?)?);
+            push_query_results(
+                interpreter.eval_user_query(&query_node, &query_schedule, enable_tracing)?,
+                &mut results,
+            );
         }
     } else {
         // it no input is defined then one evaluation of all modules is performed
         interpreter.eval(&data_opt, &None, enable_tracing, Some(schedule))?;
 
         // Now eval the query.
-        results.push(query_results_to_value(interpreter.eval_user_query(
-            &query_node,
-            &query_schedule,
-            enable_tracing,
-        )?)?);
+        push_query_results(
+            interpreter.eval_user_query(&query_node, &query_schedule, enable_tracing)?,
+            &mut results,
+        );
     }
 
     Ok(results)

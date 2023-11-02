@@ -714,7 +714,7 @@ impl<'source> Parser<'source> {
         let start = self.tok.1.start;
         let mut expr = self.parse_bool_expr()?;
 
-        while self.tok.1.text() == "in" {
+        while self.tok.1.text() == "in" && self.future_keywords.get("in").is_some() {
             expr = self.parse_membership_tail(start, expr, None)?;
         }
 
@@ -731,7 +731,7 @@ impl<'source> Parser<'source> {
             expr = self.parse_membership_tail(start, expr, Some(value))?;
         }
 
-        while self.tok.1.text() == "in" {
+        while self.tok.1.text() == "in" && self.is_imported_future_keyword("in") {
             expr = self.parse_membership_tail(start, expr, None)?;
         }
 
@@ -834,7 +834,7 @@ impl<'source> Parser<'source> {
             vars.push(span);
         }
 
-        if self.tok.1.text() != "in" || self.future_keywords.get("in").is_none() {
+        if self.tok.1.text() != "in" || !self.is_imported_future_keyword("in") {
             if self.tok.1.text() == "in" {
                 self.warn_future_keyword();
             }
