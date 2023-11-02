@@ -31,7 +31,7 @@ pub struct Interpreter<'source> {
     // TODO: handle recursive calls where same expr could have different values.
     loop_var_values: BTreeMap<&'source Expr<'source>, Value>,
     contexts: Vec<Context<'source>>,
-    functions: HashMap<String, Vec<&'source Rule<'source>>>,
+    functions: FunctionTable<'source>,
     rules: HashMap<String, Vec<&'source Rule<'source>>>,
     default_rules: HashMap<String, Vec<(&'source Rule<'source>, Option<String>)>>,
     processed: BTreeSet<&'source Rule<'source>>,
@@ -39,6 +39,7 @@ pub struct Interpreter<'source> {
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
     traces: Option<Vec<String>>,
+    allow_deprecated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,12 +82,12 @@ struct LoopExpr<'source> {
 }
 
 impl<'source> Interpreter<'source> {
-    pub fn new(modules: Vec<&'source Module<'source>>) -> Result<Interpreter<'source>> {
+    pub fn new(modules: &[&'source Module<'source>]) -> Result<Interpreter<'source>> {
         let mut with_document = Value::new_object();
         *Self::make_or_get_value_mut(&mut with_document, &["data"])? = Value::new_object();
         *Self::make_or_get_value_mut(&mut with_document, &["input"])? = Value::new_object();
         Ok(Interpreter {
-            modules,
+            modules: modules.to_vec(),
             module: None,
             schedule: None,
             current_module_path: String::default(),
@@ -98,7 +99,7 @@ impl<'source> Interpreter<'source> {
             scopes: vec![Scope::new()],
             contexts: vec![],
             loop_var_values: BTreeMap::new(),
-            functions: HashMap::new(),
+            functions: FunctionTable::new(),
             rules: HashMap::new(),
             default_rules: HashMap::new(),
             processed: BTreeSet::new(),
@@ -106,6 +107,7 @@ impl<'source> Interpreter<'source> {
             builtins_cache: BTreeMap::new(),
             no_rules_lookup: false,
             traces: None,
+            allow_deprecated: true,
         })
     }
 
@@ -828,7 +830,7 @@ impl<'source> Interpreter<'source> {
                         span,
                         fcn,
                         params,
-                        get_extra_arg(expr, &HashMap::new()),
+                        get_extra_arg(expr, &self.functions),
                         true,
                     )?,
                     _ => self.eval_expr(expr)?,
@@ -858,7 +860,7 @@ impl<'source> Interpreter<'source> {
                         span,
                         fcn,
                         params,
-                        get_extra_arg(expr, &HashMap::new()),
+                        get_extra_arg(expr, &self.functions),
                         false,
                     )?,
                     _ => self.eval_expr(expr)?,
@@ -1441,7 +1443,7 @@ impl<'source> Interpreter<'source> {
         }
 
         match self.functions.get(&path) {
-            Some(r) => Ok(r),
+            Some((r, _)) => Ok(r),
             _ => {
                 bail!(fcn.span().error("function not found"))
             }
@@ -1501,6 +1503,13 @@ impl<'source> Interpreter<'source> {
                 if let Ok(path) = Self::get_path_string(fcn, None) {
                     if let Some(builtin) = builtins::BUILTINS.get(path.as_str()) {
                         return self.eval_builtin_call(span, path, *builtin, params);
+                    }
+                    if let Some(builtin) = builtins::DEPRECATED.get(path.as_str()) {
+                        if self.allow_deprecated {
+                            return self.eval_builtin_call(span, path, *builtin, params);
+                        } else {
+                            bail!(span.error(format!("{path} is deprecated").as_str()))
+                        }
                     }
                 }
 
@@ -1862,17 +1871,24 @@ impl<'source> Interpreter<'source> {
             self.eval_output_expr()
         } else {
             let mut result = Ok(true);
-            for body in bodies {
-                self.contexts.push(ctx.clone());
+            for (idx, body) in bodies.iter().enumerate() {
+                if idx == 0 {
+                    self.contexts.push(ctx.clone());
+                } else {
+                    self.contexts.pop();
+                    let output_expr = body.assign.as_ref().map(|e| &e.value);
+                    self.contexts.push(Context {
+                        key_expr: None,
+                        output_expr,
+                        value: Value::new_array(),
+                        result: None,
+                        results: QueryResults::default(),
+                    });
+                }
                 result = self.eval_query(&body.query);
 
                 if matches!(&result, Ok(true) | Err(_)) {
                     break;
-                }
-
-                // TODO: Manage other scoped data.
-                if bodies.len() > 1 {
-                    unimplemented!("else bodies");
                 }
             }
             result
@@ -1997,7 +2013,7 @@ impl<'source> Interpreter<'source> {
         Ok(m)
     }
 
-    pub fn update_function_table(&mut self) -> Result<()> {
+    /*    pub fn update_function_table(&mut self) -> Result<()> {
         for module in self.modules.clone() {
             let prev_module = self.set_current_module(Some(module))?;
             let module_path =
@@ -2025,6 +2041,7 @@ impl<'source> Interpreter<'source> {
                     let full_path = Self::get_path_string(refr, Some(module_path.as_str()))?;
 
                     if let Some(functions) = self.functions.get_mut(&full_path) {
+                        // TODO: check function arity.
                         functions.push(rule);
                     } else {
                         self.functions.insert(full_path, vec![rule]);
@@ -2034,7 +2051,7 @@ impl<'source> Interpreter<'source> {
             self.set_current_module(prev_module)?;
         }
         Ok(())
-    }
+    }*/
 
     fn get_rule_refr(rule: &'source Rule<'source>) -> &'source Expr<'source> {
         match rule {
@@ -2225,6 +2242,22 @@ impl<'source> Interpreter<'source> {
                     }
 
                     self.processed.insert(rule);
+                } else if let RuleHead::Func { refr, .. } = rule_head {
+                    let mut path =
+                        Parser::get_path_ref_components(&self.current_module()?.package.refr)?;
+
+                    Parser::get_path_ref_components_into(refr, &mut path)?;
+                    let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+
+                    // Ensure that for functions with a nesting level (e.g: a.foo),
+                    // `a` is created as an empty object.
+                    if path.len() > 1 {
+                        let value =
+                            Self::make_or_get_value_mut(&mut self.data, &path[0..path.len() - 1])?;
+                        if value == &Value::Undefined {
+                            *value = Value::new_object();
+                        }
+                    }
                 }
             }
             _ => bail!("internal error: unexpected"),
@@ -2274,7 +2307,8 @@ impl<'source> Interpreter<'source> {
         }
 
         self.check_default_rules()?;
-        self.update_function_table()?;
+        self.functions = gather_functions(&self.modules)?;
+
         self.gather_rules()?;
 
         self.init_data = self.data.clone();
@@ -2460,7 +2494,7 @@ impl<'source> Interpreter<'source> {
                                     if old == new {
                                         bail!(refr.span().error("multiple default rules for the variable with the same index"));
                                     }
-                                } else {
+                                } else if index.is_some() || i.is_some() {
                                     bail!(refr
                                         .span()
                                         .error("conflict type with the default rules"));

@@ -4,7 +4,7 @@
 use crate::ast::*;
 use crate::builtins::*;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use anyhow::{bail, Result};
 
@@ -39,12 +39,16 @@ pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
     Ok(comps.join("."))
 }
 
-pub fn get_extra_arg<'a>(expr: &'a Expr, arities: &HashMap<String, u8>) -> Option<&'a Expr<'a>> {
+pub type FunctionTable<'a> = BTreeMap<String, (Vec<&'a Rule<'a>>, u8)>;
+
+pub fn get_extra_arg<'a>(expr: &'a Expr, functions: &FunctionTable) -> Option<&'a Expr<'a>> {
     if let Expr::Call { fcn, params, .. } = expr {
         if let Ok(path) = get_path_string(fcn, None) {
-            let n_args = if let Some(n_args) = arities.get(&path) {
+            let n_args = if let Some((_, n_args)) = functions.get(&path) {
                 *n_args
             } else if let Some((_, n_args)) = BUILTINS.get(path.as_str()) {
+                *n_args
+            } else if let Some((_, n_args)) = DEPRECATED.get(path.as_str()) {
                 *n_args
             } else {
                 return None;
@@ -56,4 +60,35 @@ pub fn get_extra_arg<'a>(expr: &'a Expr, arities: &HashMap<String, u8>) -> Optio
     }
 
     None
+}
+
+pub fn gather_functions<'a>(modules: &[&'a Module<'a>]) -> Result<FunctionTable<'a>> {
+    let mut table = FunctionTable::new();
+
+    for module in modules {
+        let module_path = get_path_string(&module.package.refr, Some("data"))?;
+        for rule in &module.policy {
+            if let Rule::Spec {
+                span,
+                head: RuleHead::Func { refr, args, .. },
+                ..
+            } = rule
+            {
+                let full_path = get_path_string(refr, Some(module_path.as_str()))?;
+
+                if let Some((functions, arity)) = table.get_mut(&full_path) {
+                    if args.len() as u8 != *arity {
+                        bail!(span.error(
+                            format!("{full_path} was previously defined with {arity} arguments.")
+                                .as_str()
+                        ));
+                    }
+                    functions.push(rule);
+                } else {
+                    table.insert(full_path, (vec![rule], args.len() as u8));
+                }
+            }
+        }
+    }
+    Ok(table)
 }

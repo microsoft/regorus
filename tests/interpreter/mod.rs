@@ -240,11 +240,12 @@ pub fn eval_file_first_rule(
     };
     let mut parser = regorus::Parser::new(&query_source)?;
     let query_node = parser.parse_query(query_span, "")?;
-    let query_schedule = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
+    let query_schedule =
+        regorus::Analyzer::new().analyze_query_snippet(&modules_ref, &query_node)?;
     let analyzer = Analyzer::new();
-    let schedule = analyzer.analyze(&modules)?;
+    let schedule = analyzer.analyze(&modules_ref)?;
 
-    let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
+    let mut interpreter = interpreter::Interpreter::new(&modules_ref)?;
     if let Some(input) = input_opt {
         // if inputs are defined then first the evaluation if prepared
         interpreter.prepare_for_eval(Some(schedule), &data_opt)?;
@@ -332,12 +333,13 @@ pub fn eval_file(
     };
     let mut parser = regorus::Parser::new(&query_source)?;
     let query_node = parser.parse_query(query_span, "")?;
-    let query_schedule = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
+    let query_schedule =
+        regorus::Analyzer::new().analyze_query_snippet(&modules_ref, &query_node)?;
 
     let analyzer = Analyzer::new();
-    let schedule = analyzer.analyze(&modules)?;
+    let schedule = analyzer.analyze(&modules_ref)?;
 
-    let mut interpreter = interpreter::Interpreter::new(modules_ref)?;
+    let mut interpreter = interpreter::Interpreter::new(&modules_ref)?;
     if let Some(input) = input_opt {
         // if inputs are defined then first the evaluation if prepared
         interpreter.prepare_for_eval(Some(schedule), &data_opt)?;

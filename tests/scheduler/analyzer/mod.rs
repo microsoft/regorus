@@ -52,9 +52,10 @@ fn analyze_file(regos: &[String], expected_scopes: &[Scope]) -> Result<()> {
         let mut parser = Parser::new(source)?;
         modules.push(parser.parse()?);
     }
+    let modules_ref: Vec<&Module> = modules.iter().collect();
 
     let analyzer = Analyzer::new();
-    let schedule = analyzer.analyze(&modules)?;
+    let schedule = analyzer.analyze(&modules_ref)?;
     for (idx, (_, scope)) in schedule.scopes.iter().enumerate() {
         if idx > expected_scopes.len() {
             bail!("extra scope generated.")

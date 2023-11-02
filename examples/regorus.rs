@@ -69,16 +69,14 @@ fn rego_eval(
         None
     };
 
+    let modules_ref: Vec<&regorus::Module> = modules.iter().collect();
+
     // Analyze the modules and determine how statements must be schedules.
     let analyzer = regorus::Analyzer::new();
-    let schedule = analyzer.analyze(&modules)?;
+    let schedule = analyzer.analyze(&modules_ref)?;
 
     // Create interpreter object.
-    let modules_ref: Vec<&regorus::Module> = modules.iter().collect();
-    let mut interpreter = regorus::Interpreter::new(modules_ref)?;
-
-    // Prepare for evalution.
-    interpreter.prepare_for_eval(Some(schedule.clone()), &Some(data.clone()))?;
+    let mut interpreter = regorus::Interpreter::new(&modules_ref)?;
 
     // Evaluate all the modules.
     interpreter.eval(&Some(data), &input, false, Some(schedule))?;
@@ -98,7 +96,8 @@ fn rego_eval(
     };
     let mut parser = regorus::Parser::new(&query_source)?;
     let query_node = parser.parse_query(query_span, "")?;
-    let query_schedule = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
+    let query_schedule =
+        regorus::Analyzer::new().analyze_query_snippet(&modules_ref, &query_node)?;
 
     let results = interpreter.eval_user_query(&query_node, &query_schedule, enable_tracing)?;
     println!("{}", serde_json::to_string_pretty(&results)?);

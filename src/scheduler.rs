@@ -4,9 +4,9 @@
 use crate::ast::Expr::*;
 use crate::ast::*;
 use crate::lexer::Span;
-use crate::utils;
+use crate::utils::*;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::string::String;
 
 use anyhow::{bail, Result};
@@ -380,6 +380,7 @@ pub struct Analyzer<'a> {
     locals: BTreeMap<&'a Query<'a>, Scope<'a>>,
     scopes: Vec<Scope<'a>>,
     order: BTreeMap<&'a Query<'a>, Vec<u16>>,
+    functions: FunctionTable<'a>,
 }
 
 #[derive(Clone)]
@@ -401,11 +402,13 @@ impl<'a> Analyzer<'a> {
             locals: BTreeMap::new(),
             scopes: vec![],
             order: BTreeMap::new(),
+            functions: FunctionTable::new(),
         }
     }
 
-    pub fn analyze(mut self, modules: &'a [Module<'a>]) -> Result<Schedule> {
+    pub fn analyze(mut self, modules: &'a [&'a Module<'a>]) -> Result<Schedule> {
         self.add_rules(modules)?;
+        self.functions = gather_functions(modules)?;
 
         for m in modules {
             self.analyze_module(m)?;
@@ -419,7 +422,7 @@ impl<'a> Analyzer<'a> {
 
     pub fn analyze_query_snippet(
         mut self,
-        modules: &'a [Module<'a>],
+        modules: &'a [&'a Module<'a>],
         query: &'a Query<'a>,
     ) -> Result<Schedule<'a>> {
         self.add_rules(modules)?;
@@ -431,9 +434,9 @@ impl<'a> Analyzer<'a> {
         })
     }
 
-    fn add_rules(&mut self, modules: &'a [Module<'a>]) -> Result<()> {
+    fn add_rules(&mut self, modules: &'a [&'a Module<'a>]) -> Result<()> {
         for m in modules {
-            let path = utils::get_path_string(&m.package.refr, Some("data"))?;
+            let path = get_path_string(&m.package.refr, Some("data"))?;
             let scope: &mut Scope = self.packages.entry(path).or_default();
             for r in &m.policy {
                 let var = match r {
@@ -454,7 +457,7 @@ impl<'a> Analyzer<'a> {
     }
 
     fn analyze_module(&mut self, m: &'a Module<'a>) -> Result<()> {
-        let path = utils::get_path_string(&m.package.refr, Some("data"))?;
+        let path = get_path_string(&m.package.refr, Some("data"))?;
         let scope = match self.packages.get(&path) {
             Some(s) => s,
             _ => bail!("internal error: package scope missing"),
@@ -956,8 +959,7 @@ impl<'a> Analyzer<'a> {
                     // TODO: vars in compr
                 }
                 Literal::Expr { expr, .. } => {
-                    if let Some(Expr::Var(return_arg)) = utils::get_extra_arg(expr, &HashMap::new())
-                    {
+                    if let Some(Expr::Var(return_arg)) = get_extra_arg(expr, &self.functions) {
                         let (mut used_vars, comprs) = Self::gather_used_vars_comprs_index_vars(
                             expr,
                             &mut scope,
