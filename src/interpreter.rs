@@ -39,6 +39,7 @@ pub struct Interpreter<'source> {
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
     traces: Option<Vec<String>>,
+    allow_deprecated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -106,6 +107,7 @@ impl<'source> Interpreter<'source> {
             builtins_cache: BTreeMap::new(),
             no_rules_lookup: false,
             traces: None,
+            allow_deprecated: true,
         })
     }
 
@@ -1501,6 +1503,13 @@ impl<'source> Interpreter<'source> {
                 if let Ok(path) = Self::get_path_string(fcn, None) {
                     if let Some(builtin) = builtins::BUILTINS.get(path.as_str()) {
                         return self.eval_builtin_call(span, path, *builtin, params);
+                    }
+                    if let Some(builtin) = builtins::DEPRECATED.get(path.as_str()) {
+                        if self.allow_deprecated {
+                            return self.eval_builtin_call(span, path, *builtin, params);
+                        } else {
+                            bail!(span.error(format!("{path} is deprecated").as_str()))
+                        }
                     }
                 }
 
