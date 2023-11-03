@@ -7,6 +7,7 @@ mod bitwise;
 pub mod comparison;
 mod conversions;
 mod debugging;
+pub mod deprecated;
 mod encoding;
 pub mod numbers;
 mod objects;
@@ -26,6 +27,8 @@ use anyhow::Result;
 use lazy_static::lazy_static;
 
 pub type BuiltinFcn = (fn(&Span, &[Expr], &[Value]) -> Result<Value>, u8);
+
+pub use deprecated::DEPRECATED;
 
 #[rustfmt::skip]
 lazy_static! {

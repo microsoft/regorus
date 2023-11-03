@@ -46,6 +46,8 @@ pub fn get_extra_arg<'a>(expr: &'a Expr, arities: &HashMap<String, u8>) -> Optio
                 *n_args
             } else if let Some((_, n_args)) = BUILTINS.get(path.as_str()) {
                 *n_args
+            } else if let Some((_, n_args)) = DEPRECATED.get(path.as_str()) {
+                *n_args
             } else {
                 return None;
             };
