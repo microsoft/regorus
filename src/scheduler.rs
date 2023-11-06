@@ -377,16 +377,16 @@ fn get_rule_prefix<'a>(expr: &Expr<'a>) -> Result<&'a str> {
 
 pub struct Analyzer<'a> {
     packages: BTreeMap<String, Scope<'a>>,
-    locals: BTreeMap<&'a Query<'a>, Scope<'a>>,
+    locals: BTreeMap<Ref<'a, Query<'a>>, Scope<'a>>,
     scopes: Vec<Scope<'a>>,
-    order: BTreeMap<&'a Query<'a>, Vec<u16>>,
+    order: BTreeMap<Ref<'a, Query<'a>>, Vec<u16>>,
     functions: FunctionTable<'a>,
 }
 
 #[derive(Clone)]
 pub struct Schedule<'a> {
-    pub scopes: BTreeMap<&'a Query<'a>, Scope<'a>>,
-    pub order: BTreeMap<&'a Query<'a>, Vec<u16>>,
+    pub scopes: BTreeMap<Ref<'a, Query<'a>>, Scope<'a>>,
+    pub order: BTreeMap<Ref<'a, Query<'a>>, Vec<u16>>,
 }
 
 impl<'a> Default for Analyzer<'a> {
@@ -535,11 +535,8 @@ impl<'a> Analyzer<'a> {
             RuleHead::Set { key, .. } => (key.as_ref(), None, scope),
             RuleHead::Func { args, assign, .. } => {
                 for a in args.iter() {
-                    match a {
-                        Var(v) => {
-                            scope.locals.insert(v.text());
-                        }
-                        _ => unimplemented!("non var arguments"),
+                    if let Var(v) = a {
+                        scope.locals.insert(v.text());
                     }
                 }
                 (None, assign.as_ref().map(|a| &a.value), scope)
@@ -672,7 +669,7 @@ impl<'a> Analyzer<'a> {
             let compr_scope = match compr {
                 Expr::ArrayCompr { query, term, .. } | Expr::SetCompr { query, term, .. } => {
                     self.analyze_query(None, Some(term), query, Scope::default())?;
-                    self.locals.get(query)
+                    self.locals.get(&Ref::make(query))
                 }
                 Expr::ObjectCompr {
                     query, key, value, ..
@@ -683,7 +680,7 @@ impl<'a> Analyzer<'a> {
                         query,
                         Scope::default(),
                     )?;
-                    self.locals.get(query)
+                    self.locals.get(&Ref::make(query))
                 }
                 _ => break,
             };
@@ -1041,14 +1038,14 @@ impl<'a> Analyzer<'a> {
         let res = schedule(&mut infos[..]);
         match res {
             Ok(SortResult::Order(ord)) => {
-                self.order.insert(query, ord);
+                self.order.insert(Ref::make(query), ord);
             }
             Err(err) => {
                 bail!(query.span.error(&err.to_string()))
             }
             _ => (),
         }
-        self.locals.insert(query, scope);
+        self.locals.insert(Ref::make(query), scope);
 
         Ok(())
     }

@@ -558,6 +558,7 @@ fn run_opa_tests() -> Result<()> {
         if !Path::new(&a).is_dir() {
             continue;
         }
+
         for entry in WalkDir::new(a)
             .sort_by_file_name()
             .into_iter()
