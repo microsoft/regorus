@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 
 fn rego_eval(
@@ -10,111 +10,50 @@ fn rego_eval(
     query: String,
     enable_tracing: bool,
 ) -> Result<()> {
-    // User specified data.
-    let mut data = regorus::Value::new_object();
+    // Create engine.
+    let mut engine = regorus::Engine::new();
 
-    // Read all policy files.
-    let mut policies = vec![];
+    // Load given files.
     for file in files.iter() {
-        let contents =
-            std::fs::read_to_string(file).with_context(|| format!("Failed to read {file}"))?;
-
         if file.ends_with(".rego") {
-            policies.push(contents);
+            // Read policy file.
+            engine.add_policy_from_file(file.to_string())?;
         } else {
-            let value: regorus::Value = if file.ends_with(".json") {
-                serde_json::from_str(&contents)?
+            // Read data file.
+            let data = if file.ends_with(".json") {
+                regorus::Value::from_json_file(file)?
             } else if file.ends_with(".yaml") {
-                serde_yaml::from_str(&contents)?
+                regorus::Value::from_yaml_file(file)?
             } else {
                 bail!("Unsupported data file `{file}`. Must be rego, json or yaml.")
             };
 
-            if let Err(err) = data.merge(value) {
-                bail!("Error processing {file}. {err}");
-            }
+            // Merge given data.
+            engine.add_data(data)?;
         }
     }
 
-    // Create source objects.
-    let mut sources = vec![];
-    for (idx, rego) in policies.iter().enumerate() {
-        sources.push(regorus::Source {
-            file: &files[idx],
-            contents: rego.as_str(),
-            lines: rego.split('\n').collect(),
-        });
-    }
-
-    // Parse the policy files.
-    let mut modules = vec![];
-    for source in &sources {
-        let mut parser = regorus::Parser::new(source)?;
-        modules.push(parser.parse()?);
-    }
-
-    // Parse input file.
-    let input = if let Some(file) = input {
-        let input_contents = std::fs::read_to_string(file.clone())
-            .with_context(|| format!("Failed to read {file}"))?;
-
-        Some(if file.ends_with(".json") {
-            serde_json::from_str(&input_contents)?
+    if let Some(file) = input {
+        let input = if file.ends_with(".json") {
+            regorus::Value::from_json_file(&file)?
         } else if file.ends_with(".yaml") {
-            serde_yaml::from_str(&input_contents)?
+            regorus::Value::from_yaml_file(&file)?
         } else {
-            bail!("invalid input file {file}");
-        })
-    } else {
-        None
-    };
+            bail!("Unsupported input file `{file}`. Must be json or yaml.")
+        };
+        engine.set_input(input);
+    }
 
-    let modules_ref: Vec<&regorus::Module> = modules.iter().collect();
-
-    // Analyze the modules and determine how statements must be schedules.
-    let analyzer = regorus::Analyzer::new();
-    let schedule = analyzer.analyze(&modules_ref)?;
-
-    // Create interpreter object.
-    let mut interpreter = regorus::Interpreter::new(&modules_ref)?;
-
-    // Evaluate all the modules.
-    interpreter.eval(&Some(data), &input, false, Some(schedule))?;
-
-    // Parse the query.
-    let query_source = regorus::Source {
-        file: "<query.rego>",
-        contents: &query,
-        lines: query.split('\n').collect(),
-    };
-    let query_span = regorus::Span {
-        source: &query_source,
-        line: 1,
-        col: 1,
-        start: 0,
-        end: query.len() as u16,
-    };
-    let mut parser = regorus::Parser::new(&query_source)?;
-    let query_node = parser.parse_query(query_span, "")?;
-    let query_schedule =
-        regorus::Analyzer::new().analyze_query_snippet(&modules_ref, &query_node)?;
-
-    let results = interpreter.eval_user_query(&query_node, &query_schedule, enable_tracing)?;
+    // Evaluate query.
+    let results = engine.eval_query(query, enable_tracing)?;
     println!("{}", serde_json::to_string_pretty(&results)?);
 
     Ok(())
 }
 
 fn rego_lex(file: String, verbose: bool) -> Result<()> {
-    let contents =
-        std::fs::read_to_string(file.clone()).with_context(|| format!("Failed to read {file}"))?;
-
     // Create source.
-    let source = regorus::Source {
-        file: file.as_str(),
-        contents: contents.as_str(),
-        lines: contents.split('\n').collect(),
-    };
+    let source = regorus::Source::from_file(file)?;
 
     // Create lexer.
     let mut lexer = regorus::Lexer::new(&source);
@@ -138,15 +77,8 @@ fn rego_lex(file: String, verbose: bool) -> Result<()> {
 }
 
 fn rego_parse(file: String) -> Result<()> {
-    let contents =
-        std::fs::read_to_string(file.clone()).with_context(|| format!("Failed to read {file}"))?;
-
     // Create source.
-    let source = regorus::Source {
-        file: file.as_str(),
-        contents: contents.as_str(),
-        lines: contents.split('\n').collect(),
-    };
+    let source = regorus::Source::from_file(file)?;
 
     // Create a parser and parse the source.
     let mut parser = regorus::Parser::new(&source)?;

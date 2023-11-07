@@ -10,6 +10,7 @@ anyhow = "1.0.66"
 ordered-float = "3.4.0"
 serde = {version = "1.0.150", features = ["derive", "rc"] }
 serde_json = "1.0.89"
+serde_yaml = "0.9.16"
 log = "0.4.17"
 env_logger="0.10.0"
 lazy_static = "1.4.0"
@@ -18,7 +19,6 @@ data-encoding = "2.4.0"
 
 [dev-dependencies]
 clap = { version = "4.4.7", features = ["derive"] }
-serde_yaml = "0.9.16"
 test-generator = "0.3.1"
 walkdir = "2.3.2"
 

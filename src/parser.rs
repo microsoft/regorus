@@ -9,22 +9,22 @@ use anyhow::{anyhow, bail, Result};
 
 #[derive(Clone)]
 pub struct Parser<'source> {
-    source: &'source Source<'source>,
+    source: Source,
     lexer: Lexer<'source>,
-    tok: Token<'source>,
+    tok: Token,
     line: u16,
     end: u16,
-    future_keywords: BTreeMap<&'source str, Span<'source>>,
+    future_keywords: BTreeMap<String, Span>,
 }
 
 const FUTURE_KEYWORDS: [&str; 4] = ["contains", "every", "if", "in"];
 
 impl<'source> Parser<'source> {
-    pub fn new(source: &'source Source<'source>) -> Result<Self> {
+    pub fn new(source: &'source Source) -> Result<Self> {
         let mut lexer = Lexer::new(source);
         let tok = lexer.next_token()?;
         Ok(Self {
-            source,
+            source: source.clone(),
             lexer,
             tok,
             line: 0,
@@ -41,7 +41,7 @@ impl<'source> Parser<'source> {
     }
 
     fn expect(&mut self, text: &str, context: &str) -> Result<()> {
-        if self.tok.1.text() == text {
+        if *self.tok.1.text() == text {
             self.next_token()
         } else {
             let msg = format!("expecting `{text}` {context}");
@@ -65,7 +65,7 @@ impl<'source> Parser<'source> {
         );
     }
 
-    pub fn set_future_keyword(&mut self, kw: &'source str, span: &Span<'source>) -> Result<()> {
+    pub fn set_future_keyword(&mut self, kw: &str, span: &Span) -> Result<()> {
         match &self.future_keywords.get(kw) {
             Some(s) => Err(self.source.error(
                 span.line,
@@ -78,16 +78,13 @@ impl<'source> Parser<'source> {
                 .as_str(),
             )),
             None => {
-                self.future_keywords.insert(kw, span.clone());
+                self.future_keywords.insert(kw.to_string(), span.clone());
                 Ok(())
             }
         }
     }
 
-    pub fn get_path_ref_components_into(
-        refr: &Expr<'source>,
-        comps: &mut Vec<Span<'source>>,
-    ) -> Result<()> {
+    pub fn get_path_ref_components_into(refr: &Expr, comps: &mut Vec<Span>) -> Result<()> {
         match refr {
             Expr::RefDot { refr, field, .. } => {
                 Self::get_path_ref_components_into(refr, comps)?;
@@ -104,16 +101,16 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub fn get_path_ref_components(refr: &Expr<'source>) -> Result<Vec<Span<'source>>> {
+    pub fn get_path_ref_components(refr: &Expr) -> Result<Vec<Span>> {
         let mut comps = vec![];
         Self::get_path_ref_components_into(refr, &mut comps)?;
         Ok(comps)
     }
 
-    fn handle_import_future_keywords(&mut self, comps: &Vec<Span<'source>>) -> Result<bool> {
-        if comps.len() >= 2 && comps[0].text() == "future" && comps[1].text() == "keywords" {
+    fn handle_import_future_keywords(&mut self, comps: &Vec<Span>) -> Result<bool> {
+        if comps.len() >= 2 && *comps[0].text() == "future" && *comps[1].text() == "keywords" {
             match comps.len() - 2 {
-                1 => self.set_future_keyword(comps[2].text(), &comps[2])?,
+                1 => self.set_future_keyword(&comps[2].text(), &comps[2])?,
                 0 => {
                     let span = &comps[1];
                     for kw in FUTURE_KEYWORDS.iter() {
@@ -128,7 +125,7 @@ impl<'source> Parser<'source> {
                 }
             }
             Ok(true)
-        } else if !comps.is_empty() && comps[0].text() == "future" {
+        } else if !comps.is_empty() && *comps[0].text() == "future" {
             let s = &comps[0];
             Err(self
                 .source
@@ -144,7 +141,7 @@ impl<'source> Parser<'source> {
         is_optional: bool,
         context: &str,
     ) -> Result<()> {
-        if self.tok.1.text() == kw {
+        if *self.tok.1.text() == kw {
             match &self.future_keywords.get(kw) {
                 Some(_) => self.next_token(),
                 None => {
@@ -161,7 +158,7 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn is_keyword(&self, ident: &'source str) -> bool {
+    fn is_keyword(&self, ident: &str) -> bool {
         matches!(
             ident,
             "as" | "default"
@@ -177,10 +174,10 @@ impl<'source> Parser<'source> {
         )
     }
 
-    fn parse_ident(&mut self) -> Result<Span<'source>> {
+    fn parse_ident(&mut self) -> Result<Span> {
         let span = self.tok.1.clone();
         match self.tok.0 {
-            TokenKind::Ident if self.is_keyword(span.text()) => Err(self.source.error(
+            TokenKind::Ident if self.is_keyword(*span.text()) => Err(self.source.error(
                 self.tok.1.line,
                 self.tok.1.col,
                 &format!("unexpected keyword `{}`", span.text()),
@@ -195,11 +192,12 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn parse_var(&mut self) -> Result<Span<'source>> {
+    fn parse_var(&mut self) -> Result<Span> {
         let span = self.tok.1.clone();
         match self.tok.0 {
             TokenKind::Ident
-                if self.is_keyword(span.text()) || self.is_imported_future_keyword(span.text()) =>
+                if self.is_keyword(*span.text())
+                    || self.is_imported_future_keyword(*span.text()) =>
             {
                 Err(self.source.error(
                     self.tok.1.line,
@@ -217,13 +215,13 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn parse_scalar_or_var(&mut self) -> Result<Expr<'source>> {
+    fn parse_scalar_or_var(&mut self) -> Result<Expr> {
         let span = self.tok.1.clone();
         let node = match &self.tok.0 {
             TokenKind::Number => Expr::Number(span),
             TokenKind::String => Expr::String(span),
             TokenKind::RawString => Expr::RawString(span),
-            TokenKind::Ident => match self.tok.1.text() {
+            TokenKind::Ident => match *self.tok.1.text() {
                 "null" => Expr::Null(span),
                 "true" => Expr::True(span),
                 "false" => Expr::False(span),
@@ -241,14 +239,14 @@ impl<'source> Parser<'source> {
         Ok(node)
     }
 
-    fn parse_compr(&mut self, delim: &str) -> Result<(Expr<'source>, Query<'source>)> {
+    fn parse_compr(&mut self, delim: &str) -> Result<(Expr, Query)> {
         // Save the state.
         let state = self.clone();
         let mut span = self.tok.1.clone();
 
         // Parse the first expression as a ref.
         let term = match self.parse_ref() {
-            Ok(e) if self.tok.1.text() == "|" => e,
+            Ok(e) if *self.tok.1.text() == "|" => e,
             _ => {
                 // Not a comprehension. Restore state.
                 *self = state;
@@ -274,7 +272,7 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn parse_compr_or_array(&mut self) -> Result<Expr<'source>> {
+    fn parse_compr_or_array(&mut self) -> Result<Expr> {
         // Save the state.
         let mut span = self.tok.1.clone();
         self.expect("[", "while parsing array comprehension or array")?;
@@ -293,11 +291,11 @@ impl<'source> Parser<'source> {
                 // No progress was made in parsing comprehension.
                 // Parse as array.
                 let mut items = vec![];
-                if self.tok.1.text() != "]" {
+                if *self.tok.1.text() != "]" {
                     items.push(self.parse_in_expr()?);
-                    while self.tok.1.text() == "," {
+                    while *self.tok.1.text() == "," {
                         self.next_token()?;
-                        match self.tok.1.text() {
+                        match *self.tok.1.text() {
                             "]" => break,
                             "" if self.tok.0 == TokenKind::Eof => break,
                             _ => items.push(self.parse_in_expr()?),
@@ -312,7 +310,7 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn parse_compr_set_or_object(&mut self) -> Result<Expr<'source>> {
+    fn parse_compr_set_or_object(&mut self) -> Result<Expr> {
         let mut span = self.tok.1.clone();
         self.expect("{", "while parsing set, object or comprehension")?;
 
@@ -336,7 +334,7 @@ impl<'source> Parser<'source> {
 
         // It could be a set, object or object comprehension.
         // In all the cases, the first expressoin must parse successfully.
-        if self.tok.1.text() == "}" {
+        if *self.tok.1.text() == "}" {
             self.next_token()?;
             span.end = self.end;
             return Ok(Expr::Object {
@@ -348,12 +346,12 @@ impl<'source> Parser<'source> {
         let mut item_span = self.tok.1.clone();
         let first = self.parse_in_expr()?;
 
-        if self.tok.1.text() != ":" {
+        if *self.tok.1.text() != ":" {
             // Parse as set.
             let mut items = vec![first];
-            while self.tok.1.text() == "," {
+            while *self.tok.1.text() == "," {
                 self.next_token()?;
-                match self.tok.1.text() {
+                match *self.tok.1.text() {
                     "}" => break,
                     "" if self.tok.0 == TokenKind::Eof => break,
                     _ => items.push(self.parse_in_expr()?),
@@ -393,10 +391,10 @@ impl<'source> Parser<'source> {
         item_span.end = self.end;
         items.push((item_span, first, value));
 
-        while self.tok.1.text() == "," {
+        while *self.tok.1.text() == "," {
             self.next_token()?;
             let item_start = self.tok.1.start;
-            let key = match self.tok.1.text() {
+            let key = match *self.tok.1.text() {
                 "}" => break,
                 "" if self.tok.0 == TokenKind::Eof => break,
                 _ => self.parse_in_expr()?,
@@ -420,7 +418,7 @@ impl<'source> Parser<'source> {
         })
     }
 
-    fn parse_empty_set(&mut self) -> Result<Expr<'source>> {
+    fn parse_empty_set(&mut self) -> Result<Expr> {
         let mut span = self.tok.1.clone();
         self.expect("set(", "while parsing empty set")?;
         self.expect(")", "while parsing empty set")?;
@@ -431,7 +429,7 @@ impl<'source> Parser<'source> {
         })
     }
 
-    fn parse_parens_expr(&mut self) -> Result<Expr<'source>> {
+    fn parse_parens_expr(&mut self) -> Result<Expr> {
         self.next_token()?;
         let expr = self.parse_membership_expr()?;
         self.expect(")", "while parsing parenthesized expression")?;
@@ -439,7 +437,7 @@ impl<'source> Parser<'source> {
         Ok(expr)
     }
 
-    fn parse_unary_expr(&mut self) -> Result<Expr<'source>> {
+    fn parse_unary_expr(&mut self) -> Result<Expr> {
         let mut span = self.tok.1.clone();
         self.next_token()?;
         let expr = self.parse_in_expr()?;
@@ -450,9 +448,9 @@ impl<'source> Parser<'source> {
         })
     }
 
-    fn parse_ref(&mut self) -> Result<Expr<'source>> {
+    fn parse_ref(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
-        let mut term = match self.tok.1.text() {
+        let mut term = match *self.tok.1.text() {
             "[" => self.parse_compr_or_array()?,
             "{" => self.parse_compr_set_or_object()?,
             "set(" => self.parse_empty_set()?,
@@ -467,7 +465,7 @@ impl<'source> Parser<'source> {
             let mut span = self.tok.1.clone();
             let sep_pos = span.start;
             span.start = start;
-            match self.tok.1.text() {
+            match *self.tok.1.text() {
                 "." | "[" if self.tok.1.start != self.end => {
                     if self.line != self.tok.1.line {
                         // Newline encountered. This could be a separate
@@ -524,16 +522,16 @@ impl<'source> Parser<'source> {
                 }
                 "(" if possible_fcn => {
                     self.next_token()?;
-                    if self.tok.1.text() == ")" {
+                    if *self.tok.1.text() == ")" {
                         return Err(self
                             .tok
                             .1
                             .error("at least one argument required for function calls"));
                     }
                     let mut args = vec![self.parse_in_expr()?];
-                    while self.tok.1.text() == "," {
+                    while *self.tok.1.text() == "," {
                         self.next_token()?;
-                        match self.tok.1.text() {
+                        match *self.tok.1.text() {
                             ")" => break,
                             "" if self.tok.0 == TokenKind::Eof => break,
                             _ => args.push(self.parse_in_expr()?),
@@ -557,18 +555,18 @@ impl<'source> Parser<'source> {
         Ok(term)
     }
 
-    fn parse_term(&mut self) -> Result<Expr<'source>> {
+    fn parse_term(&mut self) -> Result<Expr> {
         self.parse_ref()
     }
 
-    fn parse_mul_div_mod_expr(&mut self) -> Result<Expr<'source>> {
+    fn parse_mul_div_mod_expr(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let mut expr = self.parse_term()?;
 
         loop {
             let mut span = self.tok.1.clone();
             span.start = start;
-            let op = match self.tok.1.text() {
+            let op = match *self.tok.1.text() {
                 "*" => ArithOp::Mul,
                 "/" => ArithOp::Div,
                 "%" => ArithOp::Mod,
@@ -586,14 +584,14 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn parse_arith_expr(&mut self) -> Result<Expr<'source>> {
+    fn parse_arith_expr(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let mut expr = self.parse_mul_div_mod_expr()?;
 
         loop {
             let mut span = self.tok.1.clone();
             span.start = start;
-            let op = match self.tok.1.text() {
+            let op = match *self.tok.1.text() {
                 "+" => ArithOp::Add,
                 "-" => ArithOp::Sub,
                 _ => return Ok(expr),
@@ -610,11 +608,11 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn parse_and_expr(&mut self) -> Result<Expr<'source>> {
+    fn parse_and_expr(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let mut expr = self.parse_arith_expr()?;
 
-        while self.tok.1.text() == "&" {
+        while *self.tok.1.text() == "&" {
             let mut span = self.tok.1.clone();
             span.start = start;
             self.next_token()?;
@@ -630,11 +628,11 @@ impl<'source> Parser<'source> {
         Ok(expr)
     }
 
-    fn parse_or_expr(&mut self) -> Result<Expr<'source>> {
+    fn parse_or_expr(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let mut expr = self.parse_and_expr()?;
 
-        while self.tok.1.text() == "|" {
+        while *self.tok.1.text() == "|" {
             let mut span = self.tok.1.clone();
             span.start = start;
             self.next_token()?;
@@ -650,13 +648,13 @@ impl<'source> Parser<'source> {
         Ok(expr)
     }
 
-    fn parse_bool_expr(&mut self) -> Result<Expr<'source>> {
+    fn parse_bool_expr(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let mut expr = self.parse_or_expr()?;
         loop {
             let mut span = self.tok.1.clone();
             span.start = start;
-            let op = match self.tok.1.text() {
+            let op = match *self.tok.1.text() {
                 "<" => BoolOp::Lt,
                 "<=" => BoolOp::Le,
                 "==" => BoolOp::Eq,
@@ -681,9 +679,9 @@ impl<'source> Parser<'source> {
     fn parse_membership_tail(
         &mut self,
         start: u16,
-        mut expr1: Expr<'source>,
-        mut expr2: Option<Expr<'source>>,
-    ) -> Result<Expr<'source>> {
+        mut expr1: Expr,
+        mut expr2: Option<Expr>,
+    ) -> Result<Expr> {
         loop {
             let mut span = self.tok.1.clone();
             span.start = start;
@@ -702,7 +700,7 @@ impl<'source> Parser<'source> {
             };
             expr2 = None;
 
-            if self.tok.1.text() != "in" {
+            if *self.tok.1.text() != "in" {
                 break;
             }
         }
@@ -710,42 +708,42 @@ impl<'source> Parser<'source> {
         Ok(expr1)
     }
 
-    fn parse_in_expr(&mut self) -> Result<Expr<'source>> {
+    fn parse_in_expr(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let mut expr = self.parse_bool_expr()?;
 
-        while self.tok.1.text() == "in" && self.future_keywords.get("in").is_some() {
+        while *self.tok.1.text() == "in" && self.future_keywords.get("in").is_some() {
             expr = self.parse_membership_tail(start, expr, None)?;
         }
 
         Ok(expr)
     }
 
-    pub fn parse_membership_expr(&mut self) -> Result<Expr<'source>> {
+    pub fn parse_membership_expr(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let mut expr = self.parse_bool_expr()?;
 
-        if self.tok.1.text() == "," {
+        if *self.tok.1.text() == "," {
             self.next_token()?;
             let value = self.parse_bool_expr()?;
             expr = self.parse_membership_tail(start, expr, Some(value))?;
         }
 
-        while self.tok.1.text() == "in" && self.is_imported_future_keyword("in") {
+        while *self.tok.1.text() == "in" && self.is_imported_future_keyword("in") {
             expr = self.parse_membership_tail(start, expr, None)?;
         }
 
         Ok(expr)
     }
 
-    pub fn parse_assign_expr(&mut self) -> Result<Expr<'source>> {
+    pub fn parse_assign_expr(&mut self) -> Result<Expr> {
         let state = self.clone();
         let start = self.tok.1.start;
         let expr = self.parse_ref()?;
 
         let mut span = self.tok.1.clone();
         span.start = start;
-        let op = match self.tok.1.text() {
+        let op = match *self.tok.1.text() {
             "=" => AssignOp::Eq,
             ":=" => AssignOp::ColEq,
             _ => {
@@ -765,9 +763,9 @@ impl<'source> Parser<'source> {
         })
     }
 
-    fn parse_with_modifiers(&mut self) -> Result<Vec<WithModifier<'source>>> {
+    fn parse_with_modifiers(&mut self) -> Result<Vec<WithModifier>> {
         let mut modifiers = vec![];
-        while self.tok.1.text() == "with" {
+        while *self.tok.1.text() == "with" {
             let mut span = self.tok.1.clone();
             self.next_token()?;
             let refr = self.parse_path_ref()?;
@@ -779,13 +777,13 @@ impl<'source> Parser<'source> {
         Ok(modifiers)
     }
 
-    fn parse_every_stmt(&mut self) -> Result<Literal<'source>> {
+    fn parse_every_stmt(&mut self) -> Result<Literal> {
         let mut span = self.tok.1.clone();
         let context = "Failed to parse `every` statement.";
         self.parse_future_keyword("every", false, context)?;
 
         let ident = self.parse_var()?;
-        let (key, value) = match self.tok.1.text() {
+        let (key, value) = match *self.tok.1.text() {
             "," => {
                 self.next_token()?;
                 match self.parse_var() {
@@ -818,7 +816,7 @@ impl<'source> Parser<'source> {
         })
     }
 
-    fn parse_some_stmt(&mut self) -> Result<Literal<'source>> {
+    fn parse_some_stmt(&mut self) -> Result<Literal> {
         let mut span = self.tok.1.clone();
         self.expect("some", "while parsing some-decl")?;
 
@@ -826,7 +824,7 @@ impl<'source> Parser<'source> {
         let mut vars = vec![self.tok.1.clone()];
         let mut refs = vec![self.parse_ref()?];
 
-        while self.tok.1.text() == "," {
+        while *self.tok.1.text() == "," {
             self.next_token()?;
             let mut span = self.tok.1.clone();
             refs.push(self.parse_ref()?);
@@ -834,8 +832,8 @@ impl<'source> Parser<'source> {
             vars.push(span);
         }
 
-        if self.tok.1.text() != "in" || !self.is_imported_future_keyword("in") {
-            if self.tok.1.text() == "in" {
+        if *self.tok.1.text() != "in" || !self.is_imported_future_keyword("in") {
+            if *self.tok.1.text() == "in" {
                 self.warn_future_keyword();
             }
             // All the refs must be identifiers
@@ -846,7 +844,7 @@ impl<'source> Parser<'source> {
                     _ => {
                         return Err(anyhow!(
                             "{}:{}:{} error: encountered `{}` while expecting identifier",
-                            span.source.file,
+                            span.source.file(),
                             span.line,
                             span.col,
                             span.text()
@@ -866,7 +864,7 @@ impl<'source> Parser<'source> {
                 let span = &vars[2];
                 return Err(anyhow!(
                     "{}:{}:{} error: encountered `{}` while expecting `in`",
-                    span.source.file,
+                    span.source.file(),
                     span.line,
                     span.col,
                     span.text()
@@ -884,8 +882,8 @@ impl<'source> Parser<'source> {
         })
     }
 
-    fn parse_literal(&mut self) -> Result<Literal<'source>> {
-        match self.tok.1.text() {
+    fn parse_literal(&mut self) -> Result<Literal> {
+        match *self.tok.1.text() {
             "some" => return self.parse_some_stmt(),
             "every" => {
                 if self.future_keywords.get("every").is_some() {
@@ -896,7 +894,7 @@ impl<'source> Parser<'source> {
             _ => (),
         }
         let mut span = self.tok.1.clone();
-        let not_expr = if self.tok.1.text() == "not" {
+        let not_expr = if *self.tok.1.text() == "not" {
             self.next_token()?;
             true
         } else {
@@ -912,7 +910,7 @@ impl<'source> Parser<'source> {
         }
     }
 
-    pub fn parse_literal_stmt(&mut self) -> Result<LiteralStmt<'source>> {
+    pub fn parse_literal_stmt(&mut self) -> Result<LiteralStmt> {
         let mut span = self.tok.1.clone();
         let literal = self.parse_literal()?;
         let with_mods = self.parse_with_modifiers()?;
@@ -925,13 +923,9 @@ impl<'source> Parser<'source> {
         })
     }
 
-    pub fn parse_query(
-        &mut self,
-        mut span: Span<'source>,
-        end_delim: &str,
-    ) -> Result<Query<'source>> {
+    pub fn parse_query(&mut self, mut span: Span, end_delim: &str) -> Result<Query> {
         let state = self.clone();
-        let _is_definite_query = matches!(self.tok.1.text(), "some" | "every");
+        let _is_definite_query = matches!(*self.tok.1.text(), "some" | "every");
 
         // TODO: empty query?
         let mut literals = vec![];
@@ -947,7 +941,7 @@ impl<'source> Parser<'source> {
             }
         };
 
-        if self.tok.1.text() == "," {
+        if *self.tok.1.text() == "," {
             // This is likely an array or set.
             // Restore the state.
             *self = state;
@@ -957,7 +951,7 @@ impl<'source> Parser<'source> {
         literals.push(stmt);
 
         loop {
-            match self.tok.1.text() {
+            match *self.tok.1.text() {
                 t if t == end_delim => break,
                 "" if self.tok.0 == TokenKind::Eof => break,
                 ";" => self.next_token()?,
@@ -982,10 +976,10 @@ impl<'source> Parser<'source> {
         })
     }
 
-    pub fn parse_rule_assign(&mut self) -> Result<Option<RuleAssign<'source>>> {
+    pub fn parse_rule_assign(&mut self) -> Result<Option<RuleAssign>> {
         let mut span = self.tok.1.clone();
 
-        let op = match self.tok.1.text() {
+        let op = match *self.tok.1.text() {
             "=" => {
                 self.next_token()?;
                 AssignOp::Eq
@@ -1006,7 +1000,7 @@ impl<'source> Parser<'source> {
         }))
     }
 
-    fn parse_path_ref(&mut self) -> Result<Expr<'source>> {
+    fn parse_path_ref(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let var = self.parse_var()?;
 
@@ -1015,14 +1009,14 @@ impl<'source> Parser<'source> {
             let mut span = self.tok.1.clone();
             let sep_pos = span.start;
             span.start = start;
-            match self.tok.1.text() {
+            match *self.tok.1.text() {
                 "." | "[" if self.tok.1.start != self.end => {
                     bail!(
                         "{}",
                         self.source.error(
                             self.tok.1.line,
                             self.tok.1.col - 1,
-                            format!("invalid whitespace before {}", self.tok.1.text()).as_str()
+                            format!("invalid whitespace before {}", *self.tok.1.text()).as_str()
                         )
                     );
                 }
@@ -1098,7 +1092,7 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn parse_rule_ref(&mut self) -> Result<Expr<'source>> {
+    fn parse_rule_ref(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let span = self.tok.1.clone();
 
@@ -1115,7 +1109,7 @@ impl<'source> Parser<'source> {
         loop {
             let mut span = self.tok.1.clone();
             span.start = start;
-            match self.tok.1.text() {
+            match *self.tok.1.text() {
                 // . and [ must not have any space between the previous token.
                 "." | "[" if self.tok.1.start != self.end => {
                     bail!(
@@ -1123,7 +1117,7 @@ impl<'source> Parser<'source> {
                         self.source.error(
                             self.tok.1.line,
                             self.tok.1.col - 1,
-                            format!("invalid whitespace before {}", self.tok.1.text()).as_str()
+                            format!("invalid whitespace before {}", *self.tok.1.text()).as_str()
                         )
                     );
                 }
@@ -1168,18 +1162,18 @@ impl<'source> Parser<'source> {
         Ok(term)
     }
 
-    pub fn parse_rule_head(&mut self) -> Result<RuleHead<'source>> {
+    pub fn parse_rule_head(&mut self) -> Result<RuleHead> {
         let mut span = self.tok.1.clone();
 
         let rule_ref = self.parse_rule_ref()?;
-        match self.tok.1.text() {
+        match *self.tok.1.text() {
             "(" => {
                 self.check_rule_ref(&rule_ref)?;
                 self.next_token()?;
                 let mut args = vec![self.parse_term()?];
-                while self.tok.1.text() == "," {
+                while *self.tok.1.text() == "," {
                     self.next_token()?;
-                    match self.tok.1.text() {
+                    match *self.tok.1.text() {
                         ")" => break,
                         "" if self.tok.0 == TokenKind::Eof => break,
                         _ => args.push(self.parse_term()?),
@@ -1219,8 +1213,8 @@ impl<'source> Parser<'source> {
                 }
 
                 // Determine whether to create a set or a compr
-                let is_set_follower = !self.is_keyword(self.tok.1.text())
-                    && !self.is_imported_future_keyword(self.tok.1.text());
+                let is_set_follower = !self.is_keyword(*self.tok.1.text())
+                    && !self.is_imported_future_keyword(*self.tok.1.text());
                 if assign.is_none() && is_set_follower {
                     match &rule_ref {
                         Expr::RefBrack { refr, index, .. }
@@ -1257,11 +1251,11 @@ impl<'source> Parser<'source> {
         self.future_keywords.get("if").is_some()
     }
 
-    pub fn parse_query_or_literal_stmt(&mut self) -> Result<Query<'source>> {
+    pub fn parse_query_or_literal_stmt(&mut self) -> Result<Query> {
         let state = self.clone();
         let mut span = self.tok.1.clone();
 
-        if self.tok.1.text() == "{" {
+        if *self.tok.1.text() == "{" {
             self.next_token()?;
             let pos = self.end;
             match self.parse_query(span.clone(), "}") {
@@ -1281,12 +1275,12 @@ impl<'source> Parser<'source> {
         Ok(Query { span, stmts })
     }
 
-    pub fn parse_rule_bodies(&mut self) -> Result<Vec<RuleBody<'source>>> {
+    pub fn parse_rule_bodies(&mut self) -> Result<Vec<RuleBody>> {
         let mut span = self.tok.1.clone();
         let mut bodies = vec![];
 
         let assign = None;
-        let has_query = match self.tok.1.text() {
+        let has_query = match *self.tok.1.text() {
             "if" if self.if_is_keyword() => {
                 self.next_token()?;
                 let query = self.parse_query_or_literal_stmt()?;
@@ -1316,7 +1310,7 @@ impl<'source> Parser<'source> {
             _ => false,
         };
 
-        match self.tok.1.text() {
+        match *self.tok.1.text() {
             "{" if has_query => self.parse_query_blocks(&mut bodies)?,
             "else" if has_query => self.parse_else_blocks(&mut bodies)?,
             _ => (),
@@ -1325,8 +1319,8 @@ impl<'source> Parser<'source> {
         Ok(bodies)
     }
 
-    pub fn parse_query_blocks(&mut self, bodies: &mut Vec<RuleBody<'source>>) -> Result<()> {
-        while self.tok.1.text() == "{" {
+    pub fn parse_query_blocks(&mut self, bodies: &mut Vec<RuleBody>) -> Result<()> {
+        while *self.tok.1.text() == "{" {
             let mut span = self.tok.1.clone();
             self.next_token()?;
             let query = self.parse_query(span.clone(), "}")?;
@@ -1340,11 +1334,11 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub fn parse_else_blocks(&mut self, bodies: &mut Vec<RuleBody<'source>>) -> Result<()> {
+    pub fn parse_else_blocks(&mut self, bodies: &mut Vec<RuleBody>) -> Result<()> {
         loop {
             let mut span = self.tok.1.clone();
 
-            match self.tok.1.text() {
+            match *self.tok.1.text() {
                 "{" => {
                     return Err(self.source.error(
                         self.tok.1.line,
@@ -1358,7 +1352,7 @@ impl<'source> Parser<'source> {
 
             let assign = self.parse_rule_assign()?;
 
-            match self.tok.1.text() {
+            match *self.tok.1.text() {
                 "if" if self.if_is_keyword() => {
                     self.next_token()?;
                     let query = self.parse_query_or_literal_stmt()?;
@@ -1380,7 +1374,7 @@ impl<'source> Parser<'source> {
                     });
                 }
                 _ if assign.is_none() => {
-                    if self.tok.1.text() == "if" {
+                    if *self.tok.1.text() == "if" {
                         self.warn_future_keyword();
                     }
                     return Err(self.source.error(
@@ -1395,12 +1389,12 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub fn parse_default_rule(&mut self) -> Result<Rule<'source>> {
+    pub fn parse_default_rule(&mut self) -> Result<Rule> {
         let mut span = self.tok.1.clone();
         self.expect("default", "while parsing default rule")?;
         let rule_ref = self.parse_rule_ref()?;
 
-        let op = match self.tok.1.text() {
+        let op = match *self.tok.1.text() {
             "=" => AssignOp::Eq,
             ":=" => AssignOp::ColEq,
             _ => {
@@ -1423,7 +1417,7 @@ impl<'source> Parser<'source> {
         })
     }
 
-    pub fn parse_rule(&mut self) -> Result<Rule<'source>> {
+    pub fn parse_rule(&mut self) -> Result<Rule> {
         let pos = self.end;
         match self.parse_default_rule() {
             Ok(r) => return Ok(r),
@@ -1438,7 +1432,7 @@ impl<'source> Parser<'source> {
         Ok(Rule::Spec { span, head, bodies })
     }
 
-    fn parse_package(&mut self) -> Result<Package<'source>> {
+    fn parse_package(&mut self) -> Result<Package> {
         let mut span = self.tok.1.clone();
         self.expect("package", "Missing package declaration.")?;
         let name = self.parse_path_ref()?;
@@ -1446,21 +1440,13 @@ impl<'source> Parser<'source> {
         Ok(Package { span, refr: name })
     }
 
-    fn check_and_add_import(
-        &self,
-        import: Import<'source>,
-        imports: &mut Vec<Import<'source>>,
-    ) -> Result<()> {
-        let comps: Vec<&str> = Self::get_path_ref_components(&import.refr)?
-            .iter()
-            .map(|s| s.text())
-            .collect();
+    fn check_and_add_import(&self, import: Import, imports: &mut Vec<Import>) -> Result<()> {
+        let ref_comps = Self::get_path_ref_components(&import.refr)?;
+        let comps: Vec<std::rc::Rc<&str>> = ref_comps.iter().map(|s| s.text()).collect();
 
         for imp in imports.iter() {
-            let imp_comps: Vec<&str> = Self::get_path_ref_components(&imp.refr)?
-                .iter()
-                .map(|s| s.text())
-                .collect();
+            let imp_comps = Self::get_path_ref_components(&imp.refr)?;
+            let imp_comps: Vec<std::rc::Rc<&str>> = imp_comps.iter().map(|s| s.text()).collect();
 
             let shadow = match (&imp.r#as, &import.r#as) {
                 (Some(i1), Some(i2)) if i1.text() == i2.text() => true,
@@ -1490,15 +1476,15 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    fn parse_imports(&mut self) -> Result<Vec<Import<'source>>> {
+    fn parse_imports(&mut self) -> Result<Vec<Import>> {
         let mut imports = vec![];
-        while self.tok.1.text() == "import" {
+        while *self.tok.1.text() == "import" {
             let mut span = self.tok.1.clone();
             self.next_token()?;
             let refr = self.parse_path_ref()?;
 
             let comps = Self::get_path_ref_components(&refr)?;
-            if !matches!(comps[0].text(), "data" | "future" | "input") {
+            if !matches!(*comps[0].text(), "data" | "future" | "input") {
                 return Err(self.source.error(
                     comps[0].line,
                     comps[0].col,
@@ -1508,7 +1494,7 @@ impl<'source> Parser<'source> {
 
             let is_future_kw = self.handle_import_future_keywords(&comps)?;
 
-            let var = if self.tok.1.text() == "as" {
+            let var = if *self.tok.1.text() == "as" {
                 if is_future_kw {
                     return Err(self.source.error(
                         self.tok.1.line,
@@ -1519,7 +1505,7 @@ impl<'source> Parser<'source> {
 
                 self.next_token()?;
                 let var = self.parse_var()?;
-                if var.text() == "_" {
+                if *var.text() == "_" {
                     return Err(self.source.error(
                         var.line,
                         var.col,
@@ -1547,7 +1533,7 @@ impl<'source> Parser<'source> {
         Ok(imports)
     }
 
-    pub fn parse(&mut self) -> Result<Module<'source>> {
+    pub fn parse(&mut self) -> Result<Module> {
         let package = self.parse_package()?;
         let imports = self.parse_imports()?;
 

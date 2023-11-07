@@ -165,6 +165,24 @@ impl Value {
     pub fn to_json_str(&self) -> Result<String> {
         Ok(serde_json::to_string_pretty(self)?)
     }
+
+    pub fn from_json_file(path: &String) -> Result<Value> {
+        match std::fs::read_to_string(path) {
+            Ok(c) => Self::from_json_str(c.as_str()),
+            Err(e) => bail!("Failed to read {path}. {e}"),
+        }
+    }
+
+    pub fn from_yaml_str(yaml: &str) -> Result<Value> {
+        Ok(serde_yaml::from_str(yaml)?)
+    }
+
+    pub fn from_yaml_file(path: &String) -> Result<Value> {
+        match std::fs::read_to_string(path) {
+            Ok(c) => Self::from_yaml_str(c.as_str()),
+            Err(e) => bail!("Failed to read {path}. {e}"),
+        }
+    }
 }
 
 impl Value {

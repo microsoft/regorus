@@ -210,11 +210,7 @@ pub fn eval_file_first_rule(
 
     for (idx, file) in files.iter().enumerate() {
         let contents = regos[idx].as_str();
-        sources.push(Source {
-            file,
-            contents,
-            lines: contents.split('\n').collect(),
-        });
+        sources.push(Source::new(file.to_string(), contents.to_string()));
     }
 
     for source in &sources {
@@ -226,13 +222,9 @@ pub fn eval_file_first_rule(
         modules_ref.push(m);
     }
 
-    let query_source = regorus::Source {
-        file: "<query.rego>",
-        contents: query,
-        lines: query.split('\n').collect(),
-    };
+    let query_source = regorus::Source::new("<query.rego>".to_string(), query.to_string());
     let query_span = regorus::Span {
-        source: &query_source,
+        source: query_source.clone(),
         line: 1,
         col: 1,
         start: 0,
@@ -303,11 +295,7 @@ pub fn eval_file(
 
     for (idx, file) in files.iter().enumerate() {
         let contents = regos[idx].as_str();
-        sources.push(Source {
-            file,
-            contents,
-            lines: contents.split('\n').collect(),
-        });
+        sources.push(Source::new(file.to_string(), contents.to_string()));
     }
 
     for source in &sources {
@@ -319,13 +307,9 @@ pub fn eval_file(
         modules_ref.push(m);
     }
 
-    let query_source = regorus::Source {
-        file: "<query.rego>",
-        contents: query,
-        lines: query.split('\n').collect(),
-    };
+    let query_source = regorus::Source::new("<query.rego".to_string(), query.to_string());
     let query_span = regorus::Span {
-        source: &query_source,
+        source: query_source.clone(),
         line: 1,
         col: 1,
         start: 0,

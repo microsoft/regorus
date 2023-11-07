@@ -32,20 +32,10 @@ fn to_string_set(s: &BTreeSet<&str>) -> BTreeSet<String> {
 }
 
 fn analyze_file(regos: &[String], expected_scopes: &[Scope]) -> Result<()> {
-    let mut files = vec![];
     let mut sources = vec![];
     let mut modules = vec![];
     for (idx, _) in regos.iter().enumerate() {
-        files.push(format!("rego_{idx}"));
-    }
-
-    for (idx, file) in files.iter().enumerate() {
-        let contents = regos[idx].as_str();
-        sources.push(Source {
-            file,
-            contents,
-            lines: contents.split('\n').collect(),
-        });
+        sources.push(Source::new(format!("rego_{idx}"), regos[idx].clone()));
     }
 
     for source in &sources {
