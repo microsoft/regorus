@@ -9,16 +9,80 @@ use crate::value::Value;
 use anyhow::{anyhow, bail, Result};
 
 #[derive(Clone)]
-pub struct Source<'source> {
-    pub file: &'source str,
-    pub contents: &'source str,
-    pub lines: Vec<&'source str>,
+struct SourceInternal {
+    pub file: String,
+    pub contents: String,
+    pub lines: Vec<(u16, u16)>,
 }
 
-impl<'source> Source<'source> {
+#[derive(Clone)]
+pub struct Source {
+    src: std::rc::Rc<SourceInternal>,
+}
+
+impl Source {
+    pub fn new(file: String, contents: String) -> Source {
+        let mut lines = vec![];
+        let mut prev_ch = ' ';
+        let mut prev_pos = 0u16;
+        let mut start = 0u16;
+        for (i, ch) in contents.char_indices() {
+            if ch == '\n' {
+                let end = match prev_ch {
+                    '\r' => prev_pos,
+                    _ => i as u16,
+                };
+                lines.push((start, end));
+                start = i as u16 + 1;
+            }
+            prev_ch = ch;
+            prev_pos = i as u16;
+        }
+
+        if (start as usize) < contents.len() {
+            lines.push((start, contents.len() as u16));
+        } else if contents.is_empty() {
+            lines.push((0, 0));
+        } else {
+            let s = (contents.len() - 1) as u16;
+            lines.push((s, s));
+        }
+        Self {
+            src: std::rc::Rc::new(SourceInternal {
+                file,
+                contents,
+                lines,
+            }),
+        }
+    }
+
+    pub fn from_file(path: String) -> Result<Source> {
+        let contents = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => bail!("Failed to read {path}. {e}"),
+        };
+        Ok(Self::new(path, contents))
+    }
+
+    pub fn file(&self) -> &String {
+        &self.src.file
+    }
+    pub fn contents(&self) -> &String {
+        &self.src.contents
+    }
+    pub fn line(&self, idx: u16) -> &str {
+        let idx = idx as usize;
+        if idx < self.src.lines.len() {
+            let (start, end) = self.src.lines[idx];
+            &self.src.contents[start as usize..end as usize]
+        } else {
+            ""
+        }
+    }
+
     pub fn message(&self, line: u16, col: u16, kind: &str, msg: &str) -> String {
-        if line as usize > self.lines.len() {
-            return format!("{}: invalid line {} specified", self.file, line);
+        if line as usize > self.src.lines.len() {
+            return format!("{}: invalid line {} specified", self.src.file, line);
         }
 
         let line_str = format!("{line}");
@@ -30,12 +94,12 @@ impl<'source> Source<'source> {
 		{:<line_num_width$}| {}\n\
 		{:<line_num_width$}| {:<col_spaces$}^\n\
 		{}: {}",
-            self.file,
+            self.src.file,
             line,
             col,
             "",
             line,
-            self.lines[line as usize - 1],
+            self.line(line - 1),
             "",
             "",
             kind,
@@ -49,17 +113,17 @@ impl<'source> Source<'source> {
 }
 
 #[derive(Clone)]
-pub struct Span<'source> {
-    pub source: &'source Source<'source>,
+pub struct Span {
+    pub source: Source,
     pub line: u16,
     pub col: u16,
     pub start: u16,
     pub end: u16,
 }
 
-impl<'source> Span<'source> {
-    pub fn text(&self) -> &'source str {
-        &self.source.contents[self.start as usize..self.end as usize]
+impl Span {
+    pub fn text(&self) -> std::rc::Rc<&str> {
+        std::rc::Rc::new(&self.source.contents()[self.start as usize..self.end as usize])
     }
 
     pub fn message(&self, kind: &str, msg: &str) -> String {
@@ -71,7 +135,7 @@ impl<'source> Span<'source> {
     }
 }
 
-impl<'source> Debug for Span<'source> {
+impl Debug for Span {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         let t = self.text().escape_debug().to_string();
         let max = 32;
@@ -99,21 +163,21 @@ pub enum TokenKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct Token<'source>(pub TokenKind, pub Span<'source>);
+pub struct Token(pub TokenKind, pub Span);
 
 #[derive(Clone)]
 pub struct Lexer<'source> {
-    source: &'source Source<'source>,
+    source: Source,
     iter: Peekable<CharIndices<'source>>,
     line: u16,
     col: u16,
 }
 
 impl<'source> Lexer<'source> {
-    pub fn new(source: &'source Source<'source>) -> Self {
+    pub fn new(source: &'source Source) -> Self {
         Self {
-            source,
-            iter: source.contents.char_indices().peekable(),
+            source: source.clone(),
+            iter: source.contents().char_indices().peekable(),
             line: 1,
             col: 1,
         }
@@ -122,18 +186,18 @@ impl<'source> Lexer<'source> {
     fn peek(&mut self) -> (usize, char) {
         match self.iter.peek() {
             Some((index, chr)) => (*index, *chr),
-            _ => (self.source.contents.len(), '\x00'),
+            _ => (self.source.contents().len(), '\x00'),
         }
     }
 
     fn peekahead(&mut self, n: usize) -> (usize, char) {
         match self.iter.clone().nth(n) {
             Some((index, chr)) => (index, chr),
-            _ => (self.source.contents.len(), '\x00'),
+            _ => (self.source.contents().len(), '\x00'),
         }
     }
 
-    fn read_ident(&mut self) -> Result<Token<'source>> {
+    fn read_ident(&mut self) -> Result<Token> {
         let start = self.peek().0;
         let col = self.col;
         loop {
@@ -149,7 +213,7 @@ impl<'source> Lexer<'source> {
         Ok(Token(
             TokenKind::Ident,
             Span {
-                source: self.source,
+                source: self.source.clone(),
                 line: self.line,
                 col,
                 start: start as u16,
@@ -165,7 +229,7 @@ impl<'source> Lexer<'source> {
     }
 
     // See https://www.json.org/json-en.html for number's grammar
-    fn read_number(&mut self) -> Result<Token<'source>> {
+    fn read_number(&mut self) -> Result<Token> {
         let (start, chr) = self.peek();
         let col = self.col;
         self.iter.next();
@@ -206,7 +270,7 @@ impl<'source> Lexer<'source> {
         }
 
         // Ensure that the number is parsable in Rust.
-        match serde_json::from_str::<'source, Value>(&self.source.contents[start..end]) {
+        match serde_json::from_str::<Value>(&self.source.contents()[start..end]) {
             Ok(_) => (),
             Err(e) => {
                 let serde_msg = &e.to_string();
@@ -233,7 +297,7 @@ impl<'source> Lexer<'source> {
         Ok(Token(
             TokenKind::Number,
             Span {
-                source: self.source,
+                source: self.source.clone(),
                 line: self.line,
                 col,
                 start: start as u16,
@@ -242,7 +306,7 @@ impl<'source> Lexer<'source> {
         ))
     }
 
-    fn read_raw_string(&mut self) -> Result<Token<'source>> {
+    fn read_raw_string(&mut self) -> Result<Token> {
         self.iter.next();
         self.col += 1;
         let (start, _) = self.peek();
@@ -270,7 +334,7 @@ impl<'source> Lexer<'source> {
         Ok(Token(
             TokenKind::RawString,
             Span {
-                source: self.source,
+                source: self.source.clone(),
                 line,
                 col,
                 start: start as u16,
@@ -279,7 +343,7 @@ impl<'source> Lexer<'source> {
         ))
     }
 
-    fn read_string(&mut self) -> Result<Token<'source>> {
+    fn read_string(&mut self) -> Result<Token> {
         let (line, col) = (self.line, self.col);
         self.iter.next();
         self.col += 1;
@@ -335,7 +399,7 @@ impl<'source> Lexer<'source> {
         self.col += (end - start) as u16;
 
         // Ensure that the string is parsable in Rust.
-        match serde_json::from_str::<'source, String>(&self.source.contents[start - 1..end]) {
+        match serde_json::from_str::<String>(&self.source.contents()[start - 1..end]) {
             Ok(_) => (),
             Err(e) => {
                 let serde_msg = &e.to_string();
@@ -352,7 +416,7 @@ impl<'source> Lexer<'source> {
         Ok(Token(
             TokenKind::String,
             Span {
-                source: self.source,
+                source: self.source.clone(),
                 line,
                 col: col + 1,
                 start: start as u16,
@@ -399,7 +463,7 @@ impl<'source> Lexer<'source> {
         Ok(())
     }
 
-    pub fn next_token(&mut self) -> Result<Token<'source>> {
+    pub fn next_token(&mut self) -> Result<Token> {
         self.skip_ws()?;
 
         let (start, chr) = self.peek();
@@ -423,7 +487,7 @@ impl<'source> Lexer<'source> {
 		self.col += 1;
 		self.iter.next();
 		Ok(Token(TokenKind::Symbol, Span {
-		    source: self.source,
+		    source: self.source.clone(),
 		    line: self.line,
 		    col,
 		    start: start as u16,
@@ -440,7 +504,7 @@ impl<'source> Lexer<'source> {
 		    end += 1;
 		}
 		Ok(Token(TokenKind::Symbol, Span {
-		    source: self.source,
+		    source: self.source.clone(),
 		    line: self.line,
 		    col,
 		    start: start as u16,
@@ -456,7 +520,7 @@ impl<'source> Lexer<'source> {
 		    self.iter.next();
 		};
 		Ok(Token(TokenKind::Symbol, Span {
-		    source: self.source,
+		    source: self.source.clone(),
 		    line: self.line,
 		    col,
 		    start: start as u16,
@@ -468,7 +532,7 @@ impl<'source> Lexer<'source> {
 		self.iter.next();
 		self.iter.next();
 		Ok(Token(TokenKind::Symbol, Span {
-		    source: self.source,
+		    source: self.source.clone(),
 		    line: self.line,
 		    col,
 		    start: start as u16,
@@ -478,7 +542,7 @@ impl<'source> Lexer<'source> {
 	    '"' => self.read_string(),
 	    '`' => self.read_raw_string(),
 	    '\x00' => Ok(Token(TokenKind::Eof, Span {
-		source: self.source,
+		source: self.source.clone(),
 		line:self.line,
 		col,
 		start: start as u16,
@@ -487,7 +551,7 @@ impl<'source> Lexer<'source> {
 	    _ if chr.is_ascii_digit() => self.read_number(),
 	    _ if chr.is_ascii_alphabetic() || chr == '_' => {
 		let mut ident = self.read_ident()?;
-		if ident.1.text() == "set" && self.peek().1 == '(' {
+		if *ident.1.text() == "set" && self.peek().1 == '(' {
 		    // set immediately followed by ( is treated as set( if
 		    // the next token is ).
 		    let state = (self.iter.clone(), self.line, self.col);
@@ -495,7 +559,7 @@ impl<'source> Lexer<'source> {
 
 		    // Check it next token is ).
 		    let next_tok = self.next_token()?;
-		    let is_setp = next_tok.1.text() == ")";
+		    let is_setp = *next_tok.1.text() == ")";
 
 		    // Restore state
 		    (self.iter, self.line, self.col) = state;

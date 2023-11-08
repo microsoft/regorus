@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use test_generator::test_resources;
 
-fn get_tokens<'source>(source: &'source Source<'source>) -> Result<Vec<Token<'source>>> {
+fn get_tokens(source: &Source) -> Result<Vec<Token>> {
     let mut tokens = vec![];
     let mut lex = Lexer::new(source);
     loop {
@@ -35,7 +35,9 @@ fn check_loc(tok: &Token) -> Result<()> {
             false if tok.0 == TokenKind::Eof && source_idx >= source_line.len() => return Ok(()),
             // Handle case where a raw string's first char is a newline.
             false if tok.0 == TokenKind::RawString && &tok.1.text()[0..1] == "\n" => return Ok(()),
-            _ => bail!("could not find caret for {tok:#?} {msg}"),
+            _ => {
+                bail!("could not find caret for {tok:#?} {msg}");
+            }
         }
         match &caret_line[idx..idx + 1] {
             "^" => {
@@ -76,12 +78,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     let test: Test = serde_yaml::from_str(&yaml)?;
 
     for case in &test.cases {
-        let source = Source {
-            file: "case.rego",
-            contents: case.rego.as_str(),
-            lines: case.rego.as_str().split('\n').collect(),
-        };
-
+        let source = Source::new("case.rego".to_string(), case.rego.clone());
         print!("case {} ", &case.note);
 
         match get_tokens(&source) {
@@ -91,7 +88,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                         break;
                     }
                     assert_eq!(
-                        tok.1.text(),
+                        *tok.1.text(),
                         case.tokens[idx],
                         "{} Expected token `{}` not found",
                         source.message(tok.1.line, tok.1.col, "mismatch-error", &case.tokens[idx]),
@@ -184,11 +181,7 @@ fn run(path: &str) {
 #[test]
 fn debug() -> Result<()> {
     let rego = "\"This string is 35 characters long.\"\"short string\"";
-    let source = Source {
-        file: "case.rego",
-        contents: rego,
-        lines: rego.split('\n').collect(),
-    };
+    let source = Source::new("case.rego".to_string(), rego.to_string());
 
     let mut lexer = Lexer::new(&source);
     let tok = lexer.next_token()?;
@@ -210,11 +203,7 @@ fn debug() -> Result<()> {
 #[test]
 fn tab() -> Result<()> {
     let rego = r#"	"This string is 35 characters long."`raw	string`p"#;
-    let source = Source {
-        file: "case.rego",
-        contents: rego,
-        lines: rego.split('\n').collect(),
-    };
+    let source = Source::new("case.rego".to_string(), rego.to_string());
 
     let mut lexer = Lexer::new(&source);
 
@@ -244,11 +233,7 @@ fn tab() -> Result<()> {
 #[test]
 fn invalid_line() -> Result<()> {
     let rego = "";
-    let source = Source {
-        file: "case.rego",
-        contents: rego,
-        lines: rego.split('\n').collect(),
-    };
+    let source = Source::new("case.rego".to_string(), rego.to_string());
 
     assert_eq!(
         source.message(2, 0, "", ""),

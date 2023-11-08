@@ -35,115 +35,115 @@ pub enum AssignOp {
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr<'source> {
+pub enum Expr {
     // Simple items that only have a span as content.
-    String(Span<'source>),
-    RawString(Span<'source>),
-    Number(Span<'source>),
-    True(Span<'source>),
-    False(Span<'source>),
-    Null(Span<'source>),
-    Var(Span<'source>),
+    String(Span),
+    RawString(Span),
+    Number(Span),
+    True(Span),
+    False(Span),
+    Null(Span),
+    Var(Span),
 
     // array
     Array {
-        span: Span<'source>,
-        items: Vec<Expr<'source>>,
+        span: Span,
+        items: Vec<Expr>,
     },
 
     // set
     Set {
-        span: Span<'source>,
-        items: Vec<Expr<'source>>,
+        span: Span,
+        items: Vec<Expr>,
     },
 
     Object {
-        span: Span<'source>,
-        fields: Vec<(Span<'source>, Expr<'source>, Expr<'source>)>,
+        span: Span,
+        fields: Vec<(Span, Expr, Expr)>,
     },
 
     // Comprehensions
     ArrayCompr {
-        span: Span<'source>,
-        term: Box<Expr<'source>>,
-        query: Query<'source>,
+        span: Span,
+        term: Box<Expr>,
+        query: Query,
     },
 
     SetCompr {
-        span: Span<'source>,
-        term: Box<Expr<'source>>,
-        query: Query<'source>,
+        span: Span,
+        term: Box<Expr>,
+        query: Query,
     },
 
     ObjectCompr {
-        span: Span<'source>,
-        key: Box<Expr<'source>>,
-        value: Box<Expr<'source>>,
-        query: Query<'source>,
+        span: Span,
+        key: Box<Expr>,
+        value: Box<Expr>,
+        query: Query,
     },
 
     Call {
-        span: Span<'source>,
-        fcn: Box<Expr<'source>>,
-        params: Vec<Expr<'source>>,
+        span: Span,
+        fcn: Box<Expr>,
+        params: Vec<Expr>,
     },
 
     UnaryExpr {
-        span: Span<'source>,
-        expr: Box<Expr<'source>>,
+        span: Span,
+        expr: Box<Expr>,
     },
 
     // ref
     RefDot {
-        span: Span<'source>,
-        refr: Box<Expr<'source>>,
-        field: Span<'source>,
+        span: Span,
+        refr: Box<Expr>,
+        field: Span,
     },
 
     RefBrack {
-        span: Span<'source>,
-        refr: Box<Expr<'source>>,
-        index: Box<Expr<'source>>,
+        span: Span,
+        refr: Box<Expr>,
+        index: Box<Expr>,
     },
 
     // Infix expressions
     BinExpr {
-        span: Span<'source>,
+        span: Span,
         op: BinOp,
-        lhs: Box<Expr<'source>>,
-        rhs: Box<Expr<'source>>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
     BoolExpr {
-        span: Span<'source>,
+        span: Span,
         op: BoolOp,
-        lhs: Box<Expr<'source>>,
-        rhs: Box<Expr<'source>>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
 
     ArithExpr {
-        span: Span<'source>,
+        span: Span,
         op: ArithOp,
-        lhs: Box<Expr<'source>>,
-        rhs: Box<Expr<'source>>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
 
     AssignExpr {
-        span: Span<'source>,
+        span: Span,
         op: AssignOp,
-        lhs: Box<Expr<'source>>,
-        rhs: Box<Expr<'source>>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
 
     Membership {
-        span: Span<'source>,
-        key: Box<Option<Expr<'source>>>,
-        value: Box<Expr<'source>>,
-        collection: Box<Expr<'source>>,
+        span: Span,
+        key: Box<Option<Expr>>,
+        value: Box<Expr>,
+        collection: Box<Expr>,
     },
 }
 
-impl<'source> Expr<'source> {
-    pub fn span(&self) -> &Span<'source> {
+impl Expr {
+    pub fn span(&self) -> &Span {
         use Expr::*;
         match self {
             String(s) | RawString(s) | Number(s) | True(s) | False(s) | Null(s) | Var(s) => s,
@@ -167,121 +167,121 @@ impl<'source> Expr<'source> {
 }
 
 #[derive(Debug, Clone)]
-pub enum Literal<'source> {
+pub enum Literal {
     SomeVars {
-        span: Span<'source>,
-        vars: Vec<Span<'source>>,
+        span: Span,
+        vars: Vec<Span>,
     },
     SomeIn {
-        span: Span<'source>,
-        key: Option<Expr<'source>>,
-        value: Expr<'source>,
-        collection: Expr<'source>,
+        span: Span,
+        key: Option<Expr>,
+        value: Expr,
+        collection: Expr,
     },
     Expr {
-        span: Span<'source>,
-        expr: Expr<'source>,
+        span: Span,
+        expr: Expr,
     },
     NotExpr {
-        span: Span<'source>,
-        expr: Expr<'source>,
+        span: Span,
+        expr: Expr,
     },
     Every {
-        span: Span<'source>,
-        key: Option<Span<'source>>,
-        value: Span<'source>,
-        domain: Expr<'source>,
-        query: Query<'source>,
+        span: Span,
+        key: Option<Span>,
+        value: Span,
+        domain: Expr,
+        query: Query,
     },
 }
 
 #[derive(Debug, Clone)]
-pub struct WithModifier<'source> {
-    pub span: Span<'source>,
-    pub refr: Expr<'source>,
-    pub r#as: Expr<'source>,
+pub struct WithModifier {
+    pub span: Span,
+    pub refr: Expr,
+    pub r#as: Expr,
 }
 
 #[derive(Debug, Clone)]
-pub struct LiteralStmt<'source> {
-    pub span: Span<'source>,
-    pub literal: Literal<'source>,
-    pub with_mods: Vec<WithModifier<'source>>,
+pub struct LiteralStmt {
+    pub span: Span,
+    pub literal: Literal,
+    pub with_mods: Vec<WithModifier>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Query<'source> {
-    pub span: Span<'source>,
-    pub stmts: Vec<LiteralStmt<'source>>,
+pub struct Query {
+    pub span: Span,
+    pub stmts: Vec<LiteralStmt>,
 }
 
 #[derive(Debug, Clone)]
-pub struct RuleAssign<'source> {
-    pub span: Span<'source>,
+pub struct RuleAssign {
+    pub span: Span,
     pub op: AssignOp,
-    pub value: Expr<'source>,
+    pub value: Expr,
 }
 
 #[derive(Debug, Clone)]
-pub struct RuleBody<'source> {
-    pub span: Span<'source>,
-    pub assign: Option<RuleAssign<'source>>,
-    pub query: Query<'source>,
+pub struct RuleBody {
+    pub span: Span,
+    pub assign: Option<RuleAssign>,
+    pub query: Query,
 }
 
 #[derive(Debug, Clone)]
-pub enum RuleHead<'source> {
+pub enum RuleHead {
     Compr {
-        span: Span<'source>,
-        refr: Expr<'source>,
-        assign: Option<RuleAssign<'source>>,
+        span: Span,
+        refr: Expr,
+        assign: Option<RuleAssign>,
     },
     Set {
-        span: Span<'source>,
-        refr: Expr<'source>,
-        key: Option<Expr<'source>>,
+        span: Span,
+        refr: Expr,
+        key: Option<Expr>,
     },
     Func {
-        span: Span<'source>,
-        refr: Expr<'source>,
-        args: Vec<Expr<'source>>,
-        assign: Option<RuleAssign<'source>>,
+        span: Span,
+        refr: Expr,
+        args: Vec<Expr>,
+        assign: Option<RuleAssign>,
     },
 }
 
 #[derive(Debug, Clone)]
-pub enum Rule<'source> {
+pub enum Rule {
     Spec {
-        span: Span<'source>,
-        head: RuleHead<'source>,
-        bodies: Vec<RuleBody<'source>>,
+        span: Span,
+        head: RuleHead,
+        bodies: Vec<RuleBody>,
     },
     Default {
-        span: Span<'source>,
-        refr: Expr<'source>,
+        span: Span,
+        refr: Expr,
         op: AssignOp,
-        value: Expr<'source>,
+        value: Expr,
     },
 }
 
 #[derive(Debug, Clone)]
-pub struct Package<'source> {
-    pub span: Span<'source>,
-    pub refr: Expr<'source>,
+pub struct Package {
+    pub span: Span,
+    pub refr: Expr,
 }
 
 #[derive(Debug, Clone)]
-pub struct Import<'source> {
-    pub span: Span<'source>,
-    pub refr: Expr<'source>,
-    pub r#as: Option<Span<'source>>,
+pub struct Import {
+    pub span: Span,
+    pub refr: Expr,
+    pub r#as: Option<Span>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Module<'source> {
-    pub package: Package<'source>,
-    pub imports: Vec<Import<'source>>,
-    pub policy: Vec<Rule<'source>>,
+pub struct Module {
+    pub package: Package,
+    pub imports: Vec<Import>,
+    pub policy: Vec<Rule>,
 }
 
 #[derive(Debug, Clone)]
@@ -315,7 +315,6 @@ impl<'a, T> PartialOrd for Ref<'a, T> {
 
 impl<'a, T> Ord for Ref<'a, T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        //std::ptr::from_ref(self.r).partial_cmp(std::ptr::from_ref(other.r))
         (self.r as *const T).cmp(&(other.r as *const T))
     }
 }

@@ -3,6 +3,7 @@
 
 pub mod ast;
 pub mod builtins;
+pub mod engine;
 pub mod interpreter;
 pub mod lexer;
 pub mod parser;
@@ -11,6 +12,7 @@ mod utils;
 pub mod value;
 
 pub use ast::*;
+pub use engine::*;
 pub use interpreter::*;
 pub use lexer::*;
 pub use parser::*;

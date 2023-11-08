@@ -9,24 +9,24 @@ use std::collections::BTreeMap;
 use anyhow::{bail, Result};
 
 pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
-    let mut comps = vec![];
+    let mut comps: Vec<&str> = vec![];
     let mut expr = Some(refr);
     while expr.is_some() {
         match expr {
             Some(Expr::RefDot { refr, field, .. }) => {
-                comps.push(field.text());
+                comps.push(&field.text());
                 expr = Some(refr);
             }
             Some(Expr::RefBrack { refr, index, .. })
                 if matches!(index.as_ref(), Expr::String(_)) =>
             {
                 if let Expr::String(s) = index.as_ref() {
-                    comps.push(s.text());
+                    comps.push(&s.text());
                     expr = Some(refr);
                 }
             }
             Some(Expr::Var(v)) => {
-                comps.push(v.text());
+                comps.push(&v.text());
                 expr = None;
             }
             _ => bail!("internal error: not a simple ref"),
@@ -39,9 +39,9 @@ pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
     Ok(comps.join("."))
 }
 
-pub type FunctionTable<'a> = BTreeMap<String, (Vec<&'a Rule<'a>>, u8)>;
+pub type FunctionTable<'a> = BTreeMap<String, (Vec<&'a Rule>, u8)>;
 
-pub fn get_extra_arg<'a>(expr: &'a Expr, functions: &FunctionTable) -> Option<&'a Expr<'a>> {
+pub fn get_extra_arg<'a>(expr: &'a Expr, functions: &FunctionTable) -> Option<&'a Expr> {
     if let Expr::Call { fcn, params, .. } = expr {
         if let Ok(path) = get_path_string(fcn, None) {
             let n_args = if let Some((_, n_args)) = functions.get(&path) {
@@ -62,7 +62,7 @@ pub fn get_extra_arg<'a>(expr: &'a Expr, functions: &FunctionTable) -> Option<&'
     None
 }
 
-pub fn gather_functions<'a>(modules: &[&'a Module<'a>]) -> Result<FunctionTable<'a>> {
+pub fn gather_functions<'a>(modules: &[&'a Module]) -> Result<FunctionTable<'a>> {
     let mut table = FunctionTable::new();
 
     for module in modules {

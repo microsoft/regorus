@@ -28,7 +28,7 @@ fn match_span(s: &Span, v: &Value) -> Result<()> {
     match &v {
         Value::String(vs) => {
             my_assert_eq!(
-                s.text(),
+                *s.text(),
                 vs,
                 "{}",
                 s.source
@@ -37,7 +37,7 @@ fn match_span(s: &Span, v: &Value) -> Result<()> {
         }
         _ => {
             my_assert_eq!(
-                s.text(),
+                *s.text(),
                 serde_json::to_string_pretty(v)?,
                 "{}",
                 s.source
@@ -629,11 +629,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
 
     for case in &test.cases {
         print!("\ncase {} ", case.note);
-        let source = Source {
-            file: "case.rego",
-            contents: case.rego.as_str(),
-            lines: case.rego.split('\n').collect(),
-        };
+        let source = Source::new("case.rego".to_string(), case.rego.clone());
         let mut parser = Parser::new(&source)?;
         match parser.parse() {
             Ok(module) => {
