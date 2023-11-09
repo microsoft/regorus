@@ -4,7 +4,6 @@
 use anyhow::{bail, Result};
 use regorus::*;
 use serde::{Deserialize, Serialize};
-use std::env;
 use test_generator::test_resources;
 
 fn get_tokens(source: &Source) -> Result<Vec<Token>> {
@@ -153,24 +152,6 @@ fn yaml_test(file: &str) -> Result<()> {
             panic!("{}", e);
         }
     }
-}
-
-#[test]
-#[ignore = "intended for use by scripts/yaml-test-lex"]
-fn one_yaml() -> Result<()> {
-    let mut file = String::default();
-    for a in env::args() {
-        if a.ends_with(".yaml") {
-            file = a;
-            break;
-        }
-    }
-
-    if file.is_empty() {
-        bail!("missing yaml test file");
-    }
-
-    yaml_test(file.as_str())
 }
 
 #[test_resources("tests/lexer/**/*.yaml")]

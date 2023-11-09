@@ -52,6 +52,11 @@ fn lsh(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     // TODO: precision
     let v1 = v1 as i64;
     let v2 = v2 as i64;
+
+    if v2 <= 0 {
+        return Ok(Value::Undefined);
+    }
+
     Ok(Value::from_float((v1 << v2) as Float))
 }
 
@@ -101,6 +106,11 @@ fn rsh(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     // TODO: precision
     let v1 = v1 as i64;
     let v2 = v2 as i64;
+
+    if v2 < 0 {
+        return Ok(Value::Undefined);
+    }
+
     Ok(Value::from_float((v1 >> v2) as Float))
 }
 

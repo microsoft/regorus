@@ -5,4 +5,4 @@
 set -e
 yaml=$(realpath -e $1)
 
-RUST_BACKTRACE=1 cargo test interpreter::one_yaml -- --include-ignored --nocapture "$yaml" $2
+RUST_BACKTRACE=1 cargo test interpreter::one_yaml -- --include-ignored --nocapture "$yaml"

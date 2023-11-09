@@ -4,7 +4,6 @@
 use anyhow::{anyhow, bail, Result};
 use regorus::*;
 use serde::{Deserialize, Serialize};
-use std::env;
 use test_generator::test_resources;
 
 macro_rules! my_assert_eq {
@@ -698,24 +697,6 @@ fn yaml_test(file: &str) -> Result<()> {
             panic!("{}", e);
         }
     }
-}
-
-#[test]
-#[ignore = "intended for use by scripts/yaml-test-parse"]
-fn one_yaml() -> Result<()> {
-    let mut file = String::default();
-    for a in env::args() {
-        if a.ends_with(".yaml") {
-            file = a;
-            break;
-        }
-    }
-
-    if file.is_empty() {
-        bail!("missing yaml test file");
-    }
-
-    yaml_test(file.as_str())
 }
 
 #[test_resources("tests/parser/**/*.yaml")]

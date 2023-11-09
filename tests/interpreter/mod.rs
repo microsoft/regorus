@@ -1,18 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#![cfg(test)]
-
 use std::env;
-use std::path::Path;
 
 use anyhow::{bail, Result};
 use regorus::*;
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use test_generator::test_resources;
-use walkdir::WalkDir;
-
-mod cases;
 
 // Process test value specified in json/yaml to interpret special encodings.
 pub fn process_value(v: &Value) -> Result<Value> {
@@ -191,91 +185,6 @@ fn push_query_results(query_results: QueryResults, results: &mut Vec<Value>) {
     }
 }
 
-pub fn eval_file_first_rule(
-    regos: &[String],
-    data_opt: Option<Value>,
-    input_opt: Option<ValueOrVec>,
-    query: &str,
-    enable_tracing: bool,
-) -> Result<Vec<Value>> {
-    let mut results = vec![];
-    let mut files = vec![];
-    let mut sources = vec![];
-    let mut modules = vec![];
-    let mut modules_ref = vec![];
-
-    for (idx, _) in regos.iter().enumerate() {
-        files.push(format!("rego_{idx}"));
-    }
-
-    for (idx, file) in files.iter().enumerate() {
-        let contents = regos[idx].as_str();
-        sources.push(Source::new(file.to_string(), contents.to_string()));
-    }
-
-    for source in &sources {
-        let mut parser = Parser::new(source)?;
-        modules.push(parser.parse()?);
-    }
-
-    for m in &modules {
-        modules_ref.push(m);
-    }
-
-    let query_source = regorus::Source::new("<query.rego>".to_string(), query.to_string());
-    let query_span = regorus::Span {
-        source: query_source.clone(),
-        line: 1,
-        col: 1,
-        start: 0,
-        end: query.len() as u16,
-    };
-    let mut parser = regorus::Parser::new(&query_source)?;
-    let query_node = parser.parse_query(query_span, "")?;
-    let query_schedule =
-        regorus::Analyzer::new().analyze_query_snippet(&modules_ref, &query_node)?;
-    let analyzer = Analyzer::new();
-    let schedule = analyzer.analyze(&modules_ref)?;
-
-    let mut interpreter = interpreter::Interpreter::new(&modules_ref)?;
-    if let Some(input) = input_opt {
-        // if inputs are defined then first the evaluation if prepared
-        interpreter.prepare_for_eval(Some(schedule), &data_opt)?;
-
-        // then all modules are evaluated for each input
-        let mut inputs = vec![];
-        match input {
-            ValueOrVec::Single(single_input) => inputs.push(single_input),
-            ValueOrVec::Many(mut many_input) => inputs.append(&mut many_input),
-        }
-
-        for input in inputs {
-            if let Some(module) = &modules.get(0) {
-                if let Some(rule) = &module.policy.get(0) {
-                    interpreter.eval_rule_with_input(module, rule, &Some(input), enable_tracing)?;
-                }
-            }
-
-            // Now eval the query.
-            push_query_results(
-                interpreter.eval_user_query(&query_node, &query_schedule, enable_tracing)?,
-                &mut results,
-            );
-        }
-    } else {
-        // it no input is defined then one evaluation of all modules is performed
-        interpreter.eval(&data_opt, &None, enable_tracing, Some(schedule))?;
-
-        // Now eval the query
-        push_query_results(
-            interpreter.eval_user_query(&query_node, &query_schedule, enable_tracing)?,
-            &mut results,
-        );
-    }
-
-    Ok(results)
-}
-
 pub fn eval_file(
     regos: &[String],
     data_opt: Option<Value>,
@@ -415,7 +324,7 @@ struct YamlTest {
     cases: Vec<TestCase>,
 }
 
-fn yaml_test_impl(file: &str, is_opa_test: bool) -> Result<()> {
+fn yaml_test_impl(file: &str) -> Result<()> {
     let yaml_str = std::fs::read_to_string(file)?;
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
@@ -430,7 +339,6 @@ fn yaml_test_impl(file: &str, is_opa_test: bool) -> Result<()> {
 
         match (&case.want_result, &case.error) {
             (Some(_), None) | (None, Some(_)) => (),
-            _ if is_opa_test => (),
             _ => panic!("either want_result or error must be specified in test case."),
         }
 
@@ -453,23 +361,10 @@ fn yaml_test_impl(file: &str, is_opa_test: bool) -> Result<()> {
                         }
                     }
 
-                    if is_opa_test {
-                        // Convert value to json compatible representation.
-                        let results =
-                            Value::from_json_str(serde_json::to_string(&results)?.as_str())?;
-                        match_values(&results, &expected_results[0])?;
-                    } else {
-                        check_output(&results, &expected_results)?;
-                    }
+                    check_output(&results, &expected_results)?;
                 }
                 _ => bail!("eval succeeded and did not produce any errors"),
             },
-            Err(actual) if is_opa_test => {
-                if case.want_error.is_none() && case.want_error_code.is_none() {
-                    return Err(actual);
-                }
-                // opa test expects execution to fail and it did.
-            }
             Err(actual) => match &case.error {
                 Some(expected) => {
                     let actual = actual.to_string();
@@ -492,8 +387,8 @@ fn yaml_test_impl(file: &str, is_opa_test: bool) -> Result<()> {
     Ok(())
 }
 
-fn yaml_test(file: &str, is_opa_test: bool) -> Result<()> {
-    match yaml_test_impl(file, is_opa_test) {
+fn yaml_test(file: &str) -> Result<()> {
+    match yaml_test_impl(file) {
         Ok(_) => Ok(()),
         Err(e) => {
             // If Err is returned, it doesn't always get printed by cargo test.
@@ -505,20 +400,17 @@ fn yaml_test(file: &str, is_opa_test: bool) -> Result<()> {
 
 #[test]
 fn yaml_test_basic() -> Result<()> {
-    yaml_test("tests/interpreter/cases/basic_001.yaml", false)
+    yaml_test("tests/interpreter/cases/basic_001.yaml")
 }
 
 #[test]
 #[ignore = "intended for use by scripts/yaml-test-eval"]
 fn one_yaml() -> Result<()> {
     let mut file = String::default();
-    let mut is_opa_test = false;
 
     for a in env::args() {
         if a.ends_with(".yaml") {
             file = a;
-        } else if a == "opa-test" {
-            is_opa_test = true;
         }
     }
 
@@ -526,47 +418,10 @@ fn one_yaml() -> Result<()> {
         bail!("missing <yaml-file>");
     }
 
-    yaml_test(file.as_str(), is_opa_test)
+    yaml_test(file.as_str())
 }
 
 #[test_resources("tests/interpreter/**/*.yaml")]
 fn run(path: &str) {
-    yaml_test(path, false).unwrap()
-}
-
-#[test]
-#[ignore = "intended for running opa test suite"]
-fn run_opa_tests() -> Result<()> {
-    let mut failures = vec![];
-    for a in env::args() {
-        if !Path::new(&a).is_dir() {
-            continue;
-        }
-
-        for entry in WalkDir::new(a)
-            .sort_by_file_name()
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path().to_string_lossy().to_string();
-            if !Path::new(&path).is_file() || !path.ends_with(".yaml") {
-                continue;
-            }
-            let yaml = path;
-            match yaml_test_impl(yaml.as_str(), true) {
-                Ok(_) => (),
-                Err(e) => {
-                    failures.push((yaml, e));
-                }
-            }
-        }
-    }
-
-    if !failures.is_empty() {
-        for (f, e) in failures {
-            println!("{f} failed.\n{e}");
-        }
-        panic!("failed");
-    }
-    Ok(())
+    yaml_test(path).unwrap()
 }
