@@ -333,7 +333,7 @@ impl<'source> Parser<'source> {
         }
 
         // It could be a set, object or object comprehension.
-        // In all the cases, the first expressoin must parse successfully.
+        // In all the cases, the first expression must parse successfully.
         if *self.tok.1.text() == "}" {
             self.next_token()?;
             span.end = self.end;

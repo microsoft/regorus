@@ -20,7 +20,8 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("endswith", (endswith, 2));
     m.insert("format_int", (format_int, 2));
     m.insert("indexof", (indexof, 2));
-    m.insert("indexof_n", (indexof_n, 2));
+    // TODO: implement this correctly.
+    //m.insert("indexof_n", (indexof_n, 2));
     m.insert("lower", (lower, 1));
     m.insert("replace", (replace, 3));
     m.insert("split", (split, 2));
@@ -98,6 +99,7 @@ fn indexof(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     } as Float))
 }
 
+#[allow(dead_code)]
 fn indexof_n(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     let name = "indexof_n";
     ensure_args_count(span, name, params, args, 2)?;
