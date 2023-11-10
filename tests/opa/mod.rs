@@ -140,6 +140,8 @@ fn run_opa_tests() -> Result<()> {
                         }
                     }
 
+                    std::fs::write(path.join(format!("query{n}.text")), case.query.as_bytes())?;
+
                     println!("failed");
                     entry.1 += 1;
                     n += 1;
