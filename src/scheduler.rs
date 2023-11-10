@@ -776,9 +776,18 @@ impl<'a> Analyzer<'a> {
                     )?;
                     self.process_comprs(&comprs[..], scope, first_use, &mut used_vars)?;
                     let check_first_use = *op == AssignOp::ColEq;
-                    for var in self.gather_assigned_vars(lhs, scope, check_first_use, first_use)? {
+                    let assigned_vars =
+                        self.gather_assigned_vars(lhs, scope, check_first_use, first_use)?;
+
+                    for var in &assigned_vars {
                         definitions.push(Definition {
                             var,
+                            used_vars: used_vars.clone(),
+                        });
+                    }
+                    if assigned_vars.is_empty() {
+                        definitions.push(Definition {
+                            var: "",
                             used_vars: used_vars.clone(),
                         });
                     }
@@ -792,9 +801,17 @@ impl<'a> Analyzer<'a> {
                     )?;
                     let check_first_use = false;
                     self.process_comprs(&comprs[..], scope, first_use, &mut used_vars)?;
-                    for var in self.gather_assigned_vars(rhs, scope, check_first_use, first_use)? {
+                    let assigned_vars =
+                        self.gather_assigned_vars(rhs, scope, check_first_use, first_use)?;
+                    for var in &assigned_vars {
                         definitions.push(Definition {
                             var,
+                            used_vars: used_vars.clone(),
+                        });
+                    }
+                    if assigned_vars.is_empty() {
+                        definitions.push(Definition {
+                            var: "",
                             used_vars: used_vars.clone(),
                         });
                     }
