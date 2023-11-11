@@ -366,15 +366,6 @@ fn gather_vars<'a>(
     gather_loop_vars(expr, parent_scopes, scope)
 }
 
-fn get_rule_prefix(expr: &Expr) -> Result<&str> {
-    match expr {
-        Expr::Var(v) => Ok(*v.text()),
-        Expr::RefDot { refr, .. } => get_rule_prefix(refr),
-        Expr::RefBrack { refr, .. } => get_rule_prefix(refr),
-        _ => bail!("internal error: analyzer: could not get rule prefix"),
-    }
-}
-
 pub struct Analyzer<'a> {
     packages: BTreeMap<String, Scope<'a>>,
     locals: BTreeMap<Ref<'a, Query>, Scope<'a>>,
@@ -447,7 +438,7 @@ impl<'a> Analyzer<'a> {
                             | RuleHead::Set { refr, .. }
                             | RuleHead::Func { refr, .. },
                         ..
-                    } => get_rule_prefix(refr)?,
+                    } => get_root_var(refr)?,
                 };
                 scope.locals.insert(var);
             }

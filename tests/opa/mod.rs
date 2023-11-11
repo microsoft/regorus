@@ -133,7 +133,7 @@ fn run_opa_tests() -> Result<()> {
                         } else {
                             for (i, m) in modules.iter().enumerate() {
                                 std::fs::write(
-                                    path.join(format!("rego{n}_{i}.json")),
+                                    path.join(format!("rego{n}_{i}.rego")),
                                     m.as_bytes(),
                                 )?;
                             }
