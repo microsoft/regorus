@@ -232,7 +232,18 @@ impl<'source> Interpreter<'source> {
                         path.reverse();
                         let obj = self.eval_expr(refr)?;
                         let index = self.eval_expr(index)?;
-                        return Ok(Self::get_value_chained(obj[&index].clone(), &path[..]));
+                        let mut v = obj[&index].clone();
+                        // Qualified references starting with data (e.g data.p.q) can
+                        // be indexed using numbers. The number will be converted to string
+                        // if a matching key exists.
+                        if v == Value::Undefined
+                            && matches!(index, Value::Number(_))
+                            && get_root_var(refr)? == "data"
+                        {
+                            let index = index.to_string();
+                            v = obj[&index].clone();
+                        }
+                        return Ok(Self::get_value_chained(v, &path[..]));
                     }
                 },
                 _ => {
@@ -1798,7 +1809,6 @@ impl<'source> Interpreter<'source> {
     }
 
     fn make_rule_context(&self, head: &'source RuleHead) -> Result<(Context<'source>, Vec<Span>)> {
-        //TODO: include "data" ?
         let mut path = Parser::get_path_ref_components(&self.module.unwrap().package.refr)?;
 
         match head {
@@ -2129,6 +2139,25 @@ impl<'source> Interpreter<'source> {
         Ok(())
     }
 
+    fn update_data(
+        &mut self,
+        span: &Span,
+        _refr: &Expr,
+        path: &[&str],
+        value: Value,
+    ) -> Result<()> {
+        if value == Value::Undefined {
+            return Ok(());
+        }
+        // Ensure that path is created.
+        let vref = Self::make_or_get_value_mut(&mut self.data, path)?;
+        if Self::get_value_chained(self.init_data.clone(), path) == Value::Undefined {
+            Self::merge_value(span, vref, value)
+        } else {
+            Err(span.error("value for rule has already been specified in data document"))
+        }
+    }
+
     fn eval_rule(&mut self, module: &'source Module, rule: &'source Rule) -> Result<()> {
         // Skip reprocessing rule
         if self.processed.contains(&Ref::make(rule)) {
@@ -2175,41 +2204,42 @@ impl<'source> Interpreter<'source> {
                 head: rule_head,
                 bodies: rule_body,
             } => {
-                if !matches!(rule_head, RuleHead::Func { .. }) {
-                    let (ctx, mut path) = self.make_rule_context(rule_head)?;
-                    let special_set =
-                        matches!((ctx.output_expr, &ctx.value), (None, Value::Set(_)));
-                    let value = match self.eval_rule_bodies(ctx, span, rule_body)? {
-                        Value::Set(_) if special_set => {
-                            let entry = path[path.len() - 1].text();
-                            let mut s = BTreeSet::new();
-                            s.insert(Value::String(entry.to_owned().to_string()));
-                            path = path[0..path.len() - 1].to_vec();
-                            Value::from_set(s)
-                        }
-                        v => v,
-                    };
-                    if value != Value::Undefined {
+                match rule_head {
+                    RuleHead::Compr { refr, .. } | RuleHead::Set { refr, .. } => {
+                        let (ctx, mut path) = self.make_rule_context(rule_head)?;
+                        let special_set =
+                            matches!((ctx.output_expr, &ctx.value), (None, Value::Set(_)));
+                        let value = match self.eval_rule_bodies(ctx, span, rule_body)? {
+                            Value::Set(_) if special_set => {
+                                let entry = path[path.len() - 1].text();
+                                let mut s = BTreeSet::new();
+                                s.insert(Value::String(entry.to_owned().to_string()));
+                                path = path[0..path.len() - 1].to_vec();
+                                Value::from_set(s)
+                            }
+                            v => v,
+                        };
                         let paths: Vec<&str> = path.iter().map(|s| *s.text()).collect();
-                        let vref = Self::make_or_get_value_mut(&mut self.data, &paths[..])?;
-                        Self::merge_value(span, vref, value)?;
+                        self.update_data(span, refr, &paths[..], value)?;
+
+                        self.processed.insert(Ref::make(rule));
                     }
+                    RuleHead::Func { refr, .. } => {
+                        let mut path =
+                            Parser::get_path_ref_components(&self.current_module()?.package.refr)?;
 
-                    self.processed.insert(Ref::make(rule));
-                } else if let RuleHead::Func { refr, .. } = rule_head {
-                    let mut path =
-                        Parser::get_path_ref_components(&self.current_module()?.package.refr)?;
+                        Parser::get_path_ref_components_into(refr, &mut path)?;
+                        let path: Vec<&str> = path.iter().map(|s| *s.text()).collect();
 
-                    Parser::get_path_ref_components_into(refr, &mut path)?;
-                    let path: Vec<&str> = path.iter().map(|s| *s.text()).collect();
-
-                    // Ensure that for functions with a nesting level (e.g: a.foo),
-                    // `a` is created as an empty object.
-                    if path.len() > 1 {
-                        let value =
-                            Self::make_or_get_value_mut(&mut self.data, &path[0..path.len() - 1])?;
-                        if value == &Value::Undefined {
-                            *value = Value::new_object();
+                        // Ensure that for functions with a nesting level (e.g: a.foo),
+                        // `a` is created as an empty object.
+                        if path.len() > 1 {
+                            self.update_data(
+                                span,
+                                refr,
+                                &path[0..path.len() - 1],
+                                Value::new_object(),
+                            )?;
                         }
                     }
                 }
@@ -2248,7 +2278,20 @@ impl<'source> Interpreter<'source> {
 
         if let Some(data) = data {
             self.data = data.clone();
+            self.init_data = data.clone();
         }
+
+        self.functions = gather_functions(&self.modules)?;
+
+        self.gather_rules()?;
+        self.prepared = true;
+
+        Ok(())
+    }
+
+    pub fn eval_modules(&mut self, input: &Option<Value>, enable_tracing: bool) -> Result<Value> {
+        self.checks_for_eval(input, enable_tracing)?;
+        self.clean_internal_evaluation_state();
 
         // Ensure that each module has an empty object
         for m in &self.modules {
@@ -2261,43 +2304,6 @@ impl<'source> Interpreter<'source> {
         }
 
         self.check_default_rules()?;
-        self.functions = gather_functions(&self.modules)?;
-
-        self.gather_rules()?;
-
-        self.init_data = self.data.clone();
-        self.prepared = true;
-
-        Ok(())
-    }
-
-    pub fn eval_module(
-        &mut self,
-        module: &'source Module,
-        input: &Option<Value>,
-        enable_tracing: bool,
-    ) -> Result<Value> {
-        self.checks_for_eval(input, enable_tracing)?;
-        self.clean_internal_evaluation_state();
-
-        for rule in &module.policy {
-            self.eval_rule(module, rule)?;
-        }
-
-        // Defer the evaluation of the default rules to here
-        let prev_module = self.set_current_module(Some(module))?;
-        for rule in &module.policy {
-            self.eval_default_rule(rule)?;
-        }
-        self.set_current_module(prev_module)?;
-
-        Ok(self.data.clone())
-    }
-
-    pub fn eval_modules(&mut self, input: &Option<Value>, enable_tracing: bool) -> Result<Value> {
-        self.checks_for_eval(input, enable_tracing)?;
-        self.clean_internal_evaluation_state();
-
         for module in self.modules.clone() {
             for rule in &module.policy {
                 self.eval_rule(module, rule)?;

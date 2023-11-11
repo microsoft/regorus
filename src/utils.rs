@@ -17,19 +17,17 @@ pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
                 comps.push(&field.text());
                 expr = Some(refr);
             }
-            Some(Expr::RefBrack { refr, index, .. })
-                if matches!(index.as_ref(), Expr::String(_)) =>
-            {
+            Some(Expr::RefBrack { refr, index, .. }) => {
                 if let Expr::String(s) = index.as_ref() {
                     comps.push(&s.text());
-                    expr = Some(refr);
                 }
+                expr = Some(refr);
             }
             Some(Expr::Var(v)) => {
                 comps.push(&v.text());
                 expr = None;
             }
-            _ => bail!("internal error: not a simple ref"),
+            _ => bail!("internal error: not a simple ref {expr:?}"),
         }
     }
     if let Some(d) = document {
@@ -91,4 +89,14 @@ pub fn gather_functions<'a>(modules: &[&'a Module]) -> Result<FunctionTable<'a>>
         }
     }
     Ok(table)
+}
+
+pub fn get_root_var(mut expr: &Expr) -> Result<&str> {
+    loop {
+        match expr {
+            Expr::Var(v) => return Ok(*v.text()),
+            Expr::RefDot { refr, .. } | Expr::RefBrack { refr, .. } => expr = refr,
+            _ => bail!("internal error: analyzer: could not get rule prefix"),
+        }
+    }
 }

@@ -331,6 +331,9 @@ impl Value {
     }
 
     pub fn merge(&mut self, mut new: Value) -> Result<()> {
+        if self == &new {
+            return Ok(());
+        }
         match (self, &mut new) {
             (v @ Value::Undefined, _) => *v = new,
             (Value::Set(ref mut set), Value::Set(new)) => {
@@ -351,7 +354,7 @@ impl Value {
                     };
                 }
             }
-            _ => bail!("internal error: could not merge value"),
+            _ => bail!("error: could not merge value"),
         };
         Ok(())
     }

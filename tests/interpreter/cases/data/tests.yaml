@@ -1,0 +1,69 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: numbers are converted to string as needed when indexing data
+    data:
+      "1": "hello"
+      "1.2": "world"
+      test:
+        "2": 100
+        "2.2": 200
+      play:
+        "2": 100
+    modules:
+      - |
+        package test
+
+        p = v {
+          q = data.play
+          # 2 is not converted to "2" since refr doesn't being with `data`
+          v = q[2]
+        }
+
+        a = [
+          data[1],
+          data[1.2],
+          data.test[2],
+          data.test[2.2]
+        ]
+    query: data.test
+    want_result:
+      "2": 100
+      "2.2": 200
+      a:
+        - "hello"
+        - "world"
+        - 100
+        - 200
+        
+  - note: overriding refs in data produces error
+    data:
+      test:
+        rule1: 0
+    modules:
+      - |
+        package test
+
+        rule1 = 6
+    query: data.test
+    error: value for rule has already been specified
+      
+  - note: rule named data
+    data:
+      test:
+        rule1: 8
+    modules:
+      - |
+        package test
+
+        data.test.rule1 = 9
+        data.test.rule1 = 9
+    query: data.test
+    want_result:
+      rule1: 8
+      data:
+        test:
+          rule1: 9
+    
+    
