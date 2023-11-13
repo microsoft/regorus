@@ -222,8 +222,6 @@ fn traverse<'a>(expr: &'a Expr, f: &mut dyn FnMut(&'a Expr) -> Result<bool>) -> 
         ArrayCompr { .. } | SetCompr { .. } | ObjectCompr { .. } => (),
 
         Call { params, .. } => {
-            // TODO: is traversing function needed?
-            // traverse(fcn, f)?;
             for p in params {
                 traverse(p, f)?;
             }
@@ -372,6 +370,7 @@ pub struct Analyzer<'a> {
     scopes: Vec<Scope<'a>>,
     order: BTreeMap<Ref<'a, Query>, Vec<u16>>,
     functions: FunctionTable<'a>,
+    current_module_path: String,
 }
 
 #[derive(Clone)]
@@ -394,6 +393,7 @@ impl<'a> Analyzer<'a> {
             scopes: vec![],
             order: BTreeMap::new(),
             functions: FunctionTable::new(),
+            current_module_path: String::default(),
         }
     }
 
@@ -453,7 +453,7 @@ impl<'a> Analyzer<'a> {
             Some(s) => s,
             _ => bail!("internal error: package scope missing"),
         };
-
+        self.current_module_path = path;
         self.scopes.push(scope.clone());
         for r in &m.policy {
             self.analyze_rule(r)?;
@@ -597,6 +597,7 @@ impl<'a> Analyzer<'a> {
         scope: &mut Scope<'a>,
         first_use: &mut BTreeMap<&'a str, Span>,
         definitions: &mut Vec<Definition<'a>>,
+        return_arg: &Option<Ref<Expr>>,
     ) -> Result<(Vec<&'a str>, Vec<&'a Expr>)> {
         let mut used_vars = vec![];
         let mut comprs = vec![];
@@ -608,8 +609,8 @@ impl<'a> Analyzer<'a> {
                 {
                     used_vars.push(name);
                     first_use.entry(name).or_insert(v.clone());
-                } else if !scope.inputs.contains(name) {
-                    bail!(v.error(format!("Use of undefined variable `{name}` is unsafe").as_str()));
+                } else if !scope.inputs.contains(name) && Some(Ref::make(e)) != *return_arg {
+                    bail!(v.error(format!("use of undefined variable `{name}` is unsafe").as_str()));
                 }
                 Ok(false)
             }
@@ -623,6 +624,7 @@ impl<'a> Analyzer<'a> {
                             scope,
                             first_use,
                             definitions,
+                            return_arg,
                         )?;
                         definitions.push(Definition {
                             var,
@@ -764,6 +766,7 @@ impl<'a> Analyzer<'a> {
                         scope,
                         first_use,
                         definitions,
+                        &None,
                     )?;
                     self.process_comprs(&comprs[..], scope, first_use, &mut used_vars)?;
                     let check_first_use = *op == AssignOp::ColEq;
@@ -789,6 +792,7 @@ impl<'a> Analyzer<'a> {
                         scope,
                         first_use,
                         definitions,
+                        &None,
                     )?;
                     let check_first_use = false;
                     self.process_comprs(&comprs[..], scope, first_use, &mut used_vars)?;
@@ -825,8 +829,13 @@ impl<'a> Analyzer<'a> {
                 self.process_assign_expr(op, lhs, rhs, scope, first_use, definitions)
             }
             _ => {
-                let (mut used_vars, comprs) =
-                    Self::gather_used_vars_comprs_index_vars(expr, scope, first_use, definitions)?;
+                let (mut used_vars, comprs) = Self::gather_used_vars_comprs_index_vars(
+                    expr,
+                    scope,
+                    first_use,
+                    definitions,
+                    &None,
+                )?;
                 self.process_comprs(&comprs[..], scope, first_use, &mut used_vars)?;
                 definitions.push(Definition { var: "", used_vars });
                 Ok(())
@@ -922,6 +931,7 @@ impl<'a> Analyzer<'a> {
                         &mut scope,
                         &mut first_use,
                         &mut col_definitions,
+                        &None,
                     )?;
                     definitions.append(&mut col_definitions);
 
@@ -948,6 +958,7 @@ impl<'a> Analyzer<'a> {
                             &mut scope,
                             &mut first_use,
                             &mut definitions,
+                            &None,
                         )?;
                         if !definitions.is_empty() {
                             bail!("internal error: non empty definitions");
@@ -964,12 +975,18 @@ impl<'a> Analyzer<'a> {
                     // TODO: vars in compr
                 }
                 Literal::Expr { expr, .. } => {
-                    if let Some(Expr::Var(return_arg)) = get_extra_arg(expr, &self.functions) {
+                    let extra_arg = get_extra_arg(
+                        expr,
+                        Some(self.current_module_path.as_str()),
+                        &self.functions,
+                    );
+                    if let Some(ra @ Expr::Var(return_arg)) = &extra_arg {
                         let (mut used_vars, comprs) = Self::gather_used_vars_comprs_index_vars(
                             expr,
                             &mut scope,
                             &mut first_use,
                             &mut definitions,
+                            &Some(Ref::make(ra)),
                         )?;
                         let var = if *return_arg.text() != "_" {
                             // The var in the return argument slot would have been processed as
@@ -1010,6 +1027,7 @@ impl<'a> Analyzer<'a> {
                         &mut scope,
                         &mut first_use,
                         &mut definitions,
+                        &None,
                     )?;
                     self.process_comprs(&comprs[..], &mut scope, &mut first_use, &mut uv)?;
                     definitions.push(Definition {

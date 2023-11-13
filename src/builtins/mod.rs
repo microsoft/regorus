@@ -13,6 +13,7 @@ pub mod numbers;
 mod objects;
 pub mod sets;
 mod strings;
+mod time;
 mod tracing;
 pub mod types;
 mod utils;
@@ -51,7 +52,7 @@ lazy_static! {
 	encoding::register(&mut m);
 	//token_signing::register(&mut m);
 	//token_verification::register(&mut m);
-	//time::register(&mut m);
+	time::register(&mut m);
 	//cryptography::register(&mut m);
 	//graphs::register(&mut m);
 	//graphql::register(&mut m);

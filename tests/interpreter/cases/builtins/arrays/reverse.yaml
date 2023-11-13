@@ -39,7 +39,7 @@ cases:
         package test
         x = array.reverse()
     query: data.test
-    error: "at least one argument required for function calls"
+    error: "expects 1 argument"
 
   - note: reverse-more-args
     data: {}

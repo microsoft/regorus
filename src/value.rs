@@ -190,6 +190,11 @@ impl Value {
         Value::Number(Number(OrderedFloat(v)))
     }
 
+    pub fn from_u128(v: u128) -> Value {
+        // TODO: fix precision loss
+        Value::Number(Number(OrderedFloat(v as f64)))
+    }
+
     pub fn from_array(a: Vec<Value>) -> Value {
         Value::Array(Rc::new(a))
     }
