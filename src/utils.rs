@@ -39,25 +39,41 @@ pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
 
 pub type FunctionTable<'a> = BTreeMap<String, (Vec<&'a Rule>, u8)>;
 
-pub fn get_extra_arg<'a>(expr: &'a Expr, functions: &FunctionTable) -> Option<&'a Expr> {
+fn get_extra_arg_impl<'a>(
+    expr: &'a Expr,
+    module: Option<&str>,
+    functions: &FunctionTable,
+) -> Result<Option<&'a Expr>> {
     if let Expr::Call { fcn, params, .. } = expr {
-        if let Ok(path) = get_path_string(fcn, None) {
-            let n_args = if let Some((_, n_args)) = functions.get(&path) {
-                *n_args
-            } else if let Some((_, n_args)) = BUILTINS.get(path.as_str()) {
+        let full_path = get_path_string(fcn, module)?;
+        let n_args = if let Some((_, n_args)) = functions.get(&full_path) {
+            *n_args
+        } else {
+            let path = get_path_string(fcn, None)?;
+            if let Some((_, n_args)) = BUILTINS.get(path.as_str()) {
                 *n_args
             } else if let Some((_, n_args)) = DEPRECATED.get(path.as_str()) {
                 *n_args
             } else {
-                return None;
-            };
-            if n_args as usize == params.len() - 1 {
-                return params.last();
+                return Ok(None);
             }
+        };
+        if (n_args as usize) + 1 == params.len() {
+            return Ok(params.last());
         }
     }
+    Ok(None)
+}
 
-    None
+pub fn get_extra_arg<'a>(
+    expr: &'a Expr,
+    module: Option<&str>,
+    functions: &FunctionTable,
+) -> Option<&'a Expr> {
+    match get_extra_arg_impl(expr, module, functions) {
+        Ok(a) => a,
+        _ => None,
+    }
 }
 
 pub fn gather_functions<'a>(modules: &[&'a Module]) -> Result<FunctionTable<'a>> {

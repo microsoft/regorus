@@ -522,19 +522,16 @@ impl<'source> Parser<'source> {
                 }
                 "(" if possible_fcn => {
                     self.next_token()?;
-                    if *self.tok.1.text() == ")" {
-                        return Err(self
-                            .tok
-                            .1
-                            .error("at least one argument required for function calls"));
-                    }
-                    let mut args = vec![self.parse_in_expr()?];
-                    while *self.tok.1.text() == "," {
-                        self.next_token()?;
-                        match *self.tok.1.text() {
-                            ")" => break,
-                            "" if self.tok.0 == TokenKind::Eof => break,
-                            _ => args.push(self.parse_in_expr()?),
+                    let mut args = vec![];
+                    if *self.tok.1.text() != ")" {
+                        args.push(self.parse_in_expr()?);
+                        while *self.tok.1.text() == "," {
+                            self.next_token()?;
+                            match *self.tok.1.text() {
+                                ")" => break,
+                                "" if self.tok.0 == TokenKind::Eof => break,
+                                _ => args.push(self.parse_in_expr()?),
+                            }
                         }
                     }
                     self.expect(")", "while parsing call expr")?;
@@ -925,19 +922,19 @@ impl<'source> Parser<'source> {
 
     pub fn parse_query(&mut self, mut span: Span, end_delim: &str) -> Result<Query> {
         let state = self.clone();
-        let _is_definite_query = matches!(*self.tok.1.text(), "some" | "every");
+        let is_definite_query = matches!(*self.tok.1.text(), "some" | "every");
 
         // TODO: empty query?
         let mut literals = vec![];
 
         let stmt = match self.parse_literal_stmt() {
             Ok(stmt) => stmt,
-            Err(e) if _is_definite_query => return Err(e),
-            _ => {
+            Err(e) if is_definite_query => return Err(e),
+            Err(_) => {
                 // There was error parsing the first literal
                 // Restore the state and return.
                 *self = state;
-                return Err(anyhow!("encountered , when expecting {}", end_delim));
+                bail!(span.error(format!("expecting {end_delim}").as_str()));
             }
         };
 
@@ -1170,13 +1167,16 @@ impl<'source> Parser<'source> {
             "(" => {
                 self.check_rule_ref(&rule_ref)?;
                 self.next_token()?;
-                let mut args = vec![self.parse_term()?];
-                while *self.tok.1.text() == "," {
-                    self.next_token()?;
-                    match *self.tok.1.text() {
-                        ")" => break,
-                        "" if self.tok.0 == TokenKind::Eof => break,
-                        _ => args.push(self.parse_term()?),
+                let mut args = vec![];
+                if *self.tok.1.text() != ")" {
+                    args.push(self.parse_term()?);
+                    while *self.tok.1.text() == "," {
+                        self.next_token()?;
+                        match *self.tok.1.text() {
+                            ")" => break,
+                            "" if self.tok.0 == TokenKind::Eof => break,
+                            _ => args.push(self.parse_term()?),
+                        }
                     }
                 }
                 self.expect(")", "while parsing function rule args")?;

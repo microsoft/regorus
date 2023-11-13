@@ -72,7 +72,7 @@ fn run_opa_tests() -> Result<()> {
             return Ok(());
         }
     };
-    dbg!(&opa_tests_dir);
+
     let tests_path = Path::new(&opa_tests_dir);
     let mut status = BTreeMap::<String, (u32, u32)>::new();
     let mut n = 0;
@@ -152,14 +152,18 @@ fn run_opa_tests() -> Result<()> {
     }
 
     println!("TESTSUITE STATUS");
-    println!("    {:30}  {:4} {:4}", "FOLDER", "PASS", "FAIL");
+    println!("    {:40}  {:4} {:4}", "FOLDER", "PASS", "FAIL");
+    let (mut npass, mut nfail) = (0, 0);
     for (dir, (pass, fail)) in status {
         if fail == 0 {
             println!("\x1b[32m    {dir:40}: {pass:4} {fail:4}\x1b[0m");
         } else {
             println!("\x1b[31m    {dir:40}: {pass:4} {fail:4}\x1b[0m");
         }
+        npass += pass;
+        nfail += fail;
     }
-
+    println!();
+    println!("\x1b[31m    {:40}: {npass:4} {nfail:4}\x1b[0m", "TOTAL");
     Ok(())
 }

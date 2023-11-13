@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::ast::*;
-use crate::builtins;
+use crate::builtins::{self, BuiltinFcn};
 use crate::lexer::Span;
 use crate::parser::Parser;
 use crate::scheduler::*;
@@ -27,6 +27,7 @@ pub struct Interpreter<'source> {
     data: Value,
     init_data: Value,
     with_document: Value,
+    with_functions: BTreeMap<String, String>,
     scopes: Vec<Scope>,
     // TODO: handle recursive calls where same expr could have different values.
     loop_var_values: BTreeMap<Ref<'source, Expr>, Value>,
@@ -96,6 +97,7 @@ impl<'source> Interpreter<'source> {
             data: Value::new_object(),
             init_data: Value::new_object(),
             with_document,
+            with_functions: BTreeMap::new(),
             scopes: vec![Scope::new()],
             contexts: vec![],
             loop_var_values: BTreeMap::new(),
@@ -842,7 +844,11 @@ impl<'source> Interpreter<'source> {
                         span,
                         fcn,
                         params,
-                        get_extra_arg(expr, &self.functions),
+                        get_extra_arg(
+                            expr,
+                            Some(self.current_module_path.as_str()),
+                            &self.functions,
+                        ),
                         true,
                     )?,
                     _ => self.eval_expr(expr)?,
@@ -872,7 +878,11 @@ impl<'source> Interpreter<'source> {
                         span,
                         fcn,
                         params,
-                        get_extra_arg(expr, &self.functions),
+                        get_extra_arg(
+                            expr,
+                            Some(self.current_module_path.as_str()),
+                            &self.functions,
+                        ),
                         false,
                     )?,
                     _ => self.eval_expr(expr)?,
@@ -947,19 +957,43 @@ impl<'source> Interpreter<'source> {
         stmt: &'source LiteralStmt,
         stmts: &[&'source LiteralStmt],
     ) -> Result<bool> {
+        let mut skip_exec = false;
         let saved_state = if !stmt.with_mods.is_empty() {
             // Save state;
             let with_document = self.with_document.clone();
             let input = self.input.clone();
             let data = self.data.clone();
             let processed = self.processed.clone();
+            let with_functions = self.with_functions.clone();
 
             // Apply with modifiers.
             for wm in &stmt.with_mods {
-                // Evaluate value and ref
-                let value = self.eval_expr(&wm.r#as)?;
                 let path = Parser::get_path_ref_components(&wm.refr)?;
                 let path: Vec<&str> = path.iter().map(|s| *s.text()).collect();
+                let target = path.join(".");
+
+                let value = match self.eval_expr(&wm.r#as) {
+                    Ok(Value::Undefined) => {
+                        if let Ok(fcn_path) = get_path_string(&wm.r#as, None) {
+                            let span = wm.r#as.span();
+                            if self.lookup_function_by_name(&fcn_path).is_some() {
+                                let mut fcn_path = get_path_string(&wm.r#as, None)?;
+                                if !fcn_path.starts_with("data.") {
+                                    fcn_path = self.current_module_path.clone() + "." + &fcn_path;
+                                }
+                                self.with_functions.insert(target, fcn_path);
+                                continue;
+                            } else if self.lookup_builtin(span, &fcn_path).is_ok() {
+                                self.with_functions.insert(target, fcn_path);
+                                continue;
+                            }
+                        }
+                        skip_exec = true;
+                        continue;
+                    }
+                    Ok(v) => v,
+                    Err(e) => return Err(e),
+                };
 
                 if path[0] == "input" || path[0] == "data" {
                     *Self::make_or_get_value_mut(&mut self.with_document, &path[..])? = value;
@@ -968,28 +1002,38 @@ impl<'source> Interpreter<'source> {
                   } else {
                       // TODO: error about input, data
                   } */
-                // TODO: functions
             }
 
             self.data = self.with_document["data"].clone();
             self.input = self.with_document["input"].clone();
             self.processed.clear();
 
-            (with_document, input, data, processed)
+            (with_document, input, data, processed, with_functions)
         } else {
             (
                 Value::Undefined,
                 Value::Undefined,
                 Value::Undefined,
                 BTreeSet::new(),
+                BTreeMap::new(),
             )
         };
 
-        let r = self.eval_stmt_impl(stmt, stmts);
+        let r = if !skip_exec {
+            self.eval_stmt_impl(stmt, stmts)
+        } else {
+            Ok(false)
+        };
 
         // Restore state.
         if saved_state.0 != Value::Undefined {
-            (self.with_document, self.input, self.data, self.processed) = saved_state;
+            (
+                self.with_document,
+                self.input,
+                self.data,
+                self.processed,
+                self.with_functions,
+            ) = saved_state;
         }
 
         r
@@ -1443,24 +1487,22 @@ impl<'source> Interpreter<'source> {
         }
     }
 
-    fn lookup_function(&self, fcn: &'source Expr) -> Result<&Vec<&'source Rule>> {
-        let mut path = Self::get_path_string(fcn, None)?;
+    fn lookup_function_by_name(&self, path: &str) -> Option<&Vec<&'source Rule>> {
+        let mut path = path.to_owned();
         if !path.starts_with("data.") {
             path = self.current_module_path.clone() + "." + &path;
         }
 
         match self.functions.get(&path) {
-            Some((r, _)) => Ok(r),
-            _ => {
-                bail!(fcn.span().error("function not found"))
-            }
+            Some((f, _)) => Some(f),
+            _ => None,
         }
     }
 
     fn eval_builtin_call(
         &mut self,
         span: &'source Span,
-        name: String,
+        name: &str,
         builtin: builtins::BuiltinFcn,
         params: &'source [Expr],
     ) -> Result<Value> {
@@ -1474,7 +1516,7 @@ impl<'source> Interpreter<'source> {
             }
         }
 
-        let cache = builtins::must_cache(name.as_str());
+        let cache = builtins::must_cache(name);
         if let Some(name) = &cache {
             if let Some(v) = self.builtins_cache.get(&(name, args.clone())) {
                 return Ok(v.clone());
@@ -1496,30 +1538,47 @@ impl<'source> Interpreter<'source> {
         Ok(v)
     }
 
+    fn lookup_builtin(&self, span: &'source Span, path: &str) -> Result<Option<&BuiltinFcn>> {
+        Ok(if let Some(builtin) = builtins::BUILTINS.get(path) {
+            Some(builtin)
+        } else if let Some(builtin) = builtins::DEPRECATED.get(path) {
+            if !self.allow_deprecated {
+                bail!(span.error(format!("{path} is deprecated").as_str()))
+            }
+            Some(builtin)
+        } else {
+            None
+        })
+    }
+
     fn eval_call_impl(
         &mut self,
         span: &'source Span,
         fcn: &'source Expr,
         params: &'source [Expr],
     ) -> Result<Value> {
-        let fcns_rules = match self.lookup_function(fcn) {
-            Ok(r) => r,
+        let fcn_path = match get_path_string(fcn, None) {
+            Ok(p) => p,
+            _ => bail!(span.error("invalid function expression")),
+        };
+
+        let orig_fcn_path = fcn_path;
+        let fcn_path = match self.with_functions.remove(&orig_fcn_path) {
+            Some(p) => p,
+            _ => orig_fcn_path.clone(),
+        };
+
+        let fcns_rules = match self.lookup_function_by_name(&fcn_path) {
+            Some(r) => r,
             _ => {
                 // Look up builtin function.
-                // TODO: handle with modifier
-                if let Ok(path) = Self::get_path_string(fcn, None) {
-                    if let Some(builtin) = builtins::BUILTINS.get(path.as_str()) {
-                        return self.eval_builtin_call(span, path, *builtin, params);
+                if let Ok(Some(builtin)) = self.lookup_builtin(span, &fcn_path) {
+                    let r = self.eval_builtin_call(span, &fcn_path.clone(), *builtin, params);
+                    if orig_fcn_path != fcn_path {
+                        self.with_functions.insert(orig_fcn_path, fcn_path);
                     }
-                    if let Some(builtin) = builtins::DEPRECATED.get(path.as_str()) {
-                        if self.allow_deprecated {
-                            return self.eval_builtin_call(span, path, *builtin, params);
-                        } else {
-                            bail!(span.error(format!("{path} is deprecated").as_str()))
-                        }
-                    }
+                    return r;
                 }
-
                 return Err(span
                     .source
                     .error(span.line, span.col, "could not find function"));
@@ -1629,6 +1688,11 @@ impl<'source> Interpreter<'source> {
                 "functions must not produce multiple outputs for same inputs",
             ));
         }
+
+        if orig_fcn_path != fcn_path {
+            self.with_functions.insert(orig_fcn_path, fcn_path);
+        }
+
         Ok(results[0].clone())
     }
 
