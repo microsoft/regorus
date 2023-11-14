@@ -56,7 +56,7 @@ fn match_span_opt(s: &Span, v: &Value) -> Result<()> {
     }
 }
 
-fn match_vec(s: &Span, vec: &Vec<Expr>, v: &Value) -> Result<()> {
+fn match_vec(s: &Span, vec: &Vec<Ref<Expr>>, v: &Value) -> Result<()> {
     if v.as_object().is_ok() {
         match_span_opt(s, &v["span"])?;
         return match_vec(s, vec, &v["values"]);
@@ -79,7 +79,7 @@ fn match_vec(s: &Span, vec: &Vec<Expr>, v: &Value) -> Result<()> {
     Ok(())
 }
 
-fn match_object(s: &Span, fields: &Vec<(Span, Expr, Expr)>, v: &Value) -> Result<()> {
+fn match_object(s: &Span, fields: &Vec<(Span, Ref<Expr>, Ref<Expr>)>, v: &Value) -> Result<()> {
     if skip_value(v) {
         return Ok(());
     }
@@ -299,7 +299,7 @@ fn match_query(q: &Query, v: &Value) -> Result<()> {
     Ok(())
 }
 
-fn match_expr_opt(s: &Span, e: &Option<Expr>, v: &Value) -> Result<()> {
+fn match_expr_opt(s: &Span, e: &Option<Ref<Expr>>, v: &Value) -> Result<()> {
     match (e, v) {
         (Some(e), v) => match_expr(e, v),
         (None, Value::Undefined) => Ok(()),

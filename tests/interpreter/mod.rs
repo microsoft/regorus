@@ -196,7 +196,6 @@ pub fn eval_file(
     let mut files = vec![];
     let mut sources = vec![];
     let mut modules = vec![];
-    let mut modules_ref = vec![];
 
     for (idx, _) in regos.iter().enumerate() {
         files.push(format!("rego_{idx}"));
@@ -209,11 +208,7 @@ pub fn eval_file(
 
     for source in &sources {
         let mut parser = Parser::new(source)?;
-        modules.push(parser.parse()?);
-    }
-
-    for m in &modules {
-        modules_ref.push(m);
+        modules.push(Ref::new(parser.parse()?));
     }
 
     let query_source = regorus::Source::new("<query.rego".to_string(), query.to_string());
@@ -225,14 +220,13 @@ pub fn eval_file(
         end: query.len() as u16,
     };
     let mut parser = regorus::Parser::new(&query_source)?;
-    let query_node = parser.parse_query(query_span, "")?;
-    let query_schedule =
-        regorus::Analyzer::new().analyze_query_snippet(&modules_ref, &query_node)?;
+    let query_node = Ref::new(parser.parse_query(query_span, "")?);
+    let query_schedule = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
 
     let analyzer = Analyzer::new();
-    let schedule = analyzer.analyze(&modules_ref)?;
+    let schedule = analyzer.analyze(&modules)?;
 
-    let mut interpreter = interpreter::Interpreter::new(&modules_ref)?;
+    let mut interpreter = interpreter::Interpreter::new(&modules)?;
     if let Some(input) = input_opt {
         // if inputs are defined then first the evaluation if prepared
         interpreter.prepare_for_eval(Some(schedule), &data_opt)?;

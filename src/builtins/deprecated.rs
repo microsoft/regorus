@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr;
+use crate::ast::{Expr, Ref};
 use crate::builtins::utils::ensure_args_count;
 use crate::builtins::BuiltinFcn;
 use crate::lexer::Span;
@@ -24,7 +24,7 @@ lazy_static! {
     };
 }
 
-fn all(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn all(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "all", params, args, 1)?;
 
     Ok(Value::Bool(match &args[0] {
@@ -37,7 +37,7 @@ fn all(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     }))
 }
 
-fn any(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn any(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "any", params, args, 1)?;
 
     Ok(Value::Bool(match &args[0] {

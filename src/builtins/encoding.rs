@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr;
+use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_string};
 use crate::lexer::Span;
@@ -16,7 +16,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("base64.decode", (base64_decode, 1));
 }
 
-fn base64_decode(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn base64_decode(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "base64.decode";
     ensure_args_count(span, name, params, args, 1)?;
 

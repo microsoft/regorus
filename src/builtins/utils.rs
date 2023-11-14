@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr;
+use crate::ast::{Expr, Ref};
 use crate::lexer::Span;
 use crate::value::{Float, Value};
 
@@ -13,7 +13,7 @@ use anyhow::{bail, Result};
 pub fn ensure_args_count(
     span: &Span,
     fcn: &'static str,
-    params: &[Expr],
+    params: &[Ref<Expr>],
     args: &[Value],
     expected: usize,
 ) -> Result<()> {

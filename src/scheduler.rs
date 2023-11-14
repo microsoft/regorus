@@ -3,7 +3,7 @@
 
 use crate::ast::Expr::*;
 use crate::ast::*;
-use crate::lexer::Span;
+use crate::lexer::*;
 use crate::utils::*;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -12,22 +12,22 @@ use std::string::String;
 use anyhow::{bail, Result};
 
 #[derive(Debug)]
-pub struct Definition<'a> {
+pub struct Definition<Str: Clone + std::cmp::Ord> {
     // The variable being defined.
     // This can be an empty string to indicate that
     // no variable is being defined.
-    pub var: &'a str,
+    pub var: Str,
 
     // Other variables in the same scope used to compute
     // the value of this variable.
-    pub used_vars: Vec<&'a str>,
+    pub used_vars: Vec<Str>,
 }
 
 #[derive(Debug)]
-pub struct StmtInfo<'a> {
+pub struct StmtInfo<Str: Clone + std::cmp::Ord> {
     // A statement can define multiple variables.
     // A variable can also be defined by multiple statement.
-    pub definitions: Vec<Definition<'a>>,
+    pub definitions: Vec<Definition<Str>>,
 }
 
 #[derive(Debug)]
@@ -38,17 +38,21 @@ pub enum SortResult {
     Cycle(String, Vec<usize>),
 }
 
-pub fn schedule<'a>(infos: &mut [StmtInfo<'a>]) -> Result<SortResult> {
+pub fn schedule<Str: Clone + std::cmp::Ord + std::fmt::Debug>(
+    infos: &mut [StmtInfo<Str>],
+    empty: &Str,
+) -> Result<SortResult> {
     let num_statements = infos.len();
 
     // Mapping from each var to the list of statements that define it.
-    let mut defining_stmts: BTreeMap<&'a str, Vec<usize>> = BTreeMap::new();
+    let mut defining_stmts: BTreeMap<Str, Vec<usize>> = BTreeMap::new();
 
     // For each statement, interate through its definitions and add the
     // statement (index) to the var's defining-statements list.
     for (idx, info) in infos.iter().enumerate() {
         for defn in &info.definitions {
-            defining_stmts.entry(defn.var).or_default().push(idx);
+            let varc = defn.var.clone();
+            defining_stmts.entry(varc).or_default().push(idx);
         }
     }
 
@@ -63,7 +67,7 @@ pub fn schedule<'a>(infos: &mut [StmtInfo<'a>]) -> Result<SortResult> {
     let mut scheduled = vec![false; infos.len()];
 
     // List of vars to be processed.
-    let mut vars_to_process: Vec<&'a str> = defining_stmts.keys().cloned().collect();
+    let mut vars_to_process: Vec<Str> = defining_stmts.keys().cloned().collect();
     let mut tmp = vec![];
 
     let mut queue = VecDeque::new();
@@ -104,7 +108,7 @@ pub fn schedule<'a>(infos: &mut [StmtInfo<'a>]) -> Result<SortResult> {
                         .iter()
                         .all(|uv| defined_vars.contains(uv) || defined_in_stmt.contains(uv))
                     {
-                        defined_in_stmt.insert(defn.var);
+                        defined_in_stmt.insert(defn.var.clone());
                     } else {
                         // The definiton must be processed again.
                         queue.push_back(defn);
@@ -129,7 +133,7 @@ pub fn schedule<'a>(infos: &mut [StmtInfo<'a>]) -> Result<SortResult> {
 
             // For each definition in the statement, mark its var as defined.
             for defn in &infos[stmt_idx].definitions {
-                defined_vars.insert(defn.var);
+                defined_vars.insert(defn.var.clone());
             }
             Some(true)
         } else {
@@ -167,7 +171,7 @@ pub fn schedule<'a>(infos: &mut [StmtInfo<'a>]) -> Result<SortResult> {
 
         // Loop through each unscheduled var.
         for var in tmp.iter().cloned() {
-            let (stmt_scheduled, reprocess_var) = process_var(var);
+            let (stmt_scheduled, reprocess_var) = process_var(var.clone());
 
             if stmt_scheduled {
                 done = false;
@@ -177,7 +181,7 @@ pub fn schedule<'a>(infos: &mut [StmtInfo<'a>]) -> Result<SortResult> {
                 // to see if any statements that depend on var can be scheduled.
                 // Doing so allows statements like `x > 10` to be scheduled immediately after x has been defined.
                 // TODO: Also schedule statements like `y = x > 10` immediately.
-                process_var("");
+                process_var(empty.clone());
             }
 
             if reprocess_var {
@@ -187,7 +191,7 @@ pub fn schedule<'a>(infos: &mut [StmtInfo<'a>]) -> Result<SortResult> {
     }
 
     if order.len() != num_statements {
-        bail!("could not schedule all statements {order:?} {num_statements} {tmp:?}");
+        bail!("could not schedule all statements {order:?} {num_statements}");
     }
 
     // TODO: determine cycles.
@@ -195,16 +199,16 @@ pub fn schedule<'a>(infos: &mut [StmtInfo<'a>]) -> Result<SortResult> {
 }
 
 #[derive(Clone, Default, Debug)]
-pub struct Scope<'a> {
-    pub locals: BTreeSet<&'a str>,
-    pub inputs: BTreeSet<&'a str>,
+pub struct Scope {
+    pub locals: BTreeSet<SourceStr>,
+    pub inputs: BTreeSet<SourceStr>,
 }
 
-fn traverse<'a>(expr: &'a Expr, f: &mut dyn FnMut(&'a Expr) -> Result<bool>) -> Result<()> {
+fn traverse(expr: &Ref<Expr>, f: &mut dyn FnMut(&Ref<Expr>) -> Result<bool>) -> Result<()> {
     if !f(expr)? {
         return Ok(());
     }
-    match expr {
+    match expr.as_ref() {
         String(_) | RawString(_) | Number(_) | True(_) | False(_) | Null(_) | Var(_) => (),
 
         Array { items, .. } | Set { items, .. } => {
@@ -260,35 +264,35 @@ fn traverse<'a>(expr: &'a Expr, f: &mut dyn FnMut(&'a Expr) -> Result<bool>) -> 
     Ok(())
 }
 
-fn var_exists<'a>(name: &'a str, parent_scopes: &[Scope<'a>]) -> bool {
+fn var_exists(name: &SourceStr, parent_scopes: &[Scope]) -> bool {
     parent_scopes.iter().rev().any(|s| s.locals.contains(name))
 }
 
-fn gather_assigned_vars<'a>(
-    expr: &'a Expr,
+fn gather_assigned_vars(
+    expr: &Ref<Expr>,
     can_shadow: bool,
-    parent_scopes: &[Scope<'a>],
-    scope: &mut Scope<'a>,
+    parent_scopes: &[Scope],
+    scope: &mut Scope,
 ) -> Result<()> {
-    traverse(expr, &mut |e| match e {
+    traverse(expr, &mut |e| match e.as_ref() {
         // Ignore _, input, data.
         Var(v) if matches!(*v.text(), "_" | "input" | "data") => Ok(false),
 
         // Record local var that can shadow input var.
         Var(v) if can_shadow => {
-            scope.locals.insert(*v.text());
+            scope.locals.insert(v.source_str());
             Ok(false)
         }
 
         // Record input vars.
-        Var(v) if var_exists(*v.text(), parent_scopes) => {
-            scope.inputs.insert(*v.text());
+        Var(v) if var_exists(&v.source_str(), parent_scopes) => {
+            scope.inputs.insert(v.source_str());
             Ok(false)
         }
 
         // Record local var.
         Var(v) => {
-            scope.locals.insert(*v.text());
+            scope.locals.insert(v.source_str());
             Ok(false)
         }
 
@@ -298,16 +302,12 @@ fn gather_assigned_vars<'a>(
     })
 }
 
-fn gather_input_vars<'a>(
-    expr: &'a Expr,
-    parent_scopes: &[Scope<'a>],
-    scope: &mut Scope<'a>,
-) -> Result<()> {
-    traverse(expr, &mut |e| match e {
-        Var(v) if var_exists(*v.text(), parent_scopes) => {
-            let var = v.text();
-            if !scope.locals.contains(&*var) {
-                scope.inputs.insert(*var);
+fn gather_input_vars(expr: &Ref<Expr>, parent_scopes: &[Scope], scope: &mut Scope) -> Result<()> {
+    traverse(expr, &mut |e| match e.as_ref() {
+        Var(v) if var_exists(&v.source_str(), parent_scopes) => {
+            let var = v.source_str();
+            if !scope.locals.contains(&var) {
+                scope.inputs.insert(var);
             }
             Ok(false)
         }
@@ -315,20 +315,16 @@ fn gather_input_vars<'a>(
     })
 }
 
-fn gather_loop_vars<'a>(
-    expr: &'a Expr,
-    parent_scopes: &[Scope<'a>],
-    scope: &mut Scope<'a>,
-) -> Result<()> {
-    traverse(expr, &mut |e| match e {
-        Var(v) if var_exists(*v.text(), parent_scopes) => Ok(false),
+fn gather_loop_vars(expr: &Ref<Expr>, parent_scopes: &[Scope], scope: &mut Scope) -> Result<()> {
+    traverse(expr, &mut |e| match e.as_ref() {
+        Var(v) if var_exists(&v.source_str(), parent_scopes) => Ok(false),
         RefBrack { index, .. } => {
             if let Var(v) = index.as_ref() {
                 if !matches!(*v.text(), "_" | "input" | "data")
-                    && !var_exists(*v.text(), parent_scopes)
+                    && !var_exists(&v.source_str(), parent_scopes)
                 {
                     // Treat this as an index var.
-                    scope.locals.insert(*v.text());
+                    scope.locals.insert(v.source_str());
                 }
             }
             Ok(true)
@@ -343,15 +339,15 @@ fn gather_loop_vars<'a>(
 //   t = {"k": 5}
 // {k:y} = t
 // Try inlining value of t
-fn gather_vars<'a>(
-    expr: &'a Expr,
+fn gather_vars(
+    expr: &Ref<Expr>,
     can_shadow: bool,
-    parent_scopes: &[Scope<'a>],
-    scope: &mut Scope<'a>,
+    parent_scopes: &[Scope],
+    scope: &mut Scope,
 ) -> Result<()> {
     // Process assignment expressions to gather vars that are defined/assigned
     // in current scope.
-    if let AssignExpr { op, lhs, rhs, .. } = expr {
+    if let AssignExpr { op, lhs, rhs, .. } = expr.as_ref() {
         gather_assigned_vars(lhs, *op == AssignOp::ColEq, parent_scopes, scope)?;
         gather_assigned_vars(rhs, false, parent_scopes, scope)?;
     } else {
@@ -364,29 +360,29 @@ fn gather_vars<'a>(
     gather_loop_vars(expr, parent_scopes, scope)
 }
 
-pub struct Analyzer<'a> {
-    packages: BTreeMap<String, Scope<'a>>,
-    locals: BTreeMap<Ref<'a, Query>, Scope<'a>>,
-    scopes: Vec<Scope<'a>>,
-    order: BTreeMap<Ref<'a, Query>, Vec<u16>>,
-    functions: FunctionTable<'a>,
+pub struct Analyzer {
+    packages: BTreeMap<String, Scope>,
+    locals: BTreeMap<Ref<Query>, Scope>,
+    scopes: Vec<Scope>,
+    order: BTreeMap<Ref<Query>, Vec<u16>>,
+    functions: FunctionTable,
     current_module_path: String,
 }
 
 #[derive(Clone)]
-pub struct Schedule<'a> {
-    pub scopes: BTreeMap<Ref<'a, Query>, Scope<'a>>,
-    pub order: BTreeMap<Ref<'a, Query>, Vec<u16>>,
+pub struct Schedule {
+    pub scopes: BTreeMap<Ref<Query>, Scope>,
+    pub order: BTreeMap<Ref<Query>, Vec<u16>>,
 }
 
-impl<'a> Default for Analyzer<'a> {
+impl Default for Analyzer {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a> Analyzer<'a> {
-    pub fn new() -> Analyzer<'a> {
+impl Analyzer {
+    pub fn new() -> Analyzer {
         Analyzer {
             packages: BTreeMap::new(),
             locals: BTreeMap::new(),
@@ -397,7 +393,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    pub fn analyze(mut self, modules: &'a [&'a Module]) -> Result<Schedule> {
+    pub fn analyze(mut self, modules: &[Ref<Module>]) -> Result<Schedule> {
         self.add_rules(modules)?;
         self.functions = gather_functions(modules)?;
 
@@ -413,9 +409,9 @@ impl<'a> Analyzer<'a> {
 
     pub fn analyze_query_snippet(
         mut self,
-        modules: &'a [&'a Module],
-        query: &'a Query,
-    ) -> Result<Schedule<'a>> {
+        modules: &[Ref<Module>],
+        query: &Ref<Query>,
+    ) -> Result<Schedule> {
         self.add_rules(modules)?;
         self.analyze_query(None, None, query, Scope::default())?;
 
@@ -425,12 +421,12 @@ impl<'a> Analyzer<'a> {
         })
     }
 
-    fn add_rules(&mut self, modules: &'a [&'a Module]) -> Result<()> {
+    fn add_rules(&mut self, modules: &[Ref<Module>]) -> Result<()> {
         for m in modules {
             let path = get_path_string(&m.package.refr, Some("data"))?;
             let scope: &mut Scope = self.packages.entry(path).or_default();
             for r in &m.policy {
-                let var = match r {
+                let var = match r.as_ref() {
                     Rule::Default { refr, .. }
                     | Rule::Spec {
                         head:
@@ -447,7 +443,7 @@ impl<'a> Analyzer<'a> {
         Ok(())
     }
 
-    fn analyze_module(&mut self, m: &'a Module) -> Result<()> {
+    fn analyze_module(&mut self, m: &Module) -> Result<()> {
         let path = get_path_string(&m.package.refr, Some("data"))?;
         let scope = match self.packages.get(&path) {
             Some(s) => s,
@@ -463,8 +459,8 @@ impl<'a> Analyzer<'a> {
         Ok(())
     }
 
-    fn analyze_rule(&mut self, r: &'a Rule) -> Result<()> {
-        match r {
+    fn analyze_rule(&mut self, r: &Ref<Rule>) -> Result<()> {
+        match r.as_ref() {
             Rule::Spec { head, bodies, .. } => {
                 let (key, value, scope) = self.analyze_rule_head(head)?;
                 // Push arg scope if any.
@@ -472,12 +468,12 @@ impl<'a> Analyzer<'a> {
                 // scheduling.
                 self.scopes.push(scope);
                 for b in bodies {
-                    self.analyze_query(key, value, &b.query, Scope::default())?;
+                    self.analyze_query(key.clone(), value.clone(), &b.query, Scope::default())?;
                 }
 
                 if bodies.is_empty() {
                     if let Some(value) = value {
-                        self.analyze_value_expr(value)?;
+                        self.analyze_value_expr(&value)?;
                     }
                 }
 
@@ -488,25 +484,25 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn analyze_value_expr(&mut self, expr: &'a Expr) -> Result<()> {
+    fn analyze_value_expr(&mut self, expr: &Ref<Expr>) -> Result<()> {
         let mut comprs = vec![];
-        traverse(expr, &mut |e| match e {
+        traverse(expr, &mut |e| match e.as_ref() {
             ArrayCompr { .. } | SetCompr { .. } | ObjectCompr { .. } => {
-                comprs.push(e);
+                comprs.push(e.clone());
                 Ok(false)
             }
             _ => Ok(true),
         })?;
         for compr in comprs {
-            match compr {
+            match compr.as_ref() {
                 Expr::ArrayCompr { query, term, .. } | Expr::SetCompr { query, term, .. } => {
-                    self.analyze_query(None, Some(term), query, Scope::default())?;
+                    self.analyze_query(None, Some(term.clone()), query, Scope::default())?;
                 }
                 Expr::ObjectCompr {
                     query, key, value, ..
                 } => self.analyze_query(
-                    Some(key.as_ref()),
-                    Some(value.as_ref()),
+                    Some(key.clone()),
+                    Some(value.clone()),
                     query,
                     Scope::default(),
                 )?,
@@ -518,35 +514,37 @@ impl<'a> Analyzer<'a> {
 
     fn analyze_rule_head(
         &mut self,
-        head: &'a RuleHead,
-    ) -> Result<(Option<&'a Expr>, Option<&'a Expr>, Scope<'a>)> {
+        head: &RuleHead,
+    ) -> Result<(Option<ExprRef>, Option<ExprRef>, Scope)> {
         let mut scope = Scope::default();
         Ok(match head {
-            RuleHead::Compr { assign, .. } => (None, assign.as_ref().map(|a| &a.value), scope),
-            RuleHead::Set { key, .. } => (key.as_ref(), None, scope),
+            RuleHead::Compr { assign, .. } => {
+                (None, assign.as_ref().map(|a| a.value.clone()), scope)
+            }
+            RuleHead::Set { key, .. } => (key.clone(), None, scope),
             RuleHead::Func { args, assign, .. } => {
                 for a in args.iter() {
-                    if let Var(v) = a {
-                        scope.locals.insert(*v.text());
+                    if let Var(v) = a.as_ref() {
+                        scope.locals.insert(v.source_str());
                     }
                 }
-                (None, assign.as_ref().map(|a| &a.value), scope)
+                (None, assign.as_ref().map(|a| a.value.clone()), scope)
             }
         })
     }
 
     fn gather_local_vars(
         &mut self,
-        key: Option<&'a Expr>,
-        value: Option<&'a Expr>,
-        query: &'a Query,
-        scope: &mut Scope<'a>,
+        key: Option<Ref<Expr>>,
+        value: Option<Ref<Expr>>,
+        query: &Query,
+        scope: &mut Scope,
     ) -> Result<()> {
         // First process assign, some expressions and gather local vars.
         for stmt in &query.stmts {
             match &stmt.literal {
                 Literal::SomeVars { vars, .. } => vars.iter().for_each(|v| {
-                    scope.locals.insert(*v.text());
+                    scope.locals.insert(v.source_str());
                 }),
                 Literal::SomeIn {
                     key,
@@ -562,7 +560,7 @@ impl<'a> Analyzer<'a> {
                     gather_loop_vars(collection, &self.scopes, scope)?;
                 }
                 Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => {
-                    if let AssignExpr { .. } = expr {
+                    if let AssignExpr { .. } = expr.as_ref() {
                         gather_vars(expr, false, &self.scopes, scope)?;
                     } else {
                         gather_input_vars(expr, &self.scopes, scope)?;
@@ -577,10 +575,10 @@ impl<'a> Analyzer<'a> {
             }
         }
 
-        if let Some(key) = key {
+        if let Some(key) = &key {
             gather_vars(key, false, &self.scopes, scope)?;
         }
-        if let Some(value) = value {
+        if let Some(value) = &value {
             gather_vars(value, false, &self.scopes, scope)?;
         }
 
@@ -593,23 +591,23 @@ impl<'a> Analyzer<'a> {
     }
 
     fn gather_used_vars_comprs_index_vars(
-        expr: &'a Expr,
-        scope: &mut Scope<'a>,
-        first_use: &mut BTreeMap<&'a str, Span>,
-        definitions: &mut Vec<Definition<'a>>,
+        expr: &Ref<Expr>,
+        scope: &mut Scope,
+        first_use: &mut BTreeMap<SourceStr, Span>,
+        definitions: &mut Vec<Definition<SourceStr>>,
         return_arg: &Option<Ref<Expr>>,
-    ) -> Result<(Vec<&'a str>, Vec<&'a Expr>)> {
+    ) -> Result<(Vec<SourceStr>, Vec<Ref<Expr>>)> {
         let mut used_vars = vec![];
         let mut comprs = vec![];
-        traverse(expr, &mut |e| match e {
+        traverse(expr, &mut |e| match e.as_ref() {
             Var(v) if !matches!(*v.text(), "_" | "input" | "data") => {
-                let name = *v.text();
-                if scope.locals.contains(name)
+                let name = v.source_str();
+                if scope.locals.contains(&name)
                 /*|| scope.inputs.contains(name) */
                 {
-                    used_vars.push(name);
+                    used_vars.push(name.clone());
                     first_use.entry(name).or_insert(v.clone());
-                } else if !scope.inputs.contains(name) && Some(Ref::make(e)) != *return_arg {
+                } else if !scope.inputs.contains(&name) && Some(e.clone()) != *return_arg {
                     bail!(v.error(format!("use of undefined variable `{name}` is unsafe").as_str()));
                 }
                 Ok(false)
@@ -617,8 +615,8 @@ impl<'a> Analyzer<'a> {
 
             RefBrack { refr, index, .. } => {
                 if let Var(v) = index.as_ref() {
-                    let var = *v.text();
-                    if scope.locals.contains(var) {
+                    let var = v.source_str();
+                    if scope.locals.contains(&var) {
                         let (rb_used_vars, rb_comprs) = Self::gather_used_vars_comprs_index_vars(
                             refr,
                             scope,
@@ -627,7 +625,7 @@ impl<'a> Analyzer<'a> {
                             return_arg,
                         )?;
                         definitions.push(Definition {
-                            var,
+                            var: var.clone(),
                             used_vars: rb_used_vars.clone(),
                         });
                         used_vars.extend(rb_used_vars);
@@ -640,7 +638,7 @@ impl<'a> Analyzer<'a> {
             }
 
             ArrayCompr { .. } | SetCompr { .. } | ObjectCompr { .. } => {
-                comprs.push(e);
+                comprs.push(e.clone());
                 Ok(false)
             }
 
@@ -651,29 +649,29 @@ impl<'a> Analyzer<'a> {
 
     fn process_comprs(
         &mut self,
-        comprs: &[&'a Expr],
-        scope: &mut Scope<'a>,
-        first_use: &mut BTreeMap<&'a str, Span>,
-        used_vars: &mut Vec<&'a str>,
+        comprs: &[Ref<Expr>],
+        scope: &mut Scope,
+        first_use: &mut BTreeMap<SourceStr, Span>,
+        used_vars: &mut Vec<SourceStr>,
     ) -> Result<()> {
         self.scopes.push(scope.clone());
 
         for compr in comprs {
-            let compr_scope = match compr {
+            let compr_scope = match compr.as_ref() {
                 Expr::ArrayCompr { query, term, .. } | Expr::SetCompr { query, term, .. } => {
-                    self.analyze_query(None, Some(term), query, Scope::default())?;
-                    self.locals.get(&Ref::make(query))
+                    self.analyze_query(None, Some(term.clone()), query, Scope::default())?;
+                    self.locals.get(query)
                 }
                 Expr::ObjectCompr {
                     query, key, value, ..
                 } => {
                     self.analyze_query(
-                        Some(key.as_ref()),
-                        Some(value.as_ref()),
+                        Some(key.clone()),
+                        Some(value.clone()),
                         query,
                         Scope::default(),
                     )?;
-                    self.locals.get(&Ref::make(query))
+                    self.locals.get(query)
                 }
                 _ => break,
             };
@@ -683,11 +681,11 @@ impl<'a> Analyzer<'a> {
                 for iv in &compr_scope.inputs {
                     if scope.locals.contains(iv) {
                         // Record possible first use of current scope's local var.
-                        first_use.entry(iv).or_insert(compr.span().clone());
-                        used_vars.push(iv);
+                        first_use.entry(iv.clone()).or_insert(compr.span().clone());
+                        used_vars.push(iv.clone());
                     } else {
                         // If the var is not a local var, then add it to the set of input vars.
-                        scope.inputs.insert(iv);
+                        scope.inputs.insert(iv.clone());
                     }
                 }
             }
@@ -699,16 +697,16 @@ impl<'a> Analyzer<'a> {
 
     fn gather_assigned_vars(
         &self,
-        expr: &'a Expr,
-        scope: &Scope<'a>,
+        expr: &Ref<Expr>,
+        scope: &Scope,
         check_first_use: bool,
-        first_use: &BTreeMap<&'a str, Span>,
-    ) -> Result<Vec<&'a str>> {
+        first_use: &BTreeMap<SourceStr, Span>,
+    ) -> Result<Vec<SourceStr>> {
         let mut vars = vec![];
-        traverse(expr, &mut |e| match e {
+        traverse(expr, &mut |e| match e.as_ref() {
             Var(v) => {
-                let var = *v.text();
-                if scope.locals.contains(var) {
+                let var = v.source_str();
+                if scope.locals.contains(&var) {
                     if check_first_use {
                         Self::check_first_use(v, first_use)?;
                     }
@@ -726,13 +724,14 @@ impl<'a> Analyzer<'a> {
     fn process_assign_expr(
         &mut self,
         op: &AssignOp,
-        lhs: &'a Expr,
-        rhs: &'a Expr,
-        scope: &mut Scope<'a>,
-        first_use: &mut BTreeMap<&'a str, Span>,
-        definitions: &mut Vec<Definition<'a>>,
+        lhs: &Ref<Expr>,
+        rhs: &Ref<Expr>,
+        scope: &mut Scope,
+        first_use: &mut BTreeMap<SourceStr, Span>,
+        definitions: &mut Vec<Definition<SourceStr>>,
     ) -> Result<()> {
-        match (lhs, rhs) {
+        let empty_str = lhs.span().source_str().clone_empty();
+        match (lhs.as_ref(), rhs.as_ref()) {
             (
                 Array {
                     items: lhs_items, ..
@@ -775,13 +774,13 @@ impl<'a> Analyzer<'a> {
 
                     for var in &assigned_vars {
                         definitions.push(Definition {
-                            var,
+                            var: var.clone(),
                             used_vars: used_vars.clone(),
                         });
                     }
                     if assigned_vars.is_empty() {
                         definitions.push(Definition {
-                            var: "",
+                            var: empty_str.clone(),
                             used_vars: used_vars.clone(),
                         });
                     }
@@ -800,13 +799,13 @@ impl<'a> Analyzer<'a> {
                         self.gather_assigned_vars(rhs, scope, check_first_use, first_use)?;
                     for var in &assigned_vars {
                         definitions.push(Definition {
-                            var,
+                            var: var.clone(),
                             used_vars: used_vars.clone(),
                         });
                     }
                     if assigned_vars.is_empty() {
                         definitions.push(Definition {
-                            var: "",
+                            var: empty_str.clone(),
                             used_vars: used_vars.clone(),
                         });
                     }
@@ -819,12 +818,12 @@ impl<'a> Analyzer<'a> {
 
     fn process_expr(
         &mut self,
-        expr: &'a Expr,
-        scope: &mut Scope<'a>,
-        first_use: &mut BTreeMap<&'a str, Span>,
-        definitions: &mut Vec<Definition<'a>>,
+        expr: &Ref<Expr>,
+        scope: &mut Scope,
+        first_use: &mut BTreeMap<SourceStr, Span>,
+        definitions: &mut Vec<Definition<SourceStr>>,
     ) -> Result<()> {
-        match expr {
+        match expr.as_ref() {
             AssignExpr { op, lhs, rhs, .. } => {
                 self.process_assign_expr(op, lhs, rhs, scope, first_use, definitions)
             }
@@ -837,15 +836,18 @@ impl<'a> Analyzer<'a> {
                     &None,
                 )?;
                 self.process_comprs(&comprs[..], scope, first_use, &mut used_vars)?;
-                definitions.push(Definition { var: "", used_vars });
+                definitions.push(Definition {
+                    var: expr.span().source_str().clone(),
+                    used_vars,
+                });
                 Ok(())
             }
         }
     }
 
-    fn check_first_use(var: &Span, first_use: &BTreeMap<&'a str, Span>) -> Result<()> {
-        let name = *var.text();
-        if let Some(r#use) = first_use.get(name) {
+    fn check_first_use(var: &Span, first_use: &BTreeMap<SourceStr, Span>) -> Result<()> {
+        let name = var.source_str();
+        if let Some(r#use) = first_use.get(&name) {
             if r#use.line < var.line || (r#use.line == var.line && r#use.col < var.col) {
                 bail!(r#use.error(
                     format!(
@@ -860,21 +862,21 @@ impl<'a> Analyzer<'a> {
     }
 
     fn gather_some_vars(
-        expr: &'a Expr,
-        scope: &Scope<'a>,
-        _first_use: &BTreeMap<&'a str, Span>,
-        vars: &mut Vec<&'a str>,
-        non_vars: &mut Vec<&'a Expr>,
+        expr: &Ref<Expr>,
+        scope: &Scope,
+        _first_use: &BTreeMap<SourceStr, Span>,
+        vars: &mut Vec<SourceStr>,
+        non_vars: &mut Vec<Ref<Expr>>,
     ) -> Result<()> {
-        traverse(expr, &mut |e| match e {
-            Var(v) if scope.locals.contains(*v.text()) => {
-                vars.push(*v.text());
+        traverse(expr, &mut |e| match e.as_ref() {
+            Var(v) if scope.locals.contains(&v.source_str()) => {
+                vars.push(v.source_str());
                 Ok(false)
             }
             // TODO: Object key/value
             Array { .. } | Object { .. } => Ok(true),
             _ => {
-                non_vars.push(e);
+                non_vars.push(e.clone());
                 Ok(false)
             }
         })
@@ -882,11 +884,12 @@ impl<'a> Analyzer<'a> {
 
     fn analyze_query(
         &mut self,
-        key: Option<&'a Expr>,
-        value: Option<&'a Expr>,
-        query: &'a Query,
-        mut scope: Scope<'a>,
+        key: Option<Ref<Expr>>,
+        value: Option<Ref<Expr>>,
+        query: &Ref<Query>,
+        mut scope: Scope,
     ) -> Result<()> {
+        let empty_str = query.span.source_str().clone_empty();
         self.gather_local_vars(key, value, query, &mut scope)?;
 
         let mut infos = vec![];
@@ -945,7 +948,7 @@ impl<'a> Analyzer<'a> {
                     // Add dependency between some-vars and vars used in collection.
                     for var in &some_vars {
                         definitions.push(Definition {
-                            var,
+                            var: var.clone(),
                             used_vars: col_used_vars.clone(),
                         })
                     }
@@ -954,7 +957,7 @@ impl<'a> Analyzer<'a> {
                     for e in non_vars {
                         let mut definitions = vec![];
                         let (uv, comprs) = Self::gather_used_vars_comprs_index_vars(
-                            e,
+                            &e,
                             &mut scope,
                             &mut first_use,
                             &mut definitions,
@@ -971,7 +974,10 @@ impl<'a> Analyzer<'a> {
                             &mut used_vars,
                         )?;
                     }
-                    definitions.push(Definition { var: "", used_vars });
+                    definitions.push(Definition {
+                        var: empty_str.clone(),
+                        used_vars,
+                    });
                     // TODO: vars in compr
                 }
                 Literal::Expr { expr, .. } => {
@@ -980,33 +986,32 @@ impl<'a> Analyzer<'a> {
                         Some(self.current_module_path.as_str()),
                         &self.functions,
                     );
-                    if let Some(ra @ Expr::Var(return_arg)) = &extra_arg {
-                        let (mut used_vars, comprs) = Self::gather_used_vars_comprs_index_vars(
-                            expr,
-                            &mut scope,
-                            &mut first_use,
-                            &mut definitions,
-                            &Some(Ref::make(ra)),
-                        )?;
-                        let var = if *return_arg.text() != "_" {
-                            // The var in the return argument slot would have been processed as
-                            // an used var. Remove it from used vars and add it as the variable being
-                            // defined.
-                            used_vars.pop();
-                            return_arg.text()
-                        } else {
-                            std::rc::Rc::new("")
-                        };
-                        self.process_comprs(
-                            &comprs[..],
-                            &mut scope,
-                            &mut first_use,
-                            &mut used_vars,
-                        )?;
-                        definitions.push(Definition {
-                            var: *var,
-                            used_vars,
-                        });
+                    if let Some(ref ea) = extra_arg {
+                        if let Expr::Var(return_arg) = ea.as_ref() {
+                            let (mut used_vars, comprs) = Self::gather_used_vars_comprs_index_vars(
+                                expr,
+                                &mut scope,
+                                &mut first_use,
+                                &mut definitions,
+                                &extra_arg,
+                            )?;
+                            let var = if *return_arg.text() != "_" {
+                                // The var in the return argument slot would have been processed as
+                                // an used var. Remove it from used vars and add it as the variable being
+                                // defined.
+                                used_vars.pop();
+                                return_arg.source_str()
+                            } else {
+                                empty_str.clone()
+                            };
+                            self.process_comprs(
+                                &comprs[..],
+                                &mut scope,
+                                &mut first_use,
+                                &mut used_vars,
+                            )?;
+                            definitions.push(Definition { var, used_vars });
+                        }
                     } else {
                         self.process_expr(expr, &mut scope, &mut first_use, &mut definitions)?;
                     }
@@ -1031,16 +1036,16 @@ impl<'a> Analyzer<'a> {
                     )?;
                     self.process_comprs(&comprs[..], &mut scope, &mut first_use, &mut uv)?;
                     definitions.push(Definition {
-                        var: "",
+                        var: empty_str.clone(),
                         used_vars: uv,
                     });
 
                     self.scopes.push(scope.clone());
                     let mut e_scope = Scope::default();
                     if let Some(key) = key {
-                        e_scope.locals.insert(*key.text());
+                        e_scope.locals.insert(key.source_str());
                     }
-                    e_scope.locals.insert(*value.text());
+                    e_scope.locals.insert(value.source_str());
                     self.scopes.push(e_scope);
 
                     // TODO: mark first use of key, value so that they cannot be := assigned
@@ -1057,24 +1062,24 @@ impl<'a> Analyzer<'a> {
             // binding the "" var so that these statements get scheduled first.
             if definitions.is_empty() {
                 definitions.push(Definition {
-                    var: "",
+                    var: empty_str.clone(),
                     used_vars: vec![],
                 });
             }
             infos.push(StmtInfo { definitions });
         }
 
-        let res = schedule(&mut infos[..]);
+        let res = schedule(&mut infos[..], &query.span.source_str().clone_empty());
         match res {
             Ok(SortResult::Order(ord)) => {
-                self.order.insert(Ref::make(query), ord);
+                self.order.insert(query.clone(), ord);
             }
             Err(err) => {
                 bail!(query.span.error(&err.to_string()))
             }
             _ => (),
         }
-        self.locals.insert(Ref::make(query), scope);
+        self.locals.insert(query.clone(), scope);
 
         Ok(())
     }

@@ -3,6 +3,8 @@
 
 use crate::lexer::*;
 
+use std::ops::Deref;
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum BinOp {
     And,
@@ -34,7 +36,67 @@ pub enum AssignOp {
     ColEq,
 }
 
-#[derive(Debug, Clone)]
+pub struct NodeRef<T> {
+    r: std::rc::Rc<T>,
+}
+
+impl<T> Clone for NodeRef<T> {
+    fn clone(&self) -> Self {
+        Self { r: self.r.clone() }
+    }
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for NodeRef<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.r.as_ref().fmt(f)
+    }
+}
+
+impl<T> std::cmp::PartialEq for NodeRef<T> {
+    fn eq(&self, other: &Self) -> bool {
+        std::rc::Rc::as_ptr(&self.r).eq(&std::rc::Rc::as_ptr(&other.r))
+    }
+}
+
+impl<T> std::cmp::Eq for NodeRef<T> {}
+
+impl<T> std::cmp::Ord for NodeRef<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::rc::Rc::as_ptr(&self.r).cmp(&std::rc::Rc::as_ptr(&other.r))
+    }
+}
+
+impl<T> std::cmp::PartialOrd for NodeRef<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T> Deref for NodeRef<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.r
+    }
+}
+
+impl<T> AsRef<T> for NodeRef<T> {
+    fn as_ref(&self) -> &T {
+        self.deref()
+    }
+}
+
+impl<T> NodeRef<T> {
+    pub fn new(t: T) -> Self {
+        Self {
+            r: std::rc::Rc::new(t),
+        }
+    }
+}
+
+pub type Ref<T> = NodeRef<T>;
+
+#[derive(Debug)]
 pub enum Expr {
     // Simple items that only have a span as content.
     String(Span),
@@ -48,97 +110,97 @@ pub enum Expr {
     // array
     Array {
         span: Span,
-        items: Vec<Expr>,
+        items: Vec<Ref<Expr>>,
     },
 
     // set
     Set {
         span: Span,
-        items: Vec<Expr>,
+        items: Vec<Ref<Expr>>,
     },
 
     Object {
         span: Span,
-        fields: Vec<(Span, Expr, Expr)>,
+        fields: Vec<(Span, Ref<Expr>, Ref<Expr>)>,
     },
 
     // Comprehensions
     ArrayCompr {
         span: Span,
-        term: Box<Expr>,
-        query: Query,
+        term: Ref<Expr>,
+        query: Ref<Query>,
     },
 
     SetCompr {
         span: Span,
-        term: Box<Expr>,
-        query: Query,
+        term: Ref<Expr>,
+        query: Ref<Query>,
     },
 
     ObjectCompr {
         span: Span,
-        key: Box<Expr>,
-        value: Box<Expr>,
-        query: Query,
+        key: Ref<Expr>,
+        value: Ref<Expr>,
+        query: Ref<Query>,
     },
 
     Call {
         span: Span,
-        fcn: Box<Expr>,
-        params: Vec<Expr>,
+        fcn: Ref<Expr>,
+        params: Vec<Ref<Expr>>,
     },
 
     UnaryExpr {
         span: Span,
-        expr: Box<Expr>,
+        expr: Ref<Expr>,
     },
 
     // ref
     RefDot {
         span: Span,
-        refr: Box<Expr>,
+        refr: Ref<Expr>,
         field: Span,
     },
 
     RefBrack {
         span: Span,
-        refr: Box<Expr>,
-        index: Box<Expr>,
+        refr: Ref<Expr>,
+        index: Ref<Expr>,
     },
 
     // Infix expressions
     BinExpr {
         span: Span,
         op: BinOp,
-        lhs: Box<Expr>,
-        rhs: Box<Expr>,
+        lhs: Ref<Expr>,
+        rhs: Ref<Expr>,
     },
     BoolExpr {
         span: Span,
         op: BoolOp,
-        lhs: Box<Expr>,
-        rhs: Box<Expr>,
+        lhs: Ref<Expr>,
+        rhs: Ref<Expr>,
     },
 
     ArithExpr {
         span: Span,
         op: ArithOp,
-        lhs: Box<Expr>,
-        rhs: Box<Expr>,
+        lhs: Ref<Expr>,
+        rhs: Ref<Expr>,
     },
 
     AssignExpr {
         span: Span,
         op: AssignOp,
-        lhs: Box<Expr>,
-        rhs: Box<Expr>,
+        lhs: Ref<Expr>,
+        rhs: Ref<Expr>,
     },
 
     Membership {
         span: Span,
-        key: Box<Option<Expr>>,
-        value: Box<Expr>,
-        collection: Box<Expr>,
+        key: Option<Ref<Expr>>,
+        value: Ref<Expr>,
+        collection: Ref<Expr>,
     },
 }
 
@@ -166,7 +228,7 @@ impl Expr {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Literal {
     SomeVars {
         span: Span,
@@ -174,82 +236,82 @@ pub enum Literal {
     },
     SomeIn {
         span: Span,
-        key: Option<Expr>,
-        value: Expr,
-        collection: Expr,
+        key: Option<Ref<Expr>>,
+        value: Ref<Expr>,
+        collection: Ref<Expr>,
     },
     Expr {
         span: Span,
-        expr: Expr,
+        expr: Ref<Expr>,
     },
     NotExpr {
         span: Span,
-        expr: Expr,
+        expr: Ref<Expr>,
     },
     Every {
         span: Span,
         key: Option<Span>,
         value: Span,
-        domain: Expr,
-        query: Query,
+        domain: Ref<Expr>,
+        query: Ref<Query>,
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct WithModifier {
     pub span: Span,
-    pub refr: Expr,
-    pub r#as: Expr,
+    pub refr: Ref<Expr>,
+    pub r#as: Ref<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LiteralStmt {
     pub span: Span,
     pub literal: Literal,
     pub with_mods: Vec<WithModifier>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Query {
     pub span: Span,
     pub stmts: Vec<LiteralStmt>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RuleAssign {
     pub span: Span,
     pub op: AssignOp,
-    pub value: Expr,
+    pub value: Ref<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RuleBody {
     pub span: Span,
     pub assign: Option<RuleAssign>,
-    pub query: Query,
+    pub query: Ref<Query>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum RuleHead {
     Compr {
         span: Span,
-        refr: Expr,
+        refr: Ref<Expr>,
         assign: Option<RuleAssign>,
     },
     Set {
         span: Span,
-        refr: Expr,
-        key: Option<Expr>,
+        refr: Ref<Expr>,
+        key: Option<Ref<Expr>>,
     },
     Func {
         span: Span,
-        refr: Expr,
-        args: Vec<Expr>,
+        refr: Ref<Expr>,
+        args: Vec<Ref<Expr>>,
         assign: Option<RuleAssign>,
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Rule {
     Spec {
         span: Span,
@@ -258,63 +320,30 @@ pub enum Rule {
     },
     Default {
         span: Span,
-        refr: Expr,
+        refr: Ref<Expr>,
         op: AssignOp,
-        value: Expr,
+        value: Ref<Expr>,
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Package {
     pub span: Span,
-    pub refr: Expr,
+    pub refr: Ref<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Import {
     pub span: Span,
-    pub refr: Expr,
+    pub refr: Ref<Expr>,
     pub r#as: Option<Span>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Module {
     pub package: Package,
     pub imports: Vec<Import>,
-    pub policy: Vec<Rule>,
+    pub policy: Vec<Ref<Rule>>,
 }
 
-#[derive(Debug, Clone)]
-pub struct Ref<'a, T> {
-    r: &'a T,
-}
-
-impl<'a, T> Ref<'a, T> {
-    pub fn make(r: &'a T) -> Self {
-        Self { r }
-    }
-
-    pub fn inner(&self) -> &'a T {
-        self.r
-    }
-}
-
-impl<'a, T> Eq for Ref<'a, T> {}
-
-impl<'a, T> PartialEq for Ref<'a, T> {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.r, other.r)
-    }
-}
-
-impl<'a, T> PartialOrd for Ref<'a, T> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<'a, T> Ord for Ref<'a, T> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (self.r as *const T).cmp(&(other.r as *const T))
-    }
-}
+pub type ExprRef = Ref<Expr>;

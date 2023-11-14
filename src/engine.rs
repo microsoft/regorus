@@ -12,7 +12,7 @@ use anyhow::Result;
 
 #[derive(Clone)]
 pub struct Engine {
-    modules: Vec<std::rc::Rc<Module>>,
+    modules: Vec<Ref<Module>>,
     input: Value,
     data: Value,
 }
@@ -35,14 +35,14 @@ impl Engine {
     pub fn add_policy(&mut self, path: String, rego: String) -> Result<()> {
         let source = Source::new(path, rego);
         let mut parser = Parser::new(&source)?;
-        self.modules.push(std::rc::Rc::new(parser.parse()?));
+        self.modules.push(Ref::new(parser.parse()?));
         Ok(())
     }
 
     pub fn add_policy_from_file(&mut self, path: String) -> Result<()> {
         let source = Source::from_file(path)?;
         let mut parser = Parser::new(&source)?;
-        self.modules.push(std::rc::Rc::new(parser.parse()?));
+        self.modules.push(Ref::new(parser.parse()?));
         Ok(())
     }
 
@@ -59,14 +59,12 @@ impl Engine {
     }
 
     pub fn eval_query(&self, query: String, enable_tracing: bool) -> Result<QueryResults> {
-        let modules_ref: Vec<&Module> = self.modules.iter().map(|m| &**m).collect();
-
         // Analyze the modules and determine how statements must be scheduled.
         let analyzer = Analyzer::new();
-        let schedule = analyzer.analyze(&modules_ref)?;
+        let schedule = analyzer.analyze(&self.modules)?;
 
         // Create interpreter object.
-        let mut interpreter = Interpreter::new(&modules_ref)?;
+        let mut interpreter = Interpreter::new(&self.modules)?;
 
         // Evaluate all the modules.
         interpreter.eval(
@@ -87,8 +85,8 @@ impl Engine {
             end: query_len as u16,
         };
         let mut parser = Parser::new(&query_source)?;
-        let query_node = parser.parse_query(query_span, "")?;
-        let query_schedule = Analyzer::new().analyze_query_snippet(&modules_ref, &query_node)?;
+        let query_node = Ref::new(parser.parse_query(query_span, "")?);
+        let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
 
         let results = interpreter.eval_user_query(&query_node, &query_schedule, enable_tracing)?;
         Ok(results)

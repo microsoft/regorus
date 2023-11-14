@@ -3,6 +3,7 @@
 
 use crate::ast::*;
 use crate::builtins::*;
+use crate::lexer::*;
 
 use std::collections::BTreeMap;
 
@@ -37,13 +38,13 @@ pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
     Ok(comps.join("."))
 }
 
-pub type FunctionTable<'a> = BTreeMap<String, (Vec<&'a Rule>, u8)>;
+pub type FunctionTable = BTreeMap<String, (Vec<Ref<Rule>>, u8)>;
 
-fn get_extra_arg_impl<'a>(
-    expr: &'a Expr,
+fn get_extra_arg_impl(
+    expr: &Expr,
     module: Option<&str>,
     functions: &FunctionTable,
-) -> Result<Option<&'a Expr>> {
+) -> Result<Option<Ref<Expr>>> {
     if let Expr::Call { fcn, params, .. } = expr {
         let full_path = get_path_string(fcn, module)?;
         let n_args = if let Some((_, n_args)) = functions.get(&full_path) {
@@ -59,24 +60,24 @@ fn get_extra_arg_impl<'a>(
             }
         };
         if (n_args as usize) + 1 == params.len() {
-            return Ok(params.last());
+            return Ok(params.last().cloned());
         }
     }
     Ok(None)
 }
 
-pub fn get_extra_arg<'a>(
-    expr: &'a Expr,
+pub fn get_extra_arg(
+    expr: &Expr,
     module: Option<&str>,
     functions: &FunctionTable,
-) -> Option<&'a Expr> {
+) -> Option<Ref<Expr>> {
     match get_extra_arg_impl(expr, module, functions) {
         Ok(a) => a,
         _ => None,
     }
 }
 
-pub fn gather_functions<'a>(modules: &[&'a Module]) -> Result<FunctionTable<'a>> {
+pub fn gather_functions(modules: &[Ref<Module>]) -> Result<FunctionTable> {
     let mut table = FunctionTable::new();
 
     for module in modules {
@@ -86,7 +87,7 @@ pub fn gather_functions<'a>(modules: &[&'a Module]) -> Result<FunctionTable<'a>>
                 span,
                 head: RuleHead::Func { refr, args, .. },
                 ..
-            } = rule
+            } = rule.as_ref()
             {
                 let full_path = get_path_string(refr, Some(module_path.as_str()))?;
 
@@ -97,9 +98,9 @@ pub fn gather_functions<'a>(modules: &[&'a Module]) -> Result<FunctionTable<'a>>
                                 .as_str()
                         ));
                     }
-                    functions.push(rule);
+                    functions.push(rule.clone());
                 } else {
-                    table.insert(full_path, (vec![rule], args.len() as u8));
+                    table.insert(full_path, (vec![rule.clone()], args.len() as u8));
                 }
             }
         }
@@ -107,10 +108,10 @@ pub fn gather_functions<'a>(modules: &[&'a Module]) -> Result<FunctionTable<'a>>
     Ok(table)
 }
 
-pub fn get_root_var(mut expr: &Expr) -> Result<&str> {
+pub fn get_root_var(mut expr: &Expr) -> Result<SourceStr> {
     loop {
         match expr {
-            Expr::Var(v) => return Ok(*v.text()),
+            Expr::Var(v) => return Ok(v.source_str()),
             Expr::RefDot { refr, .. } | Expr::RefBrack { refr, .. } => expr = refr,
             _ => bail!("internal error: analyzer: could not get rule prefix"),
         }

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr;
+use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::ensure_args_count;
 use crate::lexer::Span;
@@ -15,7 +15,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("to_number", (to_number, 1));
 }
 
-fn to_number(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn to_number(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "to_number";
     ensure_args_count(span, name, params, args, 1)?;
 

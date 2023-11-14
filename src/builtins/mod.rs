@@ -18,7 +18,7 @@ mod tracing;
 pub mod types;
 mod utils;
 
-use crate::ast::Expr;
+use crate::ast::{Expr, Ref};
 use crate::lexer::Span;
 use crate::value::Value;
 
@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use lazy_static::lazy_static;
 
-pub type BuiltinFcn = (fn(&Span, &[Expr], &[Value]) -> Result<Value>, u8);
+pub type BuiltinFcn = (fn(&Span, &[Ref<Expr>], &[Value]) -> Result<Value>, u8);
 
 pub use deprecated::DEPRECATED;
 

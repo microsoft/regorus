@@ -27,7 +27,7 @@ struct YamlTest {
     cases: Vec<TestCase>,
 }
 
-fn to_string_set(s: &BTreeSet<&str>) -> BTreeSet<String> {
+fn to_string_set(s: &BTreeSet<SourceStr>) -> BTreeSet<String> {
     s.iter().map(|s| s.to_string()).collect()
 }
 
@@ -40,16 +40,15 @@ fn analyze_file(regos: &[String], expected_scopes: &[Scope]) -> Result<()> {
 
     for source in &sources {
         let mut parser = Parser::new(source)?;
-        modules.push(parser.parse()?);
+        modules.push(Ref::new(parser.parse()?));
     }
-    let modules_ref: Vec<&Module> = modules.iter().collect();
 
     let analyzer = Analyzer::new();
-    let schedule = analyzer.analyze(&modules_ref)?;
-    let mut scopes: Vec<(&Query, &regorus::Scope)> = schedule
+    let schedule = analyzer.analyze(&modules)?;
+    let mut scopes: Vec<(Ref<Query>, &regorus::Scope)> = schedule
         .scopes
         .iter()
-        .map(|(r, s)| (r.inner(), s))
+        .map(|(r, s)| (r.clone(), s))
         .collect();
     scopes.sort_by(|a, b| a.0.span.line.cmp(&b.0.span.line));
     for (idx, (_, scope)) in scopes.iter().enumerate() {
