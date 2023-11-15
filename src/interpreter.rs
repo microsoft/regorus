@@ -1567,9 +1567,7 @@ impl Interpreter {
                     }
                     return r;
                 }
-                return Err(span
-                    .source
-                    .error(span.line, span.col, "could not find function"));
+                bail!(span.error(format!("could not find function {fcn_path}").as_str()));
             }
         };
 
