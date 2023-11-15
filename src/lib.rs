@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 pub mod ast;
-pub mod builtins;
+mod builtins;
 pub mod engine;
 pub mod interpreter;
 pub mod lexer;

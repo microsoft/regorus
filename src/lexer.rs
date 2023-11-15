@@ -20,6 +20,63 @@ pub struct Source {
     src: std::rc::Rc<SourceInternal>,
 }
 
+#[derive(Clone)]
+pub struct SourceStr {
+    source: Source,
+    start: u16,
+    end: u16,
+}
+
+impl Debug for SourceStr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        self.text().fmt(f)
+    }
+}
+
+impl std::fmt::Display for SourceStr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        std::fmt::Display::fmt(&self.text(), f)
+    }
+}
+
+impl SourceStr {
+    pub fn new(source: Source, start: u16, end: u16) -> Self {
+        Self { source, start, end }
+    }
+
+    pub fn text(&self) -> &str {
+        &self.source.contents()[self.start as usize..self.end as usize]
+    }
+
+    pub fn clone_empty(&self) -> SourceStr {
+        Self {
+            source: self.source.clone(),
+            start: 0,
+            end: 0,
+        }
+    }
+}
+
+impl std::cmp::PartialEq for SourceStr {
+    fn eq(&self, other: &Self) -> bool {
+        self.text().eq(other.text())
+    }
+}
+
+impl std::cmp::Eq for SourceStr {}
+
+impl std::cmp::PartialOrd for SourceStr {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.text().cmp(other.text()))
+    }
+}
+
+impl std::cmp::Ord for SourceStr {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.text().cmp(other.text())
+    }
+}
+
 impl Source {
     pub fn new(file: String, contents: String) -> Source {
         let mut lines = vec![];
@@ -124,6 +181,10 @@ pub struct Span {
 impl Span {
     pub fn text(&self) -> std::rc::Rc<&str> {
         std::rc::Rc::new(&self.source.contents()[self.start as usize..self.end as usize])
+    }
+
+    pub fn source_str(&self) -> SourceStr {
+        SourceStr::new(self.source.clone(), self.start, self.end)
     }
 
     pub fn message(&self, kind: &str, msg: &str) -> String {

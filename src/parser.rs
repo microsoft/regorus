@@ -84,8 +84,8 @@ impl<'source> Parser<'source> {
         }
     }
 
-    pub fn get_path_ref_components_into(refr: &Expr, comps: &mut Vec<Span>) -> Result<()> {
-        match refr {
+    pub fn get_path_ref_components_into(refr: &Ref<Expr>, comps: &mut Vec<Span>) -> Result<()> {
+        match refr.as_ref() {
             Expr::RefDot { refr, field, .. } => {
                 Self::get_path_ref_components_into(refr, comps)?;
                 comps.push(field.clone());
@@ -101,7 +101,7 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub fn get_path_ref_components(refr: &Expr) -> Result<Vec<Span>> {
+    pub fn get_path_ref_components(refr: &Ref<Expr>) -> Result<Vec<Span>> {
         let mut comps = vec![];
         Self::get_path_ref_components_into(refr, &mut comps)?;
         Ok(comps)
@@ -283,8 +283,8 @@ impl<'source> Parser<'source> {
                 span.end = self.end;
                 Ok(Expr::ArrayCompr {
                     span,
-                    term: Box::new(term),
-                    query,
+                    term: Ref::new(term),
+                    query: Ref::new(query),
                 })
             }
             Err(_) if self.end == pos => {
@@ -292,13 +292,13 @@ impl<'source> Parser<'source> {
                 // Parse as array.
                 let mut items = vec![];
                 if *self.tok.1.text() != "]" {
-                    items.push(self.parse_in_expr()?);
+                    items.push(Ref::new(self.parse_in_expr()?));
                     while *self.tok.1.text() == "," {
                         self.next_token()?;
                         match *self.tok.1.text() {
                             "]" => break,
                             "" if self.tok.0 == TokenKind::Eof => break,
-                            _ => items.push(self.parse_in_expr()?),
+                            _ => items.push(Ref::new(self.parse_in_expr()?)),
                         }
                     }
                 }
@@ -320,8 +320,8 @@ impl<'source> Parser<'source> {
                 span.end = self.end;
                 return Ok(Expr::SetCompr {
                     span,
-                    term: Box::new(term),
-                    query,
+                    term: Ref::new(term),
+                    query: Ref::new(query),
                 });
             }
             Err(err) if self.end != pos => {
@@ -348,13 +348,13 @@ impl<'source> Parser<'source> {
 
         if *self.tok.1.text() != ":" {
             // Parse as set.
-            let mut items = vec![first];
+            let mut items = vec![Ref::new(first)];
             while *self.tok.1.text() == "," {
                 self.next_token()?;
                 match *self.tok.1.text() {
                     "}" => break,
                     "" if self.tok.0 == TokenKind::Eof => break,
-                    _ => items.push(self.parse_in_expr()?),
+                    _ => items.push(Ref::new(self.parse_in_expr()?)),
                 }
             }
             self.expect("}", "while parsing set")?;
@@ -371,9 +371,9 @@ impl<'source> Parser<'source> {
                 span.end = self.end;
                 return Ok(Expr::ObjectCompr {
                     span,
-                    key: Box::new(first),
-                    value: Box::new(term),
-                    query,
+                    key: Ref::new(first),
+                    value: Ref::new(term),
+                    query: Ref::new(query),
                 });
             }
             Err(err) if self.end != pos => {
@@ -389,7 +389,7 @@ impl<'source> Parser<'source> {
 
         let value = self.parse_in_expr()?;
         item_span.end = self.end;
-        items.push((item_span, first, value));
+        items.push((item_span, Ref::new(first), Ref::new(value)));
 
         while *self.tok.1.text() == "," {
             self.next_token()?;
@@ -406,7 +406,7 @@ impl<'source> Parser<'source> {
             let value = self.parse_in_expr()?;
             item_span.end = self.end;
 
-            items.push((item_span, key, value));
+            items.push((item_span, Ref::new(key), Ref::new(value)));
         }
 
         self.expect("}", "while parsing object")?;
@@ -444,7 +444,7 @@ impl<'source> Parser<'source> {
         span.end = self.end;
         Ok(Expr::UnaryExpr {
             span,
-            expr: Box::new(expr),
+            expr: Ref::new(expr),
         })
     }
 
@@ -500,7 +500,7 @@ impl<'source> Parser<'source> {
                     }
                     term = Expr::RefDot {
                         span,
-                        refr: Box::new(term),
+                        refr: Ref::new(term),
                         field,
                     };
                 }
@@ -516,21 +516,21 @@ impl<'source> Parser<'source> {
 
                     term = Expr::RefBrack {
                         span,
-                        refr: Box::new(term),
-                        index: Box::new(index),
+                        refr: Ref::new(term),
+                        index: Ref::new(index),
                     };
                 }
                 "(" if possible_fcn => {
                     self.next_token()?;
                     let mut args = vec![];
                     if *self.tok.1.text() != ")" {
-                        args.push(self.parse_in_expr()?);
+                        args.push(Ref::new(self.parse_in_expr()?));
                         while *self.tok.1.text() == "," {
                             self.next_token()?;
                             match *self.tok.1.text() {
                                 ")" => break,
                                 "" if self.tok.0 == TokenKind::Eof => break,
-                                _ => args.push(self.parse_in_expr()?),
+                                _ => args.push(Ref::new(self.parse_in_expr()?)),
                             }
                         }
                     }
@@ -538,7 +538,7 @@ impl<'source> Parser<'source> {
                     span.end = self.end;
                     term = Expr::Call {
                         span,
-                        fcn: Box::new(term),
+                        fcn: Ref::new(term),
                         params: args,
                     };
 
@@ -575,8 +575,8 @@ impl<'source> Parser<'source> {
             expr = Expr::ArithExpr {
                 span,
                 op,
-                lhs: Box::new(expr),
-                rhs: Box::new(right),
+                lhs: Ref::new(expr),
+                rhs: Ref::new(right),
             };
         }
     }
@@ -599,8 +599,8 @@ impl<'source> Parser<'source> {
             expr = Expr::ArithExpr {
                 span,
                 op,
-                lhs: Box::new(expr),
-                rhs: Box::new(right),
+                lhs: Ref::new(expr),
+                rhs: Ref::new(right),
             };
         }
     }
@@ -618,8 +618,8 @@ impl<'source> Parser<'source> {
             expr = Expr::BinExpr {
                 span,
                 op: BinOp::And,
-                lhs: Box::new(expr),
-                rhs: Box::new(right),
+                lhs: Ref::new(expr),
+                rhs: Ref::new(right),
             };
         }
         Ok(expr)
@@ -638,8 +638,8 @@ impl<'source> Parser<'source> {
             expr = Expr::BinExpr {
                 span,
                 op: BinOp::Or,
-                lhs: Box::new(expr),
-                rhs: Box::new(right),
+                lhs: Ref::new(expr),
+                rhs: Ref::new(right),
             };
         }
         Ok(expr)
@@ -666,8 +666,8 @@ impl<'source> Parser<'source> {
             expr = Expr::BoolExpr {
                 span,
                 op,
-                lhs: Box::new(expr),
-                rhs: Box::new(right),
+                lhs: Ref::new(expr),
+                rhs: Ref::new(right),
             };
         }
         Ok(expr)
@@ -686,14 +686,14 @@ impl<'source> Parser<'source> {
             let expr3 = self.parse_bool_expr()?;
             span.end = self.end;
             let (key, value) = match expr2 {
-                Some(e) => (Box::new(Some(expr1)), Box::new(e)),
-                None => (Box::new(None), Box::new(expr1)),
+                Some(e) => (Some(Ref::new(expr1)), Ref::new(e)),
+                None => (None, Ref::new(expr1)),
             };
             expr1 = Expr::Membership {
                 span,
                 key,
                 value,
-                collection: Box::new(expr3),
+                collection: Ref::new(expr3),
             };
             expr2 = None;
 
@@ -755,8 +755,8 @@ impl<'source> Parser<'source> {
         Ok(Expr::AssignExpr {
             span,
             op,
-            lhs: Box::new(expr),
-            rhs: Box::new(right),
+            lhs: Ref::new(expr),
+            rhs: Ref::new(right),
         })
     }
 
@@ -769,7 +769,11 @@ impl<'source> Parser<'source> {
             self.expect("as", "while parsing with-modifier expression")?;
             let r#as = self.parse_in_expr()?;
             span.end = self.end;
-            modifiers.push(WithModifier { span, refr, r#as });
+            modifiers.push(WithModifier {
+                span,
+                refr: Ref::new(refr),
+                r#as: Ref::new(r#as),
+            });
         }
         Ok(modifiers)
     }
@@ -798,10 +802,10 @@ impl<'source> Parser<'source> {
         };
 
         self.parse_future_keyword("in", false, context)?;
-        let domain = self.parse_bool_expr()?;
+        let domain = Ref::new(self.parse_bool_expr()?);
         let query_span = self.tok.1.clone();
         self.expect("{", context)?;
-        let query = self.parse_query(query_span, "}")?;
+        let query = Ref::new(self.parse_query(query_span, "}")?);
         span.end = self.end;
 
         Ok(Literal::Every {
@@ -819,12 +823,12 @@ impl<'source> Parser<'source> {
 
         // parse any vars.
         let mut vars = vec![self.tok.1.clone()];
-        let mut refs = vec![self.parse_ref()?];
+        let mut refs = vec![Ref::new(self.parse_ref()?)];
 
         while *self.tok.1.text() == "," {
             self.next_token()?;
             let mut span = self.tok.1.clone();
-            refs.push(self.parse_ref()?);
+            refs.push(Ref::new(self.parse_ref()?));
             span.end = self.end;
             vars.push(span);
         }
@@ -836,7 +840,7 @@ impl<'source> Parser<'source> {
             // All the refs must be identifiers
             for (idx, ref_expr) in refs.iter().enumerate() {
                 let span = &vars[idx];
-                match ref_expr {
+                match ref_expr.as_ref() {
                     Expr::Var(_) => (),
                     _ => {
                         return Err(anyhow!(
@@ -870,7 +874,7 @@ impl<'source> Parser<'source> {
         };
 
         self.parse_future_keyword("in", false, "while parsing some-decl")?;
-        let collection = self.parse_bool_expr()?; // TODO: check this
+        let collection = Ref::new(self.parse_bool_expr()?); // TODO: check this
         Ok(Literal::SomeIn {
             span,
             key,
@@ -898,7 +902,7 @@ impl<'source> Parser<'source> {
             false
         };
 
-        let expr = self.parse_assign_expr()?;
+        let expr = Ref::new(self.parse_assign_expr()?);
         span.end = self.end;
         if not_expr {
             Ok(Literal::NotExpr { span, expr })
@@ -988,7 +992,7 @@ impl<'source> Parser<'source> {
             _ => return Ok(None),
         };
 
-        let expr = self.parse_membership_expr()?;
+        let expr = Ref::new(self.parse_membership_expr()?);
         span.end = self.end;
         Ok(Some(RuleAssign {
             span,
@@ -1036,7 +1040,7 @@ impl<'source> Parser<'source> {
                     }
                     refr = Expr::RefDot {
                         span,
-                        refr: Box::new(refr),
+                        refr: Ref::new(refr),
                         field,
                     };
                 }
@@ -1057,8 +1061,8 @@ impl<'source> Parser<'source> {
                     span.end = self.end;
                     refr = Expr::RefBrack {
                         span,
-                        refr: Box::new(refr),
-                        index: Box::new(index),
+                        refr: Ref::new(refr),
+                        index: Ref::new(index),
                     };
                 }
                 _ => break,
@@ -1137,7 +1141,7 @@ impl<'source> Parser<'source> {
                     }
                     term = Expr::RefDot {
                         span,
-                        refr: Box::new(term),
+                        refr: Ref::new(term),
                         field,
                     };
                 }
@@ -1148,8 +1152,8 @@ impl<'source> Parser<'source> {
                     self.expect("]", "while parsing bracketed reference")?;
                     term = Expr::RefBrack {
                         span,
-                        refr: Box::new(term),
-                        index: Box::new(index),
+                        refr: Ref::new(term),
+                        index: Ref::new(index),
                     };
                 }
                 _ => break,
@@ -1162,20 +1166,20 @@ impl<'source> Parser<'source> {
     pub fn parse_rule_head(&mut self) -> Result<RuleHead> {
         let mut span = self.tok.1.clone();
 
-        let rule_ref = self.parse_rule_ref()?;
+        let rule_ref = Ref::new(self.parse_rule_ref()?);
         match *self.tok.1.text() {
             "(" => {
                 self.check_rule_ref(&rule_ref)?;
                 self.next_token()?;
                 let mut args = vec![];
                 if *self.tok.1.text() != ")" {
-                    args.push(self.parse_term()?);
+                    args.push(Ref::new(self.parse_term()?));
                     while *self.tok.1.text() == "," {
                         self.next_token()?;
                         match *self.tok.1.text() {
                             ")" => break,
                             "" if self.tok.0 == TokenKind::Eof => break,
-                            _ => args.push(self.parse_term()?),
+                            _ => args.push(Ref::new(self.parse_term()?)),
                         }
                     }
                 }
@@ -1193,7 +1197,7 @@ impl<'source> Parser<'source> {
             "contains" => {
                 self.check_rule_ref(&rule_ref)?;
                 self.next_token()?;
-                let key = self.parse_membership_expr()?;
+                let key = Ref::new(self.parse_membership_expr()?);
                 span.end = self.end;
                 Ok(RuleHead::Set {
                     span,
@@ -1206,7 +1210,7 @@ impl<'source> Parser<'source> {
                 span.end = self.end;
 
                 // Ensure that only the last term can be non-string.
-                match &rule_ref {
+                match rule_ref.as_ref() {
                     Expr::RefBrack { refr, .. } => self.check_rule_ref(refr)?,
                     Expr::RefDot { refr, .. } => self.check_rule_ref(refr)?,
                     _ => (),
@@ -1216,14 +1220,14 @@ impl<'source> Parser<'source> {
                 let is_set_follower = !self.is_keyword(*self.tok.1.text())
                     && !self.is_imported_future_keyword(*self.tok.1.text());
                 if assign.is_none() && is_set_follower {
-                    match &rule_ref {
+                    match rule_ref.as_ref() {
                         Expr::RefBrack { refr, index, .. }
                             if matches!(refr.as_ref(), Expr::Var(_)) =>
                         {
                             return Ok(RuleHead::Set {
                                 span,
-                                refr: refr.as_ref().clone(),
-                                key: Some(index.as_ref().clone()),
+                                refr: refr.clone(),
+                                key: Some(index.clone()),
                             });
                         }
                         Expr::RefDot { refr, .. } if matches!(refr.as_ref(), Expr::Var(_)) => {
@@ -1283,7 +1287,7 @@ impl<'source> Parser<'source> {
         let has_query = match *self.tok.1.text() {
             "if" if self.if_is_keyword() => {
                 self.next_token()?;
-                let query = self.parse_query_or_literal_stmt()?;
+                let query = Ref::new(self.parse_query_or_literal_stmt()?);
                 span.end = self.end;
                 bodies.push(RuleBody {
                     span,
@@ -1298,7 +1302,7 @@ impl<'source> Parser<'source> {
             }
             "{" => {
                 self.next_token()?;
-                let query = self.parse_query(span.clone(), "}")?;
+                let query = Ref::new(self.parse_query(span.clone(), "}")?);
                 span.end = self.end;
                 bodies.push(RuleBody {
                     span,
@@ -1323,7 +1327,7 @@ impl<'source> Parser<'source> {
         while *self.tok.1.text() == "{" {
             let mut span = self.tok.1.clone();
             self.next_token()?;
-            let query = self.parse_query(span.clone(), "}")?;
+            let query = Ref::new(self.parse_query(span.clone(), "}")?);
             span.end = self.end;
             bodies.push(RuleBody {
                 span,
@@ -1355,7 +1359,7 @@ impl<'source> Parser<'source> {
             match *self.tok.1.text() {
                 "if" if self.if_is_keyword() => {
                     self.next_token()?;
-                    let query = self.parse_query_or_literal_stmt()?;
+                    let query = Ref::new(self.parse_query_or_literal_stmt()?);
                     span.end = self.end;
                     bodies.push(RuleBody {
                         span,
@@ -1365,7 +1369,7 @@ impl<'source> Parser<'source> {
                 }
                 "{" => {
                     self.next_token()?;
-                    let query = self.parse_query(span.clone(), "}")?;
+                    let query = Ref::new(self.parse_query(span.clone(), "}")?);
                     span.end = self.end;
                     bodies.push(RuleBody {
                         span,
@@ -1392,7 +1396,7 @@ impl<'source> Parser<'source> {
     pub fn parse_default_rule(&mut self) -> Result<Rule> {
         let mut span = self.tok.1.clone();
         self.expect("default", "while parsing default rule")?;
-        let rule_ref = self.parse_rule_ref()?;
+        let rule_ref = Ref::new(self.parse_rule_ref()?);
 
         let op = match *self.tok.1.text() {
             "=" => AssignOp::Eq,
@@ -1407,7 +1411,7 @@ impl<'source> Parser<'source> {
 
         // todo: Rego errors for binary expressions here, but they are
         // somehow valid in a comprehension
-        let value = self.parse_term()?;
+        let value = Ref::new(self.parse_term()?);
         span.end = self.end;
         Ok(Rule::Default {
             span,
@@ -1437,7 +1441,10 @@ impl<'source> Parser<'source> {
         self.expect("package", "Missing package declaration.")?;
         let name = self.parse_path_ref()?;
         span.end = self.end;
-        Ok(Package { span, refr: name })
+        Ok(Package {
+            span,
+            refr: Ref::new(name),
+        })
     }
 
     fn check_and_add_import(&self, import: Import, imports: &mut Vec<Import>) -> Result<()> {
@@ -1481,7 +1488,7 @@ impl<'source> Parser<'source> {
         while *self.tok.1.text() == "import" {
             let mut span = self.tok.1.clone();
             self.next_token()?;
-            let refr = self.parse_path_ref()?;
+            let refr = Ref::new(self.parse_path_ref()?);
 
             let comps = Self::get_path_ref_components(&refr)?;
             if !matches!(*comps[0].text(), "data" | "future" | "input") {
@@ -1539,7 +1546,7 @@ impl<'source> Parser<'source> {
 
         let mut policy = vec![];
         while self.tok.0 != TokenKind::Eof {
-            policy.push(self.parse_rule()?);
+            policy.push(Ref::new(self.parse_rule()?));
         }
 
         Ok(Module {

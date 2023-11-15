@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr;
+use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_array, ensure_numeric};
 use crate::lexer::Span;
@@ -18,7 +18,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("array.slice", (slice, 3));
 }
 
-fn concat(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn concat(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "array.concat";
     ensure_args_count(span, name, params, args, 2)?;
     let mut v1 = ensure_array(name, &params[0], args[0].clone())?;
@@ -28,7 +28,7 @@ fn concat(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::Array(v1))
 }
 
-fn reverse(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn reverse(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "array.reverse";
     ensure_args_count(span, name, params, args, 1)?;
 
@@ -37,7 +37,7 @@ fn reverse(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::Array(v1))
 }
 
-fn slice(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn slice(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "array.slice";
     ensure_args_count(span, name, params, args, 3)?;
 

@@ -7,7 +7,7 @@ use regorus::scheduler::*;
 
 mod analyzer;
 
-fn make_info<'a>(definitions: &[(&'a str, &[&'a str])]) -> StmtInfo<'a> {
+fn make_info(definitions: &[(&'static str, &[&'static str])]) -> StmtInfo<&'static str> {
     StmtInfo {
         definitions: definitions
             .iter()
@@ -29,6 +29,9 @@ fn check_result(stmts: &[&str], expected: &[&str], r: SortResult) -> Result<()> 
     match r {
         SortResult::Order(order) => {
             print_stmts(stmts, &order);
+            for (i, o) in order.iter().cloned().enumerate() {
+                println!("{:30}{}", stmts[o as usize], expected[i]);
+            }
             for (i, o) in order.iter().cloned().enumerate() {
                 assert_eq!(stmts[o as usize], expected[i]);
             }
@@ -69,8 +72,7 @@ fn case1() -> Result<()> {
         make_info(&[("x", &[])]),
         make_info(&[("v", &[])]),
     ];
-
-    check_result(&stmts[..], &expected[..], schedule(&mut infos)?)
+    check_result(&stmts[..], &expected[..], schedule(&mut infos, &"")?)
 }
 
 #[test]
@@ -92,7 +94,7 @@ fn case2() -> Result<()> {
         make_info(&[("y", &[])]),
     ];
 
-    check_result(&stmts[..], &expected[..], schedule(&mut infos)?)
+    check_result(&stmts[..], &expected[..], schedule(&mut infos, &"")?)
 }
 
 #[test]
@@ -115,7 +117,7 @@ fn case2_rewritten() -> Result<()> {
         make_info(&[("y", &[])]),
     ];
 
-    check_result(&stmts[..], &expected[..], schedule(&mut infos)?)
+    check_result(&stmts[..], &expected[..], schedule(&mut infos, &"")?)
 }
 
 #[test]
@@ -139,7 +141,7 @@ fn case3() -> Result<()> {
         make_info(&[("y", &[])]),
     ];
 
-    check_result(&stmts[..], &expected[..], schedule(&mut infos)?)
+    check_result(&stmts[..], &expected[..], schedule(&mut infos, &"")?)
 }
 
 #[test]
@@ -163,7 +165,7 @@ fn case4_cycle() -> Result<()> {
     ];
 
     // TODO: check cycle
-    check_result(&stmts[..], &expected[..], schedule(&mut infos)?)
+    check_result(&stmts[..], &expected[..], schedule(&mut infos, &"")?)
 }
 
 #[test]
@@ -186,7 +188,7 @@ fn case4_no_cycle() -> Result<()> {
     ];
 
     // TODO: check cycle
-    check_result(&stmts[..], &expected[..], schedule(&mut infos)?)
+    check_result(&stmts[..], &expected[..], schedule(&mut infos, &"")?)
 }
 
 #[test]
@@ -215,5 +217,5 @@ fn case4_cycle_removed_via_split_multi_assign() -> Result<()> {
     ];
 
     // TODO: check cycle
-    check_result(&stmts[..], &expected[..], schedule(&mut infos)?)
+    check_result(&stmts[..], &expected[..], schedule(&mut infos, &"")?)
 }

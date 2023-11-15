@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr;
+use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::ensure_args_count;
 use crate::lexer::Span;
@@ -16,7 +16,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("time.now_ns", (now_ns, 0));
 }
 
-fn now_ns(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn now_ns(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "time.now_ns";
     ensure_args_count(span, name, params, args, 0)?;
 

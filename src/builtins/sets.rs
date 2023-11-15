@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr;
+use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_set};
 use crate::lexer::Span;
@@ -34,7 +34,7 @@ pub fn difference(expr1: &Expr, expr2: &Expr, v1: Value, v2: Value) -> Result<Va
     Ok(Value::from_set(s1.difference(&s2).cloned().collect()))
 }
 
-fn intersection_of_set_of_sets(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn intersection_of_set_of_sets(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "intersection";
     ensure_args_count(span, name, params, args, 1)?;
     let set = ensure_set(name, &params[0], args[0].clone())?;
@@ -61,7 +61,7 @@ fn intersection_of_set_of_sets(span: &Span, params: &[Expr], args: &[Value]) -> 
     Ok(Value::from_set(res))
 }
 
-fn union_of_set_of_sets(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn union_of_set_of_sets(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "union";
     ensure_args_count(span, name, params, args, 1)?;
     let set = ensure_set(name, &params[0], args[0].clone())?;

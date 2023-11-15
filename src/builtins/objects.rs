@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr;
+use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_object};
 use crate::lexer::Span;
@@ -121,7 +121,7 @@ fn merge_filters(
     Ok(filters)
 }
 
-fn json_filter(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn json_filter(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "json.filter";
     ensure_args_count(span, name, params, args, 2)?;
     ensure_object(name, &params[0], args[0].clone())?;
@@ -135,7 +135,7 @@ fn json_filter(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(json_filter_impl(&args[0], &filters))
 }
 
-fn filter(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn filter(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "object.filter";
     ensure_args_count(span, name, params, args, 2)?;
     let mut obj = ensure_object(name, &params[0], args[0].clone())?;
@@ -153,7 +153,7 @@ fn filter(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::Object(obj))
 }
 
-fn get(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn get(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "object.get";
     ensure_args_count(span, name, params, args, 3)?;
     let obj = ensure_object(name, &params[0], args[0].clone())?;
@@ -178,14 +178,14 @@ fn get(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     })
 }
 
-fn keys(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn keys(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "object.keys";
     ensure_args_count(span, name, params, args, 1)?;
     let obj = ensure_object(name, &params[0], args[0].clone())?;
     Ok(Value::from_set(obj.keys().cloned().collect()))
 }
 
-fn remove(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn remove(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "object.remove";
     ensure_args_count(span, name, params, args, 2)?;
     let mut obj = ensure_object(name, &params[0], args[0].clone())?;

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr;
+use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_numeric};
 
@@ -21,7 +21,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("bits.xor", (xor, 2));
 }
 
-fn and(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn and(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "bits.and";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -38,7 +38,7 @@ fn and(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::from_float((v1 & v2) as Float))
 }
 
-fn lsh(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn lsh(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "bits.lsh";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -60,7 +60,7 @@ fn lsh(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::from_float((v1 << v2) as Float))
 }
 
-fn negate(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn negate(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "bits.negate";
     ensure_args_count(span, name, params, args, 1)?;
 
@@ -75,7 +75,7 @@ fn negate(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::from_float((!v) as Float))
 }
 
-fn or(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn or(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "bits.or";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -92,7 +92,7 @@ fn or(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::from_float((v1 | v2) as Float))
 }
 
-fn rsh(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn rsh(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "bits.rsh";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -114,7 +114,7 @@ fn rsh(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::from_float((v1 >> v2) as Float))
 }
 
-fn xor(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn xor(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "bits.xor";
     ensure_args_count(span, name, params, args, 2)?;
 

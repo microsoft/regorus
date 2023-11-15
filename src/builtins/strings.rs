@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr;
+use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{
     ensure_args_count, ensure_array, ensure_numeric, ensure_object, ensure_string,
@@ -41,7 +41,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("upper", (upper, 1));
 }
 
-fn concat(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn concat(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "concat";
     ensure_args_count(span, name, params, args, 2)?;
     let delimiter = ensure_string(name, &params[0], &args[0])?;
@@ -49,7 +49,7 @@ fn concat(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::String(collection.join(&delimiter)))
 }
 
-fn contains(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn contains(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "contains";
     ensure_args_count(span, name, params, args, 2)?;
     let s1 = ensure_string(name, &params[0], &args[0])?;
@@ -57,7 +57,7 @@ fn contains(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::Bool(s1.contains(&s2)))
 }
 
-fn endswith(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn endswith(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "endswith";
     ensure_args_count(span, name, params, args, 2)?;
     let s1 = ensure_string(name, &params[0], &args[0])?;
@@ -65,7 +65,7 @@ fn endswith(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::Bool(s1.ends_with(&s2)))
 }
 
-fn format_int(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn format_int(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "endswith";
     ensure_args_count(span, name, params, args, 2)?;
     let mut n = ensure_numeric(name, &params[0], &args[0])?;
@@ -88,7 +88,7 @@ fn format_int(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ))
 }
 
-fn indexof(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn indexof(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "indexof";
     ensure_args_count(span, name, params, args, 2)?;
     let s1 = ensure_string(name, &params[0], &args[0])?;
@@ -100,7 +100,7 @@ fn indexof(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
 }
 
 #[allow(dead_code)]
-fn indexof_n(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn indexof_n(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "indexof_n";
     ensure_args_count(span, name, params, args, 2)?;
     let s1 = ensure_string(name, &params[0], &args[0])?;
@@ -119,14 +119,14 @@ fn indexof_n(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::from_array(positions))
 }
 
-fn lower(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn lower(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "lower";
     ensure_args_count(span, name, params, args, 1)?;
     let s = ensure_string(name, &params[0], &args[0])?;
     Ok(Value::String(s.to_lowercase()))
 }
 
-fn replace(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn replace(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "replace";
     ensure_args_count(span, name, params, args, 3)?;
     let s = ensure_string(name, &params[0], &args[0])?;
@@ -135,7 +135,7 @@ fn replace(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::String(s.replace(&old, &new)))
 }
 
-fn split(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn split(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "replace";
     ensure_args_count(span, name, params, args, 2)?;
     let s = ensure_string(name, &params[0], &args[0])?;
@@ -148,7 +148,7 @@ fn split(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ))
 }
 
-fn sprintf(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "sprintf";
     ensure_args_count(span, name, params, args, 2)?;
     let fmt = ensure_string(name, &params[0], &args[0])?;
@@ -315,7 +315,7 @@ fn sprintf(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::String(s.to_string()))
 }
 
-fn any_prefix_match(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn any_prefix_match(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "strings.any_prefix_match";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -346,7 +346,7 @@ fn any_prefix_match(span: &Span, params: &[Expr], args: &[Value]) -> Result<Valu
     ))
 }
 
-fn any_suffix_match(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn any_suffix_match(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "strings.any_suffix_match";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -377,7 +377,7 @@ fn any_suffix_match(span: &Span, params: &[Expr], args: &[Value]) -> Result<Valu
     ))
 }
 
-fn startswith(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn startswith(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "startswith";
     ensure_args_count(span, name, params, args, 2)?;
     let s1 = ensure_string(name, &params[0], &args[0])?;
@@ -385,7 +385,7 @@ fn startswith(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::Bool(s1.starts_with(&s2)))
 }
 
-fn replace_n(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn replace_n(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "trim";
     ensure_args_count(span, name, params, args, 2)?;
     let obj = ensure_object(name, &params[0], args[0].clone())?;
@@ -408,14 +408,14 @@ fn replace_n(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::String(s))
 }
 
-fn reverse(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn reverse(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "reverse";
     ensure_args_count(span, name, params, args, 1)?;
     let s = ensure_string(name, &params[0], &args[0])?;
     Ok(Value::String(s.chars().rev().collect()))
 }
 
-fn substring(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn substring(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "substring";
     ensure_args_count(span, name, params, args, 3)?;
     let s = ensure_string(name, &params[0], &args[0])?;
@@ -443,7 +443,7 @@ fn substring(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     Ok(Value::String(s[offset..offset + length].to_string()))
 }
 
-fn trim(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn trim(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "trim";
     ensure_args_count(span, name, params, args, 2)?;
     let s1 = ensure_string(name, &params[0], &args[0])?;
@@ -453,7 +453,7 @@ fn trim(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ))
 }
 
-fn trim_left(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn trim_left(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "trim_left";
     ensure_args_count(span, name, params, args, 2)?;
     let s1 = ensure_string(name, &params[0], &args[0])?;
@@ -463,7 +463,7 @@ fn trim_left(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ))
 }
 
-fn trim_prefix(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn trim_prefix(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "trim_prefix";
     ensure_args_count(span, name, params, args, 2)?;
     let s1 = ensure_string(name, &params[0], &args[0])?;
@@ -474,7 +474,7 @@ fn trim_prefix(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     }))
 }
 
-fn trim_right(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn trim_right(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "trim_right";
     ensure_args_count(span, name, params, args, 2)?;
     let s1 = ensure_string(name, &params[0], &args[0])?;
@@ -484,14 +484,14 @@ fn trim_right(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     ))
 }
 
-fn trim_space(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn trim_space(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "trim_space";
     ensure_args_count(span, name, params, args, 1)?;
     let s = ensure_string(name, &params[0], &args[0])?;
     Ok(Value::String(s.trim().to_string()))
 }
 
-fn trim_suffix(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn trim_suffix(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "trim_suffix";
     ensure_args_count(span, name, params, args, 2)?;
     let s1 = ensure_string(name, &params[0], &args[0])?;
@@ -502,7 +502,7 @@ fn trim_suffix(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
     }))
 }
 
-fn upper(span: &Span, params: &[Expr], args: &[Value]) -> Result<Value> {
+fn upper(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "upper";
     ensure_args_count(span, name, params, args, 1)?;
     let s = ensure_string(name, &params[0], &args[0])?;
