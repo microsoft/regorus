@@ -28,3 +28,7 @@ anyhow = "1.0.66"
 [profile.release]
 debug = true
 
+[[test]]
+name="opa"
+harness=false
+test=false

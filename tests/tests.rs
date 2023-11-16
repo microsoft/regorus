@@ -3,7 +3,6 @@
 
 mod interpreter;
 mod lexer;
-mod opa;
 mod parser;
 mod scheduler;
 mod value;
