@@ -1,0 +1,47 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: semver.compare passing
+    data: {}
+    modules:
+      - |
+        package test
+
+        vers = [
+          "1.9.10",
+          "1.8.15"
+        ]
+
+        # Compare each version against itself and others.
+        r = [ a | a = semver.compare(vers[_], vers[_]) ]
+    query: data.test.r
+    want_result: [0, 1, -1, 1]
+    skip: true # TODO: remove this
+    
+  - note: semver.compare wrong arg1 type
+    data: {}
+    modules:
+      - |
+        package test
+        a = semver.compare("", 1)
+    query: data.test.a
+    error: expects string argument
+      
+  - note: semver.compare wrong arg2 type
+    data: {}
+    modules:
+      - |
+        package test
+        a = semver.compare(1, "")
+    query: data.test.a
+    error: expects string argument
+           
+  - note: semver extra arg
+    data: {}
+    modules:
+      - |
+        package test
+        a = semver.compare("", "", "")
+    query: data.test.a
+    error: expects 2 arguments

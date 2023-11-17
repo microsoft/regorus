@@ -1,0 +1,39 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: semver.is_valid passing
+    data: {}
+    modules:
+      - |
+        package test
+
+        vers = [
+          "1.9.10",
+          "1.8.15",
+          "1.1",
+          "1.1.12-rc1+foo"
+        ]
+
+        r = [ a | a = semver.is_valid(vers[_]) ]
+    query: data.test.r
+    want_result: [true, true, false]
+    skip: true # TODO: remove this
+    
+  - note: semver.compare wrong arg1 type
+    data: {}
+    modules:
+      - |
+        package test
+        a = semver.is_valid(1)
+    query: data.test.a
+    error: expects string argument
+      
+  - note: semver.is_valid extra arg
+    data: {}
+    modules:
+      - |
+        package test
+        a = semver.is_valid("", "")
+    query: data.test.a
+    error: expects 1 argument

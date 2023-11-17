@@ -11,6 +11,7 @@ pub mod deprecated;
 mod encoding;
 pub mod numbers;
 mod objects;
+mod semver;
 pub mod sets;
 mod strings;
 mod time;
@@ -59,7 +60,7 @@ lazy_static! {
 	//http::register(&mut m);
 	//net::register(&mut m);
 	//uuid::register(&mut m);
-	//semantic_versions::register(&mut m);
+	semver::register(&mut m);
 	//rego::register(&mut m);
 	//opa::register(&mut m);
 	debugging::register(&mut m);
