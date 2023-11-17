@@ -43,6 +43,7 @@ pub fn schedule<Str: Clone + std::cmp::Ord + std::fmt::Debug>(
     empty: &Str,
 ) -> Result<SortResult> {
     let num_statements = infos.len();
+    let orig_infos: Vec<&StmtInfo<Str>> = infos.iter().collect();
 
     // Mapping from each var to the list of statements that define it.
     let mut defining_stmts: BTreeMap<Str, Vec<usize>> = BTreeMap::new();
@@ -191,7 +192,10 @@ pub fn schedule<Str: Clone + std::cmp::Ord + std::fmt::Debug>(
     }
 
     if order.len() != num_statements {
-        bail!("could not schedule all statements {order:?} {num_statements}");
+        eprintln!("could not schedule all statements {order:?} {orig_infos:?}");
+        return Ok(SortResult::Order(
+            (0..num_statements).map(|i| i as u16).collect(),
+        ));
     }
 
     // TODO: determine cycles.

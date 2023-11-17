@@ -14,4 +14,7 @@ if [ -f Cargo.toml ]; then
    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
        scripts/coverage
    fi
+
+   # Ensure that OPA conformance tests don't regress.
+   cargo test --test opa -- $(tr '\n' ' ' < tests/opa.passing)
 fi

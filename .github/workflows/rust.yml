@@ -32,3 +32,6 @@ jobs:
       run: cargo build --verbose --all-targets --target x86_64-unknown-linux-musl
     - name: Run tests (MUSL)
       run: cargo test --verbose --target x86_64-unknown-linux-musl
+    - name: Run tests (OPA Conformance)
+      run: >-
+        cargo test --test opa -- $(tr '\n' ' ' < tests/opa.passing)

@@ -65,6 +65,7 @@ impl Default for QueryResult {
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct QueryResults {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub result: Vec<QueryResult>,
 }
 
@@ -75,6 +76,7 @@ struct Context {
     value: Value,
     result: Option<QueryResult>,
     results: QueryResults,
+    is_compr: bool,
 }
 
 #[derive(Debug)]
@@ -494,7 +496,7 @@ impl Interpreter {
 
         // Omit recording undefined values.
         if value == Value::Undefined {
-            return Ok(Value::Bool(false));
+            return Ok(value); //Ok(Value::Bool(false));
         }
 
         self.add_variable_or(&name)?;
@@ -527,6 +529,7 @@ impl Interpreter {
             value: Value::new_set(),
             result: None,
             results: QueryResults::default(),
+            is_compr: false,
         });
         let mut r = true;
         match domain {
@@ -842,9 +845,14 @@ impl Interpreter {
 
                 if let Some(ctx) = self.contexts.last_mut() {
                     if let Some(result) = &mut ctx.result {
-                        result
-                            .expressions
-                            .push(Self::make_expression_result(span, &value))
+                        if value != Value::Undefined {
+                            result
+                                .expressions
+                                .push(Self::make_expression_result(span, &value))
+                        } else {
+                            result.bindings = Value::new_object();
+                            result.expressions.clear();
+                        }
                     }
                 }
 
@@ -1165,9 +1173,9 @@ impl Interpreter {
                             Value::Set(ref mut s) => {
                                 Rc::make_mut(s).insert(output);
                             }
-                            _ => bail!("internal error: invalid context value"),
+                            a => bail!("internal error: invalid context value {a}"),
                         }
-                    } else {
+                    } else if !ctx.is_compr {
                         match &ctx.value {
                             Value::Set(_) => (),
                             _ => ctx.value = Value::Undefined,
@@ -1191,7 +1199,11 @@ impl Interpreter {
                             .insert(Value::String(name.to_string()), value.clone());
                     }
                 }
-                ctx.results.result.push(result);
+                if result.expressions.iter().all(|v| v != &Value::Undefined)
+                    && !result.expressions.is_empty()
+                {
+                    ctx.results.result.push(result);
+                }
             }
 
             return Ok(true);
@@ -1306,7 +1318,11 @@ impl Interpreter {
                             .insert(Value::String(name.to_string()), value.clone());
                     }
                 }
-                ctx.results.result.push(result);
+                if result.expressions.iter().all(|v| v != &Value::Undefined)
+                    && !result.expressions.is_empty()
+                {
+                    ctx.results.result.push(result);
+                }
             }
         }
 
@@ -1428,6 +1444,7 @@ impl Interpreter {
             value: Value::new_array(),
             result: None,
             results: QueryResults::default(),
+            is_compr: true,
         });
 
         // Evaluate body first.
@@ -1447,6 +1464,7 @@ impl Interpreter {
             value: Value::new_set(),
             result: None,
             results: QueryResults::default(),
+            is_compr: true,
         });
 
         self.eval_query(query)?;
@@ -1470,6 +1488,7 @@ impl Interpreter {
             value: Value::new_object(),
             result: None,
             results: QueryResults::default(),
+            is_compr: true,
         });
 
         self.eval_query(query)?;
@@ -1615,6 +1634,7 @@ impl Interpreter {
                 value: Value::new_set(),
                 result: None,
                 results: QueryResults::default(),
+                is_compr: false,
             };
 
             // Back up local variables of current function and empty
@@ -1734,7 +1754,6 @@ impl Interpreter {
         }
         // Evaluate the associated default rules after non-default rules
         if let Some(rules) = self.default_rules.get(&path) {
-            dbg!(&path);
             for (r, _) in rules.clone() {
                 if !self.processed.contains(&r) {
                     let module = self.get_rule_module(&r)?;
@@ -1826,7 +1845,12 @@ impl Interpreter {
                 )),
             },
             // TODO: Handle string vs rawstring
-            Expr::String(span) => Ok(Value::String(span.text().to_string())),
+            Expr::String(span) => {
+                match serde_json::from_str::<Value>(format!("\"{}\"", span.text()).as_str()) {
+                    Ok(s) => Ok(s),
+                    Err(e) => bail!(span.error(format!("invalid string literal. {e}").as_str())),
+                }
+            }
             Expr::RawString(span) => Ok(Value::String(span.text().to_string())),
 
             // TODO: Handle undefined variables
@@ -1884,6 +1908,7 @@ impl Interpreter {
                         value,
                         result: None,
                         results: QueryResults::default(),
+                        is_compr: false,
                     },
                     path,
                 ))
@@ -1897,6 +1922,7 @@ impl Interpreter {
                         value: Value::new_set(),
                         result: None,
                         results: QueryResults::default(),
+                        is_compr: false,
                     },
                     path,
                 ))
@@ -1938,6 +1964,7 @@ impl Interpreter {
                         value: Value::new_array(),
                         result: None,
                         results: QueryResults::default(),
+                        is_compr: false,
                     });
                 }
                 result = self.eval_query(&body.query);
@@ -2018,10 +2045,10 @@ impl Interpreter {
         }
     }
 
-    pub fn merge_value(span: &Span, value: &mut Value, new: Value) -> Result<()> {
+    pub fn merge_rule_value(span: &Span, value: &mut Value, new: Value) -> Result<()> {
         match value.merge(new) {
             Ok(()) => Ok(()),
-            Err(err) => return Err(span.error(format!("{err}").as_str())),
+            Err(_) => Err(span.error("rules should not produce multiple outputs.")),
         }
     }
 
@@ -2173,15 +2200,15 @@ impl Interpreter {
 
                 if let Value::Object(btree) = &vref {
                     if !btree.contains_key(&index) {
-                        Self::merge_value(span, vref, object)?;
+                        Self::merge_rule_value(span, vref, object)?;
                     }
                 } else if let Value::Undefined = vref {
-                    Self::merge_value(span, vref, object)?;
+                    Self::merge_rule_value(span, vref, object)?;
                 }
             } else {
                 let vref = Self::make_or_get_value_mut(&mut self.data, &paths)?;
                 if let Value::Undefined = &vref {
-                    Self::merge_value(span, vref, value)?;
+                    Self::merge_rule_value(span, vref, value)?;
                 }
             };
 
@@ -2204,7 +2231,7 @@ impl Interpreter {
         // Ensure that path is created.
         let vref = Self::make_or_get_value_mut(&mut self.data, path)?;
         if Self::get_value_chained(self.init_data.clone(), path) == Value::Undefined {
-            Self::merge_value(span, vref, value)
+            Self::merge_rule_value(span, vref, value)
         } else {
             Err(span.error("value for rule has already been specified in data document"))
         }
@@ -2408,6 +2435,7 @@ impl Interpreter {
             // Request that results be gathered.
             result: Some(QueryResult::default()),
             results: QueryResults::default(),
+            is_compr: false,
         });
 
         let prev_module = self.set_current_module(self.modules.last().cloned())?;
@@ -2431,7 +2459,9 @@ impl Interpreter {
                             let orig_idx = ord[expr_idx] as usize;
                             ordered_expressions[orig_idx] = value.clone();
                         }
-                        results.result[idx].expressions = ordered_expressions;
+                        if !ordered_expressions.iter().any(|v| v == &Value::Undefined) {
+                            results.result[idx].expressions = ordered_expressions;
+                        }
                     }
                 }
                 self_schedule.order.remove(k);
