@@ -1,0 +1,153 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+
+        # Supportex by OPA
+        a = [  "E", "e", "P", "p", "T", "t" , "G" , "g" , "M" , "K" , "k" , "m" ]
+
+        # Not supported by OPA
+        b =  [ "Q", "R", "Y", "Z", "h", "da", "d", "c",
+               "μ", "n",  "f", "a", "z", "y", "r", "q"
+        ]
+
+        c = [
+         "ki", "Ki", "kI", "KI",
+         "mi", "Mi", "mI", "MI",
+         "gi", "Gi", "gI", "GI",
+         "ti", "Ti", "tI", "TI",
+         "pi", "Pi", "pI", "PI",
+         "ei", "Ei", "eI", "EI",
+        ]
+
+        d = [
+         "zi", "Zi", "zI", "ZI",
+         "yi", "Yi", "yI", "YI",	  	  
+        ]
+        
+        results = {
+          "p1" : [ units.parse(s) | s = concat("", ["1", a[_]]) ],
+          "p2" : [ units.parse(s) | s = concat("", ["1", b[_]]) ],
+          "p3" : [ units.parse(s) | s = concat("", ["1", c[_]]) ],
+          "p4" : [ units.parse(s) | s = concat("", ["1", d[_]]) ],
+          # No suffix, quoted.
+          "p5" : [ units.parse("1"), units.parse("\"1\"") ]
+        }        
+    query: data.test.results
+    want_result:
+      p1:
+        - 1e18
+        - 1e18
+        - 1e15
+        - 1e15
+        - 1e12
+        - 1e12
+        - 1e9
+        - 1e9
+        - 1e6
+        - 1e3
+        - 1e3
+        - 1e-3
+      p2:
+        - 1e30
+        - 1e27
+        - 1e24
+        - 1e21
+        - 1e2
+        - 1e1
+        - 1e-1
+        - 1e-2
+        - 1e-6
+        - 1e-9
+        - 1e-15
+        - 1e-18
+        - 1e-21
+        - 1e-24
+        - 1e-27
+        - 1e-30
+      p3:
+        - 1024
+        - 1024
+        - 1024
+        - 1024
+        - 1048576
+        - 1048576
+        - 1048576
+        - 1048576
+        - 1073741824
+        - 1073741824
+        - 1073741824
+        - 1073741824
+        - 1099511627776
+        - 1099511627776
+        - 1099511627776
+        - 1099511627776
+        - 1125899906842624
+        - 1125899906842624
+        - 1125899906842624
+        - 1125899906842624
+        - 1152921504606846976
+        - 1152921504606846976
+        - 1152921504606846976
+        - 1152921504606846976
+      p4:
+        - 1.1805916207174113e21
+        - 1.1805916207174113e21
+        - 1.1805916207174113e21
+        - 1.1805916207174113e21
+        - 1.2089258196146292e24
+        - 1.2089258196146292e24
+        - 1.2089258196146292e24
+        - 1.2089258196146292e24
+      p5: [1, 1]
+        
+  - note: extra argument
+    data: {}
+    modules:
+      - |
+        package test
+        a = units.parse("1m", "")
+    query: data.test
+    error: expects 1 argument
+         
+  - note: zero arguments
+    data: {}
+    modules:
+      - |
+        package test
+        a = units.parse()
+    query: data.test
+    error: expects 1 argument
+
+  - note: array
+    data: {}
+    modules:
+      - |
+        package test
+        a = units.parse(["1"])
+    query: data.test
+    error: expects string argument
+
+  - note: space
+    data: {}
+    modules:
+      - |
+        package test
+        a = units.parse("1 m")
+    query: data.test
+    error: spaces not allowed in resource string
+
+  - note: b suffix not supported
+    data: {}
+    modules:
+      - |
+        package test
+        a = units.parse("1mb")
+    query: data.test
+    want_result: {}
+    

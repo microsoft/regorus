@@ -1,0 +1,115 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+        a = [
+         "y",
+         "z",
+         "e",
+         "p",
+         "t",
+         "g",
+         "m",
+         "k",
+        ]
+
+        p1 = [ units.parse_bytes(s) | s = concat("", ["1", a[_], "i"])]
+        p1 = [ units.parse_bytes(s) | s = concat("", ["1", a[_], "i", "b"])]
+        p1 = [ units.parse_bytes(s) | s = concat("", ["1", a[_], "i", "B"])]
+
+        p1 = [ units.parse_bytes(s) | s = concat("", ["1", a[_], "I"])]
+        p1 = [ units.parse_bytes(s) | s = concat("", ["1", a[_], "I", "b"])]
+        p1 = [ units.parse_bytes(s) | s = concat("", ["1", a[_], "I", "B"])]
+
+        p1 = [ units.parse_bytes(s) | s = concat("", ["1", upper(a[_]), "i", "b"])]
+        p1 = [ units.parse_bytes(s) | s = concat("", ["1", upper(a[_]), "i", "B"])]
+
+        p1 = [ units.parse_bytes(s) | s = concat("", ["1", upper(a[_]), "I", "b"])]
+        p1 = [ units.parse_bytes(s) | s = concat("", ["1", upper(a[_]), "I", "B"])]
+
+        b = [
+          "q",
+          "r",
+          "y",
+          "z",
+          "e",
+          "p",
+          "t",
+          "g",
+          "m",
+          "k",
+        ]
+
+        p2 = [ units.parse_bytes(s) | s = concat("", ["1", b[_], "b"])]
+        p2 = [ units.parse_bytes(s) | s = concat("", ["1", b[_], "B"])]
+        p2 = [ units.parse_bytes(s) | s = concat("", ["1", upper(b[_]), "b"])]
+        p2 = [ units.parse_bytes(s) | s = concat("", ["1", upper(b[_]), "B"])]
+        
+        
+        results= {
+          "p1": p1,
+          "p2": p2,
+        }
+    query: data.test.results
+    want_result:
+      p1:
+        - 1.2089258196146292e24
+        - 1.1805916207174113e21
+        - 1152921504606846976
+        - 1125899906842624
+        - 1099511627776
+        - 1073741824
+        - 1048576
+        - 1024
+      p2:
+        - 1e30
+        - 1e27
+        - 1e24
+        - 1e21
+        - 1e18
+        - 1e15
+        - 1e12
+        - 1e9
+        - 1e6
+        - 1e3
+
+  - note: extra argument
+    data: {}
+    modules:
+      - |
+        package test
+        a = units.parse_bytes("1m", "")
+    query: data.test
+    error: expects 1 argument
+
+  - note: zero arguments
+    data: {}
+    modules:
+      - |
+        package test
+        a = units.parse_bytes()
+    query: data.test
+    error: expects 1 argument
+
+  - note: array
+    data: {}
+    modules:
+      - |
+        package test
+        a = units.parse_bytes(["1"])
+    query: data.test
+    error: expects string argument
+
+  - note: space
+    data: {}
+    modules:
+      - |
+        package test
+        a = units.parse_bytes("1 m")
+    query: data.test
+    error: spaces not allowed in resource string

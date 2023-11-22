@@ -20,6 +20,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("object.get", (get, 3));
     m.insert("object.keys", (keys, 1));
     m.insert("object.remove", (remove, 2));
+    m.insert("object.subset", (subset, 2));
 }
 
 fn json_filter_impl(v: &Value, filter: &Value) -> Value {
@@ -201,4 +202,32 @@ fn remove(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     };
 
     Ok(Value::Object(obj))
+}
+
+fn is_subset(sup: &Value, sub: &Value) -> bool {
+    match (sup, sub) {
+        (Value::Object(sup), Value::Object(sub)) => {
+            sub.iter().all(|(k, vsub)| {
+                match sup.get(k) {
+                    //		    Some(vsup @ Value::Object(_)) => is_subset(vsup, vsub),
+                    Some(vsup) => is_subset(vsup, vsub),
+                    _ => false,
+                }
+            })
+        }
+        (Value::Set(sup), Value::Set(sub)) => sub.is_subset(sup),
+        (Value::Array(sup), Value::Array(sub)) => sup.windows(sub.len()).any(|w| w == &sub[..]),
+        (Value::Array(sup), Value::Set(_)) => {
+            let sup = Value::from_set(sup.iter().cloned().collect());
+            is_subset(&sup, sub)
+        }
+        (sup, sub) => sup == sub,
+    }
+}
+
+fn subset(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+    let name = "object.subset";
+    ensure_args_count(span, name, params, args, 2)?;
+
+    Ok(Value::Bool(is_subset(&args[0], &args[1])))
 }

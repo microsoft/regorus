@@ -17,6 +17,7 @@ mod strings;
 mod time;
 mod tracing;
 pub mod types;
+mod units;
 mod utils;
 
 use crate::ast::{Expr, Ref};
@@ -65,7 +66,7 @@ lazy_static! {
 	//opa::register(&mut m);
 	debugging::register(&mut m);
 	tracing::register(&mut m);
-	
+	units::register(&mut m);
 	m
     };
 }

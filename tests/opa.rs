@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 use regorus::*;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::Command;
@@ -72,7 +72,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
     let tests_path = Path::new(&opa_tests_dir);
     let mut status = BTreeMap::<String, (u32, u32)>::new();
     let mut n = 0;
-    let mut missing_functions = BTreeSet::new();
+    let mut missing_functions = BTreeMap::new();
     for entry in WalkDir::new(&opa_tests_dir)
         .sort_by_file_name()
         .into_iter()
@@ -93,7 +93,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
             continue;
         }
 
-        let run_test = folders.is_empty() || folders.iter().any(|f| path_dir_str.contains(f));
+        let run_test = folders.is_empty() || folders.iter().any(|f| &path_dir_str == f);
         if !run_test {
             continue;
         }
@@ -108,24 +108,35 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                 (Ok(actual), Some(expected)) if &actual == expected => {
                     entry.0 += 1;
                 }
+                (Ok(actual), None)
+                    if actual == Value::new_array()
+                        && case.want_error.is_none()
+                        && case.error.is_none() =>
+                {
+                    entry.0 += 1;
+                }
                 (Err(_), None) if case.want_error.is_some() => {
                     // Expected failure.
                     entry.0 += 1;
                 }
                 (r, _) => {
                     print!("\n{} failed.", case.note);
+                    dbg!((&case, &r));
                     if let Err(e) = r {
                         let msg = e.to_string();
                         let pat = "could not find function ";
                         if let Some(pos) = msg.find(pat) {
                             let fcn = &msg[pos + pat.len()..];
-                            missing_functions.insert(fcn.to_string());
+                            missing_functions
+                                .entry(fcn.to_string())
+                                .and_modify(|e| *e += 1)
+                                .or_insert(1);
                         }
                     }
                     let path = Path::new("target/opa/failures").join(path_dir);
                     std::fs::create_dir_all(path.clone())?;
 
-                    let mut cmd = "target/debug/examples/regorus eval".to_string();
+                    let mut cmd = "cargo run --example dregorus eval".to_string();
                     if let Some(data) = &case.data {
                         let json_path = path.join(format!("data{n}.json"));
                         cmd += format!(" -d {}", json_path.display()).as_str();
@@ -163,7 +174,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         }
     }
 
-    println!("\nTESTSUITE STATUS");
+    println!("\nOPA TESTSUITE STATUS");
     println!("    {:40}  {:4} {:4}", "FOLDER", "PASS", "FAIL");
     let (mut npass, mut nfail) = (0, 0);
     for (dir, (pass, fail)) in status {
@@ -187,9 +198,13 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
 
     if !missing_functions.is_empty() {
         println!("\nMISSING FUNCTIONS");
-        for (idx, fcn) in missing_functions.iter().enumerate() {
-            println!("\x1b[31m    {:4}: {fcn}\x1b[0m", idx + 1);
+        println!("    {:4}  {:40} {}", "", "FUNCTION", "FAILURES");
+        let mut ncalls = 0;
+        for (idx, (fcn, calls)) in missing_functions.iter().enumerate() {
+            println!("\x1b[31m    {:4}: {fcn:40} {calls}\x1b[0m", idx + 1);
+            ncalls += calls;
         }
+        println!("\x1b[31m    {:4}  {:40} {ncalls}\x1b[0m", "", "TOTAL");
     }
 
     if nfail != 0 {

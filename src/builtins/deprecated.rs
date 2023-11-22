@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
-use crate::builtins::utils::ensure_args_count;
+use crate::builtins::utils::{ensure_args_count, ensure_set};
 use crate::builtins::BuiltinFcn;
 use crate::lexer::Span;
 use crate::value::Value;
@@ -19,7 +19,7 @@ lazy_static! {
 	
 	m.insert("all", (all, 1));
 	m.insert("any", (any, 1));	
-	
+	m.insert("set_diff", (set_diff, 2));
 	m
     };
 }
@@ -48,4 +48,12 @@ fn any(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
             bail!(span.error(format!("`any` requires array/set argument. Got `{a}`.").as_str()))
         }
     }))
+}
+
+fn set_diff(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+    let name = "set_diff";
+    ensure_args_count(span, name, params, args, 2)?;
+    let s1 = ensure_set(name, &params[0], args[0].clone())?;
+    let s2 = ensure_set(name, &params[1], args[1].clone())?;
+    Ok(Value::from_set(s1.difference(&s2).cloned().collect()))
 }
