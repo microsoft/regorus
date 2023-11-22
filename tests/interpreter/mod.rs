@@ -192,10 +192,10 @@ pub fn eval_file(
     query: &str,
     enable_tracing: bool,
 ) -> Result<Vec<Value>> {
+    let mut engine: Engine = engine::Engine::new();
+
     let mut results = vec![];
     let mut files = vec![];
-    let mut sources = vec![];
-    let mut modules = vec![];
 
     for (idx, _) in regos.iter().enumerate() {
         files.push(format!("rego_{idx}"));
@@ -203,35 +203,15 @@ pub fn eval_file(
 
     for (idx, file) in files.iter().enumerate() {
         let contents = regos[idx].as_str();
-        sources.push(Source::new(file.to_string(), contents.to_string()));
+        engine.add_policy(file.to_string(), contents.to_string())?;
     }
 
-    for source in &sources {
-        let mut parser = Parser::new(source)?;
-        modules.push(Ref::new(parser.parse()?));
+    if let Some(data) = data_opt {
+        engine.add_data(data)?;
     }
 
-    let query_source = regorus::Source::new("<query.rego".to_string(), query.to_string());
-    let query_span = regorus::Span {
-        source: query_source.clone(),
-        line: 1,
-        col: 1,
-        start: 0,
-        end: query.len() as u16,
-    };
-    let mut parser = regorus::Parser::new(&query_source)?;
-    let query_node = Ref::new(parser.parse_query(query_span, "")?);
-    let query_schedule = regorus::Analyzer::new().analyze_query_snippet(&modules, &query_node)?;
-
-    let analyzer = Analyzer::new();
-    let schedule = analyzer.analyze(&modules)?;
-
-    let mut interpreter = interpreter::Interpreter::new(&modules)?;
     if let Some(input) = input_opt {
-        // if inputs are defined then first the evaluation if prepared
-        interpreter.prepare_for_eval(Some(schedule), &data_opt)?;
-
-        // then all modules are evaluated for each input
+        // all modules are evaluated for each input
         let mut inputs = vec![];
         match input {
             ValueOrVec::Single(single_input) => inputs.push(single_input),
@@ -239,21 +219,20 @@ pub fn eval_file(
         }
 
         for input in inputs {
-            interpreter.eval_modules(&Some(input), enable_tracing)?;
+            engine.set_input(input);
+            engine.eval_modules(enable_tracing)?;
 
             // Now eval the query.
             push_query_results(
-                interpreter.eval_user_query(&query_node, &query_schedule, enable_tracing)?,
+                engine.eval_query(query.to_string(), enable_tracing)?,
                 &mut results,
             );
         }
     } else {
         // it no input is defined then one evaluation of all modules is performed
-        interpreter.eval(&data_opt, &None, enable_tracing, Some(schedule))?;
-
         // Now eval the query.
         push_query_results(
-            interpreter.eval_user_query(&query_node, &query_schedule, enable_tracing)?,
+            engine.eval_query(query.to_string(), enable_tracing)?,
             &mut results,
         );
     }

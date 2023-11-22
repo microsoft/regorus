@@ -136,7 +136,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                     let path = Path::new("target/opa/failures").join(path_dir);
                     std::fs::create_dir_all(path.clone())?;
 
-                    let mut cmd = "cargo run --example dregorus eval".to_string();
+                    let mut cmd = "cargo run --example regorus eval".to_string();
                     if let Some(data) = &case.data {
                         let json_path = path.join(format!("data{n}.json"));
                         cmd += format!(" -d {}", json_path.display()).as_str();

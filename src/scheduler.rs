@@ -58,8 +58,7 @@ pub fn schedule<Str: Clone + std::cmp::Ord + std::fmt::Debug>(
     }
 
     // Order of execution for statements.
-    let mut order = vec![];
-    order.reserve(infos.len());
+    let mut order = Vec::with_capacity(infos.len());
 
     // Keep track of whether a var has been defined or not.
     let mut defined_vars = BTreeSet::new();
