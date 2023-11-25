@@ -29,7 +29,7 @@ fn base64_decode(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Va
     let encoded_str = ensure_string(name, &params[0], &args[0])?;
     let decoded_bytes = BASE64.decode(encoded_str.as_bytes())?;
     Ok(Value::String(
-        String::from_utf8_lossy(&decoded_bytes).to_string(),
+        String::from_utf8_lossy(&decoded_bytes).into(),
     ))
 }
 
@@ -46,7 +46,8 @@ fn yaml_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Val
     ensure_args_count(span, name, params, args, 1)?;
     Ok(Value::String(
         serde_yaml::to_string(&args[0])
-            .with_context(|| span.error("could not serialize to yaml"))?,
+            .with_context(|| span.error("could not serialize to yaml"))?
+            .into(),
     ))
 }
 
@@ -70,7 +71,8 @@ fn json_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Val
     ensure_args_count(span, name, params, args, 1)?;
     Ok(Value::String(
         serde_json::to_string(&args[0])
-            .with_context(|| span.error("could not serialize to json"))?,
+            .with_context(|| span.error("could not serialize to json"))?
+            .into(),
     ))
 }
 

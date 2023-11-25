@@ -90,7 +90,7 @@ pub enum Value {
     Null,
     Bool(bool),
     Number(Number),
-    String(String),
+    String(Rc<str>),
     Array(Rc<Vec<Value>>),
     Object(Rc<BTreeMap<Value, Value>>),
 
@@ -110,7 +110,7 @@ impl Serialize for Value {
         match self {
             Value::Null => serializer.serialize_none(),
             Value::Bool(b) => serializer.serialize_bool(*b),
-            Value::String(s) => serializer.serialize_str(s.as_str()),
+            Value::String(s) => serializer.serialize_str(s.as_ref()),
             Value::Number(n) => n.serialize(serializer),
             Value::Array(a) => a.serialize(serializer),
             Value::Object(fields) => {
@@ -233,14 +233,14 @@ impl Value {
         }
     }
 
-    pub fn as_string(&self) -> Result<&String> {
+    pub fn as_string(&self) -> Result<&Rc<str>> {
         match self {
             Value::String(s) => Ok(s),
             _ => Err(anyhow!("not a string")),
         }
     }
 
-    pub fn as_string_mut(&mut self) -> Result<&mut String> {
+    pub fn as_string_mut(&mut self) -> Result<&mut Rc<str>> {
         match self {
             Value::String(s) => Ok(s),
             _ => Err(anyhow!("not a string")),
@@ -310,7 +310,7 @@ impl Value {
             return Ok(self);
         }
 
-        let key = Value::String(paths[0].to_owned());
+        let key = Value::String(paths[0].into());
         if self == &Value::Undefined {
             *self = Value::new_object();
         }
@@ -379,7 +379,7 @@ impl ops::Index<&str> for Value {
     type Output = Value;
 
     fn index(&self, key: &str) -> &Self::Output {
-        &self[&Value::String(key.to_owned())]
+        &self[&Value::String(key.into())]
     }
 }
 
@@ -387,7 +387,7 @@ impl ops::Index<&String> for Value {
     type Output = Value;
 
     fn index(&self, key: &String) -> &Self::Output {
-        &self[&Value::String(key.clone())]
+        &self[&Value::String(key.clone().into())]
     }
 }
 

@@ -12,7 +12,7 @@ use test_generator::test_resources;
 pub fn process_value(v: &Value) -> Result<Value> {
     match v {
         // Handle Undefined encoded as a string "#undefined"
-        Value::String(s) if s == "#undefined" => Ok(Value::Undefined),
+        Value::String(s) if s.as_ref() == "#undefined" => Ok(Value::Undefined),
 
         // Handle set encoded as an object
         // set! :

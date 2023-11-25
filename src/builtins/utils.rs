@@ -43,7 +43,7 @@ pub fn ensure_numeric(fcn: &str, arg: &Expr, v: &Value) -> Result<Float> {
     })
 }
 
-pub fn ensure_string(fcn: &str, arg: &Expr, v: &Value) -> Result<String> {
+pub fn ensure_string(fcn: &str, arg: &Expr, v: &Value) -> Result<Rc<str>> {
     Ok(match &v {
         Value::String(s) => s.clone(),
         _ => {
@@ -60,7 +60,7 @@ pub fn ensure_string_element<'a>(
     idx: usize,
 ) -> Result<&'a str> {
     Ok(match &v {
-        Value::String(s) => s.as_str(),
+        Value::String(s) => s.as_ref(),
         _ => {
             let span = arg.span();
             bail!(span.error(
