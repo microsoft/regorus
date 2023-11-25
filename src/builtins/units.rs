@@ -21,7 +21,7 @@ fn parse(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "units.parse";
     ensure_args_count(span, name, params, args, 1)?;
     let string = ensure_string(name, &params[0], &args[0])?;
-    let string = string.as_str();
+    let string = string.as_ref();
 
     // Remove quotes.
     let string = if string.starts_with('"') && string.ends_with('"') && string.len() >= 2 {
@@ -101,7 +101,7 @@ fn parse_bytes(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Valu
     let name = "units.parse_bytes";
     ensure_args_count(span, name, params, args, 1)?;
     let string = ensure_string(name, &params[0], &args[0])?;
-    let string = string.as_str();
+    let string = string.as_ref();
 
     // Remove quotes.
     let string = if string.starts_with('"') && string.ends_with('"') && string.len() >= 2 {

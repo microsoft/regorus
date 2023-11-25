@@ -20,7 +20,7 @@ macro_rules! my_assert_eq {
 }
 
 fn skip_value(v: &Value) -> bool {
-    matches!(v, Value::String(s) if s == "--skip--")
+    matches!(v, Value::String(s) if s.as_ref() == "--skip--")
 }
 
 fn match_span(s: &Span, v: &Value) -> Result<()> {
@@ -28,7 +28,7 @@ fn match_span(s: &Span, v: &Value) -> Result<()> {
         Value::String(vs) => {
             my_assert_eq!(
                 *s.text(),
-                vs,
+                vs.as_ref(),
                 "{}",
                 s.source
                     .message(s.line, s.col, "match-error", "mismatch happened here.")
@@ -151,7 +151,7 @@ fn match_expr_impl(e: &Expr, v: &Value) -> Result<()> {
         Expr::UnaryExpr { span, expr } => {
             match_span_opt(span, &v["span"])?;
             my_assert_eq!(
-                &Value::String("-".to_owned()),
+                &Value::String("-".into()),
                 &v["op"],
                 "{}",
                 span.source.message(
@@ -324,8 +324,8 @@ fn match_expr_opt(s: &Span, e: &Option<Ref<Expr>>, v: &Value) -> Result<()> {
 
 fn match_bin_op(s: &Span, op: &BinOp, v: &Value) -> Result<()> {
     match (op, v) {
-        (BinOp::And, Value::String(s)) if s == "&" => Ok(()),
-        (BinOp::Or, Value::String(s)) if s == "|" => Ok(()),
+        (BinOp::And, Value::String(s)) if s.as_ref() == "&" => Ok(()),
+        (BinOp::Or, Value::String(s)) if s.as_ref() == "|" => Ok(()),
         _ => bail!(
             "{}",
             s.source.message(
@@ -340,10 +340,10 @@ fn match_bin_op(s: &Span, op: &BinOp, v: &Value) -> Result<()> {
 
 fn match_arith_op(s: &Span, op: &ArithOp, v: &Value) -> Result<()> {
     match (op, v) {
-        (ArithOp::Add, Value::String(s)) if s == "+" => Ok(()),
-        (ArithOp::Sub, Value::String(s)) if s == "-" => Ok(()),
-        (ArithOp::Mul, Value::String(s)) if s == "*" => Ok(()),
-        (ArithOp::Div, Value::String(s)) if s == "/" => Ok(()),
+        (ArithOp::Add, Value::String(s)) if s.as_ref() == "+" => Ok(()),
+        (ArithOp::Sub, Value::String(s)) if s.as_ref() == "-" => Ok(()),
+        (ArithOp::Mul, Value::String(s)) if s.as_ref() == "*" => Ok(()),
+        (ArithOp::Div, Value::String(s)) if s.as_ref() == "/" => Ok(()),
         _ => bail!(
             "{}",
             s.source.message(
@@ -358,11 +358,11 @@ fn match_arith_op(s: &Span, op: &ArithOp, v: &Value) -> Result<()> {
 
 fn match_bool_op(s: &Span, op: &BoolOp, v: &Value) -> Result<()> {
     match (op, v) {
-        (BoolOp::Lt, Value::String(s)) if s == "<" => Ok(()),
-        (BoolOp::Le, Value::String(s)) if s == "<=" => Ok(()),
-        (BoolOp::Eq, Value::String(s)) if s == "==" => Ok(()),
-        (BoolOp::Ge, Value::String(s)) if s == ">=" => Ok(()),
-        (BoolOp::Gt, Value::String(s)) if s == ">" => Ok(()),
+        (BoolOp::Lt, Value::String(s)) if s.as_ref() == "<" => Ok(()),
+        (BoolOp::Le, Value::String(s)) if s.as_ref() == "<=" => Ok(()),
+        (BoolOp::Eq, Value::String(s)) if s.as_ref() == "==" => Ok(()),
+        (BoolOp::Ge, Value::String(s)) if s.as_ref() == ">=" => Ok(()),
+        (BoolOp::Gt, Value::String(s)) if s.as_ref() == ">" => Ok(()),
         _ => bail!(
             "{}",
             s.source.message(
@@ -377,8 +377,8 @@ fn match_bool_op(s: &Span, op: &BoolOp, v: &Value) -> Result<()> {
 
 fn match_assign_op(s: &Span, op: &AssignOp, v: &Value) -> Result<()> {
     match (op, v) {
-        (AssignOp::Eq, Value::String(s)) if s == "=" => Ok(()),
-        (AssignOp::ColEq, Value::String(s)) if s == ":=" => Ok(()),
+        (AssignOp::Eq, Value::String(s)) if s.as_ref() == "=" => Ok(()),
+        (AssignOp::ColEq, Value::String(s)) if s.as_ref() == ":=" => Ok(()),
         _ => bail!(
             "{}",
             s.source.message(
@@ -470,7 +470,7 @@ fn match_literal(l: &Literal, v: &Value) -> Result<()> {
         Literal::NotExpr { expr, span } => {
             let v = &v["notexpr"];
             match &v["op"] {
-                Value::String(s) if s == "not" => (),
+                Value::String(s) if s.as_ref() == "not" => (),
                 _ => {
                     bail!(
                         "{}",

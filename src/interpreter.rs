@@ -42,7 +42,7 @@ pub struct Interpreter {
     active_rules: Vec<Ref<Rule>>,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
-    traces: Option<Vec<String>>,
+    traces: Option<Vec<std::rc::Rc<str>>>,
     allow_deprecated: bool,
 }
 
@@ -807,20 +807,20 @@ impl Interpreter {
     fn make_expression_result(span: &Span, v: &Value) -> Value {
         let mut loc = BTreeMap::new();
         loc.insert(
-            Value::String("row".to_string()),
+            Value::String("row".into()),
             Value::from_float(span.line as f64),
         );
         loc.insert(
-            Value::String("col".to_string()),
+            Value::String("col".into()),
             Value::from_float(span.col as f64),
         );
 
         let mut expr = BTreeMap::new();
-        expr.insert(Value::String("value".to_string()), v.clone());
-        expr.insert(Value::String("location".to_string()), Value::from_map(loc));
+        expr.insert(Value::String("value".into()), v.clone());
+        expr.insert(Value::String("location".into()), Value::from_map(loc));
         expr.insert(
-            Value::String("text".to_string()),
-            Value::String(span.text().to_string()),
+            Value::String("text".into()),
+            Value::String(span.text().to_string().into()),
         );
         Value::from_map(expr)
     }
@@ -1196,7 +1196,7 @@ impl Interpreter {
                         result
                             .bindings
                             .as_object_mut()?
-                            .insert(Value::String(name.to_string()), value.clone());
+                            .insert(Value::String(name.to_string().into()), value.clone());
                     }
                 }
                 if result.expressions.iter().all(|v| v != &Value::Undefined)
@@ -1315,7 +1315,7 @@ impl Interpreter {
                         result
                             .bindings
                             .as_object_mut()?
-                            .insert(Value::String(name.to_string()), value.clone());
+                            .insert(Value::String(name.to_string().into()), value.clone());
                     }
                 }
                 if result.expressions.iter().all(|v| v != &Value::Undefined)
@@ -1594,7 +1594,16 @@ impl Interpreter {
 
         let mut results: Vec<Value> = Vec::new();
         let mut errors: Vec<anyhow::Error> = Vec::new();
-        for fcn_rule in fcns {
+        let mut param_values = Vec::with_capacity(params.len());
+        for p in params {
+            let v = self.eval_expr(p)?;
+            if v == Value::Undefined {
+                return Ok(v);
+            }
+            param_values.push(v);
+        }
+
+        'outer: for fcn_rule in fcns {
             let (args, output_expr, bodies) = match fcn_rule.as_ref() {
                 Rule::Spec {
                     head: RuleHead::Func { args, assign, .. },
@@ -1621,11 +1630,25 @@ impl Interpreter {
             for (idx, a) in args.iter().enumerate() {
                 let a = match a.as_ref() {
                     Expr::Var(s) => s.source_str(),
-                    _ => continue,
-                    //                    _ => unimplemented!("destructuring function arguments"),
+                    _ => {
+                        match self.eval_expr(a) {
+                            Ok(a) => {
+                                if a != param_values[idx] {
+                                    // Skip this rule definition.
+                                    continue 'outer;
+                                }
+
+                                continue;
+                            }
+                            _ => {
+                                // TODO: destructuring function arguments.
+                                continue;
+                            }
+                        }
+                    }
                 };
                 //TODO: check call in params
-                args_scope.insert(a, self.eval_expr(&params[idx])?);
+                args_scope.insert(a, param_values[idx].clone());
             }
 
             let ctx = Context {
@@ -1763,6 +1786,7 @@ impl Interpreter {
                 }
             }
         }
+
         Ok(())
     }
 
@@ -1851,7 +1875,7 @@ impl Interpreter {
                     Err(e) => bail!(span.error(format!("invalid string literal. {e}").as_str())),
                 }
             }
-            Expr::RawString(span) => Ok(Value::String(span.text().to_string())),
+            Expr::RawString(span) => Ok(Value::String(span.text().to_string().into())),
 
             // TODO: Handle undefined variables
             Expr::Var(_) => self.eval_chained_ref_dot_or_brack(expr),
@@ -2009,7 +2033,7 @@ impl Interpreter {
 
     fn get_value_chained(mut obj: Value, path: &[&str]) -> Value {
         for p in path {
-            obj = obj[&Value::String(p.to_string())].clone();
+            obj = obj[&Value::String(p.to_string().into())].clone();
         }
         obj
     }
@@ -2020,7 +2044,7 @@ impl Interpreter {
             return Ok(obj);
         }
 
-        let key = Value::String(paths[0].to_owned());
+        let key = Value::String(paths[0].into());
         if obj == &Value::Undefined {
             *obj = Value::new_object();
         }
@@ -2169,6 +2193,8 @@ impl Interpreter {
             span, refr, value, ..
         } = rule.as_ref()
         {
+            let scopes = std::mem::take(&mut self.scopes);
+
             let mut path =
                 Parser::get_path_ref_components(&self.module.clone().unwrap().package.refr)?;
 
@@ -2212,6 +2238,7 @@ impl Interpreter {
                 }
             };
 
+            self.scopes = scopes;
             self.processed.insert(rule.clone());
         }
 
@@ -2289,7 +2316,7 @@ impl Interpreter {
                             Value::Set(_) if special_set => {
                                 let entry = path[path.len() - 1].text();
                                 let mut s = BTreeSet::new();
-                                s.insert(Value::String(entry.to_owned().to_string()));
+                                s.insert(Value::String(entry.to_string().into()));
                                 path = path[0..path.len() - 1].to_vec();
                                 Value::from_set(s)
                             }

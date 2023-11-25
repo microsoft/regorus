@@ -86,7 +86,7 @@ fn display_number() {
 #[test]
 fn serialize_string() -> Result<()> {
     assert_eq!(
-        Value::String("Hello, World\n".to_owned()).to_json_str()?,
+        Value::String("Hello, World\n".into()).to_json_str()?,
         "\"Hello, World\\n\""
     );
     Ok(())
@@ -122,7 +122,7 @@ fn value_as_index() -> Result<()> {
     assert_eq!(&Value::Undefined[&idx], &Value::Undefined);
     assert_eq!(&Value::Null[&idx], &Value::Undefined);
     assert_eq!(&Value::Bool(true)[&idx], &Value::Undefined);
-    assert_eq!(&Value::String("Hello".to_owned())[&idx], &Value::Undefined);
+    assert_eq!(&Value::String("Hello".into())[&idx], &Value::Undefined);
     assert_eq!(&Value::new_set()[&idx], &Value::Undefined);
 
     Ok(())
@@ -151,7 +151,7 @@ fn api() -> Result<()> {
     assert!(&Value::from_json_str("{}")?.as_object()?.is_empty());
     let mut v = Value::new_object();
     v.as_object_mut()?
-        .insert(Value::String("a".to_owned()), Value::from_float(3.145));
+        .insert(Value::String("a".into()), Value::from_float(3.145));
     assert_eq!(v["a"], Value::from_float(3.145));
     assert_eq!(v.as_object()?.len(), 1);
 
@@ -168,8 +168,8 @@ fn api() -> Result<()> {
     assert!(Value::Null.as_set().is_err());
     assert!(Value::Null.as_set_mut().is_err());
 
-    assert!(Value::String("anc".to_owned()).as_array().is_err());
-    assert!(Value::String("anc".to_owned()).as_array_mut().is_err());
+    assert!(Value::String("anc".into()).as_array().is_err());
+    assert!(Value::String("anc".into()).as_array_mut().is_err());
 
     assert!(Value::new_object().as_number().is_err());
     assert!(Value::new_object().as_number_mut().is_err());
