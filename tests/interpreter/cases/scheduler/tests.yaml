@@ -21,3 +21,52 @@ cases:
     query: data.test
     want_result:
       r1: 12
+      
+  - note: input-dependency
+    data: {}
+    modules:
+      - |
+        package test
+
+        default p = null
+        p = input.p
+
+        q {
+          input.p
+          true
+        }
+
+        r1 = s {
+          # Dependency on null input before erroring stmt.
+          input.p
+          s = concat("", ["", p])
+        }
+
+        #r2 = s {
+        #  s = concat("", ["", p])
+        #  # Dependency on null input after erroring stmt.
+        #  # This doesn't reordered before assignment to s
+        #  # since s also has no other local var dependency.
+        #  # The written order of statements is preserved.
+        #  input.p          
+        #}
+
+        r3 = s {
+          # Indirect dependency on null input before erroring stmt.
+          q
+          s = concat("", ["", p])
+        }
+        
+        #r3 = s {
+        #  s := concat("", ["", p])
+        #  # Indirect dependency on null input after erroring stmt.
+        #  # This doesn't reordered before assignment to s
+        #  # since s also has no other local var dependency.
+        #  # The written order of statements is preserved.
+        #  input.p          
+        #  q
+        #}
+        
+    query: data.test
+    want_result:
+      p: null

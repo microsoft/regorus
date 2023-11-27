@@ -2348,7 +2348,17 @@ impl Interpreter {
                             }
                             v => v,
                         };
+
                         let paths: Vec<&str> = path.iter().map(|s| *s.text()).collect();
+
+                        if let RuleHead::Set { .. } = &rule_head {
+                            // Ensure that sets are created as empty.
+                            let vref = Self::make_or_get_value_mut(&mut self.data, &paths)?;
+                            if *vref == Value::Undefined {
+                                *vref = Value::new_set();
+                            }
+                        }
+
                         self.update_data(span, refr, &paths[..], value)?;
 
                         self.processed.insert(rule.clone());

@@ -162,6 +162,8 @@ pub fn schedule<Str: Clone + std::cmp::Ord + std::fmt::Debug>(
         (stmt_scheduled, reprocess_var)
     };
 
+    process_var(empty.clone());
+
     let mut done = false;
     while !done {
         done = true;
@@ -840,7 +842,7 @@ impl Analyzer {
                 )?;
                 self.process_comprs(&comprs[..], scope, first_use, &mut used_vars)?;
                 definitions.push(Definition {
-                    var: expr.span().source_str().clone(),
+                    var: expr.span().source_str().clone_empty(),
                     used_vars,
                 });
                 Ok(())
