@@ -78,8 +78,7 @@ fn range(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     }
     let incr = if v2 >= v1 { 1 } else { -1 } as Float;
 
-    let mut values = vec![];
-    values.reserve((v2 - v1).abs() as usize + 1);
+    let mut values = Vec::with_capacity((v2 - v1).abs() as usize + 1);
 
     let mut v = v1;
     while v != v2 {

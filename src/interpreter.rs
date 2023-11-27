@@ -20,12 +20,12 @@ type Scope = BTreeMap<SourceStr, Value>;
 type DefaultRuleInfo = (Ref<Rule>, Option<String>);
 type ContextExprs = (Option<Ref<Expr>>, Option<Ref<Expr>>);
 
+#[derive(Clone)]
 pub struct Interpreter {
     modules: Vec<Ref<Module>>,
     module: Option<Ref<Module>>,
     schedule: Option<Schedule>,
     current_module_path: String,
-    prepared: bool,
     input: Value,
     data: Value,
     init_data: Value,
@@ -44,6 +44,12 @@ pub struct Interpreter {
     no_rules_lookup: bool,
     traces: Option<Vec<std::rc::Rc<str>>>,
     allow_deprecated: bool,
+}
+
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -88,20 +94,16 @@ struct LoopExpr {
 }
 
 impl Interpreter {
-    pub fn new(modules: &[Ref<Module>]) -> Result<Interpreter> {
-        let mut with_document = Value::new_object();
-        *Self::make_or_get_value_mut(&mut with_document, &["data"])? = Value::new_object();
-        *Self::make_or_get_value_mut(&mut with_document, &["input"])? = Value::new_object();
-        Ok(Interpreter {
-            modules: modules.to_vec(),
+    pub fn new() -> Interpreter {
+        Interpreter {
+            modules: vec![],
             module: None,
             schedule: None,
             current_module_path: String::default(),
-            prepared: false,
             input: Value::new_object(),
             data: Value::new_object(),
             init_data: Value::new_object(),
-            with_document,
+            with_document: Value::new_object(),
             with_functions: BTreeMap::new(),
             scopes: vec![Scope::new()],
             contexts: vec![],
@@ -115,45 +117,66 @@ impl Interpreter {
             no_rules_lookup: false,
             traces: None,
             allow_deprecated: true,
-        })
+        }
     }
 
-    pub fn get_modules(&mut self) -> &mut Vec<Ref<Module>> {
+    pub fn set_schedule(&mut self, schedule: Option<Schedule>) {
+        self.schedule = schedule;
+    }
+
+    pub fn set_functions(&mut self, functions: FunctionTable) {
+        self.functions = functions;
+    }
+
+    pub fn set_modules(&mut self, modules: &[Ref<Module>]) {
+        self.modules = modules.to_vec();
+    }
+
+    pub fn get_modules_mut(&mut self) -> &mut Vec<Ref<Module>> {
         &mut self.modules
+    }
+
+    pub fn set_init_data(&mut self, init_data: Value) {
+        self.init_data = init_data;
     }
 
     pub fn set_data(&mut self, data: Value) {
         self.data = data;
     }
 
-    pub fn get_data(&mut self) -> &mut Value {
+    pub fn get_data_mut(&mut self) -> &mut Value {
         &mut self.data
     }
 
-    fn clean_internal_evaluation_state(&mut self) {
+    pub fn set_traces(&mut self, enable_tracing: bool) {
+        self.traces = match enable_tracing {
+            true => Some(vec![]),
+            false => None,
+        };
+    }
+
+    pub fn set_input(&mut self, input: Value) {
+        self.input = input;
+        info!("input: {:#?}", self.input);
+    }
+
+    pub fn init_with_document(&mut self) -> Result<()> {
+        *Self::make_or_get_value_mut(&mut self.with_document, &["data"])? = Value::new_object();
+        *Self::make_or_get_value_mut(&mut self.with_document, &["input"])? = Value::new_object();
+
+        Ok(())
+    }
+
+    pub fn clear_builtins_cache(&mut self) {
+        self.builtins_cache.clear();
+    }
+
+    pub fn clean_internal_evaluation_state(&mut self) {
         self.data = self.init_data.clone();
         self.processed.clear();
         self.loop_var_values.clear();
         self.scopes = vec![Scope::new()];
         self.contexts = vec![];
-    }
-
-    fn checks_for_eval(&mut self, input: &Option<Value>, enable_tracing: bool) -> Result<()> {
-        if !self.prepared {
-            bail!("prepare_for_eval should be called before eval_modules");
-        }
-
-        self.traces = match enable_tracing {
-            true => Some(vec![]),
-            false => None,
-        };
-
-        if let Some(input) = input {
-            self.input = input.clone();
-            info!("input: {:#?}", self.input);
-        }
-
-        Ok(())
     }
 
     fn current_module(&self) -> Result<Ref<Module>> {
@@ -2039,7 +2062,7 @@ impl Interpreter {
     }
 
     #[inline]
-    fn make_or_get_value_mut<'a>(obj: &'a mut Value, paths: &[&str]) -> Result<&'a mut Value> {
+    pub fn make_or_get_value_mut<'a>(obj: &'a mut Value, paths: &[&str]) -> Result<&'a mut Value> {
         if paths.is_empty() {
             return Ok(obj);
         }
@@ -2107,7 +2130,10 @@ impl Interpreter {
         Ok(comps.join("."))
     }
 
-    fn set_current_module(&mut self, module: Option<Ref<Module>>) -> Result<Option<Ref<Module>>> {
+    pub fn set_current_module(
+        &mut self,
+        module: Option<Ref<Module>>,
+    ) -> Result<Option<Ref<Module>>> {
         let m = self.module.clone();
         if let Some(m) = &module {
             self.current_module_path = Self::get_path_string(&m.package.refr, Some("data"))?;
@@ -2172,7 +2198,7 @@ impl Interpreter {
         Err(span.error(format!("invalid `{kind}` in default value").as_str()))
     }
 
-    fn check_default_rules(&self) -> Result<()> {
+    pub fn check_default_rules(&self) -> Result<()> {
         for module in &self.modules {
             for rule in &module.policy {
                 if let Rule::Default { value, .. } = rule.as_ref() {
@@ -2183,7 +2209,7 @@ impl Interpreter {
         Ok(())
     }
 
-    fn eval_default_rule(&mut self, rule: &Ref<Rule>) -> Result<()> {
+    pub fn eval_default_rule(&mut self, rule: &Ref<Rule>) -> Result<()> {
         // Skip reprocessing rule.
         if self.processed.contains(rule) {
             return Ok(());
@@ -2264,7 +2290,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_rule(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
+    pub fn eval_rule(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
         // Skip reprocessing rule
         if self.processed.contains(rule) {
             return Ok(());
@@ -2357,85 +2383,6 @@ impl Interpreter {
         }
     }
 
-    pub fn eval_rule_with_input(
-        &mut self,
-        module: &Ref<Module>,
-        rule: &Ref<Rule>,
-        input: &Option<Value>,
-        enable_tracing: bool,
-    ) -> Result<Value> {
-        self.checks_for_eval(input, enable_tracing)?;
-        self.clean_internal_evaluation_state();
-
-        self.eval_rule(module, rule)?;
-
-        Ok(self.data.clone())
-    }
-
-    pub fn prepare_for_eval(
-        &mut self,
-        schedule: Option<Schedule>,
-        data: &Option<Value>,
-    ) -> Result<()> {
-        self.schedule = schedule;
-        self.builtins_cache.clear();
-
-        if let Some(data) = data {
-            self.data = data.clone();
-            self.init_data = data.clone();
-        }
-
-        self.functions = gather_functions(&self.modules)?;
-
-        self.gather_rules()?;
-        self.prepared = true;
-
-        Ok(())
-    }
-
-    pub fn eval_modules(&mut self, input: &Option<Value>, enable_tracing: bool) -> Result<Value> {
-        self.checks_for_eval(input, enable_tracing)?;
-        self.clean_internal_evaluation_state();
-
-        // Ensure that each module has an empty object
-        for m in &self.modules {
-            let path = Parser::get_path_ref_components(&m.package.refr)?;
-            let path: Vec<&str> = path.iter().map(|s| *s.text()).collect();
-            let vref = Self::make_or_get_value_mut(&mut self.data, &path[..])?;
-            if *vref == Value::Undefined {
-                *vref = Value::new_object();
-            }
-        }
-
-        self.check_default_rules()?;
-        for module in self.modules.clone() {
-            for rule in &module.policy {
-                self.eval_rule(&module, rule)?;
-            }
-        }
-        // Defer the evaluation of the default rules to here
-        for module in self.modules.clone() {
-            let prev_module = self.set_current_module(Some(module.clone()))?;
-            for rule in &module.policy {
-                self.eval_default_rule(rule)?;
-            }
-            self.set_current_module(prev_module)?;
-        }
-
-        Ok(self.data.clone())
-    }
-
-    pub fn eval(
-        &mut self,
-        data: &Option<Value>,
-        input: &Option<Value>,
-        enable_tracing: bool,
-        schedule: Option<Schedule>,
-    ) -> Result<Value> {
-        self.prepare_for_eval(schedule, data)?;
-        self.eval_modules(input, enable_tracing)
-    }
-
     pub fn eval_user_query(
         &mut self,
         query: &Ref<Query>,
@@ -2503,7 +2450,7 @@ impl Interpreter {
         }
     }
 
-    fn gather_rules(&mut self) -> Result<()> {
+    pub fn gather_rules(&mut self) -> Result<()> {
         for module in self.modules.clone() {
             let prev_module = self.set_current_module(Some(module.clone()))?;
             for rule in &module.policy {
