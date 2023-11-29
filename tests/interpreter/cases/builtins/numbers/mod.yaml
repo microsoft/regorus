@@ -11,7 +11,6 @@ cases:
 
         # Undefined
         y { false }
-        a = 1 % 0
         b = y % 1
         c = 1 % y
     query: data.test
@@ -44,4 +43,22 @@ cases:
         package test
         x = 1%0
     query: data.test
-    want_result: {}
+    error: modulo by zero
+
+  - note: float numerator
+    data: {}
+    modules:
+      - |
+        package test
+        x = 1.1 % 1
+    query: data.test
+    error: modulo on floating-point number
+
+  - note: float denom
+    data: {}
+    modules:
+      - |
+        package test
+        x = 1 % 1.1
+    query: data.test
+    error: modulo on floating-point number

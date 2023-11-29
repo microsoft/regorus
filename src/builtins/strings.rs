@@ -8,7 +8,8 @@ use crate::builtins::utils::{
     ensure_string_collection,
 };
 use crate::lexer::Span;
-use crate::value::{Float, Number, Value};
+use crate::number::Number;
+use crate::value::Value;
 
 use std::collections::HashMap;
 
@@ -65,24 +66,31 @@ fn endswith(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> 
     Ok(Value::Bool(s1.ends_with(s2.as_ref())))
 }
 
+fn format_number(n: &Number, base: u64) -> String {
+    match base {
+        2 => n.format_bin(),
+        8 => n.format_octal(),
+        10 => n.format_decimal(),
+        16 => n.format_hex(),
+        _ => "".to_owned(),
+    }
+}
+
 fn format_int(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
-    let name = "endswith";
+    let name = "format_int";
     ensure_args_count(span, name, params, args, 2)?;
     let mut n = ensure_numeric(name, &params[0], &args[0])?;
     let mut sign = "";
-    if n < 0.0 {
+    if n < Number::from(0u64) {
         n = n.abs();
         sign = "-";
     }
-    let n = n.floor() as u64;
+    let n = n.floor();
 
     Ok(Value::String(
         (sign.to_owned()
-            + &match ensure_numeric(name, &params[1], &args[1])? as u64 {
-                2 => format!("{:b}", n),
-                8 => format!("{:o}", n),
-                10 => format!("{}", n),
-                16 => format!("{:x}", n),
+            + &match ensure_numeric(name, &params[1], &args[1])?.as_u64() {
+                Some(b) => format_number(&n, b),
                 _ => return Ok(Value::Undefined),
             })
             .into(),
@@ -94,10 +102,10 @@ fn indexof(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, name, params, args, 2)?;
     let s1 = ensure_string(name, &params[0], &args[0])?;
     let s2 = ensure_string(name, &params[1], &args[1])?;
-    Ok(Value::from_float(match s1.find(s2.as_ref()) {
+    Ok(Value::from(Number::from(match s1.find(s2.as_ref()) {
         Some(pos) => pos as i64,
         _ => -1,
-    } as Float))
+    })))
 }
 
 #[allow(dead_code)]
@@ -111,7 +119,7 @@ fn indexof_n(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value>
     let mut idx = 0;
     while idx < s1.len() {
         if let Some(pos) = s1.find(s2.as_ref()) {
-            positions.push(Value::from_float(pos as Float));
+            positions.push(Value::from(pos as u64));
             idx = pos + 1;
         } else {
             break;
@@ -201,64 +209,81 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
             _ => (),
         }
 
-        let get_sign_value = |f: &Number| match (emit_sign, f.0 .0) {
-            (_, v) if v < 0.0 => ("-", v),
-            (true, v) => ("+", v),
-            (false, v) if leave_space_for_elided_sign => (" ", v),
-            (false, v) => ("", v),
+        let get_sign_value = |f: &Number| match (emit_sign, f) {
+            (_, v) if v < &Number::from(0.0) => ("-", v.clone()),
+            (true, v) => ("+", v.clone()),
+            (false, v) if leave_space_for_elided_sign => (" ", v.clone()),
+            (false, v) => ("", v.clone()),
         };
 
         // Handle Golang printing verbs.
         // https://pkg.go.dev/fmt
         match (verb, arg) {
             ('v', _) => s += format!("{arg}").as_str(),
-            ('b', Value::Number(f)) if f.0 == f.0.floor() => {
+            ('b', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
                 s += sign;
-                s += format!("{:b}", v as u64).as_str()
+                s += v.format_bin().as_str()
             }
-            ('c', Value::Number(f)) if f.0 == f.0.floor() => {
+            ('c', Value::Number(f)) if f.is_integer() => {
                 // TODO: range error
-                let ival = f.0 .0 as u32;
-                match char::from_u32(ival) {
-                    Some(c) => s.push(c),
-                    None => {
+                let ch_opt = f.as_u64().map(|ival| char::from_u32(ival as u32));
+                match ch_opt {
+                    Some(Some(c)) => s.push(c),
+                    _ => {
                         bail!(args_span.error(
-                            format!("invalid integer value {ival} for format verb c.").as_str()
+                            format!("invalid value {} for format verb c.", f.format_decimal())
+                                .as_str()
                         ))
                     }
                 }
             }
-            ('d', Value::Number(f)) if f.0 == f.0.floor() => {
+            ('d', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
                 s += sign;
-                s += format!("{v}").as_str()
+                s += v.format_decimal().as_str()
             }
-            ('o', Value::Number(f)) if f.0 == f.0.floor() => {
+            ('o', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
                 s += sign;
-                s += format!("{:o}", v as u64).as_str()
+                s += ("0O".to_owned() + &v.format_octal()).as_str()
             }
-            ('O', Value::Number(f)) if f.0 == f.0.floor() => {
+            ('O', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
                 s += sign;
-                s += format!("0o{:o}", v as u64).as_str()
+                s += ("0o".to_owned() + &v.format_octal()).as_str()
             }
-            ('x', Value::Number(f)) if f.0 == f.0.floor() => {
+            ('x', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
                 s += sign;
-                s += format!("{:x}", v as u64).as_str()
+                s += v.format_hex().as_str()
             }
-            ('X', Value::Number(f)) if f.0 == f.0.floor() => {
+            ('X', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
                 s += sign;
-                s += format!("{:X}", v as u64).as_str()
+                s += v.format_big_hex().as_str()
             }
-            ('e', Value::Number(f)) => s += format!("{:e}", f.0).as_str(),
-            ('E', Value::Number(f)) => s += format!("{:E}", f.0).as_str(),
-            ('f' | 'F', Value::Number(f)) => s += format!("{}", f.0).as_str(),
+            ('e', Value::Number(f)) => {
+                s += match f.as_f64() {
+                    Some(f) => format!("{:e}", f),
+                    _ => bail!(span.error("cannot print large float using e format specifier")),
+                }
+                .as_str()
+            }
+            ('E', Value::Number(f)) => {
+                s += match f.as_f64() {
+                    Some(f) => format!("{:E}", f),
+                    _ => bail!(span.error("cannot print large float using E format specifier")),
+                }
+                .as_str()
+            }
+            ('f' | 'F', Value::Number(f)) => s += f.format_decimal().as_str(),
             ('g', Value::Number(f)) => {
                 let (sign, v) = get_sign_value(f);
+                let v = match v.as_f64() {
+                    Some(v) => v,
+                    _ => bail!(span.error("cannot print large float using g format specified")),
+                };
                 s += sign;
                 let bits = v.to_bits();
                 let exponent = (bits >> 52) & 0x7ff;
@@ -271,6 +296,10 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
             }
             ('G', Value::Number(f)) => {
                 let (sign, v) = get_sign_value(f);
+                let v = match v.as_f64() {
+                    Some(v) => v,
+                    _ => bail!("cannot print large float using g format specified"),
+                };
                 s += sign;
                 let bits = v.to_bits();
                 let exponent = (bits >> 52) & 0x7ff;
@@ -423,25 +452,22 @@ fn substring(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value>
     let offset = ensure_numeric(name, &params[1], &args[1])?;
     let length = ensure_numeric(name, &params[2], &args[2])?;
 
-    if offset.floor() != offset || length.floor() != length {
-        return Ok(Value::Undefined);
-    }
-
-    if offset < 0.0 || length < 0.0 {
-        return Ok(Value::Undefined);
-    }
-
-    let offset = offset as usize;
-    let length = length as usize;
-
     // TODO: distinguish between 20.0 and 20
     // Also: behavior of
     // x = substring("hello", 20 + 0.0, 25)
-    if offset > s.len() || length <= offset {
-        return Ok(Value::String("".into()));
-    }
+    match (offset.as_u64(), length.as_u64()) {
+        (Some(offset), Some(length)) => {
+            let offset = offset as usize;
+            let length = length as usize;
 
-    Ok(Value::String(s[offset..offset + length].into()))
+            if offset > s.len() || length <= offset {
+                return Ok(Value::String("".into()));
+            }
+
+            Ok(Value::String(s[offset..offset + length].into()))
+        }
+        _ => Ok(Value::Undefined),
+    }
 }
 
 fn trim(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {

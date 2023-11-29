@@ -21,8 +21,8 @@ fn to_number(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value>
 
     let span = params[0].span();
     Ok(match &args[0] {
-        Value::Bool(true) => Value::from_float(1.0),
-        Value::Bool(false) => Value::from_float(0.0),
+        Value::Bool(true) => Value::from(1u64),
+        Value::Bool(false) => Value::from(0u64),
         Value::Number(_) => args[0].clone(),
         // Eventhough the doc says that strings are converted using strconv.Atoi golang method,
         // in practice strings seems to be read as json numbers. This means that floating point

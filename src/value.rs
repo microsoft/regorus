@@ -1,90 +1,23 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use crate::number::Number;
+
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops;
 use std::rc::Rc;
+use std::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
-use ordered_float::OrderedFloat;
-use serde::de::{self, Deserializer};
+use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
 
-pub type Float = f64;
-
-// TODO: rego uses BigNum which has arbitrary precision. But there seems
-// to be some bugs with it e.g ((a + b) -a) == b doesn't return true for large
-// values of a and b.
-// Json doesn't specify a limit on precision, but in practice double (f64) seems
-// to be enough to support most use cases and portability too.
-// See discussions in jq's repository.
-// For now we use OrderedFloat<f64>. We can't use f64 directly since it doesn't
-// implement Ord trait.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Number(pub OrderedFloat<Float>);
-
-impl Serialize for Number {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let n_float = self.0 .0;
-        let n_i64 = n_float as i64;
-        let n_u64 = n_float as u64;
-
-        if n_u64 as f64 == n_float {
-            serializer.serialize_u64(n_u64)
-        } else if n_i64 as f64 == n_float {
-            serializer.serialize_i64(n_i64)
-        } else {
-            serializer.serialize_f64(n_float)
-        }
-    }
-}
-
-struct NumberVisitor;
-impl<'de> de::Visitor<'de> for NumberVisitor {
-    type Value = Number;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        write!(formatter, "a json number")
-    }
-
-    fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
-        Ok(Number(OrderedFloat(v)))
-    }
-
-    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
-        Ok(Number(OrderedFloat(v as f64)))
-    }
-
-    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
-        Ok(Number(OrderedFloat(v as f64)))
-    }
-}
-
-impl<'de> Deserialize<'de> for Number {
-    fn deserialize<D>(deserializer: D) -> Result<Number, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_f64(NumberVisitor)
-    }
-}
-
-impl fmt::Display for Number {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
 // We cannot use serde_json::Value because Rego has set type and object's key can be
 // other rego values.
-// BTree is more efficient that a hast table. Another alternative is a sorted vector.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
-#[serde(untagged)]
+// BTree is more efficient than a hash table. Another alternative is a sorted vector.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Value {
     // Json data types. serde will automatically map json to these variants.
     Null,
@@ -136,6 +69,123 @@ impl Serialize for Value {
     }
 }
 
+struct ValueVisitor;
+
+impl<'de> Visitor<'de> for ValueVisitor {
+    type Value = Value;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a value")
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::Null)
+    }
+
+    fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::Bool(v))
+    }
+
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::from(v))
+    }
+
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::from(v))
+    }
+
+    fn visit_u128<E>(self, v: u128) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::from(v))
+    }
+
+    fn visit_i128<E>(self, v: i128) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::from(v))
+    }
+
+    fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::from(Number::from(v)))
+    }
+
+    fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::String(s.to_string().into()))
+    }
+
+    fn visit_string<E>(self, s: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::String(s.into()))
+    }
+
+    fn visit_seq<V>(self, mut visitor: V) -> Result<Self::Value, V::Error>
+    where
+        V: SeqAccess<'de>,
+    {
+        let mut arr = vec![];
+        while let Some(v) = visitor.next_element()? {
+            arr.push(v);
+        }
+        Ok(Value::from(arr))
+    }
+
+    fn visit_map<V>(self, mut visitor: V) -> Result<Self::Value, V::Error>
+    where
+        V: MapAccess<'de>,
+    {
+        if let Some((key, value)) = visitor.next_entry()? {
+            if let (Value::String(k), Value::String(v)) = (&key, &value) {
+                if k.as_ref() == "$serde_json::private::Number" {
+                    match Number::from_str(v) {
+                        Ok(n) => return Ok(Value::from(n)),
+                        _ => return Err(de::Error::custom("failed to read big number")),
+                    }
+                }
+            }
+            let mut map = BTreeMap::new();
+            map.insert(key, value);
+            while let Some((key, value)) = visitor.next_entry()? {
+                map.insert(key, value);
+            }
+            Ok(Value::from(map))
+        } else {
+            Ok(Value::new_object())
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Value {
+    fn deserialize<D>(deserializer: D) -> Result<Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(ValueVisitor)
+    }
+}
+
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match serde_json::to_string(self) {
@@ -147,15 +197,15 @@ impl fmt::Display for Value {
 
 impl Value {
     pub fn new_object() -> Value {
-        Value::from_map(BTreeMap::new())
+        Value::from(BTreeMap::new())
     }
 
     pub fn new_set() -> Value {
-        Value::from_set(BTreeSet::new())
+        Value::from(BTreeSet::new())
     }
 
     pub fn new_array() -> Value {
-        Value::from_array(vec![])
+        Value::from(vec![])
     }
 
     pub fn from_json_str(json: &str) -> Result<Value> {
@@ -185,26 +235,77 @@ impl Value {
     }
 }
 
-impl Value {
-    pub fn from_float(v: Float) -> Value {
-        Value::Number(Number(OrderedFloat(v)))
+impl From<u128> for Value {
+    fn from(n: u128) -> Self {
+        Value::Number(Number::from(n))
     }
+}
 
-    pub fn from_u128(v: u128) -> Value {
-        // TODO: fix precision loss
-        Value::Number(Number(OrderedFloat(v as f64)))
+impl From<i128> for Value {
+    fn from(n: i128) -> Self {
+        Value::Number(Number::from(n))
     }
+}
 
-    pub fn from_array(a: Vec<Value>) -> Value {
+impl From<u64> for Value {
+    fn from(n: u64) -> Self {
+        Value::Number(Number::from(n))
+    }
+}
+
+impl From<i64> for Value {
+    fn from(n: i64) -> Self {
+        Value::Number(Number::from(n))
+    }
+}
+
+impl From<f64> for Value {
+    fn from(n: f64) -> Self {
+        Value::Number(Number::from(n))
+    }
+}
+
+impl From<usize> for Value {
+    fn from(n: usize) -> Self {
+        Value::Number(Number::from(n))
+    }
+}
+
+impl From<Number> for Value {
+    fn from(n: Number) -> Self {
+        Value::Number(n)
+    }
+}
+
+impl From<Vec<Value>> for Value {
+    fn from(a: Vec<Value>) -> Self {
         Value::Array(Rc::new(a))
+    }
+}
+
+impl From<BTreeSet<Value>> for Value {
+    fn from(s: BTreeSet<Value>) -> Self {
+        Value::Set(Rc::new(s))
+    }
+}
+
+impl From<BTreeMap<Value, Value>> for Value {
+    fn from(s: BTreeMap<Value, Value>) -> Self {
+        Value::Object(Rc::new(s))
+    }
+}
+
+impl Value {
+    pub fn from_array(a: Vec<Value>) -> Value {
+        Value::from(a)
     }
 
     pub fn from_set(s: BTreeSet<Value>) -> Value {
-        Value::Set(Rc::new(s))
+        Value::from(s)
     }
 
     pub fn from_map(m: BTreeMap<Value, Value>) -> Value {
-        Value::Object(Rc::new(m))
+        Value::from(m)
     }
 
     pub fn is_null(&self) -> bool {
@@ -404,14 +505,10 @@ impl ops::Index<&Value> for Value {
                 Some(v) => v,
                 _ => &Value::Undefined,
             },
-            (Value::Array(a), Value::Number(n)) => {
-                let index = n.0 .0 as usize;
-                if index < a.len() {
-                    &a[index]
-                } else {
-                    &Value::Undefined
-                }
-            }
+            (Value::Array(a), Value::Number(n)) => match n.as_u64() {
+                Some(index) if (index as usize) < a.len() => &a[index as usize],
+                _ => &Value::Undefined,
+            },
             _ => &Value::Undefined,
         }
     }

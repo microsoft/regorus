@@ -1,11 +1,13 @@
 aggregates
 all
 any
+arithmetic
 array
 assignments
 bitsand
 bitsnegate
 bitsor
+bitsshiftleft
 bitsshiftright
 bitsxor
 comparisonexpr
@@ -16,6 +18,7 @@ embeddedvirtualdoc
 evaltermexpr
 example
 fix1863
+helloworld
 indexing
 intersection
 invalidkeyerror

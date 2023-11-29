@@ -45,15 +45,21 @@ fn slice(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let start = ensure_numeric(name, &params[1], &args[1].clone())?;
     let stop = ensure_numeric(name, &params[2], &args[2].clone())?;
 
-    if start != start.floor() || stop != stop.floor() {
+    if !start.is_integer() || !stop.is_integer() {
         return Ok(Value::Undefined);
     }
 
-    // TODO: usize conversion checks.
-    let start = start as usize;
-    let stop = match stop as usize {
-        s if s > array.len() => array.len(),
-        s => s,
+    let start = match start.as_i64() {
+        Some(n) if n < 0 => 0,
+        Some(n) => n as usize,
+        _ => return Ok(Value::Undefined),
+    };
+
+    let stop = match stop.as_i64() {
+        Some(n) if n < 0 => 0,
+        Some(n) if n as usize > array.len() => array.len(),
+        Some(n) => n as usize,
+        _ => return Ok(Value::Undefined),
     };
 
     if start >= stop {
@@ -61,5 +67,5 @@ fn slice(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     }
 
     let slice = &array[start..stop];
-    Ok(Value::from_array(slice.to_vec()))
+    Ok(Value::from(slice.to_vec()))
 }
