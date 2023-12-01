@@ -11,6 +11,7 @@ pub mod deprecated;
 mod encoding;
 pub mod numbers;
 mod objects;
+mod regex;
 mod semver;
 pub mod sets;
 mod strings;
@@ -45,7 +46,7 @@ lazy_static! {
 	sets::register(&mut m);
 	objects::register(&mut m);
 	strings::register(&mut m);
-	//regex::register(&mut m);
+	regex::register(&mut m);
 	//glob::register(&mut m);
 	bitwise::register(&mut m);
 	conversions::register(&mut m);

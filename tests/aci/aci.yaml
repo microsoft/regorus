@@ -1,0 +1,390 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+- note: aci/mount_device
+  modules:
+  - api.rego
+  - framework.rego
+  - policy.rego
+  input:
+    deviceHash: 1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766
+    target: /run/layers/p0-layer0
+  data:
+    metadata: {}
+  query: data.policy.mount_device=x
+  want_result: 
+  - x:
+      allowed: true
+      metadata:
+      - action: add
+        key: /run/layers/p0-layer0
+        name: devices
+        value: 1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766
+- note: aci/mount_overlay
+  modules:
+  - api.rego
+  - framework.rego
+  - policy.rego
+  input:
+    containerID: container0
+    layerPaths:
+    - /run/layers/p0-layer0
+    - /run/layers/p0-layer1
+    - /run/layers/p0-layer2
+    - /run/layers/p0-layer3
+    - /run/layers/p0-layer4
+    - /run/layers/p0-layer5
+    target: /run/gcs/c/container0/rootfs
+  data:
+    metadata:
+      devices:
+        "/run/layers/p0-layer0": 1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766
+        "/run/layers/p0-layer1": e769d7487cc314d3ee748a4440805317c19262c7acd2fdbdb0d47d2e4613a15c
+        "/run/layers/p0-layer2": eb36921e1f82af46dfe248ef8f1b3afb6a5230a64181d960d10237a08cd73c79
+        "/run/layers/p0-layer3": 41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156
+        "/run/layers/p0-layer4": 4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c
+        "/run/layers/p0-layer5": fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a
+  query: data.policy.mount_overlay=x
+  want_result:
+  - x:
+      allowed: true
+      metadata:
+      - action: add
+        key: container0
+        name: matches
+        value:
+        - {"allow_elevated":true,"allow_stdio_access":false,"capabilities":{"ambient":["CAP_SYS_ADMIN"],"bounding":["CAP_SYS_ADMIN"],"effective":["CAP_SYS_ADMIN"],"inheritable":["CAP_SYS_ADMIN"],"permitted":["CAP_SYS_ADMIN"]},"command":["rustc","--help"],"env_rules":[{"pattern":"PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","required":true,"strategy":"string"},{"pattern":"RUSTUP_HOME=/usr/local/rustup","required":true,"strategy":"string"},{"pattern":"CARGO_HOME=/usr/local/cargo","required":true,"strategy":"string"},{"pattern":"RUST_VERSION=1.52.1","required":true,"strategy":"string"},{"pattern":"TERM=xterm","required":false,"strategy":"string"},{"pattern":"PREFIX_.+=.+","required":false,"strategy":"re2"}],"exec_processes":[{"command":["top"],"signals":[]}],"layers":["fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a","4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c","41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156","eb36921e1f82af46dfe248ef8f1b3afb6a5230a64181d960d10237a08cd73c79","e769d7487cc314d3ee748a4440805317c19262c7acd2fdbdb0d47d2e4613a15c","1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766"],"mounts":[{"destination":"/container/path/one","options":["rbind","rshared","rw"],"source":"sandbox:///host/path/one","type":"bind"},{"destination":"/container/path/two","options":["rbind","rshared","ro"],"source":"sandbox:///host/path/two","type":"bind"}],"no_new_privileges":true,"seccomp_profile_sha256":"","signals":[],"user":{"group_idnames":[{"pattern":"","strategy":"any"}],"umask":"0022","user_idname":{"pattern":"","strategy":"any"}},"working_dir":"/home/user"}
+      - action: add
+        key: /run/gcs/c/container0/rootfs
+        name: overlayTargets
+        value: true
+- note: aci/scratch_mount
+  modules:
+  - api.rego
+  - framework.rego
+  - policy.rego
+  input:
+    encrypted: true
+    target: /mnt/layer6
+  data:
+    metadata: {}
+  query: data.policy.scratch_mount=x
+  want_result:
+  - x:
+      allowed: true
+      metadata:
+      - action: add
+        key: /mnt/layer6
+        name: scratch_mounts
+        value:
+          encrypted: true
+- note: aci/create_container
+  modules:
+  - api.rego
+  - framework.rego
+  - policy.rego
+  input:
+    argList:
+    - rustc
+    - --help
+    capabilities:
+      ambient: ["CAP_SYS_ADMIN"]
+      bounding: ["CAP_SYS_ADMIN"]
+      effective: ["CAP_SYS_ADMIN"]
+      inheritable: ["CAP_SYS_ADMIN"]
+      permitted: ["CAP_SYS_ADMIN"]
+    containerID: container0
+    envList:
+    - CARGO_HOME=/usr/local/cargo
+    - RUST_VERSION=1.52.1
+    - TERM=xterm
+    - PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    - RUSTUP_HOME=/usr/local/rustup
+    groups:
+    - id: 0
+      name: root
+    hugePagesDir: /run/gcs/c/sandbox0/hugepages
+    mounts:
+    - destination: /container/path/one
+      options: ["rbind", "rshared", "rw"]
+      source: /run/gcs/c/sandbox0/sandboxMounts/host/path/one
+      type: bind
+    - destination: /container/path/two
+      options: ["rbind", "rshared", "ro"]
+      source: /run/gcs/c/sandbox0/sandboxMounts/host/path/two
+      type: bind
+    noNewPrivileges: true
+    privileged: false
+    seccompProfileSHA256: ""
+    sandboxDir: /run/gcs/c/sandbox0/sandboxMounts
+    umask: "0022"
+    user:
+      id: 0
+      name: root
+    workingDir: /home/user
+  data:
+    sandboxPrefix: "sandbox://"
+    hugePagesPrefix: "hugepages://"
+    plan9Prefix: "plan9://"
+    defaultMounts: []
+    privilegedMounts: []
+    defaultPrivilegedCapabilities:  
+      - CAP_CHOWN
+      - CAP_DAC_OVERRIDE
+      - CAP_DAC_READ_SEARCH
+      - CAP_FOWNER
+      - CAP_FSETID
+      - CAP_KILL
+      - CAP_SETGID
+      - CAP_SETUID
+      - CAP_SETPCAP
+      - CAP_LINUX_IMMUTABLE
+      - CAP_NET_BIND_SERVICE
+      - CAP_NET_BROADCAST
+      - CAP_NET_ADMIN
+      - CAP_NET_RAW
+      - CAP_IPC_LOCK
+      - CAP_IPC_OWNER
+      - CAP_SYS_MODULE
+      - CAP_SYS_RAWIO
+      - CAP_SYS_CHROOT
+      - CAP_SYS_PTRACE
+      - CAP_SYS_PACCT
+      - CAP_SYS_ADMIN
+      - CAP_SYS_BOOT
+      - CAP_SYS_NICE
+      - CAP_SYS_RESOURCE
+      - CAP_SYS_TIME
+      - CAP_SYS_TTY_CONFIG
+      - CAP_MKNOD
+      - CAP_LEASE
+      - CAP_AUDIT_WRITE
+      - CAP_AUDIT_CONTROL
+      - CAP_SETFCAP
+      - CAP_MAC_OVERRIDE
+      - CAP_MAC_ADMIN
+      - CAP_SYSLOG
+      - CAP_WAKE_ALARM
+      - CAP_BLOCK_SUSPEND
+      - CAP_AUDIT_READ
+      - CAP_PERFMON
+      - CAP_BPF
+      - CAP_CHECKPOINT_RESTORE
+    defaultUnprivilegedCapabilities:
+      - CAP_DAC_OVERRIDE
+      - CAP_FSETID
+      - CAP_FOWNER
+      - CAP_MKNOD
+      - CAP_NET_RAW
+      - CAP_SETGID
+      - CAP_SETUID
+      - CAP_SETFCAP
+      - CAP_SETPCAP
+      - CAP_NET_BIND_SERVICE
+      - CAP_SYS_CHROOT
+      - CAP_KILL
+      - CAP_AUDIT_WRITE
+    metadata:
+      devices:
+        "/run/layers/p0-layer0": 1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766
+        "/run/layers/p0-layer1": e769d7487cc314d3ee748a4440805317c19262c7acd2fdbdb0d47d2e4613a15c
+        "/run/layers/p0-layer2": eb36921e1f82af46dfe248ef8f1b3afb6a5230a64181d960d10237a08cd73c79
+        "/run/layers/p0-layer3": 41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156
+        "/run/layers/p0-layer4": 4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c
+        "/run/layers/p0-layer5": fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a
+      matches:
+        container0:
+        - {"allow_elevated":true,"allow_stdio_access":false,"capabilities":{"ambient":["CAP_SYS_ADMIN"],"bounding":["CAP_SYS_ADMIN"],"effective":["CAP_SYS_ADMIN"],"inheritable":["CAP_SYS_ADMIN"],"permitted":["CAP_SYS_ADMIN"]},"command":["rustc","--help"],"env_rules":[{"pattern":"PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","required":true,"strategy":"string"},{"pattern":"RUSTUP_HOME=/usr/local/rustup","required":true,"strategy":"string"},{"pattern":"CARGO_HOME=/usr/local/cargo","required":true,"strategy":"string"},{"pattern":"RUST_VERSION=1.52.1","required":true,"strategy":"string"},{"pattern":"TERM=xterm","required":false,"strategy":"string"},{"pattern":"PREFIX_.+=.+","required":false,"strategy":"re2"}],"exec_processes":[{"command":["top"],"signals":[]}],"layers":["fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a","4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c","41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156","eb36921e1f82af46dfe248ef8f1b3afb6a5230a64181d960d10237a08cd73c79","e769d7487cc314d3ee748a4440805317c19262c7acd2fdbdb0d47d2e4613a15c","1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766"],"mounts":[{"destination":"/container/path/one","options":["rbind","rshared","rw"],"source":"sandbox:///host/path/one","type":"bind"},{"destination":"/container/path/two","options":["rbind","rshared","ro"],"source":"sandbox:///host/path/two","type":"bind"}],"no_new_privileges":true,"seccomp_profile_sha256":"","signals":[],"user":{"group_idnames":[{"pattern":"","strategy":"any"}],"umask":"0022","user_idname":{"pattern":"","strategy":"any"}},"working_dir":"/home/user"}
+        - {"allow_elevated":false,"allow_stdio_access":false,"capabilities":null,"command":["rustc","--version"],"env_rules":[{"pattern":"PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","required":true,"strategy":"string"},{"pattern":"RUSTUP_HOME=/usr/local/rustup","required":true,"strategy":"string"},{"pattern":"CARGO_HOME=/usr/local/cargo","required":true,"strategy":"string"},{"pattern":"RUST_VERSION=1.52.1","required":true,"strategy":"string"},{"pattern":"TERM=xterm","required":false,"strategy":"string"}],"exec_processes":[{"command":["bash"],"signals":[]}],"layers":["fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a","4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c","41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156","eb36921e1f82af46dfe248ef8f1b3afb6a5230a64181d960d10237a08cd73c79","e769d7487cc314d3ee748a4440805317c19262c7acd2fdbdb0d47d2e4613a15c","1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766"],"mounts":[],"no_new_privileges":true,"seccomp_profile_sha256":"","signals":[],"user":{"group_idnames":[{"pattern":"","strategy":"any"}],"umask":"0022","user_idname":{"pattern":"","strategy":"any"}},"working_dir":"/home/fragment"}
+      overlayTargets:
+        "/run/gcs/c/container0/rootfs": true
+      scratch_mounts:
+        "/mnt/layer6":
+          encrypted: true
+  query: data.policy.create_container=x
+  want_result:
+  - x:
+      allow_stdio_access: false
+      allowed: true
+      caps_list:
+        ambient: ["CAP_SYS_ADMIN"]
+        bounding: ["CAP_SYS_ADMIN"]
+        effective: ["CAP_SYS_ADMIN"]
+        inheritable: ["CAP_SYS_ADMIN"]
+        permitted: ["CAP_SYS_ADMIN"]
+      env_list:
+      - CARGO_HOME=/usr/local/cargo
+      - RUST_VERSION=1.52.1
+      - TERM=xterm
+      - PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      - RUSTUP_HOME=/usr/local/rustup
+      metadata:
+      - action: update
+        key: container0
+        name: matches
+        value:
+        - {"allow_elevated":true,"allow_stdio_access":false,"capabilities":{"ambient":["CAP_SYS_ADMIN"],"bounding":["CAP_SYS_ADMIN"],"effective":["CAP_SYS_ADMIN"],"inheritable":["CAP_SYS_ADMIN"],"permitted":["CAP_SYS_ADMIN"]},"command":["rustc","--help"],"env_rules":[{"pattern":"PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","required":true,"strategy":"string"},{"pattern":"RUSTUP_HOME=/usr/local/rustup","required":true,"strategy":"string"},{"pattern":"CARGO_HOME=/usr/local/cargo","required":true,"strategy":"string"},{"pattern":"RUST_VERSION=1.52.1","required":true,"strategy":"string"},{"pattern":"TERM=xterm","required":false,"strategy":"string"},{"pattern":"PREFIX_.+=.+","required":false,"strategy":"re2"}],"exec_processes":[{"command":["top"],"signals":[]}],"layers":["fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a","4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c","41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156","eb36921e1f82af46dfe248ef8f1b3afb6a5230a64181d960d10237a08cd73c79","e769d7487cc314d3ee748a4440805317c19262c7acd2fdbdb0d47d2e4613a15c","1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766"],"mounts":[{"destination":"/container/path/one","options":["rbind","rshared","rw"],"source":"sandbox:///host/path/one","type":"bind"},{"destination":"/container/path/two","options":["rbind","rshared","ro"],"source":"sandbox:///host/path/two","type":"bind"}],"no_new_privileges":true,"seccomp_profile_sha256":"","signals":[],"user":{"group_idnames":[{"pattern":"","strategy":"any"}],"umask":"0022","user_idname":{"pattern":"","strategy":"any"}},"working_dir":"/home/user"}
+      - action: add
+        key: container0
+        name: started
+        value:
+          privileged: false
+- note: aci/shutdown_container
+  modules:
+  - api.rego
+  - framework.rego
+  - policy.rego
+  input:
+    containerID: container0
+  data:
+    metadata:
+      devices:
+        "/run/layers/p0-layer0": 1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766
+        "/run/layers/p0-layer1": e769d7487cc314d3ee748a4440805317c19262c7acd2fdbdb0d47d2e4613a15c
+        "/run/layers/p0-layer2": eb36921e1f82af46dfe248ef8f1b3afb6a5230a64181d960d10237a08cd73c79
+        "/run/layers/p0-layer3": 41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156
+        "/run/layers/p0-layer4": 4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c
+        "/run/layers/p0-layer5": fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a
+      matches:
+        container0:
+        - {"allow_elevated":true,"allow_stdio_access":false,"capabilities":{"ambient":["CAP_SYS_ADMIN"],"bounding":["CAP_SYS_ADMIN"],"effective":["CAP_SYS_ADMIN"],"inheritable":["CAP_SYS_ADMIN"],"permitted":["CAP_SYS_ADMIN"]},"command":["rustc","--help"],"env_rules":[{"pattern":"PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","required":true,"strategy":"string"},{"pattern":"RUSTUP_HOME=/usr/local/rustup","required":true,"strategy":"string"},{"pattern":"CARGO_HOME=/usr/local/cargo","required":true,"strategy":"string"},{"pattern":"RUST_VERSION=1.52.1","required":true,"strategy":"string"},{"pattern":"TERM=xterm","required":false,"strategy":"string"},{"pattern":"PREFIX_.+=.+","required":false,"strategy":"re2"}],"exec_processes":[{"command":["top"],"signals":[]}],"layers":["fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a","4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c","41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156","eb36921e1f82af46dfe248ef8f1b3afb6a5230a64181d960d10237a08cd73c79","e769d7487cc314d3ee748a4440805317c19262c7acd2fdbdb0d47d2e4613a15c","1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766"],"mounts":[{"destination":"/container/path/one","options":["rbind","rshared","rw"],"source":"sandbox:///host/path/one","type":"bind"},{"destination":"/container/path/two","options":["rbind","rshared","ro"],"source":"sandbox:///host/path/two","type":"bind"}],"no_new_privileges":true,"seccomp_profile_sha256":"","signals":[],"user":{"group_idnames":[{"pattern":"","strategy":"any"}],"umask":"0022","user_idname":{"pattern":"","strategy":"any"}},"working_dir":"/home/user"}
+        - {"allow_elevated":false,"allow_stdio_access":false,"capabilities":null,"command":["rustc","--version"],"env_rules":[{"pattern":"PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","required":true,"strategy":"string"},{"pattern":"RUSTUP_HOME=/usr/local/rustup","required":true,"strategy":"string"},{"pattern":"CARGO_HOME=/usr/local/cargo","required":true,"strategy":"string"},{"pattern":"RUST_VERSION=1.52.1","required":true,"strategy":"string"},{"pattern":"TERM=xterm","required":false,"strategy":"string"}],"exec_processes":[{"command":["bash"],"signals":[]}],"layers":["fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a","4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c","41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156","eb36921e1f82af46dfe248ef8f1b3afb6a5230a64181d960d10237a08cd73c79","e769d7487cc314d3ee748a4440805317c19262c7acd2fdbdb0d47d2e4613a15c","1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766"],"mounts":[],"no_new_privileges":true,"seccomp_profile_sha256":"","signals":[],"user":{"group_idnames":[{"pattern":"","strategy":"any"}],"umask":"0022","user_idname":{"pattern":"","strategy":"any"}},"working_dir":"/home/fragment"}
+      overlayTargets:
+        "/run/gcs/c/container0/rootfs": true
+      scratch_mounts:
+        "/mnt/layer6":
+          encrypted: true
+      started:
+        container0:
+        - {"privileged": false}
+  query: data.policy.shutdown_container=x
+  want_result:
+  - x:
+      allowed: true
+      metadata:
+      - action: remove
+        key: container0
+        name: matches
+- note: aci/scratch_unmount
+  modules:
+  - api.rego
+  - framework.rego
+  - policy.rego
+  input:
+    unmountTarget: /mnt/layer6
+  data:
+    metadata:
+      devices:
+        "/run/layers/p0-layer0": 1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766
+        "/run/layers/p0-layer1": e769d7487cc314d3ee748a4440805317c19262c7acd2fdbdb0d47d2e4613a15c
+        "/run/layers/p0-layer2": eb36921e1f82af46dfe248ef8f1b3afb6a5230a64181d960d10237a08cd73c79
+        "/run/layers/p0-layer3": 41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156
+        "/run/layers/p0-layer4": 4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c
+        "/run/layers/p0-layer5": fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a
+      overlayTargets:
+        "/run/gcs/c/container0/rootfs": true
+      scratch_mounts:
+        "/mnt/layer6":
+          encrypted: true
+  query: data.policy.scratch_unmount=x
+  want_result:
+  - x:
+      allowed: true
+      metadata:
+      - action: remove
+        key: /mnt/layer6
+        name: scratch_mounts
+- note: aci/unmount_overlay
+  modules:
+  - api.rego
+  - framework.rego
+  - policy.rego
+  input:
+    unmountTarget: /run/gcs/c/container0/rootfs
+  data:
+    metadata:
+      devices:
+        "/run/layers/p0-layer0": 1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766
+        "/run/layers/p0-layer1": e769d7487cc314d3ee748a4440805317c19262c7acd2fdbdb0d47d2e4613a15c
+        "/run/layers/p0-layer2": eb36921e1f82af46dfe248ef8f1b3afb6a5230a64181d960d10237a08cd73c79
+        "/run/layers/p0-layer3": 41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156
+        "/run/layers/p0-layer4": 4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c
+        "/run/layers/p0-layer5": fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a
+      overlayTargets:
+        "/run/gcs/c/container0/rootfs": true
+      scratch_mounts: []
+  query: data.policy.unmount_overlay=x
+  want_result:
+  - x:
+      allowed: true
+      metadata:
+      - action: remove
+        key: /run/gcs/c/container0/rootfs
+        name: overlayTargets
+- note: aci/unmount_device
+  modules:
+  - api.rego
+  - framework.rego
+  - policy.rego
+  input:
+    unmountTarget: /run/layers/p0-layer0
+  data:
+    metadata:
+      devices:
+        "/run/layers/p0-layer0": 1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766
+  query: data.policy.unmount_device=x
+  want_result:
+  - x:
+      allowed: true
+      metadata:
+      - action: remove
+        key: /run/layers/p0-layer0
+        name: devices
+- note: aci/load_fragment
+  modules:
+  - api.rego
+  - framework.rego
+  - policy.rego
+  - |
+      package fragment
+
+      svn := "1"
+      framework_version := "0.3.0"
+
+      containers := [
+          {
+              "command": ["rustc","--version"],
+              "env_rules": [{"pattern": `PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, "strategy": "string", "required": true},{"pattern": `RUSTUP_HOME=/usr/local/rustup`, "strategy": "string", "required": true},{"pattern": `CARGO_HOME=/usr/local/cargo`, "strategy": "string", "required": true},{"pattern": `RUST_VERSION=1.52.1`, "strategy": "string", "required": true},{"pattern": `TERM=xterm`, "strategy": "string", "required": false}],
+              "layers": ["fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a","4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c","41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156","eb36921e1f82af46dfe248ef8f1b3afb6a5230a64181d960d10237a08cd73c79","e769d7487cc314d3ee748a4440805317c19262c7acd2fdbdb0d47d2e4613a15c","1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766"],
+              "mounts": [],
+              "exec_processes": [{"command": ["bash"], "signals": []}],
+              "signals": [],
+              "user": {
+                  "user_idname": {"pattern": ``, "strategy": "any"},
+                  "group_idnames": [{"pattern": ``, "strategy": "any"}],
+                  "umask": "0022"
+              },
+              "capabilities": null,
+              "seccomp_profile_sha256": "",
+              "allow_elevated": false,
+              "working_dir": "/home/fragment",
+              "allow_stdio_access": false,
+              "no_new_privileges": true,
+          },
+      ]
+  input:
+    feed: contoso.azurecr.io/infra
+    issuer: did:web:contoso.com
+    namespace: fragment
+  data:
+    metadata: {}
+  query: data.policy.load_fragment=x
+  want_result:
+  - x: 
+      add_module: false
+      allowed: true
+      metadata:
+      - action: update
+        key: did:web:contoso.com
+        name: issuers
+        value: {"feeds":{"contoso.azurecr.io/infra":[{"containers":[{"allow_elevated":false,"allow_stdio_access":false,"capabilities":null,"command":["rustc","--version"],"env_rules":[{"pattern":"PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","required":true,"strategy":"string"},{"pattern":"RUSTUP_HOME=/usr/local/rustup","required":true,"strategy":"string"},{"pattern":"CARGO_HOME=/usr/local/cargo","required":true,"strategy":"string"},{"pattern":"RUST_VERSION=1.52.1","required":true,"strategy":"string"},{"pattern":"TERM=xterm","required":false,"strategy":"string"}],"exec_processes":[{"command":["bash"],"signals":[]}],"layers":["fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a","4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c","41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156","eb36921e1f82af46dfe248ef8f1b3afb6a5230a64181d960d10237a08cd73c79","e769d7487cc314d3ee748a4440805317c19262c7acd2fdbdb0d47d2e4613a15c","1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766"],"mounts":[],"no_new_privileges":true,"seccomp_profile_sha256":"","signals":[],"user":{"group_idnames":[{"pattern":"","strategy":"any"}],"umask":"0022","user_idname":{"pattern":"","strategy":"any"}},"working_dir":"/home/fragment"}]}]}}

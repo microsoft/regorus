@@ -121,7 +121,12 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                 }
                 (r, _) => {
                     print!("\n{} failed.", case.note);
-                    dbg!((&case, &r));
+                    println!("{}", serde_yaml::to_string(&case)?);
+                    match &r {
+                        Ok(actual) => println!("GOT\n{}", serde_yaml::to_string(&actual)?),
+                        Err(e) => println!("ERROR: {e}"),
+                    }
+
                     if let Err(e) = r {
                         let msg = e.to_string();
                         let pat = "could not find function ";
