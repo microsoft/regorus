@@ -16,6 +16,7 @@ embeddedvirtualdoc
 evaltermexpr
 example
 fix1863
+indexing
 intersection
 invalidkeyerror
 jsonfilteridempotent
@@ -26,6 +27,9 @@ objectremoveidempotent
 objectremovenonstringkey
 partialsetdoc
 rand
+regexisvalid
+regexmatch
+regexsplit
 replacen
 semvercompare
 sets
@@ -35,8 +39,10 @@ trim
 trimleft
 trimprefix
 trimright
+trimspace
 trimsuffix
 typebuiltin
 typenamebuiltin
+undos
 union
 units

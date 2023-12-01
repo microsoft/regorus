@@ -17,6 +17,7 @@ env_logger="0.10.0"
 lazy_static = "1.4.0"
 rand = "0.8.5"
 data-encoding = "2.4.0"
+regex = "1.10.2"
 
 [dev-dependencies]
 clap = { version = "4.4.7", features = ["derive"] }
@@ -31,5 +32,10 @@ debug = true
 
 [[test]]
 name="opa"
+harness=false
+test=false
+
+[[test]]
+name="aci"
 harness=false
 test=false

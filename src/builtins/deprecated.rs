@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
+use crate::builtins::regex::regex_match;
 use crate::builtins::utils::{ensure_args_count, ensure_set};
 use crate::builtins::BuiltinFcn;
 use crate::lexer::Span;
@@ -20,6 +21,7 @@ lazy_static! {
 	m.insert("all", (all, 1));
 	m.insert("any", (any, 1));	
 	m.insert("set_diff", (set_diff, 2));
+	m.insert("re_match", (regex_match, 2));
 	m
     };
 }

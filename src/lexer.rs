@@ -147,7 +147,7 @@ impl Source {
         let col_spaces = col as usize - 1;
 
         format!(
-            "\n-->{}:{}:{}\n{:<line_num_width$}|\n\
+            "\n--> {}:{}:{}\n{:<line_num_width$}|\n\
 		{:<line_num_width$}| {}\n\
 		{:<line_num_width$}| {:<col_spaces$}^\n\
 		{}: {}",

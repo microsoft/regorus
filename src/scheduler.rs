@@ -570,6 +570,15 @@ impl Analyzer {
                     } else {
                         gather_input_vars(expr, &self.scopes, scope)?;
                         gather_loop_vars(expr, &self.scopes, scope)?;
+
+                        let extra_arg = get_extra_arg(
+                            expr,
+                            Some(self.current_module_path.as_str()),
+                            &self.functions,
+                        );
+                        if let Some(ea) = extra_arg {
+                            gather_vars(&ea, false, &self.scopes, scope)?;
+                        }
                     }
                 }
                 Literal::Every { domain, .. } => {
@@ -600,19 +609,26 @@ impl Analyzer {
         scope: &mut Scope,
         first_use: &mut BTreeMap<SourceStr, Span>,
         definitions: &mut Vec<Definition<SourceStr>>,
-        return_arg: &Option<Ref<Expr>>,
+        assigned_vars: &Option<&BTreeSet<SourceStr>>,
     ) -> Result<(Vec<SourceStr>, Vec<Ref<Expr>>)> {
         let mut used_vars = vec![];
         let mut comprs = vec![];
         traverse(expr, &mut |e| match e.as_ref() {
             Var(v) if !matches!(*v.text(), "_" | "input" | "data") => {
                 let name = v.source_str();
+                let is_extra_arg = match assigned_vars {
+                    Some(vars) => vars.contains(&v.source_str()),
+                    _ => false,
+                };
+
                 if scope.locals.contains(&name)
                 /*|| scope.inputs.contains(name) */
                 {
-                    used_vars.push(name.clone());
-                    first_use.entry(name).or_insert(v.clone());
-                } else if !scope.inputs.contains(&name) && Some(e.clone()) != *return_arg {
+                    if !is_extra_arg {
+                        used_vars.push(name.clone());
+                        first_use.entry(name).or_insert(v.clone());
+                    }
+                } else if !scope.inputs.contains(&name) {
                     bail!(v.error(format!("use of undefined variable `{name}` is unsafe").as_str()));
                 }
                 Ok(false)
@@ -627,7 +643,7 @@ impl Analyzer {
                             scope,
                             first_use,
                             definitions,
-                            return_arg,
+                            assigned_vars,
                         )?;
                         definitions.push(Definition {
                             var: var.clone(),
@@ -992,30 +1008,42 @@ impl Analyzer {
                         &self.functions,
                     );
                     if let Some(ref ea) = extra_arg {
-                        if let Expr::Var(return_arg) = ea.as_ref() {
-                            let (mut used_vars, comprs) = Self::gather_used_vars_comprs_index_vars(
-                                expr,
-                                &mut scope,
-                                &mut first_use,
-                                &mut definitions,
-                                &extra_arg,
-                            )?;
-                            let var = if *return_arg.text() != "_" {
-                                // The var in the return argument slot would have been processed as
-                                // an used var. Remove it from used vars and add it as the variable being
-                                // defined.
-                                used_vars.pop();
-                                return_arg.source_str()
-                            } else {
-                                empty_str.clone()
-                            };
-                            self.process_comprs(
-                                &comprs[..],
-                                &mut scope,
-                                &mut first_use,
-                                &mut used_vars,
-                            )?;
-                            definitions.push(Definition { var, used_vars });
+                        // Gather vars that are being bound
+                        let mut extras_scope = Scope::default();
+                        gather_assigned_vars(ea, false, &self.scopes, &mut extras_scope)?;
+
+                        for var in &extras_scope.locals {
+                            scope.locals.insert(var.clone());
+                        }
+
+                        // Gather vars being used.
+                        let (mut used_vars, comprs) = Self::gather_used_vars_comprs_index_vars(
+                            expr,
+                            &mut scope,
+                            &mut first_use,
+                            &mut definitions,
+                            &Some(&extras_scope.locals),
+                        )?;
+
+                        self.process_comprs(
+                            &comprs[..],
+                            &mut scope,
+                            &mut first_use,
+                            &mut used_vars,
+                        )?;
+
+                        if !extras_scope.locals.is_empty() {
+                            for var in extras_scope.locals {
+                                definitions.push(Definition {
+                                    var,
+                                    used_vars: used_vars.clone(),
+                                });
+                            }
+                        } else {
+                            definitions.push(Definition {
+                                var: empty_str.clone(),
+                                used_vars,
+                            });
                         }
                     } else {
                         self.process_expr(expr, &mut scope, &mut first_use, &mut definitions)?;

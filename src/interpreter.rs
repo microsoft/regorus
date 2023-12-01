@@ -242,7 +242,7 @@ impl Interpreter {
                 // Stop path collection upon encountering the leading variable.
                 Expr::Var(v) => {
                     path.reverse();
-                    return self.lookup_var(v, &path[..]);
+                    return self.lookup_var(v, &path[..], false);
                 }
                 // Accumulate chained . field accesses.
                 Expr::RefDot { refr, field, .. } => {
@@ -259,8 +259,23 @@ impl Interpreter {
                     // Note, we have the choice to evaluate a non-string index
                     _ => {
                         path.reverse();
-                        let obj = self.eval_expr(refr)?;
+
                         let index = self.eval_expr(index)?;
+
+                        // Handle indexing into data.
+                        if let Ok(ref_path) = get_path_string(refr, None) {
+                            if get_root_var(refr)?.text() == "data" && index != Value::Undefined {
+                                let index = match &index {
+                                    Value::String(s) => s.to_string(),
+                                    _ => index.to_string(),
+                                };
+                                let ref_path = ref_path + "." + &index + "." + &path.join("");
+                                self.ensure_rule_evaluated(ref_path)?;
+                            }
+                        }
+
+                        let obj = self.eval_expr(refr)?;
+
                         let mut v = obj[&index].clone();
                         // Qualified references starting with data (e.g data.p.q) can
                         // be indexed using numbers. The number will be converted to string
@@ -451,55 +466,87 @@ impl Interpreter {
         let (name, value) = match op {
             AssignOp::Eq => {
                 match (lhs.as_ref(), rhs.as_ref()) {
-                    (Expr::Var(lhs_span), Expr::Var(rhs_span)) => {
-                        let (lhs_name, lhs_var) = (lhs_span.source_str(), self.eval_expr(lhs)?);
-                        let (rhs_name, rhs_var) = (rhs_span.source_str(), self.eval_expr(rhs)?);
-
-                        match (&lhs_var, &rhs_var) {
-                            (Value::Undefined, Value::Undefined) => {
-                                bail!(lhs.span().error("both operands are unsafe"))
+                    (_, Expr::Var(var)) if self.lookup_var(var, &[], true)? == Value::Undefined => {
+                        (var.source_str(), self.eval_expr(lhs)?)
+                    }
+                    (Expr::Var(var), _) if self.lookup_var(var, &[], true)? == Value::Undefined => {
+                        (var.source_str(), self.eval_expr(rhs)?)
+                    }
+                    (
+                        Expr::Array {
+                            items: lhs_items, ..
+                        },
+                        Expr::Array {
+                            items: rhs_items,
+                            span: rhs_span,
+                        },
+                    ) => {
+                        if lhs_items.len() != rhs_items.len() {
+                            bail!(rhs_span
+                                .error("mismatch in number of array elements in lhs and rhs"));
+                        }
+                        for (lhs, rhs) in std::iter::zip(lhs_items.iter(), rhs_items.iter()) {
+                            if self.eval_assign_expr(&AssignOp::Eq, lhs, rhs)? != Value::Bool(true)
+                            {
+                                return Ok(Value::Bool(false));
                             }
-                            (Value::Undefined, _) => (lhs_name, rhs_var),
-                            (_, Value::Undefined) => (rhs_name, lhs_var),
-                            // TODO: avoid reeval
-                            _ => return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs),
                         }
+                        return Ok(Value::Bool(true));
                     }
-                    (Expr::Var(lhs_span), _) => {
-                        let (name, var) = (lhs_span.source_str(), self.eval_expr(lhs)?);
-
-                        // TODO: Check this
-                        // Allow variable overwritten inside a loop
-                        if !matches!(var, Value::Undefined)
-                            && self.loop_var_values.get(rhs).is_none()
-                        {
-                            return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
-                        }
-
-                        (name, self.eval_expr(rhs)?)
+                    (Expr::Object { .. }, Expr::Object { .. }) => {
+                        // TODO: destructure
+                        return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
                     }
-                    (_, Expr::Var(rhs_span)) => {
-                        let (name, var) = (rhs_span.source_str(), self.eval_expr(rhs)?);
-
-                        // TODO: Check this
-                        // Allow variable overwritten inside a loop
-                        if !matches!(var, Value::Undefined)
-                            && self.loop_var_values.get(lhs).is_none()
-                        {
-                            return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
-                        }
-
-                        (name, self.eval_expr(lhs)?)
+                    (Expr::Array { .. }, _) => {
+                        let value = self.eval_expr(rhs)?;
+                        let mut cache = BTreeMap::new();
+                        let mut type_match = BTreeSet::new();
+                        return self
+                            .make_bindings(false, &mut type_match, &mut cache, lhs, &value)
+                            .map(Value::Bool);
+                    }
+                    (_, Expr::Array { .. }) => {
+                        let value = self.eval_expr(lhs)?;
+                        let mut cache = BTreeMap::new();
+                        let mut type_match = BTreeSet::new();
+                        return self
+                            .make_bindings(false, &mut type_match, &mut cache, rhs, &value)
+                            .map(Value::Bool);
+                    }
+                    (Expr::Object { .. }, _) => {
+                        let value = self.eval_expr(rhs)?;
+                        let mut cache = BTreeMap::new();
+                        let mut type_match = BTreeSet::new();
+                        return self
+                            .make_bindings(false, &mut type_match, &mut cache, lhs, &value)
+                            .map(Value::Bool);
+                    }
+                    (_, Expr::Object { .. }) => {
+                        let value = self.eval_expr(lhs)?;
+                        let mut cache = BTreeMap::new();
+                        let mut type_match = BTreeSet::new();
+                        return self
+                            .make_bindings(false, &mut type_match, &mut cache, rhs, &value)
+                            .map(Value::Bool);
                     }
                     // Treat the assignment as comparison if neither lhs nor rhs is a variable
                     _ => return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs),
                 }
             }
             AssignOp::ColEq => {
+                let rhs_value = self.eval_expr(rhs)?;
+                if rhs_value == Value::Undefined {
+                    return Ok(rhs_value);
+                }
+
                 let name = if let Expr::Var(span) = lhs.as_ref() {
                     span.source_str()
                 } else {
-                    bail!("internal error: unexpected");
+                    let mut cache = BTreeMap::new();
+                    let mut type_match = BTreeSet::new();
+                    return self
+                        .make_bindings(false, &mut type_match, &mut cache, lhs, &rhs_value)
+                        .map(Value::Bool);
                 };
 
                 // TODO: Check this
@@ -513,7 +560,7 @@ impl Interpreter {
                         .error(&format!("redefinition for variable {}", name)));
                 }
 
-                (name, self.eval_expr(rhs)?)
+                (name, rhs_value)
             }
         };
 
@@ -632,6 +679,7 @@ impl Interpreter {
         let raise_error = is_last && type_match.get(expr).is_none();
 
         match (expr.as_ref(), value) {
+            (Expr::Var(ident), _) if ident.text().as_ref() == &"_" => Ok(true),
             (Expr::Var(ident), _) => {
                 self.add_variable(&ident.source_str(), value.clone())?;
                 Ok(true)
@@ -1649,29 +1697,25 @@ impl Interpreter {
                 ));
             }
 
-            let mut args_scope = Scope::new();
-            for (idx, a) in args.iter().enumerate() {
-                let a = match a.as_ref() {
-                    Expr::Var(s) => s.source_str(),
-                    _ => {
-                        match self.eval_expr(a) {
-                            Ok(a) => {
-                                if a != param_values[idx] {
-                                    // Skip this rule definition.
-                                    continue 'outer;
-                                }
+            // Back up local variables of current function and empty
+            // the local variables of callee function.
+            let scopes = std::mem::take(&mut self.scopes);
 
-                                continue;
-                            }
-                            _ => {
-                                // TODO: destructuring function arguments.
-                                continue;
-                            }
-                        }
-                    }
-                };
-                //TODO: check call in params
-                args_scope.insert(a, param_values[idx].clone());
+            // Set the arguments scope.
+            let args_scope = Scope::new();
+            self.scopes.push(args_scope);
+
+            let mut cache = BTreeMap::new();
+            let mut type_match = BTreeSet::new();
+
+            for (idx, a) in args.iter().enumerate() {
+                if self
+                    .make_bindings(false, &mut type_match, &mut cache, a, &param_values[idx])
+                    .is_err()
+                {
+                    self.scopes = scopes;
+                    continue 'outer;
+                }
             }
 
             let ctx = Context {
@@ -1683,12 +1727,6 @@ impl Interpreter {
                 is_compr: false,
             };
 
-            // Back up local variables of current function and empty
-            // the local variables of callee function.
-            let scopes = std::mem::take(&mut self.scopes);
-
-            // Set the arguments scope.
-            self.scopes.push(args_scope);
             let value = match self.eval_rule_bodies(ctx, span, bodies) {
                 Ok(v) => v,
                 Err(e) => {
@@ -1768,10 +1806,17 @@ impl Interpreter {
                     }
                     Ok(Value::Bool(true))
                 }
-                _ => {
+                _ if allow_return_arg => {
                     let ret_value = self.eval_call_impl(span, fcn, &params[..params.len() - 1])?;
-                    let value = self.eval_expr(&ea)?;
-                    Ok(Value::Bool(ret_value == value))
+                    let mut cache = BTreeMap::new();
+                    let mut type_match = BTreeSet::new();
+                    self.make_bindings(false, &mut type_match, &mut cache, &ea, &ret_value)
+                        .map(Value::Bool)
+                }
+                _ => {
+                    let expected = self.eval_expr(&params[params.len() - 1])?;
+                    let ret_value = self.eval_call_impl(span, fcn, &params[..params.len() - 1])?;
+                    Ok(Value::Bool(ret_value == expected))
                 }
             }
         } else {
@@ -1813,7 +1858,7 @@ impl Interpreter {
         Ok(())
     }
 
-    fn lookup_var(&mut self, span: &Span, fields: &[&str]) -> Result<Value> {
+    fn lookup_var(&mut self, span: &Span, fields: &[&str], no_error: bool) -> Result<Value> {
         let name = span.source_str();
 
         // Return local variable/argument.
@@ -1828,6 +1873,9 @@ impl Interpreter {
 
         // TODO: should we return before checking for input?
         if self.no_rules_lookup {
+            if no_error {
+                return Ok(Value::Undefined);
+            }
             return Err(span.error("undefined var"));
         }
 
@@ -1869,6 +1917,12 @@ impl Interpreter {
                 Self::get_path_string(&self.current_module()?.package.refr, Some("data"))?;
             let rule_path = module_path + "." + name.text();
 
+            if !no_error
+                && self.rules.get(&rule_path).is_none()
+                && self.default_rules.get(&rule_path).is_none()
+            {
+                bail!(span.error("var is unsafe"));
+            }
             self.ensure_rule_evaluated(rule_path)?;
 
             let value = Self::get_value_chained(self.data.clone(), &path[..]);
