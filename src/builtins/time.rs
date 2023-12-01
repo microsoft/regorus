@@ -26,5 +26,5 @@ fn now_ns(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
         Err(e) => bail!(span.error(format!("could not fetch elapsed time. {e}").as_str())),
     };
     let nanos = elapsed.as_nanos();
-    Ok(Value::from_u128(nanos))
+    Ok(Value::from(nanos))
 }

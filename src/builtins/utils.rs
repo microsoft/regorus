@@ -3,7 +3,8 @@
 
 use crate::ast::{Expr, Ref};
 use crate::lexer::Span;
-use crate::value::{Float, Value};
+use crate::number::Number;
+use crate::value::Value;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -31,9 +32,9 @@ pub fn ensure_args_count(
     Ok(())
 }
 
-pub fn ensure_numeric(fcn: &str, arg: &Expr, v: &Value) -> Result<Float> {
+pub fn ensure_numeric(fcn: &str, arg: &Expr, v: &Value) -> Result<Number> {
     Ok(match &v {
-        Value::Number(n) => n.0 .0,
+        Value::Number(n) => n.clone(),
         _ => {
             let span = arg.span();
             bail!(

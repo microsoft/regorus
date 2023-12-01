@@ -5,7 +5,8 @@ use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_numeric};
 use crate::lexer::Span;
-use crate::value::{Float, Value};
+use crate::number::Number;
+use crate::value::Value;
 
 use std::collections::HashMap;
 
@@ -23,18 +24,18 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
 fn count(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "count", params, args, 1)?;
 
-    Ok(Value::from_float(match &args[0] {
-        Value::Array(a) => a.len() as Float,
-        Value::Set(a) => a.len() as Float,
-        Value::Object(a) => a.len() as Float,
-        Value::String(a) => a.encode_utf16().count() as Float,
+    Ok(Value::from(Number::from(match &args[0] {
+        Value::Array(a) => a.len(),
+        Value::Set(a) => a.len(),
+        Value::Object(a) => a.len(),
+        Value::String(a) => a.encode_utf16().count(),
         a => {
             let span = params[0].span();
             bail!(span.error(
                 format!("`count` requires array/object/set/string argument. Got `{a}`.").as_str()
             ))
         }
-    }))
+    })))
 }
 
 fn max(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
@@ -70,26 +71,26 @@ fn min(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
 fn product(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "product", params, args, 1)?;
 
-    let mut v = 1 as Float;
-    Ok(match &args[0] {
+    let mut v = Number::from(1_u64);
+    Ok(Value::from(match &args[0] {
         Value::Array(a) => {
             for e in a.iter() {
-                v *= ensure_numeric("product", &params[0], e)?;
+                v.mul_assign(&ensure_numeric("product", &params[0], e)?)?;
             }
-            Value::from_float(v)
+            v
         }
 
         Value::Set(a) => {
             for e in a.iter() {
-                v *= ensure_numeric("product", &params[0], e)?;
+                v.mul_assign(&ensure_numeric("product", &params[0], e)?)?;
             }
-            Value::from_float(v)
+            v
         }
         a => {
             let span = params[0].span();
             bail!(span.error(format!("`product` requires array/set argument. Got `{a}`.").as_str()))
         }
-    })
+    }))
 }
 
 fn sort(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
@@ -98,10 +99,10 @@ fn sort(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
         Value::Array(a) => {
             let mut ac = (**a).clone();
             ac.sort();
-            Value::from_array(ac)
+            Value::from(ac)
         }
         // Sorting a set produces array.
-        Value::Set(a) => Value::from_array(a.iter().cloned().collect()),
+        Value::Set(a) => Value::from(a.iter().cloned().collect::<Vec<Value>>()),
         a => {
             let span = params[0].span();
             bail!(span.error(format!("`sort` requires array/set argument. Got `{a}`.").as_str()))
@@ -112,24 +113,24 @@ fn sort(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
 fn sum(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "sum", params, args, 1)?;
 
-    let mut v = 0 as Float;
-    Ok(match &args[0] {
+    let mut v = Number::from(0_u64);
+    Ok(Value::from(match &args[0] {
         Value::Array(a) => {
             for e in a.iter() {
-                v += ensure_numeric("sum", &params[0], e)?;
+                v.add_assign(&ensure_numeric("sum", &params[0], e)?)?;
             }
-            Value::from_float(v)
+            v
         }
 
         Value::Set(a) => {
             for e in a.iter() {
-                v += ensure_numeric("sum", &params[0], e)?;
+                v.add_assign(&ensure_numeric("sum", &params[0], e)?)?;
             }
-            Value::from_float(v)
+            v
         }
         a => {
             let span = params[0].span();
             bail!(span.error(format!("`sum` requires array/set argument. Got `{a}`.").as_str()))
         }
-    })
+    }))
 }

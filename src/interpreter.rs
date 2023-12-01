@@ -446,7 +446,13 @@ impl Interpreter {
         }
     }
 
-    fn eval_arith_expr(&mut self, op: &ArithOp, lhs: &ExprRef, rhs: &ExprRef) -> Result<Value> {
+    fn eval_arith_expr(
+        &mut self,
+        span: &Span,
+        op: &ArithOp,
+        lhs: &ExprRef,
+        rhs: &ExprRef,
+    ) -> Result<Value> {
         let lhs_value = self.eval_expr(lhs)?;
         let rhs_value = self.eval_expr(rhs)?;
 
@@ -458,7 +464,7 @@ impl Interpreter {
             (ArithOp::Sub, Value::Set(_), _) | (ArithOp::Sub, _, Value::Set(_)) => {
                 builtins::sets::difference(lhs, rhs, lhs_value, rhs_value)
             }
-            _ => builtins::numbers::arithmetic_operation(op, lhs, rhs, lhs_value, rhs_value),
+            _ => builtins::numbers::arithmetic_operation(span, op, lhs, rhs, lhs_value, rhs_value),
         }
     }
 
@@ -607,7 +613,7 @@ impl Interpreter {
                 for (idx, v) in a.iter().enumerate() {
                     self.add_variable(&value.source_str(), v.clone())?;
                     if let Some(key) = key {
-                        self.add_variable(&key.source_str(), Value::from_float(idx as Float))?;
+                        self.add_variable(&key.source_str(), Value::from(idx))?;
                     }
                     if !self.eval_query(query)? {
                         r = false;
@@ -815,7 +821,7 @@ impl Interpreter {
                         &mut type_match,
                         &mut cache,
                         (key_expr, value_expr),
-                        (&Value::from_float(idx as Float), value),
+                        (&Value::from(idx), value),
                     )? {
                         continue;
                     }
@@ -877,14 +883,8 @@ impl Interpreter {
 
     fn make_expression_result(span: &Span, v: &Value) -> Value {
         let mut loc = BTreeMap::new();
-        loc.insert(
-            Value::String("row".into()),
-            Value::from_float(span.line as f64),
-        );
-        loc.insert(
-            Value::String("col".into()),
-            Value::from_float(span.col as f64),
-        );
+        loc.insert(Value::String("row".into()), Value::from(span.line as i64));
+        loc.insert(Value::String("col".into()), Value::from(span.col as i64));
 
         let mut expr = BTreeMap::new();
         expr.insert(Value::String("value".into()), v.clone());
@@ -1142,7 +1142,7 @@ impl Interpreter {
                     for (idx, v) in items.iter().enumerate() {
                         self.loop_var_values
                             .insert(loop_expr.expr.clone(), v.clone());
-                        self.add_variable(&loop_expr.index, Value::from_float(idx as Float))?;
+                        self.add_variable(&loop_expr.index, Value::from(idx))?;
 
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         self.loop_var_values.remove(&loop_expr.expr);
@@ -1960,7 +1960,7 @@ impl Interpreter {
             Expr::RefBrack { .. } => self.eval_chained_ref_dot_or_brack(expr),
 
             // Expressions with operators
-            Expr::ArithExpr { op, lhs, rhs, .. } => self.eval_arith_expr(op, lhs, rhs),
+            Expr::ArithExpr { op, lhs, rhs, .. } => self.eval_arith_expr(expr.span(), op, lhs, rhs),
             Expr::AssignExpr { op, lhs, rhs, .. } => self.eval_assign_expr(op, lhs, rhs),
             Expr::BinExpr { op, lhs, rhs, .. } => self.eval_bin_expr(op, lhs, rhs),
             Expr::BoolExpr { op, lhs, rhs, .. } => self.eval_bool_expr(op, lhs, rhs),

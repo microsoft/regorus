@@ -32,7 +32,7 @@ fn compare(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
         Ordering::Equal => 0,
         Ordering::Greater => 1,
     };
-    Ok(Value::from_float(result as f64))
+    Ok(Value::from(result as i64))
 }
 
 fn is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {

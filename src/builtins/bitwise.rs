@@ -6,7 +6,7 @@ use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_numeric};
 
 use crate::lexer::Span;
-use crate::value::{Float, Value};
+use crate::value::Value;
 
 use std::collections::HashMap;
 
@@ -28,14 +28,10 @@ fn and(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let v1 = ensure_numeric(name, &params[0], &args[0])?;
     let v2 = ensure_numeric(name, &params[1], &args[1])?;
 
-    if v1 != v1.floor() || v2 != v2.floor() {
-        return Ok(Value::Undefined);
-    }
-
-    // TODO: precision
-    let v1 = v1 as i64;
-    let v2 = v2 as i64;
-    Ok(Value::from_float((v1 & v2) as Float))
+    Ok(match v1.and(&v2) {
+        Some(v) => Value::from(v),
+        _ => Value::Undefined,
+    })
 }
 
 fn lsh(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
@@ -45,19 +41,10 @@ fn lsh(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let v1 = ensure_numeric(name, &params[0], &args[0])?;
     let v2 = ensure_numeric(name, &params[1], &args[1])?;
 
-    if v1 != v1.floor() || v2 != v2.floor() {
-        return Ok(Value::Undefined);
-    }
-
-    // TODO: precision
-    let v1 = v1 as i64;
-    let v2 = v2 as i64;
-
-    if v2 <= 0 {
-        return Ok(Value::Undefined);
-    }
-
-    Ok(Value::from_float((v1 << v2) as Float))
+    Ok(match v1.lsh(&v2) {
+        Some(v) => Value::from(v),
+        _ => Value::Undefined,
+    })
 }
 
 fn negate(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
@@ -66,13 +53,10 @@ fn negate(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
 
     let v = ensure_numeric(name, &params[0], &args[0])?;
 
-    if v != v.floor() {
-        return Ok(Value::Undefined);
-    }
-
-    // TODO: precision
-    let v = v as i64;
-    Ok(Value::from_float((!v) as Float))
+    Ok(match v.neg() {
+        Some(v) => Value::from(v),
+        _ => Value::Undefined,
+    })
 }
 
 fn or(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
@@ -82,14 +66,10 @@ fn or(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let v1 = ensure_numeric(name, &params[0], &args[0])?;
     let v2 = ensure_numeric(name, &params[1], &args[1])?;
 
-    if v1 != v1.floor() || v2 != v2.floor() {
-        return Ok(Value::Undefined);
-    }
-
-    // TODO: precision
-    let v1 = v1 as i64;
-    let v2 = v2 as i64;
-    Ok(Value::from_float((v1 | v2) as Float))
+    Ok(match v1.or(&v2) {
+        Some(v) => Value::from(v),
+        _ => Value::Undefined,
+    })
 }
 
 fn rsh(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
@@ -99,19 +79,10 @@ fn rsh(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let v1 = ensure_numeric(name, &params[0], &args[0])?;
     let v2 = ensure_numeric(name, &params[1], &args[1])?;
 
-    if v1 != v1.floor() || v2 != v2.floor() {
-        return Ok(Value::Undefined);
-    }
-
-    // TODO: precision
-    let v1 = v1 as i64;
-    let v2 = v2 as i64;
-
-    if v2 < 0 {
-        return Ok(Value::Undefined);
-    }
-
-    Ok(Value::from_float((v1 >> v2) as Float))
+    Ok(match v1.rsh(&v2) {
+        Some(v) => Value::from(v),
+        _ => Value::Undefined,
+    })
 }
 
 fn xor(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
@@ -121,12 +92,8 @@ fn xor(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let v1 = ensure_numeric(name, &params[0], &args[0])?;
     let v2 = ensure_numeric(name, &params[1], &args[1])?;
 
-    if v1 != v1.floor() || v2 != v2.floor() {
-        return Ok(Value::Undefined);
-    }
-
-    // TODO: precision
-    let v1 = v1 as i64;
-    let v2 = v2 as i64;
-    Ok(Value::from_float((v1 ^ v2) as Float))
+    Ok(match v1.xor(&v2) {
+        Some(v) => Value::from(v),
+        _ => Value::Undefined,
+    })
 }

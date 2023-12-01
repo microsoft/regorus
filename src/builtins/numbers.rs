@@ -5,11 +5,12 @@ use crate::ast::{ArithOp, Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_numeric, ensure_string};
 use crate::lexer::Span;
-use crate::value::{Float, Value};
+use crate::number::Number;
+use crate::value::Value;
 
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use rand::{thread_rng, Rng};
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
@@ -22,6 +23,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
 }
 
 pub fn arithmetic_operation(
+    span: &Span,
     op: &ArithOp,
     expr1: &Expr,
     expr2: &Expr,
@@ -32,36 +34,37 @@ pub fn arithmetic_operation(
     let v1 = ensure_numeric(op_name.as_str(), expr1, &v1)?;
     let v2 = ensure_numeric(op_name.as_str(), expr2, &v2)?;
 
-    Ok(Value::from_float(match op {
-        ArithOp::Add => v1 + v2,
-        ArithOp::Sub => v1 - v2,
-        ArithOp::Mul => v1 * v2,
-        ArithOp::Div if v2 == 0.0 => return Ok(Value::Undefined),
-        ArithOp::Div => v1 / v2,
-        ArithOp::Mod if v2 == 0.0 => return Ok(Value::Undefined),
-        ArithOp::Mod if v1.floor() != v1 => return Ok(Value::Undefined),
-        ArithOp::Mod if v2.floor() != v2 => return Ok(Value::Undefined),
-        ArithOp::Mod => v1 % v2,
+    Ok(Value::from(match op {
+        ArithOp::Add => v1.add(&v2)?,
+        ArithOp::Sub => v1.sub(&v2)?,
+        ArithOp::Mul => v1.mul(&v2)?,
+        ArithOp::Div if v2 == Number::from(0u64) => bail!(span.error("divide by zero")),
+        ArithOp::Div => v1.divide(&v2)?,
+        ArithOp::Mod if v2 == Number::from(0u64) => bail!(span.error("modulo by zero")),
+        ArithOp::Mod if !v1.is_integer() || !v2.is_integer() => {
+            bail!(span.error("modulo on floating-point number"))
+        }
+        ArithOp::Mod => v1.modulo(&v2)?,
     }))
 }
 
 fn abs(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "abs", params, args, 1)?;
-    Ok(Value::from_float(
+    Ok(Value::from(
         ensure_numeric("abs", &params[0], &args[0])?.abs(),
     ))
 }
 
 fn ceil(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "ceil", params, args, 1)?;
-    Ok(Value::from_float(
+    Ok(Value::from(
         ensure_numeric("ceil", &params[0], &args[0])?.ceil(),
     ))
 }
 
 fn floor(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "floor", params, args, 1)?;
-    Ok(Value::from_float(
+    Ok(Value::from(
         ensure_numeric("floor", &params[0], &args[0])?.floor(),
     ))
 }
@@ -71,27 +74,31 @@ fn range(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let v1 = ensure_numeric("numbers.range", &params[0], &args[0].clone())?;
     let v2 = ensure_numeric("numbers.range", &params[1], &args[1].clone())?;
 
-    if v1 != v1.floor() || v2 != v2.floor() {
-        // TODO: OPA returns undefined here.
-        // Can we emit a warning?
-        return Ok(Value::Undefined);
-    }
-    let incr = if v2 >= v1 { 1 } else { -1 } as Float;
+    let (incr, num_elements) = match (v1.as_i64(), v2.as_i64()) {
+        (Some(v1), Some(v2)) if v2 > v1 => (1, v2 + 1 - v1),
+        (Some(v1), Some(v2)) => (-1, v1 + 1 - v2),
+        _ => {
+            // TODO: OPA returns undefined here.
+            // Can we emit a warning?
+            return Ok(Value::Undefined);
+        }
+    };
 
-    let mut values = Vec::with_capacity((v2 - v1).abs() as usize + 1);
+    let mut values = Vec::with_capacity(num_elements as usize);
 
     let mut v = v1;
+    let incr = Number::from(incr as i64);
     while v != v2 {
-        values.push(Value::from_float(v));
-        v += incr;
+        values.push(Value::from(v.clone()));
+        v.add_assign(&incr)?;
     }
-    values.push(Value::from_float(v));
+    values.push(Value::from(v));
     Ok(Value::from_array(values))
 }
 
 fn round(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, "round", params, args, 1)?;
-    Ok(Value::from_float(
+    Ok(Value::from(
         ensure_numeric("round", &params[0], &args[0])?.round(),
     ))
 }
@@ -101,16 +108,15 @@ fn intn(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     ensure_args_count(span, fcn, params, args, 2)?;
     let _ = ensure_string(fcn, &params[0], &args[0])?;
     let n = ensure_numeric(fcn, &params[0], &args[1])?;
-    if n != n.floor() || n < 0 as Float {
-        return Ok(Value::Undefined);
-    }
 
-    if n == 0.0 {
-        return Ok(Value::from_float(0 as Float));
-    }
-
-    // TODO: bounds checking; arbitrary precision
-    let mut rng = thread_rng();
-    let v = rng.gen_range(0..n as u64);
-    Ok(Value::from_float(v as f64))
+    Ok(match n.as_u64() {
+        Some(0) => Value::from(0u64),
+        Some(n) => {
+            // TODO: bounds checking; arbitrary precision
+            let mut rng = thread_rng();
+            let v = rng.gen_range(0..n);
+            Value::from(v)
+        }
+        _ => Value::Undefined,
+    })
 }
