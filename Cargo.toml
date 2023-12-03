@@ -18,7 +18,10 @@ rand = "0.8.5"
 data-encoding = "2.4.0"
 regex = "1.10.2"
 num = "0.4.1"
-rust_decimal = { version = "1.33.1", features = ["serde-with-arbitrary-precision", "serde_json", "maths"] }
+rust_decimal = { version = "1.33.1", features = ["serde-with-arbitrary-precision"] }
+glob = "0.3.1"
+wax = { version = "0.6.0", features = [], default-features = false }
+
 
 [dev-dependencies]
 clap = { version = "4.4.7", features = ["derive"] }

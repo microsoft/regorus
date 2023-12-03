@@ -18,6 +18,7 @@ embeddedvirtualdoc
 evaltermexpr
 example
 fix1863
+globmatch
 helloworld
 indexing
 intersection
@@ -30,8 +31,12 @@ objectremoveidempotent
 objectremovenonstringkey
 partialsetdoc
 rand
+regexfind
+regexfindallstringsubmatch
 regexisvalid
 regexmatch
+regexmatchtemplate
+regexreplace
 regexsplit
 replacen
 semvercompare

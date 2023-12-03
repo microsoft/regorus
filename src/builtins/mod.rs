@@ -10,6 +10,7 @@ mod debugging;
 pub mod deprecated;
 
 mod encoding;
+mod glob;
 pub mod numbers;
 mod objects;
 mod regex;
@@ -48,7 +49,7 @@ lazy_static! {
 	objects::register(&mut m);
 	strings::register(&mut m);
 	regex::register(&mut m);
-	//glob::register(&mut m);
+	glob::register(&mut m);
 	bitwise::register(&mut m);
 	conversions::register(&mut m);
 	//units::register(&mut m);
