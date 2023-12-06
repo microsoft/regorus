@@ -51,12 +51,17 @@ fn get_extra_arg_impl(
             *n_args
         } else {
             let path = get_path_string(fcn, None)?;
-            if let Some((_, n_args)) = BUILTINS.get(path.as_str()) {
+            if let Some((_, n_args)) = functions.get(&path) {
                 *n_args
-            } else if let Some((_, n_args)) = DEPRECATED.get(path.as_str()) {
+            } else if let Some((_, n_args)) = BUILTINS.get(path.as_str()) {
                 *n_args
             } else {
-                return Ok(None);
+                #[cfg(feature = "deprecated")]
+                if let Some((_, n_args)) = DEPRECATED.get(path.as_str()) {
+                    *n_args
+                } else {
+                    return Ok(None);
+                }
             }
         };
         if (n_args as usize) + 1 == params.len() {

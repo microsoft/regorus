@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use core::fmt::{Debug, Formatter};
 use std::cmp::{Ord, Ordering};
 use std::ops::{AddAssign, Div, MulAssign, Rem, SubAssign};
 use std::rc::Rc;
@@ -56,11 +57,45 @@ impl Serialize for BigDecimal {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(untagged)]
+#[derive(Clone)]
 pub enum Number {
     // TODO: maybe specialize for u64, i64, f64
     Big(Rc<BigDecimal>),
+}
+
+impl Debug for Number {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            Number::Big(b) => b.d.fmt(f),
+        }
+    }
+}
+
+impl Serialize for Number {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Big(b) => {
+                if let Some(n) = self.as_u64() {
+                    n.serialize(serializer)
+                } else if let Some(n) = self.as_i64() {
+                    n.serialize(serializer)
+                } else {
+                    if let Some(f) = self.as_f64() {
+                        if &Number::from(f) == self {
+                            return f.serialize(serializer);
+                        }
+                    }
+                    let s = b.d.to_string();
+                    let v = serde_json::Number::from_str(&s)
+                        .map_err(|_| serde::ser::Error::custom("could not serialize big number"))?;
+                    v.serialize(serializer)
+                }
+            }
+        }
+    }
 }
 
 use Number::*;

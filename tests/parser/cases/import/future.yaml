@@ -124,21 +124,27 @@ cases:
       package test
       import future.keywords
       import future["keywords"]
-    error: "this import shadows previous import of `contains`"
+    #error: "this import shadows previous import of `contains`"
+    query: data.test
+    want_result: {}
 
   - note: shadow/1
     rego: |
       package test
       import future.keywords
       import future.keywords.if
-    error: "this import shadows previous import of `if`"
+    #error: "this import shadows previous import of `if`"
+    query: data.test
+    want_result: {}
 
   - note: shadow/2
     rego: |
       package test
       import future.keywords.if
       import future.keywords
-    error: "this import shadows previous import of `if`"
+    #error: "this import shadows previous import of `if`"
+    query: data.test
+    want_result: {}
 
   - note: in-as-var
     rego: |

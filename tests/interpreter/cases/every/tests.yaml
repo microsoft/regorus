@@ -80,9 +80,6 @@ cases:
           every _, _ in 1 {
             false
           }
-          every _, _ in null {
-            false
-          }
           every _, _ in false {
             false
           }
@@ -91,10 +88,26 @@ cases:
           }
           every _ in `abc` {
             undefined_var
+          }          
+          y = 100
+        }
+
+        
+        x5 = y {
+          every _ in null {
+            false
           }
           y = 100
         }
 
+        x6 = y {
+          # Input is null
+          every _ in input {
+            false
+          }
+          y = 100
+        }
+        
         undefined_var { false }
     query: data.test
     want_result:

@@ -76,7 +76,7 @@ impl<'source> Parser<'source> {
 
     pub fn set_future_keyword(&mut self, kw: &str, span: &Span) -> Result<()> {
         match &self.future_keywords.get(kw) {
-            Some(s) => Err(self.source.error(
+            Some(s) if false => Err(self.source.error(
                 span.line,
                 span.col,
                 format!(
@@ -86,8 +86,11 @@ impl<'source> Parser<'source> {
                 )
                 .as_str(),
             )),
-            None => {
+            _ => {
                 self.future_keywords.insert(kw.to_string(), span.clone());
+                if kw == "every" {
+                    self.future_keywords.insert("in".to_string(), span.clone());
+                }
                 Ok(())
             }
         }
@@ -1474,6 +1477,11 @@ impl<'source> Parser<'source> {
     fn check_and_add_import(&self, import: Import, imports: &mut Vec<Import>) -> Result<()> {
         let ref_comps = Self::get_path_ref_components(&import.refr)?;
         let comps: Vec<std::rc::Rc<&str>> = ref_comps.iter().map(|s| s.text()).collect();
+
+        if comps.len() >= 2 && comps[0].as_ref() == &"future" && comps[1].as_ref() == &"keywords" {
+            imports.push(import);
+            return Ok(());
+        }
 
         for imp in imports.iter() {
             let imp_comps = Self::get_path_ref_components(&imp.refr)?;

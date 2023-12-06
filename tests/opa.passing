@@ -14,6 +14,14 @@ comparisonexpr
 completedoc
 compositebasedereference
 dataderef
+cryptohmacequal
+cryptohmacmd5 
+cryptohmacsha1
+cryptohmacsha256
+cryptohmacsha512
+cryptomd5
+cryptsha1
+cryptosha256
 embeddedvirtualdoc
 evaltermexpr
 example

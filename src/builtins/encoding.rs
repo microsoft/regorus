@@ -17,9 +17,13 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("json.is_valid", (json_is_valid, 1));
     m.insert("json.marshal", (json_marshal, 1));
     m.insert("jsonunmarshal", (json_unmarshal, 1));
-    m.insert("yaml.is_valid", (yaml_is_valid, 1));
-    m.insert("yaml.marshal", (yaml_marshal, 1));
-    m.insert("yaml.unmarshal", (yaml_unmarshal, 1));
+
+    #[cfg(feature = "yaml")]
+    {
+        m.insert("yaml.is_valid", (yaml_is_valid, 1));
+        m.insert("yaml.marshal", (yaml_marshal, 1));
+        m.insert("yaml.unmarshal", (yaml_unmarshal, 1));
+    }
 }
 
 fn base64_decode(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
@@ -33,6 +37,7 @@ fn base64_decode(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Va
     ))
 }
 
+#[cfg(feature = "yaml")]
 fn yaml_is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "yaml.is_valid";
     ensure_args_count(span, name, params, args, 1)?;
@@ -41,6 +46,7 @@ fn yaml_is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Va
     Ok(Value::Bool(Value::from_yaml_str(&yaml_str).is_ok()))
 }
 
+#[cfg(feature = "yaml")]
 fn yaml_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "yaml.marshal";
     ensure_args_count(span, name, params, args, 1)?;
@@ -51,6 +57,7 @@ fn yaml_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Val
     ))
 }
 
+#[cfg(feature = "yaml")]
 fn yaml_unmarshal(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     let name = "yaml.unmarshal";
     ensure_args_count(span, name, params, args, 1)?;

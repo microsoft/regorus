@@ -5,26 +5,47 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = ["full-opa"]
+
+crypto = ["dep:constant_time_eq", "dep:hmac", "dep:hex", "dep:md-5", "dep:sha1", "dep:sha2"]
+deprecated = []
+glob = ["dep:wax"]
+regex = ["dep:regex"]
+semver = ["dep:semver"]
+yaml = ["serde_yaml"]
+full-opa = ["crypto", "deprecated", "glob", "regex", "semver", "yaml"]
+
 [dependencies]
 anyhow = "1.0.66"
-semver = "1.0.20"
 serde = {version = "1.0.150", features = ["derive", "rc"] }
 serde_json = {version = "1.0.89", features = ["arbitrary_precision"] }
-serde_yaml = "0.9.16"
+serde_yaml = {version = "0.9.16", optional = true }
 log = "0.4.17"
 env_logger="0.10.0"
 lazy_static = "1.4.0"
 rand = "0.8.5"
 data-encoding = "2.4.0"
-regex = "1.10.2"
 num = "0.4.1"
 rust_decimal = { version = "1.33.1", features = ["serde-with-arbitrary-precision"] }
-glob = "0.3.1"
-wax = { version = "0.6.0", features = [], default-features = false }
 
+
+
+# Crypto
+constant_time_eq = {version = "0.3.0", optional = true}
+hmac = {version = "0.12.1", optional = true}
+sha2 = {version= "0.10.8", optional = true}
+hex = {version = "0.4.3", optional = true}
+sha1 = {version = "0.10.6", optional = true}
+md-5 = {version = "0.10.6", optional = true}
+
+regex = {version = "1.10.2", optional = true}
+semver = {version = "1.0.20", optional = true}
+wax = { version = "0.6.0", features = [], default-features = false, optional = true }
 
 [dev-dependencies]
 clap = { version = "4.4.7", features = ["derive"] }
+serde_yaml = "0.9.16"
 test-generator = "0.3.1"
 walkdir = "2.3.2"
 
@@ -38,6 +59,7 @@ debug = true
 name="opa"
 harness=false
 test=false
+required-features = ["full-opa"]
 
 [[test]]
 name="aci"
