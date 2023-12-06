@@ -9,6 +9,9 @@ use crate::scheduler::*;
 use crate::utils::gather_functions;
 use crate::value::*;
 
+use std::convert::AsRef;
+use std::path::Path;
+
 use anyhow::Result;
 
 #[derive(Clone)]
@@ -42,7 +45,7 @@ impl Engine {
         Ok(())
     }
 
-    pub fn add_policy_from_file(&mut self, path: String) -> Result<()> {
+    pub fn add_policy_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         let source = Source::from_file(path)?;
         let mut parser = Parser::new(&source)?;
         self.modules.push(Ref::new(parser.parse()?));

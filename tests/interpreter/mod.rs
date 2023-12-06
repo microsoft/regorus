@@ -180,7 +180,7 @@ fn push_query_results(query_results: QueryResults, results: &mut Vec<Value>) {
         if !query_result.bindings.is_empty_object() {
             results.push(query_result.bindings.clone());
         } else if let Some(v) = query_result.expressions.last() {
-            results.push(v["value"].clone());
+            results.push(v.value.clone());
         }
     }
 }
