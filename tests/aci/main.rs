@@ -48,7 +48,7 @@ fn eval_test_case(dir: &Path, case: &TestCase) -> Result<Value> {
         values.push(if !qr.bindings.is_empty_object() {
             qr.bindings.clone()
         } else if let Some(v) = qr.expressions.last() {
-            v["value"].clone()
+            v.value.clone()
         } else {
             Value::Undefined
         });

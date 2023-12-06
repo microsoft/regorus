@@ -5,6 +5,7 @@ use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 
 fn rego_eval(
+    bundles: &[String],
     files: &[String],
     input: Option<String>,
     query: String,
@@ -13,11 +14,30 @@ fn rego_eval(
     // Create engine.
     let mut engine = regorus::Engine::new();
 
+    // Load files from given bundles.
+    for dir in bundles.iter() {
+        let entries =
+            std::fs::read_dir(dir).or_else(|e| bail!("failed to read bundle {dir}.\n{e}"))?;
+        // Loop through each entry in the bundle folder.
+        for entry in entries {
+            let entry = entry.or_else(|e| bail!("failed to unwrap entry. {e}"))?;
+            let path = entry.path();
+
+            // Process only .rego files.
+            match (path.is_file(), path.extension()) {
+                (true, Some(ext)) if ext == "rego" => {}
+                _ => continue,
+            }
+
+            engine.add_policy_from_file(entry.path())?;
+        }
+    }
+
     // Load given files.
     for file in files.iter() {
         if file.ends_with(".rego") {
             // Read policy file.
-            engine.add_policy_from_file(file.to_string())?;
+            engine.add_policy_from_file(file)?;
         } else {
             // Read data file.
             let data = if file.ends_with(".json") {
@@ -92,6 +112,10 @@ fn rego_parse(file: String) -> Result<()> {
 enum RegorusCommand {
     /// Evaluate a Rego Query.
     Eval {
+        /// Directories containing Rego files.
+        #[arg(long, short, value_name = "bundle")]
+        bundles: Vec<String>,
+
         /// Policy or data files. Rego, json or yaml.
         #[arg(long, short, value_name = "policy.rego|data.json|data.yaml")]
         data: Vec<String>,
@@ -137,11 +161,12 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         RegorusCommand::Eval {
+            bundles,
             data,
             input,
             query,
             trace,
-        } => rego_eval(&data, input, query, trace),
+        } => rego_eval(&bundles, &data, input, query, trace),
         RegorusCommand::Lex { file, verbose } => rego_lex(file, verbose),
         RegorusCommand::Parse { file } => rego_parse(file),
     }

@@ -5,6 +5,9 @@ use core::fmt::{Debug, Formatter};
 use core::iter::Peekable;
 use core::str::CharIndices;
 
+use std::convert::AsRef;
+use std::path::Path;
+
 use crate::value::Value;
 use anyhow::{anyhow, bail, Result};
 
@@ -113,12 +116,16 @@ impl Source {
         }
     }
 
-    pub fn from_file(path: String) -> Result<Source> {
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Source> {
         let contents = match std::fs::read_to_string(&path) {
             Ok(c) => c,
-            Err(e) => bail!("Failed to read {path}. {e}"),
+            Err(e) => bail!("Failed to read {}. {e}", path.as_ref().display()),
         };
-        Ok(Self::new(path, contents))
+        // TODO: retain path instead of converting to string
+        Ok(Self::new(
+            path.as_ref().to_string_lossy().to_string(),
+            contents,
+        ))
     }
 
     pub fn file(&self) -> &String {

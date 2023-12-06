@@ -53,9 +53,22 @@ impl Default for Interpreter {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct Location {
+    pub row: u16,
+    pub col: u16,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Expression {
+    pub value: Value,
+    pub text: Rc<str>,
+    pub location: Location,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct QueryResult {
     // Expressions is shown first to match OPA.
-    pub expressions: Vec<Value>,
+    pub expressions: Vec<Expression>,
     #[serde(skip_serializing_if = "Value::is_empty_object")]
     pub bindings: Value,
 }
@@ -911,19 +924,15 @@ impl Interpreter {
         Ok(count > 0)
     }
 
-    fn make_expression_result(span: &Span, v: &Value) -> Value {
-        let mut loc = BTreeMap::new();
-        loc.insert(Value::String("row".into()), Value::from(span.line as i64));
-        loc.insert(Value::String("col".into()), Value::from(span.col as i64));
-
-        let mut expr = BTreeMap::new();
-        expr.insert(Value::String("value".into()), v.clone());
-        expr.insert(Value::String("location".into()), Value::from_map(loc));
-        expr.insert(
-            Value::String("text".into()),
-            Value::String(span.text().to_string().into()),
-        );
-        Value::from_map(expr)
+    fn make_expression_result(span: &Span, v: &Value) -> Expression {
+        Expression {
+            value: v.clone(),
+            text: span.text().to_string().into(),
+            location: Location {
+                row: span.line,
+                col: span.col,
+            },
+        }
     }
 
     fn eval_stmt_impl(&mut self, stmt: &LiteralStmt, stmts: &[&LiteralStmt]) -> Result<bool> {
@@ -1300,7 +1309,10 @@ impl Interpreter {
                             .insert(Value::String(name.to_string().into()), value.clone());
                     }
                 }
-                if result.expressions.iter().all(|v| v != &Value::Undefined)
+                if result
+                    .expressions
+                    .iter()
+                    .all(|v| v.value != Value::Undefined)
                     && !result.expressions.is_empty()
                 {
                     ctx.results.result.push(result);
@@ -1419,7 +1431,10 @@ impl Interpreter {
                             .insert(Value::String(name.to_string().into()), value.clone());
                     }
                 }
-                if result.expressions.iter().all(|v| v != &Value::Undefined)
+                if result
+                    .expressions
+                    .iter()
+                    .all(|v| v.value != Value::Undefined)
                     && !result.expressions.is_empty()
                 {
                     ctx.results.result.push(result);
@@ -2524,13 +2539,22 @@ impl Interpreter {
             for (k, ord) in schedule.order.iter() {
                 if k == query {
                     for idx in 0..results.result.len() {
-                        let mut ordered_expressions = vec![Value::Undefined; ord.len()];
+                        let e = Expression {
+                            value: Value::Undefined,
+                            text: "".into(),
+                            location: Location { row: 0, col: 0 },
+                        };
+                        let mut ordered_expressions =
+                            vec![e; results.result[idx].expressions.len()];
                         for (expr_idx, value) in results.result[idx].expressions.iter().enumerate()
                         {
                             let orig_idx = ord[expr_idx] as usize;
                             ordered_expressions[orig_idx] = value.clone();
                         }
-                        if !ordered_expressions.iter().any(|v| v == &Value::Undefined) {
+                        if !ordered_expressions
+                            .iter()
+                            .any(|v| v.value == Value::Undefined)
+                        {
                             results.result[idx].expressions = ordered_expressions;
                         }
                     }
