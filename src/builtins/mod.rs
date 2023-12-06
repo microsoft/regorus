@@ -6,14 +6,20 @@ mod arrays;
 mod bitwise;
 pub mod comparison;
 mod conversions;
-mod debugging;
-pub mod deprecated;
 
+#[cfg(feature = "crypto")]
+mod crypto;
+mod debugging;
+#[cfg(feature = "deprecated")]
+pub mod deprecated;
 mod encoding;
+#[cfg(feature = "glob")]
 mod glob;
 pub mod numbers;
 mod objects;
+#[cfg(feature = "regex")]
 mod regex;
+#[cfg(feature = "semver")]
 mod semver;
 pub mod sets;
 mod strings;
@@ -34,6 +40,7 @@ use lazy_static::lazy_static;
 
 pub type BuiltinFcn = (fn(&Span, &[Ref<Expr>], &[Value]) -> Result<Value>, u8);
 
+#[cfg(feature = "deprecated")]
 pub use deprecated::DEPRECATED;
 
 #[rustfmt::skip]
@@ -48,8 +55,13 @@ lazy_static! {
 	sets::register(&mut m);
 	objects::register(&mut m);
 	strings::register(&mut m);
+	
+	#[cfg(feature = "regex")]
 	regex::register(&mut m);
+	
+	#[cfg(feature = "glob")]
 	glob::register(&mut m);
+	
 	bitwise::register(&mut m);
 	conversions::register(&mut m);
 	//units::register(&mut m);
@@ -58,12 +70,15 @@ lazy_static! {
 	//token_signing::register(&mut m);
 	//token_verification::register(&mut m);
 	time::register(&mut m);
-	//cryptography::register(&mut m);
+
+	#[cfg(feature = "crypto")]
+	crypto::register(&mut m);
 	//graphs::register(&mut m);
 	//graphql::register(&mut m);
 	//http::register(&mut m);
 	//net::register(&mut m);
 	//uuid::register(&mut m);
+	#[cfg(feature = "semver")]
 	semver::register(&mut m);
 	//rego::register(&mut m);
 	//opa::register(&mut m);

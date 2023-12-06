@@ -223,10 +223,12 @@ impl Value {
         }
     }
 
+    #[cfg(feature = "yaml")]
     pub fn from_yaml_str(yaml: &str) -> Result<Value> {
         Ok(serde_yaml::from_str(yaml)?)
     }
 
+    #[cfg(feature = "yaml")]
     pub fn from_yaml_file(path: &String) -> Result<Value> {
         match std::fs::read_to_string(path) {
             Ok(c) => Self::from_yaml_str(c.as_str()),

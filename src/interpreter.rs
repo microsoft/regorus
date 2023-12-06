@@ -100,7 +100,7 @@ impl Interpreter {
             module: None,
             schedule: None,
             current_module_path: String::default(),
-            input: Value::new_object(),
+            input: Value::Null,
             data: Value::new_object(),
             init_data: Value::new_object(),
             with_document: Value::new_object(),
@@ -499,9 +499,35 @@ impl Interpreter {
                         }
                         return Ok(Value::Bool(true));
                     }
-                    (Expr::Object { .. }, Expr::Object { .. }) => {
-                        // TODO: destructure
-                        return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs);
+                    (
+                        Expr::Object {
+                            fields: lhs_fields, ..
+                        },
+                        Expr::Object {
+                            fields: rhs_fields,
+                            span: rhs_span,
+                        },
+                    ) => {
+                        if lhs_fields.len() != rhs_fields.len() {
+                            bail!(rhs_span.error("mismatch in number of object keysin lhs and rhs"));
+                        }
+
+                        for ((_, lhs_key, lhs_value), (_, rhs_key, rhs_value)) in
+                            std::iter::zip(lhs_fields.iter(), rhs_fields.iter())
+                        {
+                            if self.eval_bool_expr(&BoolOp::Eq, lhs_key, rhs_key)?
+                                != Value::Bool(true)
+                            {
+                                return Ok(Value::Bool(false));
+                            }
+
+                            if self.eval_assign_expr(&AssignOp::Eq, lhs_value, rhs_value)?
+                                != Value::Bool(true)
+                            {
+                                return Ok(Value::Bool(false));
+                            }
+                        }
+                        return Ok(Value::Bool(true));
                     }
                     (Expr::Array { .. }, _) => {
                         let value = self.eval_expr(rhs)?;
@@ -645,6 +671,7 @@ impl Interpreter {
                     }
                 }
             }
+            Value::Undefined | Value::Null => r = false,
             // Other types cause every to evaluate to true even though
             // it is supposed to happen only for empty domain.
             _ => (),
@@ -715,7 +742,6 @@ impl Interpreter {
 
                 Ok(true)
             }
-
             // Destructure objects
             (Expr::Object { fields, .. }, Value::Object(_)) => {
                 let mut r = true;
@@ -746,6 +772,10 @@ impl Interpreter {
 
                 Ok(r)
             }
+            // TODO: This suppresses errors in case of type mismatches.
+            // OPA raises the error sometimes in static scenarios, but doesn't
+            // raise in scenarios due to data/input
+            (Expr::Array { .. }, _) | (Expr::Object { .. }, _) => Ok(false),
             _ => {
                 let expr_value = self.lookup_or_eval_expr(cache, expr)?;
                 if expr_value == Value::Undefined {
@@ -1622,16 +1652,19 @@ impl Interpreter {
     }
 
     fn lookup_builtin(&self, span: &Span, path: &str) -> Result<Option<&BuiltinFcn>> {
-        Ok(if let Some(builtin) = builtins::BUILTINS.get(path) {
-            Some(builtin)
-        } else if let Some(builtin) = builtins::DEPRECATED.get(path) {
+        if let Some(builtin) = builtins::BUILTINS.get(path) {
+            return Ok(Some(builtin));
+        }
+
+        #[cfg(feature = "deprecated")]
+        if let Some(builtin) = builtins::DEPRECATED.get(path) {
             if !self.allow_deprecated {
                 bail!(span.error(format!("{path} is deprecated").as_str()))
             }
-            Some(builtin)
-        } else {
-            None
-        })
+            return Ok(Some(builtin));
+        }
+
+        Ok(None)
     }
 
     fn eval_call_impl(&mut self, span: &Span, fcn: &ExprRef, params: &[ExprRef]) -> Result<Value> {

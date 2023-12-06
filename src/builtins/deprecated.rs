@@ -21,6 +21,8 @@ lazy_static! {
 	m.insert("all", (all, 1));
 	m.insert("any", (any, 1));	
 	m.insert("set_diff", (set_diff, 2));
+
+	#[cfg(feature = "crypto")]
 	m.insert("re_match", (regex_match, 2));
 	m
     };
