@@ -19,7 +19,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("semver.is_valid", (is_valid, 1));
 }
 
-fn compare(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn compare(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "semver.compare";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -35,7 +35,7 @@ fn compare(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     Ok(Value::from(result as i64))
 }
 
-fn is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "semver.is_valid";
     ensure_args_count(span, name, params, args, 1)?;
     let v = ensure_string(name, &params[0], &args[0])?;

@@ -37,9 +37,12 @@ cases:
         r = 1
         rrr = "fun"
     scopes:
-      - locals: ["p", "y", "q", "x", "a", "b", "idx"]
+      - locals: ["x"]
+        unscoped: ["p", "y", "q", "a", "b", "idx"]
         inputs: ["r", "rrr"]
-      - locals: ["k", "r1"]
+      - locals: []
+        unscoped: ["k", "r1"]
         inputs: ["a", "idx", "rrr"]
-      - locals: ["q", "idx1", "t"]
+      - locals: ["q"]
+        unscoped: ["idx1", "t"]
         inputs: ["rrr"]

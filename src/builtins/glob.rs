@@ -55,7 +55,7 @@ fn make_glob<'a>(pattern: &'a str, span: &'a Span) -> Result<Glob<'a>> {
     Glob::new(pattern).or_else(|_| bail!(span.error("invalid glob")))
 }
 
-fn glob_match(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn glob_match(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "glob.match";
     ensure_args_count(span, name, params, args, 3)?;
 
@@ -101,7 +101,7 @@ fn glob_match(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value
     Ok(Value::Bool(glob.is_match(&value[..])))
 }
 
-fn quote_meta(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn quote_meta(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "glob.quote_meta";
     ensure_args_count(span, name, params, args, 1)?;
 

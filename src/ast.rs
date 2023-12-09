@@ -321,6 +321,7 @@ pub enum Rule {
     Default {
         span: Span,
         refr: Ref<Expr>,
+        args: Vec<Ref<Expr>>,
         op: AssignOp,
         value: Ref<Expr>,
     },

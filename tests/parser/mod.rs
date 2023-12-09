@@ -569,12 +569,14 @@ fn match_rule(r: &Rule, v: &Value) -> Result<()> {
         Rule::Default {
             span,
             refr,
+            args,
             op,
             value,
         } => {
             let obj = &v["default"];
             match_span_opt(span, &obj["span"])?;
             match_expr(refr, &obj["refr"])?;
+            match_vec(span /*dummy*/, args, &obj["args"])?;
             match_assign_op(span, op, &obj["op"])?;
             match_expr(value, &obj["value"])
         }

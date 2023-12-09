@@ -21,7 +21,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("bits.xor", (xor, 2));
 }
 
-fn and(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn and(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "bits.and";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -34,7 +34,7 @@ fn and(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     })
 }
 
-fn lsh(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn lsh(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "bits.lsh";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -47,7 +47,7 @@ fn lsh(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     })
 }
 
-fn negate(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn negate(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "bits.negate";
     ensure_args_count(span, name, params, args, 1)?;
 
@@ -59,7 +59,7 @@ fn negate(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     })
 }
 
-fn or(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn or(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "bits.or";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -72,7 +72,7 @@ fn or(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     })
 }
 
-fn rsh(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn rsh(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "bits.rsh";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -85,7 +85,7 @@ fn rsh(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     })
 }
 
-fn xor(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn xor(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "bits.xor";
     ensure_args_count(span, name, params, args, 2)?;
 

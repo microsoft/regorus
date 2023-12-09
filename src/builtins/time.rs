@@ -16,7 +16,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("time.now_ns", (now_ns, 0));
 }
 
-fn now_ns(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn now_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "time.now_ns";
     ensure_args_count(span, name, params, args, 0)?;
 

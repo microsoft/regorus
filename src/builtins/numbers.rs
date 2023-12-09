@@ -48,28 +48,28 @@ pub fn arithmetic_operation(
     }))
 }
 
-fn abs(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn abs(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     ensure_args_count(span, "abs", params, args, 1)?;
     Ok(Value::from(
         ensure_numeric("abs", &params[0], &args[0])?.abs(),
     ))
 }
 
-fn ceil(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn ceil(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     ensure_args_count(span, "ceil", params, args, 1)?;
     Ok(Value::from(
         ensure_numeric("ceil", &params[0], &args[0])?.ceil(),
     ))
 }
 
-fn floor(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn floor(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     ensure_args_count(span, "floor", params, args, 1)?;
     Ok(Value::from(
         ensure_numeric("floor", &params[0], &args[0])?.floor(),
     ))
 }
 
-fn range(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn range(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     ensure_args_count(span, "numbers.range", params, args, 2)?;
     let v1 = ensure_numeric("numbers.range", &params[0], &args[0].clone())?;
     let v2 = ensure_numeric("numbers.range", &params[1], &args[1].clone())?;
@@ -96,14 +96,14 @@ fn range(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     Ok(Value::from_array(values))
 }
 
-fn round(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn round(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     ensure_args_count(span, "round", params, args, 1)?;
     Ok(Value::from(
         ensure_numeric("round", &params[0], &args[0])?.round(),
     ))
 }
 
-fn intn(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn intn(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let fcn = "rand.intn";
     ensure_args_count(span, fcn, params, args, 2)?;
     let _ = ensure_string(fcn, &params[0], &args[0])?;

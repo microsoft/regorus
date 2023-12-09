@@ -16,18 +16,33 @@ const OPA_REPO: &str = "https://github.com/open-policy-agent/opa";
 const OPA_BRANCH: &str = "v0.58.0";
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
 struct TestCase {
+    #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     input: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_term: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     modules: Option<Vec<String>>,
     note: String,
     query: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     sort_bindings: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     want_result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     skip: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     traces: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    strict_error: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     want_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     want_error_code: Option<String>,
 }
 
@@ -45,11 +60,18 @@ fn eval_test_case(case: &TestCase) -> Result<Value> {
     if let Some(input) = &case.input {
         engine.set_input(input.clone());
     }
+    if let Some(input_term) = &case.input_term {
+        let input = Value::from_json_str(&input_term)?;
+        engine.set_input(input);
+    }
     if let Some(modules) = &case.modules {
         for (idx, rego) in modules.iter().enumerate() {
             engine.add_policy(format!("rego{idx}.rego"), rego.clone())?;
         }
     }
+
+    engine.set_strict_builtin_errors(case.strict_error.unwrap_or_default());
+
     let query_results = engine.eval_query(case.query.clone(), true)?;
 
     let mut values = vec![];
@@ -182,9 +204,11 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
     println!("\nOPA TESTSUITE STATUS");
     println!("    {:40}  {:4} {:4}", "FOLDER", "PASS", "FAIL");
     let (mut npass, mut nfail) = (0, 0);
+    let mut passing = vec![];
     for (dir, (pass, fail)) in status {
         if fail == 0 {
             println!("\x1b[32m    {dir:40}: {pass:4} {fail:4}\x1b[0m");
+            passing.push(dir);
         } else {
             println!("\x1b[31m    {dir:40}: {pass:4} {fail:4}\x1b[0m");
         }
@@ -192,6 +216,8 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         nfail += fail;
     }
     println!();
+
+    std::fs::write("target/opa.passing", passing.join("\n"))?;
 
     if npass == 0 && nfail == 0 {
         bail!("no matching tests found.");

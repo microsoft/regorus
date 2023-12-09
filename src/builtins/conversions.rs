@@ -15,12 +15,13 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("to_number", (to_number, 1));
 }
 
-fn to_number(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn to_number(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "to_number";
     ensure_args_count(span, name, params, args, 1)?;
 
     let span = params[0].span();
     Ok(match &args[0] {
+        Value::Null => Value::from(0u64),
         Value::Bool(true) => Value::from(1u64),
         Value::Bool(false) => Value::from(0u64),
         Value::Number(_) => args[0].clone(),
@@ -34,7 +35,9 @@ fn to_number(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value>
             }
         },
         _ => {
-            bail!(span.error(format!("`{name}` expects bool/number/string argument.").as_str()));
+            bail!(
+                span.error(format!("`{name}` expects bool/number/string/null argument.").as_str())
+            );
         }
     })
 }

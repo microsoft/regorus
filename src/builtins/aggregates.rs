@@ -21,7 +21,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("sum", (sum, 1));
 }
 
-fn count(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn count(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     ensure_args_count(span, "count", params, args, 1)?;
 
     Ok(Value::from(Number::from(match &args[0] {
@@ -38,7 +38,7 @@ fn count(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     })))
 }
 
-fn max(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn max(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     ensure_args_count(span, "max", params, args, 1)?;
 
     Ok(match &args[0] {
@@ -53,7 +53,7 @@ fn max(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     })
 }
 
-fn min(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn min(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     ensure_args_count(span, "min", params, args, 1)?;
 
     Ok(match &args[0] {
@@ -68,7 +68,7 @@ fn min(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     })
 }
 
-fn product(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn product(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     ensure_args_count(span, "product", params, args, 1)?;
 
     let mut v = Number::from(1_u64);
@@ -93,7 +93,7 @@ fn product(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     }))
 }
 
-fn sort(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn sort(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     ensure_args_count(span, "sort", params, args, 1)?;
     Ok(match &args[0] {
         Value::Array(a) => {
@@ -110,7 +110,7 @@ fn sort(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     })
 }
 
-fn sum(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn sum(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     ensure_args_count(span, "sum", params, args, 1)?;
 
     let mut v = Number::from(0_u64);
