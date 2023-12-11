@@ -26,7 +26,12 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("regex.template_match", (regex_template_match, 4));
 }
 
-fn find_all_string_submatch_n(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn find_all_string_submatch_n(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
     let name = "regex.find_all_string_submatch_n";
     ensure_args_count(span, name, params, args, 3)?;
 
@@ -68,7 +73,7 @@ fn find_all_string_submatch_n(span: &Span, params: &[Ref<Expr>], args: &[Value])
     ))
 }
 
-fn find_n(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn find_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "regex.find_n";
     ensure_args_count(span, name, params, args, 3)?;
 
@@ -98,14 +103,19 @@ fn find_n(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     ))
 }
 
-fn is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "regex.is_valid";
     ensure_args_count(span, name, params, args, 1)?;
     Ok(ensure_string(name, &params[0], &args[0])
         .map_or(Value::Bool(false), |p| Value::Bool(Regex::new(&p).is_ok())))
 }
 
-pub fn regex_match(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+pub fn regex_match(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
     let name = "regex.match";
     ensure_args_count(span, name, params, args, 2)?;
     let pattern = ensure_string(name, &params[0], &args[0])?;
@@ -116,7 +126,12 @@ pub fn regex_match(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<
     Ok(Value::Bool(pattern.is_match(&value)))
 }
 
-fn regex_replace(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn regex_replace(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
     let name = "regex.replace";
     ensure_args_count(span, name, params, args, 3)?;
 
@@ -135,7 +150,7 @@ fn regex_replace(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Va
     ))
 }
 
-fn regex_split(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn regex_split(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "regex.split";
     ensure_args_count(span, name, params, args, 2)?;
     let pattern = ensure_string(name, &params[0], &args[0])?;
@@ -151,7 +166,12 @@ fn regex_split(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Valu
     ))
 }
 
-fn regex_template_match(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn regex_template_match(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
     let name = "regex.template_match";
     ensure_args_count(span, name, params, args, 4)?;
     let template = ensure_string(name, &params[0], &args[0])?;

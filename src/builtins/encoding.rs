@@ -26,7 +26,12 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     }
 }
 
-fn base64_decode(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn base64_decode(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
     let name = "base64.decode";
     ensure_args_count(span, name, params, args, 1)?;
 
@@ -38,7 +43,12 @@ fn base64_decode(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Va
 }
 
 #[cfg(feature = "yaml")]
-fn yaml_is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn yaml_is_valid(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
     let name = "yaml.is_valid";
     ensure_args_count(span, name, params, args, 1)?;
 
@@ -47,7 +57,7 @@ fn yaml_is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Va
 }
 
 #[cfg(feature = "yaml")]
-fn yaml_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn yaml_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "yaml.marshal";
     ensure_args_count(span, name, params, args, 1)?;
     Ok(Value::String(
@@ -58,14 +68,24 @@ fn yaml_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Val
 }
 
 #[cfg(feature = "yaml")]
-fn yaml_unmarshal(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn yaml_unmarshal(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
     let name = "yaml.unmarshal";
     ensure_args_count(span, name, params, args, 1)?;
     let yaml_str = ensure_string(name, &params[0], &args[0])?;
     Value::from_yaml_str(&yaml_str).with_context(|| span.error("could not deserialize yaml."))
 }
 
-fn json_is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn json_is_valid(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
     let name = "json.is_valid";
     ensure_args_count(span, name, params, args, 1)?;
 
@@ -73,7 +93,7 @@ fn json_is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Va
     Ok(Value::Bool(Value::from_json_str(&json_str).is_ok()))
 }
 
-fn json_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn json_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "json.marshal";
     ensure_args_count(span, name, params, args, 1)?;
     Ok(Value::String(
@@ -83,7 +103,12 @@ fn json_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Val
     ))
 }
 
-fn json_unmarshal(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn json_unmarshal(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
     let name = "json.unmarshal";
     ensure_args_count(span, name, params, args, 1)?;
     let json_str = ensure_string(name, &params[0], &args[0])?;

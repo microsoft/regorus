@@ -205,7 +205,8 @@ pub fn schedule<Str: Clone + std::cmp::Ord + std::fmt::Debug>(
 
 #[derive(Clone, Default, Debug)]
 pub struct Scope {
-    pub locals: BTreeSet<SourceStr>,
+    pub locals: BTreeMap<SourceStr, Span>,
+    pub unscoped: BTreeSet<SourceStr>,
     pub inputs: BTreeSet<SourceStr>,
 }
 
@@ -269,8 +270,24 @@ fn traverse(expr: &Ref<Expr>, f: &mut dyn FnMut(&Ref<Expr>) -> Result<bool>) -> 
     Ok(())
 }
 
-fn var_exists(name: &SourceStr, parent_scopes: &[Scope]) -> bool {
-    parent_scopes.iter().rev().any(|s| s.locals.contains(name))
+fn var_exists(var: &Span, parent_scopes: &[Scope]) -> bool {
+    let name = var.source_str();
+
+    for pscope in parent_scopes.iter().rev() {
+        if pscope.unscoped.contains(&name) {
+            return true;
+        }
+        // Check parent scope vars defined using :=.
+        if let Some(s) = pscope.locals.get(&name) {
+            // Note: Since a rule cannot span multiple files, it is safe to check only
+            // the line numbers.
+            if s.line <= var.line {
+                // The variable was defined in parent scope prior to current comprehension.
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn gather_assigned_vars(
@@ -285,19 +302,19 @@ fn gather_assigned_vars(
 
         // Record local var that can shadow input var.
         Var(v) if can_shadow => {
-            scope.locals.insert(v.source_str());
+            scope.locals.insert(v.source_str(), v.clone());
             Ok(false)
         }
 
         // Record input vars.
-        Var(v) if var_exists(&v.source_str(), parent_scopes) => {
+        Var(v) if var_exists(v, parent_scopes) => {
             scope.inputs.insert(v.source_str());
             Ok(false)
         }
 
         // Record local var.
         Var(v) => {
-            scope.locals.insert(v.source_str());
+            scope.unscoped.insert(v.source_str());
             Ok(false)
         }
 
@@ -309,11 +326,8 @@ fn gather_assigned_vars(
 
 fn gather_input_vars(expr: &Ref<Expr>, parent_scopes: &[Scope], scope: &mut Scope) -> Result<()> {
     traverse(expr, &mut |e| match e.as_ref() {
-        Var(v) if var_exists(&v.source_str(), parent_scopes) => {
-            let var = v.source_str();
-            if !scope.locals.contains(&var) {
-                scope.inputs.insert(var);
-            }
+        Var(v) if !scope.unscoped.contains(&v.source_str()) && var_exists(v, parent_scopes) => {
+            scope.inputs.insert(v.source_str());
             Ok(false)
         }
         _ => Ok(true),
@@ -322,14 +336,12 @@ fn gather_input_vars(expr: &Ref<Expr>, parent_scopes: &[Scope], scope: &mut Scop
 
 fn gather_loop_vars(expr: &Ref<Expr>, parent_scopes: &[Scope], scope: &mut Scope) -> Result<()> {
     traverse(expr, &mut |e| match e.as_ref() {
-        Var(v) if var_exists(&v.source_str(), parent_scopes) => Ok(false),
+        Var(v) if var_exists(v, parent_scopes) => Ok(false),
         RefBrack { index, .. } => {
             if let Var(v) = index.as_ref() {
-                if !matches!(*v.text(), "_" | "input" | "data")
-                    && !var_exists(&v.source_str(), parent_scopes)
-                {
+                if !matches!(*v.text(), "_" | "input" | "data") && !var_exists(v, parent_scopes) {
                     // Treat this as an index var.
-                    scope.locals.insert(v.source_str());
+                    scope.unscoped.insert(v.source_str());
                 }
             }
             Ok(true)
@@ -367,7 +379,7 @@ fn gather_vars(
 
 pub struct Analyzer {
     packages: BTreeMap<String, Scope>,
-    locals: BTreeMap<Ref<Query>, Scope>,
+    scope_table: BTreeMap<Ref<Query>, Scope>,
     scopes: Vec<Scope>,
     order: BTreeMap<Ref<Query>, Vec<u16>>,
     functions: FunctionTable,
@@ -390,7 +402,7 @@ impl Analyzer {
     pub fn new() -> Analyzer {
         Analyzer {
             packages: BTreeMap::new(),
-            locals: BTreeMap::new(),
+            scope_table: BTreeMap::new(),
             scopes: vec![],
             order: BTreeMap::new(),
             functions: FunctionTable::new(),
@@ -407,7 +419,7 @@ impl Analyzer {
         }
 
         Ok(Schedule {
-            scopes: self.locals,
+            scopes: self.scope_table,
             order: self.order,
         })
     }
@@ -421,7 +433,7 @@ impl Analyzer {
         self.analyze_query(None, None, query, Scope::default())?;
 
         Ok(Schedule {
-            scopes: self.locals,
+            scopes: self.scope_table,
             order: self.order,
         })
     }
@@ -441,7 +453,7 @@ impl Analyzer {
                         ..
                     } => get_root_var(refr)?,
                 };
-                scope.locals.insert(var);
+                scope.unscoped.insert(var);
             }
         }
 
@@ -529,9 +541,12 @@ impl Analyzer {
             RuleHead::Set { key, .. } => (key.clone(), None, scope),
             RuleHead::Func { args, assign, .. } => {
                 for a in args.iter() {
-                    if let Var(v) = a.as_ref() {
-                        scope.locals.insert(v.source_str());
-                    }
+                    traverse(a, &mut |e| {
+                        if let Var(v) = e.as_ref() {
+                            scope.unscoped.insert(v.source_str());
+                        }
+                        Ok(true)
+                    })?;
                 }
                 (None, assign.as_ref().map(|a| a.value.clone()), scope)
             }
@@ -549,7 +564,7 @@ impl Analyzer {
         for stmt in &query.stmts {
             match &stmt.literal {
                 Literal::SomeVars { vars, .. } => vars.iter().for_each(|v| {
-                    scope.locals.insert(v.source_str());
+                    scope.locals.insert(v.source_str(), v.clone());
                 }),
                 Literal::SomeIn {
                     key,
@@ -597,8 +612,9 @@ impl Analyzer {
         }
 
         // Remove input vars that are shadowed.
-        for v in &scope.locals {
+        for v in scope.locals.keys() {
             scope.inputs.remove(v);
+            scope.unscoped.remove(v);
         }
 
         Ok(())
@@ -621,7 +637,7 @@ impl Analyzer {
                     _ => false,
                 };
 
-                if scope.locals.contains(&name)
+                if scope.locals.contains_key(&name) || scope.unscoped.contains(&name)
                 /*|| scope.inputs.contains(name) */
                 {
                     if !is_extra_arg {
@@ -637,7 +653,7 @@ impl Analyzer {
             RefBrack { refr, index, .. } => {
                 if let Var(v) = index.as_ref() {
                     let var = v.source_str();
-                    if scope.locals.contains(&var) {
+                    if scope.locals.contains_key(&var) || scope.unscoped.contains(&var) {
                         let (rb_used_vars, rb_comprs) = Self::gather_used_vars_comprs_index_vars(
                             refr,
                             scope,
@@ -681,7 +697,7 @@ impl Analyzer {
             let compr_scope = match compr.as_ref() {
                 Expr::ArrayCompr { query, term, .. } | Expr::SetCompr { query, term, .. } => {
                     self.analyze_query(None, Some(term.clone()), query, Scope::default())?;
-                    self.locals.get(query)
+                    self.scope_table.get(query)
                 }
                 Expr::ObjectCompr {
                     query, key, value, ..
@@ -692,7 +708,7 @@ impl Analyzer {
                         query,
                         Scope::default(),
                     )?;
-                    self.locals.get(query)
+                    self.scope_table.get(query)
                 }
                 _ => break,
             };
@@ -700,7 +716,7 @@ impl Analyzer {
             // Record vars used by the comprehension scope.
             if let Some(compr_scope) = compr_scope {
                 for iv in &compr_scope.inputs {
-                    if scope.locals.contains(iv) {
+                    if scope.locals.contains_key(iv) || scope.unscoped.contains(iv) {
                         // Record possible first use of current scope's local var.
                         first_use.entry(iv.clone()).or_insert(compr.span().clone());
                         used_vars.push(iv.clone());
@@ -727,10 +743,12 @@ impl Analyzer {
         traverse(expr, &mut |e| match e.as_ref() {
             Var(v) => {
                 let var = v.source_str();
-                if scope.locals.contains(&var) {
+                if scope.locals.contains_key(&var) {
                     if check_first_use {
                         Self::check_first_use(v, first_use)?;
                     }
+                    vars.push(var);
+                } else if scope.unscoped.contains(&var) {
                     vars.push(var);
                 }
                 Ok(false)
@@ -890,7 +908,7 @@ impl Analyzer {
         non_vars: &mut Vec<Ref<Expr>>,
     ) -> Result<()> {
         traverse(expr, &mut |e| match e.as_ref() {
-            Var(v) if scope.locals.contains(&v.source_str()) => {
+            Var(v) if scope.locals.contains_key(&v.source_str()) => {
                 vars.push(v.source_str());
                 Ok(false)
             }
@@ -1012,8 +1030,8 @@ impl Analyzer {
                         let mut extras_scope = Scope::default();
                         gather_assigned_vars(ea, false, &self.scopes, &mut extras_scope)?;
 
-                        for var in &extras_scope.locals {
-                            scope.locals.insert(var.clone());
+                        for var in &extras_scope.unscoped {
+                            scope.unscoped.insert(var.clone());
                         }
 
                         // Gather vars being used.
@@ -1022,7 +1040,7 @@ impl Analyzer {
                             &mut scope,
                             &mut first_use,
                             &mut definitions,
-                            &Some(&extras_scope.locals),
+                            &Some(&extras_scope.unscoped),
                         )?;
 
                         self.process_comprs(
@@ -1032,8 +1050,8 @@ impl Analyzer {
                             &mut used_vars,
                         )?;
 
-                        if !extras_scope.locals.is_empty() {
-                            for var in extras_scope.locals {
+                        if !extras_scope.unscoped.is_empty() {
+                            for var in extras_scope.unscoped {
                                 definitions.push(Definition {
                                     var,
                                     used_vars: used_vars.clone(),
@@ -1076,9 +1094,9 @@ impl Analyzer {
                     self.scopes.push(scope.clone());
                     let mut e_scope = Scope::default();
                     if let Some(key) = key {
-                        e_scope.locals.insert(key.source_str());
+                        e_scope.locals.insert(key.source_str(), key.clone());
                     }
-                    e_scope.locals.insert(value.source_str());
+                    e_scope.locals.insert(value.source_str(), value.clone());
                     self.scopes.push(e_scope);
 
                     // TODO: mark first use of key, value so that they cannot be := assigned
@@ -1112,7 +1130,7 @@ impl Analyzer {
             }
             _ => (),
         }
-        self.locals.insert(query.clone(), scope);
+        self.scope_table.insert(query.clone(), scope);
 
         Ok(())
     }

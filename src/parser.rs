@@ -209,7 +209,9 @@ impl<'source> Parser<'source> {
         match self.tok.0 {
             TokenKind::Ident
                 if self.is_keyword(*span.text())
-                    || self.is_imported_future_keyword(*span.text()) =>
+                    || (self.is_imported_future_keyword(*span.text())
+		    // contains can be the name of a builtin even when a keyword
+		    && *span.text() != "contains") =>
             {
                 Err(self.source.error(
                     self.tok.1.line,
@@ -1425,6 +1427,25 @@ impl<'source> Parser<'source> {
         self.expect("default", "while parsing default rule")?;
         let rule_ref = Ref::new(self.parse_rule_ref()?);
 
+        let mut args = vec![];
+        if *self.token_text() == "(" {
+            self.next_token()?;
+            if *self.token_text() != ")" {
+                loop {
+                    let arg = self.parse_ident()?;
+                    if *arg.text() != "_" && args.iter().any(|a: &Span| *a.text() == *arg.text()) {
+                        bail!(arg.error("repeating parameter name"));
+                    }
+                    args.push(arg);
+                    if *self.token_text() == ")" || self.tok.0 == TokenKind::Eof {
+                        break;
+                    }
+                    self.expect(",", "while parsing default rule parameters")?;
+                }
+            }
+            self.expect(")", "while parsing default rule parameters")?;
+        }
+
         let op = match *self.token_text() {
             "=" => AssignOp::Eq,
             ":=" => AssignOp::ColEq,
@@ -1443,6 +1464,7 @@ impl<'source> Parser<'source> {
         Ok(Rule::Default {
             span,
             refr: rule_ref,
+            args: args.into_iter().map(|a| Ref::new(Expr::Var(a))).collect(),
             op,
             value,
         })

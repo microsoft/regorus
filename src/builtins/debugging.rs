@@ -20,7 +20,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
 // Symbol analyzer must ensure that vars used by print are defined before
 // the print statement. Scheduler must ensure the above constraint.
 // Additionally interpreter must allow undefined inputs to print.
-fn print(span: &Span, _params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn print(span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     if args.len() > MAX_ARGS as usize {
         bail!(span.error("print supports up to 100 arguments"));
     }

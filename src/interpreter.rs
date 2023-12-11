@@ -44,6 +44,7 @@ pub struct Interpreter {
     no_rules_lookup: bool,
     traces: Option<Vec<std::rc::Rc<str>>>,
     allow_deprecated: bool,
+    strict_builtin_errors: bool,
 }
 
 impl Default for Interpreter {
@@ -130,6 +131,7 @@ impl Interpreter {
             no_rules_lookup: false,
             traces: None,
             allow_deprecated: true,
+            strict_builtin_errors: true,
         }
     }
 
@@ -168,14 +170,18 @@ impl Interpreter {
         };
     }
 
+    pub fn set_strict_builtin_errors(&mut self, b: bool) {
+        self.strict_builtin_errors = b;
+    }
+
     pub fn set_input(&mut self, input: Value) {
         self.input = input;
         info!("input: {:#?}", self.input);
     }
 
     pub fn init_with_document(&mut self) -> Result<()> {
-        *Self::make_or_get_value_mut(&mut self.with_document, &["data"])? = Value::new_object();
-        *Self::make_or_get_value_mut(&mut self.with_document, &["input"])? = Value::new_object();
+        *Self::make_or_get_value_mut(&mut self.with_document, &["data"])? = self.init_data.clone();
+        *Self::make_or_get_value_mut(&mut self.with_document, &["input"])? = self.input.clone();
 
         Ok(())
     }
@@ -789,6 +795,7 @@ impl Interpreter {
             // OPA raises the error sometimes in static scenarios, but doesn't
             // raise in scenarios due to data/input
             (Expr::Array { .. }, _) | (Expr::Object { .. }, _) => Ok(false),
+
             _ => {
                 let expr_value = self.lookup_or_eval_expr(cache, expr)?;
                 if expr_value == Value::Undefined {
@@ -1096,18 +1103,28 @@ impl Interpreter {
                 };
 
                 if path[0] == "input" || path[0] == "data" {
+                    if path.len() > 1 {
+                        let vref =
+                            Self::make_or_get_value_mut(&mut self.with_document, &path[0..1])?;
+                        match *vref {
+                            Value::Object(_) => (),
+                            _ => *vref = Value::new_object(),
+                        }
+                    }
+
                     *Self::make_or_get_value_mut(&mut self.with_document, &path[..])? = value;
-                } /* else if path.len() == 1 {
-                      // TODO: handle var in current module.
-                  } else {
-                      // TODO: error about input, data
-                  } */
+                }
+
+                /* else if path.len() == 1 {
+                    // TODO: handle var in current module.
+                } else {
+                    // TODO: error about input, data
+                } */
             }
 
             self.data = self.with_document["data"].clone();
             self.input = self.with_document["input"].clone();
             self.processed.clear();
-
             (with_document, input, data, processed, with_functions)
         } else {
             (
@@ -1651,7 +1668,7 @@ impl Interpreter {
             }
         }
 
-        let v = builtin.0(span, params, &args[..])?;
+        let v = builtin.0(span, params, &args[..], self.strict_builtin_errors)?;
 
         // Handle trace function.
         // TODO: with modifier.
@@ -1694,18 +1711,29 @@ impl Interpreter {
             _ => orig_fcn_path.clone(),
         };
 
+        let empty = vec![];
         let fcns_rules = match self.lookup_function_by_name(&fcn_path) {
             Some(r) => r,
             _ => {
+                if self.default_rules.get(&fcn_path).is_some()
+                    || self
+                        .default_rules
+                        .get(&get_path_string(fcn, Some(&self.current_module_path))?)
+                        .is_some()
+                {
+                    // process default functions later.
+                    &empty
+                }
                 // Look up builtin function.
-                if let Ok(Some(builtin)) = self.lookup_builtin(span, &fcn_path) {
+                else if let Ok(Some(builtin)) = self.lookup_builtin(span, &fcn_path) {
                     let r = self.eval_builtin_call(span, &fcn_path.clone(), *builtin, params);
                     if orig_fcn_path != fcn_path {
                         self.with_functions.insert(orig_fcn_path, fcn_path);
                     }
                     return r;
+                } else {
+                    bail!(span.error(format!("could not find function {fcn_path}").as_str()));
                 }
-                bail!(span.error(format!("could not find function {fcn_path}").as_str()));
             }
         };
 
@@ -1757,10 +1785,10 @@ impl Interpreter {
             let mut type_match = BTreeSet::new();
 
             for (idx, a) in args.iter().enumerate() {
-                if self
-                    .make_bindings(false, &mut type_match, &mut cache, a, &param_values[idx])
-                    .is_err()
-                {
+                let b =
+                    self.make_bindings(false, &mut type_match, &mut cache, a, &param_values[idx]);
+
+                if b.ok() != Some(true) {
                     self.scopes = scopes;
                     continue 'outer;
                 }
@@ -1799,7 +1827,9 @@ impl Interpreter {
 
                 // If the function execution resulted in undefined, then propagate it.
                 Value::Undefined => Value::Undefined,
-                _ => bail!("internal error: function did not return set {value:?}"),
+
+                // Function returned a non set value
+                v => v.clone(),
             };
 
             // Restore local variables for current context.
@@ -1808,6 +1838,34 @@ impl Interpreter {
             if result != Value::Undefined {
                 results.push(result);
             }
+        }
+
+        if results.is_empty() {
+            // Back up local variables of current function and empty
+            // the local variables of callee function.
+            let scopes = std::mem::take(&mut self.scopes);
+            if errors.is_empty() {
+                // Check if any default rules can be evaluated.
+                // TODO: with mod
+                let rules = match self.default_rules.get(&fcn_path).cloned() {
+                    Some(rules) => Some(rules),
+                    None => {
+                        let fcn_path = get_path_string(fcn, Some(&self.current_module_path))?;
+                        self.default_rules.get(&fcn_path).cloned()
+                    }
+                };
+                if let Some(rules) = rules {
+                    for (rule, _) in rules.iter() {
+                        if let Rule::Default { value, .. } = rule.as_ref() {
+                            match self.eval_expr(value) {
+                                Ok(v) => results.push(v),
+                                Err(e) => errors.push(e),
+                            }
+                        }
+                    }
+                }
+            }
+            self.scopes = scopes;
         }
 
         if results.is_empty() {
@@ -1937,14 +1995,27 @@ impl Interpreter {
                 return Ok(v);
             }
 
-            // Evaluate rule corresponding to longest matching path.
-            for i in (1..fields.len() + 1).rev() {
+            if fields.is_empty() {
+                bail!(span.error("this results in recursive evaluation of data."))
+            }
+
+            // Find the rule to which the var being looked up corresponds to. This is the prefix for
+            // which rules exist.
+            let mut found = false;
+            for i in 1..fields.len() + 1 {
                 let path = "data.".to_owned() + &fields[0..i].join(".");
                 if self.rules.get(&path).is_some() || self.default_rules.get(&path).is_some() {
                     self.ensure_rule_evaluated(path)?;
+                    found = true;
                     break;
                 }
             }
+
+            // TODO: emit this error only if the var can belong to a rego module; not data specified via json/yaml.
+            //if !no_error && !found {
+            //    bail!(span.error("var is unsafe"));
+            //}
+            let _ = found;
 
             Ok(Self::get_value_chained(self.data.clone(), fields))
         } else if !self.modules.is_empty() {
@@ -1960,10 +2031,8 @@ impl Interpreter {
                 return Ok(v);
             }
 
-            // Add module prefix and ensure that any matching rule is evaluated.
-            let module_path =
-                Self::get_path_string(&self.current_module()?.package.refr, Some("data"))?;
-            let rule_path = module_path + "." + name.text();
+            // Ensure that all the rules having common prefix (name) are evaluated.
+            let rule_path = "data.".to_owned() + &path.join(".");
 
             if !no_error
                 && self.rules.get(&rule_path).is_none()
@@ -1971,6 +2040,7 @@ impl Interpreter {
             {
                 bail!(span.error("var is unsafe"));
             }
+
             self.ensure_rule_evaluated(rule_path)?;
 
             let value = Self::get_value_chained(self.data.clone(), &path[..]);
@@ -2318,9 +2388,18 @@ impl Interpreter {
         }
 
         if let Rule::Default {
-            span, refr, value, ..
+            span,
+            refr,
+            value,
+            args,
+            ..
         } = rule.as_ref()
         {
+            if !args.is_empty() {
+                // Non-zero function defaults are evaluated differently.
+                return Ok(());
+            }
+
             let scopes = std::mem::take(&mut self.scopes);
 
             let mut path =
@@ -2588,8 +2667,10 @@ impl Interpreter {
                         Expr::RefBrack { refr, .. } => refr,
                         _ => refr,
                     };
-                    let path = Self::get_path_string(refr, None)?;
-                    let path = self.current_module_path.clone() + "." + &path;
+                    //let path = Self::get_path_string(refr, None)?;
+                    let path = get_root_var(refr)?;
+                    let path = path.text();
+                    let path = self.current_module_path.clone() + "." + path;
                     match self.rules.entry(path) {
                         Entry::Occupied(o) => {
                             o.into_mut().push(rule.clone());
@@ -2617,8 +2698,10 @@ impl Interpreter {
                         _ => (refr, None),
                     };
 
-                    let path = Self::get_path_string(refr, None)?;
-                    let path = self.current_module_path.clone() + "." + &path;
+                    //let path = Self::get_path_string(refr, None)?;
+                    let path = get_root_var(refr)?;
+                    let path = path.text();
+                    let path = self.current_module_path.clone() + "." + path;
                     match self.default_rules.entry(path) {
                         Entry::Occupied(o) => {
                             for (_, i) in o.get() {

@@ -71,6 +71,10 @@ impl Engine {
         &self.modules
     }
 
+    pub fn set_strict_builtin_errors(&mut self, b: bool) {
+        self.interpreter.set_strict_builtin_errors(b)
+    }
+
     fn prepare_for_eval(&mut self, enable_tracing: bool) -> Result<()> {
         self.interpreter.set_traces(enable_tracing);
 

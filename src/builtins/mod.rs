@@ -38,7 +38,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use lazy_static::lazy_static;
 
-pub type BuiltinFcn = (fn(&Span, &[Ref<Expr>], &[Value]) -> Result<Value>, u8);
+pub type BuiltinFcn = (fn(&Span, &[Ref<Expr>], &[Value], bool) -> Result<Value>, u8);
 
 #[cfg(feature = "deprecated")]
 pub use deprecated::DEPRECATED;

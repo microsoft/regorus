@@ -28,7 +28,12 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("crypto.sha256", (crypto_sha256, 1));
 }
 
-fn hmac_equal_fixed_time(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn hmac_equal_fixed_time(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
     let name = "crypto.hmac.equal";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -41,7 +46,7 @@ fn hmac_equal_fixed_time(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> R
     )))
 }
 
-fn hmac_md5(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn hmac_md5(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "crypto.hmac.md5";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -57,7 +62,7 @@ fn hmac_md5(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> 
     Ok(Value::String(hex::encode(result.into_bytes()).into()))
 }
 
-fn hmac_sha1(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn hmac_sha1(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "crypto.hmac.sha1";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -73,7 +78,7 @@ fn hmac_sha1(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value>
     Ok(Value::String(hex::encode(result.into_bytes()).into()))
 }
 
-fn hmac_sha256(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn hmac_sha256(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "crypto.hmac.sha256";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -89,7 +94,7 @@ fn hmac_sha256(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Valu
     Ok(Value::String(hex::encode(result.into_bytes()).into()))
 }
 
-fn hmac_sha512(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn hmac_sha512(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "crypto.hmac.sha512";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -105,7 +110,7 @@ fn hmac_sha512(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Valu
     Ok(Value::String(hex::encode(result.into_bytes()).into()))
 }
 
-fn crypto_md5(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn crypto_md5(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "crypto.md5";
     ensure_args_count(span, name, params, args, 1)?;
 
@@ -119,7 +124,7 @@ fn crypto_md5(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value
     Ok(Value::String(hex::encode(result).into()))
 }
 
-fn crypto_sha1(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn crypto_sha1(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "crypto.sha1";
     ensure_args_count(span, name, params, args, 1)?;
 
@@ -133,7 +138,12 @@ fn crypto_sha1(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Valu
     Ok(Value::String(hex::encode(result).into()))
 }
 
-fn crypto_sha256(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn crypto_sha256(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
     let name = "crypto.sha256";
     ensure_args_count(span, name, params, args, 1)?;
 

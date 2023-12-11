@@ -66,7 +66,7 @@ fn two_exp(suffix: &str) -> Option<i32> {
     })
 }
 
-fn parse(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn parse(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "units.parse";
     ensure_args_count(span, name, params, args, 1)?;
     let string = ensure_string(name, &params[0], &args[0])?;
@@ -143,7 +143,7 @@ fn tenb_exp(suffix: &str) -> Option<i32> {
     })
 }
 
-fn parse_bytes(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn parse_bytes(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
     let name = "units.parse_bytes";
     ensure_args_count(span, name, params, args, 1)?;
     let string = ensure_string(name, &params[0], &args[0])?;
@@ -166,12 +166,15 @@ fn parse_bytes(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Valu
         _ => (string, ""),
     };
 
-    let v: Value = if number_part.starts_with('.') {
+    let v: Value = match if number_part.starts_with('.') {
         serde_json::from_str(format!("0{number_part}").as_str())
     } else {
         serde_json::from_str(number_part)
-    }
-    .with_context(|| span.error("could not parse number"))?;
+    } {
+        Ok(v) => v,
+        Err(_) if strict => bail!(span.error("could not parse number")),
+        _ => return Ok(Value::Undefined),
+    };
 
     let mut n = match v {
         Value::Number(n) => n.clone(),

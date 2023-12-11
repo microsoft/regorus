@@ -142,7 +142,7 @@ enum RegorusCommand {
         verbose: bool,
     },
 
-    /// Parse q Rego policy.
+    /// Parse a Rego policy.
     Parse {
         /// Rego policy file.
         file: String,

@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct Scope {
     pub locals: BTreeSet<String>,
+    pub unscoped: BTreeSet<String>,
     pub inputs: BTreeSet<String>,
 }
 
@@ -27,8 +28,11 @@ struct YamlTest {
     cases: Vec<TestCase>,
 }
 
-fn to_string_set(s: &BTreeSet<SourceStr>) -> BTreeSet<String> {
-    s.iter().map(|s| s.to_string()).collect()
+fn to_string_set<'a, I>(itr: I) -> BTreeSet<String>
+where
+    I: std::iter::Iterator<Item = &'a SourceStr>,
+{
+    itr.map(|s| s.to_string()).collect()
 }
 
 fn analyze_file(regos: &[String], expected_scopes: &[Scope]) -> Result<()> {
@@ -55,8 +59,18 @@ fn analyze_file(regos: &[String], expected_scopes: &[Scope]) -> Result<()> {
         if idx > expected_scopes.len() {
             bail!("extra scope generated.")
         }
-        assert_eq!(to_string_set(&scope.locals), expected_scopes[idx].locals);
-        assert_eq!(to_string_set(&scope.inputs), expected_scopes[idx].inputs);
+        assert_eq!(
+            to_string_set(scope.locals.keys()),
+            expected_scopes[idx].locals
+        );
+        assert_eq!(
+            to_string_set(scope.unscoped.iter()),
+            expected_scopes[idx].unscoped
+        );
+        assert_eq!(
+            to_string_set(scope.inputs.iter()),
+            expected_scopes[idx].inputs
+        );
         println!("scope {idx} matched.")
     }
 

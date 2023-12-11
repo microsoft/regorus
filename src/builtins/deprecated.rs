@@ -19,7 +19,13 @@ lazy_static! {
 	let mut m : HashMap<&'static str, BuiltinFcn>  = HashMap::new();
 	
 	m.insert("all", (all, 1));
-	m.insert("any", (any, 1));	
+	m.insert("any", (any, 1));
+	m.insert("cast_array", (cast_array, 1));
+	m.insert("cast_boolean", (cast_boolean, 1));
+	m.insert("cast_null", (cast_null, 1));
+	m.insert("cast_object", (cast_object, 1));
+	m.insert("cast_set", (cast_set, 1));
+	m.insert("cast_string", (cast_string, 1));
 	m.insert("set_diff", (set_diff, 2));
 
 	#[cfg(feature = "crypto")]
@@ -28,7 +34,7 @@ lazy_static! {
     };
 }
 
-fn all(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn all(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     ensure_args_count(span, "all", params, args, 1)?;
 
     Ok(Value::Bool(match &args[0] {
@@ -41,7 +47,7 @@ fn all(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     }))
 }
 
-fn any(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn any(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     ensure_args_count(span, "any", params, args, 1)?;
 
     Ok(Value::Bool(match &args[0] {
@@ -54,10 +60,70 @@ fn any(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
     }))
 }
 
-fn set_diff(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn set_diff(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "set_diff";
     ensure_args_count(span, name, params, args, 2)?;
     let s1 = ensure_set(name, &params[0], args[0].clone())?;
     let s2 = ensure_set(name, &params[1], args[1].clone())?;
     Ok(Value::from_set(s1.difference(&s2).cloned().collect()))
+}
+
+fn cast_array(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
+    let name = "cast_array";
+    ensure_args_count(span, name, params, args, 1)?;
+    match &args[0] {
+        Value::Array(_) => Ok(args[0].clone()),
+        _ if strict => bail!(params[0].span().error("array required")),
+        _ => Ok(Value::Undefined),
+    }
+}
+
+fn cast_boolean(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
+    let name = "cast_boolean";
+    ensure_args_count(span, name, params, args, 1)?;
+    match &args[0] {
+        Value::Bool(_) => Ok(args[0].clone()),
+        _ if strict => bail!(params[0].span().error("boolean required")),
+        _ => Ok(Value::Undefined),
+    }
+}
+
+fn cast_null(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
+    let name = "cast_null";
+    ensure_args_count(span, name, params, args, 1)?;
+    match &args[0] {
+        Value::Null => Ok(Value::Null),
+        _ if strict => bail!(params[0].span().error("null required")),
+        _ => Ok(Value::Undefined),
+    }
+}
+
+fn cast_object(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
+    let name = "cast_object";
+    ensure_args_count(span, name, params, args, 1)?;
+    match &args[0] {
+        Value::Object(_) => Ok(args[0].clone()),
+        _ if strict => bail!(params[0].span().error("object required")),
+        _ => Ok(Value::Undefined),
+    }
+}
+
+fn cast_set(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
+    let name = "cast_set";
+    ensure_args_count(span, name, params, args, 1)?;
+    match &args[0] {
+        Value::Set(_) => Ok(args[0].clone()),
+        _ if strict => bail!(params[0].span().error("set required")),
+        _ => Ok(Value::Undefined),
+    }
+}
+
+fn cast_string(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
+    let name = "cast_string";
+    ensure_args_count(span, name, params, args, 1)?;
+    match &args[0] {
+        Value::String(_) => Ok(args[0].clone()),
+        _ if strict => bail!(params[0].span().error("string required")),
+        _ => Ok(Value::Undefined),
+    }
 }

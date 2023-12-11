@@ -17,7 +17,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
 
 // Symbol analyzer must ensure that vars used by trace are defined before
 // the trace statement. Scheduler must ensure the above constraint.
-fn trace(span: &Span, params: &[Ref<Expr>], args: &[Value]) -> Result<Value> {
+fn trace(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "trace";
     ensure_args_count(span, name, params, args, 1)?;
     let msg = ensure_string(name, &params[0], &args[0])?;
