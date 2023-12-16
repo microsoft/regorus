@@ -145,7 +145,9 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                     println!("\n{} failed.", case.note);
                     println!("{}", serde_yaml::to_string(&case)?);
                     match &r {
-                        Ok(actual) => println!("GOT\n{}", serde_yaml::to_string(&actual)?),
+                        Ok(actual) => {
+                            println!("GOT\n{}", serde_yaml::to_string(&actual)?);
+                        }
                         Err(e) => println!("ERROR: {e}"),
                     }
 

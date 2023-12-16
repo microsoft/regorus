@@ -157,6 +157,11 @@ struct Cli {
 }
 
 fn main() -> Result<()> {
+    env_logger::builder()
+        .format_level(false)
+        .format_timestamp(None)
+        .init();
+
     // Parse and dispatch command.
     let cli = Cli::parse();
     match cli.command {

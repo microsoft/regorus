@@ -35,9 +35,18 @@ fn compare(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
     Ok(Value::from(result as i64))
 }
 
-fn is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+fn is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
     let name = "semver.is_valid";
     ensure_args_count(span, name, params, args, 1)?;
-    let v = ensure_string(name, &params[0], &args[0])?;
-    Ok(Value::Bool(Version::parse(&v).is_ok()))
+    Ok(Value::Bool(
+        Version::parse(&if strict {
+            ensure_string(name, &params[0], &args[0])?
+        } else {
+            match &args[0] {
+                Value::String(s) => s.clone(),
+                _ => return Ok(Value::Bool(false)),
+            }
+        })
+        .is_ok(),
+    ))
 }

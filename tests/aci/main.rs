@@ -85,11 +85,14 @@ fn run_aci_tests(dir: &Path) -> Result<()> {
                     println!("passed    {:?}", duration);
                 }
                 Ok(actual) => {
-                    println!("failed    {:?}", duration);
-                    println!("ACTUAL:");
-                    println!("{}", serde_json::to_string(&actual)?);
-                    println!("EXPECTED");
-                    println!("{}", serde_json::to_string(&case.want_result)?);
+                    println!(
+                        "DIFF {}",
+                        colored_diff::PrettyDifference {
+                            expected: &serde_yaml::to_string(&case.want_result)?,
+                            actual: &serde_yaml::to_string(&actual)?
+                        }
+                    );
+
                     nfailures += 1;
                 }
                 Err(e) => {

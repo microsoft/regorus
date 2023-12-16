@@ -282,6 +282,12 @@ impl Number {
         }
     }
 
+    pub fn is_positive(&self) -> bool {
+        match self {
+            Big(b) => b.d.is_sign_positive(),
+        }
+    }
+
     fn ensure_integers(a: &Number, b: &Number) -> Option<(BigInt, BigInt)> {
         match (a, b) {
             (Big(a), Big(b)) if a.d.is_integer() && b.d.is_integer() => {

@@ -114,7 +114,7 @@ impl Interpreter {
             module: None,
             schedule: None,
             current_module_path: String::default(),
-            input: Value::Null,
+            input: Value::Undefined,
             data: Value::new_object(),
             init_data: Value::new_object(),
             with_document: Value::new_object(),
@@ -288,7 +288,11 @@ impl Interpreter {
                                     Value::String(s) => s.to_string(),
                                     _ => index.to_string(),
                                 };
-                                let ref_path = ref_path + "." + &index + "." + &path.join("");
+                                let ref_path = if path.is_empty() {
+                                    ref_path + "." + &index
+                                } else {
+                                    ref_path + "." + &index + "." + &path.join(".")
+                                };
                                 self.ensure_rule_evaluated(ref_path)?;
                             }
                         }
@@ -483,7 +487,15 @@ impl Interpreter {
             (ArithOp::Sub, Value::Set(_), _) | (ArithOp::Sub, _, Value::Set(_)) => {
                 builtins::sets::difference(lhs, rhs, lhs_value, rhs_value)
             }
-            _ => builtins::numbers::arithmetic_operation(span, op, lhs, rhs, lhs_value, rhs_value),
+            _ => builtins::numbers::arithmetic_operation(
+                span,
+                op,
+                lhs,
+                rhs,
+                lhs_value,
+                rhs_value,
+                self.strict_builtin_errors,
+            ),
         }
     }
 
@@ -998,6 +1010,7 @@ impl Interpreter {
                     )?,
                     _ => self.eval_expr(expr)?,
                 };
+
                 if let Some(ctx) = self.contexts.last_mut() {
                     if let Some(result) = &mut ctx.result {
                         result
@@ -1011,14 +1024,10 @@ impl Interpreter {
             Literal::SomeVars { span, vars, .. } => {
                 for var in vars {
                     let name = var.source_str();
-                    if let Ok(variable) = self.add_variable_or(&name) {
-                        if variable != Value::Undefined {
-                            return Err(anyhow!(
-                                "duplicated definition of local variable {}",
-                                name
-                            ));
-                        }
+                    if self.current_scope()?.get(&name).is_some() {
+                        bail!("duplicated definition of local variable {}", name);
                     }
+                    self.add_variable_or(&name)?;
                 }
                 if let Some(ctx) = self.contexts.last_mut() {
                     if let Some(result) = &mut ctx.result {
@@ -1064,6 +1073,13 @@ impl Interpreter {
     }
 
     fn eval_stmt(&mut self, stmt: &LiteralStmt, stmts: &[&LiteralStmt]) -> Result<bool> {
+        debug_new_group!(
+            "eval_stmt {}:{} {}",
+            stmt.span.line,
+            stmt.span.col,
+            stmt.span.text()
+        );
+
         let mut skip_exec = false;
         let saved_state = if !stmt.with_mods.is_empty() {
             // Save state;
@@ -1185,6 +1201,9 @@ impl Interpreter {
                 if loop_expr_value[&idx] != Value::Undefined {
                     result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                     return Ok(result);
+                } else if idx != Value::Undefined {
+                    // The index is not valid for this collection.
+                    return Ok(false);
                 }
             }
 
@@ -1240,11 +1259,8 @@ impl Interpreter {
                     result = false;
                 }
                 _ => {
-                    return Err(loop_expr.span.source.error(
-                        loop_expr.span.line,
-                        loop_expr.span.col,
-                        "item cannot be indexed",
-                    ));
+                    // The item is not a collection.
+                    result = false;
                 }
             }
 
@@ -1854,6 +1870,7 @@ impl Interpreter {
                         self.default_rules.get(&fcn_path).cloned()
                     }
                 };
+
                 if let Some(rules) = rules {
                     for (rule, _) in rules.iter() {
                         if let Rule::Default { value, .. } = rule.as_ref() {
@@ -1967,6 +1984,7 @@ impl Interpreter {
     fn lookup_var(&mut self, span: &Span, fields: &[&str], no_error: bool) -> Result<Value> {
         let name = span.source_str();
 
+        debug_new_group!("lookup_var: name={name}, fields={fields:?}, no_error={no_error}");
         // Return local variable/argument.
         if let Some(v) = self.lookup_local_var(&name) {
             return Ok(Self::get_value_chained(v, fields));
@@ -1992,6 +2010,7 @@ impl Interpreter {
             // If the rule has already been evaluated or specified via a with modifier,
             // use that value.
             if v != Value::Undefined {
+                debug!("returning v = {v}");
                 return Ok(v);
             }
 
@@ -2051,6 +2070,13 @@ impl Interpreter {
     }
 
     fn eval_expr(&mut self, expr: &ExprRef) -> Result<Value> {
+        debug_new_group!(
+            "eval_expr: {}:{} {}",
+            expr.span().line,
+            expr.span().col,
+            expr.span().text()
+        );
+
         match expr.as_ref() {
             Expr::Null(_) => Ok(Value::Null),
             Expr::True(_) => Ok(Value::Bool(true)),
@@ -2292,7 +2318,7 @@ impl Interpreter {
                     comps.push(*v.text());
                     expr = None;
                 }
-                _ => bail!("internal error: not a simple ref"),
+                _ => bail!(format!("internal error: not a simplee ref {expr:?}")),
             }
         }
         if let Some(d) = document {
@@ -2650,11 +2676,110 @@ impl Interpreter {
         }
     }
 
+    fn get_rule_path_components(mut refr: &Ref<Expr>) -> Result<Vec<Rc<str>>> {
+        let mut components: Vec<Rc<str>> = vec![];
+        loop {
+            refr = match refr.as_ref() {
+                Expr::Var(v) => {
+                    components.push((*v.text().as_ref()).into());
+                    break;
+                }
+                Expr::RefBrack { refr, index, .. } => {
+                    if let Expr::String(s) = index.as_ref() {
+                        components.push((*s.text().as_ref()).into());
+                    }
+                    refr
+                }
+                Expr::RefDot { refr, field, .. } => {
+                    components.push((*field.text().as_ref()).into());
+                    refr
+                }
+                _ => break,
+            }
+        }
+        components.reverse();
+        Ok(components)
+    }
+
+    pub fn create_rule_prefixes(&mut self) -> Result<()> {
+        debug_new_group!("create_rule_prefixes");
+        debug!("data before: {}", self.data);
+
+        for module in self.modules.clone() {
+            let module_path = Self::get_rule_path_components(&module.package.refr)?;
+            debug!("processing module {module_path:?}");
+
+            for rule in &module.policy {
+                let mut rule_refr = Self::get_rule_refr(rule);
+                debug!("rule refr: {}", rule_refr.span().text());
+                debug!("rule : {:?}", rule);
+                if let Rule::Spec {
+                    head:
+                        RuleHead::Set {
+                            refr, key: None, ..
+                        },
+                    ..
+                } = rule.as_ref()
+                {
+                    rule_refr = match refr.as_ref() {
+                        Expr::RefDot { refr, .. } => refr,
+
+                        _ => refr,
+                    }
+                }
+
+                let mut prefix_path = module_path.clone();
+                prefix_path.append(&mut Self::get_rule_path_components(rule_refr)?);
+                let prefix_path: Vec<&str> = prefix_path[0..prefix_path.len() - 1]
+                    .iter()
+                    .map(|s| s.as_ref())
+                    .collect();
+
+                if Self::get_value_chained(self.data.clone(), &prefix_path) == Value::Undefined {
+                    self.update_data(
+                        rule_refr.span(),
+                        rule_refr,
+                        &prefix_path,
+                        Value::new_object(),
+                    )?;
+                }
+            }
+        }
+        debug!("data after: {}", self.data);
+        Ok(())
+    }
+
+    fn record_rule(&mut self, refr: &Ref<Expr>, rule: Ref<Rule>) -> Result<()> {
+        let path = get_root_var(refr)?;
+        let path = path.text();
+        let path = self.current_module_path.clone() + "." + path;
+        match self.rules.entry(path) {
+            Entry::Occupied(o) => {
+                o.into_mut().push(rule.clone());
+            }
+            Entry::Vacant(v) => {
+                v.insert(vec![rule.clone()]);
+            }
+        }
+        let path = Self::get_path_string(refr, None)?;
+        let path = self.current_module_path.clone() + "." + &path;
+        match self.rules.entry(path) {
+            Entry::Occupied(o) => {
+                o.into_mut().push(rule.clone());
+            }
+            Entry::Vacant(v) => {
+                v.insert(vec![rule.clone()]);
+            }
+        }
+        Ok(())
+    }
+
     pub fn gather_rules(&mut self) -> Result<()> {
         for module in self.modules.clone() {
             let prev_module = self.set_current_module(Some(module.clone()))?;
             for rule in &module.policy {
                 let refr = Self::get_rule_refr(rule);
+
                 if let Rule::Spec { .. } = rule.as_ref() {
                     // Adjust refr to ensure simple ref.
                     // TODO: refactor.
@@ -2667,18 +2792,7 @@ impl Interpreter {
                         Expr::RefBrack { refr, .. } => refr,
                         _ => refr,
                     };
-                    //let path = Self::get_path_string(refr, None)?;
-                    let path = get_root_var(refr)?;
-                    let path = path.text();
-                    let path = self.current_module_path.clone() + "." + path;
-                    match self.rules.entry(path) {
-                        Entry::Occupied(o) => {
-                            o.into_mut().push(rule.clone());
-                        }
-                        Entry::Vacant(v) => {
-                            v.insert(vec![rule.clone()]);
-                        }
-                    }
+                    self.record_rule(refr, rule.clone())?;
                 } else if let Rule::Default { .. } = rule.as_ref() {
                     let (refr, index) = match refr.as_ref() {
                         // TODO: Validate the index
@@ -2698,10 +2812,8 @@ impl Interpreter {
                         _ => (refr, None),
                     };
 
-                    //let path = Self::get_path_string(refr, None)?;
-                    let path = get_root_var(refr)?;
-                    let path = path.text();
-                    let path = self.current_module_path.clone() + "." + path;
+                    let path = Self::get_path_string(refr, None)?;
+                    let path = self.current_module_path.clone() + "." + &path;
                     match self.default_rules.entry(path) {
                         Entry::Occupied(o) => {
                             for (_, i) in o.get() {

@@ -9,6 +9,77 @@ use std::collections::BTreeMap;
 
 use anyhow::{bail, Result};
 
+#[cfg(debug_assertions)]
+macro_rules! debug {
+    ($($arg:tt)+) => {
+	{
+	    if log::log_enabled!(log::Level::Debug) {
+		print!("{}:{}:", file!(), line!());
+		crate::utils::NESTING.with(|f| {
+		    print!("{}", "  ".repeat(*f.borrow() as usize));
+		});
+		println!($($arg)+);
+	    }
+	}
+    }
+
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! debug {
+    ($($arg:tt)+) => {};
+}
+
+#[allow(unused)]
+pub(crate) use debug;
+
+#[cfg(debug_assertions)]
+#[allow(unused)]
+macro_rules! debug_new_group {
+    ($($arg:tt)+) => {
+	debug!($($arg)+);
+	let _group = DebugNesting::new();
+    };
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! debug_new_group {
+    ($($arg:tt)+) => {};
+}
+
+#[allow(unused)]
+pub(crate) use debug_new_group;
+
+#[allow(unused)]
+pub struct DebugNesting {}
+
+#[cfg(debug_assertions)]
+thread_local!(pub static NESTING: std::cell::RefCell<u32> = std::cell::RefCell::new(1));
+
+impl DebugNesting {
+    #[cfg(debug_assertions)]
+    #[allow(unused)]
+    pub fn new() -> DebugNesting {
+        NESTING.with(|f| {
+            *f.borrow_mut() += 1;
+        });
+        DebugNesting {}
+    }
+}
+
+#[allow(unused)]
+impl Drop for DebugNesting {
+    #[cfg(debug_assertions)]
+    fn drop(&mut self) {
+        NESTING.with(|f| {
+            *f.borrow_mut() -= 1;
+        });
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn drop(&mut self) {}
+}
+
 pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
     let mut comps: Vec<&str> = vec![];
     let mut expr = Some(refr);
