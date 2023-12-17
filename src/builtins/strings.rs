@@ -157,6 +157,41 @@ fn split(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
     ))
 }
 
+fn to_string(v: &Value, unescape: bool) -> String {
+    match v {
+        Value::Null => "null".to_owned(),
+        Value::Bool(b) => b.to_string(),
+        Value::String(s) if unescape => serde_json::to_string(&s).unwrap_or(s.as_ref().to_string()),
+        Value::String(s) => s.as_ref().to_string(),
+        Value::Number(n) => n.format_decimal(),
+        Value::Array(a) => {
+            "[".to_owned()
+                + &a.iter()
+                    .map(|e| to_string(e, true))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+                + "]"
+        }
+        Value::Set(s) => {
+            "{".to_owned()
+                + &s.iter()
+                    .map(|e| to_string(e, true))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+                + "}"
+        }
+        Value::Object(o) => {
+            "{".to_owned()
+                + &o.iter()
+                    .map(|(k, v)| to_string(k, true) + ": " + &to_string(v, true))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+                + "}"
+        }
+        Value::Undefined => "#undefined".to_string(),
+    }
+}
+
 fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "sprintf";
     ensure_args_count(span, name, params, args, 2)?;
@@ -219,6 +254,9 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
         // Handle Golang printing verbs.
         // https://pkg.go.dev/fmt
         match (verb, arg) {
+            ('s', Value::String(sv)) => s += sv.as_ref(),
+            ('s', v) => s += &to_string(v, false),
+
             ('v', _) => s += format!("{arg}").as_str(),
             ('b', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
@@ -313,11 +351,6 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
             (_, Value::Number(_)) => {
                 // TODO: binary for floating point.
                 bail!(args_span.error("floating-point number specified for format verb {verb}."));
-            }
-
-            ('s', Value::String(sv)) => s += sv.as_ref(),
-            ('s', _) => {
-                bail!(args_span.error("invalid non string argument specified for format verb %s"));
             }
 
             ('+', _) if chars.next() == Some('v') => {

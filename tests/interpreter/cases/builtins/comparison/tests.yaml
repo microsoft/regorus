@@ -214,8 +214,8 @@ cases:
           0,
           "",
           [],
+          set(),
           {},
-          set()
         ]
 
         results = {
@@ -241,35 +241,35 @@ cases:
       lt:
         object!:
           - key: null
-            value: [false, 0, "", [], {}, {"set!":[]}]
+            value: [false, 0, "", [], {"set!":[]}, {}]
           - key: false
-            value: [0, "", [], {}, {"set!":[]}]
+            value: [0, "", [], {"set!":[]}, {}]
           - key: 0
-            value: ["", [], {}, {"set!":[]}]
+            value: ["", [], {"set!":[]}, {}]
           - key: ""
-            value: [[], {}, {"set!":[]}]
+            value: [[], {"set!":[]}, {}]
           - key: []
-            value: [{}, {"set!":[]}]
-          - key: {}
-            value: [{"set!":[]}]
+            value: [{"set!":[]}, {}]
           - key: {"set!":[]}
+            value: [{}]
+          - key: {}
             value: []
       le:
         object!:
           - key: null
-            value: [null, false, 0, "", [], {}, {"set!":[]}]
+            value: [null, false, 0, "", [], {"set!":[]}, {}]
           - key: false
-            value: [false, 0, "", [], {}, {"set!":[]}]
+            value: [false, 0, "", [], {"set!":[]}, {}]
           - key: 0
-            value: [0, "", [], {}, {"set!":[]}]
+            value: [0, "", [], {"set!":[]}, {}]
           - key: ""
-            value: ["", [], {}, {"set!":[]}]
+            value: ["", [], {"set!":[]}, {}]
           - key: []
-            value: [[], {}, {"set!":[]}]
-          - key: {}
-            value: [{}, {"set!":[]}]
+            value: [[], {"set!":[]}, {}]
           - key: {"set!":[]}
-            value: [{"set!":[]}]
+            value: [{"set!":[]}, {}]
+          - key: {}
+            value: [{}]
       gt:
         object!:
           - key: null
@@ -282,10 +282,10 @@ cases:
             value: [null, false, 0]
           - key: []
             value: [null, false, 0, ""]
-          - key: {}
-            value: [null, false, 0, "", []]
           - key: {"set!":[]}
-            value: [null, false, 0, "", [], {}]
+            value: [null, false, 0, "", []]
+          - key: {}
+            value: [null, false, 0, "", [], {"set!":[]}]
       ge:
         object!:
           - key: null
@@ -298,10 +298,10 @@ cases:
             value: [null, false, 0, ""]
           - key: []
             value: [null, false, 0, "", []]
-          - key: {}
-            value: [null, false, 0, "", [], {}]
           - key: {"set!":[]}
-            value: [null, false, 0, "", [], {}, {"set!":[]}]
+            value: [null, false, 0, "", [], {"set!":[]}]
+          - key: {}
+            value: [null, false, 0, "", [], {"set!":[]}, {}]
 
   - note: arrays
     data: {}

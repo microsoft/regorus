@@ -73,6 +73,7 @@ fn cast_array(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -
     ensure_args_count(span, name, params, args, 1)?;
     match &args[0] {
         Value::Array(_) => Ok(args[0].clone()),
+        Value::Set(s) => Ok(Value::from_array(s.iter().cloned().collect())),
         _ if strict => bail!(params[0].span().error("array required")),
         _ => Ok(Value::Undefined),
     }
@@ -113,6 +114,7 @@ fn cast_set(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> 
     ensure_args_count(span, name, params, args, 1)?;
     match &args[0] {
         Value::Set(_) => Ok(args[0].clone()),
+        Value::Array(a) => Ok(Value::from_set(a.iter().cloned().collect())),
         _ if strict => bail!(params[0].span().error("set required")),
         _ => Ok(Value::Undefined),
     }

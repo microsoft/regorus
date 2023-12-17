@@ -15,10 +15,6 @@ cases:
         # Single item range
         r5 = numbers.range(8, 8)
 
-        # Non-integer start and end result in Undefined.
-        r6 = numbers.range(1.01, 5)
-        r7 = numbers.range(1, 5.01)
-
         y { false }
         r8 = numbers.range(y, 10)
         r9 = numbers.range(10, y)
@@ -31,6 +27,24 @@ cases:
       r4: [-5, -4, -3, -2, -1]
       r5: [8]
 
+  - note: non integer start
+    data: {}
+    modules:
+      - |
+        package test
+        r6 = numbers.range(1.01, 5)
+    error: must be integer
+    query: data
+    
+  - note: non integer start
+    data: {}
+    modules:
+      - |
+        package test
+        r7 = numbers.range(1, 5.01)
+    error: must be integer
+    query: data
+    
   - note: less-args
     data: {}
     modules:

@@ -43,8 +43,8 @@ fn non_string_key() -> Result<()> {
   "false": null,
   "3.141592653589793": null,
   "[true,null,3.141592653589793]": null,
-  "{\"null\":null,\"false\":null,\"3.141592653589793\":null,\"[true,null,3.141592653589793]\":null,\"[false,true,3.141592653589793]\":null,\"\\\"<undefined>\\\"\":null}": null,
   "[false,true,3.141592653589793]": null,
+  "{\"null\":null,\"false\":null,\"3.141592653589793\":null,\"[true,null,3.141592653589793]\":null,\"[false,true,3.141592653589793]\":null,\"\\\"<undefined>\\\"\":null}": null,
   "\"<undefined>\"": null
 }"#;
 

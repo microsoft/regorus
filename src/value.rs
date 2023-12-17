@@ -25,10 +25,11 @@ pub enum Value {
     Number(Number),
     String(Rc<str>),
     Array(Rc<Vec<Value>>),
-    Object(Rc<BTreeMap<Value, Value>>),
 
     // Extra rego data type
     Set(Rc<BTreeSet<Value>>),
+
+    Object(Rc<BTreeMap<Value, Value>>),
 
     // Indicate that a value is undefined
     Undefined,

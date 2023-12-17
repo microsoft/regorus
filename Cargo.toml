@@ -45,6 +45,7 @@ wax = { version = "0.6.0", features = [], default-features = false, optional = t
 
 [dev-dependencies]
 clap = { version = "4.4.7", features = ["derive"] }
+colored-diff = "0.2.3"
 serde_yaml = "0.9.16"
 test-generator = "0.3.1"
 walkdir = "2.3.2"

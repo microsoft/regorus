@@ -25,6 +25,7 @@ cryptomd5
 cryptosha1
 cryptosha256
 dataderef
+defaultkeyword
 disjunction
 elsekeyword
 embeddedvirtualdoc
@@ -44,7 +45,10 @@ invalidkeyerror
 jsonfilteridempotent
 jwtencodesignheadererrors
 jwtencodesignpayloaderrors
+negation
 nestedreferences
+numbersrange
+numbersrangestep
 objectfilter
 objectfilteridempotent
 objectfilternonstringkey
@@ -55,6 +59,7 @@ objectremoveidempotent
 objectremovenonstringkey
 partialdocconstants
 partialsetdoc
+planner-ir
 rand
 regexfind
 regexfindallstringsubmatch
@@ -65,9 +70,13 @@ regexreplace
 regexsplit
 replacen
 semvercompare
+semverisvalid
 sets
+sprintf
 subset
+toarray
 topdowndynamicdispatch
+toset
 trim
 trimleft
 trimprefix
@@ -80,3 +89,5 @@ typenamebuiltin
 undos
 union
 units
+varreferences
+virtualdocs

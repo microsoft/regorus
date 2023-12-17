@@ -147,6 +147,7 @@ impl Engine {
             self.interpreter.set_current_module(prev_module)?;
         }
 
+        self.interpreter.create_rule_prefixes()?;
         Ok(self.interpreter.get_data_mut().clone())
     }
 

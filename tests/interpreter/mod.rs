@@ -68,85 +68,17 @@ pub fn process_value(v: &Value) -> Result<Value> {
     }
 }
 
-fn display_values(c: &Value, e: &Value) -> Result<String> {
-    Ok(format!(
-        "\nleft  = {}\nright = {}\n",
-        serde_json::to_string_pretty(c)?,
-        serde_json::to_string_pretty(e)?
-    ))
-}
-
-// Helper function to match computed and expecte values.
-// On mismatch, prints the failing sub-value instead of the whole value.
-fn match_values_impl(computed: &Value, expected: &Value) -> Result<()> {
-    match (&computed, &expected) {
-        (Value::Array(a1), Value::Array(a2)) => {
-            if a1.len() != a2.len() {
-                bail!(
-                    "array length mismatch: {} != {}{}",
-                    a1.len(),
-                    a2.len(),
-                    display_values(computed, expected)?
-                );
-            }
-
-            for (idx, v1) in a1.iter().enumerate() {
-                match_values_impl(v1, &a2[idx])?;
-            }
-            Ok(())
-        }
-
-        (Value::Set(s1), Value::Set(s2)) => {
-            if s1.len() != s2.len() {
-                bail!(
-                    "set length mismatch: {} != {}{}",
-                    s1.len(),
-                    s2.len(),
-                    display_values(computed, expected)?
-                );
-            }
-
-            let mut itr2 = s2.iter();
-            for v1 in s1.iter() {
-                match_values_impl(v1, itr2.next().unwrap())?;
-            }
-            Ok(())
-        }
-
-        (Value::Object(o1), Value::Object(o2)) => {
-            if o1.len() != o2.len() {
-                bail!(
-                    "object length mismatch: {} != {}{}",
-                    o1.len(),
-                    o2.len(),
-                    display_values(computed, expected)?
-                );
-            }
-
-            let mut itr2 = o2.iter();
-            for (k1, v1) in o1.iter() {
-                let (k2, v2) = itr2.next().unwrap();
-                match_values_impl(k1, k2)?;
-                match_values_impl(v1, v2)?;
-            }
-            Ok(())
-        }
-
-        (Value::Number(n1), Value::Number(n2)) if n1 == n2 => Ok(()),
-        (Value::String(s1), Value::String(s2)) if s1 == s2 => Ok(()),
-        (Value::Bool(b1), Value::Bool(b2)) if b1 == b2 => Ok(()),
-        (Value::Null, Value::Null) => Ok(()),
-        (Value::Undefined, Value::Undefined) => Ok(()),
-
-        _ => bail!("value mismatch: {}", display_values(computed, expected)?),
-    }
-}
-
 fn match_values(computed: &Value, expected: &Value) -> Result<()> {
-    match match_values_impl(computed, expected) {
-        Ok(()) => Ok(()),
-        Err(e) => bail!("\nmismatch in {}{}", display_values(computed, expected)?, e),
+    if computed != expected {
+        panic!(
+            "{}",
+            colored_diff::PrettyDifference {
+                expected: &serde_yaml::to_string(&expected)?,
+                actual: &serde_yaml::to_string(&computed)?
+            }
+        );
     }
+    Ok(())
 }
 
 pub fn check_output(computed_results: &[Value], expected_results: &[Value]) -> Result<()> {
