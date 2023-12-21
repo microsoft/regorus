@@ -66,17 +66,7 @@ fn endswith(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) ->
     Ok(Value::Bool(s1.ends_with(s2.as_ref())))
 }
 
-fn format_number(n: &Number, base: u64) -> String {
-    match base {
-        2 => n.format_bin(),
-        8 => n.format_octal(),
-        10 => n.format_decimal(),
-        16 => n.format_hex(),
-        _ => "".to_owned(),
-    }
-}
-
-fn format_int(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+fn format_int(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
     let name = "format_int";
     ensure_args_count(span, name, params, args, 2)?;
     let mut n = ensure_numeric(name, &params[0], &args[0])?;
@@ -87,14 +77,24 @@ fn format_int(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) 
     }
     let n = n.floor();
 
-    Ok(Value::String(
-        (sign.to_owned()
-            + &match ensure_numeric(name, &params[1], &args[1])?.as_u64() {
-                Some(b) => format_number(&n, b),
-                _ => return Ok(Value::Undefined),
-            })
-            .into(),
-    ))
+    let base = ensure_numeric(name, &params[1], &args[1])?;
+
+    let num = match base.as_u64() {
+        Some(2) => n.format_bin(),
+        Some(8) => n.format_octal(),
+        Some(10) => n.format_decimal(),
+        Some(16) => n.format_hex(),
+        _ => {
+            if strict {
+                let span = params[1].span();
+                bail!(span.error(&format!("`{name}` expects base to be one of 2, 8, 10, 16")));
+            }
+
+            return Ok(Value::Undefined);
+        }
+    };
+
+    Ok(Value::String((sign.to_owned() + &num).into()))
 }
 
 fn indexof(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
