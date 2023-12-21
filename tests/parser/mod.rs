@@ -79,7 +79,7 @@ fn match_vec(s: &Span, vec: &Vec<Ref<Expr>>, v: &Value) -> Result<()> {
     Ok(())
 }
 
-fn match_object(s: &Span, fields: &Vec<(Span, Ref<Expr>, Ref<Expr>)>, v: &Value) -> Result<()> {
+fn match_object(s: &Span, fields: &[(Span, Ref<Expr>, Ref<Expr>)], v: &Value) -> Result<()> {
     if skip_value(v) {
         return Ok(());
     }
@@ -525,7 +525,7 @@ fn match_rule_body(b: &RuleBody, v: &Value) -> Result<()> {
     match_query(&b.query, &v["query"])
 }
 
-fn match_rule_bodies(span: &Span, bodies: &Vec<RuleBody>, v: &Value) -> Result<()> {
+fn match_rule_bodies(span: &Span, bodies: &[RuleBody], v: &Value) -> Result<()> {
     if skip_value(v) {
         return Ok(());
     }

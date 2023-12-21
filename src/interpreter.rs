@@ -4,6 +4,7 @@
 use crate::ast::*;
 use crate::builtins::{self, BuiltinFcn};
 use crate::lexer::*;
+use crate::number::*;
 use crate::parser::Parser;
 use crate::scheduler::*;
 use crate::utils::*;
@@ -14,6 +15,7 @@ use log::info;
 use serde::Serialize;
 use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
+use std::str::FromStr;
 
 type Scope = BTreeMap<SourceStr, Value>;
 
@@ -104,7 +106,7 @@ struct LoopExpr {
     span: Span,
     expr: ExprRef,
     value: ExprRef,
-    index: SourceStr,
+    index: Ref<Expr>,
 }
 
 impl Interpreter {
@@ -348,20 +350,26 @@ impl Interpreter {
                 // First hoist any loops in refr
                 self.hoist_loops_impl(refr, loops);
 
+                // hoist any loops in index expression.
+                self.hoist_loops_impl(index, loops);
+
                 // Then hoist the current bracket operation.
-                match index.as_ref() {
+                let mut indices = Vec::with_capacity(1);
+                let _ = traverse(index, &mut |e| match e.as_ref() {
                     Var(ident) if self.is_loop_index_var(&ident.source_str()) => {
-                        loops.push(LoopExpr {
-                            span: span.clone(),
-                            expr: expr.clone(),
-                            value: refr.clone(),
-                            index: ident.source_str(),
-                        })
+                        indices.push(ident.source_str());
+                        Ok(false)
                     }
-                    _ => {
-                        // hoist any loops in index expression.
-                        self.hoist_loops_impl(index, loops);
-                    }
+                    Array { .. } | Object { .. } => Ok(true),
+                    _ => Ok(false),
+                });
+                if !indices.is_empty() {
+                    loops.push(LoopExpr {
+                        span: span.clone(),
+                        expr: expr.clone(),
+                        value: refr.clone(),
+                        index: index.clone(),
+                    })
                 }
             }
 
@@ -503,10 +511,16 @@ impl Interpreter {
         let (name, value) = match op {
             AssignOp::Eq => {
                 match (lhs.as_ref(), rhs.as_ref()) {
-                    (_, Expr::Var(var)) if self.lookup_var(var, &[], true)? == Value::Undefined => {
+                    (_, Expr::Var(var))
+                        if var.source_str().text() != "input"
+                            && self.lookup_var(var, &[], true)? == Value::Undefined =>
+                    {
                         (var.source_str(), self.eval_expr(lhs)?)
                     }
-                    (Expr::Var(var), _) if self.lookup_var(var, &[], true)? == Value::Undefined => {
+                    (Expr::Var(var), _)
+                        if var.source_str().text() != "input"
+                            && self.lookup_var(var, &[], true)? == Value::Undefined =>
+                    {
                         (var.source_str(), self.eval_expr(rhs)?)
                     }
                     (
@@ -565,7 +579,7 @@ impl Interpreter {
                         let mut cache = BTreeMap::new();
                         let mut type_match = BTreeSet::new();
                         return self
-                            .make_bindings(false, &mut type_match, &mut cache, lhs, &value)
+                            .make_bindings(false, &mut type_match, &mut cache, lhs, &value, false)
                             .map(Value::Bool);
                     }
                     (_, Expr::Array { .. }) => {
@@ -573,7 +587,7 @@ impl Interpreter {
                         let mut cache = BTreeMap::new();
                         let mut type_match = BTreeSet::new();
                         return self
-                            .make_bindings(false, &mut type_match, &mut cache, rhs, &value)
+                            .make_bindings(false, &mut type_match, &mut cache, rhs, &value, false)
                             .map(Value::Bool);
                     }
                     (Expr::Object { .. }, _) => {
@@ -581,7 +595,7 @@ impl Interpreter {
                         let mut cache = BTreeMap::new();
                         let mut type_match = BTreeSet::new();
                         return self
-                            .make_bindings(false, &mut type_match, &mut cache, lhs, &value)
+                            .make_bindings(false, &mut type_match, &mut cache, lhs, &value, false)
                             .map(Value::Bool);
                     }
                     (_, Expr::Object { .. }) => {
@@ -589,7 +603,7 @@ impl Interpreter {
                         let mut cache = BTreeMap::new();
                         let mut type_match = BTreeSet::new();
                         return self
-                            .make_bindings(false, &mut type_match, &mut cache, rhs, &value)
+                            .make_bindings(false, &mut type_match, &mut cache, rhs, &value, false)
                             .map(Value::Bool);
                     }
                     // Treat the assignment as comparison if neither lhs nor rhs is a variable
@@ -608,7 +622,7 @@ impl Interpreter {
                     let mut cache = BTreeMap::new();
                     let mut type_match = BTreeSet::new();
                     return self
-                        .make_bindings(false, &mut type_match, &mut cache, lhs, &rhs_value)
+                        .make_bindings(false, &mut type_match, &mut cache, lhs, &rhs_value, false)
                         .map(Value::Bool);
                 };
 
@@ -734,6 +748,7 @@ impl Interpreter {
         cache: &mut BTreeMap<ExprRef, Value>,
         expr: &ExprRef,
         value: &Value,
+        check_existing_value: bool,
     ) -> Result<bool> {
         // Propagate undefined.
         if value == &Value::Undefined {
@@ -744,6 +759,13 @@ impl Interpreter {
 
         match (expr.as_ref(), value) {
             (Expr::Var(ident), _) if ident.text().as_ref() == &"_" => Ok(true),
+            (Expr::Var(ident), _)
+                if check_existing_value
+                    && self.lookup_local_var(&ident.source_str()) == Some(value.clone()) =>
+            {
+                Ok(false)
+            }
+
             (Expr::Var(ident), _) => {
                 self.add_variable(&ident.source_str(), value.clone())?;
                 Ok(true)
@@ -766,12 +788,19 @@ impl Interpreter {
                 }
                 type_match.insert(expr.clone());
 
-                let mut r = false;
+                let mut r = true;
                 for (idx, item) in items.iter().enumerate() {
-                    r = self.make_bindings(is_last, type_match, cache, item, &a[idx])? || r;
+                    r = self.make_bindings(
+                        is_last,
+                        type_match,
+                        cache,
+                        item,
+                        &a[idx],
+                        check_existing_value,
+                    )? && r;
                 }
 
-                Ok(true)
+                Ok(r)
             }
             // Destructure objects
             (Expr::Object { fields, .. }, Value::Object(_)) => {
@@ -797,6 +826,7 @@ impl Interpreter {
                             cache,
                             value_expr,
                             field_value,
+                            check_existing_value,
                         )?;
                 }
                 type_match.insert(expr.clone());
@@ -837,10 +867,18 @@ impl Interpreter {
         cache: &mut BTreeMap<ExprRef, Value>,
         expr: &ExprRef,
         value: &Value,
+        check_existing_value: bool,
     ) -> Result<bool> {
         let prev = self.no_rules_lookup;
         self.no_rules_lookup = true;
-        let r = self.make_bindings_impl(is_last, type_match, cache, expr, value);
+        let r = self.make_bindings_impl(
+            is_last,
+            type_match,
+            cache,
+            expr,
+            value,
+            check_existing_value,
+        );
         self.no_rules_lookup = prev;
         r
     }
@@ -856,11 +894,11 @@ impl Interpreter {
         let (key_expr, value_expr) = exprs;
         let (key, value) = values;
         if let Some(key_expr) = key_expr {
-            if !self.make_bindings(is_last, type_match, cache, key_expr, key)? {
+            if !self.make_bindings(is_last, type_match, cache, key_expr, key, false)? {
                 return Ok(false);
             }
         }
-        self.make_bindings(is_last, type_match, cache, value_expr, value)
+        self.make_bindings(is_last, type_match, cache, value_expr, value, false)
     }
 
     fn eval_some_in(
@@ -1197,13 +1235,15 @@ impl Interpreter {
             // If the loop's index variable has already been assigned a value
             // (this can happen if the same index is used for two different collections),
             // then evaluate statements only if the index applies to this collection.
-            if let Some(idx) = self.lookup_local_var(&loop_expr.index) {
-                if loop_expr_value[&idx] != Value::Undefined {
-                    result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
-                    return Ok(result);
-                } else if idx != Value::Undefined {
-                    // The index is not valid for this collection.
-                    return Ok(false);
+            if let Expr::Var(index_var) = loop_expr.index.as_ref() {
+                if let Some(idx) = self.lookup_local_var(&index_var.source_str()) {
+                    if loop_expr_value[&idx] != Value::Undefined {
+                        result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        return Ok(result);
+                    } else if idx != Value::Undefined {
+                        // The index is not valid for this collection.
+                        return Ok(false);
+                    }
                 }
             }
 
@@ -1217,9 +1257,20 @@ impl Interpreter {
                     for (idx, v) in items.iter().enumerate() {
                         self.loop_var_values
                             .insert(loop_expr.expr.clone(), v.clone());
-                        self.add_variable(&loop_expr.index, Value::from(idx))?;
 
-                        result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        let mut type_match = BTreeSet::new();
+                        let mut cache = BTreeMap::new();
+                        if self.make_bindings(
+                            false,
+                            &mut type_match,
+                            &mut cache,
+                            &loop_expr.index,
+                            &Value::from(idx),
+                            true,
+                        )? {
+                            result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        }
+
                         self.loop_var_values.remove(&loop_expr.expr);
                         *self.current_scope_mut()? = scope_saved.clone();
                         if let Some(ctx) = self.contexts.last_mut() {
@@ -1231,9 +1282,21 @@ impl Interpreter {
                     for v in items.iter() {
                         self.loop_var_values
                             .insert(loop_expr.expr.clone(), v.clone());
+
                         // For sets, index is also the value.
-                        self.add_variable(&loop_expr.index, v.clone())?;
-                        result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        let mut type_match = BTreeSet::new();
+                        let mut cache = BTreeMap::new();
+                        if self.make_bindings(
+                            false,
+                            &mut type_match,
+                            &mut cache,
+                            &loop_expr.index,
+                            v,
+                            true,
+                        )? {
+                            result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        }
+
                         self.loop_var_values.remove(&loop_expr.expr);
                         *self.current_scope_mut()? = scope_saved.clone();
                         if let Some(ctx) = self.contexts.last_mut() {
@@ -1246,8 +1309,18 @@ impl Interpreter {
                         self.loop_var_values
                             .insert(loop_expr.expr.clone(), v.clone());
                         // For objects, index is key.
-                        self.add_variable(&loop_expr.index, k.clone())?;
-                        result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        let mut type_match = BTreeSet::new();
+                        let mut cache = BTreeMap::new();
+                        if self.make_bindings(
+                            false,
+                            &mut type_match,
+                            &mut cache,
+                            &loop_expr.index,
+                            k,
+                            true,
+                        )? {
+                            result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        }
                         self.loop_var_values.remove(&loop_expr.expr);
                         *self.current_scope_mut()? = scope_saved.clone();
                         if let Some(ctx) = self.contexts.last_mut() {
@@ -1801,8 +1874,14 @@ impl Interpreter {
             let mut type_match = BTreeSet::new();
 
             for (idx, a) in args.iter().enumerate() {
-                let b =
-                    self.make_bindings(false, &mut type_match, &mut cache, a, &param_values[idx]);
+                let b = self.make_bindings(
+                    false,
+                    &mut type_match,
+                    &mut cache,
+                    a,
+                    &param_values[idx],
+                    false,
+                );
 
                 if b.ok() != Some(true) {
                     self.scopes = scopes;
@@ -1913,7 +1992,7 @@ impl Interpreter {
         &mut self,
         span: &Span,
         fcn: &ExprRef,
-        params: &Vec<ExprRef>,
+        params: &[ExprRef],
         extra_arg: Option<ExprRef>,
         allow_return_arg: bool,
     ) -> Result<Value> {
@@ -1933,7 +2012,7 @@ impl Interpreter {
                     let ret_value = self.eval_call_impl(span, fcn, &params[..params.len() - 1])?;
                     let mut cache = BTreeMap::new();
                     let mut type_match = BTreeSet::new();
-                    self.make_bindings(false, &mut type_match, &mut cache, &ea, &ret_value)
+                    self.make_bindings(false, &mut type_match, &mut cache, &ea, &ret_value, false)
                         .map(Value::Bool)
                 }
                 _ => {
@@ -2081,14 +2160,15 @@ impl Interpreter {
             Expr::Null(_) => Ok(Value::Null),
             Expr::True(_) => Ok(Value::Bool(true)),
             Expr::False(_) => Ok(Value::Bool(false)),
-            Expr::Number(span) => match serde_json::from_str::<Value>(*span.text()) {
-                Ok(v) => Ok(v),
-                Err(e) => Err(span.source.error(
-                    span.line,
-                    span.col,
-                    format!("could not parse number. {e}").as_str(),
-                )),
-            },
+            Expr::Number(span) => {
+                let v = match Number::from_str(*span.text()) {
+                    Ok(v) => Ok(Value::Number(v)),
+                    Err(_) => Err(span
+                        .source
+                        .error(span.line, span.col, "could not parse number")),
+                };
+                v
+            }
             // TODO: Handle string vs rawstring
             Expr::String(span) => {
                 match serde_json::from_str::<Value>(format!("\"{}\"", span.text()).as_str()) {
@@ -2189,7 +2269,7 @@ impl Interpreter {
         &mut self,
         ctx: Context,
         span: &Span,
-        bodies: &Vec<RuleBody>,
+        bodies: &[RuleBody],
     ) -> Result<Value> {
         let n_scopes = self.scopes.len();
         let result = if bodies.is_empty() {

@@ -210,7 +210,7 @@ pub struct Scope {
     pub inputs: BTreeSet<SourceStr>,
 }
 
-fn traverse(expr: &Ref<Expr>, f: &mut dyn FnMut(&Ref<Expr>) -> Result<bool>) -> Result<()> {
+pub fn traverse(expr: &Ref<Expr>, f: &mut dyn FnMut(&Ref<Expr>) -> Result<bool>) -> Result<()> {
     if !f(expr)? {
         return Ok(());
     }
@@ -336,17 +336,10 @@ fn gather_input_vars(expr: &Ref<Expr>, parent_scopes: &[Scope], scope: &mut Scop
 
 fn gather_loop_vars(expr: &Ref<Expr>, parent_scopes: &[Scope], scope: &mut Scope) -> Result<()> {
     traverse(expr, &mut |e| match e.as_ref() {
-        Var(v) if var_exists(v, parent_scopes) => Ok(false),
         RefBrack { index, .. } => {
-            if let Var(v) = index.as_ref() {
-                if !matches!(*v.text(), "_" | "input" | "data") && !var_exists(v, parent_scopes) {
-                    // Treat this as an index var.
-                    scope.unscoped.insert(v.source_str());
-                }
-            }
+            gather_assigned_vars(index, false, parent_scopes, scope)?;
             Ok(true)
         }
-
         _ => Ok(true),
     })
 }
@@ -651,26 +644,31 @@ impl Analyzer {
             }
 
             RefBrack { refr, index, .. } => {
-                if let Var(v) = index.as_ref() {
-                    let var = v.source_str();
-                    if scope.locals.contains_key(&var) || scope.unscoped.contains(&var) {
-                        let (rb_used_vars, rb_comprs) = Self::gather_used_vars_comprs_index_vars(
-                            refr,
-                            scope,
-                            first_use,
-                            definitions,
-                            assigned_vars,
-                        )?;
-                        definitions.push(Definition {
-                            var: var.clone(),
-                            used_vars: rb_used_vars.clone(),
-                        });
-                        used_vars.extend(rb_used_vars);
-                        used_vars.push(var);
-                        comprs.extend(rb_comprs);
-                        return Ok(false);
+                traverse(index, &mut |e| match e.as_ref() {
+                    Var(v) => {
+                        let var = v.source_str();
+                        if scope.locals.contains_key(&var) || scope.unscoped.contains(&var) {
+                            let (rb_used_vars, rb_comprs) =
+                                Self::gather_used_vars_comprs_index_vars(
+                                    refr,
+                                    scope,
+                                    first_use,
+                                    definitions,
+                                    assigned_vars,
+                                )?;
+                            definitions.push(Definition {
+                                var: var.clone(),
+                                used_vars: rb_used_vars.clone(),
+                            });
+                            used_vars.extend(rb_used_vars);
+                            used_vars.push(var);
+                            comprs.extend(rb_comprs);
+                        }
+                        Ok(false)
                     }
-                }
+                    Array { .. } | Object { .. } => Ok(true),
+                    _ => Ok(false),
+                })?;
                 Ok(true)
             }
 
@@ -812,9 +810,10 @@ impl Analyzer {
                         self.gather_assigned_vars(lhs, scope, check_first_use, first_use)?;
 
                     for var in &assigned_vars {
+                        let used_vars = used_vars.iter().filter(|v| v != &var).cloned().collect();
                         definitions.push(Definition {
                             var: var.clone(),
-                            used_vars: used_vars.clone(),
+                            used_vars,
                         });
                     }
                     if assigned_vars.is_empty() {
@@ -837,9 +836,10 @@ impl Analyzer {
                     let assigned_vars =
                         self.gather_assigned_vars(rhs, scope, check_first_use, first_use)?;
                     for var in &assigned_vars {
+                        let used_vars = used_vars.iter().filter(|v| v != &var).cloned().collect();
                         definitions.push(Definition {
                             var: var.clone(),
-                            used_vars: used_vars.clone(),
+                            used_vars,
                         });
                     }
                     if assigned_vars.is_empty() {
