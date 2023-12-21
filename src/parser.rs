@@ -119,7 +119,7 @@ impl<'source> Parser<'source> {
         Ok(comps)
     }
 
-    fn handle_import_future_keywords(&mut self, comps: &Vec<Span>) -> Result<bool> {
+    fn handle_import_future_keywords(&mut self, comps: &[Span]) -> Result<bool> {
         if comps.len() >= 2 && *comps[0].text() == "future" && *comps[1].text() == "keywords" {
             match comps.len() - 2 {
                 1 => self.set_future_keyword(&comps[2].text(), &comps[2])?,

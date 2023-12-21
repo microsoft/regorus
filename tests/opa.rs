@@ -61,7 +61,15 @@ fn eval_test_case(case: &TestCase) -> Result<Value> {
         engine.set_input(input.clone());
     }
     if let Some(input_term) = &case.input_term {
-        let input = Value::from_json_str(&input_term)?;
+        let input = match engine.eval_query(input_term.clone(), true)?.result.last() {
+            Some(r) if r.expressions.last().is_some() => r
+                .expressions
+                .last()
+                .expect("no expressions in result")
+                .value
+                .clone(),
+            _ => bail!("no results in evaluated input term"),
+        };
         engine.set_input(input);
     }
     if let Some(modules) = &case.modules {
@@ -87,6 +95,22 @@ fn eval_test_case(case: &TestCase) -> Result<Value> {
     let result = Value::from_array(values);
     // Make result json compatible. (E.g: avoid sets).
     Value::from_json_str(&result.to_string())
+}
+
+fn json_schema_tests_check(actual: &Value, expected: &Value) -> bool {
+    // Fetch `x` binding.
+    let actual = &actual[0][&Value::String("x".into())];
+    let expected = &expected[0][&Value::String("x".into())];
+
+    match (actual, expected) {
+        (Value::Array(actual), Value::Array(expected))
+            if actual.len() == expected.len() && actual.len() == 2 =>
+        {
+            // Only check the result since error messages may be different.
+            actual[0] == expected[0]
+        }
+        _ => false,
+    }
 }
 
 fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
@@ -126,7 +150,15 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
         for case in &test.cases {
+            let is_json_schema_test = case.note.starts_with("json_verify_schema")
+                || case.note.starts_with("json_match_schema");
+
             match (eval_test_case(case), &case.want_result) {
+                (Ok(actual), Some(expected))
+                    if is_json_schema_test && json_schema_tests_check(&actual, &expected) =>
+                {
+                    entry.0 += 1;
+                }
                 (Ok(actual), Some(expected)) if &actual == expected => {
                     entry.0 += 1;
                 }

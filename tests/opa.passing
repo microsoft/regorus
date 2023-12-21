@@ -4,6 +4,8 @@ any
 arithmetic
 array
 assignments
+base64builtins
+base64urlbuiltins
 bitsand
 bitsnegate
 bitsor
@@ -14,6 +16,7 @@ casts
 comparisonexpr
 completedoc
 compositebasedereference
+compositereferences
 comprehensions
 containskeyword
 cryptohmacequal
@@ -29,6 +32,7 @@ defaultkeyword
 disjunction
 elsekeyword
 embeddedvirtualdoc
+eqexpr
 evaltermexpr
 every
 example
@@ -38,10 +42,13 @@ functions
 globmatch
 globquotemeta
 helloworld
+hexbuiltins
 indexing
 indirectreferences
+inputvalues
 intersection
 invalidkeyerror
+jsonfilter
 jsonfilteridempotent
 jwtencodesignheadererrors
 jwtencodesignpayloaderrors
