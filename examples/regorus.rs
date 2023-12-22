@@ -10,9 +10,12 @@ fn rego_eval(
     input: Option<String>,
     query: String,
     enable_tracing: bool,
+    non_strict: bool,
 ) -> Result<()> {
     // Create engine.
     let mut engine = regorus::Engine::new();
+
+    engine.set_strict_builtin_errors(!non_strict);
 
     // Load files from given bundles.
     for dir in bundles.iter() {
@@ -130,6 +133,10 @@ enum RegorusCommand {
         /// Enable tracing.
         #[arg(long, short)]
         trace: bool,
+
+        // Non strict execution
+        #[arg(long, short)]
+        non_strict: bool,
     },
 
     /// Tokenize a Rego policy.
@@ -171,7 +178,8 @@ fn main() -> Result<()> {
             input,
             query,
             trace,
-        } => rego_eval(&bundles, &data, input, query, trace),
+            non_strict,
+        } => rego_eval(&bundles, &data, input, query, trace, non_strict),
         RegorusCommand::Lex { file, verbose } => rego_lex(file, verbose),
         RegorusCommand::Parse { file } => rego_parse(file),
     }

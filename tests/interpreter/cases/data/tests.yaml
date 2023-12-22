@@ -37,7 +37,7 @@ cases:
         - 100
         - 200
         
-  - note: overriding refs in data produces error
+  - note: overriding refs in data produces no error
     data:
       test:
         rule1: 0
@@ -46,8 +46,8 @@ cases:
         package test
 
         rule1 = 6
-    query: data.test
-    error: value for rule has already been specified
+    query: data.test.rule1
+    want_result: 0
       
   - note: rule named data
     data:

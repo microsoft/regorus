@@ -186,8 +186,8 @@ pub struct Span {
 }
 
 impl Span {
-    pub fn text(&self) -> std::rc::Rc<&str> {
-        std::rc::Rc::new(&self.source.contents()[self.start as usize..self.end as usize])
+    pub fn text(&self) -> &str {
+        &self.source.contents()[self.start as usize..self.end as usize]
     }
 
     pub fn source_str(&self) -> SourceStr {
@@ -619,7 +619,7 @@ impl<'source> Lexer<'source> {
 	    _ if chr.is_ascii_digit() => self.read_number(),
 	    _ if chr.is_ascii_alphabetic() || chr == '_' => {
 		let mut ident = self.read_ident()?;
-		if *ident.1.text() == "set" && self.peek().1 == '(' {
+		if ident.1.text() == "set" && self.peek().1 == '(' {
 		    // set immediately followed by ( is treated as set( if
 		    // the next token is ).
 		    let state = (self.iter.clone(), self.line, self.col);
@@ -627,7 +627,7 @@ impl<'source> Lexer<'source> {
 
 		    // Check it next token is ).
 		    let next_tok = self.next_token()?;
-		    let is_setp = *next_tok.1.text() == ")";
+		    let is_setp = next_tok.1.text() == ")";
 
 		    // Restore state
 		    (self.iter, self.line, self.col) = state;

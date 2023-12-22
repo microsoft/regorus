@@ -50,6 +50,9 @@ intersection
 invalidkeyerror
 jsonfilter
 jsonfilteridempotent
+jsonremove
+jsonremoveidempotent
+jsonschema
 jwtencodesignheadererrors
 jwtencodesignpayloaderrors
 negation
@@ -96,5 +99,6 @@ typenamebuiltin
 undos
 union
 units
+uuid
 varreferences
 virtualdocs
