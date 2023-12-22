@@ -1,0 +1,101 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: bases
+    data: {}
+    modules:
+      - |
+        package test
+
+        binary := format_int(10, 2)
+        octal := format_int(10, 8)
+        decimal := format_int(10, 10)
+        hex := format_int(10, 16)
+    query: data.test
+    want_result:
+      binary: "1010"
+      octal: "12"
+      decimal: "10"
+      hex: "a"
+
+  - note: bases-with-floats
+    data: {}
+    modules:
+      - |
+        package test
+
+        binary := format_int(10.2, 2)
+        octal := format_int(10.7, 8)
+        decimal := format_int(10.325436, 10)
+        hex := format_int(10.0, 16)
+    query: data.test
+    want_result:
+      binary: "1010"
+      octal: "12"
+      decimal: "10"
+      hex: "a"
+
+  - note: bases-with-negative-values
+    data: {}
+    modules:
+      - |
+        package test
+
+        binary := format_int(-10, 2)
+        octal := format_int(-10, 8)
+        decimal := format_int(-10, 10)
+        hex := format_int(-10, 16)
+    query: data.test
+    want_result:
+      binary: "-1010"
+      octal: "-12"
+      decimal: "-10"
+      hex: "-a"
+
+  - note: bases-with-negative-floats
+    data: {}
+    modules:
+      - |
+        package test
+
+        binary := format_int(-10.765, 2)
+        octal := format_int(-10.0, 8)
+        decimal := format_int(-10.999999999, 10)
+        hex := format_int(-10.00, 16)
+    query: data.test
+    want_result:
+      binary: "-1010"
+      octal: "-12"
+      decimal: "-10"
+      hex: "-a"
+
+  - note: invalid-num-type
+    data: {}
+    modules:
+      - |
+        package test
+
+        x := format_int("10", 2)
+    query: data.test
+    error: '`format_int` expects numeric argument. Got `"10"` instead'
+
+  - note: invalid-base
+    data: {}
+    modules:
+      - |
+        package test
+
+        x := format_int(10, 4)
+    query: data.test
+    error: "`format_int` expects base to be one of 2, 8, 10, 16"
+
+  - note: invalid-base-type
+    data: {}
+    modules:
+      - |
+        package test
+
+        x := format_int(10, "2")
+    query: data.test
+    error: '`format_int` expects numeric argument. Got `"2"` instead'
