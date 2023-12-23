@@ -27,7 +27,7 @@ fn match_span(s: &Span, v: &Value) -> Result<()> {
     match &v {
         Value::String(vs) => {
             my_assert_eq!(
-                *s.text(),
+                s.text(),
                 vs.as_ref(),
                 "{}",
                 s.source

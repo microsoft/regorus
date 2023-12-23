@@ -121,10 +121,10 @@ impl Engine {
         self.prepare_for_eval(enable_tracing)?;
         self.interpreter.clean_internal_evaluation_state();
 
-        // Ensure that each module has an empty object
-        for m in &self.modules {
+        // Ensure that empty modules are created.
+        for m in self.modules.iter().filter(|m| m.policy.is_empty()) {
             let path = Parser::get_path_ref_components(&m.package.refr)?;
-            let path: Vec<&str> = path.iter().map(|s| *s.text()).collect();
+            let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
             let vref =
                 Interpreter::make_or_get_value_mut(self.interpreter.get_data_mut(), &path[..])?;
             if *vref == Value::Undefined {
@@ -147,6 +147,16 @@ impl Engine {
             self.interpreter.set_current_module(prev_module)?;
         }
 
+        // Ensure that all modules are created.
+        for m in &self.modules {
+            let path = Parser::get_path_ref_components(&m.package.refr)?;
+            let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+            let vref =
+                Interpreter::make_or_get_value_mut(self.interpreter.get_data_mut(), &path[..])?;
+            if *vref == Value::Undefined {
+                *vref = Value::new_object();
+            }
+        }
         self.interpreter.create_rule_prefixes()?;
         Ok(self.interpreter.get_data_mut().clone())
     }

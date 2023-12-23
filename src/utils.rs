@@ -86,17 +86,17 @@ pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
     while expr.is_some() {
         match expr {
             Some(Expr::RefDot { refr, field, .. }) => {
-                comps.push(&field.text());
+                comps.push(field.text());
                 expr = Some(refr);
             }
             Some(Expr::RefBrack { refr, index, .. }) => {
                 if let Expr::String(s) = index.as_ref() {
-                    comps.push(&s.text());
+                    comps.push(s.text());
                 }
                 expr = Some(refr);
             }
             Some(Expr::Var(v)) => {
-                comps.push(&v.text());
+                comps.push(v.text());
                 expr = None;
             }
             _ => bail!("internal error: not a simple ref {expr:?}"),

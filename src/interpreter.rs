@@ -268,13 +268,13 @@ impl Interpreter {
                 // Accumulate chained . field accesses.
                 Expr::RefDot { refr, field, .. } => {
                     expr = refr;
-                    path.push(*field.text());
+                    path.push(field.text());
                 }
                 Expr::RefBrack { refr, index, .. } => match index.as_ref() {
                     // refr["field"] is the same as refr.field
                     Expr::String(s) => {
                         expr = refr;
-                        path.push(*s.text());
+                        path.push(s.text());
                     }
                     // Handle other forms of refr.
                     // Note, we have the choice to evaluate a non-string index
@@ -758,7 +758,7 @@ impl Interpreter {
         let raise_error = is_last && type_match.get(expr).is_none();
 
         match (expr.as_ref(), value) {
-            (Expr::Var(ident), _) if ident.text().as_ref() == &"_" => Ok(true),
+            (Expr::Var(ident), _) if ident.text() == "_" => Ok(true),
             (Expr::Var(ident), _)
                 if check_existing_value
                     && self.lookup_local_var(&ident.source_str()) == Some(value.clone()) =>
@@ -1130,7 +1130,7 @@ impl Interpreter {
             // Apply with modifiers.
             for wm in &stmt.with_mods {
                 let path = Parser::get_path_ref_components(&wm.refr)?;
-                let path: Vec<&str> = path.iter().map(|s| *s.text()).collect();
+                let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
                 let target = path.join(".");
 
                 let value = match self.eval_expr(&wm.r#as) {
@@ -2003,7 +2003,7 @@ impl Interpreter {
                     if allow_return_arg && self.lookup_local_var(&var.source_str()).is_none() =>
                 {
                     let value = self.eval_call_impl(span, fcn, &params[..params.len() - 1])?;
-                    if *var.text() != "_" {
+                    if var.text() != "_" {
                         self.add_variable(&var.source_str(), value)?;
                     }
                     Ok(Value::Bool(true))
@@ -2034,6 +2034,31 @@ impl Interpreter {
             }
         }
         None
+    }
+
+    fn ensure_module_evaluated(&mut self, path: String) -> Result<()> {
+        for module in self.modules.clone() {
+            let module_path = get_path_string(&module.package.refr, Some("data"))?;
+            if module_path.starts_with(&path)
+                && (module_path.len() == path.len()
+                    || &module_path[path.len()..path.len() + 1] == ".")
+            {
+                // Ensure that the module is created.
+                {
+                    let path = Parser::get_path_ref_components(&module.package.refr)?;
+                    let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+                    let vref = Self::make_or_get_value_mut(&mut self.data, &path[..])?;
+                    if *vref == Value::Undefined {
+                        *vref = Value::new_object();
+                    }
+                }
+
+                for rule in &module.policy {
+                    self.eval_rule(&module, rule)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn ensure_rule_evaluated(&mut self, path: String) -> Result<()> {
@@ -2100,7 +2125,7 @@ impl Interpreter {
             // Find the rule to which the var being looked up corresponds to. This is the prefix for
             // which rules exist.
             let mut found = false;
-            for i in 1..fields.len() + 1 {
+            for i in (1..fields.len() + 1).rev() {
                 let path = "data.".to_owned() + &fields[0..i].join(".");
                 if self.rules.get(&path).is_some() || self.default_rules.get(&path).is_some() {
                     self.ensure_rule_evaluated(path)?;
@@ -2109,16 +2134,16 @@ impl Interpreter {
                 }
             }
 
-            // TODO: emit this error only if the var can belong to a rego module; not data specified via json/yaml.
-            //if !no_error && !found {
-            //    bail!(span.error("var is unsafe"));
-            //}
-            let _ = found;
+            if !found {
+                // This could be path to a module.
+                let path = "data.".to_owned() + &fields.join(".");
+                self.ensure_module_evaluated(path)?;
+            }
 
             Ok(Self::get_value_chained(self.data.clone(), fields))
         } else if !self.modules.is_empty() {
             let path = Parser::get_path_ref_components(&self.module.clone().unwrap().package.refr)?;
-            let mut path: Vec<&str> = path.iter().map(|s| *s.text()).collect();
+            let mut path: Vec<&str> = path.iter().map(|s| s.text()).collect();
             path.push(name.text());
 
             let v = Self::get_value_chained(self.data.clone(), &path);
@@ -2126,7 +2151,7 @@ impl Interpreter {
             // If the rule has already been evaluated or specified via a with modifier,
             // use that value.
             if v != Value::Undefined {
-                return Ok(v);
+                return Ok(Self::get_value_chained(v, fields));
             }
 
             // Ensure that all the rules having common prefix (name) are evaluated.
@@ -2139,7 +2164,26 @@ impl Interpreter {
                 bail!(span.error("var is unsafe"));
             }
 
-            self.ensure_rule_evaluated(rule_path)?;
+            // Find the rule to which the var being looked up corresponds to. This is the prefix for
+            // which rules exist.
+            let mut found = false;
+            for i in (0..fields.len() + 1).rev() {
+                let comps = &fields[0..i];
+                let path = if comps.is_empty() {
+                    rule_path.clone()
+                } else {
+                    rule_path.clone() + "." + &fields[0..i].join(".")
+                };
+
+                if self.rules.get(&path).is_some() || self.default_rules.get(&path).is_some() {
+                    self.ensure_rule_evaluated(path)?;
+                    found = true;
+                    break;
+                }
+            }
+
+            // TODO: Is found needed?
+            let _ = found;
 
             let value = Self::get_value_chained(self.data.clone(), &path[..]);
             Ok(Self::get_value_chained(value, fields))
@@ -2161,7 +2205,7 @@ impl Interpreter {
             Expr::True(_) => Ok(Value::Bool(true)),
             Expr::False(_) => Ok(Value::Bool(false)),
             Expr::Number(span) => {
-                let v = match Number::from_str(*span.text()) {
+                let v = match Number::from_str(span.text()) {
                     Ok(v) => Ok(Value::Number(v)),
                     Err(_) => Err(span
                         .source
@@ -2383,19 +2427,19 @@ impl Interpreter {
         while expr.is_some() {
             match expr {
                 Some(Expr::RefDot { refr, field, .. }) => {
-                    comps.push(*field.text());
+                    comps.push(field.text());
                     expr = Some(refr);
                 }
                 Some(Expr::RefBrack { refr, index, .. })
                     if matches!(index.as_ref(), Expr::String(_)) =>
                 {
                     if let Expr::String(s) = index.as_ref() {
-                        comps.push(*s.text());
+                        comps.push(s.text());
                         expr = Some(refr);
                     }
                 }
                 Some(Expr::Var(v)) => {
-                    comps.push(*v.text());
+                    comps.push(v.text());
                     expr = None;
                 }
                 _ => bail!(format!("internal error: not a simplee ref {expr:?}")),
@@ -2521,7 +2565,7 @@ impl Interpreter {
             };
 
             Parser::get_path_ref_components_into(refr, &mut path)?;
-            let paths: Vec<&str> = path.iter().map(|s| *s.text()).collect();
+            let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
 
             Self::check_default_value(value)?;
             let value = self.eval_expr(value)?;
@@ -2573,7 +2617,8 @@ impl Interpreter {
         if Self::get_value_chained(self.init_data.clone(), path) == Value::Undefined {
             Self::merge_rule_value(span, vref, value)
         } else {
-            Err(span.error("value for rule has already been specified in data document"))
+            // Retain specified value.
+            Ok(())
         }
     }
 
@@ -2636,7 +2681,7 @@ impl Interpreter {
                             v => v,
                         };
 
-                        let paths: Vec<&str> = path.iter().map(|s| *s.text()).collect();
+                        let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
 
                         if let RuleHead::Set { .. } = &rule_head {
                             // Ensure that sets are created as empty.
@@ -2655,7 +2700,7 @@ impl Interpreter {
                             Parser::get_path_ref_components(&self.current_module()?.package.refr)?;
 
                         Parser::get_path_ref_components_into(refr, &mut path)?;
-                        let path: Vec<&str> = path.iter().map(|s| *s.text()).collect();
+                        let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
 
                         // Ensure that for functions with a nesting level (e.g: a.foo),
                         // `a` is created as an empty object.
@@ -2761,17 +2806,17 @@ impl Interpreter {
         loop {
             refr = match refr.as_ref() {
                 Expr::Var(v) => {
-                    components.push((*v.text().as_ref()).into());
+                    components.push(v.text().into());
                     break;
                 }
                 Expr::RefBrack { refr, index, .. } => {
                     if let Expr::String(s) = index.as_ref() {
-                        components.push((*s.text().as_ref()).into());
+                        components.push(s.text().into());
                     }
                     refr
                 }
                 Expr::RefDot { refr, field, .. } => {
-                    components.push((*field.text().as_ref()).into());
+                    components.push(field.text().into());
                     refr
                 }
                 _ => break,
@@ -2830,27 +2875,21 @@ impl Interpreter {
     }
 
     fn record_rule(&mut self, refr: &Ref<Expr>, rule: Ref<Rule>) -> Result<()> {
-        let path = get_root_var(refr)?;
-        let path = path.text();
-        let path = self.current_module_path.clone() + "." + path;
-        match self.rules.entry(path) {
-            Entry::Occupied(o) => {
-                o.into_mut().push(rule.clone());
-            }
-            Entry::Vacant(v) => {
-                v.insert(vec![rule.clone()]);
-            }
-        }
-        let path = Self::get_path_string(refr, None)?;
-        let path = self.current_module_path.clone() + "." + &path;
-        match self.rules.entry(path) {
-            Entry::Occupied(o) => {
-                o.into_mut().push(rule.clone());
-            }
-            Entry::Vacant(v) => {
-                v.insert(vec![rule.clone()]);
+        let comps = Parser::get_path_ref_components(refr)?;
+        let comps: Vec<&str> = comps.iter().map(|s| s.text()).collect();
+        for c in 0..comps.len() {
+            let path = self.current_module_path.clone() + "." + &comps[0..c + 1].join(".");
+
+            match self.rules.entry(path) {
+                Entry::Occupied(o) => {
+                    o.into_mut().push(rule.clone());
+                }
+                Entry::Vacant(v) => {
+                    v.insert(vec![rule.clone()]);
+                }
             }
         }
+
         Ok(())
     }
 

@@ -298,7 +298,7 @@ fn gather_assigned_vars(
 ) -> Result<()> {
     traverse(expr, &mut |e| match e.as_ref() {
         // Ignore _, input, data.
-        Var(v) if matches!(*v.text(), "_" | "input" | "data") => Ok(false),
+        Var(v) if matches!(v.text(), "_" | "input" | "data") => Ok(false),
 
         // Record local var that can shadow input var.
         Var(v) if can_shadow => {
@@ -623,7 +623,7 @@ impl Analyzer {
         let mut used_vars = vec![];
         let mut comprs = vec![];
         traverse(expr, &mut |e| match e.as_ref() {
-            Var(v) if !matches!(*v.text(), "_" | "input" | "data") => {
+            Var(v) if !matches!(v.text(), "_" | "input" | "data") => {
                 let name = v.source_str();
                 let is_extra_arg = match assigned_vars {
                     Some(vars) => vars.contains(&v.source_str()),
