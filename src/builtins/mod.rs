@@ -28,6 +28,8 @@ mod tracing;
 pub mod types;
 mod units;
 mod utils;
+#[cfg(feature = "uuid")]
+mod uuid;
 
 use crate::ast::{Expr, Ref};
 use crate::lexer::Span;
@@ -77,7 +79,8 @@ lazy_static! {
 	//graphql::register(&mut m);
 	//http::register(&mut m);
 	//net::register(&mut m);
-	//uuid::register(&mut m);
+	#[cfg(feature = "uuid")]
+	uuid::register(&mut m);
 	#[cfg(feature = "semver")]
 	semver::register(&mut m);
 	//rego::register(&mut m);

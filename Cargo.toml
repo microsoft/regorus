@@ -17,9 +17,10 @@ glob = ["dep:wax"]
 jsonschema = ["dep:jsonschema"]
 regex = ["dep:regex"]
 semver = ["dep:semver"]
+uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
 yaml = ["serde_yaml"]
-full-opa = ["base64", "base64url", "crypto", "deprecated", "glob", "hex", "jsonschema", "regex", "semver", "urlquery", "yaml"]
+full-opa = ["base64", "base64url", "crypto", "deprecated", "glob", "hex", "jsonschema", "regex", "semver", "uuid", "urlquery", "yaml"]
 
 [dependencies]
 anyhow = {version = "1.0.66", features = ["backtrace"] }
@@ -50,6 +51,7 @@ url = { version = "2.5.0", optional = true }
 dashu-float = { version = "0.4.1", features = ["num-traits"] }
 num-traits = "0.2.17"
 dashu-base = "0.4.0"
+uuid = { version = "1.6.1", features = ["v4", "fast-rng"], optional = true }
 
 
 [dev-dependencies]
