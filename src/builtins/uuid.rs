@@ -10,7 +10,7 @@ use crate::value::Value;
 use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{Ok, Result};
-use uuid::Uuid;
+use uuid::{Timestamp, Uuid};
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("uuid.parse", (parse, 1));
@@ -37,7 +37,7 @@ fn parse(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
         Value::String(uuid.get_variant().to_string().into()),
     );
 
-    if let Some(time) = uuid.get_timestamp() {
+    if let Some(time) = timestamp(&uuid) {
         let (sec, nanosec) = time.to_unix();
         let time = sec.wrapping_mul(1_000_000_000).wrapping_add(nanosec as u64);
         result.insert(Value::String("time".into()), Value::Number(time.into()));
@@ -110,4 +110,36 @@ fn domain(b: u8) -> String {
         2 => "Org".to_string(),
         n => format!("Domain{n}"),
     }
+}
+
+fn timestamp(uuid: &Uuid) -> Option<Timestamp> {
+    // We need a special case for v2 UUIDs because `uuid` crate does not support
+    // parsing timestamps for v2 UUIDs but OPA tests expects them and also
+    // the original Go implementation parses timestamps for v2 UUIDs.
+    // This is just a copy of parsing logic for v1 UUIDs:
+    // https://github.com/uuid-rs/uuid/blob/94ecea893fadac93248f1bd6f47673c09cec5912/src/lib.rs#L900-L904
+    if uuid.get_version_num() == 2 {
+        let (ticks, counter) = decode_rfc4122_timestamp(uuid);
+        return Some(Timestamp::from_rfc4122(ticks, counter));
+    }
+
+    uuid.get_timestamp()
+}
+
+// Copied from https://github.com/uuid-rs/uuid/blob/94ecea893fadac93248f1bd6f47673c09cec5912/src/timestamp.rs#L190-L205
+const fn decode_rfc4122_timestamp(uuid: &Uuid) -> (u64, u16) {
+    let bytes = uuid.as_bytes();
+
+    let ticks: u64 = ((bytes[6] & 0x0F) as u64) << 56
+        | (bytes[7] as u64) << 48
+        | (bytes[4] as u64) << 40
+        | (bytes[5] as u64) << 32
+        | (bytes[0] as u64) << 24
+        | (bytes[1] as u64) << 16
+        | (bytes[2] as u64) << 8
+        | (bytes[3] as u64);
+
+    let counter: u16 = ((bytes[8] & 0x3F) as u16) << 8 | (bytes[9] as u16);
+
+    (ticks, counter)
 }

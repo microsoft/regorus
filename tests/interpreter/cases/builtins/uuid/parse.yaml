@@ -59,6 +59,7 @@ cases:
         id: 1000
         macvariables: "local:unicast"
         nodeid: "32-50-96-b3-9f-47"
+        time: 1703290796079613600
         variant: "RFC4122"
         version: 2
       b:
@@ -67,6 +68,7 @@ cases:
         id: 1000
         macvariables: "local:unicast"
         nodeid: "32-50-96-b3-9f-47"
+        time: 1703290796079613600
         variant: "RFC4122"
         version: 2
   
