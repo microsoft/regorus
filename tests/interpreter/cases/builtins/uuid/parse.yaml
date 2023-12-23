@@ -105,3 +105,22 @@ cases:
         variant: "RFC4122"
         version: 8
   
+  - note: invalid-uuid
+    data: {}
+    modules:
+      - |
+        package test
+
+        id := uuid.parse("not-valid")
+    query: data.test
+    want_result: {}
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+
+        id := uuid.parse(42)
+    query: data.test
+    error: '`uuid.parse` expects string argument. Got `42` instead'

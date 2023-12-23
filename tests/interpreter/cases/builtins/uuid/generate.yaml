@@ -1,0 +1,45 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: generate-v4
+    data: {}
+    modules:
+      - |
+        package test
+
+        len := count(uuid.rfc4122("1"))
+        parsed := uuid.parse(uuid.rfc4122("1"))
+    query: data.test
+    want_result:
+      len: 36
+      parsed:
+        variant: "RFC4122"
+        version: 4
+
+  - note: consistent-output
+    data: {}
+    modules:
+      - |
+        package test
+
+        s1 := true { uuid.rfc4122("1") != uuid.rfc4122("2") }
+        s2 := true { uuid.rfc4122("1") == uuid.rfc4122("1") }
+        s3 := true { uuid.rfc4122("2") == uuid.rfc4122("2") }
+        s4 := true { uuid.rfc4122("2") != uuid.rfc4122("3") }
+    query: data.test
+    want_result:
+      s1: true
+      s2: true
+      s3: true
+      s4: true
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+
+        id := uuid.rfc4122(42)
+    query: data.test
+    error: '`uuid.rfc4122` expects string argument. Got `42` instead'

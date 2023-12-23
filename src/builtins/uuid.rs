@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("uuid.parse", (parse, 1));
+    m.insert("uuid.rfc4122", (rfc4122, 1));
 }
 
 fn parse(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
@@ -21,7 +22,9 @@ fn parse(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
     ensure_args_count(span, name, params, args, 1)?;
 
     let val = ensure_string(name, &params[0], &args[0])?;
-    let uuid = Uuid::parse_str(&val)?;
+    let Some(uuid) = Uuid::parse_str(&val).ok() else {
+        return Ok(Value::Undefined);
+    };
     let version = uuid.get_version_num();
 
     let mut result = BTreeMap::new();
@@ -78,6 +81,15 @@ fn parse(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
     }
 
     Ok(Value::from(result))
+}
+
+fn rfc4122(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+    let name = "uuid.rfc4122";
+    ensure_args_count(span, name, params, args, 1)?;
+    ensure_string(name, &params[0], &args[0])?;
+
+    let uuid = Uuid::new_v4();
+    Ok(Value::String(uuid.to_string().into()))
 }
 
 fn mac_vars(b: u8) -> &'static str {

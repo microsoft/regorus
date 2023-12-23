@@ -95,6 +95,7 @@ lazy_static! {
 pub fn must_cache(path: &str) -> Option<&'static str> {
     match path {
         "rand.intn" => Some("rand.intn"),
+        "uuid.rfc4122" => Some("uuid.rfc4122"),
         _ => None,
     }
 }
