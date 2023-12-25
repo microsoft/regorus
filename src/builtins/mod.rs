@@ -76,6 +76,7 @@ lazy_static! {
 	encoding::register(&mut m);
 	//token_signing::register(&mut m);
 	//token_verification::register(&mut m);
+	#[cfg(feature = "time")]
 	time::register(&mut m);
 
 	#[cfg(feature = "crypto")]

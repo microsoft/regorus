@@ -20,8 +20,24 @@ regex = ["dep:regex"]
 semver = ["dep:semver"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
+time = ["dep:chrono"]
 yaml = ["serde_yaml"]
-full-opa = ["base64", "base64url", "crypto", "deprecated", "glob", "graph", "hex", "jsonschema", "regex", "semver", "uuid", "urlquery", "yaml"]
+full-opa = [
+    "base64",
+    "base64url",
+    "crypto",
+    "deprecated",
+    "glob",
+    "graph",
+    "hex",
+    "jsonschema",
+    "regex",
+    "semver",
+    "uuid",
+    "urlquery",
+    "time",
+    "yaml"
+]
 
 [dependencies]
 anyhow = {version = "1.0.66", features = ["backtrace"] }
@@ -51,6 +67,7 @@ wax = { version = "0.6.0", features = [], default-features = false, optional = t
 url = { version = "2.5.0", optional = true }
 uuid = { version = "1.6.1", features = ["v4", "fast-rng"], optional = true }
 jsonschema = { version = "0.17.1", default-features = false, optional = true }
+chrono = { version = "0.4.31", optional = true }
 
 
 [dev-dependencies]
