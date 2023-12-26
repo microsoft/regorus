@@ -2727,6 +2727,7 @@ impl Interpreter {
 
     pub fn eval_user_query(
         &mut self,
+        module: &Ref<Module>,
         query: &Ref<Query>,
         schedule: &Schedule,
         enable_tracing: bool,
@@ -2754,7 +2755,7 @@ impl Interpreter {
             is_compr: false,
         });
 
-        let prev_module = self.set_current_module(self.modules.last().cloned())?;
+        let prev_module = self.set_current_module(Some(module.clone()))?;
 
         // Eval the query.
         let query_r = self.eval_query(query);
@@ -2794,6 +2795,14 @@ impl Interpreter {
         }
 
         self.set_current_module(prev_module)?;
+
+        if let Some(r) = results.result.last() {
+            if r.bindings.is_empty_object()
+                && r.expressions.iter().any(|e| e.value == Value::Bool(false))
+            {
+                results = QueryResults::default();
+            }
+        }
 
         match query_r {
             Ok(_) => Ok(results),

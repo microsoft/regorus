@@ -48,6 +48,7 @@ indirectreferences
 inputvalues
 intersection
 invalidkeyerror
+jsonbuiltins
 jsonfilter
 jsonfilteridempotent
 jsonremove
@@ -67,7 +68,11 @@ objectkeys
 objectremove
 objectremoveidempotent
 objectremovenonstringkey
+objectunion
+objectunionn
 partialdocconstants
+partialiter
+partialobjectdoc
 partialsetdoc
 planner-ir
 rand

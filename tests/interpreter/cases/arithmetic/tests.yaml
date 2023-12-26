@@ -1,0 +1,21 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: negative-integer-literal-in-arithmetic-expressions
+    data: {}
+    modules:
+      - |
+        # In the following, the negative integer must be broken into a - and an integer tokens
+        # when in arighmetic expression contexts
+        package test
+        a = 1+1-1
+        b = 1 +1 -1
+        c = 1 + 1 - 1
+        d = -1 -1
+    query: data.test
+    want_result:
+      a: 1
+      b: 1
+      c: 1
+      d: -2
+    

@@ -1,0 +1,44 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: trailing whitespace in query
+    data: {}
+    modules: ["package test"]
+    query: "1 + 1 -2          "
+    want_result: 0
+
+  - note: trailing chars in query
+    data: {}
+    modules: ["package test"]
+    query: "[1]]"
+    error: expecting EOF
+
+  - note: trailing expressions in query
+    data: {}
+    modules: ["package test"]
+    query: "1 2"
+    error: expecting EOF
+
+  - note: multiple statements in query
+    data: {}
+    modules: ["package test"]
+    query: |
+      a = [1, 2, 3]
+      true
+      y = 1 + 1
+    want_result:
+      a: [1, 2, 3]
+      y:  2
+      
+  - note: comprehensions in query
+    data: {}
+    modules: ["package test"]
+    query: |
+      true
+      [1, 2, 3][_]
+    want_result:
+      many!:
+        - [true, 1]
+        - [true, 2]
+        - [true, 3]
+
