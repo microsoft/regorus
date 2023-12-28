@@ -620,10 +620,21 @@ impl<'source> Parser<'source> {
             let op = match self.token_text() {
                 "+" => ArithOp::Add,
                 "-" => ArithOp::Sub,
+                n if n.starts_with('-') && self.tok.0 == TokenKind::Number => ArithOp::Sub,
                 _ => return Ok(expr),
             };
-            self.next_token()?;
-            let right = self.parse_mul_div_mod_expr()?;
+            let right = if self.token_text().len() > 1 {
+                // Treat the - as a separate token
+                let mut rhs_span = self.tok.1.clone();
+                rhs_span.start += 1;
+                rhs_span.col += 1;
+
+                self.next_token()?;
+                Expr::Number(rhs_span)
+            } else {
+                self.next_token()?;
+                self.parse_mul_div_mod_expr()?
+            };
             span.end = self.end;
             expr = Expr::ArithExpr {
                 span,
@@ -953,7 +964,7 @@ impl<'source> Parser<'source> {
         })
     }
 
-    pub fn parse_query(&mut self, mut span: Span, end_delim: &str) -> Result<Query> {
+    fn parse_query(&mut self, mut span: Span, end_delim: &str) -> Result<Query> {
         let state = self.clone();
         let is_definite_query = matches!(self.token_text(), "some" | "every");
 
@@ -1485,7 +1496,7 @@ impl<'source> Parser<'source> {
         Ok(Rule::Spec { span, head, bodies })
     }
 
-    fn parse_package(&mut self) -> Result<Package> {
+    pub fn parse_package(&mut self) -> Result<Package> {
         let mut span = self.tok.1.clone();
         self.expect("package", "Missing package declaration.")?;
         let name = self.parse_path_ref()?;
@@ -1608,5 +1619,14 @@ impl<'source> Parser<'source> {
             imports,
             policy,
         })
+    }
+
+    pub fn parse_user_query(&mut self) -> Result<Ref<Query>> {
+        let span = self.tok.1.clone();
+        let query = Ref::new(self.parse_query(span, "")?);
+        if self.tok.0 != TokenKind::Eof {
+            bail!(self.tok.1.error("expecting EOF"));
+        }
+        Ok(query)
     }
 }

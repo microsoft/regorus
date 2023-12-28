@@ -164,23 +164,26 @@ impl Engine {
     pub fn eval_query(&mut self, query: String, enable_tracing: bool) -> Result<QueryResults> {
         self.eval_modules(false)?;
 
-        // Parse the query.
-        let query_len = query.len();
-        let query_source = Source::new("<query.rego>".to_string(), query);
-        let query_span = Span {
-            source: query_source.clone(),
-            line: 1,
-            col: 1,
-            start: 0,
-            end: query_len as u16,
+        let query_module = {
+            let source = Source::new(
+                "<query_module.rego>".to_owned(),
+                "package __internal_query_module".to_owned(),
+            );
+            Ref::new(Parser::new(&source)?.parse()?)
         };
+
+        // Parse the query.
+        let query_source = Source::new("<query.rego>".to_string(), query);
         let mut parser = Parser::new(&query_source)?;
-        let query_node = Ref::new(parser.parse_query(query_span, "")?);
+        let query_node = parser.parse_user_query()?;
         let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
 
-        let results =
-            self.interpreter
-                .eval_user_query(&query_node, &query_schedule, enable_tracing)?;
+        let results = self.interpreter.eval_user_query(
+            &query_module,
+            &query_node,
+            &query_schedule,
+            enable_tracing,
+        )?;
         Ok(results)
     }
 }

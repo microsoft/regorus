@@ -3,7 +3,7 @@
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
-use crate::builtins::utils::{ensure_args_count, ensure_object};
+use crate::builtins::utils::{ensure_args_count, ensure_array, ensure_object};
 use crate::lexer::Span;
 use crate::value::Value;
 
@@ -21,6 +21,8 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("object.keys", (keys, 1));
     m.insert("object.remove", (remove, 2));
     m.insert("object.subset", (subset, 2));
+    m.insert("object.union", (object_union, 2));
+    m.insert("object.union_n", (object_union_n, 1));
 }
 
 fn json_filter_impl(v: &Value, filter: &Value) -> Value {
@@ -323,4 +325,60 @@ fn subset(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     ensure_args_count(span, name, params, args, 2)?;
 
     Ok(Value::Bool(is_subset(&args[0], &args[1])))
+}
+
+fn union(obj1: &Value, obj2: &Value) -> Result<Value> {
+    match (obj1, obj2) {
+        (Value::Object(m1), Value::Object(m2)) => {
+            let mut u = obj1.clone();
+            let um = u.as_object_mut()?;
+
+            for (key2, value2) in m2.iter() {
+                let vm = match m1.get(key2) {
+                    Some(value1) => union(value1, value2)?,
+                    _ => value2.clone(),
+                };
+                um.insert(key2.clone(), vm);
+            }
+            Ok(u)
+        }
+        _ => Ok(obj2.clone()),
+    }
+}
+
+fn object_union(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+    let name = "object.union";
+    ensure_args_count(span, name, params, args, 2)?;
+
+    let _ = ensure_object(name, &params[0], args[0].clone())?;
+    let _ = ensure_object(name, &params[1], args[1].clone())?;
+
+    union(&args[0], &args[1])
+}
+
+fn object_union_n(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    strict: bool,
+) -> Result<Value> {
+    let name = "object.union_n";
+    ensure_args_count(span, name, params, args, 1)?;
+
+    let arr = ensure_array(name, &params[0], args[0].clone())?;
+
+    let mut u = Value::new_object();
+    for (idx, a) in arr.iter().enumerate() {
+        if a.as_object().is_err() {
+            if strict {
+                bail!(params[0]
+                    .span()
+                    .error(&format!("item at index {idx} is not an object")));
+            }
+            return Ok(Value::Undefined);
+        }
+        u = union(&u, a)?;
+    }
+
+    Ok(u)
 }

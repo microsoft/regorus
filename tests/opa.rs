@@ -170,7 +170,11 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                     entry.0 += 1;
                 }
                 // TODO: Handle tests that specify both want_result and strict_error
-                (Err(_), _) if case.want_error.is_some() => {
+                (Err(_), _)
+                    if case.want_error.is_some()
+                        || case.strict_error == Some(true)
+                        || case.want_error_code.is_some() =>
+                {
                     // Expected failure.
                     entry.0 += 1;
                 }

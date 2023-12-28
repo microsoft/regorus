@@ -83,6 +83,7 @@ fn match_values(computed: &Value, expected: &Value) -> Result<()> {
 
 pub fn check_output(computed_results: &[Value], expected_results: &[Value]) -> Result<()> {
     if computed_results.len() != expected_results.len() {
+        dbg!((&computed_results, &expected_results));
         bail!(
             "the number of computed results ({}) and expected results ({}) is not equal",
             computed_results.len(),
@@ -108,11 +109,25 @@ pub fn check_output(computed_results: &[Value], expected_results: &[Value]) -> R
 }
 
 fn push_query_results(query_results: QueryResults, results: &mut Vec<Value>) {
-    if let Some(query_result) = query_results.result.last() {
-        if !query_result.bindings.is_empty_object() {
-            results.push(query_result.bindings.clone());
-        } else if let Some(v) = query_result.expressions.last() {
-            results.push(v.value.clone());
+    if query_results.result.len() == 1 {
+        if let Some(query_result) = query_results.result.last() {
+            if !query_result.bindings.is_empty_object() {
+                results.push(query_result.bindings.clone());
+            } else {
+                for e in query_result.expressions.iter() {
+                    results.push(e.value.clone());
+                }
+            }
+        }
+    } else {
+        for r in query_results.result.iter() {
+            if !r.bindings.is_empty_object() {
+                results.push(r.bindings.clone());
+            } else {
+                results.push(Value::from_array(
+                    r.expressions.iter().map(|e| e.value.clone()).collect(),
+                ));
+            }
         }
     }
 }
