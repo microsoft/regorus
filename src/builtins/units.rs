@@ -102,10 +102,10 @@ fn parse(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
     };
 
     if let Some(e) = ten_exp(suffix) {
-        n.mul_assign(&Number::ten_pow(e))?;
+        n.mul_assign(&Number::ten_pow(e)?)?;
         Ok(Value::from(n))
     } else if let Some(e) = two_exp(suffix) {
-        n.mul_assign(&Number::two_pow(e))?;
+        n.mul_assign(&Number::two_pow(e)?)?;
         Ok(Value::from(n))
     } else {
         return Ok(Value::Undefined);
@@ -182,10 +182,10 @@ fn parse_bytes(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) 
     };
 
     if let Some(e) = twob_exp(suffix) {
-        n.mul_assign(&Number::two_pow(e))?;
+        n.mul_assign(&Number::two_pow(e)?)?;
         Ok(Value::from(n.round()))
     } else if let Some(e) = tenb_exp(suffix) {
-        n.mul_assign(&Number::ten_pow(e))?;
+        n.mul_assign(&Number::ten_pow(e)?)?;
         Ok(Value::from(n.round()))
     } else {
         Ok(Value::Undefined)

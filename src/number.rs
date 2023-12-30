@@ -3,21 +3,18 @@
 
 use core::fmt::{Debug, Formatter};
 use std::cmp::{Ord, Ordering};
-use std::ops::{AddAssign, Div, MulAssign, SubAssign};
 use std::rc::Rc;
 use std::str::FromStr;
 
-use anyhow::{bail, Result};
-use dashu_float;
-use num_traits::cast::ToPrimitive;
+use anyhow::{anyhow, bail, Result};
 
 use serde::ser::Serializer;
 use serde::Serialize;
 
 pub type BigInt = i128;
 
-type BigFloat = dashu_float::DBig;
-const PRECISION: usize = 100;
+type BigFloat = scientific::Scientific;
+const PRECISION: scientific::Precision = scientific::Precision::Digits(100);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BigDecimal {
@@ -45,28 +42,14 @@ impl From<BigFloat> for BigDecimal {
 impl From<i128> for BigDecimal {
     fn from(value: i128) -> Self {
         BigDecimal {
-            d: Into::<BigFloat>::into(value)
-                .with_precision(PRECISION)
-                .value(),
+            d: Into::<BigFloat>::into(value),
         }
-    }
-}
-
-impl Serialize for BigDecimal {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let s = self.d.to_string();
-        let v = serde_json::Number::from_str(&s)
-            .map_err(|_| serde::ser::Error::custom("could not serialize big number"))?;
-        v.serialize(serializer)
     }
 }
 
 impl BigDecimal {
     fn is_integer(&self) -> bool {
-        self.d.floor() == self.d
+        self.d.decimals() <= 0
     }
 }
 
@@ -90,22 +73,11 @@ impl Serialize for Number {
         S: Serializer,
     {
         match self {
-            Big(b) => {
-                if let Some(n) = self.as_u64() {
-                    n.serialize(serializer)
-                } else if let Some(n) = self.as_i64() {
-                    n.serialize(serializer)
-                } else {
-                    if let Some(f) = self.as_f64() {
-                        if b.d.digits() <= 15 {
-                            return f.serialize(serializer);
-                        }
-                    }
-                    let s = b.d.to_string();
-                    let v = serde_json::Number::from_str(&s)
-                        .map_err(|_| serde::ser::Error::custom("could not serialize big number"))?;
-                    v.serialize(serializer)
-                }
+            Big(_) => {
+                let s = self.format_decimal();
+                let v = serde_json::Number::from_str(&s)
+                    .map_err(|_| serde::ser::Error::custom("could not serialize big number"))?;
+                v.serialize(serializer)
             }
         }
     }
@@ -115,7 +87,7 @@ use Number::*;
 
 impl From<BigFloat> for Number {
     fn from(n: BigFloat) -> Self {
-        Self::Big(BigDecimal::from(n.with_precision(PRECISION).value()).into())
+        Self::Big(BigDecimal::from(n).into())
     }
 }
 
@@ -162,21 +134,33 @@ impl From<f64> for Number {
 impl Number {
     pub fn as_u64(&self) -> Option<u64> {
         match self {
-            Big(b) if b.is_integer() => b.d.to_u64(),
+            Big(b) if b.is_integer() => match u64::try_from(&b.d) {
+                Ok(v) => Some(v),
+                _ => None,
+            },
             _ => None,
         }
     }
 
     pub fn as_i64(&self) -> Option<i64> {
         match self {
-            Big(b) if b.is_integer() => b.d.to_i64(),
+            Big(b) if b.is_integer() => match i64::try_from(&b.d) {
+                Ok(v) => Some(v),
+                _ => None,
+            },
             _ => None,
         }
     }
 
     pub fn as_f64(&self) -> Option<f64> {
         match self {
-            Big(b) => Some(b.d.to_binary().value().to_f64().value()),
+            Big(b) => {
+                let f = f64::from(&b.d);
+                match BigFloat::try_from(f) {
+                    Ok(bf) if bf == b.d => Some(f),
+                    _ => None,
+                }
+            }
         }
     }
 
@@ -234,61 +218,56 @@ impl PartialOrd for Number {
 
 impl Number {
     pub fn add_assign(&mut self, rhs: &Self) -> Result<()> {
-        match (self, rhs) {
-            (Big(ref mut a), Big(b)) => {
-                Rc::make_mut(a).d.add_assign(&b.d);
-            }
-        }
+        *self = self.add(rhs)?;
         Ok(())
     }
 
     pub fn add(&self, rhs: &Self) -> Result<Number> {
-        let mut c = self.clone();
-        c.add_assign(rhs)?;
-        Ok(c)
+        match (self, rhs) {
+            (Big(a), Big(b)) => Ok(Big(BigDecimal::from(&a.d + &b.d).into())),
+        }
     }
 
     pub fn sub_assign(&mut self, rhs: &Self) -> Result<()> {
-        match (self, rhs) {
-            (Big(ref mut a), Big(b)) => {
-                Rc::make_mut(a).d.sub_assign(&b.d);
-            }
-        }
+        *self = self.sub(rhs)?;
         Ok(())
     }
 
     pub fn sub(&self, rhs: &Self) -> Result<Number> {
-        let mut c = self.clone();
-        c.sub_assign(rhs)?;
-        Ok(c)
+        match (self, rhs) {
+            (Big(a), Big(b)) => Ok(Big(BigDecimal::from(&a.d - &b.d).into())),
+        }
     }
 
     pub fn mul_assign(&mut self, rhs: &Self) -> Result<()> {
-        match (self, rhs) {
-            (Big(ref mut a), Big(b)) => {
-                Rc::make_mut(a).d.mul_assign(&b.d);
-            }
-        }
+        *self = self.mul(rhs)?;
         Ok(())
     }
 
     pub fn mul(&self, rhs: &Self) -> Result<Number> {
-        let mut c = self.clone();
-        c.mul_assign(rhs)?;
-        Ok(c)
+        match (self, rhs) {
+            (Big(a), Big(b)) => Ok(Big(BigDecimal::from(&a.d * &b.d).into())),
+        }
     }
 
     pub fn divide(self, rhs: &Self) -> Result<Number> {
-        Ok(match (self, rhs) {
-            (Big(a), Big(b)) => a.d.clone().div(&b.d).into(),
-        })
+        match (self, rhs) {
+            (Big(a), Big(b)) => {
+                let c =
+                    a.d.div_truncate(&b.d, PRECISION)
+                        .map_err(|e| anyhow!("{e}"))?;
+                Ok(Big(BigDecimal::from(c).into()))
+            }
+        }
     }
 
     pub fn modulo(self, rhs: &Self) -> Result<Number> {
-        use dashu_base::RemEuclid;
-        Ok(match (self, rhs) {
-            (Big(a), Big(b)) => a.d.clone().rem_euclid(&b.d).into(),
-        })
+        match (self, rhs) {
+            (Big(a), Big(b)) => {
+                let (_, c) = a.d.div_rem(&b.d).map_err(|e| anyhow!("{e}"))?;
+                Ok(Big(BigDecimal::from(c).into()))
+            }
+        }
     }
 
     pub fn is_integer(&self) -> bool {
@@ -299,15 +278,15 @@ impl Number {
 
     pub fn is_positive(&self) -> bool {
         match self {
-            Big(b) => b.d.sign() == dashu_base::Sign::Positive,
+            Big(b) => b.d.is_sign_positive(),
         }
     }
 
     fn ensure_integers(a: &Number, b: &Number) -> Option<(BigInt, BigInt)> {
         match (a, b) {
             (Big(a), Big(b)) if a.is_integer() && b.is_integer() => {
-                match (a.d.to_i128(), b.d.to_i128()) {
-                    (Some(a), Some(b)) => Some((a, b)),
+                match (BigInt::try_from(&a.d), BigInt::try_from(&b.d)) {
+                    (Ok(a), Ok(b)) => Some((a, b)),
                     _ => None,
                 }
             }
@@ -317,7 +296,10 @@ impl Number {
 
     fn ensure_integer(&self) -> Option<BigInt> {
         match self {
-            Big(a) if a.is_integer() => a.d.to_i128(),
+            Big(a) if a.is_integer() => match BigInt::try_from(&a.d) {
+                Ok(v) => Some(v),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -362,7 +344,6 @@ impl Number {
     }
 
     pub fn abs(&self) -> Number {
-        use dashu_base::Abs;
         match self {
             Big(b) => b.d.clone().abs().into(),
         }
@@ -370,38 +351,48 @@ impl Number {
 
     pub fn floor(&self) -> Number {
         match self {
-            Big(b) => b.d.floor().into(),
+            Big(b) => Big(BigDecimal::from(b.d.round(
+                scientific::Precision::Decimals(0),
+                scientific::Rounding::RoundDown,
+            ))
+            .into()),
         }
     }
 
     pub fn ceil(&self) -> Number {
         match self {
-            Big(b) => b.d.ceil().into(),
+            Big(b) => Big(BigDecimal::from(b.d.round(
+                scientific::Precision::Decimals(0),
+                scientific::Rounding::RoundUp,
+            ))
+            .into()),
         }
     }
 
     pub fn round(&self) -> Number {
         match self {
-            Big(b) => b.d.round().into(),
+            Big(b) => Big(BigDecimal::from(b.d.round(
+                scientific::Precision::Decimals(0),
+                scientific::Rounding::RoundHalfAwayFromZero,
+            ))
+            .into()),
         }
     }
 
-    pub fn two_pow(e: i32) -> Number {
-        use num_traits::Pow;
-        BigFloat::from(2)
-            .with_precision(80)
-            .value()
-            .pow(&BigFloat::from(e))
-            .into()
+    pub fn two_pow(e: i32) -> Result<Number> {
+        if e >= 0 {
+            Ok(BigFloat::from(2).powi(e as usize).into())
+        } else {
+            Number::from(1u64).divide(&BigFloat::from(2).powi(-e as usize).into())
+        }
     }
 
-    pub fn ten_pow(e: i32) -> Number {
-        use num_traits::Pow;
-        BigFloat::from(10)
-            .with_precision(80)
-            .value()
-            .pow(&BigFloat::from(e))
-            .into()
+    pub fn ten_pow(e: i32) -> Result<Number> {
+        if e >= 0 {
+            Ok(BigFloat::from(10).powi(e as usize).into())
+        } else {
+            Number::from(1u64).divide(&BigFloat::from(10).powi(-e as usize).into())
+        }
     }
 
     pub fn format_bin(&self) -> String {
@@ -416,10 +407,58 @@ impl Number {
             .unwrap_or("".to_string())
     }
 
+    pub fn format_scientific(&self) -> String {
+        match self {
+            Big(b) => format!("{}", b.d),
+        }
+    }
+
     pub fn format_decimal(&self) -> String {
-        self.ensure_integer()
-            .map(|a| format!("{}", a))
-            .unwrap_or("".to_string())
+        if let Some(u) = self.as_u64() {
+            u.to_string()
+        } else if let Some(i) = self.as_i64() {
+            i.to_string()
+        } else if let Some(f) = self.as_f64() {
+            f.to_string()
+        } else {
+            let s = match self {
+                Big(b) => format!("{}", b.d),
+            };
+
+            // Remove trailing e0
+            if s.ends_with("e0") {
+                return s[..s.len() - 2].to_string();
+            }
+
+            // Avoid e notation if full mantissa is written out.
+            let parts: Vec<&str> = s.split('e').collect();
+            match self {
+                Big(b) => {
+                    if b.d.is_sign_positive() {
+                        if parts[0].len() == b.d.exponent1() as usize + 2 {
+                            return parts[0].replace('.', "");
+                        }
+                    } else if parts[0].len() == b.d.exponent1() as usize + 3 {
+                        return parts[0].replace('.', "");
+                    }
+                }
+            }
+
+            s
+        }
+    }
+
+    pub fn format_decimal_with_width(&self, d: u32) -> String {
+        match self {
+            Big(b) => {
+                let n = Big(BigDecimal::from(b.d.round(
+                    scientific::Precision::Decimals(d as isize),
+                    scientific::Rounding::RoundHalfAwayFromZero,
+                ))
+                .into());
+                n.format_decimal()
+            }
+        }
     }
 
     pub fn format_hex(&self) -> String {

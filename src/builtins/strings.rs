@@ -21,8 +21,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("endswith", (endswith, 2));
     m.insert("format_int", (format_int, 2));
     m.insert("indexof", (indexof, 2));
-    // TODO: implement this correctly.
-    //m.insert("indexof_n", (indexof_n, 2));
+    m.insert("indexof_n", (indexof_n, 2));
     m.insert("lower", (lower, 1));
     m.insert("replace", (replace, 3));
     m.insert("split", (split, 2));
@@ -32,7 +31,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("strings.any_suffix_match", (any_suffix_match, 2));
     m.insert("strings.replace_n", (replace_n, 2));
     m.insert("strings.reverse", (reverse, 1));
-    m.insert("strings.substring", (substring, 3));
+    m.insert("substring", (substring, 3));
     m.insert("trim", (trim, 2));
     m.insert("trim_left", (trim_left, 2));
     m.insert("trim_prefix", (trim_prefix, 2));
@@ -102,13 +101,14 @@ fn indexof(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
     ensure_args_count(span, name, params, args, 2)?;
     let s1 = ensure_string(name, &params[0], &args[0])?;
     let s2 = ensure_string(name, &params[1], &args[1])?;
-    Ok(Value::from(Number::from(match s1.find(s2.as_ref()) {
-        Some(pos) => pos as i64,
-        _ => -1,
-    })))
+    for (pos, (idx, _)) in s1.char_indices().enumerate() {
+        if s1[idx..].starts_with(s2.as_ref()) {
+            return Ok(Value::from(Number::from(pos)));
+        }
+    }
+    Ok(Value::from(Number::from(-1i64)))
 }
 
-#[allow(dead_code)]
 fn indexof_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "indexof_n";
     ensure_args_count(span, name, params, args, 2)?;
@@ -116,13 +116,9 @@ fn indexof_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -
     let s2 = ensure_string(name, &params[1], &args[1])?;
 
     let mut positions = vec![];
-    let mut idx = 0;
-    while idx < s1.len() {
-        if let Some(pos) = s1.find(s2.as_ref()) {
-            positions.push(Value::from(pos as u64));
-            idx = pos + 1;
-        } else {
-            break;
+    for (pos, (idx, _)) in s1.char_indices().enumerate() {
+        if s1[idx..].starts_with(s2.as_ref()) {
+            positions.push(Value::from(Number::from(pos)));
         }
     }
     Ok(Value::from_array(positions))
@@ -192,6 +188,21 @@ fn to_string(v: &Value, unescape: bool) -> String {
     }
 }
 
+enum Width {
+    None,
+    LeadingZeros(usize),
+    Cell(usize),
+    Decimals(usize),
+}
+
+fn apply_width(w: Width, s: String) -> String {
+    match w {
+        Width::LeadingZeros(n) if n > s.len() => "0".repeat(n - s.len()) + &s,
+        Width::Cell(n) if n > s.len() => " ".repeat(n - s.len()) + &s,
+        _ => s,
+    }
+}
+
 fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "sprintf";
     ensure_args_count(span, name, params, args, 2)?;
@@ -203,13 +214,43 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
     let mut chars = fmt.chars().peekable();
     let args_span = params[1].span();
     loop {
-        let verb = match chars.next() {
+        let (verb, width) = match chars.next() {
             Some('%') => match chars.next() {
                 Some('%') => {
                     s.push('%');
                     continue;
                 }
-                Some(c) => c,
+                Some(c) if c == '.' || c.is_numeric() => {
+                    let first_char = c;
+                    let mut w = 0;
+                    if c != '.' {
+                        w = c.to_digit(10).expect("could not get digit from char");
+                    }
+
+                    while chars.peek().map(|c| c.is_numeric()) == Some(true) {
+                        w = w * 10
+                            + chars
+                                .next()
+                                .expect("could not get next digit")
+                                .to_digit(10)
+                                .expect("could not get digit from char");
+                    }
+                    let width = match first_char {
+                        '0' => Width::LeadingZeros(w as usize),
+                        '.' => Width::Decimals(w as usize),
+                        _ => Width::Cell(w as usize),
+                    };
+                    match chars.next() {
+                        Some(c) => (c, width),
+                        _ => {
+                            let span = params[0].span();
+                            bail!(span.error(
+                                "missing format verb after `%width` at end of format string"
+                            ));
+                        }
+                    }
+                }
+                Some(c) => (c, Width::None),
                 None => {
                     let span = params[0].span();
                     bail!(span.error("missing format verb after `%` at end of format string"));
@@ -257,7 +298,7 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
             ('s', Value::String(sv)) => s += sv.as_ref(),
             ('s', v) => s += &to_string(v, false),
 
-            ('v', _) => s += format!("{arg}").as_str(),
+            ('v', _) => s += &to_string(arg, false),
             ('b', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
                 s += sign;
@@ -279,43 +320,36 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
             ('d', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
                 s += sign;
-                s += v.format_decimal().as_str()
+                s += apply_width(width, v.format_decimal()).as_str()
             }
             ('o', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
                 s += sign;
-                s += ("0O".to_owned() + &v.format_octal()).as_str()
+                s += apply_width(width, "0O".to_owned() + &v.format_octal()).as_str()
             }
             ('O', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
                 s += sign;
-                s += ("0o".to_owned() + &v.format_octal()).as_str()
+                s += apply_width(width, "0o".to_owned() + &v.format_octal()).as_str()
             }
             ('x', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
                 s += sign;
-                s += v.format_hex().as_str()
+                s += apply_width(width, v.format_hex()).as_str()
             }
             ('X', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
                 s += sign;
-                s += v.format_big_hex().as_str()
+                s += apply_width(width, v.format_big_hex()).as_str()
             }
-            ('e', Value::Number(f)) => {
-                s += match f.as_f64() {
-                    Some(f) => format!("{:e}", f),
-                    _ => bail!(span.error("cannot print large float using e format specifier")),
+            ('e', Value::Number(f)) => s += &f.format_scientific(),
+            ('E', Value::Number(f)) => s += &f.format_scientific().replace('e', "E"),
+            ('f' | 'F', Value::Number(f)) => {
+                s += &match width {
+                    Width::Decimals(d) => f.format_decimal_with_width(d as u32),
+                    _ => apply_width(width, f.format_decimal()),
                 }
-                .as_str()
             }
-            ('E', Value::Number(f)) => {
-                s += match f.as_f64() {
-                    Some(f) => format!("{:E}", f),
-                    _ => bail!(span.error("cannot print large float using E format specifier")),
-                }
-                .as_str()
-            }
-            ('f' | 'F', Value::Number(f)) => s += f.format_decimal().as_str(),
             ('g', Value::Number(f)) => {
                 let (sign, v) = get_sign_value(f);
                 let v = match v.as_f64() {
@@ -349,8 +383,7 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
                 }
             }
             (_, Value::Number(_)) => {
-                // TODO: binary for floating point.
-                bail!(args_span.error("floating-point number specified for format verb {verb}."));
+                bail!(args_span.error(&format!("number specified for format verb {verb}.")));
             }
 
             ('+', _) if chars.next() == Some('v') => {
@@ -382,31 +415,45 @@ fn any_prefix_match(
     span: &Span,
     params: &[Ref<Expr>],
     args: &[Value],
-    _strict: bool,
+    strict: bool,
 ) -> Result<Value> {
     let name = "strings.any_prefix_match";
     ensure_args_count(span, name, params, args, 2)?;
 
     let search = match &args[0] {
         Value::String(s) => vec![s.as_ref()],
-        Value::Array(_) | Value::Set(_) => ensure_string_collection(name, &params[0], &args[0])?,
-        _ => {
+        Value::Array(_) | Value::Set(_) => {
+            match ensure_string_collection(name, &params[0], &args[0]) {
+                Ok(c) => c,
+                Err(e) if strict => return Err(e),
+                _ => return Ok(Value::Undefined),
+            }
+        }
+        _ if strict => {
             let span = params[0].span();
             bail!(span.error(
                 format!("`{name}` expects string/array[string]/set[string] argument.").as_str()
             ));
         }
+        _ => return Ok(Value::Undefined),
     };
 
     let base = match &args[1] {
         Value::String(s) => vec![s.as_ref()],
-        Value::Array(_) | Value::Set(_) => ensure_string_collection(name, &params[1], &args[1])?,
-        _ => {
+        Value::Array(_) | Value::Set(_) => {
+            match ensure_string_collection(name, &params[1], &args[1]) {
+                Ok(c) => c,
+                Err(e) if strict => return Err(e),
+                _ => return Ok(Value::Undefined),
+            }
+        }
+        _ if strict => {
             let span = params[0].span();
             bail!(span.error(
                 format!("`{name}` expects string/array[string]/set[string] argument.").as_str()
             ));
         }
+        _ => return Ok(Value::Undefined),
     };
 
     Ok(Value::Bool(
@@ -418,31 +465,45 @@ fn any_suffix_match(
     span: &Span,
     params: &[Ref<Expr>],
     args: &[Value],
-    _strict: bool,
+    strict: bool,
 ) -> Result<Value> {
     let name = "strings.any_suffix_match";
     ensure_args_count(span, name, params, args, 2)?;
 
     let search = match &args[0] {
         Value::String(s) => vec![s.as_ref()],
-        Value::Array(_) | Value::Set(_) => ensure_string_collection(name, &params[0], &args[0])?,
-        _ => {
+        Value::Array(_) | Value::Set(_) => {
+            match ensure_string_collection(name, &params[0], &args[0]) {
+                Ok(c) => c,
+                Err(e) if strict => return Err(e),
+                _ => return Ok(Value::Undefined),
+            }
+        }
+        _ if strict => {
             let span = params[0].span();
             bail!(span.error(
                 format!("`{name}` expects string/array[string]/set[string] argument.").as_str()
             ));
         }
+        _ => return Ok(Value::Undefined),
     };
 
     let base = match &args[1] {
         Value::String(s) => vec![s.as_ref()],
-        Value::Array(_) | Value::Set(_) => ensure_string_collection(name, &params[1], &args[1])?,
-        _ => {
+        Value::Array(_) | Value::Set(_) => {
+            match ensure_string_collection(name, &params[1], &args[1]) {
+                Ok(c) => c,
+                Err(e) if strict => return Err(e),
+                _ => return Ok(Value::Undefined),
+            }
+        }
+        _ if strict => {
             let span = params[0].span();
             bail!(span.error(
                 format!("`{name}` expects string/array[string]/set[string] argument.").as_str()
             ));
         }
+        _ => return Ok(Value::Undefined),
     };
 
     Ok(Value::Bool(
@@ -488,28 +549,24 @@ fn reverse(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
     Ok(Value::String(s.chars().rev().collect::<String>().into()))
 }
 
-fn substring(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+fn substring(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
     let name = "substring";
     ensure_args_count(span, name, params, args, 3)?;
     let s = ensure_string(name, &params[0], &args[0])?;
     let offset = ensure_numeric(name, &params[1], &args[1])?;
     let length = ensure_numeric(name, &params[2], &args[2])?;
 
-    // TODO: distinguish between 20.0 and 20
-    // Also: behavior of
-    // x = substring("hello", 20 + 0.0, 25)
-    match (offset.as_u64(), length.as_u64()) {
-        (Some(offset), Some(length)) => {
-            let offset = offset as usize;
-            let length = length as usize;
-
-            if offset > s.len() || length <= offset {
-                return Ok(Value::String("".into()));
-            }
-
-            Ok(Value::String(s[offset..offset + length].into()))
+    match (offset.as_i64(), length.as_i64()) {
+        (Some(offset), _) if offset < 0 && strict => {
+            bail!(params[1].span().error("negative offset"))
         }
-        _ => Ok(Value::Undefined),
+        (Some(offset), _) if offset < 0 => Ok(Value::Undefined),
+        (Some(offset), Some(length)) => {
+            let start = s.chars().skip(offset as usize);
+            let length = if length < 0 { s.len() } else { length as usize };
+            Ok(Value::String(start.take(length).collect::<String>().into()))
+        }
+        _ => Ok(Value::String("".into())),
     }
 }
 
