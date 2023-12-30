@@ -1,0 +1,39 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: without-timezone
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.weekday(1703444325734390000)
+        b := time.weekday(1257894000000000000)
+    query: data.test
+    want_result:
+      a: "Sunday"
+      b: "Tuesday"
+
+  - note: with-timezone
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.weekday([1703444325734390000, "UTC"])
+        b := time.weekday([1257894000000000000, ""])
+    query: data.test
+    want_result:
+      a: "Sunday"
+      b: "Tuesday"
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.weekday("1703444325734390000")
+    query: data.test
+    error: '`time.weekday` expects `ns` to be a `number` or `array[number, string]`. Got `"1703444325734390000"` instead'

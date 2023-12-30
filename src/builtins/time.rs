@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use anyhow::{anyhow, bail, Result};
 use chrono::{
     DateTime, Datelike, Days, FixedOffset, Local, Months, NaiveDateTime, SecondsFormat, TimeZone,
-    Timelike, Utc,
+    Timelike, Utc, Weekday,
 };
 use chrono_tz::Tz;
 
@@ -25,6 +25,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("time.now_ns", (now_ns, 0));
     m.insert("time.parse_ns", (parse_ns, 2));
     m.insert("time.parse_rfc3339_ns", (parse_rfc3339_ns, 1));
+    m.insert("time.weekday", (weekday, 1));
 }
 
 fn add_date(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
@@ -220,6 +221,25 @@ fn parse_rfc3339_ns(
         Some(ns) => Ok(Value::Number(ns.into())),
         None => Ok(Value::Undefined),
     }
+}
+
+fn weekday(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+    let name = "time.weekday";
+    ensure_args_count(span, name, params, args, 1)?;
+
+    let (datetime, _) = parse_epoch(name, &params[0], &args[0])?;
+
+    let weekday = match datetime.weekday() {
+        Weekday::Mon => "Monday",
+        Weekday::Tue => "Tuesday",
+        Weekday::Wed => "Wednesday",
+        Weekday::Thu => "Thursday",
+        Weekday::Fri => "Friday",
+        Weekday::Sat => "Saturday",
+        Weekday::Sun => "Sunday",
+    };
+
+    Ok(Value::String(weekday.into()))
 }
 
 fn parse_epoch(
