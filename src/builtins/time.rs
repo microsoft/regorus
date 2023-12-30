@@ -11,7 +11,9 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 
 use anyhow::{anyhow, bail, Result};
-use chrono::{DateTime, Datelike, Days, FixedOffset, Local, Months, TimeZone, Timelike, Utc};
+use chrono::{
+    DateTime, Datelike, Days, FixedOffset, Local, Months, SecondsFormat, TimeZone, Timelike, Utc,
+};
 use chrono_tz::Tz;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
@@ -19,6 +21,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("time.clock", (clock, 1));
     m.insert("time.date", (date, 1));
     m.insert("time.diff", (diff, 2));
+    m.insert("time.format", (format, 1));
     m.insert("time.now_ns", (now_ns, 0));
 }
 
@@ -26,7 +29,7 @@ fn add_date(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) ->
     let name = "time.add_date";
     ensure_args_count(span, name, params, args, 4)?;
 
-    let datetime = parse_epoch(name, &params[0], &args[0])?;
+    let (datetime, _) = parse_epoch(name, &params[0], &args[0])?;
     let years: i32 = ensure_numeric(name, &params[1], &args[1])?
         .as_i64()
         .and_then(|n| n.try_into().ok())
@@ -71,7 +74,7 @@ fn clock(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
     let name = "time.clock";
     ensure_args_count(span, name, params, args, 1)?;
 
-    let datetime = parse_epoch(name, &params[0], &args[0])?;
+    let (datetime, _) = parse_epoch(name, &params[0], &args[0])?;
 
     Ok(Vec::from([
         (datetime.hour() as u64).into(),
@@ -85,7 +88,7 @@ fn date(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Res
     let name = "time.date";
     ensure_args_count(span, name, params, args, 1)?;
 
-    let datetime = parse_epoch(name, &params[0], &args[0])?;
+    let (datetime, _) = parse_epoch(name, &params[0], &args[0])?;
 
     Ok(Vec::from([
         (datetime.year() as u64).into(),
@@ -101,8 +104,8 @@ fn diff(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Res
     let name = "time.diff";
     ensure_args_count(span, name, params, args, 2)?;
 
-    let datetime1 = parse_epoch(name, &params[0], &args[0])?;
-    let datetime2 = parse_epoch(name, &params[1], &args[1])?;
+    let (datetime1, _) = parse_epoch(name, &params[0], &args[0])?;
+    let (datetime2, _) = parse_epoch(name, &params[1], &args[1])?;
 
     // Make sure both datetimes in the same timezone
     let datetime2 = datetime2.with_timezone(&datetime1.timezone());
@@ -159,6 +162,20 @@ fn diff(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Res
     .into())
 }
 
+fn format(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+    let name = "time.format";
+    ensure_args_count(span, name, params, args, 1)?;
+
+    let (datetime, format) = parse_epoch(name, &params[0], &args[0])?;
+
+    let result = match format {
+        Some(format) => datetime.format(&format).to_string(),
+        None => datetime.to_rfc3339_opts(SecondsFormat::AutoSi, true),
+    };
+
+    Ok(Value::String(result.into()))
+}
+
 fn now_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "time.now_ns";
     ensure_args_count(span, name, params, args, 0)?;
@@ -172,7 +189,11 @@ fn now_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     Ok(Value::from(nanos))
 }
 
-fn parse_epoch(fcn: &str, arg: &Expr, val: &Value) -> Result<DateTime<FixedOffset>> {
+fn parse_epoch(
+    fcn: &str,
+    arg: &Expr,
+    val: &Value,
+) -> Result<(DateTime<FixedOffset>, Option<String>)> {
     match val {
         Value::Number(num) => {
             let ns = num.as_i64().ok_or_else(|| {
@@ -180,7 +201,7 @@ fn parse_epoch(fcn: &str, arg: &Expr, val: &Value) -> Result<DateTime<FixedOffse
                     .error("could not convert numeric value of `ns` to int64")
             })?;
 
-            return Ok(Utc.timestamp_nanos(ns).fixed_offset());
+            return Ok((Utc.timestamp_nanos(ns).fixed_offset(), None));
         }
 
         Value::Array(arr) => match arr.as_slice() {
@@ -190,9 +211,9 @@ fn parse_epoch(fcn: &str, arg: &Expr, val: &Value) -> Result<DateTime<FixedOffse
                         .error("could not convert numeric value of `ns` to int64")
                 })?;
 
-                return Ok(Utc.timestamp_nanos(ns).fixed_offset());
+                return Ok((Utc.timestamp_nanos(ns).fixed_offset(), None));
             }
-            [Value::Number(num), Value::String(tz)] => {
+            [Value::Number(num), Value::String(tz), rest @ ..] => {
                 let ns = num.as_i64().ok_or_else(|| {
                     arg.span()
                         .error("could not convert numeric value of `ns` to int64")
@@ -206,7 +227,18 @@ fn parse_epoch(fcn: &str, arg: &Expr, val: &Value) -> Result<DateTime<FixedOffse
                         tz.timestamp_nanos(ns).fixed_offset()
                     }
                 };
-                return Ok(datetime);
+
+                let format = match rest.first() {
+                    Some(Value::String(format)) => Some(format.to_string()),
+                    Some(other) => {
+                        bail!(arg.span().error(&format!(
+                            "`{fcn}` expects 3rd element of `ns` to be a `string`. Got `{other}` instead"
+                        )))
+                    }
+                    None => None,
+                };
+
+                return Ok((datetime, format));
             }
             _ => {}
         },

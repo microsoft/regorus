@@ -1,0 +1,52 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: without-timezone-and-format
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.format(1703444325734390000)
+        b := time.format(1257894000000000000)
+    query: data.test
+    want_result:
+      a: "2023-12-24T18:58:45.734390Z"
+      b: "2009-11-10T23:00:00Z"
+
+  - note: with-timezone-and-no-format
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.format([1703444325734390000, "UTC"])
+        b := time.format([1257894000000000000, ""])
+    query: data.test
+    want_result:
+      a: "2023-12-24T18:58:45.734390Z"
+      b: "2009-11-10T23:00:00Z"
+
+  - note: with-timezone-and-format
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.format([1703444325734390000, "UTC", "%Y-%m-%dT%H:%M:%S"])
+        b := time.format([1257894000000000000, "", "%d/%m/%Y %H:%M"])
+    query: data.test
+    want_result:
+      a: "2023-12-24T18:58:45"
+      b: "10/11/2009 23:00"
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.format([1703444325734390000, "UTC", 42])
+    query: data.test
+    error: '`time.format` expects 3rd element of `ns` to be a `string`. Got `42` instead'
