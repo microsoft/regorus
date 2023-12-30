@@ -10,11 +10,13 @@ use crate::value::Value;
 use std::collections::HashMap;
 use std::time::SystemTime;
 
-use anyhow::{bail, Result};
-use chrono::{Datelike, Days, Months, NaiveDateTime};
+use anyhow::{anyhow, bail, Result};
+use chrono::{DateTime, Datelike, Days, FixedOffset, Local, Months, TimeZone, Timelike, Utc};
+use chrono_tz::Tz;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("time.add_date", (add_date, 4));
+    m.insert("time.clock", (clock, 1));
     m.insert("time.now_ns", (now_ns, 0));
 }
 
@@ -22,9 +24,7 @@ fn add_date(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) ->
     let name = "time.add_date";
     ensure_args_count(span, name, params, args, 4)?;
 
-    let ns = ensure_numeric(name, &params[0], &args[0])?
-        .as_i64()
-        .ok_or_else(|| span.error("could not convert `ns` to int64"))?;
+    let datetime = parse_epoch(name, &params[0], &args[0])?;
     let years: i32 = ensure_numeric(name, &params[1], &args[1])?
         .as_i64()
         .and_then(|n| n.try_into().ok())
@@ -37,13 +37,6 @@ fn add_date(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) ->
         .as_i64()
         .and_then(|n| n.try_into().ok())
         .ok_or_else(|| span.error("could not convert `days` to int32"))?;
-
-    let (sec, nsec) = nsec_to_sec_and_remainder(ns);
-
-    let datetime = match NaiveDateTime::from_timestamp_opt(sec, nsec) {
-        Some(datetime) => datetime,
-        None => return Ok(Value::Undefined),
-    };
 
     let Some(new_year) = datetime.year().checked_add(years) else {
         return Ok(Value::Undefined);
@@ -72,6 +65,20 @@ fn add_date(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) ->
         .unwrap_or(Value::Undefined))
 }
 
+fn clock(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+    let name = "time.add_date";
+    ensure_args_count(span, name, params, args, 1)?;
+
+    let datetime = parse_epoch(name, &params[0], &args[0])?;
+
+    Ok(Vec::from([
+        (datetime.hour() as u64).into(),
+        (datetime.minute() as u64).into(),
+        (datetime.second() as u64).into(),
+    ])
+    .into())
+}
+
 fn now_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "time.now_ns";
     ensure_args_count(span, name, params, args, 0)?;
@@ -85,27 +92,49 @@ fn now_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     Ok(Value::from(nanos))
 }
 
-// Unlike Go's `time` package, `chrono` crate only supports nanoseconds
-// up to 1_000_000_000 (a billion). But we receive the whole epochs as
-// nanoseconds which is much more larger than a billion most of the time.
-// In order to overcome this we devide nanoseconds into two,
-// whole seconds and reminder nanoseconds.
-// This is basically what Go's `time.Unix` does and we adapted our code from that function.
-// https://cs.opensource.google/go/go/+/refs/tags/go1.21.5:src/time/time.go;l=1397-1405
-fn nsec_to_sec_and_remainder(mut nsec: i64) -> (i64, u32) {
-    const BILLION: i64 = 1_000_000_000;
+fn parse_epoch(fcn: &str, arg: &Expr, val: &Value) -> Result<DateTime<FixedOffset>> {
+    match val {
+        Value::Number(num) => {
+            let ns = num.as_i64().ok_or_else(|| {
+                arg.span()
+                    .error("could not convert numeric value of `ns` to int64")
+            })?;
 
-    let mut sec: i64 = 0;
-    #[allow(clippy::manual_range_contains)]
-    if nsec < 0 || nsec >= BILLION {
-        let n = nsec / BILLION;
-        sec += n;
-        nsec -= n * BILLION;
-        if nsec < 0 {
-            nsec += BILLION;
-            sec -= 1;
+            return Ok(Utc.timestamp_nanos(ns).fixed_offset());
         }
+
+        Value::Array(arr) => match arr.as_slice() {
+            [Value::Number(num)] => {
+                let ns = num.as_i64().ok_or_else(|| {
+                    arg.span()
+                        .error("could not convert numeric value of `ns` to int64")
+                })?;
+
+                return Ok(Utc.timestamp_nanos(ns).fixed_offset());
+            }
+            [Value::Number(num), Value::String(tz)] => {
+                let ns = num.as_i64().ok_or_else(|| {
+                    arg.span()
+                        .error("could not convert numeric value of `ns` to int64")
+                })?;
+
+                let datetime = match tz.as_ref() {
+                    "UTC" | "" => Utc.timestamp_nanos(ns).fixed_offset(),
+                    "Local" => Local.timestamp_nanos(ns).fixed_offset(),
+                    _ => {
+                        let tz: Tz = tz.parse().map_err(|err: String| anyhow!(err))?;
+                        tz.timestamp_nanos(ns).fixed_offset()
+                    }
+                };
+                return Ok(datetime);
+            }
+            _ => {}
+        },
+
+        _ => {}
     }
 
-    (sec, nsec as u32)
+    bail!(arg.span().error(&format!(
+        "`{fcn}` expects `ns` to be a `number` or `array[number, string]`. Got `{val}` instead"
+    )))
 }

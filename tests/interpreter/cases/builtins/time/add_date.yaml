@@ -250,4 +250,4 @@ cases:
 
         a := time.add_date("1703444325734390000", 0, 0, 0)
     query: data.test
-    error: '`time.add_date` expects numeric argument. Got `"1703444325734390000"` instead'
+    error: '`time.add_date` expects `ns` to be a `number` or `array[number, string]`. Got `"1703444325734390000"` instead'
