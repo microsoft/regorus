@@ -3,7 +3,7 @@
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
-use crate::builtins::utils::{ensure_args_count, ensure_numeric};
+use crate::builtins::utils::{ensure_args_count, ensure_numeric, ensure_string};
 use crate::lexer::Span;
 use crate::value::Value;
 
@@ -11,7 +11,8 @@ use std::collections::HashMap;
 
 use anyhow::{anyhow, bail, Result};
 use chrono::{
-    DateTime, Datelike, Days, FixedOffset, Local, Months, SecondsFormat, TimeZone, Timelike, Utc,
+    DateTime, Datelike, Days, FixedOffset, Local, Months, NaiveDateTime, SecondsFormat, TimeZone,
+    Timelike, Utc,
 };
 use chrono_tz::Tz;
 
@@ -22,6 +23,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("time.diff", (diff, 2));
     m.insert("time.format", (format, 1));
     m.insert("time.now_ns", (now_ns, 0));
+    m.insert("time.parse_ns", (parse_ns, 2));
 }
 
 fn add_date(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
@@ -181,6 +183,21 @@ fn now_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
 
     match Utc::now().timestamp_nanos_opt() {
         Some(val) => Ok(Value::from(val)),
+        None => Ok(Value::Undefined),
+    }
+}
+
+fn parse_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+    let name = "time.parse_ns";
+    ensure_args_count(span, name, params, args, 2)?;
+
+    let layout = ensure_string(name, &params[0], &args[0])?;
+    let value = ensure_string(name, &params[1], &args[1])?;
+
+    let datetime = NaiveDateTime::parse_from_str(&value, &layout)?;
+
+    match datetime.timestamp_nanos_opt() {
+        Some(ns) => Ok(Value::Number(ns.into())),
         None => Ok(Value::Undefined),
     }
 }
