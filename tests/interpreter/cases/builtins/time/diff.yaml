@@ -1,0 +1,64 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: without-timezone
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.diff(1703444325734390000, 1257894000000000000)
+    query: data.test
+    want_result:
+      a: 
+        - 14
+        - 1
+        - 13
+        - 19
+        - 58
+        - 45
+
+  - note: with-timezone
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.diff([1703444325734390000, "UTC"], [1257894000000000000, ""])
+    query: data.test
+    want_result:
+      a: 
+        - 14
+        - 1
+        - 13
+        - 19
+        - 58
+        - 45
+
+  - note: tz1-greater-than-tz2
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.diff(1257894000000000000, 1703444325734390000)
+    query: data.test
+    want_result:
+      a: 
+        - 14
+        - 1
+        - 13
+        - 19
+        - 58
+        - 45
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.diff("1703444325734390000", 1257894000000000000)
+    query: data.test
+    error: '`time.diff` expects `ns` to be a `number` or `array[number, string]`. Got `"1703444325734390000"` instead'
