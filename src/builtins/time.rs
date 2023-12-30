@@ -17,6 +17,7 @@ use chrono_tz::Tz;
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("time.add_date", (add_date, 4));
     m.insert("time.clock", (clock, 1));
+    m.insert("time.date", (date, 1));
     m.insert("time.now_ns", (now_ns, 0));
 }
 
@@ -66,7 +67,7 @@ fn add_date(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) ->
 }
 
 fn clock(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
-    let name = "time.add_date";
+    let name = "time.clock";
     ensure_args_count(span, name, params, args, 1)?;
 
     let datetime = parse_epoch(name, &params[0], &args[0])?;
@@ -75,6 +76,20 @@ fn clock(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
         (datetime.hour() as u64).into(),
         (datetime.minute() as u64).into(),
         (datetime.second() as u64).into(),
+    ])
+    .into())
+}
+
+fn date(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+    let name = "time.date";
+    ensure_args_count(span, name, params, args, 1)?;
+
+    let datetime = parse_epoch(name, &params[0], &args[0])?;
+
+    Ok(Vec::from([
+        (datetime.year() as u64).into(),
+        (datetime.month() as u64).into(),
+        (datetime.day() as u64).into(),
     ])
     .into())
 }

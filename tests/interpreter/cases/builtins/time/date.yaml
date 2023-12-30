@@ -1,0 +1,46 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: without-timezone
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.date(1703444325734390000)
+    query: data.test
+    want_result:
+      a: 
+        - 2023
+        - 12
+        - 24
+  
+  - note: with-utc-timezone
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.date([1257894000000000000, "UTC"])
+        b := time.date([1703896119423491000, ""])
+    query: data.test
+    want_result:
+      a: 
+        - 2009
+        - 11
+        - 10
+      b:
+        - 2023
+        - 12
+        - 30
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.date("1703444325734390000")
+    query: data.test
+    error: '`time.date` expects `ns` to be a `number` or `array[number, string]`. Got `"1703444325734390000"` instead'

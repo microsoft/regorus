@@ -68,4 +68,4 @@ cases:
 
         a := time.clock("1703444325734390000")
     query: data.test
-    error: '`time.add_date` expects `ns` to be a `number` or `array[number, string]`. Got `"1703444325734390000"` instead'
+    error: '`time.clock` expects `ns` to be a `number` or `array[number, string]`. Got `"1703444325734390000"` instead'
