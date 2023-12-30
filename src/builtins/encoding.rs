@@ -3,13 +3,15 @@
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
-use crate::builtins::utils::{ensure_args_count, ensure_string};
+use crate::builtins::utils::{
+    ensure_args_count, ensure_object, ensure_string, ensure_string_collection,
+};
 use crate::lexer::Span;
 use crate::value::Value;
 
 use std::collections::{BTreeMap, HashMap};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     #[cfg(feature = "base64")]
@@ -31,7 +33,10 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     }
     #[cfg(feature = "urlquery")]
     {
+        m.insert("urlquery.decode", (urlquery_decode, 1));
         m.insert("urlquery.decode_object", (urlquery_decode_object, 1));
+        m.insert("urlquery.encode", (urlquery_encode, 1));
+        m.insert("urlquery.encode_object", (urlquery_encode_object, 1));
     }
     m.insert("json.is_valid", (json_is_valid, 1));
     m.insert("json.marshal", (json_marshal, 1));
@@ -115,11 +120,13 @@ fn base64url_decode(
         Err(_) => {
             #[cfg(feature = "base64url")]
             {
-                data_encoding::BASE64URL_NOPAD.decode(encoded_str.as_bytes())?
+                data_encoding::BASE64URL_NOPAD
+                    .decode(encoded_str.as_bytes())
+                    .map_err(|_| anyhow!(params[0].span().error("not a valid url")))?
             }
             #[cfg(not(feature = "base64url"))]
             {
-                bail!(params[0].span().error("nor a valid url"));
+                bail!(params[0].span().error("not a valid url"));
             }
         }
     };
@@ -189,13 +196,41 @@ fn hex_encode(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) 
 }
 
 #[cfg(feature = "urlquery")]
+fn urlquery_decode(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
+    let name = "urlquery.decode";
+    ensure_args_count(span, name, params, args, 1)?;
+
+    let string = ensure_string(name, &params[0], &args[0])?;
+    let url_string = "https://non-existent?".to_owned() + string.as_ref();
+    let url = match url::Url::parse(&url_string) {
+        Ok(v) => v,
+        Err(_) => bail!(params[0].span().error("not a valid url query")),
+    };
+
+    let mut query_str = "".to_owned();
+    for (k, v) in url.query_pairs() {
+        query_str += &k;
+        if v != "" {
+            query_str += "=";
+            query_str += &v;
+        }
+    }
+    Ok(Value::String(query_str.into()))
+}
+
+#[cfg(feature = "urlquery")]
 fn urlquery_decode_object(
     span: &Span,
     params: &[Ref<Expr>],
     args: &[Value],
     _strict: bool,
 ) -> Result<Value> {
-    let name = "urlquery.encode";
+    let name = "urlquery.decode_object";
     ensure_args_count(span, name, params, args, 1)?;
 
     let string = ensure_string(name, &params[0], &args[0])?;
@@ -215,7 +250,7 @@ fn urlquery_decode_object(
     }
     Ok(Value::from_map(map))
 }
-/*
+
 #[cfg(feature = "urlquery")]
 fn urlquery_encode(
     span: &Span,
@@ -226,17 +261,54 @@ fn urlquery_encode(
     let name = "urlquery.encode";
     ensure_args_count(span, name, params, args, 1)?;
 
-    let string = ensure_string(name, &params[0], &args[0])?;
-    let url_string = "https://non-existent?" + string;
-    let url = url::Url::parse(&url_string)
-        .map_err(|_| bail!(params[0].span().error("not a valid url query")))?;
+    let s = ensure_string(name, &params[0], &args[0])?;
+    let mut url = match url::Url::parse("https://non-existent") {
+        Ok(v) => v,
+        Err(_) => bail!(params[0].span().error("not a valid url query")),
+    };
 
-    Ok(Value::from_object(
-        url.query_pairs()
-            .map(|(k, v)| (Value::from(k.clone()), Value::from(v.clone())))
-            .collect(),
-    ))
-}*/
+    url.query_pairs_mut().append_pair(&s, "");
+    let query_str = url.query().unwrap_or("");
+    if query_str.is_empty() {
+        Ok(Value::String("".into()))
+    } else {
+        Ok(Value::String(query_str[..query_str.len() - 1].into()))
+    }
+}
+
+#[cfg(feature = "urlquery")]
+fn urlquery_encode_object(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
+    let name = "urlquery.encode_object";
+    ensure_args_count(span, name, params, args, 1)?;
+
+    let obj = ensure_object(name, &params[0], args[0].clone())?;
+    let mut url = match url::Url::parse("https://non-existent") {
+        Ok(v) => v,
+        Err(_) => bail!(params[0].span().error("not a valid url query")),
+    };
+
+    for (key, value) in obj.iter() {
+        let key = ensure_string(name, &params[0], key)?;
+        match value {
+            Value::String(v) => {
+                url.query_pairs_mut().append_pair(key.as_ref(), v.as_ref());
+            }
+            _ => {
+                let values = ensure_string_collection(name, &params[0], value)?;
+                for v in values {
+                    url.query_pairs_mut().append_pair(key.as_ref(), v);
+                }
+            }
+        }
+    }
+
+    Ok(Value::String(url.query().unwrap_or("").into()))
+}
 
 #[cfg(feature = "yaml")]
 fn yaml_is_valid(
