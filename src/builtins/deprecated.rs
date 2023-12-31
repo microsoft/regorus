@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
-use crate::builtins::regex::regex_match;
 use crate::builtins::utils::{ensure_args_count, ensure_set};
 use crate::builtins::BuiltinFcn;
 use crate::lexer::Span;
@@ -12,6 +11,9 @@ use std::collections::HashMap;
 
 use anyhow::{bail, Result};
 use lazy_static::lazy_static;
+
+#[cfg(feature = "regex")]
+use crate::builtins::regex::regex_match;
 
 #[rustfmt::skip]
 lazy_static! {
@@ -28,7 +30,7 @@ lazy_static! {
 	m.insert("cast_string", (cast_string, 1));
 	m.insert("set_diff", (set_diff, 2));
 
-	#[cfg(feature = "crypto")]
+	#[cfg(feature = "regex")]
 	m.insert("re_match", (regex_match, 2));
 	m
     };

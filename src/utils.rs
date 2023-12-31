@@ -133,6 +133,8 @@ fn get_extra_arg_impl(
                 } else {
                     return Ok(None);
                 }
+                #[cfg(not(feature = "deprecated"))]
+                return Ok(None);
             }
         };
         if (n_args as usize) + 1 == params.len() {

@@ -1785,6 +1785,9 @@ impl Interpreter {
             return Ok(Some(builtin));
         }
 
+        // Mark as used when deprecated feature is not enabled.
+        std::convert::identity((span, self.allow_deprecated));
+
         Ok(None)
     }
 
