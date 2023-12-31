@@ -13,7 +13,7 @@ cases:
     want_result:
       a: true
 
-  - note: now-is-monotonic
+  - note: now-is-cached
     data: {}
     modules:
       - |
@@ -22,7 +22,7 @@ cases:
         a := res {
           first := time.now_ns()
           second := time.now_ns()
-          res := second >= first
+          res := second == first
         }
     query: data.test
     want_result:
