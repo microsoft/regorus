@@ -33,6 +33,9 @@ mod utils;
 #[cfg(feature = "uuid")]
 mod uuid;
 
+#[cfg(feature = "opa-testutil")]
+mod test;
+
 use crate::ast::{Expr, Ref};
 use crate::lexer::Span;
 use crate::value::Value;
@@ -93,6 +96,10 @@ lazy_static! {
 	debugging::register(&mut m);
 	tracing::register(&mut m);
 	units::register(&mut m);
+
+	#[cfg(feature = "opa-testutil")]
+	test::register(&mut m);
+
 	m
     };
 }

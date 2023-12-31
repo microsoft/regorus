@@ -39,6 +39,9 @@ full-opa = [
     "yaml"
 ]
 
+# This feature enables some testing utils for OPA tests.
+opa-testutil = []
+
 [dependencies]
 anyhow = {version = "1.0.66", features = ["backtrace"] }
 serde = {version = "1.0.150", features = ["derive", "rc"] }
