@@ -33,18 +33,9 @@ fn add_date(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> 
     ensure_args_count(span, name, params, args, 4)?;
 
     let (datetime, _) = parse_epoch(name, &params[0], &args[0])?;
-    let years: i32 = ensure_numeric(name, &params[1], &args[1])?
-        .as_i64()
-        .and_then(|n| n.try_into().ok())
-        .ok_or_else(|| span.error("could not convert `years` to int32"))?;
-    let months: i32 = ensure_numeric(name, &params[2], &args[2])?
-        .as_i64()
-        .and_then(|n| n.try_into().ok())
-        .ok_or_else(|| span.error("could not convert `months` to int32"))?;
-    let days: i32 = ensure_numeric(name, &params[3], &args[3])?
-        .as_i64()
-        .and_then(|n| n.try_into().ok())
-        .ok_or_else(|| span.error("could not convert `days` to int32"))?;
+    let years = ensure_i32(name, &params[1], &args[1])?;
+    let months = ensure_i32(name, &params[2], &args[2])?;
+    let days = ensure_i32(name, &params[3], &args[3])?;
 
     let Some(new_year) = datetime.year().checked_add(years) else {
         return Ok(Value::Undefined);
@@ -229,6 +220,13 @@ fn weekday(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
     };
 
     Ok(Value::String(weekday.into()))
+}
+
+fn ensure_i32(name: &str, arg: &Expr, v: &Value) -> Result<i32> {
+    ensure_numeric(name, arg, v)?
+        .as_i64()
+        .and_then(|n| n.try_into().ok())
+        .ok_or_else(|| arg.span().error("could not convert to int32"))
 }
 
 fn safe_timestamp_nanos(span: &Span, strict: bool, nanos: Option<i64>) -> Result<Value> {
