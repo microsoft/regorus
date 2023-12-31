@@ -14,13 +14,14 @@ crypto = ["dep:constant_time_eq", "dep:hmac", "dep:hex", "dep:md-5", "dep:sha1",
 deprecated = []
 hex = ["dep:data-encoding"]
 glob = ["dep:wax"]
+graph = []
 jsonschema = ["dep:jsonschema"]
 regex = ["dep:regex"]
 semver = ["dep:semver"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
 yaml = ["serde_yaml"]
-full-opa = ["base64", "base64url", "crypto", "deprecated", "glob", "hex", "jsonschema", "regex", "semver", "uuid", "urlquery", "yaml"]
+full-opa = ["base64", "base64url", "crypto", "deprecated", "glob", "graph", "hex", "jsonschema", "regex", "semver", "uuid", "urlquery", "yaml"]
 
 [dependencies]
 anyhow = {version = "1.0.66", features = ["backtrace"] }
@@ -42,7 +43,6 @@ sha1 = {version = "0.10.6", optional = true}
 md-5 = {version = "0.10.6", optional = true}
 
 data-encoding = { version = "2.4.0", optional = true }
-jsonschema = { version = "0.17.1", optional = true }
 scientific = { version = "0.5.2" }
 
 regex = {version = "1.10.2", optional = true}
@@ -50,7 +50,7 @@ semver = {version = "1.0.20", optional = true}
 wax = { version = "0.6.0", features = [], default-features = false, optional = true }
 url = { version = "2.5.0", optional = true }
 uuid = { version = "1.6.1", features = ["v4", "fast-rng"], optional = true }
-
+jsonschema = { version = "0.17.1", default-features = false, optional = true }
 
 
 [dev-dependencies]

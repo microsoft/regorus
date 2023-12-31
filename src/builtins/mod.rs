@@ -15,6 +15,8 @@ pub mod deprecated;
 mod encoding;
 #[cfg(feature = "glob")]
 mod glob;
+#[cfg(feature = "graph")]
+mod graph;
 pub mod numbers;
 mod objects;
 #[cfg(feature = "regex")]
@@ -64,6 +66,9 @@ lazy_static! {
 	#[cfg(feature = "glob")]
 	glob::register(&mut m);
 	
+	#[cfg(feature = "graph")]
+	graph::register(&mut m);
+	
 	bitwise::register(&mut m);
 	conversions::register(&mut m);
 	//units::register(&mut m);
@@ -75,7 +80,6 @@ lazy_static! {
 
 	#[cfg(feature = "crypto")]
 	crypto::register(&mut m);
-	//graphs::register(&mut m);
 	//graphql::register(&mut m);
 	//http::register(&mut m);
 	//net::register(&mut m);
