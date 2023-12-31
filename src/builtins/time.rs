@@ -28,7 +28,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("time.weekday", (weekday, 1));
 }
 
-fn add_date(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+fn add_date(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
     let name = "time.add_date";
     ensure_args_count(span, name, params, args, 4)?;
 
@@ -50,7 +50,7 @@ fn add_date(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) ->
         return Ok(Value::Undefined);
     };
 
-    Ok(datetime
+    datetime
         .with_year(new_year)
         .and_then(|d| {
             let rhs = Months::new(months.unsigned_abs());
@@ -68,9 +68,9 @@ fn add_date(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) ->
                 d.checked_sub_days(rhs)
             }
         })
-        .and_then(|d| d.timestamp_nanos_opt())
-        .map(Into::into)
-        .unwrap_or(Value::Undefined))
+        .map_or(Ok(Value::Undefined), |d| {
+            safe_timestamp_nanos(span, strict, d.timestamp_nanos_opt())
+        })
 }
 
 fn clock(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
@@ -179,17 +179,14 @@ fn format(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     Ok(Value::String(result.into()))
 }
 
-fn now_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+fn now_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
     let name = "time.now_ns";
     ensure_args_count(span, name, params, args, 0)?;
 
-    match Utc::now().timestamp_nanos_opt() {
-        Some(val) => Ok(Value::from(val)),
-        None => Ok(Value::Undefined),
-    }
+    safe_timestamp_nanos(span, strict, Utc::now().timestamp_nanos_opt())
 }
 
-fn parse_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+fn parse_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
     let name = "time.parse_ns";
     ensure_args_count(span, name, params, args, 2)?;
 
@@ -197,18 +194,14 @@ fn parse_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) ->
     let value = ensure_string(name, &params[1], &args[1])?;
 
     let datetime = NaiveDateTime::parse_from_str(&value, &layout)?;
-
-    match datetime.timestamp_nanos_opt() {
-        Some(ns) => Ok(Value::Number(ns.into())),
-        None => Ok(Value::Undefined),
-    }
+    safe_timestamp_nanos(span, strict, datetime.timestamp_nanos_opt())
 }
 
 fn parse_rfc3339_ns(
     span: &Span,
     params: &[Ref<Expr>],
     args: &[Value],
-    _strict: bool,
+    strict: bool,
 ) -> Result<Value> {
     let name = "time.parse_rfc3339_ns";
     ensure_args_count(span, name, params, args, 1)?;
@@ -216,11 +209,7 @@ fn parse_rfc3339_ns(
     let value = ensure_string(name, &params[0], &args[0])?;
 
     let datetime = DateTime::parse_from_rfc3339(&value)?;
-
-    match datetime.timestamp_nanos_opt() {
-        Some(ns) => Ok(Value::Number(ns.into())),
-        None => Ok(Value::Undefined),
-    }
+    safe_timestamp_nanos(span, strict, datetime.timestamp_nanos_opt())
 }
 
 fn weekday(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
@@ -240,6 +229,16 @@ fn weekday(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
     };
 
     Ok(Value::String(weekday.into()))
+}
+
+fn safe_timestamp_nanos(span: &Span, strict: bool, nanos: Option<i64>) -> Result<Value> {
+    match nanos {
+        Some(ns) => Ok(Value::Number(ns.into())),
+        None if strict => {
+            bail!(span.error("time outside of valid range"))
+        }
+        None => Ok(Value::Undefined),
+    }
 }
 
 fn parse_epoch(
