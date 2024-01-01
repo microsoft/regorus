@@ -138,8 +138,10 @@ pub fn eval_file(
     input_opt: Option<ValueOrVec>,
     query: &str,
     enable_tracing: bool,
+    strict: bool,
 ) -> Result<Vec<Value>> {
     let mut engine: Engine = engine::Engine::new();
+    engine.set_strict_builtin_errors(strict);
 
     let mut results = vec![];
     let mut files = vec![];
@@ -237,6 +239,12 @@ struct TestCase {
     traces: Option<bool>,
     want_error: Option<String>,
     want_error_code: Option<String>,
+    #[serde(default = "default_strict")]
+    strict: bool,
+}
+
+fn default_strict() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -270,6 +278,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
             case.input,
             case.query.as_str(),
             enable_tracing,
+            case.strict,
         ) {
             Ok(results) => match case.want_result {
                 Some(want_result) => {

@@ -132,6 +132,7 @@ cases:
     want_result:
       a1: "hello world"
       a2: 6
+    strict: false
 
   - note: or-all-error
     data: {}

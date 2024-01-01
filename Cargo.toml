@@ -13,9 +13,12 @@ base64url = ["dep:data-encoding"]
 crypto = ["dep:constant_time_eq", "dep:hmac", "dep:hex", "dep:md-5", "dep:sha1", "dep:sha2"]
 deprecated = []
 hex = ["dep:data-encoding"]
+http = []
+jwt = []
 glob = ["dep:wax"]
 graph = []
 jsonschema = ["dep:jsonschema"]
+opa-runtime = []
 regex = ["dep:regex"]
 semver = ["dep:semver"]
 uuid = ["dep:uuid"]
@@ -30,12 +33,15 @@ full-opa = [
     "glob",
     "graph",
     "hex",
+    "http",
+    "jwt",
     "jsonschema",
+    "opa-runtime",
     "regex",
     "semver",
+    "time",
     "uuid",
     "urlquery",
-    "time",
     "yaml"
 ]
 

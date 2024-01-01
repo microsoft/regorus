@@ -21,7 +21,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("sum", (sum, 1));
 }
 
-fn count(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+fn count(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
     ensure_args_count(span, "count", params, args, 1)?;
 
     Ok(Value::from(Number::from(match &args[0] {
@@ -29,12 +29,13 @@ fn count(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
         Value::Set(a) => a.len(),
         Value::Object(a) => a.len(),
         Value::String(a) => a.encode_utf16().count(),
-        a => {
+        a if strict => {
             let span = params[0].span();
             bail!(span.error(
                 format!("`count` requires array/object/set/string argument. Got `{a}`.").as_str()
             ))
         }
+        _ => return Ok(Value::Undefined),
     })))
 }
 
