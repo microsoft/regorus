@@ -102,11 +102,47 @@ struct Context {
 }
 
 #[derive(Debug)]
-struct LoopExpr {
-    span: Span,
-    expr: ExprRef,
-    value: ExprRef,
-    index: Ref<Expr>,
+enum LoopExpr {
+    Loop {
+        span: Span,
+        expr: Ref<Expr>,
+        value: Ref<Expr>,
+        index: Ref<Expr>,
+    },
+    Walk {
+        span: Span,
+        expr: Ref<Expr>,
+    },
+}
+
+impl LoopExpr {
+    fn span(&self) -> Span {
+        match self {
+            Self::Loop { span, .. } => span.clone(),
+            Self::Walk { span, .. } => span.clone(),
+        }
+    }
+
+    fn value(&self) -> Ref<Expr> {
+        match self {
+            Self::Loop { value, .. } => value.clone(),
+            Self::Walk { expr, .. } => expr.clone(),
+        }
+    }
+
+    fn expr(&self) -> Ref<Expr> {
+        match self {
+            Self::Loop { expr, .. } => expr.clone(),
+            Self::Walk { expr, .. } => expr.clone(),
+        }
+    }
+
+    fn index(&self) -> Option<Ref<Expr>> {
+        match self {
+            Self::Loop { index, .. } => Some(index.clone()),
+            Self::Walk { .. } => None,
+        }
+    }
 }
 
 impl Interpreter {
@@ -364,7 +400,7 @@ impl Interpreter {
                     _ => Ok(false),
                 });
                 if !indices.is_empty() {
-                    loops.push(LoopExpr {
+                    loops.push(LoopExpr::Loop {
                         span: span.clone(),
                         expr: expr.clone(),
                         value: refr.clone(),
@@ -380,6 +416,20 @@ impl Interpreter {
             Array { items, .. } | Set { items, .. } | Call { params: items, .. } => {
                 for item in items {
                     self.hoist_loops_impl(item, loops);
+                }
+
+                // Handle walk builtin which acts as a generator.
+                // TODO: Handle with modifier on the walk builtin.
+                if let Expr::Call { fcn, .. } = expr.as_ref() {
+                    if let Ok(fcn_path) = get_path_string(fcn, None) {
+                        if fcn_path == "walk" {
+                            // TODO: Use an enum for LoopExpr to handle walk
+                            loops.push(LoopExpr::Walk {
+                                span: expr.span().clone(),
+                                expr: expr.clone(),
+                            })
+                        }
+                    }
                 }
             }
 
@@ -998,6 +1048,7 @@ impl Interpreter {
                 let value = match expr.as_ref() {
                     Expr::Call { span, fcn, params } => self.eval_call(
                         span,
+                        expr,
                         fcn,
                         params,
                         get_extra_arg(
@@ -1037,6 +1088,7 @@ impl Interpreter {
                     // Extra parameter is allowed; but a return argument is not allowed.
                     Expr::Call { span, fcn, params } => self.eval_call(
                         span,
+                        expr,
                         fcn,
                         params,
                         get_extra_arg(
@@ -1230,12 +1282,31 @@ impl Interpreter {
             let loop_expr = &loops[0];
             let mut result = false;
 
-            let loop_expr_value = self.eval_expr(&loop_expr.value)?;
+            let loop_expr_value = loop_expr.value();
+            let loop_expr_value = if let Expr::Call { span, fcn, params } = loop_expr_value.as_ref()
+            {
+                // Handle walk(obj, output_param)
+                let extra_arg = get_extra_arg(
+                    &loop_expr_value,
+                    Some(self.current_module_path.as_str()),
+                    &self.functions,
+                );
+                // If there is an extra arg, ignore it while computing the loop value.
+                let params = if extra_arg.is_some() {
+                    &params[..params.len() - 1]
+                } else {
+                    &params[..]
+                };
+                self.eval_call_impl(span, &loop_expr_value, fcn, params)?
+            } else {
+                self.eval_expr(&loop_expr_value)?
+            };
 
             // If the loop's index variable has already been assigned a value
             // (this can happen if the same index is used for two different collections),
             // then evaluate statements only if the index applies to this collection.
-            if let Expr::Var(index_var) = loop_expr.index.as_ref() {
+            let loop_expr_index = loop_expr.index();
+            if let Some(Expr::Var(index_var)) = loop_expr_index.as_ref().map(|r| r.as_ref()) {
                 if let Some(idx) = self.lookup_local_var(&index_var.source_str()) {
                     if loop_expr_value[&idx] != Value::Undefined {
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
@@ -1255,23 +1326,27 @@ impl Interpreter {
             match loop_expr_value {
                 Value::Array(items) => {
                     for (idx, v) in items.iter().enumerate() {
-                        self.loop_var_values
-                            .insert(loop_expr.expr.clone(), v.clone());
+                        self.loop_var_values.insert(loop_expr.expr(), v.clone());
 
-                        let mut type_match = BTreeSet::new();
-                        let mut cache = BTreeMap::new();
-                        if self.make_bindings(
-                            false,
-                            &mut type_match,
-                            &mut cache,
-                            &loop_expr.index,
-                            &Value::from(idx),
-                            true,
-                        )? {
+                        let exec = if let Some(index) = loop_expr.index() {
+                            let mut type_match = BTreeSet::new();
+                            let mut cache = BTreeMap::new();
+                            self.make_bindings(
+                                false,
+                                &mut type_match,
+                                &mut cache,
+                                &index,
+                                &Value::from(idx),
+                                true,
+                            )?
+                        } else {
+                            true
+                        };
+                        if exec {
                             result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         }
 
-                        self.loop_var_values.remove(&loop_expr.expr);
+                        self.loop_var_values.remove(&loop_expr.expr());
                         *self.current_scope_mut()? = scope_saved.clone();
                         if let Some(ctx) = self.contexts.last_mut() {
                             ctx.result = query_result.clone();
@@ -1280,24 +1355,21 @@ impl Interpreter {
                 }
                 Value::Set(items) => {
                     for v in items.iter() {
-                        self.loop_var_values
-                            .insert(loop_expr.expr.clone(), v.clone());
+                        self.loop_var_values.insert(loop_expr.expr(), v.clone());
 
                         // For sets, index is also the value.
-                        let mut type_match = BTreeSet::new();
-                        let mut cache = BTreeMap::new();
-                        if self.make_bindings(
-                            false,
-                            &mut type_match,
-                            &mut cache,
-                            &loop_expr.index,
-                            v,
-                            true,
-                        )? {
+                        let exec = if let Some(index) = loop_expr.index() {
+                            let mut type_match = BTreeSet::new();
+                            let mut cache = BTreeMap::new();
+                            self.make_bindings(false, &mut type_match, &mut cache, &index, v, true)?
+                        } else {
+                            true
+                        };
+                        if exec {
                             result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         }
 
-                        self.loop_var_values.remove(&loop_expr.expr);
+                        self.loop_var_values.remove(&loop_expr.expr());
                         *self.current_scope_mut()? = scope_saved.clone();
                         if let Some(ctx) = self.contexts.last_mut() {
                             ctx.result = query_result.clone();
@@ -1306,22 +1378,19 @@ impl Interpreter {
                 }
                 Value::Object(obj) => {
                     for (k, v) in obj.iter() {
-                        self.loop_var_values
-                            .insert(loop_expr.expr.clone(), v.clone());
+                        self.loop_var_values.insert(loop_expr.expr(), v.clone());
                         // For objects, index is key.
-                        let mut type_match = BTreeSet::new();
-                        let mut cache = BTreeMap::new();
-                        if self.make_bindings(
-                            false,
-                            &mut type_match,
-                            &mut cache,
-                            &loop_expr.index,
-                            k,
-                            true,
-                        )? {
+                        let exec = if let Some(index) = loop_expr.index() {
+                            let mut type_match = BTreeSet::new();
+                            let mut cache = BTreeMap::new();
+                            self.make_bindings(false, &mut type_match, &mut cache, &index, k, true)?
+                        } else {
+                            true
+                        };
+                        if exec {
                             result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         }
-                        self.loop_var_values.remove(&loop_expr.expr);
+                        self.loop_var_values.remove(&loop_expr.expr());
                         *self.current_scope_mut()? = scope_saved.clone();
                         if let Some(ctx) = self.contexts.last_mut() {
                             ctx.result = query_result.clone();
@@ -1431,37 +1500,34 @@ impl Interpreter {
         // Try out values in current loop expr.
         let loop_expr = &loops[0];
         let mut result = false;
-        match self.eval_expr(&loop_expr.value)? {
+        match self.eval_expr(&loop_expr.value())? {
             Value::Array(items) => {
                 for v in items.iter() {
-                    self.loop_var_values
-                        .insert(loop_expr.expr.clone(), v.clone());
+                    self.loop_var_values.insert(loop_expr.expr(), v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Set(items) => {
                 for v in items.iter() {
-                    self.loop_var_values
-                        .insert(loop_expr.expr.clone(), v.clone());
+                    self.loop_var_values.insert(loop_expr.expr(), v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Object(obj) => {
                 for (_, v) in obj.iter() {
-                    self.loop_var_values
-                        .insert(loop_expr.expr.clone(), v.clone());
+                    self.loop_var_values.insert(loop_expr.expr(), v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             _ => {
-                return Err(loop_expr.span.source.error(
-                    loop_expr.span.line,
-                    loop_expr.span.col,
+                return Err(loop_expr.span().source.error(
+                    loop_expr.span().line,
+                    loop_expr.span().col,
                     "item cannot be indexed",
                 ));
             }
         }
-        self.loop_var_values.remove(&loop_expr.expr);
+        self.loop_var_values.remove(&loop_expr.expr());
         Ok(result)
     }
 
@@ -1791,7 +1857,18 @@ impl Interpreter {
         Ok(None)
     }
 
-    fn eval_call_impl(&mut self, span: &Span, fcn: &ExprRef, params: &[ExprRef]) -> Result<Value> {
+    fn eval_call_impl(
+        &mut self,
+        span: &Span,
+        expr: &ExprRef,
+        fcn: &ExprRef,
+        params: &[ExprRef],
+    ) -> Result<Value> {
+        // Return generated values of walk builtin.
+        if let Some(v) = self.loop_var_values.get(expr) {
+            return Ok(v.clone());
+        }
+
         let fcn_path = match get_path_string(fcn, None) {
             Ok(p) => p,
             _ => bail!(span.error("invalid function expression")),
@@ -1994,6 +2071,7 @@ impl Interpreter {
     fn eval_call(
         &mut self,
         span: &Span,
+        expr: &ExprRef,
         fcn: &ExprRef,
         params: &[ExprRef],
         extra_arg: Option<ExprRef>,
@@ -2005,14 +2083,16 @@ impl Interpreter {
                 Expr::Var(var)
                     if allow_return_arg && self.lookup_local_var(&var.source_str()).is_none() =>
                 {
-                    let value = self.eval_call_impl(span, fcn, &params[..params.len() - 1])?;
+                    let value =
+                        self.eval_call_impl(span, expr, fcn, &params[..params.len() - 1])?;
                     if var.text() != "_" {
                         self.add_variable(&var.source_str(), value)?;
                     }
                     Ok(Value::Bool(true))
                 }
                 _ if allow_return_arg => {
-                    let ret_value = self.eval_call_impl(span, fcn, &params[..params.len() - 1])?;
+                    let ret_value =
+                        self.eval_call_impl(span, expr, fcn, &params[..params.len() - 1])?;
                     let mut cache = BTreeMap::new();
                     let mut type_match = BTreeSet::new();
                     self.make_bindings(false, &mut type_match, &mut cache, &ea, &ret_value, false)
@@ -2020,12 +2100,13 @@ impl Interpreter {
                 }
                 _ => {
                     let expected = self.eval_expr(&params[params.len() - 1])?;
-                    let ret_value = self.eval_call_impl(span, fcn, &params[..params.len() - 1])?;
+                    let ret_value =
+                        self.eval_call_impl(span, expr, fcn, &params[..params.len() - 1])?;
                     Ok(Value::Bool(ret_value == expected))
                 }
             }
         } else {
-            self.eval_call_impl(span, fcn, params)
+            self.eval_call_impl(span, expr, fcn, params)
         }
     }
 
@@ -2254,7 +2335,9 @@ impl Interpreter {
             } => self.eval_object_compr(key, value, query),
             Expr::SetCompr { term, query, .. } => self.eval_set_compr(term, query),
             Expr::UnaryExpr { .. } => unimplemented!("unar expr is umplemented"),
-            Expr::Call { span, fcn, params } => self.eval_call(span, fcn, params, None, false),
+            Expr::Call { span, fcn, params } => {
+                self.eval_call(span, expr, fcn, params, None, false)
+            }
         }
     }
 

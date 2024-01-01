@@ -149,11 +149,27 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         let yaml_str = std::fs::read_to_string(&path_str)?;
         let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
-        for case in &test.cases {
+        for mut case in test.cases {
             let is_json_schema_test = case.note.starts_with("json_verify_schema")
                 || case.note.starts_with("json_match_schema");
 
-            match (eval_test_case(case), &case.want_result) {
+            if case.note == "reachable_paths/cycle_1022_3" {
+                // The OPA behavior is not well-defined.
+                // See: https://github.com/open-policy-agent/opa/issues/5871
+                //      https://github.com/open-policy-agent/opa/issues/6128
+                // We lock down all the paths leading to leaf nodes instead.
+                case.want_result = serde_json::from_str(
+                    r#" [{
+                  "x" : [
+                    ["one", "five", "seven", "eight", "three"],
+                    ["one", "five", "six", "nine"],
+                    ["one", "five", "six", "seven", "eight", "three"],
+                    ["one", "two", "four", "three"]
+                  ]
+                }]"#,
+                )?;
+            };
+            match (eval_test_case(&case), &case.want_result) {
                 (Ok(actual), Some(expected))
                     if is_json_schema_test && json_schema_tests_check(&actual, &expected) =>
                 {
