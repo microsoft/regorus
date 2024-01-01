@@ -76,6 +76,7 @@ partialobjectdoc
 partialsetdoc
 planner-ir
 rand
+reachable
 regexfind
 regexfindallstringsubmatch
 regexisvalid
@@ -109,3 +110,4 @@ urlbuiltins
 uuid
 varreferences
 virtualdocs
+walkbuiltin
