@@ -1,0 +1,71 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: without-timezone
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.clock(1703444325734390000)
+    query: data.test
+    want_result:
+      a: 
+        - 18
+        - 58
+        - 45
+  
+  - note: with-utc-timezone
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.clock([1703444325734390000, "UTC"])
+        b := time.clock([1703444325734390000, ""])
+    query: data.test
+    want_result:
+      a: 
+        - 18
+        - 58
+        - 45
+      b:
+        - 18
+        - 58
+        - 45
+
+  - note: with-cet-timezone
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.clock([1703444325734390000, "CET"])
+    query: data.test
+    want_result:
+      a: 
+        - 19
+        - 58
+        - 45
+
+  - note: with-local-timezone
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.clock([1703444325734390000, "Local"]) != null
+    query: data.test
+    want_result:
+      a: true
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.clock("1703444325734390000")
+    query: data.test
+    error: '`time.clock` expects `ns` to be a `number` or `array[number, string]`. Got `"1703444325734390000"` instead'

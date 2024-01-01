@@ -1,0 +1,253 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: adding-nothing
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, 0, 0, 0)
+    query: data.test
+    want_result:
+      a: 1703444325734390000
+
+  - note: adding-years
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, 1, 0, 0)
+        b := time.add_date(1703444325734390000, 60, 0, 0)
+    query: data.test
+    want_result:
+      a: 1735066725734390000
+      b: 3596900325734390000
+
+  - note: subtracting-years
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, -1, 0, 0)
+        b := time.add_date(1703444325734390000, -60, 0, 0)
+    query: data.test
+    want_result:
+      a: 1671908325734390000
+      b: -190011674265610000
+
+  - note: adding-overflowing-years
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, 2147483647, 0, 0)
+    query: data.test
+    want_result: {}
+
+  - note: subtracting-overflowing-years
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, -2147483647, 0, 0)
+    query: data.test
+    want_result: {}
+
+  - note: adding-months
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, 0, 1, 0)
+        b := time.add_date(1703444325734390000, 0, 12, 0)
+    query: data.test
+    want_result:
+      a: 1706122725734390000
+      b: 1735066725734390000
+
+  - note: subtracting-months
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, 0, -1, 0)
+        b := time.add_date(1703444325734390000, 0, -12, 0)
+    query: data.test
+    want_result:
+      a: 1700852325734390000
+      b: 1671908325734390000
+
+  - note: adding-overflowing-months
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, 0, 15, 0)
+        b := time.add_date(1703444325734390000, 0, 19, 0)
+    query: data.test
+    want_result:
+      a: 1742842725734390000
+      b: 1753383525734390000
+
+  - note: subtracting-overflowing-months
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, 0, -15, 0)
+        b := time.add_date(1703444325734390000, 0, -19, 0)
+    query: data.test
+    want_result:
+      a: 1664045925734390000
+      b: 1653418725734390000
+
+  - note: adding-days
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, 0, 0, 5)
+        b := time.add_date(1703444325734390000, 0, 0, 16)
+    query: data.test
+    want_result:
+      a: 1703876325734390000
+      b: 1704826725734390000
+
+  - note: subtracting-days
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, 0, 0, -5)
+        b := time.add_date(1703444325734390000, 0, 0, -16)
+    query: data.test
+    want_result:
+      a: 1703012325734390000
+      b: 1702061925734390000
+
+  - note: adding-overflowing-days
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, 0, 0, 31)
+        b := time.add_date(1703444325734390000, 0, 0, 37)
+    query: data.test
+    want_result:
+      a: 1706122725734390000
+      b: 1706641125734390000
+
+  - note: subtracting-overflowing-days
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, 0, 0, -31)
+        b := time.add_date(1703444325734390000, 0, 0, -37)
+    query: data.test
+    want_result:
+      a: 1700765925734390000
+      b: 1700247525734390000
+
+  - note: adding-mixed
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, 213, 6, 5)
+        b := time.add_date(1703444325734390000, 5, 0, 6)
+        c := time.add_date(1703444325734390000, 0, 3, 16)
+        d := time.add_date(1703444325734390000, 7, 3, 0)
+        e := time.add_date(1703444325734390000, 10, 2, 16)
+        f := time.add_date(1703444325734390000, 10, 14, 16)
+        g := time.add_date(1703444325734390000, 10, 14, 75)
+    query: data.test
+    want_result:
+      a: 8441261925734390000
+      b: 1861815525734390000
+      c: 1712689125734390000
+      d: 1932145125734390000
+      e: 2025802725734390000
+      f: 2057338725734390000
+      g: 2062436325734390000
+
+  - note: subtracting-mixed
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, -213, -6, -5)
+        b := time.add_date(1703444325734390000, -5, 0, -6)
+        c := time.add_date(1703444325734390000, 0, -3, -16)
+        d := time.add_date(1703444325734390000, -7, -3, 0)
+        e := time.add_date(1703444325734390000, -10, -2, -16)
+        f := time.add_date(1703444325734390000, -10, -14, -16)
+        g := time.add_date(1703444325734390000, -10, -14, -75)
+    query: data.test
+    want_result:
+      a: -5034459674265610000
+      b: 1545159525734390000
+      c: 1694199525734390000
+      d: 1474743525734390000
+      e: 1381258725734390000
+      f: 1349722725734390000
+      g: 1344625125734390000
+
+  - note: mixed-operations
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date(1703444325734390000, -213, 6, -5)
+        b := time.add_date(1703444325734390000, 5, 0, -6)
+        c := time.add_date(1703444325734390000, 0, -3, -16)
+        d := time.add_date(1703444325734390000, 8, -3, 0)
+        e := time.add_date(1703444325734390000, -10, 2, 16)
+        f := time.add_date(1703444325734390000, -10, 14, -16)
+        g := time.add_date(1703444325734390000, 10, 14, -75)
+    query: data.test
+    want_result:
+      a: -5002923674265610000
+      b: 1860778725734390000
+      c: 1694199525734390000
+      d: 1948042725734390000
+      e: 1394650725734390000
+      f: 1423421925734390000
+      g: 2049476325734390000
+
+  - note: missing-arguments
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date()
+    query: data.test
+    error: '`time.add_date` expects 4 arguments'
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.add_date("1703444325734390000", 0, 0, 0)
+    query: data.test
+    error: '`time.add_date` expects `ns` to be a `number` or `array[number, string]`. Got `"1703444325734390000"` instead'

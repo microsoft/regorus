@@ -1,0 +1,27 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: parse-rfc3339
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.parse_rfc3339_ns("1985-04-12T23:20:50.52Z")
+        b := time.parse_rfc3339_ns("1996-12-19T16:39:57-08:00")
+
+    query: data.test
+    want_result:
+      a: 482196050520000000
+      b: 851042397000000000
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.parse_rfc3339_ns(482196050520000000)
+    query: data.test
+    error: '`time.parse_rfc3339_ns` expects string argument. Got `482196050520000000` instead'

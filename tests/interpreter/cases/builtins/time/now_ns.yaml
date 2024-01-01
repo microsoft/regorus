@@ -1,0 +1,29 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: now-is-greater-than-2009
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.now_ns() > 1257894000000000000
+    query: data.test
+    want_result:
+      a: true
+
+  - note: now-is-cached
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := res {
+          first := time.now_ns()
+          second := time.now_ns()
+          res := second == first
+        }
+    query: data.test
+    want_result:
+      a: true

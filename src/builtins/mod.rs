@@ -33,6 +33,9 @@ mod utils;
 #[cfg(feature = "uuid")]
 mod uuid;
 
+#[cfg(feature = "opa-testutil")]
+mod test;
+
 use crate::ast::{Expr, Ref};
 use crate::lexer::Span;
 use crate::value::Value;
@@ -76,6 +79,7 @@ lazy_static! {
 	encoding::register(&mut m);
 	//token_signing::register(&mut m);
 	//token_verification::register(&mut m);
+	#[cfg(feature = "time")]
 	time::register(&mut m);
 
 	#[cfg(feature = "crypto")]
@@ -92,6 +96,10 @@ lazy_static! {
 	debugging::register(&mut m);
 	tracing::register(&mut m);
 	units::register(&mut m);
+
+	#[cfg(feature = "opa-testutil")]
+	test::register(&mut m);
+
 	m
     };
 }
@@ -100,6 +108,7 @@ pub fn must_cache(path: &str) -> Option<&'static str> {
     match path {
         "rand.intn" => Some("rand.intn"),
         "uuid.rfc4122" => Some("uuid.rfc4122"),
+        "time.now_ns" => Some("time.now_ns"),
         _ => None,
     }
 }
