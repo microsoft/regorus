@@ -11,3 +11,6 @@ Cargo.lock
 
 # vscode files
 .vscode/
+
+# worktrees
+worktrees/

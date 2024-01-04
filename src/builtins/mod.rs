@@ -17,14 +17,21 @@ mod encoding;
 mod glob;
 #[cfg(feature = "graph")]
 mod graph;
+#[cfg(feature = "http")]
+mod http;
+#[cfg(feature = "jwt")]
+mod jwt;
 pub mod numbers;
 mod objects;
+#[cfg(feature = "opa-runtime")]
+mod opa;
 #[cfg(feature = "regex")]
 mod regex;
 #[cfg(feature = "semver")]
 mod semver;
 pub mod sets;
 mod strings;
+#[cfg(feature = "time")]
 mod time;
 mod tracing;
 pub mod types;
@@ -77,22 +84,24 @@ lazy_static! {
 	//units::register(&mut m);
 	types::register(&mut m);
 	encoding::register(&mut m);
-	//token_signing::register(&mut m);
-	//token_verification::register(&mut m);
+	#[cfg(feature = "jwt")]
+	jwt::register(&mut m);
 	#[cfg(feature = "time")]
 	time::register(&mut m);
 
 	#[cfg(feature = "crypto")]
 	crypto::register(&mut m);
 	//graphql::register(&mut m);
-	//http::register(&mut m);
+	#[cfg(feature = "http")]
+	http::register(&mut m);
 	//net::register(&mut m);
 	#[cfg(feature = "uuid")]
 	uuid::register(&mut m);
 	#[cfg(feature = "semver")]
 	semver::register(&mut m);
 	//rego::register(&mut m);
-	//opa::register(&mut m);
+	#[cfg(feature = "opa-runtime")]
+	opa::register(&mut m);
 	debugging::register(&mut m);
 	tracing::register(&mut m);
 	units::register(&mut m);
@@ -106,9 +115,10 @@ lazy_static! {
 
 pub fn must_cache(path: &str) -> Option<&'static str> {
     match path {
+        "opa.runtime" => Some("opa.runtime"),
         "rand.intn" => Some("rand.intn"),
-        "uuid.rfc4122" => Some("uuid.rfc4122"),
         "time.now_ns" => Some("time.now_ns"),
+        "uuid.rfc4122" => Some("uuid.rfc4122"),
         _ => None,
     }
 }

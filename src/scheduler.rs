@@ -3,6 +3,7 @@
 
 use crate::ast::Expr::*;
 use crate::ast::*;
+use crate::builtins;
 use crate::lexer::*;
 use crate::utils::*;
 
@@ -555,6 +556,10 @@ impl Analyzer {
     ) -> Result<()> {
         // First process assign, some expressions and gather local vars.
         for stmt in &query.stmts {
+            for wm in &stmt.with_mods {
+                gather_input_vars(&wm.r#as, &self.scopes, scope)?;
+                gather_loop_vars(&wm.r#as, &self.scopes, scope)?;
+            }
             match &stmt.literal {
                 Literal::SomeVars { vars, .. } => vars.iter().for_each(|v| {
                     scope.locals.insert(v.source_str(), v.clone());
@@ -622,6 +627,7 @@ impl Analyzer {
     ) -> Result<(Vec<SourceStr>, Vec<Ref<Expr>>)> {
         let mut used_vars = vec![];
         let mut comprs = vec![];
+        let full_expr = expr;
         traverse(expr, &mut |e| match e.as_ref() {
             Var(v) if !matches!(v.text(), "_" | "input" | "data") => {
                 let name = v.source_str();
@@ -638,7 +644,15 @@ impl Analyzer {
                         first_use.entry(name).or_insert(v.clone());
                     }
                 } else if !scope.inputs.contains(&name) {
-                    bail!(v.error(format!("use of undefined variable `{name}` is unsafe").as_str()));
+                    match get_path_string(full_expr, None) {
+                        Ok(path)
+                            if builtins::BUILTINS.contains_key(path.as_str())
+                                || builtins::deprecated::DEPRECATED.contains_key(path.as_str()) => {
+                        }
+                        _ => bail!(v.error(
+                            format!("use of undefined variable `{name}` is unsafe").as_str()
+                        )),
+                    }
                 }
                 Ok(false)
             }
@@ -758,6 +772,7 @@ impl Analyzer {
         Ok(vars)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_assign_expr(
         &mut self,
         op: &AssignOp,
@@ -766,6 +781,8 @@ impl Analyzer {
         scope: &mut Scope,
         first_use: &mut BTreeMap<SourceStr, Span>,
         definitions: &mut Vec<Definition<SourceStr>>,
+        mut with_mods_used_vars: Vec<SourceStr>,
+        mut with_mods_comprs: Vec<Ref<Expr>>,
     ) -> Result<()> {
         let empty_str = lhs.span().source_str().clone_empty();
         match (lhs.as_ref(), rhs.as_ref()) {
@@ -790,6 +807,8 @@ impl Analyzer {
                         scope,
                         first_use,
                         definitions,
+                        with_mods_used_vars.clone(),
+                        with_mods_comprs.clone(),
                     )?;
                 }
                 return Ok(());
@@ -797,13 +816,15 @@ impl Analyzer {
             // TODO: object
             _ => {
                 {
-                    let (mut used_vars, comprs) = Self::gather_used_vars_comprs_index_vars(
+                    let (mut used_vars, mut comprs) = Self::gather_used_vars_comprs_index_vars(
                         rhs,
                         scope,
                         first_use,
                         definitions,
                         &None,
                     )?;
+                    used_vars.append(&mut with_mods_used_vars.clone());
+                    comprs.append(&mut with_mods_comprs.clone());
                     self.process_comprs(&comprs[..], scope, first_use, &mut used_vars)?;
                     let check_first_use = *op == AssignOp::ColEq;
                     let assigned_vars =
@@ -824,13 +845,15 @@ impl Analyzer {
                     }
                 }
                 {
-                    let (mut used_vars, comprs) = Self::gather_used_vars_comprs_index_vars(
+                    let (mut used_vars, mut comprs) = Self::gather_used_vars_comprs_index_vars(
                         lhs,
                         scope,
                         first_use,
                         definitions,
                         &None,
                     )?;
+                    used_vars.append(&mut with_mods_used_vars);
+                    comprs.append(&mut with_mods_comprs);
                     let check_first_use = false;
                     self.process_comprs(&comprs[..], scope, first_use, &mut used_vars)?;
                     let assigned_vars =
@@ -861,20 +884,32 @@ impl Analyzer {
         scope: &mut Scope,
         first_use: &mut BTreeMap<SourceStr, Span>,
         definitions: &mut Vec<Definition<SourceStr>>,
+        mut with_mods_used_vars: Vec<SourceStr>,
+        mut with_mods_comprs: Vec<Ref<Expr>>,
     ) -> Result<()> {
         match expr.as_ref() {
-            AssignExpr { op, lhs, rhs, .. } => {
-                self.process_assign_expr(op, lhs, rhs, scope, first_use, definitions)
-            }
+            AssignExpr { op, lhs, rhs, .. } => self.process_assign_expr(
+                op,
+                lhs,
+                rhs,
+                scope,
+                first_use,
+                definitions,
+                with_mods_used_vars,
+                with_mods_comprs,
+            ),
             _ => {
-                let (mut used_vars, comprs) = Self::gather_used_vars_comprs_index_vars(
+                let (mut used_vars, mut comprs) = Self::gather_used_vars_comprs_index_vars(
                     expr,
                     scope,
                     first_use,
                     definitions,
                     &None,
                 )?;
+                comprs.append(&mut with_mods_comprs);
+                used_vars.append(&mut with_mods_used_vars);
                 self.process_comprs(&comprs[..], scope, first_use, &mut used_vars)?;
+
                 definitions.push(Definition {
                     var: expr.span().source_str().clone_empty(),
                     used_vars,
@@ -935,6 +970,20 @@ impl Analyzer {
         let mut first_use = BTreeMap::new();
         for stmt in &query.stmts {
             let mut definitions = vec![];
+            let mut with_mods_used_vars = vec![];
+            let mut with_mods_comprs = vec![];
+            for wm in &stmt.with_mods {
+                let (mut used_vars, mut comprs) = Self::gather_used_vars_comprs_index_vars(
+                    &wm.r#as,
+                    &mut scope,
+                    &mut first_use,
+                    &mut definitions,
+                    &None,
+                )?;
+
+                with_mods_used_vars.append(&mut used_vars);
+                with_mods_comprs.append(&mut comprs);
+            }
             match &stmt.literal {
                 Literal::SomeVars { vars, .. } => {
                     for v in vars {
@@ -968,13 +1017,16 @@ impl Analyzer {
                     )?;
 
                     let mut col_definitions = vec![];
-                    let (mut col_used_vars, col_comprs) = Self::gather_used_vars_comprs_index_vars(
-                        collection,
-                        &mut scope,
-                        &mut first_use,
-                        &mut col_definitions,
-                        &None,
-                    )?;
+                    let (mut col_used_vars, mut col_comprs) =
+                        Self::gather_used_vars_comprs_index_vars(
+                            collection,
+                            &mut scope,
+                            &mut first_use,
+                            &mut col_definitions,
+                            &None,
+                        )?;
+                    col_used_vars.append(&mut with_mods_used_vars);
+                    col_comprs.append(&mut with_mods_comprs.clone());
                     definitions.append(&mut col_definitions);
 
                     self.process_comprs(
@@ -995,13 +1047,16 @@ impl Analyzer {
                     let mut used_vars = vec![];
                     for e in non_vars {
                         let mut definitions = vec![];
-                        let (uv, comprs) = Self::gather_used_vars_comprs_index_vars(
+                        let (mut uv, mut comprs) = Self::gather_used_vars_comprs_index_vars(
                             &e,
                             &mut scope,
                             &mut first_use,
                             &mut definitions,
                             &None,
                         )?;
+
+                        uv.append(&mut with_mods_used_vars.clone());
+                        comprs.append(&mut with_mods_comprs.clone());
                         if !definitions.is_empty() {
                             bail!("internal error: non empty definitions");
                         }
@@ -1035,13 +1090,15 @@ impl Analyzer {
                         }
 
                         // Gather vars being used.
-                        let (mut used_vars, comprs) = Self::gather_used_vars_comprs_index_vars(
+                        let (mut used_vars, mut comprs) = Self::gather_used_vars_comprs_index_vars(
                             expr,
                             &mut scope,
                             &mut first_use,
                             &mut definitions,
                             &Some(&extras_scope.unscoped),
                         )?;
+                        used_vars.append(&mut with_mods_used_vars);
+                        comprs.append(&mut with_mods_comprs);
 
                         self.process_comprs(
                             &comprs[..],
@@ -1064,11 +1121,25 @@ impl Analyzer {
                             });
                         }
                     } else {
-                        self.process_expr(expr, &mut scope, &mut first_use, &mut definitions)?;
+                        self.process_expr(
+                            expr,
+                            &mut scope,
+                            &mut first_use,
+                            &mut definitions,
+                            with_mods_used_vars,
+                            with_mods_comprs,
+                        )?;
                     }
                 }
                 Literal::NotExpr { expr, .. } => {
-                    self.process_expr(expr, &mut scope, &mut first_use, &mut definitions)?;
+                    self.process_expr(
+                        expr,
+                        &mut scope,
+                        &mut first_use,
+                        &mut definitions,
+                        with_mods_used_vars,
+                        with_mods_comprs,
+                    )?;
                 }
                 Literal::Every {
                     key,
@@ -1078,13 +1149,15 @@ impl Analyzer {
                     ..
                 } => {
                     // Create dependencies for vars used in domain.
-                    let (mut uv, comprs) = Self::gather_used_vars_comprs_index_vars(
+                    let (mut uv, mut comprs) = Self::gather_used_vars_comprs_index_vars(
                         domain,
                         &mut scope,
                         &mut first_use,
                         &mut definitions,
                         &None,
                     )?;
+                    uv.append(&mut with_mods_used_vars);
+                    comprs.append(&mut with_mods_comprs);
                     self.process_comprs(&comprs[..], &mut scope, &mut first_use, &mut uv)?;
                     definitions.push(Definition {
                         var: empty_str.clone(),

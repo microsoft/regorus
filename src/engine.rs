@@ -84,7 +84,6 @@ impl Engine {
             let analyzer = Analyzer::new();
             let schedule = analyzer.analyze(&self.modules)?;
 
-            self.interpreter.init_with_document()?;
             self.interpreter.set_schedule(Some(schedule));
             self.interpreter.set_modules(&self.modules);
 
@@ -93,6 +92,10 @@ impl Engine {
             // the data will be reset to init_data each time clean_internal_evaluation_state is called
             let init_data = self.interpreter.get_data_mut().clone();
             self.interpreter.set_init_data(init_data);
+
+            // Initialize the with-document with initial data values.
+            // with-modifiers will be applied to this document.
+            self.interpreter.init_with_document()?;
 
             self.interpreter
                 .set_functions(gather_functions(&self.modules)?);

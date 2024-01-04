@@ -6,6 +6,7 @@ array
 assignments
 base64builtins
 base64urlbuiltins
+baseandvirtualdocs
 bitsand
 bitsnegate
 bitsor
@@ -47,7 +48,6 @@ indexing
 indirectreferences
 inputvalues
 intersection
-invalidkeyerror
 jsonbuiltins
 jsonfilter
 jsonfilteridempotent
@@ -111,3 +111,4 @@ uuid
 varreferences
 virtualdocs
 walkbuiltin
+withkeyword

@@ -21,6 +21,19 @@ type Scope = BTreeMap<SourceStr, Value>;
 
 type DefaultRuleInfo = (Ref<Rule>, Option<String>);
 type ContextExprs = (Option<Ref<Expr>>, Option<Ref<Expr>>);
+type State = (
+    Value,
+    Value,
+    Value,
+    BTreeSet<Ref<Rule>>,
+    BTreeMap<String, FunctionModifier>,
+);
+
+#[derive(Debug, Clone)]
+enum FunctionModifier {
+    Function(String),
+    Value(Value),
+}
 
 #[derive(Clone)]
 pub struct Interpreter {
@@ -32,7 +45,7 @@ pub struct Interpreter {
     data: Value,
     init_data: Value,
     with_document: Value,
-    with_functions: BTreeMap<String, String>,
+    with_functions: BTreeMap<String, FunctionModifier>,
     scopes: Vec<Scope>,
     // TODO: handle recursive calls where same expr could have different values.
     loop_var_values: BTreeMap<ExprRef, Value>,
@@ -1162,6 +1175,127 @@ impl Interpreter {
         })
     }
 
+    fn apply_with_modifiers(&mut self, stmt: &LiteralStmt) -> Result<(Option<State>, bool)> {
+        if !stmt.with_mods.is_empty() {
+            // Save state;
+            let with_document = self.with_document.clone();
+            let input = self.input.clone();
+            let data = self.data.clone();
+            let processed = self.processed.clone();
+            let with_functions = self.with_functions.clone();
+
+            self.processed.clear();
+
+            let mut skip_exec = false;
+            // Apply with modifiers.
+            for wm in &stmt.with_mods {
+                let path = Parser::get_path_ref_components(&wm.refr)?;
+                let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+                let mut target = path.join(".");
+
+                let mut target_is_function = self.lookup_function_by_name(&target).is_some()
+                    || matches!(self.lookup_builtin(wm.refr.span(), &target), Ok(Some(_)));
+
+                if !target_is_function
+                    && !target.starts_with("data.")
+                    && !target.starts_with("input.")
+                    && target != "input"
+                {
+                    // target must be a function.
+                    if self.lookup_function_by_name(&target).is_none()
+                        && !matches!(self.lookup_builtin(wm.refr.span(), &target), Ok(Some(_)))
+                    {
+                        // Prefix target with current module path.
+                        target = self.current_module_path.clone() + "." + &target;
+                        if self.lookup_function_by_name(&target).is_none() {
+                            bail!(wm.refr.span().error("undefined rule"));
+                        }
+                        target_is_function = true;
+                    }
+                }
+
+                if target_is_function {
+                    match self.eval_expr(&wm.r#as) {
+                        Ok(v) if v != Value::Undefined => {
+                            // Function replaced by value.
+                            self.with_functions
+                                .insert(target, FunctionModifier::Value(v));
+                        }
+                        _ => {
+                            // Function replaced by another function.
+                            // Lookup by with current module path prefixed.
+                            let mut function_path =
+                                get_path_string(&wm.r#as, Some(&self.current_module_path))?;
+                            if self.lookup_function_by_name(&function_path).is_none() {
+                                // Lookup without current module path prefixed.
+                                function_path = get_path_string(&wm.r#as, None)?;
+                                if self.lookup_function_by_name(&function_path).is_none()
+                                    && !matches!(
+                                        self.lookup_builtin(wm.r#as.span(), &function_path),
+                                        Ok(Some(_))
+                                    )
+                                {
+                                    // bail!(wm.r#as.span().error("could not evaluate expression"));
+                                    skip_exec = true;
+                                }
+                            }
+                            self.with_functions
+                                .insert(target, FunctionModifier::Function(function_path));
+                        }
+                    }
+                } else {
+                    let value = self.eval_expr(&wm.r#as)?;
+                    skip_exec = value == Value::Undefined;
+                    if path[0] == "input" || path[0] == "data" {
+                        // Override existing values in case of conflict.
+                        let mut obj = &mut self.with_document;
+                        for p in &path[0..path.len()] {
+                            if !matches!(obj, Value::Object(_)) {
+                                *obj = Value::new_object();
+                            }
+
+                            obj = obj
+                                .as_object_mut()?
+                                .entry(Value::String(p.to_string().into()))
+                                .or_insert(Value::new_object());
+                        }
+                        *obj = value;
+                        // Mark modified rules as processed.
+                        if let Some(rules) = self.rules.get(&target) {
+                            for r in rules {
+                                self.processed.insert(r.clone());
+                            }
+                        }
+                    } else {
+                        bail!(wm.refr.span().error("not a valid target for with modifier"));
+                    }
+                }
+            }
+
+            self.data = self.with_document["data"].clone();
+            self.input = self.with_document["input"].clone();
+            Ok((
+                Some((with_document, input, data, processed, with_functions)),
+                skip_exec,
+            ))
+        } else {
+            Ok((None, false))
+        }
+    }
+
+    fn restore_state(&mut self, saved_state: Option<State>) -> Result<()> {
+        if let Some(s) = saved_state {
+            (
+                self.with_document,
+                self.input,
+                self.data,
+                self.processed,
+                self.with_functions,
+            ) = s;
+        }
+        Ok(())
+    }
+
     fn eval_stmt(&mut self, stmt: &LiteralStmt, stmts: &[&LiteralStmt]) -> Result<bool> {
         debug_new_group!(
             "eval_stmt {}:{} {}",
@@ -1170,94 +1304,14 @@ impl Interpreter {
             stmt.span.text()
         );
 
-        let mut skip_exec = false;
-        let saved_state = if !stmt.with_mods.is_empty() {
-            // Save state;
-            let with_document = self.with_document.clone();
-            let input = self.input.clone();
-            let data = self.data.clone();
-            let processed = self.processed.clone();
-            let with_functions = self.with_functions.clone();
-
-            // Apply with modifiers.
-            for wm in &stmt.with_mods {
-                let path = Parser::get_path_ref_components(&wm.refr)?;
-                let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
-                let target = path.join(".");
-
-                let value = match self.eval_expr(&wm.r#as) {
-                    Ok(Value::Undefined) => {
-                        if let Ok(fcn_path) = get_path_string(&wm.r#as, None) {
-                            let span = wm.r#as.span();
-                            if self.lookup_function_by_name(&fcn_path).is_some() {
-                                let mut fcn_path = get_path_string(&wm.r#as, None)?;
-                                if !fcn_path.starts_with("data.") {
-                                    fcn_path = self.current_module_path.clone() + "." + &fcn_path;
-                                }
-                                self.with_functions.insert(target, fcn_path);
-                                continue;
-                            } else if self.lookup_builtin(span, &fcn_path).is_ok() {
-                                self.with_functions.insert(target, fcn_path);
-                                continue;
-                            }
-                        }
-                        skip_exec = true;
-                        continue;
-                    }
-                    Ok(v) => v,
-                    Err(e) => return Err(e),
-                };
-
-                if path[0] == "input" || path[0] == "data" {
-                    if path.len() > 1 {
-                        let vref =
-                            Self::make_or_get_value_mut(&mut self.with_document, &path[0..1])?;
-                        match *vref {
-                            Value::Object(_) => (),
-                            _ => *vref = Value::new_object(),
-                        }
-                    }
-
-                    *Self::make_or_get_value_mut(&mut self.with_document, &path[..])? = value;
-                }
-
-                /* else if path.len() == 1 {
-                    // TODO: handle var in current module.
-                } else {
-                    // TODO: error about input, data
-                } */
-            }
-
-            self.data = self.with_document["data"].clone();
-            self.input = self.with_document["input"].clone();
-            self.processed.clear();
-            (with_document, input, data, processed, with_functions)
-        } else {
-            (
-                Value::Undefined,
-                Value::Undefined,
-                Value::Undefined,
-                BTreeSet::new(),
-                BTreeMap::new(),
-            )
-        };
-
+        let (saved_state, skip_exec) = self.apply_with_modifiers(stmt)?;
         let r = if !skip_exec {
             self.eval_stmt_impl(stmt, stmts)
         } else {
             Ok(false)
         };
 
-        // Restore state.
-        if saved_state.0 != Value::Undefined {
-            (
-                self.with_document,
-                self.input,
-                self.data,
-                self.processed,
-                self.with_functions,
-            ) = saved_state;
-        }
+        self.restore_state(saved_state)?;
 
         r
     }
@@ -1282,6 +1336,9 @@ impl Interpreter {
             let loop_expr = &loops[0];
             let mut result = false;
 
+            // Apply with modifiers before evaluating the loop expression.
+            let (saved_state, _) = self.apply_with_modifiers(stmts[0])?;
+
             let loop_expr_value = loop_expr.value();
             let loop_expr_value = if let Expr::Call { span, fcn, params } = loop_expr_value.as_ref()
             {
@@ -1302,7 +1359,11 @@ impl Interpreter {
                 self.eval_expr(&loop_expr_value)?
             };
 
-            // If the loop's index variable has already been assigned a value
+            // Restore with modifiers.
+            // TODO: Delay this restore so that the stmt doesn't have to apply with modifiers again.
+            self.restore_state(saved_state)?;
+
+            // If the loop's index variable h<as already been assigned a value
             // (this can happen if the same index is used for two different collections),
             // then evaluate statements only if the index applies to this collection.
             let loop_expr_index = loop_expr.index();
@@ -1874,9 +1935,36 @@ impl Interpreter {
             _ => bail!(span.error("invalid function expression")),
         };
 
+        let mut param_values = Vec::with_capacity(params.len());
+        let mut error = None;
+        for p in params {
+            match self.eval_expr(p) {
+                Ok(v) => param_values.push(v),
+                Err(e) => {
+                    error = Some(Err(e));
+                    break;
+                }
+            }
+        }
+
         let orig_fcn_path = fcn_path;
-        let fcn_path = match self.with_functions.remove(&orig_fcn_path) {
-            Some(p) => p,
+        let mut with_functions_saved = None;
+        let fcn_path = match self.with_functions.get(&orig_fcn_path) {
+            Some(FunctionModifier::Function(p)) => {
+                let p = p.clone();
+                with_functions_saved = Some(self.with_functions.clone());
+                self.with_functions.clear();
+                p
+            }
+            Some(FunctionModifier::Value(v)) => {
+                if param_values.iter().any(|v| v == &Value::Undefined) {
+                    return Ok(Value::Undefined);
+                }
+                if let Some(err) = error {
+                    err?;
+                };
+                return Ok(v.clone());
+            }
             _ => orig_fcn_path.clone(),
         };
 
@@ -1896,8 +1984,8 @@ impl Interpreter {
                 // Look up builtin function.
                 else if let Ok(Some(builtin)) = self.lookup_builtin(span, &fcn_path) {
                     let r = self.eval_builtin_call(span, &fcn_path.clone(), *builtin, params);
-                    if orig_fcn_path != fcn_path {
-                        self.with_functions.insert(orig_fcn_path, fcn_path);
+                    if let Some(with_functions) = with_functions_saved {
+                        self.with_functions = with_functions;
                     }
                     return r;
                 } else {
@@ -1905,19 +1993,17 @@ impl Interpreter {
                 }
             }
         };
+        if param_values.iter().any(|v| v == &Value::Undefined) {
+            if let Some(with_functions) = with_functions_saved {
+                self.with_functions = with_functions;
+            }
+            return Ok(Value::Undefined);
+        }
 
         let fcns = fcns_rules.clone();
 
         let mut results: Vec<Value> = Vec::new();
         let mut errors: Vec<anyhow::Error> = Vec::new();
-        let mut param_values = Vec::with_capacity(params.len());
-        for p in params {
-            let v = self.eval_expr(p)?;
-            if v == Value::Undefined {
-                return Ok(v);
-            }
-            param_values.push(v);
-        }
 
         'outer: for fcn_rule in fcns {
             let (args, output_expr, bodies) = match fcn_rule.as_ref() {
@@ -2000,6 +2086,8 @@ impl Interpreter {
                 // If the function successfully executed, but did not return any value, then return true.
                 Value::Set(s) if s.is_empty() && output_expr.is_none() => Value::Bool(true),
 
+                Value::Set(s) if s.is_empty() => Value::Undefined,
+
                 // If the function execution resulted in undefined, then propagate it.
                 Value::Undefined => Value::Undefined,
 
@@ -2013,6 +2101,10 @@ impl Interpreter {
             if result != Value::Undefined {
                 results.push(result);
             }
+        }
+
+        if self.strict_builtin_errors && !errors.is_empty() {
+            return Err(anyhow!(errors[0].to_string()));
         }
 
         if results.is_empty() {
@@ -2044,6 +2136,10 @@ impl Interpreter {
             self.scopes = scopes;
         }
 
+        if let Some(with_functions) = with_functions_saved {
+            self.with_functions = with_functions;
+        }
+
         if results.is_empty() {
             if errors.is_empty() {
                 return Ok(Value::Undefined);
@@ -2059,10 +2155,6 @@ impl Interpreter {
                 span.col,
                 "functions must not produce multiple outputs for same inputs",
             ));
-        }
-
-        if orig_fcn_path != fcn_path {
-            self.with_functions.insert(orig_fcn_path, fcn_path);
         }
 
         Ok(results[0].clone())
@@ -2122,6 +2214,10 @@ impl Interpreter {
 
     fn ensure_module_evaluated(&mut self, path: String) -> Result<()> {
         for module in self.modules.clone() {
+            if Some(&module) == self.module.as_ref() {
+                // Prevent cyclic evaluation.
+                continue;
+            }
             let module_path = get_path_string(&module.package.refr, Some("data"))?;
             if module_path.starts_with(&path)
                 && (module_path.len() == path.len()
@@ -2138,7 +2234,9 @@ impl Interpreter {
                 }
 
                 for rule in &module.policy {
-                    self.eval_rule(&module, rule)?;
+                    if !self.processed.contains(rule) {
+                        self.eval_rule(&module, rule)?;
+                    }
                 }
             }
         }
@@ -2165,7 +2263,6 @@ impl Interpreter {
                 }
             }
         }
-
         Ok(())
     }
 
@@ -2193,17 +2290,18 @@ impl Interpreter {
 
         // Ensure that rules are evaluated
         if name.text() == "data" {
-            let v = Self::get_value_chained(self.data.clone(), fields);
+            // With modifiers may be used to specify part of a module that that not yet been
+            // evaluated. Therefore ensure that module is evaluated first.
+            let path = "data.".to_owned() + &fields.join(".");
+            self.ensure_module_evaluated(path)?;
 
             // If the rule has already been evaluated or specified via a with modifier,
             // use that value.
+            let v = Self::get_value_chained(self.data.clone(), fields);
+
             if v != Value::Undefined {
                 debug!("returning v = {v}");
                 return Ok(v);
-            }
-
-            if fields.is_empty() {
-                bail!(span.error("this results in recursive evaluation of data."))
             }
 
             // Find the rule to which the var being looked up corresponds to. This is the prefix for
@@ -2781,7 +2879,9 @@ impl Interpreter {
 
                         self.processed.insert(rule.clone());
                     }
-                    RuleHead::Func { refr, .. } => {
+                    RuleHead::Func {
+                        refr, args, assign, ..
+                    } => {
                         let mut path =
                             Parser::get_path_ref_components(&self.current_module()?.package.refr)?;
 
@@ -2797,6 +2897,20 @@ impl Interpreter {
                                 &path[0..path.len() - 1],
                                 Value::new_object(),
                             )?;
+                        }
+
+                        if args.is_empty() {
+                            let ctx = Context {
+                                key_expr: None,
+                                output_expr: assign.as_ref().map(|a| a.value.clone()),
+                                value: Value::new_array(),
+                                result: None,
+                                results: QueryResults::default(),
+                                is_compr: false,
+                            };
+
+                            let value = self.eval_rule_bodies(ctx, span, rule_body)?;
+                            self.update_data(refr.span(), refr, &path[..], value)?;
                         }
                     }
                 }
