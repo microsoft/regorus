@@ -104,6 +104,7 @@ fn eval_test_case(case: &TestCase) -> Result<Value> {
             Value::Undefined
         });
     }
+
     let result = Value::from_array(values);
     // Make result json compatible. (E.g: avoid sets).
     Value::from_json_str(&result.to_string())
@@ -128,7 +129,7 @@ fn json_schema_tests_check(actual: &Value, expected: &Value) -> bool {
 fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
     println!("OPA TESTSUITE: {opa_tests_dir}");
     let tests_path = Path::new(&opa_tests_dir);
-    let mut status = BTreeMap::<String, (u32, u32)>::new();
+    let mut status = BTreeMap::<String, (u32, u32, u32)>::new();
     let mut n = 0;
     let mut missing_functions = BTreeMap::new();
     for entry in WalkDir::new(&opa_tests_dir)
@@ -156,7 +157,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
             continue;
         }
 
-        let entry = status.entry(path_dir_str).or_insert((0, 0));
+        let entry = status.entry(path_dir_str).or_insert((0, 0, 0));
 
         let yaml_str = std::fs::read_to_string(&path_str)?;
         let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
@@ -186,8 +187,20 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                 // Skip the test.
                 println!("skipping impossible test: {}", case.note);
                 continue;
+            } else if case.note == "refheads/general, multiple result-set entries" {
+                // The entries are specified in reverse order of how object keys would be sorted.
+                if let Some(ref mut want_result) = &mut case.want_result {
+                    want_result.as_array_mut()?.sort();
+                }
             }
 
+            // Normalize for comparison.
+            if let Some(want_result) = case.want_result {
+                case.want_result = Some(serde_json::from_str(&want_result.to_string())?);
+            }
+
+            print!("{:4}: {:90}", entry.2, case.note);
+            entry.2 += 1;
             match (eval_test_case(&case), &case.want_result) {
                 (Ok(actual), Some(expected))
                     if is_json_schema_test && json_schema_tests_check(&actual, &expected) =>
@@ -271,7 +284,8 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                     n += 1;
                     continue;
                 }
-            };
+            }
+            println!("  \x1b[32mPASSED\x1b[0m");
         }
     }
 
@@ -279,7 +293,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
     println!("    {:40}  {:4} {:4}", "FOLDER", "PASS", "FAIL");
     let (mut npass, mut nfail) = (0, 0);
     let mut passing = vec![];
-    for (dir, (pass, fail)) in status {
+    for (dir, (pass, fail, _)) in status {
         if fail == 0 {
             println!("\x1b[32m    {dir:40}: {pass:4} {fail:4}\x1b[0m");
             passing.push(dir);
@@ -296,20 +310,20 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
     if npass == 0 && nfail == 0 {
         bail!("no matching tests found.");
     } else if nfail == 0 {
-        println!("\x1b[32m    {:40}: {npass:4} {nfail:4}\x1b[0m", "TOTAL");
+        println!("\x1b[32m    {:42}: {npass:4} {nfail:4}\x1b[0m", "TOTAL");
     } else {
-        println!("\x1b[31m    {:40}: {npass:4} {nfail:4}\x1b[0m", "TOTAL");
+        println!("\x1b[31m    {:42}: {npass:4} {nfail:4}\x1b[0m", "TOTAL");
     }
 
     if !missing_functions.is_empty() {
         println!("\nMISSING FUNCTIONS");
-        println!("    {:4}  {:40} {}", "", "FUNCTION", "FAILURES");
+        println!("    {:4}  {:42} {}", "", "FUNCTION", "FAILURES");
         let mut ncalls = 0;
         for (idx, (fcn, calls)) in missing_functions.iter().enumerate() {
-            println!("\x1b[31m    {:4}: {fcn:40} {calls}\x1b[0m", idx + 1);
+            println!("\x1b[31m    {:4}: {fcn:42} {calls}\x1b[0m", idx + 1);
             ncalls += calls;
         }
-        println!("\x1b[31m    {:4}  {:40} {ncalls}\x1b[0m", "", "TOTAL");
+        println!("\x1b[31m    {:4}  {:42} {ncalls}\x1b[0m", "", "TOTAL");
     }
 
     if nfail != 0 {

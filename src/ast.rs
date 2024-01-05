@@ -327,6 +327,14 @@ pub enum Rule {
     },
 }
 
+impl Rule {
+    pub fn span(&self) -> &Span {
+        match self {
+            Self::Spec { span, .. } | Self::Default { span, .. } => span,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Package {
     pub span: Span,
