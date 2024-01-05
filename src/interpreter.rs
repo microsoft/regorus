@@ -13,7 +13,9 @@ use crate::value::*;
 use anyhow::{anyhow, bail, Result};
 use log::info;
 use serde::Serialize;
+use std::collections::btree_map::Entry as BTreeMapEntry;
 use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap};
+use std::ops::Bound::*;
 use std::rc::Rc;
 use std::str::FromStr;
 
@@ -27,6 +29,7 @@ type State = (
     Value,
     BTreeSet<Ref<Rule>>,
     BTreeMap<String, FunctionModifier>,
+    BTreeMap<Vec<Value>, (Value, Ref<Expr>)>,
 );
 
 #[derive(Debug, Clone)]
@@ -54,6 +57,7 @@ pub struct Interpreter {
     rules: HashMap<String, Vec<Ref<Rule>>>,
     default_rules: HashMap<String, Vec<DefaultRuleInfo>>,
     processed: BTreeSet<Ref<Rule>>,
+    rule_values: BTreeMap<Vec<Value>, (Value, Ref<Expr>)>,
     active_rules: Vec<Ref<Rule>>,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
@@ -112,6 +116,27 @@ struct Context {
     result: Option<QueryResult>,
     results: QueryResults,
     is_compr: bool,
+    rule_ref: Option<ExprRef>,
+    rule_value: Value,
+    is_set: bool,
+    is_old_style_set: bool,
+}
+
+impl Default for Context {
+    fn default() -> Self {
+        Self {
+            key_expr: None,
+            output_expr: None,
+            value: Value::Undefined,
+            result: None,
+            results: QueryResults::default(),
+            is_compr: false,
+            rule_ref: None,
+            rule_value: Value::new_object(),
+            is_set: false,
+            is_old_style_set: false,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -177,6 +202,7 @@ impl Interpreter {
             rules: HashMap::new(),
             default_rules: HashMap::new(),
             processed: BTreeSet::new(),
+            rule_values: BTreeMap::new(),
             active_rules: vec![],
             builtins_cache: BTreeMap::new(),
             no_rules_lookup: false,
@@ -734,12 +760,8 @@ impl Interpreter {
 
         self.scopes.push(Scope::new());
         self.contexts.push(Context {
-            key_expr: None,
-            output_expr: None,
             value: Value::new_set(),
-            result: None,
-            results: QueryResults::default(),
-            is_compr: false,
+            ..Context::default()
         });
         let mut r = true;
         match domain {
@@ -1183,8 +1205,10 @@ impl Interpreter {
             let data = self.data.clone();
             let processed = self.processed.clone();
             let with_functions = self.with_functions.clone();
+            let rule_values = self.rule_values.clone();
 
             self.processed.clear();
+            self.rule_values.clear();
 
             let mut skip_exec = false;
             // Apply with modifiers.
@@ -1275,7 +1299,14 @@ impl Interpreter {
             self.data = self.with_document["data"].clone();
             self.input = self.with_document["input"].clone();
             Ok((
-                Some((with_document, input, data, processed, with_functions)),
+                Some((
+                    with_document,
+                    input,
+                    data,
+                    processed,
+                    with_functions,
+                    rule_values,
+                )),
                 skip_exec,
             ))
         } else {
@@ -1291,6 +1322,7 @@ impl Interpreter {
                 self.data,
                 self.processed,
                 self.with_functions,
+                self.rule_values,
             ) = s;
         }
         Ok(())
@@ -1472,9 +1504,159 @@ impl Interpreter {
         }
     }
 
+    fn eval_rule_ref(&mut self, refr: &ExprRef) -> Result<Vec<Value>> {
+        let mut comps = vec![];
+        let mut expr = refr;
+        loop {
+            match expr.as_ref() {
+                Expr::Var(v) => {
+                    comps.push(Value::String(v.text().into()));
+                    break;
+                }
+                Expr::RefBrack { refr, index, .. } => {
+                    comps.push(self.eval_expr(index)?);
+                    expr = refr;
+                }
+                Expr::RefDot { refr, field, .. } => {
+                    comps.push(Value::String(field.text().into()));
+                    expr = refr;
+                }
+                _ => {
+                    bail!(expr.span().error("not a valid rule ref"));
+                }
+            }
+        }
+        comps.reverse();
+        Ok(comps)
+    }
+
+    fn update_rule_value(
+        &mut self,
+        span: &Span,
+        path: Vec<Value>,
+        mut value: Value,
+        is_set: bool,
+    ) -> Result<()> {
+        // If rule's value already exists in initial document, prefer it.
+        {
+            let mut init_obj = &self.init_data;
+            for p in path.iter() {
+                init_obj = &init_obj[p];
+            }
+
+            if init_obj != &Value::Undefined {
+                return Ok(());
+            }
+        }
+
+        let mut obj = &mut self.data;
+        let len = path.len();
+        for (idx, p) in path.into_iter().enumerate() {
+            if idx == len - 1 {
+                // last key.
+                if is_set {
+                    let set = obj
+                        .as_object_mut()
+                        .map_err(|_| anyhow!(span.error("previous value is not an object")))?
+                        .entry(p)
+                        .or_insert(Value::new_set())
+                        .as_set_mut()
+                        .map_err(|_| anyhow!(span.error("previous value is not a set")))?;
+                    set.append(value.as_set_mut()?);
+                } else {
+                    let obj = obj
+                        .as_object_mut()
+                        .map_err(|_| anyhow!(span.error("previous value is not an object")))?;
+                    match obj.entry(p) {
+                        BTreeMapEntry::Vacant(v) => {
+                            if value != Value::Undefined {
+                                v.insert(value);
+                            } else {
+                                // TODO: clean this assumption between Undefined vs Object.
+                                v.insert(Value::new_object());
+                            }
+                        }
+                        BTreeMapEntry::Occupied(o) => {
+                            if o.get() != &value && value != Value::Undefined {
+                                bail!(span
+                                    .error("complete rules should not produce multiple outputs"))
+                            }
+                        }
+                    }
+                }
+                break;
+            } else {
+                obj = obj
+                    .as_object_mut()
+                    .map_err(|_| anyhow!(span.error("previous value is not an object")))?
+                    .entry(p)
+                    .or_insert(Value::new_object());
+            }
+        }
+        Ok(())
+    }
+
     fn eval_output_expr_in_loop(&mut self, loops: &[LoopExpr]) -> Result<bool> {
         if loops.is_empty() {
             let (key_expr, output_expr) = self.get_exprs_from_context()?;
+
+            let ctx = self.get_current_context()?;
+            let (is_set, is_old_style_set) = (ctx.is_set, ctx.is_old_style_set);
+            if let Some(rule_ref) = ctx.rule_ref.clone() {
+                let mut comps = self.eval_rule_ref(&rule_ref)?;
+                if let Some(ke) = &key_expr {
+                    comps.push(self.eval_expr(ke)?);
+                }
+                let output = if let Some(oe) = &output_expr {
+                    self.eval_expr(oe)?
+                } else if is_old_style_set && !comps.is_empty() {
+                    let output = comps[comps.len() - 1].clone();
+                    comps.pop();
+                    output
+                } else {
+                    Value::Bool(true)
+                };
+
+                let comps_defined = comps.iter().all(|v| v != &Value::Undefined);
+                let ctx = self.contexts.last_mut().expect("no current context");
+
+                if output == Value::Undefined || !comps_defined {
+                    return Ok(false);
+                }
+
+                if is_set {
+                    // Ensure that set rule is created even if the element is undefined.
+                    let set = ctx
+                        .rule_value
+                        .as_object_mut()?
+                        .entry(Value::from_array(comps))
+                        .or_insert(Value::new_set());
+                    if output != Value::Undefined {
+                        set.as_set_mut()?.insert(output);
+                        return Ok(true);
+                    }
+                    return Ok(false);
+                }
+
+                // Non-set rule.
+                match ctx
+                    .rule_value
+                    .as_object_mut()?
+                    .entry(Value::from_array(comps))
+                {
+                    BTreeMapEntry::Vacant(v) => {
+                        v.insert(output);
+                    }
+                    BTreeMapEntry::Occupied(o) if o.get() != &output => bail!(rule_ref
+                        .span()
+                        .error("rules must not produce multiple outputs")),
+                    _ => {
+                        // Rule produced same value.
+                    }
+                }
+
+                return Ok(true);
+            }
 
             match (key_expr, output_expr) {
                 (Some(ke), Some(oe)) => {
@@ -1788,12 +1970,10 @@ impl Interpreter {
     fn eval_array_compr(&mut self, term: &ExprRef, query: &Ref<Query>) -> Result<Value> {
         // Push new context
         self.contexts.push(Context {
-            key_expr: None,
             output_expr: Some(term.clone()),
             value: Value::new_array(),
-            result: None,
-            results: QueryResults::default(),
             is_compr: true,
+            ..Context::default()
         });
 
         // Evaluate body first.
@@ -1808,12 +1988,10 @@ impl Interpreter {
     fn eval_set_compr(&mut self, term: &ExprRef, query: &Ref<Query>) -> Result<Value> {
         // Push new context
         self.contexts.push(Context {
-            key_expr: None,
             output_expr: Some(term.clone()),
             value: Value::new_set(),
-            result: None,
-            results: QueryResults::default(),
             is_compr: true,
+            ..Context::default()
         });
 
         self.eval_query(query)?;
@@ -1835,9 +2013,8 @@ impl Interpreter {
             key_expr: Some(key.clone()),
             output_expr: Some(value.clone()),
             value: Value::new_object(),
-            result: None,
-            results: QueryResults::default(),
             is_compr: true,
+            ..Context::default()
         });
 
         self.eval_query(query)?;
@@ -2056,12 +2233,9 @@ impl Interpreter {
             }
 
             let ctx = Context {
-                key_expr: None,
                 output_expr: output_expr.clone(),
                 value: Value::new_set(),
-                result: None,
-                results: QueryResults::default(),
-                is_compr: false,
+                ..Context::default()
             };
 
             let value = match self.eval_rule_bodies(ctx, span, bodies) {
@@ -2453,29 +2627,28 @@ impl Interpreter {
                 };
 
                 Parser::get_path_ref_components_into(refr, &mut path)?;
-
                 Ok((
                     Context {
                         key_expr,
                         output_expr,
                         value,
-                        result: None,
-                        results: QueryResults::default(),
-                        is_compr: false,
+                        rule_ref: Some(refr.clone()),
+                        ..Context::default()
                     },
                     path,
                 ))
             }
             RuleHead::Set { refr, key, .. } => {
                 Parser::get_path_ref_components_into(refr, &mut path)?;
+                let is_old_style_set = key.is_none();
                 Ok((
                     Context {
-                        key_expr: None,
                         output_expr: key.clone(),
                         value: Value::new_set(),
-                        result: None,
-                        results: QueryResults::default(),
-                        is_compr: false,
+                        rule_ref: Some(refr.clone()),
+                        is_set: true,
+                        is_old_style_set,
+                        ..Context::default()
                     },
                     path,
                 ))
@@ -2512,12 +2685,10 @@ impl Interpreter {
                     self.contexts.pop();
                     let output_expr = body.assign.as_ref().map(|e| e.value.clone());
                     self.contexts.push(Context {
-                        key_expr: None,
                         output_expr,
-                        value: Value::new_array(),
-                        result: None,
-                        results: QueryResults::default(),
-                        is_compr: false,
+                        //                        value: Value::new_array(),
+                        //                        ..Context::default()
+                        ..ctx.clone()
                     });
                 }
                 result = self.eval_query(&body.query);
@@ -2540,6 +2711,14 @@ impl Interpreter {
         };
 
         assert_eq!(self.scopes.len(), n_scopes);
+
+        if ctx.rule_ref.is_some() {
+            if result {
+                return Ok(ctx.rule_value);
+            } else {
+                return Ok(Value::Undefined);
+            }
+        }
 
         Ok(match result {
             true => match &ctx.value {
@@ -2741,6 +2920,7 @@ impl Interpreter {
 
             let (refr, index) = match refr.as_ref() {
                 Expr::RefBrack { refr, index, .. } => (refr, Some(index.clone())),
+                Expr::RefDot { .. } => (refr, None),
                 Expr::Var(_) => (refr, None),
                 _ => bail!(refr.span().error(&format!(
                     "invalid token {:?} with the default keyword",
@@ -2806,6 +2986,42 @@ impl Interpreter {
         }
     }
 
+    fn check_rule_path(
+        &mut self,
+        refr: &ExprRef,
+        path: &[Value],
+        value: &Value,
+        is_set: bool,
+    ) -> Result<()> {
+        // TODO: can copying of path be avoided below?
+        let range = self.rule_values.range((Unbounded, Included(path.to_vec())));
+
+        // Check whether any rules evaluated so far is a parent of given rule.
+        let mut conflict = None;
+        for (k, (v, r)) in range.rev() {
+            if path.starts_with(k) {
+                if k == path && (is_set || v == value) {
+                    // rule evaluated to same value again.
+                } else {
+                    conflict = Some((v, r));
+                }
+            } else {
+                break;
+            }
+        }
+
+        if let Some((_, r)) = conflict {
+            bail!(refr.span().error(&format!(
+                "rule conflicts with the following rule:\n{}",
+                r.span().message("", "defined here")
+            )));
+        }
+        self.rule_values
+            .insert(path.to_vec(), (value.clone(), refr.clone()));
+
+        Ok(())
+    }
+
     pub fn eval_rule(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
         // Skip reprocessing rule
         if self.processed.contains(rule) {
@@ -2851,32 +3067,41 @@ impl Interpreter {
             } => {
                 match rule_head {
                     RuleHead::Compr { refr, .. } | RuleHead::Set { refr, .. } => {
-                        let (ctx, mut path) = self.make_rule_context(rule_head)?;
-                        let special_set =
-                            matches!((&ctx.output_expr, &ctx.value), (None, Value::Set(_)));
-                        let value = match self.eval_rule_bodies(ctx, span, rule_body)? {
-                            Value::Set(_) if special_set => {
-                                let entry = path[path.len() - 1].text();
-                                let mut s = BTreeSet::new();
-                                s.insert(Value::String(entry.to_string().into()));
-                                path = path[0..path.len() - 1].to_vec();
-                                Value::from_set(s)
+                        let (ctx, _) = self.make_rule_context(rule_head)?;
+                        let is_set = ctx.is_set;
+                        let is_object = ctx.key_expr.is_some() && !is_set;
+
+                        let value = self.eval_rule_bodies(ctx, span, rule_body)?;
+                        let package_components = self.eval_rule_ref(&module.package.refr)?;
+
+                        if value != Value::Undefined {
+                            for (path, value) in value.as_object()? {
+                                let mut full_path = package_components.clone();
+                                full_path.append(&mut path.as_array()?.clone());
+                                self.check_rule_path(refr, &full_path, value, is_set)?;
+                                self.update_rule_value(span, full_path, value.clone(), is_set)?;
                             }
-                            v => v,
-                        };
-
-                        let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
-
-                        if let RuleHead::Set { .. } = &rule_head {
-                            // Ensure that sets are created as empty.
-                            let vref = Self::make_or_get_value_mut(&mut self.data, &paths)?;
-                            if *vref == Value::Undefined {
-                                *vref = Value::new_set();
+                        } else if is_set {
+                            if let Ok(mut comps) = self.eval_rule_ref(refr) {
+                                let mut full_path = package_components;
+                                full_path.append(&mut comps);
+                                self.update_rule_value(span, full_path, Value::new_set(), true)?;
+                            }
+                        } else if is_object {
+                            // Fetch the rule, ignoring the key.
+                            if let Expr::RefBrack { refr, .. } = refr.as_ref() {
+                                if let Ok(mut comps) = self.eval_rule_ref(refr) {
+                                    let mut full_path = package_components;
+                                    full_path.append(&mut comps);
+                                    self.update_rule_value(
+                                        span,
+                                        full_path,
+                                        Value::Undefined,
+                                        false,
+                                    )?;
+                                }
                             }
                         }
-
-                        self.update_data(span, refr, &paths[..], value)?;
-
                         self.processed.insert(rule.clone());
                     }
                     RuleHead::Func {
@@ -2901,12 +3126,9 @@ impl Interpreter {
 
                         if args.is_empty() {
                             let ctx = Context {
-                                key_expr: None,
                                 output_expr: assign.as_ref().map(|a| a.value.clone()),
                                 value: Value::new_array(),
-                                result: None,
-                                results: QueryResults::default(),
-                                is_compr: false,
+                                ..Context::default()
                             };
 
                             let value = self.eval_rule_bodies(ctx, span, rule_body)?;
@@ -2946,13 +3168,10 @@ impl Interpreter {
 
         // Push new context.
         self.contexts.push(Context {
-            key_expr: None,
-            output_expr: None,
             value: Value::new_set(),
             // Request that results be gathered.
             result: Some(QueryResult::default()),
-            results: QueryResults::default(),
-            is_compr: false,
+            ..Context::default()
         });
 
         let prev_module = self.set_current_module(Some(module.clone()))?;
@@ -3021,6 +3240,8 @@ impl Interpreter {
                 Expr::RefBrack { refr, index, .. } => {
                     if let Expr::String(s) = index.as_ref() {
                         components.push(s.text().into());
+                    } else {
+                        components.clear();
                     }
                     refr
                 }

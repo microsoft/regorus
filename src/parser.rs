@@ -1112,27 +1112,6 @@ impl<'source> Parser<'source> {
         Ok(refr)
     }
 
-    fn check_rule_ref(&self, mut refr: &Expr) -> Result<()> {
-        // Only the last term can be non-string
-        loop {
-            refr = match refr {
-                Expr::RefDot { refr, .. } => refr,
-                Expr::RefBrack { span, refr, index } => {
-                    if !matches!(index.as_ref(), Expr::String(_)) {
-                        return Err(self.source.error(
-                            span.line,
-                            span.col,
-                            "only the final ref term can be non-string",
-                        ));
-                    }
-                    refr
-                }
-                Expr::Var(_) => return Ok(()),
-                _ => bail!("internal error: not a valid ref"),
-            };
-        }
-    }
-
     fn parse_rule_ref(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let span = self.tok.1.clone();
@@ -1209,7 +1188,6 @@ impl<'source> Parser<'source> {
         let rule_ref = Ref::new(self.parse_rule_ref()?);
         match self.token_text() {
             "(" => {
-                self.check_rule_ref(&rule_ref)?;
                 self.next_token()?;
                 let mut args = vec![];
                 if self.token_text() != ")" {
@@ -1235,7 +1213,6 @@ impl<'source> Parser<'source> {
                 })
             }
             "contains" => {
-                self.check_rule_ref(&rule_ref)?;
                 self.next_token()?;
                 let key = Ref::new(self.parse_membership_expr()?);
                 span.end = self.end;
@@ -1248,13 +1225,6 @@ impl<'source> Parser<'source> {
             _ => {
                 let assign = self.parse_rule_assign()?;
                 span.end = self.end;
-
-                // Ensure that only the last term can be non-string.
-                match rule_ref.as_ref() {
-                    Expr::RefBrack { refr, .. } => self.check_rule_ref(refr)?,
-                    Expr::RefDot { refr, .. } => self.check_rule_ref(refr)?,
-                    _ => (),
-                }
 
                 // Determine whether to create a set or a compr
                 let is_set_follower = !self.is_keyword(self.token_text())
