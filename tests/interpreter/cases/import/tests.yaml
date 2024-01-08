@@ -1,0 +1,73 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: import input
+    input:
+      a: 10
+    modules:
+      - |      
+        package a
+        import input as foo
+        b = foo
+      - |
+        package b
+        import input.a
+        import input.a as A
+
+        c = a
+        d = A
+    query: data
+    want_result:
+      a:
+        b:
+          a: 10
+      b:
+        c: 10
+        d: 10
+  - note: import data, cross ref
+    modules:
+      - |
+        package a
+        import data.b.a
+        b = a + 1
+        
+      - |
+        package b
+        # Both the following imports are overridden by rules
+        #import data.a.b as a
+        #import data.a.b
+
+        import data.a.b as C
+        import data.a.b
+
+        a = 10
+        c = C + b
+    query: data
+    want_result:
+      a:
+        b: 11
+      b:
+        a: 10
+        c: 22
+        
+  - note: import overridden by rule
+    modules:
+      - |
+        package a
+        a = 10
+      - |
+        package b
+        import data.a.a
+
+        a = 20
+    query: data.b.a
+    want_result: 20
+        
+  - note: invalid import ref
+    modules:
+      - |
+        package a
+        import foo
+    query: data
+    error: "import path must begin with one of"
