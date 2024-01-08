@@ -64,6 +64,7 @@ pub struct Interpreter {
     traces: Option<Vec<std::rc::Rc<str>>>,
     allow_deprecated: bool,
     strict_builtin_errors: bool,
+    imports: BTreeMap<String, Ref<Expr>>,
 }
 
 impl Default for Interpreter {
@@ -209,6 +210,7 @@ impl Interpreter {
             traces: None,
             allow_deprecated: true,
             strict_builtin_errors: true,
+            imports: BTreeMap::default(),
         }
     }
 
@@ -2437,13 +2439,14 @@ impl Interpreter {
                 }
             }
         }
+
         Ok(())
     }
 
     fn lookup_var(&mut self, span: &Span, fields: &[&str], no_error: bool) -> Result<Value> {
         let name = span.source_str();
-
         debug_new_group!("lookup_var: name={name}, fields={fields:?}, no_error={no_error}");
+
         // Return local variable/argument.
         if let Some(v) = self.lookup_local_var(&name) {
             return Ok(Self::get_value_chained(v, fields));
@@ -2516,6 +2519,7 @@ impl Interpreter {
             if !no_error
                 && self.rules.get(&rule_path).is_none()
                 && self.default_rules.get(&rule_path).is_none()
+                && self.imports.get(&rule_path).is_none()
             {
                 bail!(span.error("var is unsafe"));
             }
@@ -2538,8 +2542,14 @@ impl Interpreter {
                 }
             }
 
-            // TODO: Is found needed?
-            let _ = found;
+            if !found {
+                if let Some(imported_var) = self.imports.get(&rule_path).cloned() {
+                    return Ok(Self::get_value_chained(
+                        self.eval_expr(&imported_var)?,
+                        fields,
+                    ));
+                }
+            }
 
             let value = Self::get_value_chained(self.data.clone(), &path[..]);
             Ok(Self::get_value_chained(value, fields))
@@ -3320,6 +3330,31 @@ impl Interpreter {
             }
         }
 
+        Ok(())
+    }
+
+    pub fn process_imports(&mut self) -> Result<()> {
+        for module in &self.modules {
+            let module_path = get_path_string(&module.package.refr, Some("data"))?;
+            for import in &module.imports {
+                let target = match &import.r#as {
+                    Some(s) => s.text(),
+                    _ => match import.refr.as_ref() {
+                        Expr::RefDot { field, .. } => field.text(),
+                        Expr::RefBrack { index, .. } => match index.as_ref() {
+                            Expr::String(s) => s.text(),
+                            _ => "",
+                        },
+                        _ => "",
+                    },
+                };
+                if target.is_empty() {
+                    bail!(import.refr.span().error("invalid ref in import"));
+                }
+                self.imports
+                    .insert(module_path.clone() + "." + target, import.refr.clone());
+            }
+        }
         Ok(())
     }
 

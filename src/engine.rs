@@ -100,6 +100,7 @@ impl Engine {
             self.interpreter
                 .set_functions(gather_functions(&self.modules)?);
             self.interpreter.gather_rules()?;
+            self.interpreter.process_imports()?;
             self.prepared = true;
         }
 
