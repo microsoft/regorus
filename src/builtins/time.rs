@@ -17,7 +17,7 @@ use chrono::{
 };
 use chrono_tz::Tz;
 
-mod compat;
+pub(in crate::builtins) mod compat;
 mod diff;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
