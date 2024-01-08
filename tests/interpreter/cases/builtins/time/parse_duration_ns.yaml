@@ -1,0 +1,47 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: simple
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.parse_duration_ns("1h")
+        b := time.parse_duration_ns("5m")
+        c := time.parse_duration_ns("45s")
+        d := time.parse_duration_ns("15ms")
+    query: data.test
+    want_result:
+      a: 3600000000000
+      b: 300000000000
+      c: 45000000000
+      d: 15000000
+
+  - note: complex
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.parse_duration_ns("1h6m13.3s20ms15µs1ns")
+        b := time.parse_duration_ns("1.2h20.2ms15µs56ns")
+        c := time.parse_duration_ns("45.67s123ms")
+        d := time.parse_duration_ns("15.000001ms")
+    query: data.test
+    want_result:
+      a: 3973320015001
+      b: 4320020215056
+      c: 45793000000
+      d: 15000001
+
+  - note: invalid-type
+    data: {}
+    modules:
+      - |
+        package test
+
+        a := time.parse_duration_ns(100)
+    query: data.test
+    error: '`time.parse_duration_ns` expects string argument. Got `100` instead'

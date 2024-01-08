@@ -17,6 +17,7 @@ use chrono::{
 };
 use chrono_tz::Tz;
 
+mod compat;
 mod diff;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
@@ -26,6 +27,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("time.diff", (diff, 2));
     m.insert("time.format", (format, 1));
     m.insert("time.now_ns", (now_ns, 0));
+    m.insert("time.parse_duration_ns", (parse_duration_ns, 1));
     m.insert("time.parse_ns", (parse_ns, 2));
     m.insert("time.parse_rfc3339_ns", (parse_rfc3339_ns, 1));
     m.insert("time.weekday", (weekday, 1));
@@ -134,6 +136,20 @@ fn now_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Re
     ensure_args_count(span, name, params, args, 0)?;
 
     safe_timestamp_nanos(span, strict, Utc::now().timestamp_nanos_opt())
+}
+
+fn parse_duration_ns(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    strict: bool,
+) -> Result<Value> {
+    let name = "time.parse_duration_ns";
+    ensure_args_count(span, name, params, args, 1)?;
+
+    let value = ensure_string(name, &params[0], &args[0])?;
+    let dur = compat::parse_duration(value.as_ref())?;
+    safe_timestamp_nanos(span, strict, dur.num_nanoseconds())
 }
 
 fn parse_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
