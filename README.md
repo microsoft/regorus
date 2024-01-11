@@ -8,10 +8,8 @@
 Regorus is available as a library that can be easily integrated into your Rust projects.
 
 
-> **Warning**
-> While Regorus is highly performant and can interpret complex Rego policies, it does not yet pass the full [OPA test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite).
-> We are actively working to achieve full OPA compliance. Meanwhile, Regorus should be considered
-> **experimental and used with discretion**.
+Regorus passes the [OPA v0.60.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few builtins.
+See [OPA Conformance][#opa-conformance] below.
 
 ## Getting Started
 
@@ -118,6 +116,60 @@ Compare it with OPA
       Time (mean ± σ):      45.2 ms ±   0.6 ms    [User: 68.8 ms, System: 5.1 ms]
       Range (min … max):    43.8 ms …  46.7 ms    62 runs
 
+
+## OPA Conformance
+
+Regorus has been verified to be compliant with [OPA v0.60.0](https://github.com/open-policy-agent/opa/releases/tag/v0.60.0) 
+using a [test driver](tests/opa.rs) that loads and runs the OPA testsuite using Regorus, and verifies that expected outputs
+are produced.
+
+The test driver can be invoked by running:
+
+```
+cargo test -r --test opa
+```
+
+Currently, Regorus passes all the non-builtin specific tests. See [passing tests suites](tests/opa.passing).
+
+The following test suites don't pass fully due to mising builtins:
+- `cryptoparsersaprivatekeys`
+- `cryptox509parseandverifycertificates`
+- `cryptox509parsecertificaterequest`
+- `cryptox509parsecertificates`
+- `cryptox509parsekeypair`
+- `cryptox509parsersaprivatekey`
+- `globsmatch`
+- `graphql`
+- `invalidkeyerror`
+- `jsonpatch`
+- `jwtbuiltins`
+- `jwtdecodeverify`
+- `jwtencodesign`
+- `jwtencodesignraw`
+- `jwtverifyhs256`
+- `jwtverifyhs384`
+- `jwtverifyhs512`
+- `jwtverifyrsa`
+- `netcidrcontains`
+- `netcidrcontainsmatches`
+- `netcidrexpand`
+- `netcidrintersects`
+- `netcidrisvalid`
+- `netcidrmerge`
+- `netcidroverlap`
+- `netlookupipaddr`
+- `providers-aws`
+- `regometadatachain`
+- `regometadatarule`
+- `regoparsemodule`
+- `rendertemplate`
+- `time`
+
+They are captured in the following [github issues](https://github.com/microsoft/regorus/issues?q=is%3Aopen+is%3Aissue+label%3Alib).
+
+### Grammar
+
+The grammar used by Regorus to parse Rego policies is described in [grammar.md](docs/grammar.md) in both EBNF and RailRoad Diagram formats.
 
 ## Contributing
 
