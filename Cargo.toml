@@ -1,7 +1,11 @@
 [package]
 name = "regorus"
+description = "A fast, lightweight Rego (OPA policy language) interpreter"
 version = "0.1.0"
 edition = "2021"
+license-file = "LICENSE"
+repository = "https://github.com/microsoft/regorus"
+keywords = ["interpreter", "opa", "policy-as-code", "rego", "confidential-computing"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
