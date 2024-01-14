@@ -473,3 +473,14 @@ impl Number {
             .unwrap_or("".to_string())
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::number::*;
+
+    #[test]
+    fn display_number() {
+        let n = Number::from(123456f64);
+        assert_eq!(format!("{}", n.format_decimal()), "123456");
+    }
+}

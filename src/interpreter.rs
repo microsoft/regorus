@@ -226,10 +226,6 @@ impl Interpreter {
         self.modules = modules.to_vec();
     }
 
-    pub fn get_modules_mut(&mut self) -> &mut Vec<Ref<Module>> {
-        &mut self.modules
-    }
-
     pub fn set_init_data(&mut self, init_data: Value) {
         self.init_data = init_data;
     }

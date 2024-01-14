@@ -67,12 +67,6 @@ fn serialize_number() -> Result<()> {
 }
 
 #[test]
-fn display_number() {
-    let n = Number::from(123456f64);
-    assert_eq!(format!("{}", n.format_decimal()), "123456");
-}
-
-#[test]
 fn serialize_string() -> Result<()> {
     assert_eq!(
         Value::String("Hello, World\n".into()).to_json_str()?,

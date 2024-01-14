@@ -1,9 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use crate::{ast::*, lexer::*, parser::*, scheduler::*};
 use anyhow::{bail, Result};
-use regorus::scheduler::*;
-use regorus::*;
 use serde::{Deserialize, Serialize};
 use test_generator::test_resources;
 
@@ -49,7 +48,7 @@ fn analyze_file(regos: &[String], expected_scopes: &[Scope]) -> Result<()> {
 
     let analyzer = Analyzer::new();
     let schedule = analyzer.analyze(&modules)?;
-    let mut scopes: Vec<(Ref<Query>, &regorus::Scope)> = schedule
+    let mut scopes: Vec<(Ref<Query>, &crate::scheduler::Scope)> = schedule
         .scopes
         .iter()
         .map(|(r, s)| (r.clone(), s))

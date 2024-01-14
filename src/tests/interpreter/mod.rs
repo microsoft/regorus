@@ -3,8 +3,9 @@
 
 use std::env;
 
+use crate::*;
+
 use anyhow::{bail, Result};
-use regorus::*;
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use test_generator::test_resources;
 
@@ -140,7 +141,7 @@ pub fn eval_file(
     enable_tracing: bool,
     strict: bool,
 ) -> Result<Vec<Value>> {
-    let mut engine: Engine = engine::Engine::new();
+    let mut engine: Engine = Engine::new();
     engine.set_strict_builtin_errors(strict);
 
     let mut results = vec![];
