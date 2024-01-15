@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use anyhow::{bail, Result};
-use regorus::*;
+use regorus::unstable::*;
 use serde::{Deserialize, Serialize};
 use test_generator::test_resources;
 

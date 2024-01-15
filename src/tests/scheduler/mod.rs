@@ -1,9 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use crate::scheduler::*;
 use anyhow::{bail, Result};
-
-use regorus::scheduler::*;
 
 mod analyzer;
 

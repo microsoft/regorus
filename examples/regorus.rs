@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 use anyhow::{bail, Result};
-use clap::{Parser, Subcommand};
 
 fn rego_eval(
     bundles: &[String],
@@ -75,16 +74,18 @@ fn rego_eval(
 }
 
 fn rego_lex(file: String, verbose: bool) -> Result<()> {
+    use regorus::unstable::*;
+
     // Create source.
-    let source = regorus::Source::from_file(file)?;
+    let source = Source::from_file(file)?;
 
     // Create lexer.
-    let mut lexer = regorus::Lexer::new(&source);
+    let mut lexer = Lexer::new(&source);
 
     // Read tokens until EOF.
     loop {
         let token = lexer.next_token()?;
-        if token.0 == regorus::TokenKind::Eof {
+        if token.0 == TokenKind::Eof {
             break;
         }
 
@@ -100,18 +101,20 @@ fn rego_lex(file: String, verbose: bool) -> Result<()> {
 }
 
 fn rego_parse(file: String) -> Result<()> {
+    use regorus::unstable::*;
+
     // Create source.
-    let source = regorus::Source::from_file(file)?;
+    let source = Source::from_file(file)?;
 
     // Create a parser and parse the source.
-    let mut parser = regorus::Parser::new(&source)?;
+    let mut parser = Parser::new(&source)?;
     let ast = parser.parse()?;
     println!("{ast:#?}");
 
     Ok(())
 }
 
-#[derive(Subcommand)]
+#[derive(clap::Subcommand)]
 enum RegorusCommand {
     /// Evaluate a Rego Query.
     Eval {
@@ -164,6 +167,7 @@ struct Cli {
 }
 
 fn main() -> Result<()> {
+    use clap::Parser;
     env_logger::builder()
         .format_level(false)
         .format_timestamp(None)

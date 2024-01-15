@@ -36,6 +36,7 @@ pub enum SortResult {
     // The order in which statements must be executed.
     Order(Vec<u16>),
     // List of statements comprising a cycle for a given var.
+    #[allow(unused)]
     Cycle(String, Vec<usize>),
 }
 
