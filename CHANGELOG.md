@@ -6,14 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0](https://github.com/microsoft/regorus/releases/tag/v0.1.0) - 2024-01-12
+## [0.1.0-alpha.1](https://github.com/microsoft/regorus/releases/tag/v0.1.0-alpha.1) - 2024-01-15
 
 ### Fixed
 - fix bitwise.and and add tests ([#19](https://github.com/microsoft/regorus/pull/19))
 
 ### Other
-- Add Release-plz GitHub workflow file
-- Update `Cargo.toml`
+- Change version to `0.1.0-alpha.1`
+- Add crate documentation ([#106](https://github.com/microsoft/regorus/pull/106))
+- Release preparation ([#105](https://github.com/microsoft/regorus/pull/105))
 - Update READEME.md with current status, grammar etc. ([#102](https://github.com/microsoft/regorus/pull/102))
 - Implement builtin `time.parse_duration_ns` method ([#100](https://github.com/microsoft/regorus/pull/100))
 - Implement import keyword ([#101](https://github.com/microsoft/regorus/pull/101))
