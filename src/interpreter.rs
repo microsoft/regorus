@@ -9,10 +9,10 @@ use crate::parser::Parser;
 use crate::scheduler::*;
 use crate::utils::*;
 use crate::value::*;
+use crate::{Expression, Location, QueryResult, QueryResults};
 
 use anyhow::{anyhow, bail, Result};
 use log::info;
-use serde::Serialize;
 use std::collections::btree_map::Entry as BTreeMapEntry;
 use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap};
 use std::ops::Bound::*;
@@ -71,42 +71,6 @@ impl Default for Interpreter {
     fn default() -> Self {
         Self::new()
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Location {
-    pub row: u16,
-    pub col: u16,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Expression {
-    pub value: Value,
-    pub text: Rc<str>,
-    pub location: Location,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct QueryResult {
-    // Expressions is shown first to match OPA.
-    pub expressions: Vec<Expression>,
-    #[serde(skip_serializing_if = "Value::is_empty_object")]
-    pub bindings: Value,
-}
-
-impl Default for QueryResult {
-    fn default() -> Self {
-        Self {
-            bindings: Value::new_object(),
-            expressions: vec![],
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct QueryResults {
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub result: Vec<QueryResult>,
 }
 
 #[derive(Debug, Clone)]
