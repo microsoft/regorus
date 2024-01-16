@@ -2,10 +2,13 @@
 
 **Regorus** is
 
-  - *Rego*-*Rus(t)*  - A fast, light-weight [Rego](https://www.openpolicyagent.org/docs/latest/policy-language/) interpreter written in Rust.
+  - *Rego*-*Rus(t)*  - A fast, light-weight [Rego](https://www.openpolicyagent.org/docs/latest/policy-language/)
+   interpreter written in Rust.
   - *Rigorous* - A rigorous enforcer of well-defined Rego semantics.
 
 Regorus is available as a library that can be easily integrated into your Rust projects.
+
+Here is an example of evaluating a simple Rego policy:
 
 ```rust
 use anyhow::Result;
@@ -36,12 +39,13 @@ fn main() -> Result<()> {
 }
 ```
 
-Regorus passes the [OPA v0.60.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few builtins.
-See [OPA Conformance](#opa-conformance) below.
+Regorus passes the [OPA v0.60.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
+builtins. See [OPA Conformance](#opa-conformance) below.
 
 ## Getting Started
 
-[examples/regorus](https://github.com/microsoft/regorus/blob/main/examples/regorus.rs) is an example program that shows how to integrate Regorus into your project and evaluate Rego policies.
+[examples/regorus](https://github.com/microsoft/regorus/blob/main/examples/regorus.rs) is an example program that
+shows how to integrate Regorus into your project and evaluate Rego policies.
 
 To build and install it, do
 
@@ -94,7 +98,8 @@ This produces the following output
 }
 ```
 
-Next, evaluate a sample [policy](examples/example.rego) and [input](examples/input.json) (borrowed from [Rego tutorial](https://www.openpolicyagent.org/docs/latest/#2-try-opa-eval)):
+Next, evaluate a sample [policy](examples/example.rego) and [input](examples/input.json)
+(borrowed from [Rego tutorial](https://www.openpolicyagent.org/docs/latest/#2-try-opa-eval)):
 
 ```bash
 $ regorus eval -d examples/example.rego -i examples/input.json data.example
@@ -178,7 +183,8 @@ The test driver can be invoked by running:
 $ cargo test -r --test opa
 ```
 
-Currently, Regorus passes all the non-builtin specific tests. See [passing tests suites](https://github.com/microsoft/regorus/blob/main/tests/opa.passing).
+Currently, Regorus passes all the non-builtin specific tests.
+See [passing tests suites](https://github.com/microsoft/regorus/blob/main/tests/opa.passing).
 
 The following test suites don't pass fully due to mising builtins:
 - `cryptoparsersaprivatekeys`
@@ -219,7 +225,8 @@ They are captured in the following [github issues](https://github.com/microsoft/
 
 ### Grammar
 
-The grammar used by Regorus to parse Rego policies is described in [grammar.md](https://github.com/microsoft/regorus/blob/main/docs/grammar.md) in both [W3C EBNF](https://www.w3.org/Notation.html) and [RailRoad Diagram](https://en.wikipedia.org/wiki/Syntax_diagram) formats.
+The grammar used by Regorus to parse Rego policies is described in [grammar.md](https://github.com/microsoft/regorus/blob/main/docs/grammar.md)
+in both [W3C EBNF](https://www.w3.org/Notation.html) and [RailRoad Diagram](https://en.wikipedia.org/wiki/Syntax_diagram) formats.
 
 ## Contributing
 

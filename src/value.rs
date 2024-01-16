@@ -238,6 +238,24 @@ impl Value {
     }
 }
 
+impl From<bool> for Value {
+    fn from(b: bool) -> Self {
+        Value::Bool(b)
+    }
+}
+
+impl From<String> for Value {
+    fn from(s: String) -> Self {
+        Value::String(s.into())
+    }
+}
+
+impl From<&str> for Value {
+    fn from(s: &str) -> Self {
+        Value::String(s.into())
+    }
+}
+
 impl From<u128> for Value {
     fn from(n: u128) -> Self {
         Value::Number(Number::from(n))

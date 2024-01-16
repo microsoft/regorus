@@ -8,12 +8,14 @@ use crate::parser::*;
 use crate::scheduler::*;
 use crate::utils::gather_functions;
 use crate::value::*;
+use crate::QueryResults;
 
 use std::convert::AsRef;
 use std::path::Path;
 
 use anyhow::Result;
 
+/// The Rego evaluation engine.
 #[derive(Clone)]
 pub struct Engine {
     modules: Vec<Ref<Module>>,
@@ -21,6 +23,7 @@ pub struct Engine {
     prepared: bool,
 }
 
+/// Create a default engine.
 impl Default for Engine {
     fn default() -> Self {
         Self::new()
