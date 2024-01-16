@@ -15,7 +15,7 @@ fn non_string_key() -> Result<()> {
     obj.as_object_mut()?
         .insert(Value::from(std::f64::consts::PI), Value::Null);
     obj.as_object_mut()?.insert(
-        Value::from_array(vec![
+        Value::from(vec![
             Value::Bool(true),
             Value::Null,
             Value::from(std::f64::consts::PI),
@@ -115,14 +115,14 @@ fn value_as_index() -> Result<()> {
 fn string_as_index() -> Result<()> {
     let obj = Value::from_json_str(r#"{ "a" : 5, "b" : 6 }"#)?;
     assert_eq!(&obj["a"], &Value::from(5.0));
-    assert_eq!(&obj[&"b".to_owned()], &Value::from(6.0));
+    assert_eq!(&obj["b".to_owned()], &Value::from(6.0));
     Ok(())
 }
 
 #[test]
 fn usize_as_index() -> Result<()> {
-    assert_eq!(&Value::from_json_str("[1, 2, 3]")?[0], &Value::from(1.0));
-    assert_eq!(&Value::from_json_str("[1, 2, 3]")?[5], &Value::Undefined);
+    assert_eq!(&Value::from_json_str("[1, 2, 3]")?[0u64], &Value::from(1.0));
+    assert_eq!(&Value::from_json_str("[1, 2, 3]")?[5u64], &Value::Undefined);
     Ok(())
 }
 
@@ -134,9 +134,6 @@ fn api() -> Result<()> {
         .insert(Value::String("a".into()), Value::from(3.145));
     assert_eq!(v["a"], Value::from(3.145));
     assert_eq!(v.as_object()?.len(), 1);
-
-    // Null
-    assert!(Value::Null.is_null());
 
     let v = Value::new_set();
     assert_eq!(v.as_set()?.len(), 0);

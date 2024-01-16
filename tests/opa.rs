@@ -84,7 +84,7 @@ fn eval_test_case(case: &TestCase) -> Result<Value> {
 
     let mut values = vec![];
     for qr in query_results.result {
-        values.push(if !qr.bindings.is_empty_object() {
+        values.push(if !qr.bindings.as_object()?.is_empty() {
             if case.sort_bindings == Some(true) {
                 let mut v = qr.bindings.clone();
                 let bindings = v.as_object_mut()?;
@@ -105,15 +105,15 @@ fn eval_test_case(case: &TestCase) -> Result<Value> {
         });
     }
 
-    let result = Value::from_array(values);
+    let result = Value::from(values);
     // Make result json compatible. (E.g: avoid sets).
     Value::from_json_str(&result.to_string())
 }
 
 fn json_schema_tests_check(actual: &Value, expected: &Value) -> bool {
     // Fetch `x` binding.
-    let actual = &actual[0][&Value::String("x".into())];
-    let expected = &expected[0][&Value::String("x".into())];
+    let actual = &actual[0]["x"];
+    let expected = &expected[0]["x"];
 
     match (actual, expected) {
         (Value::Array(actual), Value::Array(expected))

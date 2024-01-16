@@ -3,7 +3,6 @@
 
 use crate::ast::Expr::*;
 use crate::ast::*;
-use crate::builtins;
 use crate::lexer::*;
 use crate::utils::*;
 
@@ -629,6 +628,7 @@ impl Analyzer {
         let mut used_vars = vec![];
         let mut comprs = vec![];
         let full_expr = expr;
+        std::convert::identity(&full_expr);
         traverse(expr, &mut |e| match e.as_ref() {
             Var(v) if !matches!(v.text(), "_" | "input" | "data") => {
                 let name = v.source_str();
@@ -645,15 +645,18 @@ impl Analyzer {
                         first_use.entry(name).or_insert(v.clone());
                     }
                 } else if !scope.inputs.contains(&name) {
-                    match get_path_string(full_expr, None) {
-                        Ok(path)
-                            if builtins::BUILTINS.contains_key(path.as_str())
-                                || builtins::deprecated::DEPRECATED.contains_key(path.as_str()) => {
+                    #[cfg(feature = "deprecated")]
+                    {
+                        if let Ok(path) = get_path_string(full_expr, None) {
+                            if crate::builtins::BUILTINS.contains_key(path.as_str())
+                                || crate::builtins::deprecated::DEPRECATED
+                                    .contains_key(path.as_str())
+                            {
+                                return Ok(false);
+                            }
                         }
-                        _ => bail!(v.error(
-                            format!("use of undefined variable `{name}` is unsafe").as_str()
-                        )),
                     }
+                    bail!(v.error(format!("use of undefined variable `{name}` is unsafe").as_str()));
                 }
                 Ok(false)
             }

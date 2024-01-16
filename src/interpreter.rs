@@ -235,6 +235,7 @@ impl Interpreter {
         self.loop_var_values.clear();
         self.scopes = vec![Scope::new()];
         self.contexts = vec![];
+        self.rule_values.clear();
     }
 
     fn current_module(&self) -> Result<Ref<Module>> {
@@ -347,7 +348,7 @@ impl Interpreter {
                             && get_root_var(refr)?.text() == "data"
                         {
                             let index = index.to_string();
-                            v = obj[&index].clone();
+                            v = obj[index].clone();
                         }
                         return Ok(Self::get_value_chained(v, &path[..]));
                     }
@@ -1310,6 +1311,13 @@ impl Interpreter {
         r
     }
 
+    fn clear_scope(scope: &mut Scope) {
+        // Set each value to undefined. This is equivalent to removing the key.
+        for (_, v) in scope.iter_mut() {
+            *v = Value::Undefined;
+        }
+    }
+
     fn eval_stmts_in_loop(&mut self, stmts: &[&LiteralStmt], loops: &[LoopExpr]) -> Result<bool> {
         if loops.is_empty() {
             if !stmts.is_empty() {
@@ -1373,9 +1381,8 @@ impl Interpreter {
                 }
             }
 
-            // Save the current scope and restore it after evaluating the statements so
-            // that the effects of the current loop iteration are cleared.
-            let scope_saved = self.current_scope()?.clone();
+            // Create a new scope.
+            self.scopes.push(Scope::default());
 
             let query_result = self.get_current_context()?.result.clone();
             match loop_expr_value {
@@ -1401,12 +1408,13 @@ impl Interpreter {
                             result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         }
 
-                        self.loop_var_values.remove(&loop_expr.expr());
-                        *self.current_scope_mut()? = scope_saved.clone();
+                        Self::clear_scope(self.current_scope_mut()?);
                         if let Some(ctx) = self.contexts.last_mut() {
                             ctx.result = query_result.clone();
                         }
                     }
+
+                    self.loop_var_values.remove(&loop_expr.expr());
                 }
                 Value::Set(items) => {
                     for v in items.iter() {
@@ -1424,12 +1432,12 @@ impl Interpreter {
                             result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         }
 
-                        self.loop_var_values.remove(&loop_expr.expr());
-                        *self.current_scope_mut()? = scope_saved.clone();
+                        Self::clear_scope(self.current_scope_mut()?);
                         if let Some(ctx) = self.contexts.last_mut() {
                             ctx.result = query_result.clone();
                         }
                     }
+                    self.loop_var_values.remove(&loop_expr.expr());
                 }
                 Value::Object(obj) => {
                     for (k, v) in obj.iter() {
@@ -1445,12 +1453,13 @@ impl Interpreter {
                         if exec {
                             result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         }
-                        self.loop_var_values.remove(&loop_expr.expr());
-                        *self.current_scope_mut()? = scope_saved.clone();
+
+                        Self::clear_scope(self.current_scope_mut()?);
                         if let Some(ctx) = self.contexts.last_mut() {
                             ctx.result = query_result.clone();
                         }
                     }
+                    self.loop_var_values.remove(&loop_expr.expr());
                 }
                 Value::Undefined => {
                     result = false;
@@ -1460,6 +1469,8 @@ impl Interpreter {
                     result = false;
                 }
             }
+
+            self.scopes.pop();
 
             // Return true if at least on iteration returned true
             Ok(result)
@@ -1692,7 +1703,7 @@ impl Interpreter {
                 if result
                     .expressions
                     .iter()
-                    .all(|v| v.value != Value::Undefined)
+                    .all(|v| v.value != Value::Undefined && v.value != Value::Bool(false))
                     && !result.expressions.is_empty()
                 {
                     ctx.results.result.push(result);
@@ -1811,7 +1822,7 @@ impl Interpreter {
                 if result
                     .expressions
                     .iter()
-                    .all(|v| v.value != Value::Undefined)
+                    .all(|v| v.value != Value::Undefined && v.value != Value::Bool(false))
                     && !result.expressions.is_empty()
                 {
                     ctx.results.result.push(result);
@@ -2027,10 +2038,12 @@ impl Interpreter {
 
         // Handle trace function.
         // TODO: with modifier.
-        if let (Some(traces), Value::String(msg)) = (&mut self.traces, &v) {
-            traces.push(msg.clone());
-            return Ok(Value::Bool(true));
-        };
+        if name == "trace" {
+            if let (Some(traces), Value::String(msg)) = (&mut self.traces, &v) {
+                traces.push(msg.clone());
+                return Ok(Value::Bool(true));
+            }
+        }
 
         if let Some(name) = cache {
             self.builtins_cache.insert((name, args), v.clone());
@@ -2374,6 +2387,14 @@ impl Interpreter {
                         self.eval_rule(&module, rule)?;
                     }
                 }
+
+                let prev_module = self.set_current_module(Some(module.clone()))?;
+                for rule in &module.policy {
+                    if !self.processed.contains(rule) {
+                        self.eval_default_rule(rule)?;
+                    }
+                }
+                self.set_current_module(prev_module)?;
             }
         }
         Ok(())
@@ -3186,7 +3207,7 @@ impl Interpreter {
         self.set_current_module(prev_module)?;
 
         if let Some(r) = results.result.last() {
-            if r.bindings.is_empty_object()
+            if matches!(&r.bindings, Value::Object(obj) if obj.is_empty())
                 && r.expressions.iter().any(|e| e.value == Value::Bool(false))
             {
                 results = QueryResults::default();

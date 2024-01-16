@@ -45,7 +45,7 @@ fn eval_test_case(dir: &Path, case: &TestCase) -> Result<Value> {
 
     let mut values = vec![];
     for qr in query_results.result {
-        values.push(if !qr.bindings.is_empty_object() {
+        values.push(if !qr.bindings.as_object()?.is_empty() {
             qr.bindings.clone()
         } else if let Some(v) = qr.expressions.last() {
             v.value.clone()
@@ -53,7 +53,7 @@ fn eval_test_case(dir: &Path, case: &TestCase) -> Result<Value> {
             Value::Undefined
         });
     }
-    let result = Value::from_array(values);
+    let result = Value::from(values);
     // Make result json compatible. (E.g: avoid sets).
     Value::from_json_str(&result.to_string())
 }

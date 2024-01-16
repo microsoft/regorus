@@ -139,7 +139,7 @@ pub struct Expression {
 /// # }
 /// ```
 ///
-/// If any expression evaluates to false, then no results are produces.
+/// If any expression evaluates to false, then no results are produced.
 /// ```
 /// # use regorus::*;
 /// # fn main() -> anyhow::Result<()> {
@@ -172,13 +172,96 @@ impl Default for QueryResult {
     }
 }
 
+/// Results of evaluating a Rego query.
+///
+/// Generates the same `json` representation as `opa eval`.
+///
+/// Queries typically produce a single result.
+/// ```
+/// # use regorus::*;
+/// # fn main() -> anyhow::Result<()> {
+/// // Create engine and evaluate "true; true; false".
+/// let results = Engine::new().eval_query("1 + 1".to_string(), false)?;
+///
+/// assert!(results.result.len() == 1);
+/// assert_eq!(results.result[0].expressions[0].value, Value::from(2u64));
+/// assert_eq!(results.result[0].expressions[0].text.as_ref(), "1 + 1");
+/// # Ok(())
+/// # }
+/// ```
+///
+/// If any expression evaluates to false, then no results are produced.
+/// ```
+/// # use regorus::*;
+/// # fn main() -> anyhow::Result<()> {
+/// // Create engine and evaluate "true; true; false".
+/// let results = Engine::new().eval_query("true; true; false".to_string(), false)?;
+///
+/// assert!(results.result.is_empty());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// Queries containing loops produce multiple results.
+/// ```
+/// # use regorus::*;
+/// # fn main() -> anyhow::Result<()> {
+/// let results = Engine::new().eval_query("x = [1, 2, 3][_]".to_string(), false)?;
+///
+/// // Three results are produced, one of each value of x.
+/// assert_eq!(results.result.len(), 3);
+///
+/// // Assert expressions and bindings of results.
+/// assert_eq!(results.result[0].expressions[0].value, Value::Bool(true));
+/// assert_eq!(results.result[0].expressions[0].text.as_ref(), "x = [1, 2, 3][_]");
+/// assert_eq!(results.result[0].bindings[&Value::from("x")], Value::from(1u64));
+///
+/// assert_eq!(results.result[1].expressions[0].value, Value::Bool(true));
+/// assert_eq!(results.result[1].expressions[0].text.as_ref(), "x = [1, 2, 3][_]");
+/// assert_eq!(results.result[1].bindings[&Value::from("x")], Value::from(2u64));
+///
+/// assert_eq!(results.result[2].expressions[0].value, Value::Bool(true));
+/// assert_eq!(results.result[2].expressions[0].text.as_ref(), "x = [1, 2, 3][_]");
+/// assert_eq!(results.result[2].bindings[&Value::from("x")], Value::from(3u64));
+/// # Ok(())
+/// # }
+/// ```
+///
+/// Loop iterations that evaluate to false or undefined don't produce results.
+/// ```
+/// # use regorus::*;
+/// # fn main() -> anyhow::Result<()> {
+/// let results = Engine::new().eval_query("x = [1, 2, 3][_]; x >= 2".to_string(), false)?;
+///
+/// // Two results are produced, one for x = 2 and another for x = 3.
+/// assert_eq!(results.result.len(), 2);
+///
+/// // Assert expressions and bindings of results.
+/// assert_eq!(results.result[0].expressions[0].value, Value::Bool(true));
+/// assert_eq!(results.result[0].expressions[0].text.as_ref(), "x = [1, 2, 3][_]");
+/// assert_eq!(results.result[0].expressions[0].value, Value::Bool(true));
+/// assert_eq!(results.result[0].expressions[1].text.as_ref(), "x >= 2");
+/// assert_eq!(results.result[0].bindings[&Value::from("x")], Value::from(2u64));
+///
+/// assert_eq!(results.result[1].expressions[0].value, Value::Bool(true));
+/// assert_eq!(results.result[1].expressions[0].text.as_ref(), "x = [1, 2, 3][_]");
+/// assert_eq!(results.result[1].expressions[0].value, Value::Bool(true));
+/// assert_eq!(results.result[1].expressions[1].text.as_ref(), "x >= 2");
+/// assert_eq!(results.result[1].bindings[&Value::from("x")], Value::from(3u64));
+/// # Ok(())
+/// # }
+/// ```
+///
+/// See [QueryResult] for examples of different kinds of results.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct QueryResults {
+    /// Collection of results of evaluting a query.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub result: Vec<QueryResult>,
 }
 
 /// Items in `unstable` are likely to change.
+#[doc(hidden)]
 pub mod unstable {
     pub use crate::ast::*;
     pub use crate::lexer::*;

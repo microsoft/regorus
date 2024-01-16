@@ -16,6 +16,7 @@ use std::path::Path;
 use anyhow::Result;
 
 /// The Rego evaluation engine.
+///
 #[derive(Clone)]
 pub struct Engine {
     modules: Vec<Ref<Module>>,
@@ -31,6 +32,7 @@ impl Default for Engine {
 }
 
 impl Engine {
+    /// Create an instance of [Engine].
     pub fn new() -> Self {
         Self {
             modules: vec![],
@@ -39,6 +41,29 @@ impl Engine {
         }
     }
 
+    /// Add a policy.
+    ///
+    /// The policy file will be parsed and converted to AST representation.
+    /// Multiple policy files may be added to the engine.
+    ///
+    /// * `path`: A filename to be associated with the policy.
+    /// * `rego`: The rego policy code.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// engine.add_policy(
+    ///    "test.rego".to_string(),
+    ///    r#"
+    ///    package test
+    ///    allow = input.user == "root"
+    ///    "#.to_string())?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
     pub fn add_policy(&mut self, path: String, rego: String) -> Result<()> {
         let source = Source::new(path, rego);
         let mut parser = Parser::new(&source)?;
@@ -48,6 +73,22 @@ impl Engine {
         Ok(())
     }
 
+    /// Add a policy from a given file.
+    ///
+    /// The policy file will be parsed and converted to AST representation.
+    /// Multiple policy files may be added to the engine.
+    ///
+    /// * `path`: Path to the policy file (.rego).
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// engine.add_policy_from_file("tests/aci/framework.rego")?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn add_policy_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         let source = Source::from_file(path)?;
         let mut parser = Parser::new(&source)?;
@@ -56,28 +97,163 @@ impl Engine {
         Ok(())
     }
 
+    /// Set the input document.
+    ///
+    /// * `input`: Input documented. Typically this [Value] is constructed from JSON or YAML.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// let input = Value::from_json_str(r#"
+    /// {
+    ///   "role" : "admin",
+    ///   "action": "delete"
+    /// }"#)?;
+    ///
+    /// engine.set_input(input);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn set_input(&mut self, input: Value) {
         self.interpreter.set_input(input);
     }
 
+    /// Clear the data document.
+    ///
+    /// The data document will be reset to an empty object.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// engine.clear_data();
+    ///
+    /// // Evaluate data.
+    /// let results = engine.eval_query("data".to_string(), false)?;
+    ///
+    /// // Assert that it is empty object.
+    /// assert_eq!(results.result.len(), 1);
+    /// assert_eq!(results.result[0].expressions.len(), 1);
+    /// assert_eq!(results.result[0].expressions[0].value, Value::new_object());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn clear_data(&mut self) {
         self.interpreter.set_data(Value::new_object());
         self.prepared = false;
     }
 
+    /// Add data document.
+    ///
+    /// The specified data document is merged into existing data document.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// // Only objects can be added.
+    /// assert!(engine.add_data(Value::from_json_str("[]")?).is_err());
+    ///
+    /// // Merge { "x" : 1, "y" : {} }
+    /// assert!(engine.add_data(Value::from_json_str(r#"{ "x" : 1, "y" : {}}"#)?).is_ok());
+    ///
+    /// // Merge { "z" : 2 }
+    /// assert!(engine.add_data(Value::from_json_str(r#"{ "z" : 2 }"#)?).is_ok());
+    ///
+    /// // Merge { "z" : 3 }. Conflict error.
+    /// assert!(engine.add_data(Value::from_json_str(r#"{ "z" : 3 }"#)?).is_err());
+    ///
+    /// assert_eq!(
+    ///   engine.eval_query("data".to_string(), false)?.result[0].expressions[0].value,
+    ///   Value::from_json_str(r#"{ "x": 1, "y": {}, "z": 2}"#)?
+    /// );
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn add_data(&mut self, data: Value) -> Result<()> {
         self.prepared = false;
         self.interpreter.get_data_mut().merge(data)
     }
 
-    pub fn get_modules(&mut self) -> &Vec<Ref<Module>> {
-        &self.modules
-    }
-
+    /// Set whether builtins should raise errors strictly or not.
+    ///
+    /// Regorus differs from OPA in that by default builtins will
+    /// raise errors instead of returning Undefined.
+    ///
+    /// ----
+    /// **_NOTE:_** Currently not all builtins honor this flag and will always strictly raise errors.
+    /// ----
     pub fn set_strict_builtin_errors(&mut self, b: bool) {
         self.interpreter.set_strict_builtin_errors(b)
     }
 
+    #[doc(hidden)]
+    pub fn get_modules(&mut self) -> &Vec<Ref<Module>> {
+        &self.modules
+    }
+
+    /// Evaluate a Rego query.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// // Add policies
+    /// engine.add_policy_from_file("tests/aci/framework.rego")?;
+    /// engine.add_policy_from_file("tests/aci/api.rego")?;
+    /// engine.add_policy_from_file("tests/aci/policy.rego")?;
+    ///
+    /// // Add data document (if any).
+    /// // If multiple data documents can be added, they will be merged together.
+    /// engine.add_data(Value::from_json_file("tests/aci/data.json")?)?;
+    ///
+    /// // At this point the policies and data have been loaded.
+    /// // Either the same engine can be used to make multiple queries or the engine
+    /// // can be cloned to avoid having the reload the policies and data.
+    /// let _clone = engine.clone();
+    ///
+    /// // Evaluate a query.
+    /// // Load input and make query.
+    /// engine.set_input(Value::new_object());
+    /// let results = engine.eval_query("data.framework.mount_overlay.allowed".to_string(), false)?;
+    /// assert!(results.result.is_empty());
+    ///
+    /// // Evaluate query with different inputs.
+    /// engine.set_input(Value::from_json_file("tests/aci/input.json")?);
+    /// let results = engine.eval_query("data.framework.mount_overlay.allowed".to_string(), false)?;
+    /// assert_eq!(results.result[0].expressions[0].value, Value::from(true));
+    /// # Ok(())
+    /// # }
+    pub fn eval_query(&mut self, query: String, enable_tracing: bool) -> Result<QueryResults> {
+        self.eval_modules(enable_tracing)?;
+
+        let query_module = {
+            let source = Source::new(
+                "<query_module.rego>".to_owned(),
+                "package __internal_query_module".to_owned(),
+            );
+            Ref::new(Parser::new(&source)?.parse()?)
+        };
+
+        // Parse the query.
+        let query_source = Source::new("<query.rego>".to_string(), query);
+        let mut parser = Parser::new(&query_source)?;
+        let query_node = parser.parse_user_query()?;
+        let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
+        self.interpreter.eval_user_query(
+            &query_module,
+            &query_node,
+            &query_schedule,
+            enable_tracing,
+        )
+    }
+
+    #[doc(hidden)]
     fn prepare_for_eval(&mut self, enable_tracing: bool) -> Result<()> {
         self.interpreter.set_traces(enable_tracing);
 
@@ -110,6 +286,7 @@ impl Engine {
         Ok(())
     }
 
+    #[doc(hidden)]
     pub fn eval_rule(
         &mut self,
         module: &Ref<Module>,
@@ -124,6 +301,7 @@ impl Engine {
         Ok(self.interpreter.get_data_mut().clone())
     }
 
+    #[doc(hidden)]
     pub fn eval_modules(&mut self, enable_tracing: bool) -> Result<Value> {
         self.prepare_for_eval(enable_tracing)?;
         self.interpreter.clean_internal_evaluation_state();
@@ -166,31 +344,5 @@ impl Engine {
         }
         self.interpreter.create_rule_prefixes()?;
         Ok(self.interpreter.get_data_mut().clone())
-    }
-
-    pub fn eval_query(&mut self, query: String, enable_tracing: bool) -> Result<QueryResults> {
-        self.eval_modules(false)?;
-
-        let query_module = {
-            let source = Source::new(
-                "<query_module.rego>".to_owned(),
-                "package __internal_query_module".to_owned(),
-            );
-            Ref::new(Parser::new(&source)?.parse()?)
-        };
-
-        // Parse the query.
-        let query_source = Source::new("<query.rego>".to_string(), query);
-        let mut parser = Parser::new(&query_source)?;
-        let query_node = parser.parse_user_query()?;
-        let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
-
-        let results = self.interpreter.eval_user_query(
-            &query_module,
-            &query_node,
-            &query_schedule,
-            enable_tracing,
-        )?;
-        Ok(results)
     }
 }
