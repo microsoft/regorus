@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2](https://github.com/microsoft/regorus/compare/v0.1.0-alpha.1...v0.1.0-alpha.2) - 2024-01-19
+
+### Other
+- Improve crate documentation ([#111](https://github.com/microsoft/regorus/pull/111))
+- Try out manual trigger for release-plz ([#110](https://github.com/microsoft/regorus/pull/110))
+- - Document Location, Expression, QueryResult ([#109](https://github.com/microsoft/regorus/pull/109))
+
 ## [0.1.0-alpha.1](https://github.com/microsoft/regorus/releases/tag/v0.1.0-alpha.1) - 2024-01-15
 
 ### Fixed
