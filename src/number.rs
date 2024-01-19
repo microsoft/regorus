@@ -132,6 +132,26 @@ impl From<f64> for Number {
 }
 
 impl Number {
+    pub fn as_u128(&self) -> Option<u128> {
+        match self {
+            Big(b) if b.is_integer() => match u128::try_from(&b.d) {
+                Ok(v) => Some(v),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_i128(&self) -> Option<i128> {
+        match self {
+            Big(b) if b.is_integer() => match i128::try_from(&b.d) {
+                Ok(v) => Some(v),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Big(b) if b.is_integer() => match u64::try_from(&b.d) {

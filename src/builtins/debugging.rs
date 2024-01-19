@@ -28,11 +28,14 @@ fn print(span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     let mut msg = String::default();
     for a in args {
         match a {
-            Value::Undefined => msg += "<undefined>",
-            _ => msg += format!("{a}").as_str(),
+            Value::Undefined => msg += " <undefined>",
+            Value::String(s) => msg += &format!(" {s}"),
+            _ => msg += &format!(" {a}"),
         };
     }
 
-    span.message("print", msg.as_str());
+    if !msg.is_empty() {
+        println!("{}", &msg[1..]);
+    }
     Ok(Value::Bool(true))
 }

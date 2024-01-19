@@ -3,14 +3,16 @@
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
+#[allow(unused)]
 use crate::builtins::utils::{
     ensure_args_count, ensure_object, ensure_string, ensure_string_collection,
 };
 use crate::lexer::Span;
 use crate::value::Value;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
+#[allow(unused)]
 use anyhow::{anyhow, bail, Context, Result};
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
@@ -41,11 +43,6 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("json.is_valid", (json_is_valid, 1));
     m.insert("json.marshal", (json_marshal, 1));
     m.insert("json.unmarshal", (json_unmarshal, 1));
-    #[cfg(feature = "jsonschema")]
-    {
-        m.insert("json.match_schema", (json_match_schema, 2));
-        m.insert("json.verify_schema", (json_verify_schema, 1));
-    }
 
     #[cfg(feature = "yaml")]
     {
@@ -240,7 +237,7 @@ fn urlquery_decode_object(
         Err(_) => bail!(params[0].span().error("not a valid url query")),
     };
 
-    let mut map = BTreeMap::new();
+    let mut map = std::collections::BTreeMap::new();
     for (k, v) in url.query_pairs() {
         let key = Value::String(k.clone().into());
         let value = Value::String(v.clone().into());
@@ -381,73 +378,4 @@ fn json_unmarshal(
     ensure_args_count(span, name, params, args, 1)?;
     let json_str = ensure_string(name, &params[0], &args[0])?;
     Value::from_json_str(&json_str).with_context(|| span.error("could not deserialize json."))
-}
-
-#[cfg(feature = "jsonschema")]
-fn compile_json_schema(param: &Ref<Expr>, arg: &Value) -> Result<jsonschema::JSONSchema> {
-    let schema_str = match arg {
-        Value::String(schema_str) => schema_str.as_ref().to_string(),
-        _ => arg.to_json_str()?,
-    };
-
-    if let Ok(schema) = serde_json::from_str(&schema_str) {
-        match jsonschema::JSONSchema::compile(&schema) {
-            Ok(schema) => return Ok(schema),
-            Err(e) => bail!(e.to_string()),
-        }
-    }
-    bail!(param.span().error("not a valid json schema"))
-}
-
-#[cfg(feature = "jsonschema")]
-fn json_verify_schema(
-    span: &Span,
-    params: &[Ref<Expr>],
-    args: &[Value],
-    strict: bool,
-) -> Result<Value> {
-    let name = "json.verify_schema";
-    ensure_args_count(span, name, params, args, 1)?;
-
-    Ok(Value::from_array(
-        match compile_json_schema(&params[0], &args[0]) {
-            Ok(_) => [Value::Bool(true), Value::Null],
-            Err(e) if strict => bail!(params[0]
-                .span()
-                .error(format!("invalid schema: {e}").as_str())),
-            Err(e) => [Value::Bool(false), Value::String(e.to_string().into())],
-        }
-        .to_vec(),
-    ))
-}
-
-#[cfg(feature = "jsonschema")]
-fn json_match_schema(
-    span: &Span,
-    params: &[Ref<Expr>],
-    args: &[Value],
-    strict: bool,
-) -> Result<Value> {
-    let name = "json.match_schema";
-    ensure_args_count(span, name, params, args, 2)?;
-
-    // The following is expected to succeed.
-    let document: serde_json::Value = serde_json::from_str(&args[0].to_json_str()?)?;
-
-    Ok(Value::from_array(
-        match compile_json_schema(&params[1], &args[1]) {
-            Ok(schema) => match schema.validate(&document) {
-                Ok(_) => [Value::Bool(true), Value::Null],
-                Err(e) => [
-                    Value::Bool(false),
-                    Value::from_array(e.map(|e| Value::String(e.to_string().into())).collect()),
-                ],
-            },
-            Err(e) if strict => bail!(params[1]
-                .span()
-                .error(format!("invalid schema: {e}").as_str())),
-            Err(e) => [Value::Bool(false), Value::String(e.to_string().into())],
-        }
-        .to_vec(),
-    ))
 }
