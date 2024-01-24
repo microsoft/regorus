@@ -65,7 +65,8 @@ builtins. See [OPA Conformance](#opa-conformance) below.
 
 Regorus can be used from a variety of languages:
 
-- Javascript (nodejs): Via npm package `regorus-wasm`. This package is Regorus compiled into WASM.
+- Javascript: Via npm package `regorusjs`. This package is Regorus compiled into WASM.
+- Python: Via `regorus` package.
 
 ## Getting Started
 

@@ -13,7 +13,7 @@ use crate::QueryResults;
 use std::convert::AsRef;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 /// The Rego evaluation engine.
 ///
@@ -175,6 +175,9 @@ impl Engine {
     /// # }
     /// ```
     pub fn add_data(&mut self, data: Value) -> Result<()> {
+        if data.as_object().is_err() {
+            bail!("data must be object");
+        }
         self.prepared = false;
         self.interpreter.get_data_mut().merge(data)
     }
