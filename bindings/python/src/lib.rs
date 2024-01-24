@@ -7,12 +7,12 @@ use pyo3::types::*;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use regorus::Value;
+use ::regorus::Value;
 
-/// Python wrapper for [`regorus::Engine`]
+/// Regorus engine.
 #[pyclass(unsendable)]
 pub struct Engine {
-    engine: regorus::Engine,
+    engine: ::regorus::Engine,
 }
 
 impl Default for Engine {
@@ -171,7 +171,7 @@ impl Engine {
     #[new]
     pub fn new() -> Self {
         Self {
-            engine: regorus::Engine::new(),
+            engine: ::regorus::Engine::new(),
         }
     }
 
@@ -199,7 +199,7 @@ impl Engine {
     ///
     /// * `data`: JSON encoded value to be used as policy data.
     pub fn add_data_json(&mut self, data: String) -> Result<()> {
-        let data = regorus::Value::from_json_str(&data)?;
+        let data = Value::from_json_str(&data)?;
         self.engine.add_data(data)
     }
 
@@ -223,7 +223,7 @@ impl Engine {
     ///
     /// * `input`: JSON encoded value to be used as input to query.
     pub fn set_input_json(&mut self, input: String) -> Result<()> {
-        let input = regorus::Value::from_json_str(&input)?;
+        let input = Value::from_json_str(&input)?;
         self.engine.set_input(input);
         Ok(())
     }
@@ -270,10 +270,7 @@ impl Engine {
     }
 }
 
-mod export {
-    use pyo3::prelude::*;
-    #[pymodule]
-    fn regorus(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
-        m.add_class::<crate::Engine>()
-    }
+#[pymodule]
+pub fn regorus(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    m.add_class::<crate::Engine>()
 }
