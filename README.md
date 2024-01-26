@@ -61,6 +61,12 @@ $ cargo build -r --example regorus --features "yaml" --no-default-features; stri
 Regorus passes the [OPA v0.60.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
 builtins. See [OPA Conformance](#opa-conformance) below.
 
+## Bindings
+
+Regorus can be used from a variety of languages:
+
+- Javascript (nodejs): Via npm package `regorus-wasm`. This package is Regorus compiled into WASM.
+
 ## Getting Started
 
 [examples/regorus](https://github.com/microsoft/regorus/blob/main/examples/regorus.rs) is an example program that
