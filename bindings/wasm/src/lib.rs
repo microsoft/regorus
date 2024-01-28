@@ -63,6 +63,12 @@ impl Engine {
         self.engine.add_data(data).map_err(error_to_jsvalue)
     }
 
+    /// Clear policy data.
+    pub fn clear_data(&mut self) -> Result<(), JsValue> {
+        self.engine.clear_data();
+        Ok(())
+    }
+
     /// Set input.
     ///
     /// See https://docs.rs/regorus/0.1.0-alpha.2/regorus/struct.Engine.html#method.set_input

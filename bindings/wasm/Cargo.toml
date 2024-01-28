@@ -1,5 +1,5 @@
 [package]
-name = "regorus-wasm"
+name = "regorusjs"
 version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/microsoft/regorus/bindings/wasm"
