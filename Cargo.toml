@@ -1,3 +1,4 @@
+workspace = { members = ["bindings/wasm"] }
 [package]
 name = "regorus"
 description = "A fast, lightweight Rego (OPA policy language) interpreter"

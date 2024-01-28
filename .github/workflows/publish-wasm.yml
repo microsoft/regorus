@@ -1,0 +1,23 @@
+name: publish-wasm
+
+permissions:
+  pull-requests: write
+  contents: write
+
+on: workflow_dispatch
+
+jobs:
+  publish-wasm:
+    name: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build
+        run: wasm-pack build --target nodejs -r
+      - name: Publish
+        run: # TODO
