@@ -1,0 +1,481 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: conflict future after rego.v1
+    data: {}
+    modules:
+      - |
+        package test
+
+        import rego.v1
+        import future.keywords.in
+
+    query: data
+    error: "this import shadows previous import"
+
+  - note: conflict rego after future
+    data: {}
+    modules:
+      - |
+        package test
+
+        import future.keywords.in
+        import rego.v1
+
+    query: data
+    error: "this import shadows previous import"
+
+  - note: conflict rego after rego
+    data: {}
+    modules:
+      - |
+        package test
+
+        import rego.v1
+        import rego.v1
+
+    query: data
+    error: "this import shadows previous import"
+
+  - note: allowed future after future
+    data: {}
+    modules:
+      - |
+        package test
+
+        import future.keywords
+        import future.keywords
+
+    query: data.test
+    want_result: {}
+
+  - note: if-required-before-body
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        allow {
+          1 > 2
+        }
+    query: data
+    error: "`if` keyword is required before rule body"
+
+  - note: ok-if-before-body
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        allow if {
+          1 < 2
+        }
+    query: data.test
+    want_result:
+        allow: true
+
+  - note: if-required-before-else-body
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        allow if {
+          1 > 2
+        } else = 5 {
+          1 < 2
+        }
+    query: data
+    error: "`if` keyword is required before rule body"
+
+  - note: ok-if-before-else-body
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        allow if {
+          1 > 2
+        } else = 5 if {
+          1 < 2
+        }
+    query: data.test
+    want_result:
+      allow: 5
+
+  # cases from https://www.openpolicyagent.org/docs/latest/opa-1/#backwards-compatibility-in-opa-v10
+  - note: invalid1
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p { true }
+    query: data
+    error: "`if` keyword is required before rule body"
+
+  - note: invalid2
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a { true }
+    query: data
+    error: "`if` keyword is required before rule body"
+
+  - note: invalid3
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a.b { true }
+    query: data
+    error: "`if` keyword is required before rule body"
+
+  - note: valid1
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p if true
+    query: data.test
+    want_result:
+      p: true
+
+  - note: valid2
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a if true
+    query: data.test
+    want_result:
+      p:
+        a: true
+
+  - note: valid3
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a.b if true
+    query: data.test
+    want_result:
+      p:
+        a:
+          b: true
+
+  - note: valid4
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p contains "a"
+    query: data.test
+    want_result:
+      p:
+        set!: ["a"]
+
+  - note: valid5
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p := 1
+    query: data.test
+    want_result:
+      p: 1
+
+  - note: valid6
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a := 1
+    query: data.test
+    want_result:
+      p:
+        a: 1
+
+  - note: valid6
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a.b := 1
+    query: data.test
+    want_result:
+      p:
+        a:
+          b: 1
+
+  - note: invalid11
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p
+    query: data.test
+    error: rule must have a body
+
+  - note: invalid12
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a
+    query: data.test
+    error: "`contains` keyword is required for partial set rules"
+
+  - note: invalid13
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a.b
+    query: data.test
+    error: rule must have a body
+
+  - note: invalid21
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p { true }
+    query: data.test
+    error: "`if` keyword is required before rule body"
+
+  - note: valid21
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p if { true }
+    query: data.test
+    want_result:
+      p: true
+
+  - note: invalid22
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a
+    query: data.test
+    error: "`contains` keyword is required for partial set rules"
+
+  - note: valid22
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p contains "a"
+    query: data.test
+    want_result:
+      p:
+        set!: ["a"]
+
+  - note: invalid23
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a { true }
+    query: data.test
+    error: "`if` keyword is required before rule body"
+
+  - note: valid22
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p contains "a" if { true }
+    query: data.test
+    want_result:
+      p:
+        set!: ["a"]
+
+  - note: invalid24
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a.b
+    query: data.test
+    error: "rule must have a body or assignment"
+
+  - note: valid22
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a.b := true
+    query: data.test
+    want_result:
+      p:
+        a:
+          b: true
+
+  - note: invalid25
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a.b { true }
+    query: data.test
+    error: "`if` keyword is required before rule body"
+
+  - note: valid22
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        p.a.b if { true }
+    query: data.test
+    want_result:
+      p:
+        a:
+          b: true
+
+  - note: data-shadowed-by-rule
+    data: {}
+    modules:
+      - |
+        package test
+        data = 1
+    query: data.test
+    want_result:
+      data: 1
+
+  - note: invalid-data-shadowed-by-rule
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        data = 1
+    query: data.test
+    error: data cannot be shadowed
+
+  - note: input-shadowed-by-rule
+    data: {}
+    modules:
+      - |
+        package test
+        input = 1
+    query: data.test
+    want_result:
+      input: 1
+
+  - note: invalid-input-shadowed-by-rule
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        input = 1
+    query: data.test
+    error: input cannot be shadowed
+
+  - note: input-shadowed-by-local-var
+    data: {}
+    modules:
+      - |
+        package test
+        x {
+          input := 1
+          input > 0
+        }
+        y {
+           # This evaluates to false
+           input = 1
+           input > 0
+        }
+    query: data.test
+    want_result:
+      x: true
+
+  - note: invalid-input-shadowed-by-local-var
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        x if {
+          input := 1
+          input > 0
+        }
+    query: data.test
+    error: input cannot be shadowed
+
+  - note: data-shadowed-by-local-var
+    data: {}
+    modules:
+      - |
+        package test
+        x {
+          data := 1
+          data > 0
+        }
+    query: data.test
+    want_result:
+      x: true
+
+  - note: invalid-data-shadowed-by-local-var
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        x if {
+          data := 1
+          data > 0
+        }
+    query: data.test
+    error: data cannot be shadowed
+
+  - note: deprecated-function
+    data: {}
+    modules:
+      - |
+        package test
+        x {
+          cast_array([1])
+        }
+    query: data.test
+    want_result:
+      x: true
+      
+  - note: invalid-deprecated-function
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        x if {
+          cast_array([1])
+        }
+    query: data.test
+    error: is deprecated

@@ -15,6 +15,7 @@ pub struct Parser<'source> {
     line: u16,
     end: u16,
     future_keywords: BTreeMap<String, Span>,
+    rego_v1: bool,
 }
 
 const FUTURE_KEYWORDS: [&str; 4] = ["contains", "every", "if", "in"];
@@ -30,6 +31,7 @@ impl<'source> Parser<'source> {
             line: 0,
             end: 0,
             future_keywords: BTreeMap::new(),
+            rego_v1: false,
         })
     }
 
@@ -76,19 +78,19 @@ impl<'source> Parser<'source> {
 
     pub fn set_future_keyword(&mut self, kw: &str, span: &Span) -> Result<()> {
         match &self.future_keywords.get(kw) {
-            Some(s) if false => Err(self.source.error(
+            Some(s) if self.rego_v1 => Err(self.source.error(
                 span.line,
                 span.col,
                 format!(
                     "this import shadows previous import of `{kw}` defined at:{}",
-                    self.source
-                        .message(s.line, s.col, "", "this import is shadowed.")
+                    s.message("", "this import is shadowed.")
                 )
                 .as_str(),
             )),
             _ => {
                 self.future_keywords.insert(kw.to_string(), span.clone());
-                if kw == "every" {
+                if kw == "every" && !self.rego_v1 {
+                    //rego.v1 explicitly adds each keyword.
                     self.future_keywords.insert("in".to_string(), span.clone());
                 }
                 Ok(())
@@ -782,6 +784,17 @@ impl<'source> Parser<'source> {
         span.start = start;
         let op = match self.token_text() {
             "=" => AssignOp::Eq,
+            ":=" if self.rego_v1 => {
+                if let Expr::Var(v) = &expr {
+                    if v.text() == "input" {
+                        bail!(span.error("input cannot be shadowed"));
+                    }
+                    if v.text() == "data" {
+                        bail!(span.error("data cannot be shadowed"));
+                    }
+                }
+                AssignOp::ColEq
+            }
             ":=" => AssignOp::ColEq,
             _ => {
                 *self = state;
@@ -974,6 +987,7 @@ impl<'source> Parser<'source> {
         let stmt = match self.parse_literal_stmt() {
             Ok(stmt) => stmt,
             Err(e) if is_definite_query => return Err(e),
+            Err(e) if matches!(self.token_text(), "=" | ":=") => return Err(e),
             Err(_) => {
                 // There was error parsing the first literal
                 // Restore the state and return.
@@ -1117,7 +1131,16 @@ impl<'source> Parser<'source> {
         let span = self.tok.1.clone();
 
         let mut term = if self.tok.0 == TokenKind::Ident {
-            Expr::Var(self.parse_var()?)
+            let v = self.parse_var()?;
+            if self.rego_v1 {
+                if v.text() == "input" {
+                    bail!(span.error("input cannot be shadowed"));
+                }
+                if v.text() == "data" {
+                    bail!(span.error("data cannot be shadowed"));
+                }
+            }
+            Expr::Var(v)
         } else {
             return Err(self.source.error(
                 span.line,
@@ -1311,6 +1334,9 @@ impl<'source> Parser<'source> {
                 false
             }
             "{" => {
+                if self.rego_v1 {
+                    bail!(span.error("`if` keyword is required before rule body"));
+                }
                 self.next_token()?;
                 let query = Ref::new(self.parse_query(span.clone(), "}")?);
                 span.end = self.end;
@@ -1378,6 +1404,9 @@ impl<'source> Parser<'source> {
                     });
                 }
                 "{" => {
+                    if self.rego_v1 {
+                        bail!(span.error("`if` keyword is required before rule body"));
+                    }
                     self.next_token()?;
                     let query = Ref::new(self.parse_query(span.clone(), "}")?);
                     span.end = self.end;
@@ -1463,6 +1492,25 @@ impl<'source> Parser<'source> {
         let head = self.parse_rule_head()?;
         let bodies = self.parse_rule_bodies()?;
         span.end = self.end;
+
+        if self.rego_v1 && bodies.is_empty() {
+            match &head {
+                RuleHead::Compr { assign, .. } | RuleHead::Func { assign, .. }
+                    if assign.is_none() =>
+                {
+                    bail!(span.error("rule must have a body or assignment"));
+                }
+                RuleHead::Set { refr, key, .. } if key.is_none() => {
+                    if Self::get_path_ref_components(refr)?.len() == 2 {
+                        bail!(span.error("`contains` keyword is required for partial set rules"));
+                    } else {
+                        bail!(span.error("rule must have a body or assignment"));
+                    }
+                }
+                _ => (),
+            }
+        }
+
         Ok(Rule::Spec { span, head, bodies })
     }
 
@@ -1526,15 +1574,25 @@ impl<'source> Parser<'source> {
             let refr = Ref::new(self.parse_path_ref()?);
 
             let comps = Self::get_path_ref_components(&refr)?;
-            if !matches!(comps[0].text(), "data" | "future" | "input") {
+            span.end = self.end;
+            if !matches!(comps[0].text(), "data" | "future" | "input" | "rego") {
                 return Err(self.source.error(
                     comps[0].line,
                     comps[0].col,
-                    "import path must begin with one of: {data, future, input}",
+                    "import path must begin with one of: {data, future, input, rego}",
                 ));
             }
 
-            let is_future_kw = self.handle_import_future_keywords(&comps)?;
+            let is_future_kw =
+                if comps.len() == 2 && comps[0].text() == "rego" && comps[1].text() == "v1" {
+                    self.rego_v1 = true;
+                    for kw in FUTURE_KEYWORDS {
+                        self.set_future_keyword(kw, &span)?;
+                    }
+                    true
+                } else {
+                    self.handle_import_future_keywords(&comps)?
+                };
 
             let var = if self.token_text() == "as" {
                 if is_future_kw {
@@ -1588,6 +1646,7 @@ impl<'source> Parser<'source> {
             package,
             imports,
             policy,
+            rego_v1: self.rego_v1,
         })
     }
 

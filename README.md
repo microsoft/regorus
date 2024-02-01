@@ -58,15 +58,15 @@ $ cargo build -r --example regorus --features "yaml" --no-default-features; stri
 ```
 
 
-Regorus passes the [OPA v0.60.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
+Regorus passes the [OPA v0.61.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
 builtins. See [OPA Conformance](#opa-conformance) below.
 
 ## Bindings
 
 Regorus can be used from a variety of languages:
 
-- Javascript: Via npm package `regorusjs`. This package is Regorus compiled into WASM.
-- Python: Via `regorus` package.
+- Javascript: To compile Regorus to WASM and use it in Javascript, see [bindings/wasm](bindings/wasm)
+- Python: To use Regorus from Python, see [bindings/python](bindings/python)
 
 ## Getting Started
 
@@ -199,7 +199,7 @@ Benchmark 1: opa eval -b tests/aci -d tests/aci/data.json -i tests/aci/input.jso
 ```
 ## OPA Conformance
 
-Regorus has been verified to be compliant with [OPA v0.60.0](https://github.com/open-policy-agent/opa/releases/tag/v0.60.0)
+Regorus has been verified to be compliant with [OPA v0.61.0](https://github.com/open-policy-agent/opa/releases/tag/v0.61.0)
 using a [test driver](https://github.com/microsoft/regorus/blob/main/tests/opa.rs) that loads and runs the OPA testsuite using Regorus, and verifies that expected outputs
 are produced.
 

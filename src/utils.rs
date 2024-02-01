@@ -109,7 +109,7 @@ pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
     Ok(comps.join("."))
 }
 
-pub type FunctionTable = BTreeMap<String, (Vec<Ref<Rule>>, u8)>;
+pub type FunctionTable = BTreeMap<String, (Vec<Ref<Rule>>, u8, Ref<Module>)>;
 
 fn get_extra_arg_impl(
     expr: &Expr,
@@ -118,11 +118,11 @@ fn get_extra_arg_impl(
 ) -> Result<Option<Ref<Expr>>> {
     if let Expr::Call { fcn, params, .. } = expr {
         let full_path = get_path_string(fcn, module)?;
-        let n_args = if let Some((_, n_args)) = functions.get(&full_path) {
+        let n_args = if let Some((_, n_args, _)) = functions.get(&full_path) {
             *n_args
         } else {
             let path = get_path_string(fcn, None)?;
-            if let Some((_, n_args)) = functions.get(&path) {
+            if let Some((_, n_args, _)) = functions.get(&path) {
                 *n_args
             } else if let Some((_, n_args)) = BUILTINS.get(path.as_str()) {
                 *n_args
@@ -169,7 +169,7 @@ pub fn gather_functions(modules: &[Ref<Module>]) -> Result<FunctionTable> {
             {
                 let full_path = get_path_string(refr, Some(module_path.as_str()))?;
 
-                if let Some((functions, arity)) = table.get_mut(&full_path) {
+                if let Some((functions, arity, _)) = table.get_mut(&full_path) {
                     if args.len() as u8 != *arity {
                         bail!(span.error(
                             format!("{full_path} was previously defined with {arity} arguments.")
@@ -178,7 +178,10 @@ pub fn gather_functions(modules: &[Ref<Module>]) -> Result<FunctionTable> {
                     }
                     functions.push(rule.clone());
                 } else {
-                    table.insert(full_path, (vec![rule.clone()], args.len() as u8));
+                    table.insert(
+                        full_path,
+                        (vec![rule.clone()], args.len() as u8, module.clone()),
+                    );
                 }
             }
         }
