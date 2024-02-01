@@ -353,6 +353,7 @@ pub struct Module {
     pub package: Package,
     pub imports: Vec<Import>,
     pub policy: Vec<Ref<Rule>>,
+    pub rego_v1: bool,
 }
 
 pub type ExprRef = Ref<Expr>;

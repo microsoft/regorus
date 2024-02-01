@@ -224,13 +224,13 @@ cases:
     rego: |
       package test
       import foo
-    error: "import path must begin with one of: {data, future, input}"
+    error: "import path must begin with one of: {data, future, input, rego}"
 
   - note: invalid-beginning-1
     rego: |
       package test
       import foo.bar
-    error: "import path must begin with one of: {data, future, input}"
+    error: "import path must begin with one of: {data, future, input, rego}"
 
   - note: missing-field-1
     rego: |

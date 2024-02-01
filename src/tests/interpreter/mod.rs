@@ -84,7 +84,6 @@ fn match_values(computed: &Value, expected: &Value) -> Result<()> {
 
 pub fn check_output(computed_results: &[Value], expected_results: &[Value]) -> Result<()> {
     if computed_results.len() != expected_results.len() {
-        dbg!((&computed_results, &expected_results));
         bail!(
             "the number of computed results ({}) and expected results ({}) is not equal",
             computed_results.len(),

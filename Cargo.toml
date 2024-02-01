@@ -89,7 +89,6 @@ uuid = { version = "1.6.1", features = ["v4", "fast-rng"], optional = true }
 jsonschema = { version = "0.17.1", default-features = false, optional = true }
 chrono = { version = "0.4.31", optional = true }
 chrono-tz = { version = "0.8.5", optional = true }
-document-features = "0.2.8"
 
 
 [dev-dependencies]

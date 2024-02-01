@@ -1998,14 +1998,14 @@ impl Interpreter {
         }
     }
 
-    fn lookup_function_by_name(&self, path: &str) -> Option<&Vec<Ref<Rule>>> {
+    fn lookup_function_by_name(&self, path: &str) -> Option<(&Vec<Ref<Rule>>, &Ref<Module>)> {
         let mut path = path.to_owned();
         if !path.starts_with("data.") {
             path = self.current_module_path.clone() + "." + &path;
         }
 
         match self.functions.get(&path) {
-            Some((f, _)) => Some(f),
+            Some((f, _, m)) => Some((f, m)),
             _ => None,
         }
     }
@@ -2058,7 +2058,8 @@ impl Interpreter {
 
         #[cfg(feature = "deprecated")]
         if let Some(builtin) = builtins::DEPRECATED.get(path) {
-            if !self.allow_deprecated {
+            let allow = self.allow_deprecated && !self.current_module()?.rego_v1;
+            if !allow {
                 bail!(span.error(format!("{path} is deprecated").as_str()))
             }
             return Ok(Some(builtin));
@@ -2120,9 +2121,9 @@ impl Interpreter {
             _ => orig_fcn_path.clone(),
         };
 
-        let empty = vec![];
-        let fcns_rules = match self.lookup_function_by_name(&fcn_path) {
-            Some(r) => r,
+        let empty: Vec<Ref<Rule>> = vec![];
+        let (fcns_rules, fcn_module) = match self.lookup_function_by_name(&fcn_path) {
+            Some((fcns, m)) => (fcns, Some(m.clone())),
             _ => {
                 if self.default_rules.get(&fcn_path).is_some()
                     || self
@@ -2131,10 +2132,10 @@ impl Interpreter {
                         .is_some()
                 {
                     // process default functions later.
-                    &empty
+                    (&empty, self.module.clone())
                 }
                 // Look up builtin function.
-                else if let Ok(Some(builtin)) = self.lookup_builtin(span, &fcn_path) {
+                else if let Some(builtin) = self.lookup_builtin(span, &fcn_path)? {
                     let r = self.eval_builtin_call(span, &fcn_path.clone(), *builtin, params);
                     if let Some(with_functions) = with_functions_saved {
                         self.with_functions = with_functions;
@@ -2213,6 +2214,7 @@ impl Interpreter {
                 ..Context::default()
             };
 
+            let prev_module = self.set_current_module(fcn_module.clone())?;
             let value = match self.eval_rule_bodies(ctx, span, bodies) {
                 Ok(v) => v,
                 Err(e) => {
@@ -2222,6 +2224,7 @@ impl Interpreter {
                     continue;
                 }
             };
+            self.set_current_module(prev_module)?;
 
             let result = match &value {
                 Value::Set(s) if s.len() == 1 => s.iter().next().unwrap().clone(),
