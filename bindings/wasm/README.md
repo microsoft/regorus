@@ -6,9 +6,13 @@
    interpreter written in Rust.
   - *Rigorous* - A rigorous enforcer of well-defined Rego semantics.
 
+`regorusjs` is Regorus compiled into WASM.
+
 See [Repository](https://github.com/microsoft/regorus).
 
-`regorusjs` is Regorus compiled into WASM.
+To build this binding, see [building](https://github.com/microsoft/regorus/bindings/wasm/building.md)
+
+
 
 ## Usage
 
