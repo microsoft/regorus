@@ -182,8 +182,16 @@ impl Engine {
     /// * `path`: A filename to be associated with the policy.
     /// * `rego`: Rego policy.
     pub fn add_policy(&mut self, path: String, rego: String) -> Result<()> {
-        self.engine.add_policy(path, rego)?;
-        Ok(())
+        self.engine.add_policy(path, rego)
+    }
+
+    /// Add a policy from given file.
+    ///
+    /// The policy is parsed into AST.
+    ///
+    /// * `path`: Path to the policy file.
+    pub fn add_policy_from_file(&mut self, path: String) -> Result<()> {
+        self.engine.add_policy_from_file(path)
     }
 
     /// Add policy data.
@@ -200,6 +208,14 @@ impl Engine {
     /// * `data`: JSON encoded value to be used as policy data.
     pub fn add_data_json(&mut self, data: String) -> Result<()> {
         let data = Value::from_json_str(&data)?;
+        self.engine.add_data(data)
+    }
+
+    /// Add policy data from file.
+    ///
+    /// * `path`: Path to JSON policy data.
+    pub fn add_data_from_json_file(&mut self, path: String) -> Result<()> {
+        let data = Value::from_json_file(&path)?;
         self.engine.add_data(data)
     }
 
@@ -224,6 +240,15 @@ impl Engine {
     /// * `input`: JSON encoded value to be used as input to query.
     pub fn set_input_json(&mut self, input: String) -> Result<()> {
         let input = Value::from_json_str(&input)?;
+        self.engine.set_input(input);
+        Ok(())
+    }
+
+    /// Set input.
+    ///
+    /// * `path`: Path to JSON input data.
+    pub fn set_input_from_json_file(&mut self, path: String) -> Result<()> {
+        let input = Value::from_json_file(&path)?;
         self.engine.set_input(input);
         Ok(())
     }

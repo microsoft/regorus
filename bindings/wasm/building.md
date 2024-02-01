@@ -6,6 +6,7 @@
 
 - Build `regorusjs` for nodejs.
   ```
+  cd bindings/wasm
   wasm-pack build --target nodejs --release
   ```
 
