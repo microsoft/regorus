@@ -12,6 +12,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Corrosion)
 
 project("regorus-test")
+set(CMAKE_CXX_STANDARD 17)
 
 corrosion_import_crate(
   # Path to <regorus-source-folder>/bindings/ffi/Cargo.toml
@@ -21,7 +22,7 @@ corrosion_import_crate(
   # Only build the "regorusc" crate.
   CRATES "regorus-ffi")
 
-add_executable(regorus_test main.c)
+add_executable(regorus_test main.cpp)
 # Add path to <regorus-source-folder>/bindings/ffi
 target_include_directories(regorus_test PRIVATE "../ffi")
 target_link_libraries(regorus_test regorus-ffi)

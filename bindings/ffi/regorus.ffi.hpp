@@ -1,5 +1,5 @@
-#ifndef REGORUS_HPP
-#define REGORUS_HPP
+#ifndef REGORUS_FFI_HPP
+#define REGORUS_FFI_HPP
 
 #include <cstdarg>
 #include <cstdint>
@@ -92,4 +92,4 @@ RegorusResult regorus_engine_eval_query(RegorusEngine *engine, const char *query
 
 } // extern "C"
 
-#endif // REGORUS_HPP
+#endif // REGORUS_FFI_HPP
