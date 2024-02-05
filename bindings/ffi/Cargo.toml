@@ -1,0 +1,17 @@
+[package]
+name = "regorus-ffi"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0.79"
+regorus = { path  = "../.." }
+serde_json = "1.0.113"
+
+[build-dependencies]
+cbindgen = "0.26.0"
+csbindgen = "1.9.0"

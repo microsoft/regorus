@@ -1,6 +1,7 @@
 [workspace]
 
 members = [
+    "bindings/ffi",
     "bindings/python",
     "bindings/wasm"
 ]
