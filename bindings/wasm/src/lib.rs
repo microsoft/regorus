@@ -64,6 +64,8 @@ impl Engine {
     }
 
     /// Clear policy data.
+    ///
+    /// See https://docs.rs/regorus/0.1.0-alpha.2/regorus/struct.Engine.html#method.clear_data
     pub fn clear_data(&mut self) -> Result<(), JsValue> {
         self.engine.clear_data();
         Ok(())
