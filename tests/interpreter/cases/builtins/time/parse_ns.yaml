@@ -8,11 +8,11 @@ cases:
       - |
         package test
 
-        a := time.parse_ns("%Y-%m-%dT%H:%M:%S", "2006-01-02T15:04:05")
-        b := time.parse_ns("%Y-%m-%d %H:%M:%S", "2015-09-05 23:56:04")
+        a := time.parse_ns("2006-01-02T15:04:05", "2016-05-10T19:06:42")
+        b := time.parse_ns("2006-01-02 15:04:05", "2015-09-05 23:56:04")
     query: data.test
     want_result:
-      a: 1136214245000000000
+      a: 1462907202000000000
       b: 1441497364000000000
 
   - note: format-and-parse-back
@@ -22,8 +22,8 @@ cases:
         package test
         
         a := res {
-          date := time.format([1703444325734390000, "UTC", "%Y-%m-%dT%H:%M:%S%.f"])
-          res := time.parse_ns("%Y-%m-%dT%H:%M:%S%.f", date)
+          date := time.format([1703444325734390000, "UTC", "2006-01-02T15:04:05.999999999"])
+          res := time.parse_ns("2006-01-02T15:04:05.999999999", date)
         }
     query: data.test
     want_result:
@@ -35,6 +35,6 @@ cases:
       - |
         package test
 
-        a := time.parse_ns("%Y-%m-%dT%H:%M:%S%.f", 1703444325734390000)
+        a := time.parse_ns("2006-01-02T15:04:05.999999999", 1703444325734390000)
     query: data.test
     error: '`time.parse_ns` expects string argument. Got `1703444325734390000` instead'
