@@ -555,6 +555,18 @@ pub fn parse(layout: &str, value: &str) -> ParseResult<DateTime<FixedOffset>> {
         parsed.set_year(0)?;
     }
 
+    // Go's `time.Parse` allows missing time (hour, minute, second) but
+    // chrono fails to parse them, we're setting time to `0` if time is missing.
+    if parsed.hour_div_12.is_none()
+        && parsed.hour_mod_12.is_none()
+        && parsed.minute.is_none()
+        && parsed.second.is_none()
+    {
+        parsed.set_hour(0)?;
+        parsed.set_minute(0)?;
+        parsed.set_second(0)?;
+    }
+
     if parsed.offset.is_some() {
         parsed.to_datetime()
     } else {
@@ -1284,6 +1296,14 @@ mod tests {
             let result = format(time, &tc.format);
             assert_eq!(result, tc.result);
         }
+    }
+
+    #[test]
+    fn parses_date_only() {
+        let time = parse("2006-01-02", "2020-02-02").unwrap();
+        assert_eq!(time.year(), 2020);
+        assert_eq!(time.month(), 2);
+        assert_eq!(time.day(), 2);
     }
 
     const _LAYOUT: &str = "01/02 03:04:05PM '06 -0700"; // The reference time, in numerical order.
