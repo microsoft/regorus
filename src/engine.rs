@@ -8,7 +8,7 @@ use crate::parser::*;
 use crate::scheduler::*;
 use crate::utils::gather_functions;
 use crate::value::*;
-use crate::QueryResults;
+use crate::{Extension, QueryResults};
 
 use std::convert::AsRef;
 use std::path::Path;
@@ -347,5 +347,93 @@ impl Engine {
         }
         self.interpreter.create_rule_prefixes()?;
         Ok(self.interpreter.get_data_mut().clone())
+    }
+
+    /// Add a custom builtin (extension).
+    ///
+    /// * `path`: The fully qualified path of the builtin.
+    /// * `nargs`: The number of arguments the builtin takes.
+    /// * `extension`: The [`Extension`] instance.
+    ///
+    /// ```rust
+    /// # use regorus::*;
+    /// # use anyhow::{bail, Result};
+    /// # fn main() -> Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// // Policy uses `do_magic` custom builtin.
+    /// engine.add_policy(
+    ///    "test.rego".to_string(),
+    ///    r#"package test
+    ///       x = do_magic(1)
+    ///    "#.to_string(),
+    /// )?;
+    ///
+    /// // Evaluating fails since `do_magic` is not defined.
+    /// assert!(engine.eval_query("data.test.x".to_string(), false).is_err());
+    ///
+    /// // Add extension to implement `do_magic`. The extension can be stateful.
+    /// let mut magic = 8;
+    /// engine.add_extension("do_magic".to_string(), 1 , Box::new(move | mut params: Vec<Value> | {
+    ///   // params is mut and therefore individual values can be removed from it and modified.
+    ///   // The number of parameters (1) has already been validated.
+    ///
+    ///   match &params[0].as_i64() {
+    ///      Ok(i) => {
+    ///         // Compute value
+    ///         let v = *i + magic;
+    ///         // Update extension state.
+    ///         magic += 1;
+    ///         Ok(Value::from(v))
+    ///      }
+    ///      // Extensions can raise errors. Regorus will add location information to
+    ///      // the error.
+    ///      _ => bail!("do_magic expects i64 value")
+    ///   }
+    /// }))?;
+    ///
+    /// // Evaluation will now succeed.
+    /// let r = engine.eval_query("data.test.x".to_string(), false)?;
+    /// assert_eq!(r.result[0].expressions[0].value.as_i64()?, 9);
+    ///
+    /// // Cloning the engine will also clone the extension.
+    /// let mut engine1 = engine.clone();
+    ///
+    /// // Evaluating again will return a different value since the extension is stateful.
+    /// let r = engine.eval_query("data.test.x".to_string(), false)?;
+    /// assert_eq!(r.result[0].expressions[0].value.as_i64()?, 10);
+    ///
+    /// // The second engine has a clone of the extension.
+    /// let r = engine1.eval_query("data.test.x".to_string(), false)?;
+    /// assert_eq!(r.result[0].expressions[0].value.as_i64()?, 10);
+    ///
+    /// // Once added, the extension cannot be replaced or removed.
+    /// assert!(engine.add_extension("do_magic".to_string(), 1, Box::new(|_:Vec<Value>| {
+    ///   Ok(Value::Undefined)
+    /// })).is_err());
+    ///
+    /// // Extensions don't support out-parameter syntax.
+    /// engine.add_policy(
+    ///   "policy.rego".to_string(),
+    ///   r#"package invalid
+    ///      x = y {
+    ///       # y = do_magic(2)
+    ///       do_magic(2, y)  # y is supplied as an out parameter.
+    ///     }
+    ///    "#.to_string()
+    /// )?;
+    ///
+    /// // Evaluation fails since y is not defined.
+    /// assert!(engine.eval_query("data.invalid.y".to_string(), false).is_err());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn add_extension(
+        &mut self,
+        path: String,
+        nargs: u8,
+        extension: Box<dyn Extension>,
+    ) -> Result<()> {
+        self.interpreter.add_extension(path, nargs, extension)
     }
 }

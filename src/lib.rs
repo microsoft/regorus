@@ -260,6 +260,37 @@ pub struct QueryResults {
     pub result: Vec<QueryResult>,
 }
 
+/// A user defined builtin function implementation.
+///
+/// It is not necessary to implement this trait directly.
+pub trait Extension: FnMut(Vec<Value>) -> anyhow::Result<Value> {
+    /// Fn, FnMut etc are not sized and cannot be cloned in their boxed form.
+    /// clone_box exists to overcome that.
+    fn clone_box<'a>(&self) -> Box<dyn 'a + Extension>
+    where
+        Self: 'a;
+}
+
+/// Automatically make matching closures a valid [`Extension`].
+impl<F> Extension for F
+where
+    F: FnMut(Vec<Value>) -> anyhow::Result<Value> + Clone,
+{
+    fn clone_box<'a>(&self) -> Box<dyn 'a + Extension>
+    where
+        Self: 'a,
+    {
+        Box::new(self.clone())
+    }
+}
+
+/// Implement clone for a boxed extension using [`Extension::clone_box`].
+impl<'a> Clone for Box<dyn 'a + Extension> {
+    fn clone(&self) -> Self {
+        (**self).clone_box()
+    }
+}
+
 /// Items in `unstable` are likely to change.
 #[doc(hidden)]
 pub mod unstable {
