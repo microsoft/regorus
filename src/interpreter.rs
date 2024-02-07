@@ -9,7 +9,7 @@ use crate::parser::Parser;
 use crate::scheduler::*;
 use crate::utils::*;
 use crate::value::*;
-use crate::{Expression, Location, QueryResult, QueryResults};
+use crate::{Expression, Extension, Location, QueryResult, QueryResults};
 
 use anyhow::{anyhow, bail, Result};
 use log::info;
@@ -65,6 +65,7 @@ pub struct Interpreter {
     allow_deprecated: bool,
     strict_builtin_errors: bool,
     imports: BTreeMap<String, Ref<Expr>>,
+    extensions: HashMap<String, (u8, Box<dyn Extension>)>,
 }
 
 impl Default for Interpreter {
@@ -175,6 +176,7 @@ impl Interpreter {
             allow_deprecated: true,
             strict_builtin_errors: true,
             imports: BTreeMap::default(),
+            extensions: HashMap::new(),
         }
     }
 
@@ -2101,6 +2103,7 @@ impl Interpreter {
         }
 
         let orig_fcn_path = fcn_path;
+
         let mut with_functions_saved = None;
         let fcn_path = match self.with_functions.get(&orig_fcn_path) {
             Some(FunctionModifier::Function(p)) => {
@@ -2121,6 +2124,7 @@ impl Interpreter {
             _ => orig_fcn_path.clone(),
         };
 
+        let mut extension = None;
         let empty: Vec<Ref<Rule>> = vec![];
         let (fcns_rules, fcn_module) = match self.lookup_function_by_name(&fcn_path) {
             Some((fcns, m)) => (fcns, Some(m.clone())),
@@ -2133,6 +2137,11 @@ impl Interpreter {
                 {
                     // process default functions later.
                     (&empty, self.module.clone())
+                }
+                // Look up extension.
+                else if let Some(ext) = self.extensions.get_mut(&fcn_path) {
+                    extension = Some(ext);
+                    (&empty, None)
                 }
                 // Look up builtin function.
                 else if let Some(builtin) = self.lookup_builtin(span, &fcn_path)? {
@@ -2151,6 +2160,21 @@ impl Interpreter {
                 self.with_functions = with_functions;
             }
             return Ok(Value::Undefined);
+        }
+
+        if let Some((nargs, ext)) = extension {
+            if param_values.len() != *nargs as usize {
+                bail!(span.error("incorrect number of parameters supplied to extension"));
+            }
+            let r = ext(param_values);
+            // Restore with_functions.
+            if let Some(with_functions) = with_functions_saved {
+                self.with_functions = with_functions;
+            }
+            match r {
+                Ok(v) => return Ok(v),
+                Err(e) => bail!(span.error(&format!("{e}"))),
+            }
         }
 
         let fcns = fcns_rules.clone();
@@ -3016,43 +3040,7 @@ impl Interpreter {
         Ok(())
     }
 
-    pub fn eval_rule(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
-        // Skip reprocessing rule
-        if self.processed.contains(rule) {
-            return Ok(());
-        }
-
-        // Skip default rules
-        if let Rule::Default { .. } = rule.as_ref() {
-            return Ok(());
-        }
-
-        self.active_rules.push(rule.clone());
-        if self.active_rules.iter().filter(|&r| r == rule).count() == 2 {
-            let mut msg = String::default();
-            for r in &self.active_rules {
-                let refr = Self::get_rule_refr(r);
-                let span = refr.span();
-                msg += span
-                    .source
-                    .message(span.line, span.col, "depends on", "")
-                    .as_str();
-            }
-            msg += "cyclic evaluation";
-            let refr = Self::get_rule_refr(rule);
-            let span = refr.span();
-            return Err(span.source.error(
-                span.line,
-                span.col,
-                format!("recursion detected when evaluating rule:{msg}").as_str(),
-            ));
-        }
-
-        // Back up local variables of current function and empty
-        // the local variables of callee function.
-        let scopes = std::mem::take(&mut self.scopes);
-        let prev_module = self.set_current_module(Some(module.clone()))?;
-
+    fn eval_rule_impl(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
         match rule.as_ref() {
             Rule::Spec {
                 span,
@@ -3133,10 +3121,53 @@ impl Interpreter {
             }
             _ => bail!("internal error: unexpected"),
         }
+        Ok(())
+    }
+
+    pub fn eval_rule(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
+        // Skip reprocessing rule
+        if self.processed.contains(rule) {
+            return Ok(());
+        }
+
+        // Skip default rules
+        if let Rule::Default { .. } = rule.as_ref() {
+            return Ok(());
+        }
+
+        self.active_rules.push(rule.clone());
+        if self.active_rules.iter().filter(|&r| r == rule).count() == 2 {
+            let mut msg = String::default();
+            for r in &self.active_rules {
+                let refr = Self::get_rule_refr(r);
+                let span = refr.span();
+                msg += span
+                    .source
+                    .message(span.line, span.col, "depends on", "")
+                    .as_str();
+            }
+            msg += "cyclic evaluation";
+            self.active_rules.pop();
+            let refr = Self::get_rule_refr(rule);
+            let span = refr.span();
+            return Err(span.source.error(
+                span.line,
+                span.col,
+                format!("recursion detected when evaluating rule:{msg}").as_str(),
+            ));
+        }
+
+        // Back up local variables of current function and empty
+        // the local variables of callee function.
+        let scopes = std::mem::take(&mut self.scopes);
+        let prev_module = self.set_current_module(Some(module.clone()))?;
+
+        let res = self.eval_rule_impl(module, rule);
+
         self.set_current_module(prev_module)?;
         self.scopes = scopes;
         match self.active_rules.pop() {
-            Some(ref r) if r == rule => Ok(()),
+            Some(ref r) if r == rule => res,
             _ => bail!("internal error: current rule not active"),
         }
     }
@@ -3408,5 +3439,19 @@ impl Interpreter {
             self.set_current_module(prev_module)?;
         }
         Ok(())
+    }
+
+    pub fn add_extension(
+        &mut self,
+        path: String,
+        nargs: u8,
+        extension: Box<dyn Extension>,
+    ) -> Result<()> {
+        if let std::collections::hash_map::Entry::Vacant(v) = self.extensions.entry(path) {
+            v.insert((nargs, extension));
+            Ok(())
+        } else {
+            bail!("extension already added");
+        }
     }
 }
