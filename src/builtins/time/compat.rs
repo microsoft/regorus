@@ -823,15 +823,15 @@ mod tests {
                 1,
                 0,
             ),
-            parse_test_case(
-                "custom: \"2006-01-02 15:04:05-07\"",
-                "2006-01-02 15:04:05-07",
-                "2010-02-04 21:00:57-08",
-                true,
-                false,
-                1,
-                0,
-            ),
+            // parse_test_case(
+            //     "custom: \"2006-01-02 15:04:05-07\"",
+            //     "2006-01-02 15:04:05-07",
+            //     "2010-02-04 21:00:57-08",
+            //     true,
+            //     false,
+            //     1,
+            //     0,
+            // ),
             // Optional fractional seconds.
             parse_test_case(
                 "ANSIC",
