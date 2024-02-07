@@ -2,7 +2,7 @@
 // Licensed under the MIT and Apache 2.0 License.
 
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Timelike};
 
 // Adapted from the official Go implementation:
 // https://github.com/open-policy-agent/opa/blob/eb17a716b97720a27c6569395ba7c4b7409aae87/topdown/time.go#L179-L243
@@ -12,7 +12,6 @@ pub fn diff_between_datetimes(
 ) -> Result<(i32, i32, i32, i32, i32, i32)> {
     // The following implementation of this function is taken
     // from https://github.com/icza/gox licensed under Apache 2.0.
-    // The only modification made is to variable names.
     //
     // For details, see https://stackoverflow.com/a/36531443/1705598
     //
@@ -50,12 +49,9 @@ pub fn diff_between_datetimes(
         day -= 1;
     }
     if day < 0 {
-        // Days in month:
-        let t = Utc
-            .with_ymd_and_hms(datetime1.year(), datetime1.month(), 32, 0, 0, 0)
-            .single()
+        let days_in_month = days_in_month(datetime1.year(), datetime1.month())
             .ok_or(anyhow!("Could not convert `ns1` to datetime"))?;
-        day += 32 - t.day() as i32;
+        day += days_in_month as i32;
         month -= 1;
     }
     if month < 0 {
@@ -66,4 +62,22 @@ pub fn diff_between_datetimes(
     // END REDISTRIBUTION FROM APACHE 2.0 LICENSED PROJECT
 
     Ok((year, month, day, hour, min, sec))
+}
+
+fn days_in_month(year: i32, month: u32) -> Option<i64> {
+    Some(
+        NaiveDate::from_ymd_opt(
+            match month {
+                12 => year + 1,
+                _ => year,
+            },
+            match month {
+                12 => 1,
+                _ => month + 1,
+            },
+            1,
+        )?
+        .signed_duration_since(NaiveDate::from_ymd_opt(year, month, 1)?)
+        .num_days(),
+    )
 }

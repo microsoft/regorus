@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use anyhow::{anyhow, bail, Result};
 
 use chrono::{
-    DateTime, Datelike, Days, FixedOffset, Local, Months, NaiveDateTime, SecondsFormat, TimeZone,
-    Timelike, Utc, Weekday,
+    DateTime, Datelike, Days, FixedOffset, Local, Months, SecondsFormat, TimeZone, Timelike, Utc,
+    Weekday,
 };
 use chrono_tz::Tz;
 
@@ -124,7 +124,7 @@ fn format(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     let (datetime, format) = parse_epoch(name, &params[0], &args[0])?;
 
     let result = match format {
-        Some(format) => datetime.format(&format).to_string(),
+        Some(format) => compat::format(datetime, layout_with_predefined_formats(&format)),
         None => datetime.to_rfc3339_opts(SecondsFormat::AutoSi, true),
     };
 
@@ -159,7 +159,7 @@ fn parse_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> 
     let layout = ensure_string(name, &params[0], &args[0])?;
     let value = ensure_string(name, &params[1], &args[1])?;
 
-    let datetime = NaiveDateTime::parse_from_str(&value, &layout)?;
+    let datetime = compat::parse(layout_with_predefined_formats(&layout), &value)?;
     safe_timestamp_nanos(span, strict, datetime.timestamp_nanos_opt())
 }
 
@@ -274,4 +274,22 @@ fn parse_epoch(
     bail!(arg.span().error(&format!(
         "`{fcn}` expects `ns` to be a `number` or `array[number, string]`. Got `{val}` instead"
     )))
+}
+
+fn layout_with_predefined_formats(format: &str) -> &str {
+    match format {
+        "ANSIC" => "Mon Jan _2 15:04:05 2006",
+        "UnixDate" => "Mon Jan _2 15:04:05 MST 2006",
+        "RubyDate" => "Mon Jan 02 15:04:05 -0700 2006",
+        "RFC822" => "02 Jan 06 15:04 MST",
+        // RFC822 with numeric zone
+        "RFC822Z" => "02 Jan 06 15:04 -0700",
+        "RFC850" => "Monday, 02-Jan-06 15:04:05 MST",
+        "RFC1123" => "Mon, 02 Jan 2006 15:04:05 MST",
+        // RFC1123 with numeric zone
+        "RFC1123Z" => "Mon, 02 Jan 2006 15:04:05 -0700",
+        "RFC3339" => "2006-01-02T15:04:05Z07:00",
+        "RFC3339Nano" => "2006-01-02T15:04:05.999999999Z07:00",
+        other => other,
+    }
 }

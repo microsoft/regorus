@@ -34,8 +34,8 @@ cases:
       - |
         package test
 
-        a := time.format([1703444325734390000, "UTC", "%Y-%m-%dT%H:%M:%S"])
-        b := time.format([1257894000000000000, "", "%d/%m/%Y %H:%M"])
+        a := time.format([1703444325734390000, "UTC", "2006-01-02T15:04:05"])
+        b := time.format([1257894000000000000, "", "02/01/2006 15:04"])
     query: data.test
     want_result:
       a: "2023-12-24T18:58:45"
