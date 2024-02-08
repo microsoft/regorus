@@ -9,7 +9,7 @@ members = [
 [package]
 name = "regorus"
 description = "A fast, lightweight Rego (OPA policy language) interpreter"
-version = "0.1.0-alpha.3"
+version = "0.1.0"
 edition = "2021"
 license-file = "LICENSE"
 repository = "https://github.com/microsoft/regorus"
