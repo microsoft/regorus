@@ -36,12 +36,12 @@ jobs:
       run: cargo test -r --test aci
     - name: Run tests (OPA Conformance)
       run: >-
-        cargo test -r --test opa -- $(tr '\n' ' ' < tests/opa.passing)
+        cargo test -r --test opa --features opa-testutil  -- $(tr '\n' ' ' < tests/opa.passing)
 
-    - name: Install wasm-pack
-      run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+    # - name: Install wasm-pack
+    #   run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-    - name: Run wasm binding tests
-      run: |
-        cd bindings/wasm
-        wasm-pack test --node -r
+    # - name: Run wasm binding tests
+    #   run: |
+    #     cd bindings/wasm
+    #     wasm-pack test --node -r

@@ -1,8 +1,0 @@
-#!/bin/bash
-# Copyright (c) Microsoft Corporation.
-# Licensed under the MIT License.
-
-set -e
-yaml=$(realpath -e $1)
-
-RUST_BACKTRACE=1 cargo test parser::one_yaml -- --include-ignored --nocapture "$yaml"

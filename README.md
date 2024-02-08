@@ -269,7 +269,6 @@ The following test suites don't pass fully due to mising builtins:
 - `regometadatarule`
 - `regoparsemodule`
 - `rendertemplate`
-- `time`
 
 They are captured in the following [github issues](https://github.com/microsoft/regorus/issues?q=is%3Aopen+is%3Aissue+label%3Alib).
 

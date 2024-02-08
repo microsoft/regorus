@@ -16,5 +16,5 @@ if [ -f Cargo.toml ]; then
    fi
 
    # Ensure that OPA conformance tests don't regress.
-   cargo test -r --test opa -- $(tr '\n' ' ' < tests/opa.passing)
+   cargo test -r --features opa-testutil --test opa -- $(tr '\n' ' ' < tests/opa.passing)
 fi
