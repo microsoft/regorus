@@ -6,8 +6,21 @@
    interpreter written in Rust.
   - *Rigorous* - A rigorous enforcer of well-defined Rego semantics.
 
-Regorus is available as a library that can be easily integrated into your Rust projects.
+Regorus is also
+  - *cross-platform* - Written in platform-agnostic Rust.
+  - *current* - We strive to keep Regorus up to date with latest OPA release. Regorus supports `import rego.v1`.
+  - *compliant* - Regorus is mostly compliant with the latest [OPA release v0.61.0](https://github.com/open-policy-agent/opa/releases/tag/v0.61.0). See [OPA Conformance](#opa-conformance) for details. Note that while we behaviorally produce the same results, we don't yet support all the builtins.
+  - *extensible* - Extend the Rego language by implementing custom stateful builtins in Rust.
+    See [add_extension](https://github.com/microsoft/regorus/blob/fc68bf9c8bea36427dae9401a7d1f6ada771f7ab/src/engine.rs#L352).
+    Support for extensibility using other languages coming soon.
+  - *polyglot* - In addition to Rust, Regorus can be used from *C*, *C++*, *C#*, *Golang*, *Javascript* and *Python*.
+    This is made possible by the excellent FFI tools available in the Rust ecosystem. See [bindings](#bindings) for information on how to use Regorus from different languages.
 
+    To try out a *Javascript(WASM)* compiled version of Regorus from your browser, visit [Regorus Playground](https://anakrish.github.io/regorus-playground/).
+
+
+
+Regorus is available as a library that can be easily integrated into your Rust projects.
 Here is an example of evaluating a simple Rego policy:
 
 ```rust
@@ -40,12 +53,11 @@ fn main() -> Result<()> {
 ```
 
 Regorus is designed with [Confidential Computing](https://confidentialcomputing.io/about/) in mind. In Confidential Computing environments,
-it is important to be able to control exactly what is being run. Regorus allows enabling and disabling various components using cargo 
+it is important to be able to control exactly what is being run. Regorus allows enabling and disabling various components using cargo
 features. By default all features are enabled.
 
 The default build of regorus example program is 6.4M:
 ```bash
-$ cargo build -r --example regorus; strip target/release/examples/regorus; ls -lh target/release/examples/regorus
 $ cargo build -r --example regorus; strip target/release/examples/regorus; ls -lh target/release/examples/regorus
 -rwxr-xr-x  1 anand  staff   6.4M Jan 19 11:23 target/release/examples/regorus*
 ```
@@ -57,7 +69,6 @@ $ cargo build -r --example regorus --features "yaml" --no-default-features; stri
 -rwxr-xr-x  1 anand  staff   2.9M Jan 19 11:26 target/release/examples/regorus*
 ```
 
-
 Regorus passes the [OPA v0.61.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
 builtins. See [OPA Conformance](#opa-conformance) below.
 
@@ -65,8 +76,22 @@ builtins. See [OPA Conformance](#opa-conformance) below.
 
 Regorus can be used from a variety of languages:
 
-- Javascript: To compile Regorus to WASM and use it in Javascript, see [bindings/wasm](bindings/wasm)
-- Python: To use Regorus from Python, see [bindings/python](bindings/python)
+- *C*: C binding is generated using [cbindgen](https://github.com/mozilla/cbindgen).
+  [corrosion-rs](https://github.com/corrosion-rs/corrosion) can be used to seamlessly use Regorous
+   in your CMake based projects. See [bindings/c](https://github.com/microsoft/regorus/tree/main/bindings/c).
+- *C++*: C++ binding is generated using [cbindgen](https://github.com/mozilla/cbindgen).
+  [corrosion-rs](https://github.com/corrosion-rs/corrosion) can be used to seamlessly use Regorous
+   in your CMake based projects. See [bindings/cpp](https://github.com/microsoft/regorus/tree/main/bindings/cpp).
+- *C#*: C# binding is generated using [csbindgen](https://github.com/Cysharp/csbindgen). See [bindings/csharp](https://github.com/microsoft/regorus/tree/main/bindings/csharp) for an example of how to build and use Regorus in your C# projects.
+- *Golang*: The C bindings are exposed to Golang via [CGo](https://pkg.go.dev/cmd/cgo). See [bindings/go](https://github.com/microsoft/regorus/tree/main/bindings/go) for an example of how to build and use Regorus in your Go projects.
+- *Python*: Python bindings are generated using [pyo3](https://github.com/PyO3/pyo3). Wheels are created using [maturin](https://github.com/PyO3/maturin). See [bindings/python](https://github.com/microsoft/regorus/tree/main/bindings/python).
+- *Javascript*: Regorus is compiled to WASM using [wasmpack](https://github.com/rustwasm/wasm-pack).
+  See [bindings/wasm](https://github.com/microsoft/regorus/tree/main/bindings/wasm) for an example of using Regorus from nodejs.
+  To try out a *Javascript(WASM)* compiled version of Regorus from your browser, visit [Regorus Playground](https://anakrish.github.io/regorus-playground/).
+
+To avoid operational overhead, we currently don't publish these bindings to various repositories.
+It is straight-forward to build these bindings yourself.
+
 
 ## Getting Started
 
