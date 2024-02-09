@@ -248,7 +248,6 @@ The following test suites don't pass fully due to mising builtins:
 - `graphql`
 - `invalidkeyerror`
 - `jsonpatch`
-- `jwtbuiltins`
 - `jwtdecodeverify`
 - `jwtencodesign`
 - `jwtencodesignraw`
