@@ -16,7 +16,6 @@ use log::info;
 use std::collections::btree_map::Entry as BTreeMapEntry;
 use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap};
 use std::ops::Bound::*;
-use std::rc::Rc;
 use std::str::FromStr;
 
 type Scope = BTreeMap<SourceStr, Value>;
@@ -61,7 +60,7 @@ pub struct Interpreter {
     active_rules: Vec<Ref<Rule>>,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
-    traces: Option<Vec<std::rc::Rc<str>>>,
+    traces: Option<Vec<Rc<str>>>,
     allow_deprecated: bool,
     strict_builtin_errors: bool,
     imports: BTreeMap<String, Ref<Expr>>,

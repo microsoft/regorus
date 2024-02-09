@@ -5,12 +5,11 @@ use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_array, ensure_numeric};
 use crate::lexer::Span;
-use crate::value::Value;
+use crate::value::{Rc, Value};
 
 use std::collections::HashMap;
 
 use anyhow::Result;
-use std::rc::Rc;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("array.concat", (concat, 2));
