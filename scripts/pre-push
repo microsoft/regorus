@@ -10,10 +10,8 @@ if [ -f Cargo.toml ]; then
    "$dir/pre-commit"
 
    # Ensure that all tests pass
-   # Also generate coverage information.
-   if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-       scripts/coverage
-   fi
+   cargo test -r
+   cargo test -r --test aci
 
    # Ensure that OPA conformance tests don't regress.
    cargo test -r --features opa-testutil --test opa -- $(tr '\n' ' ' < tests/opa.passing)
