@@ -157,7 +157,9 @@ fn to_string(v: &Value, unescape: bool) -> String {
     match v {
         Value::Null => "null".to_owned(),
         Value::Bool(b) => b.to_string(),
-        Value::String(s) if unescape => serde_json::to_string(&s).unwrap_or(s.as_ref().to_string()),
+        Value::String(s) if unescape => {
+            serde_json::to_string(s.as_ref()).unwrap_or(s.as_ref().to_string())
+        }
         Value::String(s) => s.as_ref().to_string(),
         Value::Number(n) => n.format_decimal(),
         Value::Array(a) => {

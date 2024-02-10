@@ -5,11 +5,10 @@ use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_array, ensure_object};
 use crate::lexer::Span;
-use crate::value::Value;
+use crate::value::{Rc, Value};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::iter::Iterator;
-use std::rc::Rc;
 
 use anyhow::{bail, Result};
 

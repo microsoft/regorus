@@ -8,13 +8,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::AsRef;
 use std::ops;
 use std::path::Path;
-use std::rc::Rc;
 use std::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
 use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
+
+pub type Rc<T> = compact_rc::Rc16<T>;
 
 /// A value in a Rego document.
 ///
