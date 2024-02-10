@@ -54,8 +54,7 @@ jsonfilteridempotent
 jsonremove
 jsonremoveidempotent
 jsonschema
-jwtencodesignheadererrors
-jwtencodesignpayloaderrors
+jwtbuiltins
 negation
 nestedreferences
 numbersrange
