@@ -71,3 +71,11 @@ cases:
         import foo
     query: data
     error: "import path must begin with one of"
+
+  - note: redundant import input
+    modules:
+      - |
+        package test
+        import input
+    query: data.test
+    want_result: {}

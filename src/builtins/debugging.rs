@@ -35,7 +35,7 @@ fn print(span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     }
 
     if !msg.is_empty() {
-        println!("{}", &msg[1..]);
+        eprintln!("{}", &msg[1..]);
     }
     Ok(Value::Bool(true))
 }

@@ -3359,11 +3359,22 @@ impl Interpreter {
                             Expr::String(s) => s.text(),
                             _ => "",
                         },
+                        Expr::Var(v) if v.text() == "input" => {
+                            // Warn redundant import of input. Ignore it.
+                            eprintln!(
+                                "{}",
+                                import.refr.span().error("redundant import of `input`")
+                            );
+                            continue;
+                        }
                         _ => "",
                     },
                 };
                 if target.is_empty() {
-                    bail!(import.refr.span().error("invalid ref in import"));
+                    bail!(import
+                        .refr
+                        .span()
+                        .message("warning", "invalid ref in import"));
                 }
                 self.imports
                     .insert(module_path.clone() + "." + target, import.refr.clone());
