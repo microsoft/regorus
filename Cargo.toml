@@ -18,8 +18,9 @@ keywords = ["interpreter", "opa", "policy-as-code", "rego"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["full-opa"]
+default = ["full-opa", "arc"]
 
+arc = ["scientific/arc"]
 base64 = ["dep:data-encoding"]
 base64url = ["dep:data-encoding"]
 crypto = ["dep:constant_time_eq", "dep:hmac", "dep:hex", "dep:md-5", "dep:sha1", "dep:sha2"]

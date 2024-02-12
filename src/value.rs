@@ -15,7 +15,7 @@ use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
 
-pub type Rc<T> = compact_rc::Rc16<T>;
+use crate::Rc;
 
 /// A value in a Rego document.
 ///

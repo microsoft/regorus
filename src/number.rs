@@ -3,13 +3,14 @@
 
 use core::fmt::{Debug, Formatter};
 use std::cmp::{Ord, Ordering};
-use std::rc::Rc;
 use std::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
 
 use serde::ser::Serializer;
 use serde::Serialize;
+
+use crate::Rc;
 
 pub type BigInt = i128;
 
