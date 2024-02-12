@@ -17,7 +17,7 @@ use anyhow::{bail, Result};
 
 /// The Rego evaluation engine.
 ///
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Engine {
     modules: Vec<Ref<Module>>,
     interpreter: Interpreter,

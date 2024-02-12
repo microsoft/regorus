@@ -38,7 +38,7 @@ enum FunctionModifier {
     Value(Value),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Interpreter {
     modules: Vec<Ref<Module>>,
     module: Option<Ref<Module>>,

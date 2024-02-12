@@ -297,6 +297,12 @@ impl<'a> Clone for Box<dyn 'a + Extension> {
     }
 }
 
+impl std::fmt::Debug for dyn Extension {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        f.write_fmt(format_args!("<extension>"))
+    }
+}
+
 /// Items in `unstable` are likely to change.
 #[doc(hidden)]
 pub mod unstable {

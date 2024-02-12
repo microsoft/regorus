@@ -380,7 +380,7 @@ pub struct Analyzer {
     current_module_path: String,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Schedule {
     pub scopes: BTreeMap<Ref<Query>, Scope>,
     pub order: BTreeMap<Ref<Query>, Vec<u16>>,
