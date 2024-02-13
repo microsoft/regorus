@@ -5,7 +5,8 @@ use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_array, ensure_numeric};
 use crate::lexer::Span;
-use crate::value::{Rc, Value};
+use crate::Rc;
+use crate::Value;
 
 use std::collections::HashMap;
 

@@ -8,7 +8,9 @@ use core::str::CharIndices;
 use std::convert::AsRef;
 use std::path::Path;
 
-use crate::value::Value;
+use crate::Rc;
+use crate::Value;
+
 use anyhow::{anyhow, bail, Result};
 
 #[derive(Clone)]
@@ -20,7 +22,7 @@ struct SourceInternal {
 
 #[derive(Clone)]
 pub struct Source {
-    src: std::rc::Rc<SourceInternal>,
+    src: Rc<SourceInternal>,
 }
 
 #[derive(Clone)]
@@ -108,7 +110,7 @@ impl Source {
             lines.push((s, s));
         }
         Self {
-            src: std::rc::Rc::new(SourceInternal {
+            src: Rc::new(SourceInternal {
                 file,
                 contents,
                 lines,

@@ -17,7 +17,7 @@ use anyhow::{bail, Result};
 
 /// The Rego evaluation engine.
 ///
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Engine {
     modules: Vec<Ref<Module>>,
     interpreter: Interpreter,
@@ -120,6 +120,11 @@ impl Engine {
         self.interpreter.set_input(input);
     }
 
+    pub fn set_input_json(&mut self, input_json: &str) -> Result<()> {
+        self.set_input(Value::from_json_str(input_json)?);
+        Ok(())
+    }
+
     /// Clear the data document.
     ///
     /// The data document will be reset to an empty object.
@@ -180,6 +185,10 @@ impl Engine {
         }
         self.prepared = false;
         self.interpreter.get_data_mut().merge(data)
+    }
+
+    pub fn add_data_json(&mut self, data_json: &str) -> Result<()> {
+        self.add_data(Value::from_json_str(data_json)?)
     }
 
     /// Set whether builtins should raise errors strictly or not.
@@ -254,6 +263,14 @@ impl Engine {
             &query_schedule,
             enable_tracing,
         )
+    }
+
+    pub fn eval_bool_query(&mut self, query: String, enable_tracing: bool) -> Result<bool> {
+        let results = self.eval_query(query, enable_tracing)?;
+        if results.result.len() != 1 || results.result[0].expressions.len() != 1 {
+            bail!("query did not produce exactly one value");
+        }
+        results.result[0].expressions[0].value.as_bool().copied()
     }
 
     #[doc(hidden)]

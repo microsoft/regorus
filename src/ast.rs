@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::lexer::*;
+use crate::Rc;
 
 use std::ops::Deref;
 
@@ -37,7 +38,7 @@ pub enum AssignOp {
 }
 
 pub struct NodeRef<T> {
-    r: std::rc::Rc<T>,
+    r: Rc<T>,
 }
 
 impl<T> Clone for NodeRef<T> {
@@ -54,7 +55,7 @@ impl<T: std::fmt::Debug> std::fmt::Debug for NodeRef<T> {
 
 impl<T> std::cmp::PartialEq for NodeRef<T> {
     fn eq(&self, other: &Self) -> bool {
-        std::rc::Rc::as_ptr(&self.r).eq(&std::rc::Rc::as_ptr(&other.r))
+        Rc::as_ptr(&self.r).eq(&Rc::as_ptr(&other.r))
     }
 }
 
@@ -62,7 +63,7 @@ impl<T> std::cmp::Eq for NodeRef<T> {}
 
 impl<T> std::cmp::Ord for NodeRef<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        std::rc::Rc::as_ptr(&self.r).cmp(&std::rc::Rc::as_ptr(&other.r))
+        Rc::as_ptr(&self.r).cmp(&Rc::as_ptr(&other.r))
     }
 }
 
@@ -88,9 +89,7 @@ impl<T> AsRef<T> for NodeRef<T> {
 
 impl<T> NodeRef<T> {
     pub fn new(t: T) -> Self {
-        Self {
-            r: std::rc::Rc::new(t),
-        }
+        Self { r: Rc::new(t) }
     }
 }
 

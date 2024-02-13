@@ -9,6 +9,7 @@ use crate::parser::Parser;
 use crate::scheduler::*;
 use crate::utils::*;
 use crate::value::*;
+use crate::Rc;
 use crate::{Expression, Extension, Location, QueryResult, QueryResults};
 
 use anyhow::{anyhow, bail, Result};
@@ -37,7 +38,7 @@ enum FunctionModifier {
     Value(Value),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Interpreter {
     modules: Vec<Ref<Module>>,
     module: Option<Ref<Module>>,
@@ -64,7 +65,7 @@ pub struct Interpreter {
     allow_deprecated: bool,
     strict_builtin_errors: bool,
     imports: BTreeMap<String, Ref<Expr>>,
-    extensions: HashMap<String, (u8, Box<dyn Extension>)>,
+    extensions: HashMap<String, (u8, Rc<Box<dyn Extension>>)>,
 }
 
 impl Default for Interpreter {
@@ -2165,7 +2166,7 @@ impl Interpreter {
             if param_values.len() != *nargs as usize {
                 bail!(span.error("incorrect number of parameters supplied to extension"));
             }
-            let r = ext(param_values);
+            let r = Rc::make_mut(ext)(param_values);
             // Restore with_functions.
             if let Some(with_functions) = with_functions_saved {
                 self.with_functions = with_functions;
@@ -3458,7 +3459,7 @@ impl Interpreter {
         extension: Box<dyn Extension>,
     ) -> Result<()> {
         if let std::collections::hash_map::Entry::Vacant(v) = self.extensions.entry(path) {
-            v.insert((nargs, extension));
+            v.insert((nargs, Rc::new(extension)));
             Ok(())
         } else {
             bail!("extension already added");

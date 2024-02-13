@@ -20,6 +20,12 @@ mod value;
 pub use engine::Engine;
 pub use value::Value;
 
+#[cfg(feature = "arc")]
+use std::sync::Arc as Rc;
+
+#[cfg(not(feature = "arc"))]
+use std::rc::Rc;
+
 /// Location of an [`Expression`] in a Rego query.
 ///
 /// ```
@@ -68,7 +74,7 @@ pub struct Expression {
     pub value: Value,
 
     /// The Rego expression.
-    pub text: std::rc::Rc<str>,
+    pub text: Rc<str>,
 
     /// Location of the expression in the query string.
     pub location: Location,
@@ -263,7 +269,7 @@ pub struct QueryResults {
 /// A user defined builtin function implementation.
 ///
 /// It is not necessary to implement this trait directly.
-pub trait Extension: FnMut(Vec<Value>) -> anyhow::Result<Value> {
+pub trait Extension: FnMut(Vec<Value>) -> anyhow::Result<Value> + Send + Sync {
     /// Fn, FnMut etc are not sized and cannot be cloned in their boxed form.
     /// clone_box exists to overcome that.
     fn clone_box<'a>(&self) -> Box<dyn 'a + Extension>
@@ -274,7 +280,7 @@ pub trait Extension: FnMut(Vec<Value>) -> anyhow::Result<Value> {
 /// Automatically make matching closures a valid [`Extension`].
 impl<F> Extension for F
 where
-    F: FnMut(Vec<Value>) -> anyhow::Result<Value> + Clone,
+    F: FnMut(Vec<Value>) -> anyhow::Result<Value> + Clone + Send + Sync,
 {
     fn clone_box<'a>(&self) -> Box<dyn 'a + Extension>
     where
@@ -288,6 +294,12 @@ where
 impl<'a> Clone for Box<dyn 'a + Extension> {
     fn clone(&self) -> Self {
         (**self).clone_box()
+    }
+}
+
+impl std::fmt::Debug for dyn Extension {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        f.write_fmt(format_args!("<extension>"))
     }
 }
 

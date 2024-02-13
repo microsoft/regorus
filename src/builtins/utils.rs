@@ -4,7 +4,8 @@
 use crate::ast::{Expr, Ref};
 use crate::lexer::Span;
 use crate::number::Number;
-use crate::value::{Rc, Value};
+use crate::Rc;
+use crate::Value;
 
 use std::collections::{BTreeMap, BTreeSet};
 
