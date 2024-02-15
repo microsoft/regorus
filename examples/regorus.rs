@@ -10,6 +10,7 @@ fn rego_eval(
     query: String,
     enable_tracing: bool,
     non_strict: bool,
+    #[cfg(feature = "coverage")] coverage: bool,
 ) -> Result<()> {
     // Create engine.
     let mut engine = regorus::Engine::new();
@@ -69,6 +70,28 @@ fn rego_eval(
     // Evaluate query.
     let results = engine.eval_query(query, enable_tracing)?;
     println!("{}", serde_json::to_string_pretty(&results)?);
+
+    #[cfg(feature = "coverage")]
+    if coverage {
+        println!("\n\nCOVERAGE REPORT");
+        // Fetch coverage report.
+        let report = engine.get_coverage_report()?;
+        for file in report.files.into_iter() {
+            if file.uncovered.is_empty() {
+                println!("{} has full coverage", file.path);
+                continue;
+            }
+
+            println!("{}:", file.path);
+            for (line, code) in file.code.split('\n').enumerate() {
+                if file.uncovered.contains(&(line as u32 + 1)) {
+                    println!("\x1b[31m {line:4}  {code}\x1b[0m");
+                } else {
+                    println!(" {line:4}  {code}");
+                }
+            }
+        }
+    }
 
     Ok(())
 }
@@ -140,6 +163,11 @@ enum RegorusCommand {
         // Non strict execution
         #[arg(long, short)]
         non_strict: bool,
+
+        // Display coverage information
+        #[cfg(feature = "coverage")]
+        #[arg(long, short)]
+        coverage: bool,
     },
 
     /// Tokenize a Rego policy.
@@ -183,7 +211,18 @@ fn main() -> Result<()> {
             query,
             trace,
             non_strict,
-        } => rego_eval(&bundles, &data, input, query, trace, non_strict),
+            #[cfg(feature = "coverage")]
+            coverage,
+        } => rego_eval(
+            &bundles,
+            &data,
+            input,
+            query,
+            trace,
+            non_strict,
+            #[cfg(feature = "coverage")]
+            coverage,
+        ),
         RegorusCommand::Lex { file, verbose } => rego_lex(file, verbose),
         RegorusCommand::Parse { file } => rego_parse(file),
     }

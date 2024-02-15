@@ -303,6 +303,21 @@ impl std::fmt::Debug for dyn Extension {
     }
 }
 
+#[cfg(feature = "coverage")]
+pub mod coverage {
+    #[derive(Default, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
+    pub struct PolicyFile {
+        pub path: String,
+        pub code: String,
+        pub uncovered: std::collections::BTreeSet<u32>,
+    }
+
+    #[derive(Default, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
+    pub struct Report {
+        pub files: Vec<PolicyFile>,
+    }
+}
+
 /// Items in `unstable` are likely to change.
 #[doc(hidden)]
 pub mod unstable {

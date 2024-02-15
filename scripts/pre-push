@@ -9,10 +9,18 @@ if [ -f Cargo.toml ]; then
    dir=$(dirname "${BASH_SOURCE[0]}")
    "$dir/pre-commit"
 
+   # Ensure that the public API works
+   cargo test -r --doc
+   
    # Ensure that all tests pass
    cargo test -r
    cargo test -r --test aci
 
    # Ensure that OPA conformance tests don't regress.
    cargo test -r --features opa-testutil --test opa -- $(tr '\n' ' ' < tests/opa.passing)
+
+   # Run the same tests using "coverage" build
+   cargo test -r --features "coverage"
+   cargo test -r --test aci --features "coverage"
+   cargo test -r --features "coverage,opa-testutil" --test opa -- $(tr '\n' ' ' < tests/opa.passing)
 fi
