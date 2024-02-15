@@ -1,0 +1,20 @@
+{
+    "incoming": {
+        "ext1": {
+            "urls": ["url1", "url2"],
+            "state": "enabled",
+	    "settings":["setting1", "setting2"],
+            "version": "1.1"
+        },
+        "ext2": {
+            "location": "url2",
+            "state": "disabled",
+            "version": "2.0"
+        },
+        "ext3": {
+            "location": "url3",
+            "state": "enabled",
+            "version": "1.0"
+        }
+    }
+}

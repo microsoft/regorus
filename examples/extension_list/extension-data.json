@@ -1,0 +1,15 @@
+{
+    "allowed": {
+        "ext1": {
+            "version": "1.0",
+            "upgradable": false
+        },
+        "ext2": {
+            "signature": "xyz245",
+            "upgradable": true
+        },
+        "App3": {
+            "type": "app"
+        }
+    }
+}
