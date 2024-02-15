@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk" InitialTargets="BuildRegorusFFI"> 
+
+  <Target Name="BuildRegorusFFI">
+    <Exec Command="cargo build -r --manifest-path ../../ffi/Cargo.toml" />
+    <Copy SourceFiles="../../ffi/RegorusFFI.g.cs" DestinationFolder="." />
+    <ItemGroup>
+        <RegorusDylib Include="..\..\..\target\release\*regorus_ffi*" />
+    </ItemGroup>    
+    <Copy SourceFiles="@(RegorusDylib)" DestinationFolder="." />
+  </Target>
+
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net40</TargetFramework>
+    <RootNamespace>regorus_test</RootNamespace>
+    <StartupObject>regoregorus_test.Program</StartupObject>
+    <ImplicitUsings>enable</ImplicitUsings> 
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+
+
+</Project>

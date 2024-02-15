@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<package>
+  <metadata>
+    <id>RegorusCsharp-Lib-x64</id>
+    <version>0.2.1</version>
+    <title>RegorusCsharp-Lib-x64</title>
+    <authors>yangjie@microsoft.com</authors>
+    <owners>yangjie@microsoft.com</owners>
+    <projectUrl>https://www.microsoft.com</projectUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>Regorus C# library for x64</description>
+    <releaseNotes>remove Regorus.cs from Nuget</releaseNotes>
+    <copyright>Copyright (C) Microsoft Corp</copyright>
+    <summary></summary>
+  </metadata>
+  <files>
+    <file src="RegorusFFI.g.cs" target="RegorusFFI.g.cs"/>
+    <file src="regorus_ffi.dll" target="lib\regorusc.dll" />
+    <file src="README" target="README" />
+    <file src="..\..\..\LICENSE" target="LICENSE" />
+  </files>
+</package>
