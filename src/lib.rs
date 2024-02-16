@@ -186,17 +186,33 @@ impl Default for QueryResult {
 /// ```
 /// # use regorus::*;
 /// # fn main() -> anyhow::Result<()> {
-/// // Create engine and evaluate "true; true; false".
+/// // Create engine and evaluate "1 + 1".
 /// let results = Engine::new().eval_query("1 + 1".to_string(), false)?;
 ///
-/// assert!(results.result.len() == 1);
+/// assert_eq!(results.result.len(), 1);
 /// assert_eq!(results.result[0].expressions[0].value, Value::from(2u64));
 /// assert_eq!(results.result[0].expressions[0].text.as_ref(), "1 + 1");
 /// # Ok(())
 /// # }
 /// ```
 ///
-/// If any expression evaluates to false, then no results are produced.
+/// If a query contains only one expression, and even if the expression evaluates
+/// to false, the value will be returned.
+/// ```
+/// # use regorus::*;
+/// # fn main() -> anyhow::Result<()> {
+/// // Create engine and evaluate "1 > 2" which is false.
+/// let results = Engine::new().eval_query("1 > 2".to_string(), false)?;
+///
+/// assert_eq!(results.result.len(), 1);
+/// assert_eq!(results.result[0].expressions[0].value, Value::from(false));
+/// assert_eq!(results.result[0].expressions[0].text.as_ref(), "1 > 2");
+/// # Ok(())
+/// # }
+/// ```
+///
+/// In a query containing multiple expressions, if  any expression evaluates to false,
+/// then no results are produced.
 /// ```
 /// # use regorus::*;
 /// # fn main() -> anyhow::Result<()> {
@@ -204,6 +220,26 @@ impl Default for QueryResult {
 /// let results = Engine::new().eval_query("true; true; false".to_string(), false)?;
 ///
 /// assert!(results.result.is_empty());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// Note that `=` is different from `==`. The former evaluates to undefined if the LHS and RHS
+/// are not equal. The latter evaluates to either true or false.
+/// ```
+/// # use regorus::*;
+/// # fn main() -> anyhow::Result<()> {
+/// // Create engine and evaluate "1 = 2" which is undefined and produces no resutl.
+/// let results = Engine::new().eval_query("1 = 2".to_string(), false)?;
+///
+/// assert_eq!(results.result.len(), 0);
+///
+/// // Create engine and evaluate "1 == 2" which evaluates to false.
+/// let results = Engine::new().eval_query("1 == 2".to_string(), false)?;
+///
+/// assert_eq!(results.result.len(), 1);
+/// assert_eq!(results.result[0].expressions[0].value, Value::from(false));
+/// assert_eq!(results.result[0].expressions[0].text.as_ref(), "1 == 2");
 /// # Ok(())
 /// # }
 /// ```

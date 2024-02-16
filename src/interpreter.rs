@@ -661,7 +661,13 @@ impl Interpreter {
                             .map(Value::Bool);
                     }
                     // Treat the assignment as comparison if neither lhs nor rhs is a variable
-                    _ => return self.eval_bool_expr(&BoolOp::Eq, lhs, rhs),
+                    _ => {
+                        let r = self.eval_bool_expr(&BoolOp::Eq, lhs, rhs)?;
+                        if r == Value::Bool(false) {
+                            return Ok(Value::Undefined);
+                        }
+                        return Ok(r);
+                    }
                 }
             }
             AssignOp::ColEq => {
@@ -1702,11 +1708,12 @@ impl Interpreter {
                             .insert(Value::String(name.to_string().into()), value.clone());
                     }
                 }
-                if result
-                    .expressions
-                    .iter()
-                    .all(|v| v.value != Value::Undefined && v.value != Value::Bool(false))
-                    && !result.expressions.is_empty()
+                if result.expressions.len() == 1 // Single expression query
+                    || result // Multi expression query where no value is false
+                       .expressions
+                       .iter()
+                       .all(|v| v.value != Value::Undefined && v.value != Value::Bool(false))
+                       && !result.expressions.is_empty()
                 {
                     ctx.results.result.push(result);
                 }
@@ -1821,7 +1828,9 @@ impl Interpreter {
                             .insert(Value::String(name.to_string().into()), value.clone());
                     }
                 }
-                if result
+
+                if result.expressions.len() == 1 // Single expression query
+                    || result // Multi expression query where no value is false
                     .expressions
                     .iter()
                     .all(|v| v.value != Value::Undefined && v.value != Value::Bool(false))
@@ -3242,7 +3251,8 @@ impl Interpreter {
 
         if let Some(r) = results.result.last() {
             if matches!(&r.bindings, Value::Object(obj) if obj.is_empty())
-                && r.expressions.iter().any(|e| e.value == Value::Bool(false))
+                && (r.expressions.len() > 1
+                    && r.expressions.iter().any(|e| e.value == Value::Bool(false)))
             {
                 results = QueryResults::default();
             }

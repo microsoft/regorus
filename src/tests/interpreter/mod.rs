@@ -234,6 +234,7 @@ struct TestCase {
     query: String,
     sort_bindings: Option<bool>,
     want_result: Option<ValueOrVec>,
+    no_result: Option<bool>,
     skip: Option<bool>,
     error: Option<String>,
     traces: Option<bool>,
@@ -267,7 +268,10 @@ fn yaml_test_impl(file: &str) -> Result<()> {
 
         match (&case.want_result, &case.error) {
             (Some(_), None) | (None, Some(_)) => (),
-            _ => panic!("either want_result or error must be specified in test case."),
+            _ if case.no_result != Some(true) => {
+                panic!("either want_result, error or no_result must be specified in test case.")
+            }
+            _ => (),
         }
 
         let enable_tracing = case.traces.is_some() && case.traces.unwrap();
@@ -292,6 +296,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
 
                     check_output(&results, &expected_results)?;
                 }
+                _ if case.no_result == Some(true) => (),
                 _ => bail!("eval succeeded and did not produce any errors"),
             },
             Err(actual) => match &case.error {

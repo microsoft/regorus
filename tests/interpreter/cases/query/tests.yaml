@@ -1,0 +1,26 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: single-expression query producing false
+    data: {}
+    modules: []
+    query: 1 == 2
+    want_result: false
+
+  - note: single-expression query producing no results (due to undefined)
+    data: {}
+    modules: []
+    query: 1 = 2
+    no_result: true
+
+  - note: multi-expression query in which one expression is false (1)
+    data: {}
+    modules: []
+    query: "1 == 1; 1 == 2"
+    no_result: true
+
+  - note: multi-expression query in which one expression is false (2)
+    data: {}
+    modules: []
+    query: "1 == 2; 1 == 1"
+    no_result: true
