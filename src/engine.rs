@@ -233,7 +233,7 @@ impl Engine {
     /// // Load input and make query.
     /// engine.set_input(Value::new_object());
     /// let results = engine.eval_query("data.framework.mount_overlay.allowed".to_string(), false)?;
-    /// assert!(results.result.is_empty());
+    /// assert_eq!(results.result[0].expressions[0].value, Value::from(false));
     ///
     /// // Evaluate query with different inputs.
     /// engine.set_input(Value::from_json_file("tests/aci/input.json")?);
