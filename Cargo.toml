@@ -3,7 +3,8 @@
 members = [
     "bindings/ffi",
     "bindings/python",
-    "bindings/wasm"
+    "bindings/wasm",
+    "bindings/java",
 ]
 
 [package]
