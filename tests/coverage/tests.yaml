@@ -1,0 +1,20 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: basic
+    modules:
+      - |
+        package test
+
+        x = 1
+        
+        y = k {
+          input.x == 5
+          k = input.k
+        }
+    query: data.test
+    uncovered: [
+      [ 5, 7 ]
+    ]
+        

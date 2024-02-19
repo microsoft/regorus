@@ -66,6 +66,9 @@ pub struct Interpreter {
     strict_builtin_errors: bool,
     imports: BTreeMap<String, Ref<Expr>>,
     extensions: HashMap<String, (u8, Rc<Box<dyn Extension>>)>,
+
+    #[cfg(feature = "coverage")]
+    coverage: HashMap<Source, Vec<bool>>,
 }
 
 impl Default for Interpreter {
@@ -177,6 +180,9 @@ impl Interpreter {
             strict_builtin_errors: true,
             imports: BTreeMap::default(),
             extensions: HashMap::new(),
+
+            #[cfg(feature = "coverage")]
+            coverage: HashMap::new(),
         }
     }
 
@@ -2583,6 +2589,31 @@ impl Interpreter {
             expr.span().text()
         );
 
+        #[cfg(feature = "coverage")]
+        {
+            let span = expr.span();
+            let source = &span.source;
+            let line = span.line as usize;
+            if line > 0 {
+                // Check if coverage table already exists for source.
+                match self.coverage.get_mut(source) {
+                    Some(c) => {
+                        // Ensure that current line is valid.
+                        if c.len() < line + 1 {
+                            c.resize(line + 1, false);
+                        }
+                        c[line] = true;
+                    }
+                    _ => {
+                        // Create new table.
+                        let mut c = vec![false; line + 1];
+                        c[line] = true;
+                        self.coverage.insert(source.clone(), c);
+                    }
+                }
+            }
+        }
+
         match expr.as_ref() {
             Expr::Null(_) => Ok(Value::Null),
             Expr::True(_) => Ok(Value::Bool(true)),
@@ -3474,5 +3505,124 @@ impl Interpreter {
         } else {
             bail!("extension already added");
         }
+    }
+
+    #[cfg(feature = "coverage")]
+    fn gather_uncovered_lines_in_query(
+        &self,
+        query: &Ref<Query>,
+        covered: &Vec<bool>,
+        uncovered: &mut BTreeSet<u32>,
+    ) -> Result<()> {
+        for stmt in &query.stmts {
+            // TODO: with mods
+            match &stmt.literal {
+                Literal::SomeVars { .. } => (),
+                Literal::SomeIn {
+                    value, collection, ..
+                } => {
+                    self.gather_uncovered_lines_in_expr(value, covered, uncovered)?;
+                    self.gather_uncovered_lines_in_expr(collection, covered, uncovered)?;
+                }
+                Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => {
+                    self.gather_uncovered_lines_in_expr(expr, covered, uncovered)?;
+                }
+                Literal::Every { domain, query, .. } => {
+                    self.gather_uncovered_lines_in_expr(domain, covered, uncovered)?;
+                    self.gather_uncovered_lines_in_query(query, covered, uncovered)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "coverage")]
+    fn gather_uncovered_lines_in_expr(
+        &self,
+        expr: &Ref<Expr>,
+        covered: &Vec<bool>,
+        uncovered: &mut BTreeSet<u32>,
+    ) -> Result<()> {
+        use Expr::*;
+        traverse(expr, &mut |e| {
+            Ok(match e.as_ref() {
+                ArrayCompr { query, .. } | SetCompr { query, .. } | ObjectCompr { query, .. } => {
+                    self.gather_uncovered_lines_in_query(query, covered, uncovered)?;
+                    false
+                }
+                _ => {
+                    let line = e.span().line as usize;
+                    if line >= covered.len() || !covered[line] {
+                        uncovered.insert(line as u32);
+                    }
+                    true
+                }
+            })
+        })?;
+        Ok(())
+    }
+
+    #[cfg(feature = "coverage")]
+    pub fn get_coverage_report(&self) -> Result<crate::coverage::Report> {
+        let mut report = crate::coverage::Report::default();
+
+        for module in self.modules.iter() {
+            let span = module.package.refr.span();
+
+            // Get coverage information for the module.
+            let Some(covered) = self.coverage.get(&span.source) else {
+                continue;
+            };
+
+            let mut uncovered = BTreeSet::new();
+
+            // Loop through each rule and figure out the lines that were not coverd.
+            for rule in &module.policy {
+                match rule.as_ref() {
+                    Rule::Spec { head, bodies, .. } => {
+                        match head {
+                            RuleHead::Compr { assign, .. } | RuleHead::Func { assign, .. } => {
+                                if let Some(a) = assign {
+                                    self.gather_uncovered_lines_in_expr(
+                                        &a.value,
+                                        covered,
+                                        &mut uncovered,
+                                    )?;
+                                }
+                            }
+                            RuleHead::Set { key, .. } => {
+                                if let Some(k) = key {
+                                    self.gather_uncovered_lines_in_expr(
+                                        k,
+                                        covered,
+                                        &mut uncovered,
+                                    )?;
+                                }
+                            }
+                        }
+                        for b in bodies {
+                            self.gather_uncovered_lines_in_query(
+                                &b.query,
+                                covered,
+                                &mut uncovered,
+                            )?;
+                        }
+                    }
+                    Rule::Default { value, .. } => {
+                        self.gather_uncovered_lines_in_expr(value, covered, &mut uncovered)?;
+                    }
+                }
+            }
+
+            let file = crate::coverage::PolicyFile {
+                path: span.source.file().clone(),
+                code: span.source.contents().clone(),
+                uncovered,
+            };
+
+            report.files.push(file);
+        }
+
+        Ok(report)
     }
 }

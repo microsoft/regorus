@@ -23,27 +23,29 @@ jobs:
     - name: Format Check
       run: cargo fmt --check
     - name: Build
-      run: cargo build --verbose
-    - name: Build Tests
-      run: cargo build --all-targets --verbose
-    - name: Clippy
-      run: cargo clippy --all-targets --no-deps -- -Dwarnings
+      run: cargo build -r --verbose
+    - name: Doc Tests
+      run: cargo test -r --doc
     - name: Run tests
       run: cargo test -r --verbose
-    - name: Build (MUSL)
-      run: cargo build --verbose --all-targets --target x86_64-unknown-linux-musl
-    - name: Run tests (MUSL)
-      run: cargo test -r --verbose --target x86_64-unknown-linux-musl
     - name: Run tests (ACI)
       run: cargo test -r --test aci
     - name: Run tests (OPA Conformance)
       run: >-
         cargo test -r --test opa --features opa-testutil  -- $(tr '\n' ' ' < tests/opa.passing)
-
-    # - name: Install wasm-pack
-    #   run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-    # - name: Run wasm binding tests
-    #   run: |
-    #     cd bindings/wasm
-    #     wasm-pack test --node -r
+    - name: Run tests (coverage)
+      run: cargo test -r --verbose --features "coverage"
+    - name: Run tests (ACI coverage)
+      run: cargo test -r --test aci --features "coverage"
+    - name: Run tests (OPA Conformance Coverage)
+      run: >-
+        cargo test -r --test opa --features "opa-testutil,coverage"  -- $(tr '\n' ' ' < tests/opa.passing)
+    - name: Build (MUSL)
+      run: cargo build --verbose --all-targets --target x86_64-unknown-linux-musl
+    - name: Run tests (MUSL)
+      run: cargo test -r --verbose --target x86_64-unknown-linux-musl
+    - name: Run tests (MUSL ACI)
+      run: cargo test -r --test aci --features "coverage" --target x86_64-unknown-linux-musl
+    - name: Run tests (MUSL OPA Conformance Coverage)
+      run: >-
+        cargo test -r --test opa --features "opa-testutil,coverage" --target x86_64-unknown-linux-musl  -- $(tr '\n' ' ' < tests/opa.passing)

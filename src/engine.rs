@@ -453,4 +453,9 @@ impl Engine {
     ) -> Result<()> {
         self.interpreter.add_extension(path, nargs, extension)
     }
+
+    #[cfg(feature = "coverage")]
+    pub fn get_coverage_report(&self) -> Result<crate::coverage::Report> {
+        self.interpreter.get_coverage_report()
+    }
 }
