@@ -9,14 +9,20 @@ use anyhow::Result;
 use test_generator::test_resources;
 
 #[derive(serde::Deserialize)]
+struct File {
+    covered: BTreeSet<u32>,
+    not_covered: BTreeSet<u32>,
+}
+
+#[derive(serde::Deserialize)]
 struct TestCase {
     data: Option<Value>,
     input: Option<Value>,
     modules: Vec<String>,
     note: String,
     query: String,
-    uncovered: Vec<BTreeSet<u32>>,
     skip: Option<bool>,
+    report: Vec<File>,
 }
 
 #[derive(serde::Deserialize)]
@@ -38,6 +44,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
         }
 
         let mut engine = Engine::new();
+        engine.set_enable_coverage(true);
 
         for (idx, rego) in case.modules.iter().enumerate() {
             engine.add_policy(format!("rego_{idx}"), rego.clone())?;
@@ -54,8 +61,9 @@ fn yaml_test_impl(file: &str) -> Result<()> {
         let _ = engine.eval_query(case.query.clone(), false)?;
         let report = engine.get_coverage_report()?;
 
-        for (idx, uncovered) in case.uncovered.into_iter().enumerate() {
-            assert_eq!(uncovered, report.files[idx].uncovered);
+        for (idx, file) in case.report.into_iter().enumerate() {
+            assert_eq!(file.not_covered, report.files[idx].not_covered);
+            assert_eq!(file.covered, report.files[idx].covered);
         }
 
         println!("passed");

@@ -14,7 +14,8 @@ cases:
           k = input.k
         }
     query: data.test
-    uncovered: [
-      [ 5, 7 ]
-    ]
+    report:
+      - covered: [3, 6]
+        not_covered: [5, 7]
+
         

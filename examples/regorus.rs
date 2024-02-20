@@ -17,6 +17,9 @@ fn rego_eval(
 
     engine.set_strict_builtin_errors(!non_strict);
 
+    #[cfg(feature = "coverage")]
+    engine.set_enable_coverage(coverage);
+
     // Load files from given bundles.
     for dir in bundles.iter() {
         let entries =
@@ -73,24 +76,8 @@ fn rego_eval(
 
     #[cfg(feature = "coverage")]
     if coverage {
-        println!("\n\nCOVERAGE REPORT");
-        // Fetch coverage report.
         let report = engine.get_coverage_report()?;
-        for file in report.files.into_iter() {
-            if file.uncovered.is_empty() {
-                println!("{} has full coverage", file.path);
-                continue;
-            }
-
-            println!("{}:", file.path);
-            for (line, code) in file.code.split('\n').enumerate() {
-                if file.uncovered.contains(&(line as u32 + 1)) {
-                    println!("\x1b[31m {line:4}  {code}\x1b[0m");
-                } else {
-                    println!(" {line:4}  {code}");
-                }
-            }
-        }
+        println!("{}", report.to_colored_string()?);
     }
 
     Ok(())

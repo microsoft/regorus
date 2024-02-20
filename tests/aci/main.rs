@@ -111,6 +111,7 @@ fn run_aci_tests(dir: &Path) -> Result<()> {
 #[cfg(feature = "coverage")]
 fn run_aci_tests_coverage(dir: &Path) -> Result<()> {
     let mut engine = Engine::new();
+    engine.set_enable_coverage(true);
 
     let mut added = std::collections::BTreeSet::new();
 
@@ -150,24 +151,8 @@ fn run_aci_tests_coverage(dir: &Path) -> Result<()> {
         }
     }
 
-    println!("\n\nCOVERAGE REPORT");
-    // Fetch coverage report.
     let report = engine.get_coverage_report()?;
-    for file in report.files.into_iter() {
-        if file.uncovered.is_empty() {
-            println!("{} has full coverage", file.path);
-            continue;
-        }
-
-        println!("{}:", file.path);
-        for (line, code) in file.code.split('\n').enumerate() {
-            if file.uncovered.contains(&(line as u32 + 1)) {
-                println!("\x1b[31m {line:4}  {code}\x1b[0m");
-            } else {
-                println!(" {line:4}  {code}");
-            }
-        }
-    }
+    println!("{}", report.to_colored_string()?);
 
     Ok(())
 }
@@ -184,11 +169,8 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    cfg_if::cfg_if! {
-    if #[cfg(feature = "coverage")] {
-        run_aci_tests_coverage(&Path::new(&cli.test_dir))
-    } else {
-        run_aci_tests(&Path::new(&cli.test_dir))
-    }
-    }
+    #[cfg(feature = "coverage")]
+    run_aci_tests_coverage(&Path::new(&cli.test_dir))?;
+
+    run_aci_tests(&Path::new(&cli.test_dir))
 }

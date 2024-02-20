@@ -46,6 +46,7 @@ yaml = ["serde_yaml"]
 full-opa = [
     "base64",
     "base64url",
+    "coverage",
     "crypto",
     "deprecated",
     "glob",
