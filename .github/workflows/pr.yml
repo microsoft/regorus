@@ -33,19 +33,12 @@ jobs:
     - name: Run tests (OPA Conformance)
       run: >-
         cargo test -r --test opa --features opa-testutil  -- $(tr '\n' ' ' < tests/opa.passing)
-    - name: Run tests (coverage)
-      run: cargo test -r --verbose --features "coverage"
-    - name: Run tests (ACI coverage)
-      run: cargo test -r --test aci --features "coverage"
-    - name: Run tests (OPA Conformance Coverage)
-      run: >-
-        cargo test -r --test opa --features "opa-testutil,coverage"  -- $(tr '\n' ' ' < tests/opa.passing)
     - name: Build (MUSL)
       run: cargo build --verbose --all-targets --target x86_64-unknown-linux-musl
     - name: Run tests (MUSL)
       run: cargo test -r --verbose --target x86_64-unknown-linux-musl
     - name: Run tests (MUSL ACI)
-      run: cargo test -r --test aci --features "coverage" --target x86_64-unknown-linux-musl
-    - name: Run tests (MUSL OPA Conformance Coverage)
+      run: cargo test -r --test aci --target x86_64-unknown-linux-musl
+    - name: Run tests (MUSL OPA Conformance)
       run: >-
-        cargo test -r --test opa --features "opa-testutil,coverage" --target x86_64-unknown-linux-musl  -- $(tr '\n' ' ' < tests/opa.passing)
+        cargo test -r --test opa --features opa-testutil --target x86_64-unknown-linux-musl  -- $(tr '\n' ' ' < tests/opa.passing)

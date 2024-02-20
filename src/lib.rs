@@ -341,16 +341,46 @@ impl std::fmt::Debug for dyn Extension {
 
 #[cfg(feature = "coverage")]
 pub mod coverage {
-    #[derive(Default, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
-    pub struct PolicyFile {
+    #[derive(Default, serde::Serialize, serde::Deserialize)]
+    pub struct File {
         pub path: String,
         pub code: String,
-        pub uncovered: std::collections::BTreeSet<u32>,
+        pub covered: std::collections::BTreeSet<u32>,
+        pub not_covered: std::collections::BTreeSet<u32>,
     }
 
-    #[derive(Default, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
+    #[derive(Default, serde::Serialize, serde::Deserialize)]
     pub struct Report {
-        pub files: Vec<PolicyFile>,
+        pub files: Vec<File>,
+    }
+
+    impl Report {
+        pub fn to_colored_string(&self) -> anyhow::Result<String> {
+            use std::io::Write;
+            let mut s = Vec::new();
+            writeln!(&mut s, "COVERAGE REPORT:")?;
+            for file in self.files.iter() {
+                if file.not_covered.is_empty() {
+                    writeln!(&mut s, "{} has full coverage", file.path)?;
+                    continue;
+                }
+
+                writeln!(&mut s, "{}:", file.path)?;
+                for (line, code) in file.code.split('\n').enumerate() {
+                    let line = line as u32 + 1;
+                    if file.not_covered.contains(&line) {
+                        writeln!(&mut s, "\x1b[31m {line:4}  {code}\x1b[0m")?;
+                    } else if file.covered.contains(&line) {
+                        writeln!(&mut s, "\x1b[32m {line:4}  {code}\x1b[0m")?;
+                    } else {
+                        writeln!(&mut s, " {line:4}  {code}")?;
+                    }
+                }
+            }
+
+            writeln!(&mut s)?;
+            Ok(std::str::from_utf8(&s)?.to_string())
+        }
     }
 }
 

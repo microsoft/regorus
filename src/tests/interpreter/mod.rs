@@ -143,6 +143,9 @@ pub fn eval_file(
     let mut engine: Engine = Engine::new();
     engine.set_strict_builtin_errors(strict);
 
+    #[cfg(feature = "coverage")]
+    engine.set_enable_coverage(true);
+
     let mut results = vec![];
     let mut files = vec![];
 

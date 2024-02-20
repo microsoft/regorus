@@ -69,6 +69,8 @@ pub struct Interpreter {
 
     #[cfg(feature = "coverage")]
     coverage: HashMap<Source, Vec<bool>>,
+    #[cfg(feature = "coverage")]
+    enable_coverage: bool,
 }
 
 impl Default for Interpreter {
@@ -183,6 +185,8 @@ impl Interpreter {
 
             #[cfg(feature = "coverage")]
             coverage: HashMap::new(),
+            #[cfg(feature = "coverage")]
+            enable_coverage: false,
         }
     }
 
@@ -2590,7 +2594,7 @@ impl Interpreter {
         );
 
         #[cfg(feature = "coverage")]
-        {
+        if self.enable_coverage {
             let span = expr.span();
             let source = &span.source;
             let line = span.line as usize;
@@ -3508,11 +3512,11 @@ impl Interpreter {
     }
 
     #[cfg(feature = "coverage")]
-    fn gather_uncovered_lines_in_query(
+    fn gather_coverage_in_query(
         &self,
         query: &Ref<Query>,
         covered: &Vec<bool>,
-        uncovered: &mut BTreeSet<u32>,
+        file: &mut crate::coverage::File,
     ) -> Result<()> {
         for stmt in &query.stmts {
             // TODO: with mods
@@ -3521,15 +3525,15 @@ impl Interpreter {
                 Literal::SomeIn {
                     value, collection, ..
                 } => {
-                    self.gather_uncovered_lines_in_expr(value, covered, uncovered)?;
-                    self.gather_uncovered_lines_in_expr(collection, covered, uncovered)?;
+                    self.gather_coverage_in_expr(value, covered, file)?;
+                    self.gather_coverage_in_expr(collection, covered, file)?;
                 }
                 Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => {
-                    self.gather_uncovered_lines_in_expr(expr, covered, uncovered)?;
+                    self.gather_coverage_in_expr(expr, covered, file)?;
                 }
                 Literal::Every { domain, query, .. } => {
-                    self.gather_uncovered_lines_in_expr(domain, covered, uncovered)?;
-                    self.gather_uncovered_lines_in_query(query, covered, uncovered)?;
+                    self.gather_coverage_in_expr(domain, covered, file)?;
+                    self.gather_coverage_in_query(query, covered, file)?;
                 }
             }
         }
@@ -3537,23 +3541,25 @@ impl Interpreter {
     }
 
     #[cfg(feature = "coverage")]
-    fn gather_uncovered_lines_in_expr(
+    fn gather_coverage_in_expr(
         &self,
         expr: &Ref<Expr>,
         covered: &Vec<bool>,
-        uncovered: &mut BTreeSet<u32>,
+        file: &mut crate::coverage::File,
     ) -> Result<()> {
         use Expr::*;
         traverse(expr, &mut |e| {
             Ok(match e.as_ref() {
                 ArrayCompr { query, .. } | SetCompr { query, .. } | ObjectCompr { query, .. } => {
-                    self.gather_uncovered_lines_in_query(query, covered, uncovered)?;
+                    self.gather_coverage_in_query(query, covered, file)?;
                     false
                 }
                 _ => {
                     let line = e.span().line as usize;
                     if line >= covered.len() || !covered[line] {
-                        uncovered.insert(line as u32);
+                        file.not_covered.insert(line as u32);
+                    } else if line < covered.len() && covered[line] {
+                        file.covered.insert(line as u32);
                     }
                     true
                 }
@@ -3574,7 +3580,12 @@ impl Interpreter {
                 continue;
             };
 
-            let mut uncovered = BTreeSet::new();
+            let mut file = crate::coverage::File {
+                path: span.source.file().clone(),
+                code: span.source.contents().clone(),
+                covered: BTreeSet::new(),
+                not_covered: BTreeSet::new(),
+            };
 
             // Loop through each rule and figure out the lines that were not coverd.
             for rule in &module.policy {
@@ -3583,46 +3594,41 @@ impl Interpreter {
                         match head {
                             RuleHead::Compr { assign, .. } | RuleHead::Func { assign, .. } => {
                                 if let Some(a) = assign {
-                                    self.gather_uncovered_lines_in_expr(
-                                        &a.value,
-                                        covered,
-                                        &mut uncovered,
-                                    )?;
+                                    self.gather_coverage_in_expr(&a.value, covered, &mut file)?;
                                 }
                             }
                             RuleHead::Set { key, .. } => {
                                 if let Some(k) = key {
-                                    self.gather_uncovered_lines_in_expr(
-                                        k,
-                                        covered,
-                                        &mut uncovered,
-                                    )?;
+                                    self.gather_coverage_in_expr(k, covered, &mut file)?;
                                 }
                             }
                         }
                         for b in bodies {
-                            self.gather_uncovered_lines_in_query(
-                                &b.query,
-                                covered,
-                                &mut uncovered,
-                            )?;
+                            self.gather_coverage_in_query(&b.query, covered, &mut file)?;
                         }
                     }
                     Rule::Default { value, .. } => {
-                        self.gather_uncovered_lines_in_expr(value, covered, &mut uncovered)?;
+                        self.gather_coverage_in_expr(value, covered, &mut file)?;
                     }
                 }
             }
-
-            let file = crate::coverage::PolicyFile {
-                path: span.source.file().clone(),
-                code: span.source.contents().clone(),
-                uncovered,
-            };
 
             report.files.push(file);
         }
 
         Ok(report)
+    }
+
+    #[cfg(feature = "coverage")]
+    pub fn set_enable_coverage(&mut self, enable: bool) {
+        if self.enable_coverage != enable {
+            self.enable_coverage = enable;
+            self.clear_coverage_data();
+        }
+    }
+
+    #[cfg(feature = "coverage")]
+    pub fn clear_coverage_data(&mut self) {
+        self.coverage = HashMap::new();
     }
 }

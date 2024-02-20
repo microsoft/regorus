@@ -54,6 +54,9 @@ struct YamlTest {
 fn eval_test_case(case: &TestCase) -> Result<Value> {
     let mut engine = Engine::new();
 
+    #[cfg(feature = "coverage")]
+    engine.set_enable_coverage(true);
+
     if let Some(data) = &case.data {
         engine.add_data(data.clone())?;
     }
