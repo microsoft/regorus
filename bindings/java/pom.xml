@@ -4,8 +4,7 @@
   Licensed under the MIT License.
 -->
 
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project>
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>com.microsoft.regorus</groupId>
@@ -16,11 +15,26 @@
   <description>Java bindings for Regorus - a fast, lightweight Rego interpreter written in Rust</description>
   <url>https://github.com/microsoft/regorus/bindings/java</url>
 
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/blog/license/mit</url>
+    </license>
+  </licenses>
+
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.source>1.8</maven.compiler.source>
     <maven.compiler.target>1.8</maven.compiler.target>
   </properties>
+
+  <distributionManagement>
+    <repository>
+      <id>ossrh</id>
+      <name>Central Repository OSSRH</name>
+      <url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+    </repository>
+  </distributionManagement>
 
   <dependencies>
     <dependency>
@@ -38,114 +52,80 @@
   </dependencies>
 
   <build>
-    <pluginManagement><!-- lock down plugins versions to avoid using Maven defaults (may be moved to parent pom) -->
-      <plugins>
-        <plugin>
-          <artifactId>maven-clean-plugin</artifactId>
-          <version>3.1.0</version>
-        </plugin>
-        <plugin>
-          <artifactId>maven-site-plugin</artifactId>
-          <version>3.7.1</version>
-        </plugin>
-        <plugin>
-          <artifactId>maven-project-info-reports-plugin</artifactId>
-          <version>3.0.0</version>
-        </plugin>
-        <!-- see http://maven.apache.org/ref/current/maven-core/default-bindings.html#Plugin_bindings_for_jar_packaging -->
-        <plugin>
-          <artifactId>maven-resources-plugin</artifactId>
-          <version>3.0.2</version>
-        </plugin>
-        <plugin>
-          <artifactId>maven-compiler-plugin</artifactId>
-          <version>3.8.0</version>
-        </plugin>
-        <plugin>
-          <artifactId>maven-surefire-plugin</artifactId>
-          <version>2.22.1</version>
-        </plugin>
-        <plugin>
-          <artifactId>maven-jar-plugin</artifactId>
-          <version>3.0.2</version>
-        </plugin>
-        <plugin>
-          <artifactId>maven-install-plugin</artifactId>
-          <version>2.5.2</version>
-        </plugin>
-        <plugin>
-          <artifactId>maven-deploy-plugin</artifactId>
-          <version>2.8.2</version>
-        </plugin>
-      </plugins>
-    </pluginManagement>
+    <resources>
+      <resource>
+        <!-- 
+          Include native/ folder in built JAR.
+          During CI build we build native libraries for various platforms
+          and put them into native/ folder. 
+          See `.github/publish-java.yml`.
+         -->
+        <directory>${project.basedir}/native</directory>
+      </resource>
+    </resources>
 
-    <extensions>
-        <extension>
-            <groupId>kr.motd.maven</groupId>
-            <artifactId>os-maven-plugin</artifactId>
-            <version>1.7.0</version>
-        </extension>
-    </extensions>
-
-    <!-- Adapted from https://github.com/apache/opendal/blob/93e5f65bbf30df2fed4bdd95bb0685c73c6418c2/bindings/java/pom.xml -->
     <plugins>
       <plugin>
-          <artifactId>exec-maven-plugin</artifactId>
-          <groupId>org.codehaus.mojo</groupId>
-          <version>3.1.0</version>
-          <executions>
-              <execution>
-                  <id>compile-native-code</id>
-                  <phase>compile</phase>
-                  <goals>
-                      <goal>exec</goal>
-                  </goals>
-                  <configuration>
-                      <executable>python3</executable>
-                      <arguments>
-                          <argument>${project.basedir}/tools/build.py</argument>
-                          <argument>--classifier</argument>
-                          <argument>${os.detected.classifier}</argument>
-                      </arguments>
-                  </configuration>
-              </execution>
-          </executions>
+        <artifactId>exec-maven-plugin</artifactId>
+        <groupId>org.codehaus.mojo</groupId>
+        <version>3.1.0</version>
+        <executions>
+          <execution>
+            <!-- Build a debug release for tests -->
+            <id>build-native-lib-for-test</id>
+            <phase>test-compile</phase>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <configuration>
+              <executable>python3</executable>
+              <arguments>
+                <argument>${project.basedir}/tools/testbuild.py</argument>
+              </arguments>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
+
       <plugin>
-          <groupId>org.apache.maven.plugins</groupId>
-          <artifactId>maven-surefire-plugin</artifactId>
-          <version>3.1.2</version>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.2.5</version>
+        <configuration>
+          <!-- Add debug build to Java path, so it's discoverable by JVM. This is only for tests. -->
+          <argLine>-Djava.library.path=${project.basedir}/target/debug:${java.library.path}</argLine>
+        </configuration>
       </plugin>
+
+      <!-- Build javadoc JAR, this is required by Maven Central. -->
       <plugin>
-          <groupId>org.apache.maven.plugins</groupId>
-          <artifactId>maven-jar-plugin</artifactId>
-          <executions>
-              <!--  Generate the fallback JAR that does not contain the native library.  -->
-              <execution>
-                  <id>default-jar</id>
-                  <configuration>
-                      <excludes>
-                          <exclude>native/**</exclude>
-                      </excludes>
-                  </configuration>
-              </execution>
-              <!--  Generate the JAR that contains the native library in it.  -->
-              <execution>
-                  <id>native-jar</id>
-                  <goals>
-                      <goal>jar</goal>
-                  </goals>
-                  <configuration>
-                      <classifier>${os.detected.classifier}</classifier>
-                      <includes>
-                          <include>native/**</include>
-                      </includes>
-                  </configuration>
-              </execution>
-          </executions>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <version>3.6.3</version>
+        <executions>
+          <execution>
+            <id>attach-javadoc</id>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
-  </plugins>
+
+      <!-- Build sources JAR, this is required by Maven Central. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <version>3.3.0</version>
+        <executions>
+          <execution>
+            <id>attach-sources</id>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
   </build>
 
   <reporting>
