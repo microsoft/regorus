@@ -33,6 +33,14 @@ JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeAddPolicyFromFile
 
 /*
  * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeClearData
+ * Signature: (J)V
+ */
+JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeClearData
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
  * Method:    nativeAddDataJson
  * Signature: (JLjava/lang/String;)V
  */

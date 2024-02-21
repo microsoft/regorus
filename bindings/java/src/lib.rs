@@ -50,6 +50,19 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddPolicyFromFile
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClearData(
+    env: JNIEnv,
+    _class: JClass,
+    engine_ptr: jlong,
+) {
+    let _ = throw_err(env, |_env| {
+        let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
+        engine.clear_data();
+        Ok(())
+    });
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddDataJson(
     env: JNIEnv,
     _class: JClass,

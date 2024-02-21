@@ -13,6 +13,9 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.concurrent.atomic.AtomicReference;
 
+/**
+ * Regorus Engine.
+ */
 public class Engine implements AutoCloseable {
     // Methods exposed from Rust side, you can run
     // `javac -h . src/main/java/com/microsoft/regorus/Engine.java` to update
@@ -21,6 +24,7 @@ public class Engine implements AutoCloseable {
     private static native long nativeNewEngine();
     private static native void nativeAddPolicy(long enginePtr, String path, String rego);
     private static native void nativeAddPolicyFromFile(long enginePtr, String path);
+    private static native void nativeClearData(long enginePtr);
     private static native void nativeAddDataJson(long enginePtr, String data);
     private static native void nativeAddDataJsonFromFile(long enginePtr, String path);
     private static native void nativeSetInputJson(long enginePtr, String input);
@@ -32,24 +36,103 @@ public class Engine implements AutoCloseable {
     // engine expects this pointer. It is free'd in `close` method.
     private final long enginePtr;
 
+    /**
+     * Creates a new Regorus Engine.
+     */
     public Engine() {
         enginePtr = nativeNewEngine();
     }
 
-    public void addPolicy(String path, String rego) {
-        nativeAddPolicy(enginePtr, path, rego);
+    /**
+     * Adds an inline Rego policy.
+     * 
+     * @param filename Filename of this Rego policy.
+     * @param rego     Rego policy.
+     */
+    public void addPolicy(String filename, String rego) {
+        nativeAddPolicy(enginePtr, filename, rego);
     }
 
-    public void addDataJson(String path) {
-        nativeAddDataJson(enginePtr, path);
+    /**
+     * Adds a Rego policy from given path.
+     * 
+     * @param path Path of the Rego policy.
+     */
+    public void addPolicyFromFile(String path) {
+        nativeAddPolicyFromFile(enginePtr, path);
     }
 
-    public void setInputJson(String path) {
-        nativeSetInputJson(enginePtr, path);
+    /**
+     * Clears the data  document.
+     */
+    public void clearData() {
+        nativeClearData(enginePtr);
     }
 
-    public String evalQuery(String path) {
-        return nativeEvalQuery(enginePtr, path);
+    /**
+     * Adds inline data document from given JSON. 
+     * The specified data document is merged into existing data document.
+     * It will throw an error if new data conflicts with the existing document.
+     * 
+     * Example:
+     *  addDataJson("[]") - Throws as it's not an object.
+     *  addDataJson('{"a": 1}') - Fine
+     *  addDataJson('{"b": 2}') - Fine, now {"a": 1, "b": 2}
+     *  addDataJson('{"b": 3}') - Throws as `b` conflicts.
+     * 
+     * @see clearData
+     * 
+     * @throws RuntimeException If data conflicts with the existing document 
+     *                          or data is not an object.
+     * 
+     * @param data Inline data document.
+     */
+    public void addDataJson(String data) throws RuntimeException {
+        nativeAddDataJson(enginePtr, data);
+    }
+
+    /**
+     * Adds data document from given JSON file. 
+     * The specified data document is merged into existing data document.
+     * It will throw an error if new data conflicts with the existing document.
+     * 
+     * @see addDataJson
+     * @see clearData
+     * 
+     * @throws RuntimeException If data conflicts with the existing document 
+     *                          or data is not an object.
+     * 
+     * @param path Path to JSON data document.
+     */
+    public void addDataJsonFromFile(String path) throws RuntimeException {
+        nativeAddDataJsonFromFile(enginePtr, path);
+    }
+
+    /**
+     * Sets inline JSON input.
+     * 
+     * @param input inline JSON input.
+     */
+    public void setInputJson(String input) {
+        nativeSetInputJson(enginePtr, input);
+    }
+
+    /**
+     * Sets JSON input from given path.
+     * 
+     * @param path Path to JSON input.
+     */
+    public void setInputJsonFromFile(String path) {
+        nativeSetInputJsonFromFile(enginePtr, path);
+    }
+
+    /**
+     * Evaluates given Rego query and returns a JSON string as a result.
+     * 
+     * @param query The Rego query.
+     */
+    public String evalQuery(String query) {
+        return nativeEvalQuery(enginePtr, query);
     }
     
     @Override
