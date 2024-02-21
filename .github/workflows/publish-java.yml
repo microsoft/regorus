@@ -38,11 +38,12 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - run: cargo build --release --target ${{ matrix.target }} --manifest-path ./bindings/java/Cargo.toml
-      - run: mv target/${{ matrix.target }}/release/libregorus_java.${{ matrix.extension }} ./libregorus_java-${{ matrix.target }}.${{ matrix.extension }}
+      - run: mkdir -p native/${{ matrix.target }}
+      - run: mv target/${{ matrix.target }}/release/*.${{ matrix.extension }} ./native/${{ matrix.target }}/
       - uses: actions/upload-artifact@v4
         with:
-          name: libregorus_java
-          path: libregorus_java-${{ matrix.target }}.${{ matrix.extension }}
+          name: native-libraries
+          path: native/
 
   release:
     name: Release
@@ -61,7 +62,7 @@ jobs:
       - uses: actions/download-artifact@v4
         working-directory: ./bindings/java
         with:
-          name: libregorus_java
+          name: native-libraries
           path: native/
       - run: mvn deploy
         working-directory: ./bindings/java

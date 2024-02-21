@@ -142,33 +142,34 @@ public class Engine implements AutoCloseable {
         nativeDestroyEngine(enginePtr);
     }
 
-    // Loading native library from jar is adapted from:
+    // Loading native library from JAR is adapted from:
     // https://github.com/apache/opendal/blob/93e5f65bbf30df2fed4bdd95bb0685c73c6418c2/bindings/java/src/main/java/org/apache/opendal/NativeLibrary.java
     // https://github.com/apache/opendal/blob/93e5f65bbf30df2fed4bdd95bb0685c73c6418c2/bindings/java/src/main/java/org/apache/opendal/Environment.java
-    private static final String classifier;
     static {
-        final StringBuilder classifierBuilder = new StringBuilder();
-        final String os = System.getProperty("os.name").toLowerCase();
-        if (os.startsWith("windows")) {
-            classifierBuilder.append("windows");
-        } else if (os.startsWith("mac")) {
-            classifierBuilder.append("osx");
-        } else {
-            classifierBuilder.append("linux");
-        }
-        classifierBuilder.append("-");
+        // Build a Rust target triple, like: 'aarch64-unknown-linux-gnu'.
+        final StringBuilder targetTripleBuilder = new StringBuilder();
+
         final String arch = System.getProperty("os.arch").toLowerCase();
         if (arch.equals("aarch64")) {
-            classifierBuilder.append("aarch_64");
+            targetTripleBuilder.append("aarch64");
         } else {
-            classifierBuilder.append("x86_64");
+            targetTripleBuilder.append("x86_64");
         }
-        classifier = classifierBuilder.toString();
+        targetTripleBuilder.append("-");
 
-        loadNativeLibrary();
+        final String os = System.getProperty("os.name").toLowerCase();
+        if (os.startsWith("windows")) {
+            targetTripleBuilder.append("pc-windows-msvc");
+        } else if (os.startsWith("mac")) {
+            targetTripleBuilder.append("apple-darwin");
+        } else {
+            targetTripleBuilder.append("unknown-linux-gnu");
+        }
+
+        loadNativeLibrary(targetTripleBuilder.toString());
     }
 
-    private static void loadNativeLibrary() {
+    private static void loadNativeLibrary(String targetTriple) {
         try {
             // try dynamic library - the search path can be configured via "-Djava.library.path"
             System.loadLibrary("regorus_java");
@@ -177,10 +178,14 @@ public class Engine implements AutoCloseable {
             // ignore - try from classpath
         }
 
-        final String libraryPath = bundledLibraryPath();
+        // Native libraries will be bundles into JARs like: 
+        // `aarch64-apple-darwin/libregorus_java.dylib`
+        final String libraryName = System.mapLibraryName("regorus_java");
+        final String libraryPath = "/" + targetTriple + "/" + libraryName;
+
         try (final InputStream is = Engine.class.getResourceAsStream(libraryPath)) {
             if (is == null) {
-                throw new RuntimeException("cannot find " + libraryPath);
+                throw new RuntimeException("Cannot find " + libraryPath + "\nSee https://github.com/microsoft/regorus/tree/main/bindings/java for help.");
             }
             final int dot = libraryPath.indexOf('.');
             final File tmpFile = File.createTempFile(libraryPath.substring(0, dot), libraryPath.substring(dot));
@@ -190,10 +195,5 @@ public class Engine implements AutoCloseable {
         } catch (IOException exception) {
             throw new RuntimeException(exception);
         }
-    }
-
-    private static String bundledLibraryPath() {
-        final String libraryName = System.mapLibraryName("regorus_java");
-        return "/native/" + classifier + "/" + libraryName;
     }
 }
