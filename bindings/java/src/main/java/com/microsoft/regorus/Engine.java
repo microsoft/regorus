@@ -130,6 +130,8 @@ public class Engine implements AutoCloseable {
      * Evaluates given Rego query and returns a JSON string as a result.
      * 
      * @param query The Rego query.
+     * 
+     * @return Query results as a JSON string.
      */
     public String evalQuery(String query) {
         return nativeEvalQuery(enginePtr, query);
