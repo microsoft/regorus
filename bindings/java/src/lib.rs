@@ -9,7 +9,7 @@ use jni::JNIEnv;
 use regorus::{Engine, Value};
 
 #[no_mangle]
-pub extern "system" fn Java_com_microsoft_regorus_Engine_newEngine(
+pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeNewEngine(
     _env: JNIEnv,
     _class: JClass,
 ) -> jlong {
@@ -18,7 +18,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_newEngine(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_microsoft_regorus_Engine_addPolicy(
+pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddPolicy(
     env: JNIEnv,
     _class: JClass,
     engine_ptr: jlong,
@@ -35,7 +35,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_addPolicy(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_microsoft_regorus_Engine_addPolicyFromFile(
+pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddPolicyFromFile(
     env: JNIEnv,
     _class: JClass,
     engine_ptr: jlong,
@@ -50,7 +50,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_addPolicyFromFile(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_microsoft_regorus_Engine_addDataJson(
+pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddDataJson(
     env: JNIEnv,
     _class: JClass,
     engine_ptr: jlong,
@@ -65,7 +65,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_addDataJson(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_microsoft_regorus_Engine_addDataJsonFromFile(
+pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddDataJsonFromFile(
     env: JNIEnv,
     _class: JClass,
     engine_ptr: jlong,
@@ -80,7 +80,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_addDataJsonFromFile(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_microsoft_regorus_Engine_setInputJson(
+pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetInputJson(
     env: JNIEnv,
     _class: JClass,
     engine_ptr: jlong,
@@ -95,7 +95,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_setInputJson(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_microsoft_regorus_Engine_setInputJsonFromFile(
+pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetInputJsonFromFile(
     env: JNIEnv,
     _class: JClass,
     engine_ptr: jlong,
@@ -110,7 +110,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_setInputJsonFromFile(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_microsoft_regorus_Engine_evalQuery(
+pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeEvalQuery(
     env: JNIEnv,
     _class: JClass,
     engine_ptr: jlong,
@@ -131,7 +131,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_evalQuery(
 }
 
 #[no_mangle]
-pub unsafe extern "system" fn Java_com_microsoft_regorus_Engine_destroyEngine(
+pub unsafe extern "system" fn Java_com_microsoft_regorus_Engine_nativeDestroyEngine(
     _env: JNIEnv,
     _class: JClass,
     engine_ptr: jlong,

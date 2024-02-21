@@ -18,43 +18,43 @@ public class Engine implements AutoCloseable {
     // `javac -h . src/main/java/com/microsoft/regorus/Engine.java` to update
     // expected native header at `bindings/java/com_microsoft_regorus_Engine.h`
     // if you update the native API.
-    private static native long newEngine();
-    private static native void addPolicy(long enginePtr, String path, String rego);
-    private static native void addPolicyFromFile(long enginePtr, String path);
-    private static native void addDataJson(long enginePtr, String data);
-    private static native void addDataJsonFromFile(long enginePtr, String path);
-    private static native void setInputJson(long enginePtr, String input);
-    private static native void setInputJsonFromFile(long enginePtr, String path);
-    private static native String evalQuery(long enginePtr, String query);
-    private static native void destroyEngine(long enginePtr);
+    private static native long nativeNewEngine();
+    private static native void nativeAddPolicy(long enginePtr, String path, String rego);
+    private static native void nativeAddPolicyFromFile(long enginePtr, String path);
+    private static native void nativeAddDataJson(long enginePtr, String data);
+    private static native void nativeAddDataJsonFromFile(long enginePtr, String path);
+    private static native void nativeSetInputJson(long enginePtr, String input);
+    private static native void nativeSetInputJsonFromFile(long enginePtr, String path);
+    private static native String nativeEvalQuery(long enginePtr, String query);
+    private static native void nativeDestroyEngine(long enginePtr);
 
     // Pointer to Engine allocated on Rust's heap, all native methods works on
     // engine expects this pointer. It is free'd in `close` method.
     private final long enginePtr;
 
     public Engine() {
-        enginePtr = newEngine();
+        enginePtr = nativeNewEngine();
     }
 
-    public void pubAddPolicy(String path, String rego) {
-        addPolicy(enginePtr, path, rego);
+    public void addPolicy(String path, String rego) {
+        nativeAddPolicy(enginePtr, path, rego);
     }
 
-    public void pubAddDataJson(String path) {
-        addDataJson(enginePtr, path);
+    public void addDataJson(String path) {
+        nativeAddDataJson(enginePtr, path);
     }
 
-    public void pubSetInputJson(String path) {
-        setInputJson(enginePtr, path);
+    public void setInputJson(String path) {
+        nativeSetInputJson(enginePtr, path);
     }
 
-    public String pubEvalQuery(String path) {
-        return evalQuery(enginePtr, path);
+    public String evalQuery(String path) {
+        return nativeEvalQuery(enginePtr, path);
     }
     
     @Override
     public void close() {
-        destroyEngine(enginePtr);
+        nativeDestroyEngine(enginePtr);
     }
 
     // Loading native library from jar is adapted from:
