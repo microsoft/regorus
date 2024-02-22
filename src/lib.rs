@@ -3,6 +3,7 @@
 
 // Use README.md as crate documentation.
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use serde::Serialize;
 
@@ -340,21 +341,39 @@ impl std::fmt::Debug for dyn Extension {
 }
 
 #[cfg(feature = "coverage")]
+#[cfg_attr(docsrs, doc(cfg(feature = "coverage")))]
 pub mod coverage {
     #[derive(Default, serde::Serialize, serde::Deserialize)]
+    /// Coverage information about a rego policy file.
     pub struct File {
+        /// Path of the policy file.
         pub path: String,
+
+        /// The rego policy.
         pub code: String,
+
+        /// Lines that were evaluated.
         pub covered: std::collections::BTreeSet<u32>,
+
+        /// Lines that were not evaluated.
         pub not_covered: std::collections::BTreeSet<u32>,
     }
 
     #[derive(Default, serde::Serialize, serde::Deserialize)]
+    /// Policy coverage report.
     pub struct Report {
+        /// Coverage information for files.
         pub files: Vec<File>,
     }
 
     impl Report {
+        /// Produce an ANSI color encoded version of the report.
+        ///
+        /// Covered lines are green.
+        /// Lines that are not covered are red.
+        ///
+        /// <img src="https://github.com/microsoft/regorus/blob/main/docs/coverage.png?raw=true">
+
         pub fn to_colored_string(&self) -> anyhow::Result<String> {
             use std::io::Write;
             let mut s = Vec::new();
