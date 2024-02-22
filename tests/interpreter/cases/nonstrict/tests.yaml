@@ -1,0 +1,19 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+  cases:
+    - note: builtin error gobbled up in non strict mode
+      modules:
+        - |
+          package test
+          a = to_number("abc")
+      query: data.test
+      want_result: {}
+      strict: false
+
+    - note: builtin error in strict mode
+      modules:
+        - |
+          package test
+          a = to_number("abc")
+      query: data.test
+      error: "could not parse string as number"
