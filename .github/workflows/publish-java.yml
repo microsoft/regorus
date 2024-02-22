@@ -60,10 +60,9 @@ jobs:
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
       - uses: actions/download-artifact@v4
-        working-directory: ./bindings/java
         with:
           name: native-libraries
-          path: native/
+          path: ./bindings/java/native/
       - run: mvn deploy
         working-directory: ./bindings/java
         env:
