@@ -9,74 +9,82 @@ extern "C" {
 #endif
 /*
  * Class:     com_microsoft_regorus_Engine
- * Method:    newEngine
+ * Method:    nativeNewEngine
  * Signature: ()J
  */
-JNIEXPORT jlong JNICALL Java_com_microsoft_regorus_Engine_newEngine
+JNIEXPORT jlong JNICALL Java_com_microsoft_regorus_Engine_nativeNewEngine
   (JNIEnv *, jclass);
 
 /*
  * Class:     com_microsoft_regorus_Engine
- * Method:    addPolicy
+ * Method:    nativeAddPolicy
  * Signature: (JLjava/lang/String;Ljava/lang/String;)V
  */
-JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_addPolicy
+JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeAddPolicy
   (JNIEnv *, jclass, jlong, jstring, jstring);
 
 /*
  * Class:     com_microsoft_regorus_Engine
- * Method:    addPolicyFromFile
+ * Method:    nativeAddPolicyFromFile
  * Signature: (JLjava/lang/String;)V
  */
-JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_addPolicyFromFile
+JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeAddPolicyFromFile
   (JNIEnv *, jclass, jlong, jstring);
 
 /*
  * Class:     com_microsoft_regorus_Engine
- * Method:    addDataJson
- * Signature: (JLjava/lang/String;)V
- */
-JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_addDataJson
-  (JNIEnv *, jclass, jlong, jstring);
-
-/*
- * Class:     com_microsoft_regorus_Engine
- * Method:    addDataJsonFromFile
- * Signature: (JLjava/lang/String;)V
- */
-JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_addDataJsonFromFile
-  (JNIEnv *, jclass, jlong, jstring);
-
-/*
- * Class:     com_microsoft_regorus_Engine
- * Method:    setInputJson
- * Signature: (JLjava/lang/String;)V
- */
-JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_setInputJson
-  (JNIEnv *, jclass, jlong, jstring);
-
-/*
- * Class:     com_microsoft_regorus_Engine
- * Method:    setInputJsonFromFile
- * Signature: (JLjava/lang/String;)V
- */
-JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_setInputJsonFromFile
-  (JNIEnv *, jclass, jlong, jstring);
-
-/*
- * Class:     com_microsoft_regorus_Engine
- * Method:    evalQuery
- * Signature: (JLjava/lang/String;)Ljava/lang/String;
- */
-JNIEXPORT jstring JNICALL Java_com_microsoft_regorus_Engine_evalQuery
-  (JNIEnv *, jclass, jlong, jstring);
-
-/*
- * Class:     com_microsoft_regorus_Engine
- * Method:    destroyEngine
+ * Method:    nativeClearData
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_destroyEngine
+JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeClearData
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeAddDataJson
+ * Signature: (JLjava/lang/String;)V
+ */
+JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeAddDataJson
+  (JNIEnv *, jclass, jlong, jstring);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeAddDataJsonFromFile
+ * Signature: (JLjava/lang/String;)V
+ */
+JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeAddDataJsonFromFile
+  (JNIEnv *, jclass, jlong, jstring);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeSetInputJson
+ * Signature: (JLjava/lang/String;)V
+ */
+JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeSetInputJson
+  (JNIEnv *, jclass, jlong, jstring);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeSetInputJsonFromFile
+ * Signature: (JLjava/lang/String;)V
+ */
+JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeSetInputJsonFromFile
+  (JNIEnv *, jclass, jlong, jstring);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeEvalQuery
+ * Signature: (JLjava/lang/String;)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_microsoft_regorus_Engine_nativeEvalQuery
+  (JNIEnv *, jclass, jlong, jstring);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeDestroyEngine
+ * Signature: (J)V
+ */
+JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeDestroyEngine
   (JNIEnv *, jclass, jlong);
 
 #ifdef __cplusplus
