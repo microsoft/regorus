@@ -74,6 +74,12 @@ jobs:
           pattern: native-libraries-*
           merge-multiple: true
           path: ./bindings/java/native/
+      - run: mvn package
+        working-directory: ./bindings/java
+      - uses: actions/upload-artifact@v4
+        with:
+          name: built-jars
+          path: ./bindings/java/target/regorus-java-*.jar
       - run: mvn deploy
         working-directory: ./bindings/java
         env:
