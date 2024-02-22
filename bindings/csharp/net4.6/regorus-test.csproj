@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk" InitialTargets="BuildRegorusFFI"> 
+
+  <Target Name="BuildRegorusFFI">
+    <Exec Command="cargo build -r --manifest-path ../../ffi/Cargo.toml" />
+    <Copy SourceFiles="../../ffi/RegorusFFI.g.cs" DestinationFolder="." />
+    <ItemGroup>
+        <RegorusDylib Include="..\..\..\target\release\*regorus_ffi*" />
+        <PackageReference Include="System.Text.Json" Version="8.0.0" />
+    </ItemGroup>    
+    <Copy SourceFiles="@(RegorusDylib)" DestinationFolder="." />
+    <Copy SourceFiles=".\regorus_ffi.dll"  DestinationFiles="$(OutDir)regorusc.dll" />
+  </Target>
+
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net4.6.2</TargetFramework>
+    <RootNamespace>regorus_test</RootNamespace>
+    <StartupObject>regoregorus_test.Program</StartupObject>
+    <ImplicitUsings>enable</ImplicitUsings> 
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+
+
+</Project>
