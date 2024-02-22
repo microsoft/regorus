@@ -34,6 +34,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           java-version: 8
+          distribution: "microsoft"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -56,6 +57,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           java-version: 8
+          distribution: "microsoft"
           server-id: ossrh
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
