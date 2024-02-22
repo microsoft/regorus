@@ -51,7 +51,7 @@ jobs:
       - run: mv target/${{ matrix.target }}/release/*.${{ matrix.extension }} ./native/${{ matrix.target }}/
       - uses: actions/upload-artifact@v4
         with:
-          name: native-libraries
+          name: native-libraries-${{ matrix.target }}
           path: native/
 
   release:
@@ -71,7 +71,8 @@ jobs:
           server-password: MAVEN_PASSWORD
       - uses: actions/download-artifact@v4
         with:
-          name: native-libraries
+          pattern: native-libraries-*
+          merge-multiple: true
           path: ./bindings/java/native/
       - run: mvn deploy
         working-directory: ./bindings/java
