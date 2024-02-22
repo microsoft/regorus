@@ -175,7 +175,8 @@ $ regorus eval -d examples/example.rego -i examples/input.json data.example --co
 ```
 
 It produces the following coverage report which shows that all lines are executed except the line that sets `allow` to true.
-![coverage.png](https://github.com/microsoft/regorus/blob/main/docs/coverage.png)
+
+![coverage.png](https://github.com/microsoft/regorus/blob/main/docs/coverage.png?raw=true)
 
 See [Engine::get_coverage_report](https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.get_coverage_report) for details.
 Policy coverage information is useful for debugging your policy as well as to write tests for your policy so that all 

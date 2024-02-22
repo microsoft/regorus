@@ -125,3 +125,9 @@ required-features = ["full-opa"]
 name="aci"
 harness=false
 test=false
+
+[package.metadata.docs.rs]
+# To build locally:
+# RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features --no-deps
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
