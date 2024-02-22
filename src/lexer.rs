@@ -6,6 +6,7 @@ use core::iter::Peekable;
 use core::str::CharIndices;
 
 use std::convert::AsRef;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use crate::Rc;
@@ -23,6 +24,38 @@ struct SourceInternal {
 #[derive(Clone)]
 pub struct Source {
     src: Rc<SourceInternal>,
+}
+
+impl std::cmp::Ord for Source {
+    fn cmp(&self, other: &Source) -> std::cmp::Ordering {
+        Rc::as_ptr(&self.src).cmp(&Rc::as_ptr(&other.src))
+    }
+}
+
+impl std::cmp::PartialOrd for Source {
+    fn partial_cmp(&self, other: &Source) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl std::cmp::PartialEq for Source {
+    fn eq(&self, other: &Source) -> bool {
+        Rc::as_ptr(&self.src) == Rc::as_ptr(&other.src)
+    }
+}
+
+impl std::cmp::Eq for Source {}
+
+impl Hash for Source {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Rc::as_ptr(&self.src).hash(state)
+    }
+}
+
+impl Debug for Source {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        self.src.file.fmt(f)
+    }
 }
 
 #[derive(Clone)]

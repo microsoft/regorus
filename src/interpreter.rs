@@ -66,6 +66,11 @@ pub struct Interpreter {
     strict_builtin_errors: bool,
     imports: BTreeMap<String, Ref<Expr>>,
     extensions: HashMap<String, (u8, Rc<Box<dyn Extension>>)>,
+
+    #[cfg(feature = "coverage")]
+    coverage: HashMap<Source, Vec<bool>>,
+    #[cfg(feature = "coverage")]
+    enable_coverage: bool,
 }
 
 impl Default for Interpreter {
@@ -177,6 +182,11 @@ impl Interpreter {
             strict_builtin_errors: true,
             imports: BTreeMap::default(),
             extensions: HashMap::new(),
+
+            #[cfg(feature = "coverage")]
+            coverage: HashMap::new(),
+            #[cfg(feature = "coverage")]
+            enable_coverage: false,
         }
     }
 
@@ -2583,6 +2593,31 @@ impl Interpreter {
             expr.span().text()
         );
 
+        #[cfg(feature = "coverage")]
+        if self.enable_coverage {
+            let span = expr.span();
+            let source = &span.source;
+            let line = span.line as usize;
+            if line > 0 {
+                // Check if coverage table already exists for source.
+                match self.coverage.get_mut(source) {
+                    Some(c) => {
+                        // Ensure that current line is valid.
+                        if c.len() < line + 1 {
+                            c.resize(line + 1, false);
+                        }
+                        c[line] = true;
+                    }
+                    _ => {
+                        // Create new table.
+                        let mut c = vec![false; line + 1];
+                        c[line] = true;
+                        self.coverage.insert(source.clone(), c);
+                    }
+                }
+            }
+        }
+
         match expr.as_ref() {
             Expr::Null(_) => Ok(Value::Null),
             Expr::True(_) => Ok(Value::Bool(true)),
@@ -3474,5 +3509,126 @@ impl Interpreter {
         } else {
             bail!("extension already added");
         }
+    }
+
+    #[cfg(feature = "coverage")]
+    fn gather_coverage_in_query(
+        &self,
+        query: &Ref<Query>,
+        covered: &Vec<bool>,
+        file: &mut crate::coverage::File,
+    ) -> Result<()> {
+        for stmt in &query.stmts {
+            // TODO: with mods
+            match &stmt.literal {
+                Literal::SomeVars { .. } => (),
+                Literal::SomeIn {
+                    value, collection, ..
+                } => {
+                    self.gather_coverage_in_expr(value, covered, file)?;
+                    self.gather_coverage_in_expr(collection, covered, file)?;
+                }
+                Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => {
+                    self.gather_coverage_in_expr(expr, covered, file)?;
+                }
+                Literal::Every { domain, query, .. } => {
+                    self.gather_coverage_in_expr(domain, covered, file)?;
+                    self.gather_coverage_in_query(query, covered, file)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "coverage")]
+    fn gather_coverage_in_expr(
+        &self,
+        expr: &Ref<Expr>,
+        covered: &Vec<bool>,
+        file: &mut crate::coverage::File,
+    ) -> Result<()> {
+        use Expr::*;
+        traverse(expr, &mut |e| {
+            Ok(match e.as_ref() {
+                ArrayCompr { query, .. } | SetCompr { query, .. } | ObjectCompr { query, .. } => {
+                    self.gather_coverage_in_query(query, covered, file)?;
+                    false
+                }
+                _ => {
+                    let line = e.span().line as usize;
+                    if line >= covered.len() || !covered[line] {
+                        file.not_covered.insert(line as u32);
+                    } else if line < covered.len() && covered[line] {
+                        file.covered.insert(line as u32);
+                    }
+                    true
+                }
+            })
+        })?;
+        Ok(())
+    }
+
+    #[cfg(feature = "coverage")]
+    pub fn get_coverage_report(&self) -> Result<crate::coverage::Report> {
+        let mut report = crate::coverage::Report::default();
+
+        for module in self.modules.iter() {
+            let span = module.package.refr.span();
+
+            // Get coverage information for the module.
+            let Some(covered) = self.coverage.get(&span.source) else {
+                continue;
+            };
+
+            let mut file = crate::coverage::File {
+                path: span.source.file().clone(),
+                code: span.source.contents().clone(),
+                covered: BTreeSet::new(),
+                not_covered: BTreeSet::new(),
+            };
+
+            // Loop through each rule and figure out the lines that were not coverd.
+            for rule in &module.policy {
+                match rule.as_ref() {
+                    Rule::Spec { head, bodies, .. } => {
+                        match head {
+                            RuleHead::Compr { assign, .. } | RuleHead::Func { assign, .. } => {
+                                if let Some(a) = assign {
+                                    self.gather_coverage_in_expr(&a.value, covered, &mut file)?;
+                                }
+                            }
+                            RuleHead::Set { key, .. } => {
+                                if let Some(k) = key {
+                                    self.gather_coverage_in_expr(k, covered, &mut file)?;
+                                }
+                            }
+                        }
+                        for b in bodies {
+                            self.gather_coverage_in_query(&b.query, covered, &mut file)?;
+                        }
+                    }
+                    Rule::Default { value, .. } => {
+                        self.gather_coverage_in_expr(value, covered, &mut file)?;
+                    }
+                }
+            }
+
+            report.files.push(file);
+        }
+
+        Ok(report)
+    }
+
+    #[cfg(feature = "coverage")]
+    pub fn set_enable_coverage(&mut self, enable: bool) {
+        if self.enable_coverage != enable {
+            self.enable_coverage = enable;
+            self.clear_coverage_data();
+        }
+    }
+
+    #[cfg(feature = "coverage")]
+    pub fn clear_coverage_data(&mut self) {
+        self.coverage = HashMap::new();
     }
 }

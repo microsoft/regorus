@@ -13,7 +13,7 @@ Regorus is also
   - *extensible* - Extend the Rego language by implementing custom stateful builtins in Rust.
     See [add_extension](https://github.com/microsoft/regorus/blob/fc68bf9c8bea36427dae9401a7d1f6ada771f7ab/src/engine.rs#L352).
     Support for extensibility using other languages coming soon.
-  - *polyglot* - In addition to Rust, Regorus can be used from *C*, *C++*, *C#*, *Golang*, *Javascript* and *Python*.
+  - *polyglot* - In addition to Rust, Regorus can be used from *C*, *C++*, *C#*, *Golang*, *Java*, *Javascript* and *Python*.
     This is made possible by the excellent FFI tools available in the Rust ecosystem. See [bindings](#bindings) for information on how to use Regorus from different languages.
 
     To try out a *Javascript(WASM)* compiled version of Regorus from your browser, visit [Regorus Playground](https://anakrish.github.io/regorus-playground/).
@@ -85,6 +85,8 @@ Regorus can be used from a variety of languages:
 - *C#*: C# binding is generated using [csbindgen](https://github.com/Cysharp/csbindgen). See [bindings/csharp](https://github.com/microsoft/regorus/tree/main/bindings/csharp) for an example of how to build and use Regorus in your C# projects.
 - *Golang*: The C bindings are exposed to Golang via [CGo](https://pkg.go.dev/cmd/cgo). See [bindings/go](https://github.com/microsoft/regorus/tree/main/bindings/go) for an example of how to build and use Regorus in your Go projects.
 - *Python*: Python bindings are generated using [pyo3](https://github.com/PyO3/pyo3). Wheels are created using [maturin](https://github.com/PyO3/maturin). See [bindings/python](https://github.com/microsoft/regorus/tree/main/bindings/python).
+- *Java*: Java bindings are developed using [jni-rs](https://github.com/jni-rs/jni-rs).
+  See [bindings/java](https://github.com/microsoft/regorus/tree/main/bindings/java).
 - *Javascript*: Regorus is compiled to WASM using [wasmpack](https://github.com/rustwasm/wasm-pack).
   See [bindings/wasm](https://github.com/microsoft/regorus/tree/main/bindings/wasm) for an example of using Regorus from nodejs.
   To try out a *Javascript(WASM)* compiled version of Regorus from your browser, visit [Regorus Playground](https://anakrish.github.io/regorus-playground/).
@@ -149,7 +151,7 @@ This produces the following output
 }
 ```
 
-Next, evaluate a sample [policy](examples/example.rego) and [input](examples/input.json)
+Next, evaluate a sample [policy](https://github.com/microsoft/regorus/blob/main/examples/example.rego) and [input](https://github.com/microsoft/regorus/blob/main/examples/input.json)
 (borrowed from [Rego tutorial](https://www.openpolicyagent.org/docs/latest/#2-try-opa-eval)):
 
 ```bash
@@ -162,6 +164,22 @@ Finally, evaluate real-world [policies](tests/aci/) used in Azure Container Inst
 $ regorus eval -b tests/aci -d tests/aci/data.json -i tests/aci/input.json data.policy.mount_overlay=x
 ```
 
+## Policy coverage
+
+Regorus allows determining which lines of a policy have been executed using the `coverage` feature (enabled by default).
+
+We can try it out using the `regorus` example program by passing in the `--coverage` flag.
+
+```shell
+$ regorus eval -d examples/example.rego -i examples/input.json data.example --coverage
+```
+
+It produces the following coverage report which shows that all lines are executed except the line that sets `allow` to true.
+![coverage.png](https://github.com/microsoft/regorus/blob/main/docs/coverage.png)
+
+See [Engine::get_coverage_report](https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.get_coverage_report) for details.
+Policy coverage information is useful for debugging your policy as well as to write tests for your policy so that all 
+lines of the policy are exercised by the tests.
 
 ## ACI Policies
 

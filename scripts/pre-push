@@ -9,6 +9,9 @@ if [ -f Cargo.toml ]; then
    dir=$(dirname "${BASH_SOURCE[0]}")
    "$dir/pre-commit"
 
+   # Ensure that the public API works
+   cargo test -r --doc
+   
    # Ensure that all tests pass
    cargo test -r
    cargo test -r --test aci

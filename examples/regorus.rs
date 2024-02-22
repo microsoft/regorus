@@ -10,11 +10,15 @@ fn rego_eval(
     query: String,
     enable_tracing: bool,
     non_strict: bool,
+    #[cfg(feature = "coverage")] coverage: bool,
 ) -> Result<()> {
     // Create engine.
     let mut engine = regorus::Engine::new();
 
     engine.set_strict_builtin_errors(!non_strict);
+
+    #[cfg(feature = "coverage")]
+    engine.set_enable_coverage(coverage);
 
     // Load files from given bundles.
     for dir in bundles.iter() {
@@ -69,6 +73,12 @@ fn rego_eval(
     // Evaluate query.
     let results = engine.eval_query(query, enable_tracing)?;
     println!("{}", serde_json::to_string_pretty(&results)?);
+
+    #[cfg(feature = "coverage")]
+    if coverage {
+        let report = engine.get_coverage_report()?;
+        println!("{}", report.to_colored_string()?);
+    }
 
     Ok(())
 }
@@ -140,6 +150,11 @@ enum RegorusCommand {
         // Non strict execution
         #[arg(long, short)]
         non_strict: bool,
+
+        // Display coverage information
+        #[cfg(feature = "coverage")]
+        #[arg(long, short)]
+        coverage: bool,
     },
 
     /// Tokenize a Rego policy.
@@ -183,7 +198,18 @@ fn main() -> Result<()> {
             query,
             trace,
             non_strict,
-        } => rego_eval(&bundles, &data, input, query, trace, non_strict),
+            #[cfg(feature = "coverage")]
+            coverage,
+        } => rego_eval(
+            &bundles,
+            &data,
+            input,
+            query,
+            trace,
+            non_strict,
+            #[cfg(feature = "coverage")]
+            coverage,
+        ),
         RegorusCommand::Lex { file, verbose } => rego_lex(file, verbose),
         RegorusCommand::Parse { file } => rego_parse(file),
     }
