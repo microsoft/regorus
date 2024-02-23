@@ -1426,7 +1426,21 @@ impl<'source> Parser<'source> {
                         "expected assignment or query after `else`",
                     ));
                 }
-                _ => break,
+                _ => {
+                    let mut query_span = span.clone();
+                    query_span.end = query_span.start;
+                    let query = Ref::new(Query {
+                        span: query_span,
+                        stmts: vec![],
+                    });
+                    span.end = self.end;
+                    bodies.push(RuleBody {
+                        span,
+                        assign,
+                        query,
+                    });
+                    break;
+                }
             }
         }
         Ok(())

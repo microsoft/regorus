@@ -1,0 +1,18 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: else without body
+    data: {}
+    modules:
+      - |
+        package test
+        x = 4 {
+          false
+        } else = 5
+
+        y = 6
+    query: data.test
+    want_result:
+      x: 5
+      y: 6
