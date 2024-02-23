@@ -15,9 +15,13 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             extension: so
+            build_cmd: zigbuild
+            glibc: "2.17"
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             extension: so
+            build_cmd: zigbuild
+            glibc: "2.17"
           - target: x86_64-apple-darwin
             os: macos-latest
             extension: dylib
@@ -38,15 +42,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          # Setup for cargo
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-
-      - run: cargo build --release --target ${{ matrix.target }} --manifest-path ./bindings/java/Cargo.toml
+      - if: ${{ matrix.build_cmd == 'zigbuild' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - if: ${{ matrix.build_cmd == 'zigbuild' }}
+        run: pip install cargo-zigbuild
+      - run: cargo ${{ matrix.build_cmd || 'build' }} --release --target ${{ matrix.target }}${{ matrix.glibc && format('.{0}', matrix.glibc) || '' }} --manifest-path ./bindings/java/Cargo.toml
       - run: mkdir -p native/${{ matrix.target }}
       - run: mv target/${{ matrix.target }}/release/*.${{ matrix.extension }} ./native/${{ matrix.target }}/
       - uses: actions/upload-artifact@v4
