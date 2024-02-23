@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/microsoft/regorus/compare/regorus-v0.1.0...regorus-v0.1.1) - 2024-02-23
+
+### Other
+- Handle else block without body ([#155](https://github.com/microsoft/regorus/pull/155))
+- Ignore errors from builtin functions in non strict mode ([#154](https://github.com/microsoft/regorus/pull/154))
+- Java publishing ([#151](https://github.com/microsoft/regorus/pull/151))
+- Document coverage feature; Convenience query functions ([#152](https://github.com/microsoft/regorus/pull/152))
+- Policy Coverage ([#149](https://github.com/microsoft/regorus/pull/149))
+- Initial implementation of policy coverage ([#146](https://github.com/microsoft/regorus/pull/146))
+- Java bindings ([#147](https://github.com/microsoft/regorus/pull/147))
+- Preserve false in single-expression queries ([#145](https://github.com/microsoft/regorus/pull/145))
+- Create rust-clippy.yml ([#143](https://github.com/microsoft/regorus/pull/143))
+- `arc` feature to enable using Engine and other data structures from multiple threads ([#142](https://github.com/microsoft/regorus/pull/142))
+- genpolicy tweaks ([#141](https://github.com/microsoft/regorus/pull/141))
+- io.jwt.decode ([#140](https://github.com/microsoft/regorus/pull/140))
+- Use compact_rc ([#139](https://github.com/microsoft/regorus/pull/139))
+- Scripting tweaks ([#138](https://github.com/microsoft/regorus/pull/138))
+
 ## [0.1.0-alpha.3](https://github.com/microsoft/regorus/compare/regorus-v0.1.0-alpha.2...regorus-v0.1.0-alpha.3) - 2024-02-01
 
 ### Fixed
