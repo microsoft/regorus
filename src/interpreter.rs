@@ -28,6 +28,7 @@ type State = (
     Value,
     Value,
     BTreeSet<Ref<Rule>>,
+    Value,
     BTreeMap<String, FunctionModifier>,
     BTreeMap<Vec<Value>, (Value, Ref<Expr>)>,
 );
@@ -57,6 +58,7 @@ pub struct Interpreter {
     rules: HashMap<String, Vec<Ref<Rule>>>,
     default_rules: HashMap<String, Vec<DefaultRuleInfo>>,
     processed: BTreeSet<Ref<Rule>>,
+    processed_paths: Value,
     rule_values: BTreeMap<Vec<Value>, (Value, Ref<Expr>)>,
     active_rules: Vec<Ref<Rule>>,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
@@ -173,6 +175,7 @@ impl Interpreter {
             rules: HashMap::new(),
             default_rules: HashMap::new(),
             processed: BTreeSet::new(),
+            processed_paths: Value::new_object(),
             rule_values: BTreeMap::new(),
             active_rules: vec![],
             builtins_cache: BTreeMap::new(),
@@ -244,6 +247,7 @@ impl Interpreter {
     pub fn clean_internal_evaluation_state(&mut self) {
         self.data = self.init_data.clone();
         self.processed.clear();
+        self.processed_paths = Value::new_object();
         self.loop_var_values.clear();
         self.scopes = vec![Scope::new()];
         self.contexts = vec![];
@@ -1189,6 +1193,7 @@ impl Interpreter {
             let rule_values = self.rule_values.clone();
 
             self.processed.clear();
+            let processed_paths = std::mem::replace(&mut self.processed_paths, Value::new_object());
             self.rule_values.clear();
 
             let mut skip_exec = false;
@@ -1285,6 +1290,7 @@ impl Interpreter {
                     input,
                     data,
                     processed,
+                    processed_paths,
                     with_functions,
                     rule_values,
                 )),
@@ -1302,6 +1308,7 @@ impl Interpreter {
                 self.input,
                 self.data,
                 self.processed,
+                self.processed_paths,
                 self.with_functions,
                 self.rule_values,
             ) = s;
@@ -2431,6 +2438,7 @@ impl Interpreter {
                     if *vref == Value::Undefined {
                         *vref = Value::new_object();
                     }
+                    self.mark_processed(&path)?;
                 }
 
                 for rule in &module.policy {
@@ -2448,6 +2456,7 @@ impl Interpreter {
                 self.set_current_module(prev_module)?;
             }
         }
+
         Ok(())
     }
 
@@ -2460,6 +2469,7 @@ impl Interpreter {
                 }
             }
         }
+
         // Evaluate the associated default rules after non-default rules
         if let Some(rules) = self.default_rules.get(&path) {
             for (r, _) in rules.clone() {
@@ -2472,6 +2482,34 @@ impl Interpreter {
             }
         }
 
+        let comps: Vec<&str> = path.split('.').collect();
+        self.mark_processed(&comps[1..])
+    }
+
+    fn is_processed(&self, path: &[&str]) -> Result<bool> {
+        let mut obj = &self.processed_paths;
+        for p in path {
+            // Prefix has already been processed.
+            if obj[&Value::Undefined] == Value::Null {
+                return Ok(true);
+            }
+
+            match &obj[*p] {
+                // Prefix and its suffixes including path have not been processed.
+                Value::Undefined => return Ok(false),
+                v => obj = v,
+            }
+        }
+
+        Ok(obj[&Value::Undefined] == Value::Null)
+    }
+
+    fn mark_processed(&mut self, path: &[&str]) -> Result<()> {
+        let obj = self.processed_paths.make_or_get_value_mut(path)?;
+        if obj == &Value::Undefined {
+            *obj = Value::new_object();
+        }
+        obj.as_object_mut()?.insert(Value::Undefined, Value::Null);
         Ok(())
     }
 
@@ -2499,36 +2537,21 @@ impl Interpreter {
 
         // Ensure that rules are evaluated
         if name.text() == "data" {
+            if self.is_processed(fields)? {
+                return Ok(Self::get_value_chained(self.data.clone(), fields));
+            }
+
             // With modifiers may be used to specify part of a module that that not yet been
             // evaluated. Therefore ensure that module is evaluated first.
             let path = "data.".to_owned() + &fields.join(".");
-            self.ensure_module_evaluated(path)?;
+            self.ensure_module_evaluated(path.clone())?;
 
-            // If the rule has already been evaluated or specified via a with modifier,
-            // use that value.
-            let v = Self::get_value_chained(self.data.clone(), fields);
-
-            if v != Value::Undefined {
-                debug!("returning v = {v}");
-                return Ok(v);
-            }
-
-            // Find the rule to which the var being looked up corresponds to. This is the prefix for
-            // which rules exist.
-            let mut found = false;
             for i in (1..fields.len() + 1).rev() {
                 let path = "data.".to_owned() + &fields[0..i].join(".");
                 if self.rules.get(&path).is_some() || self.default_rules.get(&path).is_some() {
                     self.ensure_rule_evaluated(path)?;
-                    found = true;
                     break;
                 }
-            }
-
-            if !found {
-                // This could be path to a module.
-                let path = "data.".to_owned() + &fields.join(".");
-                self.ensure_module_evaluated(path)?;
             }
 
             Ok(Self::get_value_chained(self.data.clone(), fields))
@@ -2537,12 +2560,8 @@ impl Interpreter {
             let mut path: Vec<&str> = path.iter().map(|s| s.text()).collect();
             path.push(name.text());
 
-            let v = Self::get_value_chained(self.data.clone(), &path);
-
-            // If the rule has already been evaluated or specified via a with modifier,
-            // use that value.
-            if v != Value::Undefined {
-                return Ok(Self::get_value_chained(v, fields));
+            if self.is_processed(&path)? {
+                return Ok(Self::get_value_chained(self.data.clone(), &path));
             }
 
             // Ensure that all the rules having common prefix (name) are evaluated.
