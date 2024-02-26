@@ -1,0 +1,64 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: prefix after rules
+    data: {}
+    modules:
+      - |
+        package test
+        a.b.c = 1
+        a.b.d = 2
+        y = a.b
+    query: data.test
+    want_result:
+      a:
+        b:
+          c: 1
+          d: 2
+      y:
+        c: 1
+        d: 2
+
+  - note: prefix between rules
+    data: {}
+    modules:
+      - |
+        package test
+        a.b.c = 1
+        y = a.b
+        a.b.d = 2
+    query: data.test
+    want_result:
+      a:
+        b:
+          c: 1
+          d: 2
+      y:
+        c: 1
+        d: 2
+
+  - note: prefix between rules
+    data: {}
+    modules:
+      - |
+        package test
+        a.b.c = 1
+        y = a.b
+        a.b.d = 2
+        a[p][q] = 3 {
+          p = "b"
+          q = "e"
+        }
+    query: data.test
+    want_result:
+      a:
+        b:
+          c: 1
+          d: 2
+          e: 3
+      y:
+        c: 1
+        d: 2
+        e: 3
+    skip: true

@@ -39,3 +39,19 @@ cases:
       b:
         y: 10
         z: 25
+
+  - note: inter
+    data: {}
+    modules:
+      - |
+        package test
+        a.b.c = 1
+        a.b.d = a.b.e
+        a.b.e = a.b.c
+    query: data.test
+    want_result:
+      a:
+        b:
+          c: 1
+          d: 1
+          e: 1
