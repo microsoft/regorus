@@ -36,7 +36,7 @@ cases:
            true: false,
            [1, 3] : {"hello", "world"}
         }
-        
+
     query: data.test
     want_result:
       array: [1, 2, 3]
@@ -71,5 +71,19 @@ cases:
               set!:
                 - "hello"
                 - "world"
-          
-              
+
+
+  - note: value chain (unqualified)
+    data: {}
+    modules:
+      - |
+        package test
+
+        a = {
+          "b" : 5
+        }
+        x = a.b
+        # The second look up must also produce the same value.
+        y = a.b
+    query: data.test.y
+    want_result: 5

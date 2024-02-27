@@ -2561,7 +2561,8 @@ impl Interpreter {
             path.push(name.text());
 
             if self.is_processed(&path)? {
-                return Ok(Self::get_value_chained(self.data.clone(), &path));
+                let value = Self::get_value_chained(self.data.clone(), &path);
+                return Ok(Self::get_value_chained(value, fields));
             }
 
             // Ensure that all the rules having common prefix (name) are evaluated.
