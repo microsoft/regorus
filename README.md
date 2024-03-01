@@ -9,7 +9,7 @@
 Regorus is also
   - *cross-platform* - Written in platform-agnostic Rust.
   - *current* - We strive to keep Regorus up to date with latest OPA release. Regorus supports `import rego.v1`.
-  - *compliant* - Regorus is mostly compliant with the latest [OPA release v0.61.0](https://github.com/open-policy-agent/opa/releases/tag/v0.61.0). See [OPA Conformance](#opa-conformance) for details. Note that while we behaviorally produce the same results, we don't yet support all the builtins.
+  - *compliant* - Regorus is mostly compliant with the latest [OPA release v0.62.0](https://github.com/open-policy-agent/opa/releases/tag/v0.62.0). See [OPA Conformance](#opa-conformance) for details. Note that while we behaviorally produce the same results, we don't yet support all the builtins.
   - *extensible* - Extend the Rego language by implementing custom stateful builtins in Rust.
     See [add_extension](https://github.com/microsoft/regorus/blob/fc68bf9c8bea36427dae9401a7d1f6ada771f7ab/src/engine.rs#L352).
     Support for extensibility using other languages coming soon.
