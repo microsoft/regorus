@@ -17,3 +17,38 @@
           a = to_number("abc")
       query: data.test
       error: "could not parse string as number"
+
+    - note: count of null error gobbled up in non strict mode
+      modules:
+        - |
+          package test
+          import rego.v1
+
+          foo := input.a
+
+          some_id := {
+            "count_value": count(foo) > 2,
+          }
+      input:
+        a: null
+      query: data.test
+      strict: false
+      want_result:
+        foo: null
+
+    - note: count of null error in strict mode
+      modules:
+        - |
+          package test
+          import rego.v1
+
+          foo := input.a
+
+          some_id := {
+            "count_value": count(foo) > 2,
+            (count(foo) > 2): "count_value",
+          }
+      input:
+        a: null
+      query: data.test
+      error: "`count` requires array/object/set/string argument"

@@ -1905,7 +1905,13 @@ impl Interpreter {
             // ( scalar | ref | var ) ":" term, the OPA
             // implementation is more like expr ":" expr
             let key = self.eval_expr(key)?;
+            if key == Value::Undefined {
+                return Ok(Value::Undefined);
+            }
             let value = self.eval_expr(value)?;
+            if value == Value::Undefined {
+                return Ok(Value::Undefined);
+            }
             object.insert(key, value);
         }
 
