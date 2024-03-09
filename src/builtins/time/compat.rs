@@ -599,66 +599,82 @@ mod tests {
         for (input, expected_dur) in [
             // simple
             ("0", Duration::zero()),
-            ("5s", Duration::seconds(5)),
-            ("30s", Duration::seconds(30)),
-            ("1478s", Duration::seconds(1478)),
+            ("5s", Duration::try_seconds(5).unwrap()),
+            ("30s", Duration::try_seconds(30).unwrap()),
+            ("1478s", Duration::try_seconds(1478).unwrap()),
             // sign
-            ("-5s", -Duration::seconds(5)),
-            ("+5s", Duration::seconds(5)),
+            ("-5s", -Duration::try_seconds(5).unwrap()),
+            ("+5s", Duration::try_seconds(5).unwrap()),
             ("-0", Duration::zero()),
             ("+0", Duration::zero()),
             // decimal
-            ("5.0s", Duration::seconds(5)),
-            ("5.6s", Duration::seconds(5) + Duration::milliseconds(600)),
-            ("5.s", Duration::seconds(5)),
-            (".5s", Duration::milliseconds(500)),
-            ("1.0s", Duration::seconds(1)),
-            ("1.00s", Duration::seconds(1)),
-            ("1.004s", Duration::seconds(1) + Duration::milliseconds(4)),
-            ("1.0040s", Duration::seconds(1) + Duration::milliseconds(4)),
+            ("5.0s", Duration::try_seconds(5).unwrap()),
+            (
+                "5.6s",
+                Duration::try_seconds(5).unwrap() + Duration::try_milliseconds(600).unwrap(),
+            ),
+            ("5.s", Duration::try_seconds(5).unwrap()),
+            (".5s", Duration::try_milliseconds(500).unwrap()),
+            ("1.0s", Duration::try_seconds(1).unwrap()),
+            ("1.00s", Duration::try_seconds(1).unwrap()),
+            (
+                "1.004s",
+                Duration::try_seconds(1).unwrap() + Duration::try_milliseconds(4).unwrap(),
+            ),
+            (
+                "1.0040s",
+                Duration::try_seconds(1).unwrap() + Duration::try_milliseconds(4).unwrap(),
+            ),
             (
                 "100.00100s",
-                Duration::seconds(100) + Duration::milliseconds(1),
+                Duration::try_seconds(100).unwrap() + Duration::try_milliseconds(1).unwrap(),
             ),
             // different units
             ("10ns", Duration::nanoseconds(10)),
             ("11us", Duration::microseconds(11)),
             ("12µs", Duration::microseconds(12)), // U+00B5
             ("12μs", Duration::microseconds(12)), // U+03BC
-            ("13ms", Duration::milliseconds(13)),
-            ("14s", Duration::seconds(14)),
-            ("15m", Duration::minutes(15)),
-            ("16h", Duration::hours(16)),
+            ("13ms", Duration::try_milliseconds(13).unwrap()),
+            ("14s", Duration::try_seconds(14).unwrap()),
+            ("15m", Duration::try_minutes(15).unwrap()),
+            ("16h", Duration::try_hours(16).unwrap()),
             // composite durations
-            ("3h30m", Duration::hours(3) + Duration::minutes(30)),
+            (
+                "3h30m",
+                Duration::try_hours(3).unwrap() + Duration::try_minutes(30).unwrap(),
+            ),
             (
                 "10.5s4m",
-                Duration::minutes(4) + Duration::seconds(10) + Duration::milliseconds(500),
+                Duration::try_minutes(4).unwrap()
+                    + Duration::try_seconds(10).unwrap()
+                    + Duration::try_milliseconds(500).unwrap(),
             ),
             (
                 "-2m3.4s",
-                -(Duration::minutes(2) + Duration::seconds(3) + Duration::milliseconds(400)),
+                -(Duration::try_minutes(2).unwrap()
+                    + Duration::try_seconds(3).unwrap()
+                    + Duration::try_milliseconds(400).unwrap()),
             ),
             (
                 "1h2m3s4ms5us6ns",
-                Duration::hours(1)
-                    + Duration::minutes(2)
-                    + Duration::seconds(3)
-                    + Duration::milliseconds(4)
+                Duration::try_hours(1).unwrap()
+                    + Duration::try_minutes(2).unwrap()
+                    + Duration::try_seconds(3).unwrap()
+                    + Duration::try_milliseconds(4).unwrap()
                     + Duration::microseconds(5)
                     + Duration::nanoseconds(6),
             ),
             (
                 "39h9m14.425s",
-                Duration::hours(39)
-                    + Duration::minutes(9)
-                    + Duration::seconds(14)
-                    + Duration::milliseconds(425),
+                Duration::try_hours(39).unwrap()
+                    + Duration::try_minutes(9).unwrap()
+                    + Duration::try_seconds(14).unwrap()
+                    + Duration::try_milliseconds(425).unwrap(),
             ),
             // large value
             ("52763797000ns", Duration::nanoseconds(52763797000)),
             // more than 9 digits after decimal point, see https://golang.org/issue/6617
-            ("0.3333333333333333333h", Duration::minutes(20)),
+            ("0.3333333333333333333h", Duration::try_minutes(20).unwrap()),
             // 9007199254740993 = 1<<53+1 cannot be stored precisely in a float64
             ("9007199254740993ns", Duration::nanoseconds((1 << 53) + 1)),
             // largest duration that can be represented by int64 in nanoseconds
@@ -679,11 +695,16 @@ mod tests {
             // largest negative round trip value, see https://golang.org/issue/48629
             ("-2562047h47m16.854775808s", Duration::nanoseconds(i64::MIN)),
             // huge string; issue 15011.
-            ("0.100000000000000000000h", Duration::minutes(6)),
+            (
+                "0.100000000000000000000h",
+                Duration::try_minutes(6).unwrap(),
+            ),
             // This value tests the first overflow check in leadingFraction.
             (
                 "0.830103483285477580700h",
-                Duration::minutes(49) + Duration::seconds(48) + Duration::nanoseconds(372539827),
+                Duration::try_minutes(49).unwrap()
+                    + Duration::try_seconds(48).unwrap()
+                    + Duration::nanoseconds(372539827),
             ),
         ] {
             let dur = parse_duration(input).unwrap();
