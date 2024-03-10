@@ -1,0 +1,46 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: unary expr on non literals produces an error
+    modules:
+      - |
+        package test
+
+        x = - y
+        y = 1
+    query: data.test
+    error: "unary - can only be used with numeric literals"
+
+  - note: unary expr on literals work
+    modules:
+      - |
+        package test
+
+        x = - 1 # With space
+        y = -1
+        z = -   # With newlines and comment
+        
+          1  
+    query: data.test
+    want_result:
+      x: -1
+      y: -1
+      z: -1
+      
+  - note: double unary expr
+    modules:
+      - |
+        package test
+
+        x = - -1
+    query: data.test
+    error: "unary - can only be used with numeric literals"
+
+  - note: double unary expr double space
+    modules:
+      - |
+        package test
+
+        x = - - 1
+    query: data.test
+    error: "unary - can only be used with numeric literals"

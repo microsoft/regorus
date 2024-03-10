@@ -2699,7 +2699,22 @@ impl Interpreter {
                 key, value, query, ..
             } => self.eval_object_compr(key, value, query),
             Expr::SetCompr { term, query, .. } => self.eval_set_compr(term, query),
-            Expr::UnaryExpr { .. } => unimplemented!("unar expr is umplemented"),
+            Expr::UnaryExpr { span, expr: uexpr } => match uexpr.as_ref() {
+                Expr::Number(_) if !uexpr.span().text().starts_with('-') => {
+                    builtins::numbers::arithmetic_operation(
+                        span,
+                        &ArithOp::Sub,
+                        expr,
+                        uexpr,
+                        Value::from(0),
+                        self.eval_expr(uexpr)?,
+                        self.strict_builtin_errors,
+                    )
+                }
+                _ => bail!(expr
+                    .span()
+                    .error("unary - can only be used with numeric literals")),
+            },
             Expr::Call { span, fcn, params } => {
                 self.eval_call(span, expr, fcn, params, None, false)
             }
