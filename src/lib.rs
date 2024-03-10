@@ -44,7 +44,7 @@ use std::rc::Rc;
 /// # }
 /// ````
 /// See also [`QueryResult`].
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Eq, PartialEq)]
 pub struct Location {
     /// Line number. Starts at 1.
     pub row: u16,
@@ -69,7 +69,7 @@ pub struct Location {
 /// # }
 /// ```
 /// See also [`QueryResult`].
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Eq, PartialEq)]
 pub struct Expression {
     /// Computed value of the expression.
     pub value: Value,
@@ -157,7 +157,7 @@ pub struct Expression {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Eq, PartialEq)]
 pub struct QueryResult {
     /// Expressions in the query.
     ///
@@ -296,7 +296,7 @@ impl Default for QueryResult {
 /// ```
 ///
 /// See [QueryResult] for examples of different kinds of results.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Eq, PartialEq)]
 pub struct QueryResults {
     /// Collection of results of evaluting a query.
     #[serde(skip_serializing_if = "Vec::is_empty")]

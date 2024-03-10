@@ -241,9 +241,12 @@ impl Engine {
     /// assert_eq!(results.result[0].expressions[0].value, Value::from(true));
     /// # Ok(())
     /// # }
+    /// ```
     pub fn eval_query(&mut self, query: String, enable_tracing: bool) -> Result<QueryResults> {
-        self.eval_modules(enable_tracing)?;
+        self.prepare_for_eval(enable_tracing)?;
+        self.interpreter.clean_internal_evaluation_state();
 
+        self.interpreter.create_rule_prefixes()?;
         let query_module = {
             let source = Source::new(
                 "<query_module.rego>".to_owned(),
@@ -256,6 +259,9 @@ impl Engine {
         let query_source = Source::new("<query.rego>".to_string(), query);
         let mut parser = Parser::new(&query_source)?;
         let query_node = parser.parse_user_query()?;
+        if query_node.span.text() == "data" {
+            self.eval_modules(enable_tracing)?;
+        }
         let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
         self.interpreter.eval_user_query(
             &query_module,
@@ -290,6 +296,7 @@ impl Engine {
     /// assert!(engine.eval_bool_query("true; false; true".to_string(), enable_tracing).is_err());
     /// # Ok(())
     /// # }
+    /// ```
     pub fn eval_bool_query(&mut self, query: String, enable_tracing: bool) -> Result<bool> {
         let results = self.eval_query(query, enable_tracing)?;
         match results.result.len() {
@@ -344,6 +351,38 @@ impl Engine {
     /// # }
     pub fn eval_deny_query(&mut self, query: String, enable_tracing: bool) -> bool {
         !matches!(self.eval_bool_query(query, enable_tracing), Ok(false))
+    }
+
+    #[doc(hidden)]
+    /// Evaluate the given query and all the rules in the supplied policies.
+    ///
+    /// This is mainly used for testing Regorus itself.
+    pub fn eval_query_and_all_rules(
+        &mut self,
+        query: String,
+        enable_tracing: bool,
+    ) -> Result<QueryResults> {
+        self.eval_modules(enable_tracing)?;
+
+        let query_module = {
+            let source = Source::new(
+                "<query_module.rego>".to_owned(),
+                "package __internal_query_module".to_owned(),
+            );
+            Ref::new(Parser::new(&source)?.parse()?)
+        };
+
+        // Parse the query.
+        let query_source = Source::new("<query.rego>".to_string(), query);
+        let mut parser = Parser::new(&query_source)?;
+        let query_node = parser.parse_user_query()?;
+        let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
+        self.interpreter.eval_user_query(
+            &query_module,
+            &query_node,
+            &query_schedule,
+            enable_tracing,
+        )
     }
 
     #[doc(hidden)]
@@ -513,8 +552,8 @@ impl Engine {
     ///    "#.to_string()
     /// )?;
     ///
-    /// // Evaluation fails since y is not defined.
-    /// assert!(engine.eval_query("data.invalid.y".to_string(), false).is_err());
+    /// // Evaluation fails since rule x calls an extension with out parameter.
+    /// assert!(engine.eval_query("data.invalid.x".to_string(), false).is_err());
     /// # Ok(())
     /// # }
     /// ```
