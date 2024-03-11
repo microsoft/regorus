@@ -2437,14 +2437,11 @@ impl Interpreter {
                     || &module_path[path.len()..path.len() + 1] == ".")
             {
                 // Ensure that the module is created.
-                {
-                    let path = Parser::get_path_ref_components(&module.package.refr)?;
-                    let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
-                    let vref = Self::make_or_get_value_mut(&mut self.data, &path[..])?;
-                    if *vref == Value::Undefined {
-                        *vref = Value::new_object();
-                    }
-                    self.mark_processed(&path)?;
+                let path = Parser::get_path_ref_components(&module.package.refr)?;
+                let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+                let vref = Self::make_or_get_value_mut(&mut self.data, &path[..])?;
+                if *vref == Value::Undefined {
+                    *vref = Value::new_object();
                 }
 
                 for rule in &module.policy {
@@ -2460,6 +2457,7 @@ impl Interpreter {
                     }
                 }
                 self.set_current_module(prev_module)?;
+                self.mark_processed(&path)?;
             }
         }
 
@@ -2467,7 +2465,9 @@ impl Interpreter {
     }
 
     fn ensure_rule_evaluated(&mut self, path: String) -> Result<()> {
+        let mut matched = false;
         if let Some(rules) = self.rules.get(&path) {
+            matched = true;
             for r in rules.clone() {
                 if !self.processed.contains(&r) {
                     let module = self.get_rule_module(&r)?;
@@ -2478,6 +2478,7 @@ impl Interpreter {
 
         // Evaluate the associated default rules after non-default rules
         if let Some(rules) = self.default_rules.get(&path) {
+            matched = true;
             for (r, _) in rules.clone() {
                 if !self.processed.contains(&r) {
                     let module = self.get_rule_module(&r)?;
@@ -2488,8 +2489,11 @@ impl Interpreter {
             }
         }
 
-        let comps: Vec<&str> = path.split('.').collect();
-        self.mark_processed(&comps[1..])
+        if matched {
+            let comps: Vec<&str> = path.split('.').collect();
+            self.mark_processed(&comps[1..])?;
+        }
+        Ok(())
     }
 
     fn is_processed(&self, path: &[&str]) -> Result<bool> {
@@ -2545,6 +2549,15 @@ impl Interpreter {
         if name.text() == "data" {
             if self.is_processed(fields)? {
                 return Ok(Self::get_value_chained(self.data.clone(), fields));
+            }
+
+            // If "data" is used in a query, without any fields, then evaluate all the modules.
+            if fields.is_empty() && self.active_rules.is_empty() {
+                for module in self.modules.clone() {
+                    for rule in &module.policy {
+                        self.eval_rule(&module, rule)?;
+                    }
+                }
             }
 
             // With modifiers may be used to specify part of a module that that not yet been
@@ -3381,31 +3394,29 @@ impl Interpreter {
             debug!("processing module {module_path:?}");
 
             for rule in &module.policy {
-                let mut rule_refr = Self::get_rule_refr(rule);
-                debug!("rule refr: {}", rule_refr.span().text());
-                debug!("rule : {:?}", rule);
-                if let Rule::Spec {
-                    head:
-                        RuleHead::Set {
-                            refr, key: None, ..
-                        },
-                    ..
-                } = rule.as_ref()
-                {
-                    rule_refr = match refr.as_ref() {
-                        Expr::RefDot { refr, .. } => refr,
-
-                        _ => refr,
+                let rule_refr = Self::get_rule_refr(rule);
+                let mut prefix_path = module_path.clone();
+                let mut components = Self::get_rule_path_components(rule_refr)?;
+                let is_old_set = matches!(
+                    rule.as_ref(),
+                    Rule::Spec {
+                        head: RuleHead::Set { key: None, .. },
+                        ..
                     }
+                );
+
+                if components.len() >= 2 && is_old_set {
+                    components.pop();
                 }
 
-                let mut prefix_path = module_path.clone();
-                prefix_path.append(&mut Self::get_rule_path_components(rule_refr)?);
-                let prefix_path: Vec<&str> = prefix_path[0..prefix_path.len() - 1]
-                    .iter()
-                    .map(|s| s.as_ref())
-                    .collect();
+                if components.len() > 1 {
+                    components.pop();
+                } else {
+                    continue;
+                }
 
+                prefix_path.append(&mut components);
+                let prefix_path: Vec<&str> = prefix_path.iter().map(|s| s.as_ref()).collect();
                 if Self::get_value_chained(self.data.clone(), &prefix_path) == Value::Undefined {
                     self.update_data(
                         rule_refr.span(),
@@ -3439,6 +3450,42 @@ impl Interpreter {
         Ok(())
     }
 
+    fn record_default_rule(
+        &mut self,
+        refr: &Ref<Expr>,
+        rule: &Ref<Rule>,
+        index: Option<String>,
+    ) -> Result<()> {
+        let comps = Parser::get_path_ref_components(refr)?;
+        let comps: Vec<&str> = comps.iter().map(|s| s.text()).collect();
+        for (idx, c) in (0..comps.len()).enumerate() {
+            let path = self.current_module_path.clone() + "." + &comps[0..c + 1].join(".");
+            match self.default_rules.entry(path) {
+                Entry::Occupied(o) => {
+                    if idx + 1 == comps.len() {
+                        for (_, i) in o.get() {
+                            if index.is_some() && i.is_some() {
+                                let old = i.as_ref().unwrap();
+                                let new = index.as_ref().unwrap();
+                                if old == new {
+                                    bail!(refr.span().error("multiple default rules for the variable with the same index"));
+                                }
+                            } else if index.is_some() || i.is_some() {
+                                bail!(refr.span().error("conflict type with the default rules"));
+                            }
+                        }
+                    }
+                    o.into_mut().push((rule.clone(), index.clone()));
+                }
+                Entry::Vacant(v) => {
+                    v.insert(vec![(rule.clone(), index.clone())]);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn process_imports(&mut self) -> Result<()> {
         for module in &self.modules {
             let module_path = get_path_string(&module.package.refr, Some("data"))?;
@@ -3455,7 +3502,10 @@ impl Interpreter {
                             // Warn redundant import of input. Ignore it.
                             eprintln!(
                                 "{}",
-                                import.refr.span().error("redundant import of `input`")
+                                import
+                                    .refr
+                                    .span()
+                                    .message("warning", "redundant import of `input`")
                             );
                             continue;
                         }
@@ -3513,29 +3563,7 @@ impl Interpreter {
                         _ => (refr, None),
                     };
 
-                    let path = Self::get_path_string(refr, None)?;
-                    let path = self.current_module_path.clone() + "." + &path;
-                    match self.default_rules.entry(path) {
-                        Entry::Occupied(o) => {
-                            for (_, i) in o.get() {
-                                if index.is_some() && i.is_some() {
-                                    let old = i.as_ref().unwrap();
-                                    let new = index.as_ref().unwrap();
-                                    if old == new {
-                                        bail!(refr.span().error("multiple default rules for the variable with the same index"));
-                                    }
-                                } else if index.is_some() || i.is_some() {
-                                    bail!(refr
-                                        .span()
-                                        .error("conflict type with the default rules"));
-                                }
-                            }
-                            o.into_mut().push((rule.clone(), index));
-                        }
-                        Entry::Vacant(v) => {
-                            v.insert(vec![(rule.clone(), index)]);
-                        }
-                    }
+                    self.record_default_rule(refr, rule, index)?;
                 }
             }
             self.set_current_module(prev_module)?;

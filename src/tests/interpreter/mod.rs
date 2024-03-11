@@ -162,31 +162,48 @@ pub fn eval_file(
         engine.add_data(data)?;
     }
 
-    if let Some(input) = input_opt {
-        // all modules are evaluated for each input
-        let mut inputs = vec![];
-        match input {
-            ValueOrVec::Single(single_input) => inputs.push(single_input),
-            ValueOrVec::Many(mut many_input) => inputs.append(&mut many_input),
+    let mut inputs = vec![];
+    match input_opt {
+        Some(ValueOrVec::Single(single_input)) => inputs.push(single_input),
+        Some(ValueOrVec::Many(mut many_input)) => inputs.append(&mut many_input),
+        _ => (),
+    }
+
+    let mut engine_full = engine.clone();
+
+    if inputs.is_empty() {
+        // Now eval the query.
+        let r = engine.eval_query(query.to_string(), enable_tracing)?;
+        let r_full = engine_full.eval_query_and_all_rules(query.to_string(), enable_tracing)?;
+        if r != r_full {
+            println!(
+                "{}\n{}",
+                serde_json::to_string_pretty(&r_full)?,
+                serde_json::to_string_pretty(&r)?
+            );
+            assert_eq!(r_full, r);
         }
 
+        push_query_results(r, &mut results);
+    } else {
         for input in inputs {
-            engine.set_input(input);
-            engine.eval_modules(enable_tracing)?;
+            engine.set_input(input.clone());
+            engine_full.set_input(input);
 
             // Now eval the query.
-            push_query_results(
-                engine.eval_query(query.to_string(), enable_tracing)?,
-                &mut results,
-            );
+            let r = engine.eval_query(query.to_string(), enable_tracing)?;
+            let r_full = engine_full.eval_query_and_all_rules(query.to_string(), enable_tracing)?;
+            if r != r_full {
+                println!(
+                    "{}\n{}",
+                    serde_json::to_string_pretty(&r_full)?,
+                    serde_json::to_string_pretty(&r)?
+                );
+                assert_eq!(r_full, r);
+            }
+
+            push_query_results(r, &mut results);
         }
-    } else {
-        // it no input is defined then one evaluation of all modules is performed
-        // Now eval the query.
-        push_query_results(
-            engine.eval_query(query.to_string(), enable_tracing)?,
-            &mut results,
-        );
     }
 
     Ok(results)
