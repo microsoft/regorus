@@ -626,4 +626,43 @@ impl Engine {
     pub fn clear_coverage_data(&mut self) {
         self.interpreter.clear_coverage_data()
     }
+
+    /// Gather output from print statements instead of emiting to stderr.
+    ///
+    /// See [`Engine::take_prints`].    
+    pub fn set_gather_prints(&mut self, b: bool) {
+        self.interpreter.set_gather_prints(b);
+    }
+
+    /// Take the gathered output of print statements.
+    ///
+    /// ```rust
+    /// # use regorus::*;
+    /// # use anyhow::{bail, Result};
+    /// # fn main() -> Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// // Print to stderr.
+    /// engine.eval_query("print(\"Hello\")".to_string(), false)?;
+    ///
+    /// // Configure gathering print statements.
+    /// engine.set_gather_prints(true);
+    ///
+    /// // Execute query.
+    /// engine.eval_query("print(\"Hello\")".to_string(), false)?;
+    ///
+    /// // Take and clear prints.
+    /// let prints = engine.take_prints()?;
+    /// assert_eq!(prints.len(), 1);
+    /// assert!(prints[0].contains("Hello"));
+    ///
+    /// for p in prints {
+    ///   println!("{p}");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn take_prints(&mut self) -> Result<Vec<String>> {
+        self.interpreter.take_prints()
+    }
 }

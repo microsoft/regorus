@@ -54,6 +54,8 @@ use lazy_static::lazy_static;
 
 pub type BuiltinFcn = (fn(&Span, &[Ref<Expr>], &[Value], bool) -> Result<Value>, u8);
 
+pub use debugging::print_to_string;
+
 #[cfg(feature = "deprecated")]
 pub use deprecated::DEPRECATED;
 

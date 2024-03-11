@@ -73,6 +73,9 @@ pub struct Interpreter {
     coverage: HashMap<Source, Vec<bool>>,
     #[cfg(feature = "coverage")]
     enable_coverage: bool,
+
+    gather_prints: bool,
+    prints: Vec<String>,
 }
 
 impl Default for Interpreter {
@@ -190,6 +193,9 @@ impl Interpreter {
             coverage: HashMap::new(),
             #[cfg(feature = "coverage")]
             enable_coverage: false,
+
+            gather_prints: false,
+            prints: Vec::default(),
         }
     }
 
@@ -2052,13 +2058,25 @@ impl Interpreter {
         params: &[ExprRef],
     ) -> Result<Value> {
         let mut args = vec![];
-        let allow_undefined = name == "print"; // TODO: with modifier
+        let is_print = name == "print"; // TODO: with modifier
+        let allow_undefined = is_print;
         for p in params {
             match self.eval_expr(p)? {
                 // If any argument is undefined, then the call is undefined.
                 Value::Undefined if !allow_undefined => return Ok(Value::Undefined),
                 p => args.push(p),
             }
+        }
+
+        if is_print && self.gather_prints {
+            // Do not print to stderr. Instead, gather.
+            let msg =
+                builtins::print_to_string(span, params, &args[..], self.strict_builtin_errors)?;
+
+            // Prefix location information.
+            self.prints
+                .push(format!("{}:{}: {msg}", span.source.file(), span.line));
+            return Ok(Value::Bool(true));
         }
 
         let cache = builtins::must_cache(name);
@@ -3704,5 +3722,17 @@ impl Interpreter {
     #[cfg(feature = "coverage")]
     pub fn clear_coverage_data(&mut self) {
         self.coverage = HashMap::new();
+    }
+
+    pub fn set_gather_prints(&mut self, b: bool) {
+        if b != self.gather_prints {
+            // Clear existing prints.
+            std::mem::take(&mut self.prints);
+        }
+        self.gather_prints = b;
+    }
+
+    pub fn take_prints(&mut self) -> Result<Vec<String>> {
+        Ok(std::mem::take(&mut self.prints))
     }
 }
