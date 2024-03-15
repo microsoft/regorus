@@ -2926,25 +2926,23 @@ impl Interpreter {
     pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
         let mut comps = vec![];
         let mut expr = Some(refr);
-        while expr.is_some() {
-            match expr {
-                Some(Expr::RefDot { refr, field, .. }) => {
+        while let Some(e) = expr {
+            match e {
+                Expr::RefDot { refr, field, .. } => {
                     comps.push(field.text());
                     expr = Some(refr);
                 }
-                Some(Expr::RefBrack { refr, index, .. })
-                    if matches!(index.as_ref(), Expr::String(_)) =>
-                {
+                Expr::RefBrack { refr, index, .. } if matches!(index.as_ref(), Expr::String(_)) => {
                     if let Expr::String(s) = index.as_ref() {
                         comps.push(s.text());
                         expr = Some(refr);
                     }
                 }
-                Some(Expr::Var(v)) => {
+                Expr::Var(v) => {
                     comps.push(v.text());
                     expr = None;
                 }
-                _ => bail!(format!("internal error: not a simplee ref {expr:?}")),
+                _ => bail!(e.span().error("invalid ref expression")),
             }
         }
         if let Some(d) = document {

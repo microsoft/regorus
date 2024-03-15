@@ -190,11 +190,12 @@ pub fn gather_functions(modules: &[Ref<Module>]) -> Result<FunctionTable> {
 }
 
 pub fn get_root_var(mut expr: &Expr) -> Result<SourceStr> {
+    let empty = expr.span().source_str().clone_empty();
     loop {
         match expr {
             Expr::Var(v) => return Ok(v.source_str()),
             Expr::RefDot { refr, .. } | Expr::RefBrack { refr, .. } => expr = refr,
-            _ => bail!("internal error: analyzer: could not get rule prefix"),
+            _ => return Ok(empty),
         }
     }
 }

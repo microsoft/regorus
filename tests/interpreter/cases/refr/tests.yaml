@@ -1,0 +1,14 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: ref
+    modules:
+      - |
+        package test
+        x = [k |
+          [1, 2, 3][[1, 2, 3][k]]
+        ]
+
+    query: data.test
+    want_result:
+      x: [0, 1]
