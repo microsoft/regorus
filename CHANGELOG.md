@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/microsoft/regorus/compare/regorus-v0.1.1...regorus-v0.1.2) - 2024-03-22
+
+### Other
+- Handle non simple refs in chained expressions ([#182](https://github.com/microsoft/regorus/pull/182))
+- Ability to gather print statements ([#179](https://github.com/microsoft/regorus/pull/179))
+- Top-down evaluation ([#177](https://github.com/microsoft/regorus/pull/177))
+- Make unary `-` operator OPA compatible. ([#175](https://github.com/microsoft/regorus/pull/175))
+- Don't use deprecated chrono `Duration` methods ([#173](https://github.com/microsoft/regorus/pull/173))
+- Propagate Undefined in object expressions ([#171](https://github.com/microsoft/regorus/pull/171))
+- Bump to OPA v0.62.0 ([#169](https://github.com/microsoft/regorus/pull/169))
+- Fix regression ([#164](https://github.com/microsoft/regorus/pull/164))
+- Separately keep track of whether rules have been evaluated or not ([#163](https://github.com/microsoft/regorus/pull/163))
+- Link Linux libraries against glibc 2.17 using `cargo-zigbuild` ([#158](https://github.com/microsoft/regorus/pull/158))
+
 ## [0.1.1](https://github.com/microsoft/regorus/compare/regorus-v0.1.0...regorus-v0.1.1) - 2024-02-23
 
 ### Other
