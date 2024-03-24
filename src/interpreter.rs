@@ -13,7 +13,6 @@ use crate::Rc;
 use crate::{Expression, Extension, Location, QueryResult, QueryResults};
 
 use anyhow::{anyhow, bail, Result};
-use log::info;
 use std::collections::btree_map::Entry as BTreeMapEntry;
 use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap};
 use std::ops::Bound::*;
@@ -236,7 +235,6 @@ impl Interpreter {
 
     pub fn set_input(&mut self, input: Value) {
         self.input = input;
-        info!("input: {:#?}", self.input);
     }
 
     pub fn init_with_document(&mut self) -> Result<()> {
@@ -730,11 +728,6 @@ impl Interpreter {
 
         // TODO: optimize this
         self.variables_assignment(&name, &value)?;
-
-        info!(
-            "eval_assign_expr before, op: {:?}, lhs: {:?}, rhs: {:?}",
-            op, lhs, rhs
-        );
 
         Ok(Value::Bool(true))
     }
@@ -1323,13 +1316,6 @@ impl Interpreter {
     }
 
     fn eval_stmt(&mut self, stmt: &LiteralStmt, stmts: &[&LiteralStmt]) -> Result<bool> {
-        debug_new_group!(
-            "eval_stmt {}:{} {}",
-            stmt.span.line,
-            stmt.span.col,
-            stmt.span.text()
-        );
-
         let (saved_state, skip_exec) = self.apply_with_modifiers(stmt)?;
         let r = if !skip_exec {
             self.eval_stmt_impl(stmt, stmts)
@@ -2543,7 +2529,6 @@ impl Interpreter {
 
     fn lookup_var(&mut self, span: &Span, fields: &[&str], no_error: bool) -> Result<Value> {
         let name = span.source_str();
-        debug_new_group!("lookup_var: name={name}, fields={fields:?}, no_error={no_error}");
 
         // Return local variable/argument.
         if let Some(v) = self.lookup_local_var(&name) {
@@ -2648,13 +2633,6 @@ impl Interpreter {
     }
 
     fn eval_expr(&mut self, expr: &ExprRef) -> Result<Value> {
-        debug_new_group!(
-            "eval_expr: {}:{} {}",
-            expr.span().line,
-            expr.span().col,
-            expr.span().text()
-        );
-
         #[cfg(feature = "coverage")]
         if self.enable_coverage {
             let span = expr.span();
@@ -3402,12 +3380,8 @@ impl Interpreter {
     }
 
     pub fn create_rule_prefixes(&mut self) -> Result<()> {
-        debug_new_group!("create_rule_prefixes");
-        debug!("data before: {}", self.data);
-
         for module in self.modules.clone() {
             let module_path = Self::get_rule_path_components(&module.package.refr)?;
-            debug!("processing module {module_path:?}");
 
             for rule in &module.policy {
                 let rule_refr = Self::get_rule_refr(rule);
@@ -3443,7 +3417,7 @@ impl Interpreter {
                 }
             }
         }
-        debug!("data after: {}", self.data);
+
         Ok(())
     }
 

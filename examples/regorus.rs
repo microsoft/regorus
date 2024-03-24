@@ -184,10 +184,6 @@ struct Cli {
 
 fn main() -> Result<()> {
     use clap::Parser;
-    env_logger::builder()
-        .format_level(false)
-        .format_timestamp(None)
-        .init();
 
     // Parse and dispatch command.
     let cli = Cli::parse();
