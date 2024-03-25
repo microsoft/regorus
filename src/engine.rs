@@ -208,6 +208,52 @@ impl Engine {
         &self.modules
     }
 
+    /// Evaluate rule(s) at given path.
+    ///
+    /// [`eval_rule`] is often faster than [`eval_query`] and should be preferred if
+    /// OPA style [`QueryResults`] are not needed.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// // Add policy
+    /// engine.add_policy(
+    ///   "policy.rego".to_string(),
+    ///   r#"
+    ///   package example
+    ///   import rego.v1
+    ///
+    ///   x = [1, 2]
+    ///
+    ///   y := 5 if input.a > 2
+    ///   "#.to_string())?;
+    ///
+    /// // Evaluate rule.
+    /// let v = engine.eval_rule("data.example.x".to_string())?;
+    /// assert_eq!(v, Value::from(vec![Value::from(1), Value::from(2)]));
+    ///
+    /// // y evaluates to undefined.
+    /// let v = engine.eval_rule("data.example.y".to_string())?;
+    /// assert_eq!(v, Value::Undefined);
+    ///
+    /// // Evaluating a non-existent rule is an error.
+    /// let r = engine.eval_rule("data.exaample.x".to_string());
+    /// assert!(r.is_err());
+    ///
+    /// // Path must be valid rule paths.
+    /// assert!( engine.eval_rule("data".to_string()).is_err());
+    /// assert!( engine.eval_rule("data.example".to_string()).is_err());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn eval_rule(&mut self, path: String) -> Result<Value> {
+        self.prepare_for_eval(false)?;
+        self.interpreter.clean_internal_evaluation_state();
+        self.interpreter.eval_rule_in_path(path)
+    }
+
     /// Evaluate a Rego query.
     ///
     /// ```
@@ -419,7 +465,7 @@ impl Engine {
     }
 
     #[doc(hidden)]
-    pub fn eval_rule(
+    pub fn eval_rule_in_module(
         &mut self,
         module: &Ref<Module>,
         rule: &Ref<Rule>,

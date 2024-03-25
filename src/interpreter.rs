@@ -14,7 +14,7 @@ use crate::{Expression, Extension, Location, QueryResult, QueryResults};
 
 use anyhow::{anyhow, bail, Result};
 use std::collections::btree_map::Entry as BTreeMapEntry;
-use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap};
+use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Bound::*;
 use std::str::FromStr;
 
@@ -75,6 +75,7 @@ pub struct Interpreter {
 
     gather_prints: bool,
     prints: Vec<String>,
+    rule_paths: HashSet<String>,
 }
 
 impl Default for Interpreter {
@@ -195,6 +196,7 @@ impl Interpreter {
 
             gather_prints: false,
             prints: Vec::default(),
+            rule_paths: HashSet::new(),
         }
     }
 
@@ -3426,6 +3428,9 @@ impl Interpreter {
         let comps: Vec<&str> = comps.iter().map(|s| s.text()).collect();
         for c in 0..comps.len() {
             let path = self.current_module_path.clone() + "." + &comps[0..c + 1].join(".");
+            if c + 1 == comps.len() {
+                self.rule_paths.insert(path.clone());
+            }
 
             match self.rules.entry(path) {
                 Entry::Occupied(o) => {
@@ -3450,6 +3455,10 @@ impl Interpreter {
         let comps: Vec<&str> = comps.iter().map(|s| s.text()).collect();
         for (idx, c) in (0..comps.len()).enumerate() {
             let path = self.current_module_path.clone() + "." + &comps[0..c + 1].join(".");
+            if c + 1 == comps.len() {
+                self.rule_paths.insert(path.clone());
+            }
+
             match self.default_rules.entry(path) {
                 Entry::Occupied(o) => {
                     if idx + 1 == comps.len() {
@@ -3706,5 +3715,15 @@ impl Interpreter {
 
     pub fn take_prints(&mut self) -> Result<Vec<String>> {
         Ok(std::mem::take(&mut self.prints))
+    }
+
+    pub fn eval_rule_in_path(&mut self, path: String) -> Result<Value> {
+        if !self.rule_paths.contains(&path) {
+            bail!("not a valid rule path");
+        }
+        self.ensure_rule_evaluated(path.clone())?;
+        let parts: Vec<&str> = path.split('.').collect();
+
+        Ok(Self::get_value_chained(self.data.clone(), &parts[1..]))
     }
 }
