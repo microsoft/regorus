@@ -102,7 +102,7 @@ itertools = "0.12.1"
 [dev-dependencies]
 cfg-if = "1.0.0"
 clap = { version = "4.4.7", features = ["derive"] }
-colored-diff = "0.2.3"
+prettydiff = { version = "0.6.4", default-features = false }
 serde_yaml = "0.9.16"
 test-generator = "0.3.1"
 walkdir = "2.3.2"

@@ -21,3 +21,87 @@ cases:
       x1: [[1, 0], [2, 1], [3, 2], [4, 3]]
       x2: [[1, 1], [2, 2], [3, 3], [4, 4]]
       x3: [["q", "p"], ["s", "r"]]
+
+  - note: early return
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords
+
+        a = [1, "hello"]
+        # Implicit value
+        b1 {
+            a[_] + 1
+        }
+
+        # Literals
+        b2 := true { a[_] + 1 }
+        b3 := false { a[_] + 1 }
+        b4 := 1 { a[_] + 1 }
+        b5 := null { a[_] + 1 }
+        b6 := "hello" { a[_] + 1 }
+        b7 := `world` { a[_] + 1 }
+
+        # constant refs
+        c[null] := true { a[_] + 1 }
+        c["hello"] := false { a[_] + 1 }
+        c[`world`] := 1 { a[_] + 1 }
+        c[true] := null { a[_] + 1 }
+        c[false] := "hello" { a[_] + 1 }
+        c[7] := `world` { a[_] + 1 }
+
+        # Old style set must should also be considered for early return.
+        old.style { a[_] + 1 }
+
+        # Multi part constant refactor
+        multi[1]["hello"] := 5 { a[_] +1 }
+        
+        # Two elements must be produced
+        d = [1 | [1,2][_] ]
+
+        # Non simple ref must not result in early return.
+        f[p] = 5 {
+          p := a[_]
+        }
+
+        f1[p] = 5 {
+          a[p]
+        }
+
+        # Contains syntax
+        g contains p if {
+          p := a[_]
+        }
+    query: data.test
+    want_result:
+      a: [1, "hello"]
+      b1: true
+      b2: true
+      b3: false
+      b4: 1
+      b5: null
+      b6: "hello"
+      b7: "world"
+      c:
+        null: true
+        "hello": false
+        "world": 1
+        true: null
+        false: "hello"
+        7: "world"
+      d: [1, 1]
+      f:
+        1: 5
+        "hello": 5
+      f1:
+        0: 5
+        1: 5
+      g:
+        set!: [1, "hello"]
+      multi:
+        1:
+          "hello": 5
+      old:
+        set!: ["style"]
+        
