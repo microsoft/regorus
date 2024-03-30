@@ -31,7 +31,7 @@ Gem::Specification.new do |spec|
   end
 
   # Ensure Cargo.lock is included
-  spec.files << "Cargo.lock" if File.exist?("Cargo.lock")
+  spec.files << "../../Cargo.lock" if File.exist?("../../Cargo.lock")
 
   spec.bindir = "exe"
   spec.executables = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
