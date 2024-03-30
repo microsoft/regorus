@@ -1,9 +1,4 @@
-use magnus::{
-    method, module,
-    prelude::*,
-    Error, Ruby,
-    exception::runtime_error
-};
+use magnus::{exception::runtime_error, method, module, prelude::*, Error, Ruby};
 use regorus::Engine as RegorusEngine;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -56,74 +51,120 @@ impl Engine {
     }
 
     fn add_data(&self, ruby_hash: magnus::RHash) -> Result<(), Error> {
-        let data_value: regorus::Value = serde_magnus::deserialize(ruby_hash)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to deserialize Ruby value: {}", e)))?;
+        let data_value: regorus::Value = serde_magnus::deserialize(ruby_hash).map_err(|e| {
+            Error::new(
+                runtime_error(),
+                format!("Failed to deserialize Ruby value: {}", e),
+            )
+        })?;
 
-        self.engine.borrow_mut().add_data(data_value)
+        self.engine
+            .borrow_mut()
+            .add_data(data_value)
             .map_err(|e| Error::new(runtime_error(), format!("Failed to add data: {}", e)))
     }
 
     fn add_data_json(&self, json_string: String) -> Result<(), Error> {
-        let json_data: regorus::Value = serde_json::from_str(&json_string)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to parse JSON data: {}", e)))?;
+        let json_data: regorus::Value = serde_json::from_str(&json_string).map_err(|e| {
+            Error::new(runtime_error(), format!("Failed to parse JSON data: {}", e))
+        })?;
 
-        self.engine.borrow_mut().add_data(json_data)
+        self.engine
+            .borrow_mut()
+            .add_data(json_data)
             .map_err(|e| Error::new(runtime_error(), format!("Failed to add data json: {}", e)))
     }
 
     fn add_data_from_json_file(&self, path: String) -> Result<(), Error> {
-        let json_data = regorus::Value::from_json_file(&path)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to parse JSON data file: {}", e)))?;
+        let json_data = regorus::Value::from_json_file(&path).map_err(|e| {
+            Error::new(
+                runtime_error(),
+                format!("Failed to parse JSON data file: {}", e),
+            )
+        })?;
 
-        self.engine.borrow_mut().add_data(json_data)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to add data from file: {}", e)))
+        self.engine.borrow_mut().add_data(json_data).map_err(|e| {
+            Error::new(
+                runtime_error(),
+                format!("Failed to add data from file: {}", e),
+            )
+        })
     }
 
     fn clear_data(&self) -> Result<(), Error> {
-        self.engine
-            .borrow_mut()
-            .clear_data();
+        self.engine.borrow_mut().clear_data();
         Ok(())
     }
 
     fn set_input(&self, ruby_hash: magnus::RHash) -> Result<(), Error> {
-        let input_value: regorus::Value = serde_magnus::deserialize(ruby_hash)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to deserialize Ruby value: {}", e)))?;
+        let input_value: regorus::Value = serde_magnus::deserialize(ruby_hash).map_err(|e| {
+            Error::new(
+                runtime_error(),
+                format!("Failed to deserialize Ruby value: {}", e),
+            )
+        })?;
 
         self.engine.borrow_mut().set_input(input_value);
         Ok(())
     }
 
     fn set_input_json(&self, json_string: String) -> Result<(), Error> {
-        let json_data: regorus::Value = serde_json::from_str(&json_string)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to parse JSON input file: {}", e)))?;
+        let json_data: regorus::Value = serde_json::from_str(&json_string).map_err(|e| {
+            Error::new(
+                runtime_error(),
+                format!("Failed to parse JSON input file: {}", e),
+            )
+        })?;
 
         self.engine.borrow_mut().set_input(json_data);
         Ok(())
     }
 
     fn add_input_from_json_file(&self, path: String) -> Result<(), Error> {
-        let json_data = regorus::Value::from_json_file(&path)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to parse JSON input file: {}", e)))?;
+        let json_data = regorus::Value::from_json_file(&path).map_err(|e| {
+            Error::new(
+                runtime_error(),
+                format!("Failed to parse JSON input file: {}", e),
+            )
+        })?;
 
         self.engine.borrow_mut().set_input(json_data);
         Ok(())
     }
 
     fn eval_query_as_json(&self, query: String) -> Result<String, Error> {
-        let results = self.engine.borrow_mut().eval_query(query, false)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to evaluate query as json: {}", e)))?;
+        let results = self
+            .engine
+            .borrow_mut()
+            .eval_query(query, false)
+            .map_err(|e| {
+                Error::new(
+                    runtime_error(),
+                    format!("Failed to evaluate query as json: {}", e),
+                )
+            })?;
 
-        serde_json::to_string(&results)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to serialize query results: {}", e)))
+        serde_json::to_string(&results).map_err(|e| {
+            Error::new(
+                runtime_error(),
+                format!("Failed to serialize query results: {}", e),
+            )
+        })
     }
 
     fn eval_query(&self, query: String) -> Result<magnus::Value, Error> {
-        let results = self.engine.borrow_mut().eval_query(query, false)
+        let results = self
+            .engine
+            .borrow_mut()
+            .eval_query(query, false)
             .map_err(|e| Error::new(runtime_error(), format!("Failed to evaluate query: {}", e)))?;
 
-        serde_magnus::serialize(&results)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to convert query results to Ruby value: {}", e)))
+        serde_magnus::serialize(&results).map_err(|e| {
+            Error::new(
+                runtime_error(),
+                format!("Failed to convert query results to Ruby value: {}", e),
+            )
+        })
     }
 }
 
@@ -142,18 +183,27 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
 
     // policy operations
     engine_class.define_method("add_policy", method!(Engine::add_policy, 2))?;
-    engine_class.define_method("add_policy_from_file", method!(Engine::add_policy_from_file, 1))?;
+    engine_class.define_method(
+        "add_policy_from_file",
+        method!(Engine::add_policy_from_file, 1),
+    )?;
 
     // data operations
     engine_class.define_method("add_data", method!(Engine::add_data, 1))?;
     engine_class.define_method("add_data_json", method!(Engine::add_data_json, 1))?;
-    engine_class.define_method("add_data_from_json_file", method!(Engine::add_data_from_json_file, 1))?;
+    engine_class.define_method(
+        "add_data_from_json_file",
+        method!(Engine::add_data_from_json_file, 1),
+    )?;
     engine_class.define_method("clear_data", method!(Engine::clear_data, 0))?;
 
     // input operations
     engine_class.define_method("set_input", method!(Engine::set_input, 1))?;
     engine_class.define_method("set_input_json", method!(Engine::set_input_json, 1))?;
-    engine_class.define_method("add_input_from_json_file", method!(Engine::add_input_from_json_file, 1))?;
+    engine_class.define_method(
+        "add_input_from_json_file",
+        method!(Engine::add_input_from_json_file, 1),
+    )?;
 
     // query operations
     engine_class.define_method("eval_query", method!(Engine::eval_query, 1))?;

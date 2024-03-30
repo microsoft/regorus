@@ -5,7 +5,7 @@ members = [
     "bindings/python",
     "bindings/wasm",
     "bindings/java",
-    "bindings/ruby",
+    "bindings/ruby/ext/regorusrb",
 ]
 
 [package]
