@@ -1,3 +1,7 @@
+require:
+  - rubocop-minitest
+  - rubocop-rake
+
 AllCops:
   TargetRubyVersion: 3.0
   NewCops: enable
@@ -7,6 +11,10 @@ Layout/LineLength:
 
 Lint/EmptyClass:
   Enabled: false
+
+Metrics/ClassLength:
+  Exclude:
+    - 'test/**/*.rb'
 
 Metrics/MethodLength:
   Enabled: false

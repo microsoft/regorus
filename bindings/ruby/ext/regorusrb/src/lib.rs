@@ -65,13 +65,9 @@ impl Engine {
     }
 
     fn add_data_json(&self, json_string: String) -> Result<(), Error> {
-        let json_data: regorus::Value = serde_json::from_str(&json_string).map_err(|e| {
-            Error::new(runtime_error(), format!("Failed to parse JSON data: {}", e))
-        })?;
-
         self.engine
             .borrow_mut()
-            .add_data(json_data)
+            .add_data_json(&json_string)
             .map_err(|e| Error::new(runtime_error(), format!("Failed to add data json: {}", e)))
     }
 
@@ -109,15 +105,10 @@ impl Engine {
     }
 
     fn set_input_json(&self, json_string: String) -> Result<(), Error> {
-        let json_data: regorus::Value = serde_json::from_str(&json_string).map_err(|e| {
-            Error::new(
-                runtime_error(),
-                format!("Failed to parse JSON input file: {}", e),
-            )
-        })?;
-
-        self.engine.borrow_mut().set_input(json_data);
-        Ok(())
+        self.engine
+            .borrow_mut()
+            .set_input_json(&json_string)
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to set input JSON: {}", e)))
     }
 
     fn add_input_from_json_file(&self, path: String) -> Result<(), Error> {
@@ -130,6 +121,21 @@ impl Engine {
 
         self.engine.borrow_mut().set_input(json_data);
         Ok(())
+    }
+
+    fn eval_query(&self, query: String) -> Result<magnus::Value, Error> {
+        let results = self
+            .engine
+            .borrow_mut()
+            .eval_query(query, false)
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to evaluate query: {}", e)))?;
+
+        serde_magnus::serialize(&results).map_err(|e| {
+            Error::new(
+                runtime_error(),
+                format!("Failed to serailzie query results: {}", e),
+            )
+        })
     }
 
     fn eval_query_as_json(&self, query: String) -> Result<String, Error> {
@@ -152,19 +158,23 @@ impl Engine {
         })
     }
 
-    fn eval_query(&self, query: String) -> Result<magnus::Value, Error> {
-        let results = self
-            .engine
-            .borrow_mut()
-            .eval_query(query, false)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to evaluate query: {}", e)))?;
+    fn eval_rule(&self, path: String) -> Result<Option<magnus::Value>, Error> {
+        let result =
+            self.engine.borrow_mut().eval_rule(path).map_err(|e| {
+                Error::new(runtime_error(), format!("Failed to evaluate rule: {}", e))
+            })?;
 
-        serde_magnus::serialize(&results).map_err(|e| {
-            Error::new(
-                runtime_error(),
-                format!("Failed to convert query results to Ruby value: {}", e),
-            )
-        })
+        match result {
+            regorus::Value::Undefined => Ok(None), // Convert undefined to Ruby's nil
+            _ => serde_magnus::serialize(&result) // Serialize other results normally
+                .map(Some)
+                .map_err(|e| {
+                    magnus::Error::new(
+                        runtime_error(),
+                        format!("Failed to serialize the rule evaluation result: {}", e),
+                    )
+                }),
+        }
     }
 }
 
@@ -208,6 +218,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     // query operations
     engine_class.define_method("eval_query", method!(Engine::eval_query, 1))?;
     engine_class.define_method("eval_query_as_json", method!(Engine::eval_query_as_json, 1))?;
+    engine_class.define_method("eval_rule", method!(Engine::eval_rule, 1))?;
 
     Ok(())
 }

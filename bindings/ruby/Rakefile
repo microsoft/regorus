@@ -11,6 +11,7 @@ RuboCop::RakeTask.new
 
 require "rb_sys/extensiontask"
 
+desc "build the .gem file, including native extensions, according to the .gemspec"
 task build: :compile
 
 GEMSPEC = Gem::Specification.load("regorusrb.gemspec")

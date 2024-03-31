@@ -4,100 +4,131 @@ require "test_helper"
 require "json"
 
 class TestRegorus < Minitest::Test
+  ALICE = "Alice"
+  BOB = "Bob"
+  CARLOS = "Carlos"
+
+  def setup
+    @engine = ::Regorus::Engine.new
+    @engine.add_policy("regorus_test.rego", example_policy)
+    @engine.add_data(example_data)
+  end
+
   def example_policy
     <<~REGO
       package regorus_test
       is_manager {
-          input.name == data.managers[_]
+        input.name == data.managers[_]
       }
 
       is_employee {
-          input.name == data.employees[_]
+        input.name == data.employees[_]
+      }
+
+      # Set a default value for to return false instead of nil
+      default is_manager_bool = false
+      default is_employee_bool = false
+
+      is_manager_bool {
+        is_manager
+      }
+
+      is_employee_bool {
+        is_employee
       }
     REGO
   end
 
   def example_data
     {
-      "managers" => ["Alice"],
-      "employees" => ["Alice", "Bob"]
+      "managers" => [ALICE],
+      "employees" => [ALICE, BOB]
     }
   end
 
-  def alice_input
-    { "name" => "Alice" }
+  def input_for(name)
+    { "name" => name }
   end
 
-  def test_that_it_has_a_version_number
+  def test_version_number_presence
     refute_nil ::Regorus::VERSION
   end
 
-  def test_it_creates_an_engine
+  def test_engine_creation
     assert_instance_of ::Regorus::Engine, ::Regorus::Engine.new
   end
 
-  def test_it_implements_add_policy
-    engine = ::Regorus::Engine.new
-
-    assert_silent { engine.add_policy("example.rego", example_policy) }
+  def test_policy_addition
+    assert_silent { @engine.add_policy("example.rego", example_policy) }
   end
 
-  def test_it_creates_new_objects_with_new
-    refute_equal ::Regorus::Engine.new.object_id, ::Regorus::Engine.new.object_id
+  def test_object_creation_with_new
+    refute_same ::Regorus::Engine.new, ::Regorus::Engine.new
   end
 
-  def test_sorting_engine_objects
-    engine_array = [::Regorus::Engine.new, ::Regorus::Engine.new]
-    assert_silent { engine_array.sort }
+  def test_data_addition
+    assert_silent { @engine.add_data(example_data) }
   end
 
-  def test_it_implements_add_data
-    engine = ::Regorus::Engine.new
-
-    assert_silent { engine.add_data(example_data) }
+  def test_data_addition_as_json
+    assert_silent { @engine.add_data_json(example_data.to_json) }
   end
 
-  def test_it_implements_add_data_json
-    engine = ::Regorus::Engine.new
+  def test_query_evaluation_for_alice
+    @engine.set_input(input_for(ALICE))
 
-    assert_silent { engine.add_data_json(example_data.to_json) }
+    assert_equal alice_results, @engine.eval_query("data.regorus_test")
   end
 
-  def test_it_implements_eval_query
-    engine = ::Regorus::Engine.new
-    engine.add_policy("regorus_test.rego", example_policy)
-    engine.add_data(example_data)
-    engine.set_input(alice_input)
+  def test_query_evaluation_for_bob
+    @engine.set_input(input_for(BOB))
 
-    assert_equal alice_results, engine.eval_query("data.regorus_test")
+    assert_equal bob_results, @engine.eval_query("data.regorus_test")
   end
 
-  def test_it_implements_eval_query_as_json
-    engine = ::Regorus::Engine.new
-    engine.add_policy("regorus_test.rego", example_policy)
-    engine.add_data(example_data)
-    engine.set_input(alice_input)
+  def test_query_evaluation_as_json
+    @engine.set_input(input_for(ALICE))
 
-    assert_equal alice_results.to_json, engine.eval_query_as_json("data.regorus_test")
+    assert_equal alice_results.to_json, @engine.eval_query_as_json("data.regorus_test")
   end
 
-  def test_it_creates_new_objects_with_clone
-    engine = ::Regorus::Engine.new
-    cloned_engine = engine.clone
+  def test_rule_evaluation_for_alice
+    @engine.set_input(input_for(ALICE))
+
+    assert @engine.eval_rule("data.regorus_test.is_employee")
+    assert @engine.eval_rule("data.regorus_test.is_employee_bool")
+    assert @engine.eval_rule("data.regorus_test.is_manager")
+    assert @engine.eval_rule("data.regorus_test.is_manager_bool")
+  end
+
+  def test_rule_evaluation_for_bob
+    @engine.set_input(input_for(BOB))
+
+    assert @engine.eval_rule("data.regorus_test.is_employee")
+    assert @engine.eval_rule("data.regorus_test.is_employee_bool")
+    assert_nil @engine.eval_rule("data.regorus_test.is_manager")
+    refute @engine.eval_rule("data.regorus_test.is_manager_bool")
+  end
+
+  def test_rule_evaluation_for_carlos
+    @engine.set_input(input_for(CARLOS))
+
+    assert_nil @engine.eval_rule("data.regorus_test.is_employee")
+    refute @engine.eval_rule("data.regorus_test.is_employee_bool")
+    assert_nil @engine.eval_rule("data.regorus_test.is_manager")
+    refute @engine.eval_rule("data.regorus_test.is_manager_bool")
+  end
+
+  def test_missing_rules_handling
+    @engine.set_input(input_for(ALICE))
+    assert_raises(RuntimeError) { @engine.eval_rule("data.regorus_test.not_a_rule") }
+  end
+
+  def test_engine_cloning
+    cloned_engine = @engine.clone
 
     assert_instance_of ::Regorus::Engine, cloned_engine
-    refute_equal engine.object_id, cloned_engine.object_id
-  end
-
-  def test_it_clones_state_when_engine_is_cloned
-    engine = ::Regorus::Engine.new
-    engine.add_policy("regorus_test.rego", example_policy)
-    engine.add_data(example_data)
-    engine.set_input(alice_input)
-
-    cloned_engine = engine.clone
-
-    assert_equal alice_results, cloned_engine.eval_query("data.regorus_test")
+    refute_same @engine, cloned_engine
   end
 
   def alice_results
@@ -108,7 +139,32 @@ class TestRegorus < Minitest::Test
             {
               value: {
                 "is_employee" => true,
-                "is_manager" => true
+                "is_employee_bool" => true,
+                "is_manager" => true,
+                "is_manager_bool" => true
+              },
+              text: "data.regorus_test",
+              location: {
+                row: 1,
+                col: 1
+              }
+            }
+          ]
+        }
+      ]
+    }
+  end
+
+  def bob_results
+    {
+      result: [
+        {
+          expressions: [
+            {
+              value: {
+                "is_employee" => true,
+                "is_employee_bool" => true,
+                "is_manager_bool" => false
               },
               text: "data.regorus_test",
               location: {

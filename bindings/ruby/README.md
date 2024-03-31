@@ -6,7 +6,11 @@
    interpreter written in Rust.
   - *Rigorous* - A rigorous enforcer of well-defined Rego semantics.
 
-Regorus can be used in Ruby by  Use the bundler CLI to add the gem from remote git source:
+## Installation
+
+Regorus can be used in Ruby by configuring bundler to build from the remote git source.
+
+Use the bundler CLI to add the gem from remote git source:
 `
 bundle add regorus --git 'https://github.com/microsoft/regorus/tree/main/bindings/ruby'
 `
@@ -20,25 +24,13 @@ It is not yet available in rubygems.
 
 See [Repository](https://github.com/microsoft/regorus).
 
-To build this gem locally
+To build this gem locally without bundler,
 
 `rake build`
 
-then to install the gem and build the native extensions,
+then to install the gem and build the native extensions
 
 `gem install --local ./pkg/regorusrb-0.1.0.gem`
-
-## Installation
-
-TODO: Replace `UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG` with your gem name right after releasing it to RubyGems.org. Please do not do it earlier due to security reasons. Alternatively, replace this section with instructions to install your gem from git if you don't plan to release to RubyGems.org.
-
-Install the gem and add to the application's Gemfile by executing:
-
-    $ bundle add UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG
-
-If bundler is not being used to manage dependencies, install the gem by executing:
-
-    $ gem install UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG
 
 ## Usage
 
@@ -82,13 +74,15 @@ input = {
 
 engine.set_input(input)
 
-# Eval query
-results = engine.eval_query('data.framework.mount_overlay=x')
+# Evaluate a specife rule
+rule_results = engine.eval_rule('data.framework.mount_overlay')
+puts rule_results # { "allowed" => true, "metadata" => [...]}
 
-# Print results
-puts results[:result][0]
+# Or evalute a full policy document
+query_results = engine.eval_query('data.framework')
+puts query_results[:result][0]
 
-# Eval query as json
+# Query results can can also be returned as JSON strings instead of Ruby Hash structure
 results_json = engine.eval_query_as_json('data.framework.mount_overlay=x')
 puts results_json
 ```
