@@ -13,7 +13,7 @@ Regorus is also
   - *extensible* - Extend the Rego language by implementing custom stateful builtins in Rust.
     See [add_extension](https://github.com/microsoft/regorus/blob/fc68bf9c8bea36427dae9401a7d1f6ada771f7ab/src/engine.rs#L352).
     Support for extensibility using other languages coming soon.
-  - *polyglot* - In addition to Rust, Regorus can be used from *C*, *C++*, *C#*, *Golang*, *Java*, *Javascript* and *Python*.
+  - *polyglot* - In addition to Rust, Regorus can be used from *C*, *C++*, *C#*, *Golang*, *Java*, *Javascript*, *Python*, and *Ruby*.
     This is made possible by the excellent FFI tools available in the Rust ecosystem. See [bindings](#bindings) for information on how to use Regorus from different languages.
 
     To try out a *Javascript(WASM)* compiled version of Regorus from your browser, visit [Regorus Playground](https://anakrish.github.io/regorus-playground/).
@@ -90,6 +90,8 @@ Regorus can be used from a variety of languages:
 - *Javascript*: Regorus is compiled to WASM using [wasmpack](https://github.com/rustwasm/wasm-pack).
   See [bindings/wasm](https://github.com/microsoft/regorus/tree/main/bindings/wasm) for an example of using Regorus from nodejs.
   To try out a *Javascript(WASM)* compiled version of Regorus from your browser, visit [Regorus Playground](https://anakrish.github.io/regorus-playground/).
+- *Ruby*: Ruby bindings are developed using [magnus](https://github.com/matsadler/magnus).
+  See [bindings/ruby](https://github.com/microsoft/regorus/tree/main/bindings/ruby).
 
 To avoid operational overhead, we currently don't publish these bindings to various repositories.
 It is straight-forward to build these bindings yourself.

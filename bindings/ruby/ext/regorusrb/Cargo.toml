@@ -1,0 +1,16 @@
+[package]
+name = "regorusrb"
+version = "0.1.0"
+edition = "2021"
+description = "Ruby bindings for Regorus - a fast, lightweight Rego interpreter written in Rust"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+magnus = { version = "0.6.2" }
+regorus = { path = "../../../.." }
+serde_json = "1.0.115"
+serde_magnus = "0.8.1"

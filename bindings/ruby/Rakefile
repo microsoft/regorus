@@ -1,0 +1,23 @@
+# frozen_string_literal: true
+
+require "bundler/gem_tasks"
+require "minitest/test_task"
+
+Minitest::TestTask.create
+
+require "rubocop/rake_task"
+
+RuboCop::RakeTask.new
+
+require "rb_sys/extensiontask"
+
+desc "build the .gem file, including native extensions, according to the .gemspec"
+task build: :compile
+
+GEMSPEC = Gem::Specification.load("regorusrb.gemspec")
+
+RbSys::ExtensionTask.new("regorusrb", GEMSPEC) do |ext|
+  ext.lib_dir = "lib/regorusrb"
+end
+
+task default: %i[compile test rubocop]
