@@ -3,7 +3,6 @@
 
 use anyhow::Result;
 use std::path::Path;
-use std::process::Command;
 
 fn main() -> Result<()> {
     // Copy hooks to appropriate location so that git will run them.
@@ -14,12 +13,15 @@ fn main() -> Result<()> {
     }
 
     // Supply information as compile-time environment variables.
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .unwrap();
-    let git_hash = String::from_utf8(output.stdout).unwrap();
-    println!("cargo:rustc-env=GIT_HASH={}", git_hash);
+    #[cfg(feature = "opa-runtime")]
+    {
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("`git rev-parse HEAD` failed.");
+        let git_hash = String::from_utf8(output.stdout).unwrap();
+        println!("cargo:rustc-env=GIT_HASH={}", git_hash);
+    }
 
     Ok(())
 }
