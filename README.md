@@ -9,7 +9,7 @@
 Regorus is also
   - *cross-platform* - Written in platform-agnostic Rust.
   - *current* - We strive to keep Regorus up to date with latest OPA release. Regorus supports `import rego.v1`.
-  - *compliant* - Regorus is mostly compliant with the latest [OPA release v0.62.0](https://github.com/open-policy-agent/opa/releases/tag/v0.62.0). See [OPA Conformance](#opa-conformance) for details. Note that while we behaviorally produce the same results, we don't yet support all the builtins.
+  - *compliant* - Regorus is mostly compliant with the latest [OPA release v0.63.0](https://github.com/open-policy-agent/opa/releases/tag/v0.63.0). See [OPA Conformance](#opa-conformance) for details. Note that while we behaviorally produce the same results, we don't yet support all the builtins.
   - *extensible* - Extend the Rego language by implementing custom stateful builtins in Rust.
     See [add_extension](https://github.com/microsoft/regorus/blob/fc68bf9c8bea36427dae9401a7d1f6ada771f7ab/src/engine.rs#L352).
     Support for extensibility using other languages coming soon.
@@ -69,7 +69,7 @@ $ cargo build -r --example regorus --features "yaml" --no-default-features; stri
 -rwxr-xr-x  1 anand  staff   2.9M Jan 19 11:26 target/release/examples/regorus*
 ```
 
-Regorus passes the [OPA v0.61.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
+Regorus passes the [OPA v0.63.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
 builtins. See [OPA Conformance](#opa-conformance) below.
 
 ## Bindings
@@ -181,7 +181,7 @@ It produces the following coverage report which shows that all lines are execute
 ![coverage.png](https://github.com/microsoft/regorus/blob/main/docs/coverage.png?raw=true)
 
 See [Engine::get_coverage_report](https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.get_coverage_report) for details.
-Policy coverage information is useful for debugging your policy as well as to write tests for your policy so that all 
+Policy coverage information is useful for debugging your policy as well as to write tests for your policy so that all
 lines of the policy are exercised by the tests.
 
 ## ACI Policies
@@ -245,7 +245,7 @@ Benchmark 1: opa eval -b tests/aci -d tests/aci/data.json -i tests/aci/input.jso
 ```
 ## OPA Conformance
 
-Regorus has been verified to be compliant with [OPA v0.61.0](https://github.com/open-policy-agent/opa/releases/tag/v0.61.0)
+Regorus has been verified to be compliant with [OPA v0.63.0](https://github.com/open-policy-agent/opa/releases/tag/v0.63.0)
 using a [test driver](https://github.com/microsoft/regorus/blob/main/tests/opa.rs) that loads and runs the OPA testsuite using Regorus, and verifies that expected outputs
 are produced.
 
