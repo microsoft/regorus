@@ -584,6 +584,55 @@ impl From<f64> for Value {
     }
 }
 
+impl From<serde_json::Value> for Value {
+    /// Create a [`Value`] from [`serde_json::Value`].
+    ///
+    /// Returns [`Value::Undefined`] in case of error.
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let json_v = serde_json::json!({ "x":10, "y": 20 });
+    /// let v = Value::from(json_v);
+    ///
+    /// assert_eq!(v["x"].as_u64()?, 10);
+    /// assert_eq!(v["y"].as_u64()?, 20);
+    /// # Ok(())
+    /// # }
+    fn from(v: serde_json::Value) -> Self {
+        match serde_json::from_value(v) {
+            Ok(v) => v,
+            _ => Value::Undefined,
+        }
+    }
+}
+
+#[cfg(feature = "yaml")]
+impl From<serde_yaml::Value> for Value {
+    /// Create a [`Value`] from [`serde_yaml::Value`].
+    ///
+    /// Returns [`Value::Undefined`] in case of error.
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let yaml = "
+    ///   x: 10
+    ///   y: 20
+    /// ";
+    /// let yaml_v : serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+    /// let v = Value::from(yaml_v);
+    ///
+    /// assert_eq!(v["x"].as_u64()?, 10);
+    /// assert_eq!(v["y"].as_u64()?, 20);
+    /// # Ok(())
+    /// # }
+    fn from(v: serde_yaml::Value) -> Self {
+        match serde_yaml::from_value(v) {
+            Ok(v) => v,
+            _ => Value::Undefined,
+        }
+    }
+}
+
 impl Value {
     /// Create a [`Value::Number`] from a string containing numeric representation of a number.
     ///

@@ -210,7 +210,7 @@ impl Engine {
 
     /// Evaluate rule(s) at given path.
     ///
-    /// [`eval_rule`] is often faster than [`eval_query`] and should be preferred if
+    /// [`Engine::eval_rule`] is often faster than [`Engine::eval_query`] and should be preferred if
     /// OPA style [`QueryResults`] are not needed.
     ///
     /// ```
