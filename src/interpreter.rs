@@ -4,7 +4,6 @@
 use crate::ast::*;
 use crate::builtins::{self, BuiltinFcn};
 use crate::lexer::*;
-use crate::number::*;
 use crate::parser::Parser;
 use crate::scheduler::*;
 use crate::utils::*;
@@ -16,7 +15,6 @@ use anyhow::{anyhow, bail, Result};
 use std::collections::btree_map::Entry as BTreeMapEntry;
 use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Bound::*;
-use std::str::FromStr;
 
 type Scope = BTreeMap<SourceStr, Value>;
 
@@ -323,18 +321,18 @@ impl Interpreter {
                 // Stop path collection upon encountering the leading variable.
                 Expr::Var(v) => {
                     path.reverse();
-                    return self.lookup_var(v, &path[..], false);
+                    return self.lookup_var(&v.0, &path[..], false);
                 }
                 // Accumulate chained . field accesses.
                 Expr::RefDot { refr, field, .. } => {
                     expr = refr;
-                    path.push(field.text());
+                    path.push(field.0.text());
                 }
                 Expr::RefBrack { refr, index, .. } => match index.as_ref() {
                     // refr["field"] is the same as refr.field
                     Expr::String(s) => {
                         expr = refr;
-                        path.push(s.text());
+                        path.push(s.0.text());
                     }
                     // Handle other forms of refr.
                     // Note, we have the choice to evaluate a non-string index
@@ -416,8 +414,8 @@ impl Interpreter {
                 // Then hoist the current bracket operation.
                 let mut indices = Vec::with_capacity(1);
                 let _ = traverse(index, &mut |e| match e.as_ref() {
-                    Var(ident) if self.is_loop_index_var(&ident.source_str()) => {
-                        indices.push(ident.source_str());
+                    Var(ident) if self.is_loop_index_var(&ident.0.source_str()) => {
+                        indices.push(ident.0.source_str());
                         Ok(false)
                     }
                     Array { .. } | Object { .. } => Ok(true),
@@ -586,16 +584,16 @@ impl Interpreter {
             AssignOp::Eq => {
                 match (lhs.as_ref(), rhs.as_ref()) {
                     (_, Expr::Var(var))
-                        if var.source_str().text() != "input"
-                            && self.lookup_var(var, &[], true)? == Value::Undefined =>
+                        if var.0.source_str().text() != "input"
+                            && self.lookup_var(&var.0, &[], true)? == Value::Undefined =>
                     {
-                        (var.source_str(), self.eval_expr(lhs)?)
+                        (var.0.source_str(), self.eval_expr(lhs)?)
                     }
                     (Expr::Var(var), _)
-                        if var.source_str().text() != "input"
-                            && self.lookup_var(var, &[], true)? == Value::Undefined =>
+                        if var.0.source_str().text() != "input"
+                            && self.lookup_var(&var.0, &[], true)? == Value::Undefined =>
                     {
-                        (var.source_str(), self.eval_expr(rhs)?)
+                        (var.0.source_str(), self.eval_expr(rhs)?)
                     }
                     (
                         Expr::Array {
@@ -696,8 +694,8 @@ impl Interpreter {
                     return Ok(rhs_value);
                 }
 
-                let name = if let Expr::Var(span) = lhs.as_ref() {
-                    span.source_str()
+                let name = if let Expr::Var(s) = lhs.as_ref() {
+                    s.0.source_str()
                 } else {
                     let mut cache = BTreeMap::new();
                     let mut type_match = BTreeSet::new();
@@ -829,16 +827,16 @@ impl Interpreter {
         let raise_error = is_last && type_match.get(expr).is_none();
 
         match (expr.as_ref(), value) {
-            (Expr::Var(ident), _) if ident.text() == "_" => Ok(true),
+            (Expr::Var(ident), _) if ident.0.text() == "_" => Ok(true),
             (Expr::Var(ident), _)
                 if check_existing_value
-                    && self.lookup_local_var(&ident.source_str()) == Some(value.clone()) =>
+                    && self.lookup_local_var(&ident.0.source_str()) == Some(value.clone()) =>
             {
                 Ok(false)
             }
 
             (Expr::Var(ident), _) => {
-                self.add_variable(&ident.source_str(), value.clone())?;
+                self.add_variable(&ident.0.source_str(), value.clone())?;
                 Ok(true)
             }
 
@@ -1389,7 +1387,7 @@ impl Interpreter {
             // then evaluate statements only if the index applies to this collection.
             let loop_expr_index = loop_expr.index();
             if let Some(Expr::Var(index_var)) = loop_expr_index.as_ref().map(|r| r.as_ref()) {
-                if let Some(idx) = self.lookup_local_var(&index_var.source_str()) {
+                if let Some(idx) = self.lookup_local_var(&index_var.0.source_str()) {
                     if loop_expr_value[&idx] != Value::Undefined {
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         return Ok(result);
@@ -1502,7 +1500,7 @@ impl Interpreter {
         loop {
             match expr.as_ref() {
                 Expr::Var(v) => {
-                    comps.push(Value::String(v.text().into()));
+                    comps.push(Value::String(v.0.text().into()));
                     break;
                 }
                 Expr::RefBrack { refr, index, .. } => {
@@ -1510,7 +1508,7 @@ impl Interpreter {
                     expr = refr;
                 }
                 Expr::RefDot { refr, field, .. } => {
-                    comps.push(Value::String(field.text().into()));
+                    comps.push(Value::String(field.0.text().into()));
                     expr = refr;
                 }
                 _ => {
@@ -2392,12 +2390,12 @@ impl Interpreter {
         if let Some(ea) = extra_arg {
             match ea.as_ref() {
                 Expr::Var(var)
-                    if allow_return_arg && self.lookup_local_var(&var.source_str()).is_none() =>
+                    if allow_return_arg && self.lookup_local_var(&var.0.source_str()).is_none() =>
                 {
                     let value =
                         self.eval_call_impl(span, expr, fcn, &params[..params.len() - 1])?;
-                    if var.text() != "_" {
-                        self.add_variable(&var.source_str(), value)?;
+                    if var.0.text() != "_" {
+                        self.add_variable(&var.0.source_str(), value)?;
                     }
                     Ok(Value::Bool(true))
                 }
@@ -2664,24 +2662,10 @@ impl Interpreter {
             Expr::Null(_) => Ok(Value::Null),
             Expr::True(_) => Ok(Value::Bool(true)),
             Expr::False(_) => Ok(Value::Bool(false)),
-            Expr::Number(span) => {
-                let v = match Number::from_str(span.text()) {
-                    Ok(v) => Ok(Value::Number(v)),
-                    Err(_) => Err(span
-                        .source
-                        .error(span.line, span.col, "could not parse number")),
-                };
-                v
-            }
+            Expr::Number((_, v)) => Ok(v.clone()),
             // TODO: Handle string vs rawstring
-            Expr::String(span) => {
-                match serde_json::from_str::<Value>(format!("\"{}\"", span.text()).as_str()) {
-                    Ok(s) => Ok(s),
-                    Err(e) => bail!(span.error(format!("invalid string literal. {e}").as_str())),
-                }
-            }
-            Expr::RawString(span) => Ok(Value::String(span.text().to_string().into())),
-
+            Expr::String((_, v)) => Ok(v.clone()),
+            Expr::RawString((_, v)) => Ok(v.clone()),
             // TODO: Handle undefined variables
             Expr::Var(_) => self.eval_chained_ref_dot_or_brack(expr),
             Expr::RefDot { .. } => self.eval_chained_ref_dot_or_brack(expr),
@@ -2909,17 +2893,17 @@ impl Interpreter {
         while let Some(e) = expr {
             match e {
                 Expr::RefDot { refr, field, .. } => {
-                    comps.push(field.text());
+                    comps.push(field.0.text());
                     expr = Some(refr);
                 }
                 Expr::RefBrack { refr, index, .. } if matches!(index.as_ref(), Expr::String(_)) => {
                     if let Expr::String(s) = index.as_ref() {
-                        comps.push(s.text());
+                        comps.push(s.0.text());
                         expr = Some(refr);
                     }
                 }
                 Expr::Var(v) => {
-                    comps.push(v.text());
+                    comps.push(v.0.text());
                     expr = None;
                 }
                 _ => bail!(e.span().error("invalid ref expression")),
@@ -2985,7 +2969,7 @@ impl Interpreter {
             }
 
             // The following may evaluate to undefined.
-            Var(span) => ("var", span),
+            Var((span, _)) => ("var", span),
             Call { span, .. } => ("call", span),
             UnaryExpr { span, .. } => ("unaryexpr", span),
             RefDot { span, .. } => ("ref", span),
@@ -3359,19 +3343,19 @@ impl Interpreter {
         loop {
             refr = match refr.as_ref() {
                 Expr::Var(v) => {
-                    components.push(v.text().into());
+                    components.push(v.0.text().into());
                     break;
                 }
                 Expr::RefBrack { refr, index, .. } => {
                     if let Expr::String(s) = index.as_ref() {
-                        components.push(s.text().into());
+                        components.push(s.0.text().into());
                     } else {
                         components.clear();
                     }
                     refr
                 }
                 Expr::RefDot { refr, field, .. } => {
-                    components.push(field.text().into());
+                    components.push(field.0.text().into());
                     refr
                 }
                 _ => break,
@@ -3492,12 +3476,12 @@ impl Interpreter {
                 let target = match &import.r#as {
                     Some(s) => s.text(),
                     _ => match import.refr.as_ref() {
-                        Expr::RefDot { field, .. } => field.text(),
+                        Expr::RefDot { field, .. } => field.0.text(),
                         Expr::RefBrack { index, .. } => match index.as_ref() {
-                            Expr::String(s) => s.text(),
+                            Expr::String(s) => s.0.text(),
                             _ => "",
                         },
-                        Expr::Var(v) if v.text() == "input" => {
+                        Expr::Var(v) if v.0.text() == "input" => {
                             // Warn redundant import of input. Ignore it.
                             eprintln!(
                                 "{}",
