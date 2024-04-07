@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::lexer::*;
+use crate::value::Value;
 use crate::Rc;
 
 use std::ops::Deref;
@@ -98,13 +99,13 @@ pub type Ref<T> = NodeRef<T>;
 #[derive(Debug)]
 pub enum Expr {
     // Simple items that only have a span as content.
-    String(Span),
-    RawString(Span),
-    Number(Span),
+    String((Span, Value)),
+    RawString((Span, Value)),
+    Number((Span, Value)),
     True(Span),
     False(Span),
     Null(Span),
-    Var(Span),
+    Var((Span, Value)),
 
     // array
     Array {
@@ -158,7 +159,7 @@ pub enum Expr {
     RefDot {
         span: Span,
         refr: Ref<Expr>,
-        field: Span,
+        field: (Span, Value),
     },
 
     RefBrack {
@@ -207,7 +208,8 @@ impl Expr {
     pub fn span(&self) -> &Span {
         use Expr::*;
         match self {
-            String(s) | RawString(s) | Number(s) | True(s) | False(s) | Null(s) | Var(s) => s,
+            String(s) | RawString(s) | Number(s) | Var(s) => &s.0,
+            True(s) | False(s) | Null(s) => s,
             Array { span, .. }
             | Set { span, .. }
             | Object { span, .. }

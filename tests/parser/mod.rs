@@ -102,13 +102,13 @@ fn match_expr_impl(e: &Expr, v: &Value) -> Result<()> {
         return Ok(());
     }
     match e {
-        Expr::String(s) => match_span(s, &v["string"]),
-        Expr::RawString(s) => match_span(s, &v["rawstring"]),
-        Expr::Number(s) => match_span(s, &v["number"]),
+        Expr::String(s) => match_span(&s.0, &v["string"]),
+        Expr::RawString(s) => match_span(&s.0, &v["rawstring"]),
+        Expr::Number(s) => match_span(&s.0, &v["number"]),
         Expr::True(s) => match_span(s, v),
         Expr::False(s) => match_span(s, v),
         Expr::Null(s) => match_span(s, v),
-        Expr::Var(s) => match_span(s, &v["var"]),
+        Expr::Var(s) => match_span(&s.0, &v["var"]),
         Expr::Array { span, items } => match_vec(span, items, &v["array"]),
         Expr::Set { span, items } => match_vec(span, items, &v["set"]),
         Expr::Object { span, fields } => match_object(span, fields, &v["object"]),
@@ -141,7 +141,7 @@ fn match_expr_impl(e: &Expr, v: &Value) -> Result<()> {
         Expr::RefDot { span, refr, field } => {
             match_span_opt(span, &v["refdot"]["span"])?;
             match_expr(refr, &v["refdot"]["refr"])?;
-            match_span(field, &v["refdot"]["field"])
+            match_span(&field.0, &v["refdot"]["field"])
         }
         Expr::RefBrack { span, refr, index } => {
             match_span_opt(span, &v["refbrack"]["span"])?;

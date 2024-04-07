@@ -14,17 +14,17 @@ pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
     while expr.is_some() {
         match expr {
             Some(Expr::RefDot { refr, field, .. }) => {
-                comps.push(field.text());
+                comps.push(field.0.text());
                 expr = Some(refr);
             }
             Some(Expr::RefBrack { refr, index, .. }) => {
                 if let Expr::String(s) = index.as_ref() {
-                    comps.push(s.text());
+                    comps.push(s.0.text());
                 }
                 expr = Some(refr);
             }
             Some(Expr::Var(v)) => {
-                comps.push(v.text());
+                comps.push(v.0.text());
                 expr = None;
             }
             _ => bail!("internal error: not a simple ref {expr:?}"),
@@ -121,7 +121,7 @@ pub fn get_root_var(mut expr: &Expr) -> Result<SourceStr> {
     let empty = expr.span().source_str().clone_empty();
     loop {
         match expr {
-            Expr::Var(v) => return Ok(v.source_str()),
+            Expr::Var(v) => return Ok(v.0.source_str()),
             Expr::RefDot { refr, .. } | Expr::RefBrack { refr, .. } => expr = refr,
             _ => return Ok(empty),
         }

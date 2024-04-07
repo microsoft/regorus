@@ -3,7 +3,11 @@
 
 use crate::ast::*;
 use crate::lexer::*;
+use crate::number::*;
+use crate::value::*;
+
 use std::collections::BTreeMap;
+use std::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
 
@@ -102,14 +106,14 @@ impl<'source> Parser<'source> {
         match refr.as_ref() {
             Expr::RefDot { refr, field, .. } => {
                 Self::get_path_ref_components_into(refr, comps)?;
-                comps.push(field.clone());
+                comps.push(field.0.clone());
             }
             Expr::RefBrack { refr, index, .. } => {
                 Self::get_path_ref_components_into(refr, comps)?;
                 Self::get_path_ref_components_into(index, comps)?;
             }
-            Expr::Var(v) => comps.push(v.clone()),
-            Expr::String(s) => comps.push(s.clone()),
+            Expr::Var(v) => comps.push(v.0.clone()),
+            Expr::String(s) => comps.push(s.0.clone()),
             _ => bail!("internal error: not a simple ref"),
         }
         Ok(())
@@ -231,17 +235,38 @@ impl<'source> Parser<'source> {
         }
     }
 
+    fn read_number(span: Span) -> Result<Expr> {
+        match Number::from_str(span.text()) {
+            Ok(v) => Ok(Expr::Number((span, Value::Number(v)))),
+            Err(_) => bail!(span.error("could not parse number")),
+        }
+    }
+
     fn parse_scalar_or_var(&mut self) -> Result<Expr> {
         let span = self.tok.1.clone();
         let node = match &self.tok.0 {
-            TokenKind::Number => Expr::Number(span),
-            TokenKind::String => Expr::String(span),
-            TokenKind::RawString => Expr::RawString(span),
+            TokenKind::Number => Self::read_number(span)?,
+            TokenKind::String => {
+                let v = match serde_json::from_str::<Value>(format!("\"{}\"", span.text()).as_str())
+                {
+                    Ok(v) => v,
+                    Err(e) => bail!(span.error(format!("invalid string literal. {e}").as_str())),
+                };
+                Expr::String((span, v))
+            }
+            TokenKind::RawString => {
+                let v = Value::from(span.text().to_string());
+                Expr::RawString((span, v))
+            }
             TokenKind::Ident => match self.token_text() {
                 "null" => Expr::Null(span),
                 "true" => Expr::True(span),
                 "false" => Expr::False(span),
-                _ => return Ok(Expr::Var(self.parse_var()?)),
+                _ => {
+                    let ident = self.parse_var()?;
+                    let v = Value::from(ident.text());
+                    return Ok(Expr::Var((ident, v)));
+                }
             },
             _ => {
                 return Err(self.source.error(
@@ -529,10 +554,11 @@ impl<'source> Parser<'source> {
                             )
                         );
                     }
+                    let fieldv = Value::from(field.text());
                     term = Expr::RefDot {
                         span,
                         refr: Ref::new(term),
-                        field,
+                        field: (field, fieldv),
                     };
                 }
                 "[" => {
@@ -632,7 +658,7 @@ impl<'source> Parser<'source> {
                 rhs_span.col += 1;
 
                 self.next_token()?;
-                Expr::Number(rhs_span)
+                Self::read_number(rhs_span)?
             } else {
                 self.next_token()?;
                 self.parse_mul_div_mod_expr()?
@@ -786,10 +812,10 @@ impl<'source> Parser<'source> {
             "=" => AssignOp::Eq,
             ":=" if self.rego_v1 => {
                 if let Expr::Var(v) = &expr {
-                    if v.text() == "input" {
+                    if v.0.text() == "input" {
                         bail!(span.error("input cannot be shadowed"));
                     }
-                    if v.text() == "data" {
+                    if v.0.text() == "data" {
                         bail!(span.error("data cannot be shadowed"));
                     }
                 }
@@ -1055,11 +1081,16 @@ impl<'source> Parser<'source> {
         }))
     }
 
+    fn span_and_value(s: Span) -> (Span, Value) {
+        let v = Value::from(s.text());
+        (s, v)
+    }
+
     fn parse_path_ref(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let var = self.parse_var()?;
 
-        let mut refr = Expr::Var(var);
+        let mut refr = Expr::Var(Self::span_and_value(var));
         loop {
             let mut span = self.tok.1.clone();
             let sep_pos = span.start;
@@ -1095,13 +1126,13 @@ impl<'source> Parser<'source> {
                     refr = Expr::RefDot {
                         span,
                         refr: Ref::new(refr),
-                        field,
+                        field: Self::span_and_value(field),
                     };
                 }
                 "[" => {
                     self.next_token()?;
                     let index = match &self.tok.0 {
-                        TokenKind::String => Expr::String(self.tok.1.clone()),
+                        TokenKind::String => Expr::String(Self::span_and_value(self.tok.1.clone())),
                         _ => {
                             return Err(self.source.error(
                                 self.tok.1.line,
@@ -1140,7 +1171,7 @@ impl<'source> Parser<'source> {
                     bail!(span.error("data cannot be shadowed"));
                 }
             }
-            Expr::Var(v)
+            Expr::Var(Self::span_and_value(v))
         } else {
             return Err(self.source.error(
                 span.line,
@@ -1184,7 +1215,7 @@ impl<'source> Parser<'source> {
                     term = Expr::RefDot {
                         span,
                         refr: Ref::new(term),
-                        field,
+                        field: Self::span_and_value(field),
                     };
                 }
                 "[" => {
@@ -1488,7 +1519,10 @@ impl<'source> Parser<'source> {
         Ok(Rule::Default {
             span,
             refr: rule_ref,
-            args: args.into_iter().map(|a| Ref::new(Expr::Var(a))).collect(),
+            args: args
+                .into_iter()
+                .map(|a| Ref::new(Expr::Var(Self::span_and_value(a))))
+                .collect(),
             op,
             value,
         })
