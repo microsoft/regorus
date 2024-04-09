@@ -10,14 +10,18 @@
 
 Regorus can be used in Ruby by configuring bundler to build from the remote git source.
 
-Use the bundler CLI to add the gem from remote git source:
+If using [Bundler](https://bundler.io/) to manage gems (recommended), edit your gemfile to include the following
 `
-bundle add regorus --git 'https://github.com/microsoft/regorus/tree/main/bindings/ruby'
+gem "regorusrb", git: "https://github.com/microsoft/regorus/", glob: "bindings/ruby/*.gemspec"
 `
 
-or manually edit your gemfile to include the following
+or manually install checkout the source and build the gem
+
 `
-gem "regorus", git: "https://github.com/microsoft/regorus/tree/main/bindings/ruby"
+git clone https://github.com/microsoft/regorus/
+cd regorus/bindings/ruby
+rake && rake build # should eventually output 'regorusrb 0.1.0 built to pkg/regorusrb-0.1.0.gem.'
+gem install --local ./pkg/regorusrb-0.1.0.gem
 `
 
 It is not yet available in rubygems.

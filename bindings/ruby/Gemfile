@@ -10,7 +10,7 @@ gemspec
 gem "minitest", "~> 5.16"
 gem "rake", "~> 13.0"
 gem "rake-compiler"
-gem "rb_sys", "~> 0.9.63"
+gem "rake-compiler-dock"
 gem "rubocop", "~> 1.62", require: false
 gem "rubocop-minitest", require: false
 gem "rubocop-rake", require: false

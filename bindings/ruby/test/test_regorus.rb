@@ -119,6 +119,30 @@ class TestRegorus < Minitest::Test
     refute @engine.eval_rule("data.regorus_test.is_manager_bool")
   end
 
+  def test_eval_bool_query
+    assert @engine.eval_bool_query("1 < 2")
+    refute @engine.eval_bool_query("1 > 2")
+    assert_raises(RuntimeError) { @engine.eval_bool_query("1 + 1") }
+    assert_raises(RuntimeError) { @engine.eval_bool_query("true; true") }
+    assert_raises(RuntimeError) { @engine.eval_bool_query("true; false; true") }
+  end
+
+  def test_eval_allow_query
+    assert @engine.eval_allow_query("1 < 2")
+    refute @engine.eval_allow_query("1 > 2")
+    refute @engine.eval_allow_query("1 + 1")
+    refute @engine.eval_allow_query("true; true")
+    refute @engine.eval_allow_query("true; false; true")
+  end
+
+  def test_eval_deny_query
+    assert @engine.eval_deny_query("1 < 2")
+    refute @engine.eval_deny_query("1 > 2")
+    assert @engine.eval_deny_query("1 + 1")
+    assert @engine.eval_deny_query("true; true")
+    assert @engine.eval_deny_query("true; false; true")
+  end
+
   def test_missing_rules_handling
     @engine.set_input(input_for(ALICE))
     assert_raises(RuntimeError) { @engine.eval_rule("data.regorus_test.not_a_rule") }

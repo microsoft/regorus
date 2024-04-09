@@ -158,9 +158,9 @@ impl Engine {
         })
     }
 
-    fn eval_rule(&self, path: String) -> Result<Option<magnus::Value>, Error> {
+    fn eval_rule(&self, query: String) -> Result<Option<magnus::Value>, Error> {
         let result =
-            self.engine.borrow_mut().eval_rule(path).map_err(|e| {
+            self.engine.borrow_mut().eval_rule(query).map_err(|e| {
                 Error::new(runtime_error(), format!("Failed to evaluate rule: {}", e))
             })?;
 
@@ -175,6 +175,21 @@ impl Engine {
                     )
                 }),
         }
+    }
+
+    fn eval_bool_query(&self, query: String) -> Result<bool, Error> {
+        self.engine
+            .borrow_mut()
+            .eval_bool_query(query, false)
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to evaluate query: {}", e)))
+    }
+
+    fn eval_allow_query(&self, query: String) -> Result<bool, Error> {
+        Ok(self.engine.borrow_mut().eval_allow_query(query, false))
+    }
+
+    fn eval_deny_query(&self, query: String) -> Result<bool, Error> {
+        Ok(self.engine.borrow_mut().eval_deny_query(query, false))
     }
 }
 
@@ -219,6 +234,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     engine_class.define_method("eval_query", method!(Engine::eval_query, 1))?;
     engine_class.define_method("eval_query_as_json", method!(Engine::eval_query_as_json, 1))?;
     engine_class.define_method("eval_rule", method!(Engine::eval_rule, 1))?;
-
+    engine_class.define_method("eval_bool_query", method!(Engine::eval_bool_query, 1))?;
+    engine_class.define_method("eval_allow_query", method!(Engine::eval_allow_query, 1))?;
+    engine_class.define_method("eval_deny_query", method!(Engine::eval_deny_query, 1))?;
     Ok(())
 }
