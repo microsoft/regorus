@@ -9,7 +9,7 @@ use crate::value::Value;
 
 use std::collections::HashMap;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 
 use chrono::{
     DateTime, Datelike, Days, FixedOffset, Local, Months, SecondsFormat, TimeZone, Timelike, Utc,
@@ -248,7 +248,10 @@ fn parse_epoch(
                     "UTC" | "" => Utc.timestamp_nanos(ns).fixed_offset(),
                     "Local" => Local.timestamp_nanos(ns).fixed_offset(),
                     _ => {
-                        let tz: Tz = tz.parse().map_err(|err: String| anyhow!(err))?;
+                        let tz: Tz = match tz.parse() {
+                            Ok(tz) => tz,
+                            Err(e) => bail!(e),
+                        };
                         tz.timestamp_nanos(ns).fixed_offset()
                     }
                 };
