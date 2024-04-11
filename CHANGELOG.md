@@ -6,6 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/microsoft/regorus/compare/regorus-v0.1.2...regorus-v0.1.3) - 2024-04-11
+
+### Other
+- Add a note in example to prefer eval_rule over eval_query ([#204](https://github.com/microsoft/regorus/pull/204))
+- Do not enable serde_json/arbitrary_precision by default ([#203](https://github.com/microsoft/regorus/pull/203))
+- Rewrite so that code compiles with chrono_tz 0.8.5 and 0.9.0 ([#201](https://github.com/microsoft/regorus/pull/201))
+- update ruby bindings ([#200](https://github.com/microsoft/regorus/pull/200))
+- Store Value instances in AST for strings, numbers and idents ([#197](https://github.com/microsoft/regorus/pull/197))
+- :Value> and From<serde_yaml::Value> ([#196](https://github.com/microsoft/regorus/pull/196))
+- Build dependency on git only if opa.runtime feature is enabled. ([#194](https://github.com/microsoft/regorus/pull/194))
+- Update to opa v0.63.0 ([#192](https://github.com/microsoft/regorus/pull/192))
+- Update pyo3 requirement from 0.20.2 to 0.21.0 ([#190](https://github.com/microsoft/regorus/pull/190))
+- Ruby bindings for existing FFI methods, plus eval_rule() ([#188](https://github.com/microsoft/regorus/pull/188))
+- Evaluate rules directly instead of queries ([#186](https://github.com/microsoft/regorus/pull/186))
+- Remove cruft. ([#184](https://github.com/microsoft/regorus/pull/184))
+
 ## [0.1.2](https://github.com/microsoft/regorus/compare/regorus-v0.1.1...regorus-v0.1.2) - 2024-03-22
 
 ### Other
