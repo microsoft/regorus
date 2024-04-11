@@ -246,13 +246,12 @@ Benchmark 1: opa eval -b tests/aci -d tests/aci/data.json -i tests/aci/input.jso
 ## OPA Conformance
 
 Regorus has been verified to be compliant with [OPA v0.63.0](https://github.com/open-policy-agent/opa/releases/tag/v0.63.0)
-using a [test driver](https://github.com/microsoft/regorus/blob/main/tests/opa.rs) that loads and runs the OPA testsuite using Regorus, and verifies that expected outputs
-are produced.
+using a [test driver](https://github.com/microsoft/regorus/blob/main/tests/opa.rs) that loads and runs the OPA testsuite using Regorus, and verifies that expected outputs are produced.
 
 The test driver can be invoked by running:
 
 ```bash
-$ cargo test -r --test opa
+$ cargo test -r --test opa --features opa-testutil,serde_json/arbitrary_precision
 ```
 
 Currently, Regorus passes all the non-builtin specific tests.

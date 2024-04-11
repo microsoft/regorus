@@ -460,8 +460,8 @@ impl From<u128> for Value {
     /// # use regorus::*;
     /// # fn main() -> anyhow::Result<()> {
     /// assert_eq!(
-    ///   Value::from(340_282_366_920_938_463_463_374_607_431_768_211_455u128),
-    ///   Value::from_json_str("340282366920938463463374607431768211455")?);
+    ///   Value::from(340_282_366_920_938_463_463_374_607_431_768_211_455u128).as_u128()?,
+    ///   340_282_366_920_938_463_463_374_607_431_768_211_455u128);
     /// # Ok(())
     /// # }
     fn from(n: u128) -> Self {
@@ -475,8 +475,8 @@ impl From<i128> for Value {
     /// # use regorus::*;
     /// # fn main() -> anyhow::Result<()> {
     /// assert_eq!(
-    ///   Value::from(-170141183460469231731687303715884105728i128),
-    ///   Value::from_json_str("-170141183460469231731687303715884105728")?);
+    ///   Value::from(-170141183460469231731687303715884105728i128).as_i128()?,
+    ///   -170141183460469231731687303715884105728i128);
     /// # Ok(())
     /// # }
     fn from(n: i128) -> Self {
@@ -551,7 +551,7 @@ impl From<f64> for Value {
     /// # fn main() -> anyhow::Result<()> {
     /// assert_eq!(
     ///   Value::from(3.141592653589793),
-    ///   Value::from_json_str("3.141592653589793")?);
+    ///   Value::from_numeric_string("3.141592653589793")?);
     /// # Ok(())
     /// # }
     /// ```
@@ -559,19 +559,19 @@ impl From<f64> for Value {
     /// Note, f64 can store only around 15 digits of precision whereas [`Value::Number`]
     /// can store arbitrary precision. Adding an extra digit to the f64 literal in the above
     /// example causes loss of precision and the Value created from f64 does not match the
-    /// Value parsed from json string (which is more precise).
+    /// Value parsed from numeric string (which is more precise).
     /// ```
     /// # use regorus::*;
     /// # fn main() -> anyhow::Result<()> {
     /// // The last digit is lost in f64.
     /// assert_ne!(
     ///   Value::from(3.1415926535897932),
-    ///   Value::from_json_str("3.141592653589793232")?);
+    ///   Value::from_numeric_string("3.141592653589793232")?);
     ///
     /// // The value, in this case is equal to parsing the json number with last digit omitted.
     /// assert_ne!(
     ///   Value::from(3.1415926535897932),
-    ///   Value::from_json_str("3.14159265358979323")?);
+    ///   Value::from_numeric_string("3.14159265358979323")?);
     /// # Ok(())
     /// # }
     /// ```
@@ -643,9 +643,9 @@ impl Value {
     /// # fn main() -> anyhow::Result<()> {
     /// let v = Value::from_numeric_string("3.14159265358979323846264338327950288419716939937510")?;
     ///
-    /// assert_eq!(
-    ///   v.to_json_str()?,
-    ///   "3.1415926535897932384626433832795028841971693993751");
+    /// println!("{}", v.to_json_str()?);
+    /// // Prints 3.1415926535897932384626433832795028841971693993751 if serde_json/arbitrary_precision feature is enabled.
+    /// // Prints 3.141592653589793 if serde_json/arbitrary_precision is not enabled.
     /// # Ok(())
     /// # }
     /// ```
