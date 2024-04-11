@@ -71,7 +71,7 @@ opa-testutil = []
 [dependencies]
 anyhow = {version = "1.0.66", features = ["backtrace"] }
 serde = {version = "1.0.150", features = ["derive", "rc"] }
-serde_json = {version = "1.0.89", features = ["arbitrary_precision"] }
+serde_json = "1.0.89"
 serde_yaml = {version = "0.9.16", optional = true }
 lazy_static = "1.4.0"
 rand = "0.8.5"
