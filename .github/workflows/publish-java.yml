@@ -1,0 +1,89 @@
+name: publish-java
+
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build for ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            extension: so
+            build_cmd: zigbuild
+            glibc: "2.17"
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            extension: so
+            build_cmd: zigbuild
+            glibc: "2.17"
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            extension: dylib
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            extension: dylib
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            extension: dll
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 8
+          distribution: "corretto"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: ${{ matrix.build_cmd == 'zigbuild' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - if: ${{ matrix.build_cmd == 'zigbuild' }}
+        run: pip install cargo-zigbuild
+      - run: cargo ${{ matrix.build_cmd || 'build' }} --release --target ${{ matrix.target }}${{ matrix.glibc && format('.{0}', matrix.glibc) || '' }} --manifest-path ./bindings/java/Cargo.toml
+      - run: mkdir -p native/${{ matrix.target }}
+      - run: mv target/${{ matrix.target }}/release/*.${{ matrix.extension }} ./native/${{ matrix.target }}/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-libraries-${{ matrix.target }}
+          path: native/
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 8
+          distribution: "corretto"
+          server-id: ossrh
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-libraries-*
+          merge-multiple: true
+          path: ./bindings/java/native/
+      - run: mvn package
+        working-directory: ./bindings/java
+      - uses: actions/upload-artifact@v4
+        with:
+          name: built-jars
+          path: ./bindings/java/target/regorus-java-*.jar
+      - run: mvn deploy
+        working-directory: ./bindings/java
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}

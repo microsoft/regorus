@@ -17,13 +17,13 @@ public class EngineTest extends TestCase
     {
         String resJson;
         try (Engine engine = new Engine()) {
-            engine.pubAddPolicy(
+            engine.addPolicy(
                 "hello.rego",
                 "package test\nmessage = concat(\", \", [input.message, data.message])"
             );
-            engine.pubAddDataJson("{\"message\":\"World!\"}");
-            engine.pubSetInputJson("{\"message\":\"Hello\"}");
-            resJson = engine.pubEvalQuery("data.test.message");
+            engine.addDataJson("{\"message\":\"World!\"}");
+            engine.setInputJson("{\"message\":\"Hello\"}");
+            resJson = engine.evalQuery("data.test.message");
         }
 
         Gson gson = new Gson();

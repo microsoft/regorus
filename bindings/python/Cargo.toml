@@ -14,7 +14,7 @@ crate-type = ["cdylib"]
 [dependencies]
 anyhow = "1.0.79"
 ordered-float = "4.2.0"
-pyo3 = {version = "0.20.2", features = ["anyhow", "extension-module"] }
+pyo3 = {version = "0.21.0", features = ["anyhow", "extension-module"] }
 regorus = { path  = "../.." }
 serde_json = "1.0.112"
 

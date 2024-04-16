@@ -9,11 +9,11 @@
 Regorus is also
   - *cross-platform* - Written in platform-agnostic Rust.
   - *current* - We strive to keep Regorus up to date with latest OPA release. Regorus supports `import rego.v1`.
-  - *compliant* - Regorus is mostly compliant with the latest [OPA release v0.61.0](https://github.com/open-policy-agent/opa/releases/tag/v0.61.0). See [OPA Conformance](#opa-conformance) for details. Note that while we behaviorally produce the same results, we don't yet support all the builtins.
+  - *compliant* - Regorus is mostly compliant with the latest [OPA release v0.63.0](https://github.com/open-policy-agent/opa/releases/tag/v0.63.0). See [OPA Conformance](#opa-conformance) for details. Note that while we behaviorally produce the same results, we don't yet support all the builtins.
   - *extensible* - Extend the Rego language by implementing custom stateful builtins in Rust.
     See [add_extension](https://github.com/microsoft/regorus/blob/fc68bf9c8bea36427dae9401a7d1f6ada771f7ab/src/engine.rs#L352).
     Support for extensibility using other languages coming soon.
-  - *polyglot* - In addition to Rust, Regorus can be used from *C*, *C++*, *C#*, *Golang*, *Java*, *Javascript* and *Python*.
+  - *polyglot* - In addition to Rust, Regorus can be used from *C*, *C++*, *C#*, *Golang*, *Java*, *Javascript*, *Python*, and *Ruby*.
     This is made possible by the excellent FFI tools available in the Rust ecosystem. See [bindings](#bindings) for information on how to use Regorus from different languages.
 
     To try out a *Javascript(WASM)* compiled version of Regorus from your browser, visit [Regorus Playground](https://anakrish.github.io/regorus-playground/).
@@ -69,7 +69,7 @@ $ cargo build -r --example regorus --features "yaml" --no-default-features; stri
 -rwxr-xr-x  1 anand  staff   2.9M Jan 19 11:26 target/release/examples/regorus*
 ```
 
-Regorus passes the [OPA v0.61.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
+Regorus passes the [OPA v0.63.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
 builtins. See [OPA Conformance](#opa-conformance) below.
 
 ## Bindings
@@ -90,6 +90,8 @@ Regorus can be used from a variety of languages:
 - *Javascript*: Regorus is compiled to WASM using [wasmpack](https://github.com/rustwasm/wasm-pack).
   See [bindings/wasm](https://github.com/microsoft/regorus/tree/main/bindings/wasm) for an example of using Regorus from nodejs.
   To try out a *Javascript(WASM)* compiled version of Regorus from your browser, visit [Regorus Playground](https://anakrish.github.io/regorus-playground/).
+- *Ruby*: Ruby bindings are developed using [magnus](https://github.com/matsadler/magnus).
+  See [bindings/ruby](https://github.com/microsoft/regorus/tree/main/bindings/ruby).
 
 To avoid operational overhead, we currently don't publish these bindings to various repositories.
 It is straight-forward to build these bindings yourself.
@@ -175,10 +177,11 @@ $ regorus eval -d examples/example.rego -i examples/input.json data.example --co
 ```
 
 It produces the following coverage report which shows that all lines are executed except the line that sets `allow` to true.
-![coverage.png](https://github.com/microsoft/regorus/blob/main/docs/coverage.png)
+
+![coverage.png](https://github.com/microsoft/regorus/blob/main/docs/coverage.png?raw=true)
 
 See [Engine::get_coverage_report](https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.get_coverage_report) for details.
-Policy coverage information is useful for debugging your policy as well as to write tests for your policy so that all 
+Policy coverage information is useful for debugging your policy as well as to write tests for your policy so that all
 lines of the policy are exercised by the tests.
 
 ## ACI Policies
@@ -242,14 +245,13 @@ Benchmark 1: opa eval -b tests/aci -d tests/aci/data.json -i tests/aci/input.jso
 ```
 ## OPA Conformance
 
-Regorus has been verified to be compliant with [OPA v0.61.0](https://github.com/open-policy-agent/opa/releases/tag/v0.61.0)
-using a [test driver](https://github.com/microsoft/regorus/blob/main/tests/opa.rs) that loads and runs the OPA testsuite using Regorus, and verifies that expected outputs
-are produced.
+Regorus has been verified to be compliant with [OPA v0.63.0](https://github.com/open-policy-agent/opa/releases/tag/v0.63.0)
+using a [test driver](https://github.com/microsoft/regorus/blob/main/tests/opa.rs) that loads and runs the OPA testsuite using Regorus, and verifies that expected outputs are produced.
 
 The test driver can be invoked by running:
 
 ```bash
-$ cargo test -r --test opa
+$ cargo test -r --test opa --features opa-testutil,serde_json/arbitrary_precision
 ```
 
 Currently, Regorus passes all the non-builtin specific tests.

@@ -208,6 +208,52 @@ impl Engine {
         &self.modules
     }
 
+    /// Evaluate rule(s) at given path.
+    ///
+    /// [`Engine::eval_rule`] is often faster than [`Engine::eval_query`] and should be preferred if
+    /// OPA style [`QueryResults`] are not needed.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// // Add policy
+    /// engine.add_policy(
+    ///   "policy.rego".to_string(),
+    ///   r#"
+    ///   package example
+    ///   import rego.v1
+    ///
+    ///   x = [1, 2]
+    ///
+    ///   y := 5 if input.a > 2
+    ///   "#.to_string())?;
+    ///
+    /// // Evaluate rule.
+    /// let v = engine.eval_rule("data.example.x".to_string())?;
+    /// assert_eq!(v, Value::from(vec![Value::from(1), Value::from(2)]));
+    ///
+    /// // y evaluates to undefined.
+    /// let v = engine.eval_rule("data.example.y".to_string())?;
+    /// assert_eq!(v, Value::Undefined);
+    ///
+    /// // Evaluating a non-existent rule is an error.
+    /// let r = engine.eval_rule("data.exaample.x".to_string());
+    /// assert!(r.is_err());
+    ///
+    /// // Path must be valid rule paths.
+    /// assert!( engine.eval_rule("data".to_string()).is_err());
+    /// assert!( engine.eval_rule("data.example".to_string()).is_err());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn eval_rule(&mut self, path: String) -> Result<Value> {
+        self.prepare_for_eval(false)?;
+        self.interpreter.clean_internal_evaluation_state();
+        self.interpreter.eval_rule_in_path(path)
+    }
+
     /// Evaluate a Rego query.
     ///
     /// ```
@@ -241,7 +287,127 @@ impl Engine {
     /// assert_eq!(results.result[0].expressions[0].value, Value::from(true));
     /// # Ok(())
     /// # }
+    /// ```
     pub fn eval_query(&mut self, query: String, enable_tracing: bool) -> Result<QueryResults> {
+        self.prepare_for_eval(enable_tracing)?;
+        self.interpreter.clean_internal_evaluation_state();
+
+        self.interpreter.create_rule_prefixes()?;
+        let query_module = {
+            let source = Source::new(
+                "<query_module.rego>".to_owned(),
+                "package __internal_query_module".to_owned(),
+            );
+            Ref::new(Parser::new(&source)?.parse()?)
+        };
+
+        // Parse the query.
+        let query_source = Source::new("<query.rego>".to_string(), query);
+        let mut parser = Parser::new(&query_source)?;
+        let query_node = parser.parse_user_query()?;
+        if query_node.span.text() == "data" {
+            self.eval_modules(enable_tracing)?;
+        }
+        let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
+        self.interpreter.eval_user_query(
+            &query_module,
+            &query_node,
+            &query_schedule,
+            enable_tracing,
+        )
+    }
+
+    /// Evaluate a Rego query that produces a boolean value.
+    ///
+    ///
+    /// This function should be preferred over [`Engine::eval_query`] if just a `true`/`false`
+    /// value is desired instead of [`QueryResults`].
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// # let mut engine = Engine::new();
+    ///
+    /// let enable_tracing = false;
+    /// assert_eq!(engine.eval_bool_query("1 > 2".to_string(), enable_tracing)?, false);
+    /// assert_eq!(engine.eval_bool_query("1 < 2".to_string(), enable_tracing)?, true);
+    ///
+    /// // Non boolean queries will raise an error.
+    /// assert!(engine.eval_bool_query("1+1".to_string(), enable_tracing).is_err());
+    ///
+    /// // Queries producing multiple values will raise an error.
+    /// assert!(engine.eval_bool_query("true; true".to_string(), enable_tracing).is_err());
+    ///
+    /// // Queries producing no values will raise an error.
+    /// assert!(engine.eval_bool_query("true; false; true".to_string(), enable_tracing).is_err());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn eval_bool_query(&mut self, query: String, enable_tracing: bool) -> Result<bool> {
+        let results = self.eval_query(query, enable_tracing)?;
+        match results.result.len() {
+            0 => bail!("query did not produce any values"),
+            1 if results.result[0].expressions.len() == 1 => {
+                results.result[0].expressions[0].value.as_bool().copied()
+            }
+            _ => bail!("query produced more than one value"),
+        }
+    }
+
+    /// Evaluate an `allow` query.
+    ///
+    /// This is a wrapper over [`Engine::eval_bool_query`] that returns true only if the
+    /// boolean query succeed and produced a `true` value.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// # let mut engine = Engine::new();
+    ///
+    /// let enable_tracing = false;
+    /// assert_eq!(engine.eval_allow_query("1 > 2".to_string(), enable_tracing), false);
+    /// assert_eq!(engine.eval_allow_query("1 < 2".to_string(), enable_tracing), true);
+    ///
+    /// assert_eq!(engine.eval_allow_query("1+1".to_string(), enable_tracing), false);
+    /// assert_eq!(engine.eval_allow_query("true; true".to_string(), enable_tracing), false);
+    /// assert_eq!(engine.eval_allow_query("true; false; true".to_string(), enable_tracing), false);
+    /// # Ok(())
+    /// # }
+    pub fn eval_allow_query(&mut self, query: String, enable_tracing: bool) -> bool {
+        matches!(self.eval_bool_query(query, enable_tracing), Ok(true))
+    }
+
+    /// Evaluate a `deny` query.
+    ///
+    /// This is a wrapper over [`Engine::eval_bool_query`] that returns false only if the
+    /// boolean query succeed and produced a `false` value.
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// # let mut engine = Engine::new();
+    ///
+    /// let enable_tracing = false;
+    /// assert_eq!(engine.eval_deny_query("1 > 2".to_string(), enable_tracing), false);
+    /// assert_eq!(engine.eval_deny_query("1 < 2".to_string(), enable_tracing), true);
+    ///
+    /// assert_eq!(engine.eval_deny_query("1+1".to_string(), enable_tracing), true);
+    /// assert_eq!(engine.eval_deny_query("true; true".to_string(), enable_tracing), true);
+    /// assert_eq!(engine.eval_deny_query("true; false; true".to_string(), enable_tracing), true);
+    /// # Ok(())
+    /// # }
+    pub fn eval_deny_query(&mut self, query: String, enable_tracing: bool) -> bool {
+        !matches!(self.eval_bool_query(query, enable_tracing), Ok(false))
+    }
+
+    #[doc(hidden)]
+    /// Evaluate the given query and all the rules in the supplied policies.
+    ///
+    /// This is mainly used for testing Regorus itself.
+    pub fn eval_query_and_all_rules(
+        &mut self,
+        query: String,
+        enable_tracing: bool,
+    ) -> Result<QueryResults> {
         self.eval_modules(enable_tracing)?;
 
         let query_module = {
@@ -263,14 +429,6 @@ impl Engine {
             &query_schedule,
             enable_tracing,
         )
-    }
-
-    pub fn eval_bool_query(&mut self, query: String, enable_tracing: bool) -> Result<bool> {
-        let results = self.eval_query(query, enable_tracing)?;
-        if results.result.len() != 1 || results.result[0].expressions.len() != 1 {
-            bail!("query did not produce exactly one value");
-        }
-        results.result[0].expressions[0].value.as_bool().copied()
     }
 
     #[doc(hidden)]
@@ -307,7 +465,7 @@ impl Engine {
     }
 
     #[doc(hidden)]
-    pub fn eval_rule(
+    pub fn eval_rule_in_module(
         &mut self,
         module: &Ref<Module>,
         rule: &Ref<Rule>,
@@ -440,8 +598,8 @@ impl Engine {
     ///    "#.to_string()
     /// )?;
     ///
-    /// // Evaluation fails since y is not defined.
-    /// assert!(engine.eval_query("data.invalid.y".to_string(), false).is_err());
+    /// // Evaluation fails since rule x calls an extension with out parameter.
+    /// assert!(engine.eval_query("data.invalid.x".to_string(), false).is_err());
     /// # Ok(())
     /// # }
     /// ```
@@ -455,17 +613,102 @@ impl Engine {
     }
 
     #[cfg(feature = "coverage")]
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "coverage")))]
+    /// Get the coverage report.
+    ///
+    /// ```rust
+    /// # use regorus::*;
+    /// # use anyhow::{bail, Result};
+    /// # fn main() -> Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// engine.add_policy(
+    ///    "policy.rego".to_string(),
+    ///    r#"
+    /// package test    # Line 2
+    ///
+    /// x = y {         # Line 4
+    ///   input.a > 2   # Line 5
+    ///   y = 5         # Line 6
+    /// }
+    ///    "#.to_string()
+    /// )?;
+    ///
+    /// // Enable coverage.
+    /// engine.set_enable_coverage(true);
+    ///
+    /// engine.eval_query("data".to_string(), false)?;
+    ///
+    /// let report = engine.get_coverage_report()?;
+    /// assert_eq!(report.files[0].path, "policy.rego");
+    ///
+    /// // Only line 5 is evaluated.
+    /// assert_eq!(report.files[0].covered.iter().cloned().collect::<Vec<u32>>(), vec![5]);
+    ///
+    /// // Line 4 and 6 are not evaluated.
+    /// assert_eq!(report.files[0].not_covered.iter().cloned().collect::<Vec<u32>>(), vec![4, 6]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// See also [`crate::coverage::Report::to_colored_string`].
     pub fn get_coverage_report(&self) -> Result<crate::coverage::Report> {
         self.interpreter.get_coverage_report()
     }
 
     #[cfg(feature = "coverage")]
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "coverage")))]
+    /// Enable/disable policy coverage.
+    ///
+    /// If `enable` is different from the current value, then any existing coverage
+    /// information will be cleared.
     pub fn set_enable_coverage(&mut self, enable: bool) {
         self.interpreter.set_enable_coverage(enable)
     }
 
     #[cfg(feature = "coverage")]
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "coverage")))]
+    /// Clear the gathered policy coverage data.
     pub fn clear_coverage_data(&mut self) {
         self.interpreter.clear_coverage_data()
+    }
+
+    /// Gather output from print statements instead of emiting to stderr.
+    ///
+    /// See [`Engine::take_prints`].    
+    pub fn set_gather_prints(&mut self, b: bool) {
+        self.interpreter.set_gather_prints(b);
+    }
+
+    /// Take the gathered output of print statements.
+    ///
+    /// ```rust
+    /// # use regorus::*;
+    /// # use anyhow::{bail, Result};
+    /// # fn main() -> Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// // Print to stderr.
+    /// engine.eval_query("print(\"Hello\")".to_string(), false)?;
+    ///
+    /// // Configure gathering print statements.
+    /// engine.set_gather_prints(true);
+    ///
+    /// // Execute query.
+    /// engine.eval_query("print(\"Hello\")".to_string(), false)?;
+    ///
+    /// // Take and clear prints.
+    /// let prints = engine.take_prints()?;
+    /// assert_eq!(prints.len(), 1);
+    /// assert!(prints[0].contains("Hello"));
+    ///
+    /// for p in prints {
+    ///   println!("{p}");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn take_prints(&mut self) -> Result<Vec<String>> {
+        self.interpreter.take_prints()
     }
 }

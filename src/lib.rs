@@ -3,6 +3,7 @@
 
 // Use README.md as crate documentation.
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use serde::Serialize;
 
@@ -43,7 +44,7 @@ use std::rc::Rc;
 /// # }
 /// ````
 /// See also [`QueryResult`].
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Eq, PartialEq)]
 pub struct Location {
     /// Line number. Starts at 1.
     pub row: u16,
@@ -68,7 +69,7 @@ pub struct Location {
 /// # }
 /// ```
 /// See also [`QueryResult`].
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Eq, PartialEq)]
 pub struct Expression {
     /// Computed value of the expression.
     pub value: Value,
@@ -156,7 +157,7 @@ pub struct Expression {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Eq, PartialEq)]
 pub struct QueryResult {
     /// Expressions in the query.
     ///
@@ -295,7 +296,7 @@ impl Default for QueryResult {
 /// ```
 ///
 /// See [QueryResult] for examples of different kinds of results.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Eq, PartialEq)]
 pub struct QueryResults {
     /// Collection of results of evaluting a query.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -340,21 +341,39 @@ impl std::fmt::Debug for dyn Extension {
 }
 
 #[cfg(feature = "coverage")]
+#[cfg_attr(docsrs, doc(cfg(feature = "coverage")))]
 pub mod coverage {
     #[derive(Default, serde::Serialize, serde::Deserialize)]
+    /// Coverage information about a rego policy file.
     pub struct File {
+        /// Path of the policy file.
         pub path: String,
+
+        /// The rego policy.
         pub code: String,
+
+        /// Lines that were evaluated.
         pub covered: std::collections::BTreeSet<u32>,
+
+        /// Lines that were not evaluated.
         pub not_covered: std::collections::BTreeSet<u32>,
     }
 
     #[derive(Default, serde::Serialize, serde::Deserialize)]
+    /// Policy coverage report.
     pub struct Report {
+        /// Coverage information for files.
         pub files: Vec<File>,
     }
 
     impl Report {
+        /// Produce an ANSI color encoded version of the report.
+        ///
+        /// Covered lines are green.
+        /// Lines that are not covered are red.
+        ///
+        /// <img src="https://github.com/microsoft/regorus/blob/main/docs/coverage.png?raw=true">
+
         pub fn to_colored_string(&self) -> anyhow::Result<String> {
             use std::io::Write;
             let mut s = Vec::new();

@@ -6,6 +6,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/microsoft/regorus/compare/regorus-v0.1.2...regorus-v0.1.3) - 2024-04-11
+
+### Other
+- Add a note in example to prefer eval_rule over eval_query ([#204](https://github.com/microsoft/regorus/pull/204))
+- Do not enable serde_json/arbitrary_precision by default ([#203](https://github.com/microsoft/regorus/pull/203))
+- Rewrite so that code compiles with chrono_tz 0.8.5 and 0.9.0 ([#201](https://github.com/microsoft/regorus/pull/201))
+- update ruby bindings ([#200](https://github.com/microsoft/regorus/pull/200))
+- Store Value instances in AST for strings, numbers and idents ([#197](https://github.com/microsoft/regorus/pull/197))
+- :Value> and From<serde_yaml::Value> ([#196](https://github.com/microsoft/regorus/pull/196))
+- Build dependency on git only if opa.runtime feature is enabled. ([#194](https://github.com/microsoft/regorus/pull/194))
+- Update to opa v0.63.0 ([#192](https://github.com/microsoft/regorus/pull/192))
+- Update pyo3 requirement from 0.20.2 to 0.21.0 ([#190](https://github.com/microsoft/regorus/pull/190))
+- Ruby bindings for existing FFI methods, plus eval_rule() ([#188](https://github.com/microsoft/regorus/pull/188))
+- Evaluate rules directly instead of queries ([#186](https://github.com/microsoft/regorus/pull/186))
+- Remove cruft. ([#184](https://github.com/microsoft/regorus/pull/184))
+
+## [0.1.2](https://github.com/microsoft/regorus/compare/regorus-v0.1.1...regorus-v0.1.2) - 2024-03-22
+
+### Other
+- Handle non simple refs in chained expressions ([#182](https://github.com/microsoft/regorus/pull/182))
+- Ability to gather print statements ([#179](https://github.com/microsoft/regorus/pull/179))
+- Top-down evaluation ([#177](https://github.com/microsoft/regorus/pull/177))
+- Make unary `-` operator OPA compatible. ([#175](https://github.com/microsoft/regorus/pull/175))
+- Don't use deprecated chrono `Duration` methods ([#173](https://github.com/microsoft/regorus/pull/173))
+- Propagate Undefined in object expressions ([#171](https://github.com/microsoft/regorus/pull/171))
+- Bump to OPA v0.62.0 ([#169](https://github.com/microsoft/regorus/pull/169))
+- Fix regression ([#164](https://github.com/microsoft/regorus/pull/164))
+- Separately keep track of whether rules have been evaluated or not ([#163](https://github.com/microsoft/regorus/pull/163))
+- Link Linux libraries against glibc 2.17 using `cargo-zigbuild` ([#158](https://github.com/microsoft/regorus/pull/158))
+
+## [0.1.1](https://github.com/microsoft/regorus/compare/regorus-v0.1.0...regorus-v0.1.1) - 2024-02-23
+
+### Other
+- Handle else block without body ([#155](https://github.com/microsoft/regorus/pull/155))
+- Ignore errors from builtin functions in non strict mode ([#154](https://github.com/microsoft/regorus/pull/154))
+- Java publishing ([#151](https://github.com/microsoft/regorus/pull/151))
+- Document coverage feature; Convenience query functions ([#152](https://github.com/microsoft/regorus/pull/152))
+- Policy Coverage ([#149](https://github.com/microsoft/regorus/pull/149))
+- Initial implementation of policy coverage ([#146](https://github.com/microsoft/regorus/pull/146))
+- Java bindings ([#147](https://github.com/microsoft/regorus/pull/147))
+- Preserve false in single-expression queries ([#145](https://github.com/microsoft/regorus/pull/145))
+- Create rust-clippy.yml ([#143](https://github.com/microsoft/regorus/pull/143))
+- `arc` feature to enable using Engine and other data structures from multiple threads ([#142](https://github.com/microsoft/regorus/pull/142))
+- genpolicy tweaks ([#141](https://github.com/microsoft/regorus/pull/141))
+- io.jwt.decode ([#140](https://github.com/microsoft/regorus/pull/140))
+- Use compact_rc ([#139](https://github.com/microsoft/regorus/pull/139))
+- Scripting tweaks ([#138](https://github.com/microsoft/regorus/pull/138))
+
 ## [0.1.0-alpha.3](https://github.com/microsoft/regorus/compare/regorus-v0.1.0-alpha.2...regorus-v0.1.0-alpha.3) - 2024-02-01
 
 ### Fixed

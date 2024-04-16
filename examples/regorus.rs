@@ -70,8 +70,16 @@ fn rego_eval(
         engine.set_input(input);
     }
 
-    // Evaluate query.
+    // Note: The `eval_query` function is used below since it produces output
+    // in the same format as OPA. It also allows evaluating arbitrary statements
+    // as queries.
+    //
+    // Most applications will want to use `eval_rule` instead.
+    // It is faster since it does not have to parse the query string.
+    // It also returns the value of the rule directly and thus is easier
+    // to use.
     let results = engine.eval_query(query, enable_tracing)?;
+
     println!("{}", serde_json::to_string_pretty(&results)?);
 
     #[cfg(feature = "coverage")]
@@ -147,11 +155,11 @@ enum RegorusCommand {
         #[arg(long, short)]
         trace: bool,
 
-        // Non strict execution
+        /// Perform non-strict evaluation. (default behavior of OPA).
         #[arg(long, short)]
         non_strict: bool,
 
-        // Display coverage information
+        /// Display coverage information
         #[cfg(feature = "coverage")]
         #[arg(long, short)]
         coverage: bool,
@@ -183,10 +191,6 @@ struct Cli {
 
 fn main() -> Result<()> {
     use clap::Parser;
-    env_logger::builder()
-        .format_level(false)
-        .format_timestamp(None)
-        .init();
 
     // Parse and dispatch command.
     let cli = Cli::parse();
