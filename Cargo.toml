@@ -69,7 +69,7 @@ full-opa = [
 opa-testutil = []
 
 [dependencies]
-anyhow = {version = "1.0.66", features = ["backtrace"] }
+anyhow = { version = "1.0.45", default-features=false }
 serde = {version = "1.0.150", features = ["derive", "rc"] }
 serde_json = "1.0.89"
 serde_yaml = {version = "0.9.16", optional = true }
@@ -108,7 +108,7 @@ test-generator = "0.3.1"
 walkdir = "2.3.2"
 
 [build-dependencies]
-anyhow = "1.0.66"
+anyhow = "1.0"
 
 [profile.release]
 debug = true
