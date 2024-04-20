@@ -12,7 +12,7 @@ keywords = ["interpreter", "opa", "policy-as-code", "rego"]
 crate-type = ["cdylib"]
 
 [dependencies]
-anyhow = "1.0.79"
+anyhow = "1.0"
 ordered-float = "4.2.0"
 pyo3 = {version = "0.21.0", features = ["anyhow", "extension-module"] }
 regorus = { path  = "../.." }

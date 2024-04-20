@@ -9,7 +9,7 @@ use crate::value::Value;
 
 use std::collections::{BTreeMap, HashMap};
 
-use anyhow::{Ok, Result};
+use anyhow::Result;
 use uuid::{Timestamp, Uuid};
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {

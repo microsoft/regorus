@@ -12,7 +12,7 @@ use semver::Version;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use anyhow::{Ok, Result};
+use anyhow::Result;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("semver.compare", (compare, 2));
