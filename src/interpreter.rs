@@ -94,6 +94,8 @@ struct Context {
     rule_value: Value,
     is_set: bool,
     is_old_style_set: bool,
+    output_constness_determined: bool,
+    early_return: bool,
 }
 
 impl Default for Context {
@@ -109,6 +111,8 @@ impl Default for Context {
             rule_value: Value::new_object(),
             is_set: false,
             is_old_style_set: false,
+            output_constness_determined: false,
+            early_return: false,
         }
     }
 }
@@ -1428,6 +1432,9 @@ impl Interpreter {
                         Self::clear_scope(self.current_scope_mut()?);
                         if let Some(ctx) = self.contexts.last_mut() {
                             ctx.result = query_result.clone();
+                            if ctx.early_return {
+                                break;
+                            }
                         }
                     }
 
@@ -1452,6 +1459,9 @@ impl Interpreter {
                         Self::clear_scope(self.current_scope_mut()?);
                         if let Some(ctx) = self.contexts.last_mut() {
                             ctx.result = query_result.clone();
+                            if ctx.early_return {
+                                break;
+                            }
                         }
                     }
                     self.loop_var_values.remove(&loop_expr.expr());
@@ -1474,6 +1484,9 @@ impl Interpreter {
                         Self::clear_scope(self.current_scope_mut()?);
                         if let Some(ctx) = self.contexts.last_mut() {
                             ctx.result = query_result.clone();
+                            if ctx.early_return {
+                                break;
+                            }
                         }
                     }
                     self.loop_var_values.remove(&loop_expr.expr());
@@ -1586,29 +1599,94 @@ impl Interpreter {
         Ok(())
     }
 
+    // A ref is a constant ref, if it does not contain any local variables.
+    // For now, we restrict constant refs to those that contain only simple literals.
+    fn is_constant_ref(&self, mut expr: &Ref<Expr>) -> Result<bool> {
+        loop {
+            match expr.as_ref() {
+                Expr::Var(_) => break,
+                Expr::RefDot { refr, .. } => expr = refr,
+                Expr::RefBrack { refr, index, .. } if self.is_simple_literal(index)? => expr = refr,
+                _ => return Ok(false),
+            }
+        }
+        Ok(true)
+    }
+
+    fn is_simple_literal(&self, expr: &Ref<Expr>) -> Result<bool> {
+        Ok(matches!(
+            expr.as_ref(),
+            Expr::String(_)
+                | Expr::RawString(_)
+                | Expr::True(_)
+                | Expr::False(_)
+                | Expr::Null(_)
+                | Expr::Number(_)
+        ))
+    }
+
+    // A rule's output expression is constant if it does not contain local variables.
+    // For now, we restrict output expressions to those that contain only simple literals.
+    fn is_constant_output(
+        &self,
+        key_expr: &Option<Ref<Expr>>,
+        output_expr: &Ref<Expr>,
+    ) -> Result<bool> {
+        let mut is_const = true;
+        if let Some(key_expr) = key_expr {
+            is_const = self.is_simple_literal(key_expr)?;
+        }
+        Ok(is_const && self.is_simple_literal(output_expr)?)
+    }
+
     fn eval_output_expr_in_loop(&mut self, loops: &[LoopExpr]) -> Result<bool> {
         if loops.is_empty() {
             let (key_expr, output_expr) = self.get_exprs_from_context()?;
 
             let ctx = self.get_current_context()?;
-            let (is_set, is_old_style_set) = (ctx.is_set, ctx.is_old_style_set);
+            let (is_set, is_old_style_set, is_rule, constness_determined) = (
+                ctx.is_set,
+                ctx.is_old_style_set,
+                !ctx.is_compr,
+                ctx.output_constness_determined,
+            );
+
             if let Some(rule_ref) = ctx.rule_ref.clone() {
+                let mut is_const_rule = if is_rule && !constness_determined {
+                    self.is_constant_ref(&rule_ref)?
+                } else {
+                    // Constness has already been determined or is not a rule.
+                    // Treat the expression as not constant.
+                    false
+                };
+
                 let mut comps = self.eval_rule_ref(&rule_ref)?;
                 if let Some(ke) = &key_expr {
                     comps.push(self.eval_expr(ke)?);
                 }
                 let output = if let Some(oe) = &output_expr {
+                    // Rule is constant only if its ref, key and output are constant.
+                    is_const_rule = is_const_rule && self.is_constant_output(&key_expr, oe)?;
                     self.eval_expr(oe)?
                 } else if is_old_style_set && !comps.is_empty() {
+                    // Rule's constness is determined only by its ref.
                     let output = comps[comps.len() - 1].clone();
                     comps.pop();
                     output
                 } else {
+                    // Rule's constness is determined only by its ref.
                     Value::Bool(true)
                 };
 
                 let comps_defined = comps.iter().all(|v| v != &Value::Undefined);
                 let ctx = self.contexts.last_mut().expect("no current context");
+
+                if is_const_rule {
+                    ctx.early_return = true;
+                }
+                if is_rule {
+                    ctx.output_constness_determined = true;
+                }
 
                 if output == Value::Undefined || !comps_defined {
                     return Ok(false);

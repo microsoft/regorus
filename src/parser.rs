@@ -114,7 +114,17 @@ impl<'source> Parser<'source> {
             }
             Expr::Var(v) => comps.push(v.0.clone()),
             Expr::String(s) => comps.push(s.0.clone()),
-            _ => bail!("internal error: not a simple ref"),
+            Expr::True(s) | Expr::False(s) | Expr::Null(s) => comps.push(s.clone()),
+            Expr::Number(s) => {
+                // Ensure that the span will be the serialized representation.
+                if *s.0.text() == s.1.to_json_str()? {
+                    comps.push(s.0.clone());
+                } else {
+                    bail!(refr.span().error("not a valid ref"));
+                }
+            }
+
+            _ => bail!(refr.span().error("not a valid ref")),
         }
         Ok(())
     }

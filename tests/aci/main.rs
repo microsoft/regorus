@@ -92,10 +92,10 @@ fn run_aci_tests(dir: &Path) -> Result<()> {
                 Ok(actual) => {
                     println!(
                         "DIFF {}",
-                        colored_diff::PrettyDifference {
-                            expected: &serde_yaml::to_string(&case.want_result)?,
-                            actual: &serde_yaml::to_string(&actual)?
-                        }
+                        prettydiff::diff_chars(
+                            &serde_yaml::to_string(&case.want_result)?,
+                            &serde_yaml::to_string(&actual)?
+                        )
                     );
 
                     nfailures += 1;
