@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/microsoft/regorus/compare/regorus-v0.1.3...regorus-v0.1.4) - 2024-04-22
+
+### Other
+- early return ([#189](https://github.com/microsoft/regorus/pull/189))
+- Fix anyhow dependency issues ([#208](https://github.com/microsoft/regorus/pull/208))
+- remove unused compact-rc dependency ([#207](https://github.com/microsoft/regorus/pull/207))
+
 ## [0.1.3](https://github.com/microsoft/regorus/compare/regorus-v0.1.2...regorus-v0.1.3) - 2024-04-11
 
 ### Other
