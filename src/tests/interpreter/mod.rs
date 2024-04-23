@@ -73,10 +73,10 @@ fn match_values(computed: &Value, expected: &Value) -> Result<()> {
     if computed != expected {
         panic!(
             "{}",
-            colored_diff::PrettyDifference {
-                expected: &serde_yaml::to_string(&expected)?,
-                actual: &serde_yaml::to_string(&computed)?
-            }
+            prettydiff::diff_chars(
+                &serde_yaml::to_string(&expected)?,
+                &serde_yaml::to_string(&computed)?
+            )
         );
     }
     Ok(())
@@ -347,7 +347,7 @@ fn yaml_test(file: &str) -> Result<()> {
         Err(e) => {
             // If Err is returned, it doesn't always get printed by cargo test.
             // Therefore, panic with the error.
-            panic!("{}", e);
+            panic!("{e}");
         }
     }
 }
