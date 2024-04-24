@@ -44,15 +44,81 @@ mod uuid;
 mod test;
 
 use crate::ast::{Expr, Ref};
-use crate::lexer::Span;
-use crate::value::Value;
+use crate::builtins::encoding::DecodeError;
+#[cfg(feature = "semver")]
+use crate::builtins::semver::SemverError;
+#[cfg(feature = "time")]
+use crate::builtins::time::compat::ParseDurationError;
+#[cfg(feature = "time")]
+use crate::builtins::time::compat::ParseError as TimeParseError;
+use crate::builtins::utils::UtilsError;
+use crate::lexer::{LexerError, Span};
+use crate::number::NumberError;
+use crate::value::{Value, ValueError};
 
 use std::collections::HashMap;
 
-use anyhow::Result;
+use thiserror::Error;
+
 use lazy_static::lazy_static;
 
-pub type BuiltinFcn = (fn(&Span, &[Ref<Expr>], &[Value], bool) -> Result<Value>, u8);
+#[derive(Error, Debug)]
+pub enum BuiltinError {
+    #[error(transparent)]
+    UtilsError(#[from] UtilsError),
+    #[error(transparent)]
+    LexerError(#[from] LexerError),
+    #[error(transparent)]
+    NumberError(#[from] NumberError),
+    #[error(transparent)]
+    ValueError(#[from] ValueError),
+    #[cfg(feature = "time")]
+    #[error(transparent)]
+    ParseDurationError(#[from] ParseDurationError),
+    #[cfg(feature = "time")]
+    #[error(transparent)]
+    TimeParseError(#[from] TimeParseError),
+    #[cfg(feature = "time")]
+    #[error("unknown timezone: {0}")]
+    UnknownTimezone(String),
+    #[error(transparent)]
+    DecodeError(#[from] DecodeError),
+    #[error("serialize failed: {0}")]
+    SerializeFailed(#[source] LexerError),
+    #[error("deserialize failed: {0}")]
+    DeserializeFailed(#[source] LexerError),
+    #[cfg(feature = "glob")]
+    #[error("string contains internal glob placeholder")]
+    StringContainsGlobPattern,
+    #[cfg(feature = "crypto")]
+    #[error("failed to create hmac: {0}")]
+    HmacError(#[source] LexerError),
+    #[cfg(feature = "graph")]
+    #[error("neighbours for node {0} must be array or set")]
+    WrongNeighbours(Value),
+    #[cfg(feature = "jsonschema")]
+    #[error("json schema validation failed: {0}")]
+    JsonSchemaValidationFailed(String),
+    #[error("json parsing failed")]
+    JsonParsingFailed(#[from] serde_json::Error),
+    #[cfg(feature = "regex")]
+    #[error("regex error: {0}")]
+    RegexError(#[source] LexerError),
+    #[cfg(feature = "semver")]
+    #[error(transparent)]
+    SemverError(#[from] SemverError),
+    #[cfg(feature = "time")]
+    #[error("could not convert `ns1` to datetime")]
+    DateTimeConversionError,
+    #[cfg(feature = "opa-runtime")]
+    #[error(transparent)]
+    OutOfRangeError(#[from] chrono::OutOfRangeError),
+}
+
+pub type BuiltinFcn = (
+    fn(&Span, &[Ref<Expr>], &[Value], bool) -> Result<Value, BuiltinError>,
+    u8,
+);
 
 pub use debugging::print_to_string;
 

@@ -4,13 +4,14 @@
 use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_array, ensure_numeric};
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::Rc;
 use crate::Value;
 
 use std::collections::HashMap;
 
-use anyhow::Result;
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("array.concat", (concat, 2));

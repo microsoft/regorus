@@ -2,14 +2,16 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
+use crate::bail;
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_object};
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::value::Value;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use anyhow::{bail, Result};
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("graph.reachable", (reachable, 2));
@@ -94,7 +96,9 @@ fn visit(
                 set.len()
             }
             Some(&Value::Null) => 0,
-            _ => bail!(format!("neighbors for node `{node}` must be array/set.")),
+            _ => {
+                return Err(BuiltinError::WrongNeighbours(node.clone()));
+            }
         };
 
         if n == 0 {

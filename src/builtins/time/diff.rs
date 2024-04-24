@@ -1,8 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT and Apache 2.0 License.
 
-use anyhow::{anyhow, Result};
+use crate::builtins::BuiltinError;
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Timelike};
+
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 // Adapted from the official Go implementation:
 // https://github.com/open-policy-agent/opa/blob/eb17a716b97720a27c6569395ba7c4b7409aae87/topdown/time.go#L179-L243
@@ -50,7 +52,7 @@ pub fn diff_between_datetimes(
     }
     if day < 0 {
         let days_in_month = days_in_month(datetime1.year(), datetime1.month())
-            .ok_or(anyhow!("Could not convert `ns1` to datetime"))?;
+            .ok_or(BuiltinError::DateTimeConversionError)?;
         day += days_in_month as i32;
         month -= 1;
     }

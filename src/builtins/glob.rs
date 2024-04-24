@@ -2,14 +2,16 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
+use crate::bail;
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_string, ensure_string_collection};
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::value::Value;
 
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
+type Result<T> = std::result::Result<T, BuiltinError>;
 //use glob::{Pattern, MatchOptions};
 use wax::{Glob, Pattern};
 
@@ -28,7 +30,7 @@ fn suppress_unix_style_delimiter(s: &str) -> Result<String> {
 
 fn make_delimiters_unix_style(s: &str, delimiters: &[char]) -> Result<String> {
     if s.contains(PLACE_HOLDER) {
-        bail!("string contains internal glob placeholder");
+        return Err(BuiltinError::StringContainsGlobPattern);
     }
 
     let has_unix_style = delimiters.contains(&'/');

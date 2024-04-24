@@ -4,13 +4,14 @@
 use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::ensure_args_count;
+use crate::builtins::BuiltinError;
 
 use crate::lexer::Span;
 use crate::value::Value;
 
 use std::collections::{BTreeMap, HashMap};
 
-use anyhow::Result;
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("opa.runtime", (opa_runtime, 0));

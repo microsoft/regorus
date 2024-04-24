@@ -10,13 +10,18 @@ use crate::value::Value;
 
 use std::collections::HashMap;
 
-use anyhow::Result;
+use super::BuiltinError;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("http.send", (send, 1));
 }
 
-fn send(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+fn send(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value, BuiltinError> {
     let name = "http.send";
     ensure_args_count(span, name, params, args, 1)?;
     Ok(Value::Undefined)

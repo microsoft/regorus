@@ -2,18 +2,21 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
+use crate::bail;
 use crate::builtins::utils::{ensure_args_count, ensure_set};
+use crate::builtins::BuiltinError;
 use crate::builtins::BuiltinFcn;
 use crate::lexer::Span;
 use crate::value::Value;
 
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
 use lazy_static::lazy_static;
 
 #[cfg(feature = "regex")]
 use crate::builtins::regex::regex_match;
+
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 #[rustfmt::skip]
 lazy_static! {

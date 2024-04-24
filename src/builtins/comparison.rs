@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 
 use crate::ast::BoolOp;
+use crate::builtins::BuiltinError;
 use crate::value::Value;
 
-use anyhow::Result;
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 /// compare two values
 ///

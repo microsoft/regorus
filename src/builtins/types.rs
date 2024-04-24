@@ -4,12 +4,13 @@
 use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::ensure_args_count;
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::value::Value;
 
 use std::collections::HashMap;
 
-use anyhow::Result;
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("is_array", (is_array, 1));

@@ -2,18 +2,18 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
+use crate::bail;
 use crate::builtins;
 use crate::builtins::utils::{
     ensure_args_count, ensure_array, ensure_numeric, ensure_object, ensure_string,
     ensure_string_collection,
 };
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::number::Number;
 use crate::value::Value;
 
 use std::collections::HashMap;
-
-use anyhow::{bail, Result};
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("concat", (concat, 2));
@@ -40,6 +40,8 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("trim_suffix", (trim_suffix, 2));
     m.insert("upper", (upper, 1));
 }
+
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 fn concat(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "concat";
@@ -315,7 +317,7 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
                         bail!(args_span.error(
                             format!("invalid value {} for format verb c.", f.format_decimal())
                                 .as_str()
-                        ))
+                        ));
                     }
                 }
             }
@@ -372,7 +374,7 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
                 let (sign, v) = get_sign_value(f);
                 let v = match v.as_f64() {
                     Some(v) => v,
-                    _ => bail!("cannot print large float using g format specified"),
+                    _ => bail!(span.error("cannot print large float using g format specified")),
                 };
                 s += sign;
                 let bits = v.to_bits();
@@ -427,7 +429,7 @@ fn any_prefix_match(
         Value::Array(_) | Value::Set(_) => {
             match ensure_string_collection(name, &params[0], &args[0]) {
                 Ok(c) => c,
-                Err(e) if strict => return Err(e),
+                Err(e) if strict => bail!(e),
                 _ => return Ok(Value::Undefined),
             }
         }
@@ -445,7 +447,7 @@ fn any_prefix_match(
         Value::Array(_) | Value::Set(_) => {
             match ensure_string_collection(name, &params[1], &args[1]) {
                 Ok(c) => c,
-                Err(e) if strict => return Err(e),
+                Err(e) if strict => bail!(e),
                 _ => return Ok(Value::Undefined),
             }
         }
@@ -477,7 +479,7 @@ fn any_suffix_match(
         Value::Array(_) | Value::Set(_) => {
             match ensure_string_collection(name, &params[0], &args[0]) {
                 Ok(c) => c,
-                Err(e) if strict => return Err(e),
+                Err(e) if strict => bail!(e),
                 _ => return Ok(Value::Undefined),
             }
         }
@@ -495,7 +497,7 @@ fn any_suffix_match(
         Value::Array(_) | Value::Set(_) => {
             match ensure_string_collection(name, &params[1], &args[1]) {
                 Ok(c) => c,
-                Err(e) if strict => return Err(e),
+                Err(e) if strict => bail!(e),
                 _ => return Ok(Value::Undefined),
             }
         }

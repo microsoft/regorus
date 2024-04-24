@@ -2,14 +2,16 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
+use crate::bail;
 use crate::builtins;
 use crate::builtins::utils::ensure_args_count;
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::value::Value;
 
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("to_number", (to_number, 1));

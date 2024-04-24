@@ -4,13 +4,15 @@
 use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_string};
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::value::Value;
 
 use std::collections::{BTreeMap, HashMap};
 
-use anyhow::Result;
 use uuid::{Timestamp, Uuid};
+
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("uuid.parse", (parse, 1));

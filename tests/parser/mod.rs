@@ -603,7 +603,8 @@ fn match_import(i: &Import, v: &Value) -> Result<()> {
         _ => Err(i
             .span
             .source
-            .error(i.span.line, i.span.col, "import does not have `as` binding")),
+            .error(i.span.line, i.span.col, "import does not have `as` binding")
+            .into()),
     }
 }
 
@@ -679,7 +680,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                     }
                     println!("{actual}");
                 }
-                _ => return Err(actual),
+                _ => return Err(actual.into()),
             },
         }
 

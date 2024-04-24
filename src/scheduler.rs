@@ -9,7 +9,21 @@ use crate::utils::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::string::String;
 
-use anyhow::{bail, Result};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum SchedulerError {
+    #[error("package scope missing")]
+    MissingPackageScope,
+    #[error("lexer error: {0}")]
+    LexerError(#[from] LexerError),
+    #[error("non-empty definitions")]
+    NonEmptyDefinitions,
+    #[error(transparent)]
+    UtilsError(#[from] UtilsError),
+}
+
+pub(crate) type Result<T> = std::result::Result<T, SchedulerError>;
 
 #[derive(Debug)]
 pub struct Definition<Str: Clone + std::cmp::Ord> {
@@ -458,10 +472,10 @@ impl Analyzer {
 
     fn analyze_module(&mut self, m: &Module) -> Result<()> {
         let path = get_path_string(&m.package.refr, Some("data"))?;
-        let scope = match self.packages.get(&path) {
-            Some(s) => s,
-            _ => bail!("internal error: package scope missing"),
-        };
+        let scope = self
+            .packages
+            .get(&path)
+            .ok_or(SchedulerError::MissingPackageScope)?;
         self.current_module_path = path;
         self.scopes.push(scope.clone());
         for r in &m.policy {
@@ -658,9 +672,9 @@ impl Analyzer {
                             }
                         }
                     }
-                    bail!(v
-                        .0
-                        .error(format!("use of undefined variable `{name}` is unsafe").as_str()));
+                    let err =
+                        v.0.error(format!("use of undefined variable `{name}` is unsafe").as_str());
+                    Err(err)?;
                 }
                 Ok(false)
             }
@@ -804,7 +818,7 @@ impl Analyzer {
             ) => {
                 if lhs_items.len() != rhs_items.len() {
                     let span = rhs.span();
-                    bail!(span.error("mismatch in number of array elements"));
+                    Err(span.error("mismatch in number of array elements"))?;
                 }
 
                 for (idx, lhs_elem) in lhs_items.iter().enumerate() {
@@ -931,13 +945,14 @@ impl Analyzer {
         let name = var.source_str();
         if let Some(r#use) = first_use.get(&name) {
             if r#use.line < var.line || (r#use.line == var.line && r#use.col < var.col) {
-                bail!(r#use.error(
+                let err = r#use.error(
                     format!(
                         "var `{name}` used before definition below.{}",
                         var.message("definition", "")
                     )
-                    .as_str()
-                ));
+                    .as_str(),
+                );
+                Err(err)?;
             }
         }
         Ok(())
@@ -1066,7 +1081,7 @@ impl Analyzer {
                         uv.append(&mut with_mods_used_vars.clone());
                         comprs.append(&mut with_mods_comprs.clone());
                         if !definitions.is_empty() {
-                            bail!("internal error: non empty definitions");
+                            return Err(SchedulerError::NonEmptyDefinitions);
                         }
                         used_vars.extend(uv);
                         self.process_comprs(
@@ -1207,7 +1222,8 @@ impl Analyzer {
                 self.order.insert(query.clone(), ord);
             }
             Err(err) => {
-                bail!(query.span.error(&err.to_string()))
+                let err = query.span.error(&err.to_string());
+                Err(err)?;
             }
             _ => (),
         }

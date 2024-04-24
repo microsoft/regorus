@@ -9,10 +9,10 @@ use std::convert::AsRef;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
+use thiserror::Error;
+
 use crate::Rc;
 use crate::Value;
-
-use anyhow::{anyhow, bail, Result};
 
 #[derive(Clone)]
 struct SourceInternal {
@@ -24,6 +24,14 @@ struct SourceInternal {
 #[derive(Clone)]
 pub struct Source {
     src: Rc<SourceInternal>,
+}
+
+#[derive(Error, Debug)]
+pub enum LexerError {
+    #[error("io failed: {0}")]
+    IoFailed(#[from] std::io::Error),
+    #[error("{0}")]
+    DetailedError(String),
 }
 
 impl std::cmp::Ord for Source {
@@ -151,11 +159,8 @@ impl Source {
         }
     }
 
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Source> {
-        let contents = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => bail!("Failed to read {}. {e}", path.as_ref().display()),
-        };
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Source, LexerError> {
+        let contents = std::fs::read_to_string(&path)?;
         // TODO: retain path instead of converting to string
         Ok(Self::new(
             path.as_ref().to_string_lossy().to_string(),
@@ -206,8 +211,8 @@ impl Source {
         )
     }
 
-    pub fn error(&self, line: u16, col: u16, msg: &str) -> anyhow::Error {
-        anyhow!(self.message(line, col, "error", msg))
+    pub fn error(&self, line: u16, col: u16, msg: &str) -> LexerError {
+        LexerError::DetailedError(self.message(line, col, "error", msg))
     }
 }
 
@@ -233,7 +238,7 @@ impl Span {
         self.source.message(self.line, self.col, kind, msg)
     }
 
-    pub fn error(&self, msg: &str) -> anyhow::Error {
+    pub fn error(&self, msg: &str) -> LexerError {
         self.source.error(self.line, self.col, msg)
     }
 }
@@ -300,7 +305,7 @@ impl<'source> Lexer<'source> {
         }
     }
 
-    fn read_ident(&mut self) -> Result<Token> {
+    fn read_ident(&mut self) -> Result<Token, LexerError> {
         let start = self.peek().0;
         let col = self.col;
         loop {
@@ -332,7 +337,7 @@ impl<'source> Lexer<'source> {
     }
 
     // See https://www.json.org/json-en.html for number's grammar
-    fn read_number(&mut self) -> Result<Token> {
+    fn read_number(&mut self) -> Result<Token, LexerError> {
         let (start, chr) = self.peek();
         let col = self.col;
         self.iter.next();
@@ -385,7 +390,7 @@ impl<'source> Lexer<'source> {
                     m => m.to_owned(),
                 };
 
-                bail!(
+                return Err(LexerError::DetailedError(format!(
                     "{} {}",
                     self.source.error(
                         self.line,
@@ -393,7 +398,7 @@ impl<'source> Lexer<'source> {
                         "invalid number. serde_json cannot parse number:"
                     ),
                     msg
-                )
+                )));
             }
         }
 
@@ -409,7 +414,7 @@ impl<'source> Lexer<'source> {
         ))
     }
 
-    fn read_raw_string(&mut self) -> Result<Token> {
+    fn read_raw_string(&mut self) -> Result<Token, LexerError> {
         self.iter.next();
         self.col += 1;
         let (start, _) = self.peek();
@@ -446,7 +451,7 @@ impl<'source> Lexer<'source> {
         ))
     }
 
-    fn read_string(&mut self) -> Result<Token> {
+    fn read_string(&mut self) -> Result<Token, LexerError> {
         let (line, col) = (self.line, self.col);
         self.iter.next();
         self.col += 1;
@@ -507,12 +512,12 @@ impl<'source> Lexer<'source> {
             Err(e) => {
                 let serde_msg = &e.to_string();
                 let msg = serde_msg;
-                bail!(
+                return Err(LexerError::DetailedError(format!(
                     "{} {}",
                     self.source
                         .error(self.line, col, "serde_json cannot parse string:"),
                     msg
-                )
+                )));
             }
         }
 
@@ -528,7 +533,7 @@ impl<'source> Lexer<'source> {
         ))
     }
 
-    fn skip_ws(&mut self) -> Result<()> {
+    fn skip_ws(&mut self) -> Result<(), LexerError> {
         // Only the 4 json whitespace characters are recognized.
         // https://www.crockford.com/mckeeman.html.
         // Additionally, comments are also skipped.
@@ -566,7 +571,7 @@ impl<'source> Lexer<'source> {
         Ok(())
     }
 
-    pub fn next_token(&mut self) -> Result<Token> {
+    pub fn next_token(&mut self) -> Result<Token, LexerError> {
         self.skip_ws()?;
 
         let (start, chr) = self.peek();

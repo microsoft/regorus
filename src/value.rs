@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::number::Number;
+use crate::number::{Number, NumberError};
 
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
@@ -10,10 +10,10 @@ use std::ops;
 use std::path::Path;
 use std::str::FromStr;
 
-use anyhow::{anyhow, bail, Result};
 use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::Rc;
 
@@ -57,6 +57,45 @@ pub enum Value {
     /// Undefined value.
     /// Used to indicate the absence of a value.
     Undefined,
+}
+
+#[derive(Debug)]
+pub enum Primitive {
+    Bool,
+    I128,
+    U128,
+    I64,
+    U64,
+    F64,
+    String,
+    Number,
+    Array,
+    Set,
+    Object,
+}
+
+#[derive(Error, Debug)]
+pub enum ValueError {
+    #[error("json deserialization failed: {0}")]
+    JsonDeserializationFailed(#[from] serde_json::Error),
+    #[error("yaml deserialization failed: {0}")]
+    YamlDeserializationFailed(#[from] serde_yaml::Error),
+    #[error("io failed: {0}")]
+    IoFailed(#[from] std::io::Error),
+    #[error("number conversion failed: {0}")]
+    NumberConversionFailed(#[from] NumberError),
+    #[error("not a {0:?}")]
+    NotA(Primitive),
+    #[error("unexpected error")]
+    Unexpected,
+    #[error("value for key {key} generated multiple times: {first}, {second}")]
+    ValueGeneratedMultipleTimes {
+        key: String,
+        first: String,
+        second: String,
+    },
+    #[error("could not merge")]
+    MergeFailed,
 }
 
 #[doc(hidden)]
@@ -308,7 +347,7 @@ impl Value {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_json_str(json: &str) -> Result<Value> {
+    pub fn from_json_str(json: &str) -> Result<Value, ValueError> {
         Ok(serde_json::from_str(json)?)
     }
 
@@ -326,11 +365,9 @@ impl Value {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_json_file<P: AsRef<Path>>(path: P) -> Result<Value> {
-        match std::fs::read_to_string(&path) {
-            Ok(c) => Self::from_json_str(c.as_str()),
-            Err(e) => bail!("Failed to read {}. {e}", path.as_ref().display()),
-        }
+    pub fn from_json_file<P: AsRef<Path>>(path: P) -> Result<Value, ValueError> {
+        let c = std::fs::read_to_string(&path)?;
+        Self::from_json_str(c.as_str())
     }
 
     /// Serialize a value to JSON.
@@ -392,25 +429,23 @@ impl Value {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn to_json_str(&self) -> Result<String> {
+    pub fn to_json_str(&self) -> Result<String, ValueError> {
         Ok(serde_json::to_string_pretty(self)?)
     }
 
     /// Deserialize a value from YAML.
     /// Note: Deserialization from YAML does not support arbitrary precision numbers.
     #[cfg(feature = "yaml")]
-    pub fn from_yaml_str(yaml: &str) -> Result<Value> {
+    pub fn from_yaml_str(yaml: &str) -> Result<Value, ValueError> {
         Ok(serde_yaml::from_str(yaml)?)
     }
 
     /// Deserialize a value from a file containing YAML.
     /// Note: Deserialization from YAML does not support arbitrary precision numbers.
     #[cfg(feature = "yaml")]
-    pub fn from_yaml_file(path: &String) -> Result<Value> {
-        match std::fs::read_to_string(path) {
-            Ok(c) => Self::from_yaml_str(c.as_str()),
-            Err(e) => bail!("Failed to read {path}. {e}"),
-        }
+    pub fn from_yaml_file(path: &String) -> Result<Value, ValueError> {
+        let c = std::fs::read_to_string(path)?;
+        Self::from_yaml_str(c.as_str())
     }
 }
 
@@ -649,10 +684,8 @@ impl Value {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_numeric_string(s: &str) -> Result<Value> {
-        Ok(Value::Number(
-            Number::from_str(s).map_err(|_| anyhow!("not a valid numeric string"))?,
-        ))
+    pub fn from_numeric_string(s: &str) -> Result<Value, ValueError> {
+        Ok(Value::Number(Number::from_str(s)?))
     }
 }
 
@@ -765,10 +798,10 @@ impl Value {
     /// assert_eq!(v.as_bool()?, &true);
     /// # Ok(())
     /// # }
-    pub fn as_bool(&self) -> Result<&bool> {
+    pub fn as_bool(&self) -> Result<&bool, ValueError> {
         match self {
             Value::Bool(b) => Ok(b),
-            _ => Err(anyhow!("not a bool")),
+            _ => Err(ValueError::NotA(Primitive::Bool)),
         }
     }
 
@@ -780,10 +813,10 @@ impl Value {
     /// *v.as_bool_mut()? = false;
     /// # Ok(())
     /// # }
-    pub fn as_bool_mut(&mut self) -> Result<&mut bool> {
+    pub fn as_bool_mut(&mut self) -> Result<&mut bool, ValueError> {
         match self {
             Value::Bool(b) => Ok(b),
-            _ => Err(anyhow!("not a bool")),
+            _ => Err(ValueError::NotA(Primitive::Bool)),
         }
     }
 
@@ -802,15 +835,15 @@ impl Value {
     /// assert!(v.as_u128().is_err());
     /// # Ok(())
     /// # }
-    pub fn as_u128(&self) -> Result<u128> {
+    pub fn as_u128(&self) -> Result<u128, ValueError> {
         match self {
             Value::Number(b) => {
                 if let Some(n) = b.as_u128() {
                     return Ok(n);
                 }
-                bail!("not a u128");
+                Err(ValueError::NotA(Primitive::U128))
             }
-            _ => Err(anyhow!("not a u128")),
+            _ => Err(ValueError::NotA(Primitive::U128)),
         }
     }
 
@@ -829,15 +862,15 @@ impl Value {
     /// assert!(v.as_i128().is_err());
     /// # Ok(())
     /// # }
-    pub fn as_i128(&self) -> Result<i128> {
+    pub fn as_i128(&self) -> Result<i128, ValueError> {
         match self {
             Value::Number(b) => {
                 if let Some(n) = b.as_i128() {
                     return Ok(n);
                 }
-                bail!("not a i128");
+                Err(ValueError::NotA(Primitive::I128))
             }
-            _ => Err(anyhow!("not a i128")),
+            _ => Err(ValueError::NotA(Primitive::I128)),
         }
     }
 
@@ -856,15 +889,15 @@ impl Value {
     /// assert!(v.as_u64().is_err());
     /// # Ok(())
     /// # }
-    pub fn as_u64(&self) -> Result<u64> {
+    pub fn as_u64(&self) -> Result<u64, ValueError> {
         match self {
             Value::Number(b) => {
                 if let Some(n) = b.as_u64() {
                     return Ok(n);
                 }
-                bail!("not a u64");
+                Err(ValueError::NotA(Primitive::U64))
             }
-            _ => Err(anyhow!("not a u64")),
+            _ => Err(ValueError::NotA(Primitive::U64)),
         }
     }
 
@@ -883,15 +916,15 @@ impl Value {
     /// assert!(v.as_i64().is_err());
     /// # Ok(())
     /// # }
-    pub fn as_i64(&self) -> Result<i64> {
+    pub fn as_i64(&self) -> Result<i64, ValueError> {
         match self {
             Value::Number(b) => {
                 if let Some(n) = b.as_i64() {
                     return Ok(n);
                 }
-                bail!("not an i64");
+                Err(ValueError::NotA(Primitive::I64))
             }
-            _ => Err(anyhow!("not an i64")),
+            _ => Err(ValueError::NotA(Primitive::I64)),
         }
     }
 
@@ -909,15 +942,15 @@ impl Value {
     /// assert!(v.as_i64().is_err());
     /// # Ok(())
     /// # }
-    pub fn as_f64(&self) -> Result<f64> {
+    pub fn as_f64(&self) -> Result<f64, ValueError> {
         match self {
             Value::Number(b) => {
                 if let Some(n) = b.as_f64() {
                     return Ok(n);
                 }
-                bail!("not a f64");
+                Err(ValueError::NotA(Primitive::F64))
             }
-            _ => Err(anyhow!("not a f64")),
+            _ => Err(ValueError::NotA(Primitive::F64)),
         }
     }
 
@@ -929,10 +962,10 @@ impl Value {
     /// assert_eq!(v.as_string()?.as_ref(), "Hello");
     /// # Ok(())
     /// # }
-    pub fn as_string(&self) -> Result<&Rc<str>> {
+    pub fn as_string(&self) -> Result<&Rc<str>, ValueError> {
         match self {
             Value::String(s) => Ok(s),
-            _ => Err(anyhow!("not a string")),
+            _ => Err(ValueError::NotA(Primitive::String)),
         }
     }
 
@@ -944,26 +977,26 @@ impl Value {
     /// *v.as_string_mut()? = "World".into();
     /// # Ok(())
     /// # }
-    pub fn as_string_mut(&mut self) -> Result<&mut Rc<str>> {
+    pub fn as_string_mut(&mut self) -> Result<&mut Rc<str>, ValueError> {
         match self {
             Value::String(s) => Ok(s),
-            _ => Err(anyhow!("not a string")),
+            _ => Err(ValueError::NotA(Primitive::String)),
         }
     }
 
     #[doc(hidden)]
-    pub fn as_number(&self) -> Result<&Number> {
+    pub fn as_number(&self) -> Result<&Number, ValueError> {
         match self {
             Value::Number(n) => Ok(n),
-            _ => Err(anyhow!("not a number")),
+            _ => Err(ValueError::NotA(Primitive::Number)),
         }
     }
 
     #[doc(hidden)]
-    pub fn as_number_mut(&mut self) -> Result<&mut Number> {
+    pub fn as_number_mut(&mut self) -> Result<&mut Number, ValueError> {
         match self {
             Value::Number(n) => Ok(n),
-            _ => Err(anyhow!("not a number")),
+            _ => Err(ValueError::NotA(Primitive::Number)),
         }
     }
 
@@ -975,10 +1008,10 @@ impl Value {
     /// assert_eq!(v.as_array()?[0], Value::from("Hello"));
     /// # Ok(())
     /// # }
-    pub fn as_array(&self) -> Result<&Vec<Value>> {
+    pub fn as_array(&self) -> Result<&Vec<Value>, ValueError> {
         match self {
             Value::Array(a) => Ok(a),
-            _ => Err(anyhow!("not an array")),
+            _ => Err(ValueError::NotA(Primitive::Array)),
         }
     }
 
@@ -990,10 +1023,10 @@ impl Value {
     /// v.as_array_mut()?.push(Value::from("World"));
     /// # Ok(())
     /// # }
-    pub fn as_array_mut(&mut self) -> Result<&mut Vec<Value>> {
+    pub fn as_array_mut(&mut self) -> Result<&mut Vec<Value>, ValueError> {
         match self {
             Value::Array(a) => Ok(Rc::make_mut(a)),
-            _ => Err(anyhow!("not an array")),
+            _ => Err(ValueError::NotA(Primitive::Array)),
         }
     }
 
@@ -1011,10 +1044,10 @@ impl Value {
     /// assert_eq!(v.as_set()?.first(), Some(&Value::from("Hello")));
     /// # Ok(())
     /// # }
-    pub fn as_set(&self) -> Result<&BTreeSet<Value>> {
+    pub fn as_set(&self) -> Result<&BTreeSet<Value>, ValueError> {
         match self {
             Value::Set(s) => Ok(s),
-            _ => Err(anyhow!("not a set")),
+            _ => Err(ValueError::NotA(Primitive::Set)),
         }
     }
 
@@ -1032,10 +1065,10 @@ impl Value {
     /// v.as_set_mut()?.insert(Value::from("World"));
     /// # Ok(())
     /// # }
-    pub fn as_set_mut(&mut self) -> Result<&mut BTreeSet<Value>> {
+    pub fn as_set_mut(&mut self) -> Result<&mut BTreeSet<Value>, ValueError> {
         match self {
             Value::Set(s) => Ok(Rc::make_mut(s)),
-            _ => Err(anyhow!("not a set")),
+            _ => Err(ValueError::NotA(Primitive::Set)),
         }
     }
 
@@ -1056,10 +1089,10 @@ impl Value {
     /// );
     /// # Ok(())
     /// # }
-    pub fn as_object(&self) -> Result<&BTreeMap<Value, Value>> {
+    pub fn as_object(&self) -> Result<&BTreeMap<Value, Value>, ValueError> {
         match self {
             Value::Object(m) => Ok(m),
-            _ => Err(anyhow!("not an object")),
+            _ => Err(ValueError::NotA(Primitive::Object)),
         }
     }
 
@@ -1077,16 +1110,19 @@ impl Value {
     /// v.as_object_mut()?.insert(Value::from("Good"), Value::from("Bye"));
     /// # Ok(())
     /// # }
-    pub fn as_object_mut(&mut self) -> Result<&mut BTreeMap<Value, Value>> {
+    pub fn as_object_mut(&mut self) -> Result<&mut BTreeMap<Value, Value>, ValueError> {
         match self {
             Value::Object(m) => Ok(Rc::make_mut(m)),
-            _ => Err(anyhow!("not an object")),
+            _ => Err(ValueError::NotA(Primitive::Object)),
         }
     }
 }
 
 impl Value {
-    pub(crate) fn make_or_get_value_mut<'a>(&'a mut self, paths: &[&str]) -> Result<&'a mut Value> {
+    pub(crate) fn make_or_get_value_mut<'a>(
+        &'a mut self,
+        paths: &[&str],
+    ) -> Result<&'a mut Value, ValueError> {
         if paths.is_empty() {
             return Ok(self);
         }
@@ -1105,18 +1141,18 @@ impl Value {
             Value::Object(map) => match Rc::make_mut(map).get_mut(&key) {
                 Some(v) if paths.len() == 1 => Ok(v),
                 Some(v) => Self::make_or_get_value_mut(v, &paths[1..]),
-                _ => bail!("internal error: unexpected"),
+                _ => Err(ValueError::Unexpected),
             },
             Value::Undefined if paths.len() > 1 => {
                 *self = Value::new_object();
                 Self::make_or_get_value_mut(self, paths)
             }
             Value::Undefined => Ok(self),
-            _ => bail!("internal error: make: not an selfect {self:?}"),
+            _ => Err(ValueError::NotA(Primitive::Object)),
         }
     }
 
-    pub(crate) fn merge(&mut self, mut new: Value) -> Result<()> {
+    pub(crate) fn merge(&mut self, mut new: Value) -> Result<(), ValueError> {
         if self == &new {
             return Ok(());
         }
@@ -1129,18 +1165,20 @@ impl Value {
                 for (k, v) in new.iter() {
                     match map.get(k) {
                         Some(pv) if *pv != *v => {
-                            bail!(
-                                "value for key `{}` generated multiple times: `{}` and `{}`",
-                                serde_json::to_string_pretty(&k)?,
-                                serde_json::to_string_pretty(&pv)?,
-                                serde_json::to_string_pretty(&v)?,
-                            )
+                            let key = serde_json::to_string_pretty(&k)?;
+                            let first = serde_json::to_string_pretty(&pv)?;
+                            let second = serde_json::to_string_pretty(&v)?;
+                            let err =
+                                ValueError::ValueGeneratedMultipleTimes { key, first, second };
+                            return Err(err);
                         }
                         _ => Rc::make_mut(map).insert(k.clone(), v.clone()),
                     };
                 }
             }
-            _ => bail!("error: could not merge value"),
+            _ => {
+                return Err(ValueError::MergeFailed);
+            }
         };
         Ok(())
     }

@@ -2,19 +2,72 @@
 // Licensed under the MIT License.
 
 use crate::ast::*;
-use crate::builtins::{self, BuiltinFcn};
+use crate::bail;
+use crate::builtins::{self, BuiltinError, BuiltinFcn};
 use crate::lexer::*;
-use crate::parser::Parser;
+use crate::parser::{Parser, ParserError};
 use crate::scheduler::*;
 use crate::utils::*;
 use crate::value::*;
 use crate::Rc;
 use crate::{Expression, Extension, Location, QueryResult, QueryResults};
 
-use anyhow::{anyhow, bail, Result};
 use std::collections::btree_map::Entry as BTreeMapEntry;
 use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Bound::*;
+use thiserror::Error;
+
+type Result<T> = std::result::Result<T, InterpreterError>;
+
+#[derive(Error, Debug)]
+pub enum InterpreterError {
+    #[error("unexpected")]
+    Unexpected,
+    #[error("not an object")]
+    NotAnObject,
+    #[error("builtin error: {0}")]
+    BuiltinError(#[from] BuiltinError),
+    #[error("lexer error: {0}")]
+    LexerError(#[from] LexerError),
+    #[error("parser error: {0}")]
+    ParserError(#[from] ParserError),
+    #[error("scheduler error: {0}")]
+    SchedulerError(#[from] SchedulerError),
+    #[error("value error: {0}")]
+    ValueError(#[from] ValueError),
+    #[error(transparent)]
+    UtilsError(#[from] UtilsError),
+    #[error("invalid rule path")]
+    InvalidRulePath,
+    #[error("current module not set")]
+    CurrentModuleNotSet,
+    #[error("current rule not active")]
+    CurrentRuleNotActive,
+    #[error("no active scope")]
+    NoActiveScope,
+    #[error("variable {0} is undefined")]
+    VariableUndefined(String),
+    #[error("duplicated definition of local variable {0}")]
+    DuplicatedDefinition(String),
+    #[error("previous value is not an object")]
+    PreviousValueNotAnObject,
+    #[error("previous value is not a set")]
+    PreviousValueNotASet,
+    #[error("invalid context value {0}")]
+    InvalidContextValue(Value),
+    #[error("context already popped")]
+    ContextAlreadyPopped,
+    #[error("not a function")]
+    NotAFunction,
+    #[error("could not find module for rule")]
+    RuleModuleNotFound,
+    #[error("no current context")]
+    NoCurrentContext,
+    #[error("extension already added")]
+    ExtensionAlreadyAdded,
+    #[error("serde_json error")]
+    SerdeJsonError(#[from] serde_json::Error),
+}
 
 type Scope = BTreeMap<SourceStr, Value>;
 
@@ -265,19 +318,17 @@ impl Interpreter {
     fn current_module(&self) -> Result<Ref<Module>> {
         self.module
             .clone()
-            .ok_or_else(|| anyhow!("internal error: current module not set"))
+            .ok_or(InterpreterError::CurrentModuleNotSet)
     }
 
     fn current_scope(&mut self) -> Result<&Scope> {
-        self.scopes
-            .last()
-            .ok_or_else(|| anyhow!("internal error: no active scope"))
+        self.scopes.last().ok_or(InterpreterError::NoActiveScope)
     }
 
     fn current_scope_mut(&mut self) -> Result<&mut Scope> {
         self.scopes
             .last_mut()
-            .ok_or_else(|| anyhow!("internal error: no active scope"))
+            .ok_or(InterpreterError::NoActiveScope)
     }
 
     #[inline(always)]
@@ -309,7 +360,7 @@ impl Interpreter {
         } else if name.text() == "_" {
             Ok(())
         } else {
-            bail!("variable {} is undefined", name)
+            return Err(InterpreterError::VariableUndefined(name.text().into()));
         }
     }
 
@@ -536,7 +587,8 @@ impl Interpreter {
             return Ok(Value::Undefined);
         }
 
-        builtins::comparison::compare(op, &lhs, &rhs)
+        let value = builtins::comparison::compare(op, &lhs, &rhs)?;
+        Ok(value)
     }
 
     fn eval_bin_expr(&mut self, op: &BinOp, lhs: &ExprRef, rhs: &ExprRef) -> Result<Value> {
@@ -547,10 +599,11 @@ impl Interpreter {
             return Ok(Value::Undefined);
         }
 
-        match op {
-            BinOp::Or => builtins::sets::union(lhs, rhs, lhs_value, rhs_value),
-            BinOp::And => builtins::sets::intersection(lhs, rhs, lhs_value, rhs_value),
-        }
+        let set = match op {
+            BinOp::Or => builtins::sets::union(lhs, rhs, lhs_value, rhs_value)?,
+            BinOp::And => builtins::sets::intersection(lhs, rhs, lhs_value, rhs_value)?,
+        };
+        Ok(set)
     }
 
     fn eval_arith_expr(
@@ -567,9 +620,9 @@ impl Interpreter {
             return Ok(Value::Undefined);
         }
 
-        match (op, &lhs_value, &rhs_value) {
+        let value = match (op, &lhs_value, &rhs_value) {
             (ArithOp::Sub, Value::Set(_), _) | (ArithOp::Sub, _, Value::Set(_)) => {
-                builtins::sets::difference(lhs, rhs, lhs_value, rhs_value)
+                builtins::sets::difference(lhs, rhs, lhs_value, rhs_value)?
             }
             _ => builtins::numbers::arithmetic_operation(
                 span,
@@ -579,8 +632,9 @@ impl Interpreter {
                 lhs_value,
                 rhs_value,
                 self.strict_builtin_errors,
-            ),
-        }
+            )?,
+        };
+        Ok(value)
     }
 
     fn eval_assign_expr(&mut self, op: &AssignOp, lhs: &ExprRef, rhs: &ExprRef) -> Result<Value> {
@@ -848,7 +902,7 @@ impl Interpreter {
             (Expr::Array { items, .. }, Value::Array(a)) => {
                 if items.len() != a.len() {
                     if raise_error {
-                        return Err(span.error(
+                        bail!(span.error(
                             format!(
                                 "array length mismatch. Expected {} got {}.",
                                 items.len(),
@@ -886,7 +940,7 @@ impl Interpreter {
 
                     if field_value == &Value::Undefined {
                         if raise_error {
-                            return Err(span.error("Expected value, got undefined."));
+                            bail!(span.error("Expected value, got undefined."));
                         }
                         return Ok(false);
                     }
@@ -922,7 +976,7 @@ impl Interpreter {
                     let value_t = builtins::types::get_type(value);
 
                     if expr_t != value_t {
-                        return Err(span.error(
+                        bail!(span.error(
 			format!("Cannot bind pattern of type `{expr_t}` with value of type `{value_t}`. Value is {value}.").as_str()));
                     }
                 }
@@ -1046,8 +1100,8 @@ impl Interpreter {
             v => {
                 let span = collection.span();
                 bail!(span.error(
-                    format!("`some .. in collection` expects array/set/object. Got `{v}`").as_str()
-                ))
+                    format!("`some .. in collection` expects array/set/object. Got `{v}`").as_str(),
+                ));
             }
         }
 
@@ -1138,7 +1192,7 @@ impl Interpreter {
                 for var in vars {
                     let name = var.source_str();
                     if self.current_scope()?.get(&name).is_some() {
-                        bail!("duplicated definition of local variable {}", name);
+                        return Err(InterpreterError::DuplicatedDefinition(format!("{}", name)));
                     }
                     self.add_variable_or(&name)?;
                 }
@@ -1560,16 +1614,16 @@ impl Interpreter {
                 if is_set {
                     let set = obj
                         .as_object_mut()
-                        .map_err(|_| anyhow!(span.error("previous value is not an object")))?
+                        .map_err(|_| InterpreterError::PreviousValueNotAnObject)?
                         .entry(p)
                         .or_insert(Value::new_set())
                         .as_set_mut()
-                        .map_err(|_| anyhow!(span.error("previous value is not a set")))?;
+                        .map_err(|_| InterpreterError::PreviousValueNotASet)?;
                     set.append(value.as_set_mut()?);
                 } else {
                     let obj = obj
                         .as_object_mut()
-                        .map_err(|_| anyhow!(span.error("previous value is not an object")))?;
+                        .map_err(|_| InterpreterError::PreviousValueNotAnObject)?;
                     match obj.entry(p) {
                         BTreeMapEntry::Vacant(v) => {
                             if value != Value::Undefined {
@@ -1582,7 +1636,7 @@ impl Interpreter {
                         BTreeMapEntry::Occupied(o) => {
                             if o.get() != &value && value != Value::Undefined {
                                 bail!(span
-                                    .error("complete rules should not produce multiple outputs"))
+                                    .error("complete rules should not produce multiple outputs"));
                             }
                         }
                     }
@@ -1591,7 +1645,7 @@ impl Interpreter {
             } else {
                 obj = obj
                     .as_object_mut()
-                    .map_err(|_| anyhow!(span.error("previous value is not an object")))?
+                    .map_err(|_| InterpreterError::PreviousValueNotAnObject)?
                     .entry(p)
                     .or_insert(Value::new_object());
             }
@@ -1715,9 +1769,11 @@ impl Interpreter {
                     BTreeMapEntry::Vacant(v) => {
                         v.insert(output);
                     }
-                    BTreeMapEntry::Occupied(o) if o.get() != &output => bail!(rule_ref
-                        .span()
-                        .error("rules must not produce multiple outputs")),
+                    BTreeMapEntry::Occupied(o) if o.get() != &output => {
+                        bail!(rule_ref
+                            .span()
+                            .error("rules must not produce multiple outputs"));
+                    }
                     _ => {
                         // Rule produced same value.
                     }
@@ -1737,14 +1793,14 @@ impl Interpreter {
                         match map.get(&key) {
                             Some(pv) if *pv != value => {
                                 let span = ke.span();
-                                return Err(span.source.error(
+                                bail!(span.source.error(
                                     span.line,
                                     span.col,
                                     format!(
-					"value for key `{}` generated multiple times: `{}` and `{}`",
-					serde_json::to_string_pretty(&key)?,
-					serde_json::to_string_pretty(&pv)?,
-					serde_json::to_string_pretty(&value)?,
+                                        "value for key `{}` generated multiple times: `{}` and `{}`",
+                                        serde_json::to_string_pretty(&key)?,
+                                        serde_json::to_string_pretty(&pv)?,
+                                        serde_json::to_string_pretty(&value)?,
                                     )
                                     .as_str(),
                                 ));
@@ -1769,7 +1825,9 @@ impl Interpreter {
                             Value::Set(ref mut s) => {
                                 Rc::make_mut(s).insert(output);
                             }
-                            a => bail!("internal error: invalid context value {a}"),
+                            a => {
+                                return Err(InterpreterError::InvalidContextValue(a.clone()));
+                            }
                         }
                     } else if !ctx.is_compr {
                         match &ctx.value {
@@ -1832,7 +1890,7 @@ impl Interpreter {
                 }
             }
             _ => {
-                return Err(loop_expr.span().source.error(
+                bail!(loop_expr.span().source.error(
                     loop_expr.span().line,
                     loop_expr.span().col,
                     "item cannot be indexed",
@@ -1846,7 +1904,7 @@ impl Interpreter {
     fn get_current_context(&self) -> Result<&Context> {
         match self.contexts.last() {
             Some(ctx) => Ok(ctx),
-            _ => bail!("internal error: no active context found"),
+            _ => Err(InterpreterError::NoCurrentContext),
         }
     }
 
@@ -1938,9 +1996,11 @@ impl Interpreter {
             match schedule.order.get(query) {
                 Some(ord) => ord.iter().map(|i| &query.stmts[*i as usize]).collect(),
                 // TODO
-                _ => bail!(query
-                    .span
-                    .error("statements not scheduled in query {query:?}")),
+                _ => {
+                    bail!(query
+                        .span
+                        .error("statements not scheduled in query {query:?}"));
+                }
             }
         } else {
             query.stmts.iter().collect()
@@ -2058,7 +2118,7 @@ impl Interpreter {
 
         match self.contexts.pop() {
             Some(ctx) => Ok(ctx.value),
-            None => bail!("internal error: context already popped"),
+            None => Err(InterpreterError::ContextAlreadyPopped),
         }
     }
 
@@ -2075,7 +2135,7 @@ impl Interpreter {
 
         match self.contexts.pop() {
             Some(ctx) => Ok(ctx.value),
-            None => bail!("internal error: context already popped"),
+            None => Err(InterpreterError::ContextAlreadyPopped),
         }
     }
 
@@ -2098,7 +2158,7 @@ impl Interpreter {
 
         match self.contexts.pop() {
             Some(ctx) => Ok(ctx.value),
-            None => bail!("internal error: context already popped"),
+            None => Err(InterpreterError::ContextAlreadyPopped),
         }
     }
 
@@ -2181,7 +2241,7 @@ impl Interpreter {
         if let Some(builtin) = builtins::DEPRECATED.get(path) {
             let allow = self.allow_deprecated && !self.current_module()?.rego_v1;
             if !allow {
-                bail!(span.error(format!("{path} is deprecated").as_str()))
+                bail!(span.error(format!("{path} is deprecated").as_str()));
             }
             return Ok(Some(builtin));
         }
@@ -2206,7 +2266,9 @@ impl Interpreter {
 
         let fcn_path = match get_path_string(fcn, None) {
             Ok(p) => p,
-            _ => bail!(span.error("invalid function expression")),
+            _ => {
+                bail!(span.error("invalid function expression"));
+            }
         };
 
         let mut param_values = Vec::with_capacity(params.len());
@@ -2292,14 +2354,16 @@ impl Interpreter {
             }
             match r {
                 Ok(v) => return Ok(v),
-                Err(e) => bail!(span.error(&format!("{e}"))),
+                Err(e) => {
+                    bail!(span.error(&format!("{}", e)));
+                }
             }
         }
 
         let fcns = fcns_rules.clone();
 
         let mut results: Vec<Value> = Vec::new();
-        let mut errors: Vec<anyhow::Error> = Vec::new();
+        let mut errors: Vec<InterpreterError> = Vec::new();
 
         'outer: for fcn_rule in fcns {
             let (args, output_expr, bodies) = match fcn_rule.as_ref() {
@@ -2308,11 +2372,13 @@ impl Interpreter {
                     bodies,
                     ..
                 } => (args, assign.as_ref().map(|a| a.value.clone()), bodies),
-                _ => bail!("internal error not a function"),
+                _ => {
+                    return Err(InterpreterError::NotAFunction);
+                }
             };
 
             if args.len() != params.len() {
-                return Err(span.source.error(
+                bail!(span.source.error(
                     span.line,
                     span.col,
                     format!(
@@ -2372,11 +2438,11 @@ impl Interpreter {
             let result = match &value {
                 Value::Set(s) if s.len() == 1 => s.iter().next().unwrap().clone(),
                 Value::Set(s) if !s.is_empty() => {
-                    return Err(span.source.error(
+                    bail!(span.source.error(
                         span.line,
                         span.col,
                         format!("function produced multiple outputs {value:?}").as_str(),
-                    ))
+                    ));
                 }
                 // If the function successfully executed, but did not return any value, then return true.
                 Value::Set(s) if s.is_empty() && output_expr.is_none() => Value::Bool(true),
@@ -2399,7 +2465,7 @@ impl Interpreter {
         }
 
         if self.strict_builtin_errors && !errors.is_empty() {
-            return Err(anyhow!(errors[0].to_string()));
+            return Err(errors.remove(0));
         }
 
         if results.is_empty() {
@@ -2439,13 +2505,13 @@ impl Interpreter {
             if errors.is_empty() {
                 return Ok(Value::Undefined);
             } else {
-                return Err(anyhow!(errors[0].to_string()));
+                return Err(errors.remove(0));
             }
         }
 
         // all defined values should be the equal to the same value that should be returned
         if !results.windows(2).all(|w| w[0] == w[1]) {
-            return Err(span.source.error(
+            bail!(span.source.error(
                 span.line,
                 span.col,
                 "functions must not produce multiple outputs for same inputs",
@@ -2623,7 +2689,7 @@ impl Interpreter {
             if no_error {
                 return Ok(Value::Undefined);
             }
-            return Err(span.error("undefined var"));
+            bail!(span.error("undefined var"));
         }
 
         // Ensure that rules are evaluated
@@ -2774,7 +2840,7 @@ impl Interpreter {
             Expr::SetCompr { term, query, .. } => self.eval_set_compr(term, query),
             Expr::UnaryExpr { span, expr: uexpr } => match uexpr.as_ref() {
                 Expr::Number(_) if !uexpr.span().text().starts_with('-') => {
-                    builtins::numbers::arithmetic_operation(
+                    let value = builtins::numbers::arithmetic_operation(
                         span,
                         &ArithOp::Sub,
                         expr,
@@ -2782,11 +2848,14 @@ impl Interpreter {
                         Value::from(0),
                         self.eval_expr(uexpr)?,
                         self.strict_builtin_errors,
-                    )
+                    )?;
+                    Ok(value)
                 }
-                _ => bail!(expr
-                    .span()
-                    .error("unary - can only be used with numeric literals")),
+                _ => {
+                    bail!(expr
+                        .span()
+                        .error("unary - can only be used with numeric literals"));
+                }
             },
             Expr::Call { span, fcn, params } => {
                 self.eval_call(span, expr, fcn, params, None, false)
@@ -2844,7 +2913,7 @@ impl Interpreter {
                 return Ok(m.clone());
             }
         }
-        bail!("internal error: could not find module for rule");
+        Err(InterpreterError::RuleModuleNotFound)
     }
 
     fn eval_rule_bodies(
@@ -2883,7 +2952,9 @@ impl Interpreter {
 
         let ctx = match self.contexts.pop() {
             Some(ctx) => ctx,
-            _ => bail!("internal error: rule's context already popped"),
+            _ => {
+                return Err(InterpreterError::ContextAlreadyPopped);
+            }
         };
 
         let result = match result {
@@ -2907,11 +2978,11 @@ impl Interpreter {
                 Value::Array(a) if a.len() == 1 => a[0].clone(),
                 Value::Array(a) if a.is_empty() => Value::Bool(true),
                 Value::Array(_) => {
-                    return Err(span.source.error(
+                    bail!(span.source.error(
                         span.line,
                         span.col,
                         "complete rules should not produce multiple outputs",
-                    ))
+                    ));
                 }
                 Value::Set(_) => ctx.value,
                 _ => unimplemented!("todo fix this: ctx.value = {:?}", ctx.value),
@@ -2947,21 +3018,23 @@ impl Interpreter {
             Value::Object(map) => match Rc::make_mut(map).get_mut(&key) {
                 Some(v) if paths.len() == 1 => Ok(v),
                 Some(v) => Self::make_or_get_value_mut(v, &paths[1..]),
-                _ => bail!("internal error: unexpected"),
+                _ => Err(InterpreterError::Unexpected),
             },
             Value::Undefined if paths.len() > 1 => {
                 *obj = Value::new_object();
                 Self::make_or_get_value_mut(obj, paths)
             }
             Value::Undefined => Ok(obj),
-            _ => bail!("internal error: make: not an object {obj:?}"),
+            _ => Err(InterpreterError::NotAnObject),
         }
     }
 
     pub fn merge_rule_value(span: &Span, value: &mut Value, new: Value) -> Result<()> {
         match value.merge(new) {
             Ok(()) => Ok(()),
-            Err(_) => Err(span.error("rules should not produce multiple outputs.")),
+            Err(_) => {
+                bail!(span.error("rules should not produce multiple outputs."));
+            }
         }
     }
 
@@ -2984,7 +3057,9 @@ impl Interpreter {
                     comps.push(v.0.text());
                     expr = None;
                 }
-                _ => bail!(e.span().error("invalid ref expression")),
+                _ => {
+                    bail!(e.span().error("invalid ref expression"));
+                }
             }
         }
         if let Some(d) = document {
@@ -3059,7 +3134,7 @@ impl Interpreter {
             Membership { span, .. } => ("membership", span),
         };
 
-        Err(span.error(format!("invalid `{kind}` in default value").as_str()))
+        bail!(span.error(format!("invalid `{kind}` in default value").as_str()));
     }
 
     pub fn check_default_rules(&self) -> Result<()> {
@@ -3101,10 +3176,12 @@ impl Interpreter {
                 Expr::RefBrack { refr, index, .. } => (refr, Some(index.clone())),
                 Expr::RefDot { .. } => (refr, None),
                 Expr::Var(_) => (refr, None),
-                _ => bail!(refr.span().error(&format!(
-                    "invalid token {:?} with the default keyword",
-                    refr
-                ))),
+                _ => {
+                    bail!(refr.span().error(&format!(
+                        "invalid token {:?} with the default keyword",
+                        refr
+                    )));
+                }
             };
 
             Parser::get_path_ref_components_into(refr, &mut path)?;
@@ -3280,7 +3357,9 @@ impl Interpreter {
                     }
                 }
             }
-            _ => bail!("internal error: unexpected"),
+            _ => {
+                return Err(InterpreterError::Unexpected);
+            }
         }
         Ok(())
     }
@@ -3311,7 +3390,7 @@ impl Interpreter {
             self.active_rules.pop();
             let refr = Self::get_rule_refr(rule);
             let span = refr.span();
-            return Err(span.source.error(
+            bail!(span.source.error(
                 span.line,
                 span.col,
                 format!("recursion detected when evaluating rule:{msg}").as_str(),
@@ -3329,7 +3408,7 @@ impl Interpreter {
         self.scopes = scopes;
         match self.active_rules.pop() {
             Some(ref r) if r == rule => res,
-            _ => bail!("internal error: current rule not active"),
+            _ => Err(InterpreterError::CurrentRuleNotActive),
         }
     }
 
@@ -3367,7 +3446,9 @@ impl Interpreter {
 
         let mut results = match self.contexts.pop() {
             Some(ctx) => ctx.results,
-            _ => bail!("internal error: no context"),
+            _ => {
+                return Err(InterpreterError::NoCurrentContext);
+            }
         };
 
         // Restore schedules.
@@ -3574,10 +3655,7 @@ impl Interpreter {
                     },
                 };
                 if target.is_empty() {
-                    bail!(import
-                        .refr
-                        .span()
-                        .message("warning", "invalid ref in import"));
+                    bail!(import.refr.span().error("invalid ref in import"));
                 }
                 self.imports
                     .insert(module_path.clone() + "." + target, import.refr.clone());
@@ -3640,10 +3718,9 @@ impl Interpreter {
     ) -> Result<()> {
         if let std::collections::hash_map::Entry::Vacant(v) = self.extensions.entry(path) {
             v.insert((nargs, Rc::new(extension)));
-            Ok(())
-        } else {
-            bail!("extension already added");
+            return Ok(());
         }
+        Err(InterpreterError::ExtensionAlreadyAdded)
     }
 
     #[cfg(feature = "coverage")]
@@ -3652,7 +3729,7 @@ impl Interpreter {
         query: &Ref<Query>,
         covered: &Vec<bool>,
         file: &mut crate::coverage::File,
-    ) -> Result<()> {
+    ) -> crate::scheduler::Result<()> {
         for stmt in &query.stmts {
             // TODO: with mods
             match &stmt.literal {
@@ -3681,7 +3758,7 @@ impl Interpreter {
         expr: &Ref<Expr>,
         covered: &Vec<bool>,
         file: &mut crate::coverage::File,
-    ) -> Result<()> {
+    ) -> crate::scheduler::Result<()> {
         use Expr::*;
         traverse(expr, &mut |e| {
             Ok(match e.as_ref() {
@@ -3781,7 +3858,7 @@ impl Interpreter {
 
     pub fn eval_rule_in_path(&mut self, path: String) -> Result<Value> {
         if !self.rule_paths.contains(&path) {
-            bail!("not a valid rule path");
+            return Err(InterpreterError::InvalidRulePath);
         }
         self.ensure_rule_evaluated(path.clone())?;
         let parts: Vec<&str> = path.split('.').collect();

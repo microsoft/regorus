@@ -2,8 +2,10 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
+use crate::bail;
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_array, ensure_object};
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::Rc;
 use crate::Value;
@@ -11,7 +13,7 @@ use crate::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::iter::Iterator;
 
-use anyhow::{bail, Result};
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("json.filter", (json_filter, 2));
@@ -399,7 +401,7 @@ fn compile_json_schema(param: &Ref<Expr>, arg: &Value) -> Result<jsonschema::JSO
     if let Ok(schema) = serde_json::from_str(&schema_str) {
         match jsonschema::JSONSchema::compile(&schema) {
             Ok(schema) => return Ok(schema),
-            Err(e) => bail!(e.to_string()),
+            Err(e) => return Err(BuiltinError::JsonSchemaValidationFailed(e.to_string())),
         }
     }
     bail!(param.span().error("not a valid json schema"))

@@ -2,15 +2,17 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
+use crate::bail;
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_numeric, ensure_string};
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::value::Value;
 
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
 use regex::Regex;
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert(
@@ -39,8 +41,11 @@ fn find_all_string_submatch_n(
     let value = ensure_string(name, &params[1], &args[1])?;
     let n = ensure_numeric(name, &params[2], &args[2])?;
 
-    let pattern =
-        Regex::new(&pattern).or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let Ok(pattern) = Regex::new(&pattern) else {
+        return Err(BuiltinError::RegexError(
+            params[0].span().error("invalid regex"),
+        ));
+    };
 
     if !n.is_integer() {
         bail!(params[2].span().error("n must be an integer"));
@@ -81,8 +86,11 @@ fn find_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     let value = ensure_string(name, &params[1], &args[1])?;
     let n = ensure_numeric(name, &params[2], &args[2])?;
 
-    let pattern =
-        Regex::new(&pattern).or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let Ok(pattern) = Regex::new(&pattern) else {
+        return Err(BuiltinError::RegexError(
+            params[0].span().error("invalid regex"),
+        ));
+    };
 
     if !n.is_integer() {
         bail!(params[2].span().error("n must be an integer"));
@@ -121,8 +129,11 @@ pub fn regex_match(
     let pattern = ensure_string(name, &params[0], &args[0])?;
     let value = ensure_string(name, &params[1], &args[1])?;
 
-    let pattern =
-        Regex::new(&pattern).or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let Ok(pattern) = Regex::new(&pattern) else {
+        return Err(BuiltinError::RegexError(
+            params[0].span().error("invalid regex"),
+        ));
+    };
     Ok(Value::Bool(pattern.is_match(&value)))
 }
 
@@ -156,8 +167,11 @@ fn regex_split(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
     let pattern = ensure_string(name, &params[0], &args[0])?;
     let value = ensure_string(name, &params[1], &args[1])?;
 
-    let pattern =
-        Regex::new(&pattern).or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let Ok(pattern) = Regex::new(&pattern) else {
+        return Err(BuiltinError::RegexError(
+            params[0].span().error("invalid regex"),
+        ));
+    };
     Ok(Value::from_array(
         pattern
             .split(&value)
@@ -196,8 +210,11 @@ fn regex_template_match(
         }
 
         // Fetch pattern, excluding delimiters.
-        let pattern = Regex::new(&template[start + delimiter_start.len()..end])
-            .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+        let Ok(pattern) = Regex::new(&template[start + delimiter_start.len()..end]) else {
+            return Err(BuiltinError::RegexError(
+                params[0].span().error("invalid regex"),
+            ));
+        };
 
         // Skip preceding literal in value.
         value = &value[start..];
