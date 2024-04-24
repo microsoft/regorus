@@ -1,0 +1,20 @@
+{
+    "extensions": {
+        "test2": {
+            "signingInfo": {
+                "extensionSigned": true
+            }
+        },
+        "test3": {
+            "signingInfo": {
+                "extensionSigned": false
+            }
+        },
+        "test1": {
+            "signingInfo": {
+                "extensionSigned": false
+            }
+        },
+        "test4": {}
+    }
+}
