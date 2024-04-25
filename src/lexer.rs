@@ -455,7 +455,7 @@ impl<'source> Lexer<'source> {
             let (offset, ch) = self.peek();
             let col = self.col + (offset - start) as u16;
             match ch {
-                '"' | '#' | '\x00' => {
+                '"' | '\x00' => {
                     break;
                 }
                 '\\' => {
