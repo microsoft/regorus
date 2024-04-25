@@ -77,7 +77,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     let test: Test = serde_yaml::from_str(&yaml)?;
 
     for case in &test.cases {
-        let source = Source::new("case.rego".to_string(), case.rego.clone());
+        let source = Source::from_contents("case.rego".to_string(), case.rego.clone())?;
         print!("case {} ", &case.note);
 
         match get_tokens(&source) {
@@ -162,7 +162,7 @@ fn run(path: &str) {
 #[test]
 fn debug() -> Result<()> {
     let rego = "\"This string is 35 characters long.\"\"short string\"";
-    let source = Source::new("case.rego".to_string(), rego.to_string());
+    let source = Source::from_contents("case.rego".to_string(), rego.to_string())?;
 
     let mut lexer = Lexer::new(&source);
     let tok = lexer.next_token()?;
@@ -184,7 +184,7 @@ fn debug() -> Result<()> {
 #[test]
 fn tab() -> Result<()> {
     let rego = r#"	"This string is 35 characters long."`raw	string`p"#;
-    let source = Source::new("case.rego".to_string(), rego.to_string());
+    let source = Source::from_contents("case.rego".to_string(), rego.to_string())?;
 
     let mut lexer = Lexer::new(&source);
 
@@ -214,12 +214,30 @@ fn tab() -> Result<()> {
 #[test]
 fn invalid_line() -> Result<()> {
     let rego = "";
-    let source = Source::new("case.rego".to_string(), rego.to_string());
+    let source = Source::from_contents("case.rego".to_string(), rego.to_string())?;
 
     assert_eq!(
         source.message(2, 0, "", ""),
         "case.rego: invalid line 2 specified"
     );
 
+    Ok(())
+}
+
+#[test]
+fn file_more_than_64_kb_size() -> Result<()> {
+    let source = Source::from_file("tests/coco/data/large.rego")?;
+    let mut lexer = Lexer::new(&source);
+
+    let mut count = 0;
+    // Read tokens until EOF.
+    loop {
+        let token = lexer.next_token()?;
+        count += 1;
+        if token.0 == TokenKind::Eof {
+            break;
+        }
+    }
+    assert_eq!(count, 8789);
     Ok(())
 }

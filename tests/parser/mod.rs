@@ -630,7 +630,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
 
     for case in &test.cases {
         print!("\ncase {} ", case.note);
-        let source = Source::new("case.rego".to_string(), case.rego.clone());
+        let source = Source::from_contents("case.rego".to_string(), case.rego.clone())?;
         let mut parser = Parser::new(&source)?;
         match parser.parse() {
             Ok(module) => {

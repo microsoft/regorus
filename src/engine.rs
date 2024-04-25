@@ -65,7 +65,7 @@ impl Engine {
     /// ```
     ///
     pub fn add_policy(&mut self, path: String, rego: String) -> Result<()> {
-        let source = Source::new(path, rego);
+        let source = Source::from_contents(path, rego)?;
         let mut parser = Parser::new(&source)?;
         self.modules.push(Ref::new(parser.parse()?));
         // if policies change, interpreter needs to be prepared again
@@ -294,15 +294,15 @@ impl Engine {
 
         self.interpreter.create_rule_prefixes()?;
         let query_module = {
-            let source = Source::new(
+            let source = Source::from_contents(
                 "<query_module.rego>".to_owned(),
                 "package __internal_query_module".to_owned(),
-            );
+            )?;
             Ref::new(Parser::new(&source)?.parse()?)
         };
 
         // Parse the query.
-        let query_source = Source::new("<query.rego>".to_string(), query);
+        let query_source = Source::from_contents("<query.rego>".to_string(), query)?;
         let mut parser = Parser::new(&query_source)?;
         let query_node = parser.parse_user_query()?;
         if query_node.span.text() == "data" {
@@ -411,15 +411,15 @@ impl Engine {
         self.eval_modules(enable_tracing)?;
 
         let query_module = {
-            let source = Source::new(
+            let source = Source::from_contents(
                 "<query_module.rego>".to_owned(),
                 "package __internal_query_module".to_owned(),
-            );
+            )?;
             Ref::new(Parser::new(&source)?.parse()?)
         };
 
         // Parse the query.
-        let query_source = Source::new("<query.rego>".to_string(), query);
+        let query_source = Source::from_contents("<query.rego>".to_string(), query)?;
         let mut parser = Parser::new(&query_source)?;
         let query_node = parser.parse_user_query()?;
         let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
