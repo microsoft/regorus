@@ -25,15 +25,15 @@ pub enum InterpreterError {
     Unexpected,
     #[error("not an object")]
     NotAnObject,
-    #[error("builtin error: {0}")]
+    #[error(transparent)]
     BuiltinError(#[from] BuiltinError),
-    #[error("lexer error: {0}")]
+    #[error(transparent)]
     LexerError(#[from] LexerError),
-    #[error("parser error: {0}")]
+    #[error(transparent)]
     ParserError(#[from] ParserError),
-    #[error("scheduler error: {0}")]
+    #[error(transparent)]
     SchedulerError(#[from] SchedulerError),
-    #[error("value error: {0}")]
+    #[error(transparent)]
     ValueError(#[from] ValueError),
     #[error(transparent)]
     UtilsError(#[from] UtilsError),
@@ -3729,7 +3729,7 @@ impl Interpreter {
         query: &Ref<Query>,
         covered: &Vec<bool>,
         file: &mut crate::coverage::File,
-    ) -> crate::scheduler::Result<()> {
+    ) -> std::result::Result<(), SchedulerError> {
         for stmt in &query.stmts {
             // TODO: with mods
             match &stmt.literal {
@@ -3758,7 +3758,7 @@ impl Interpreter {
         expr: &Ref<Expr>,
         covered: &Vec<bool>,
         file: &mut crate::coverage::File,
-    ) -> crate::scheduler::Result<()> {
+    ) -> std::result::Result<(), SchedulerError> {
         use Expr::*;
         traverse(expr, &mut |e| {
             Ok(match e.as_ref() {

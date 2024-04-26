@@ -159,7 +159,7 @@ impl Source {
         }
     }
 
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Source, LexerError> {
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Source, std::io::Error> {
         let contents = std::fs::read_to_string(&path)?;
         // TODO: retain path instead of converting to string
         Ok(Self::new(

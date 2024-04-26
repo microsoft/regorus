@@ -15,7 +15,7 @@ use thiserror::Error;
 pub enum SchedulerError {
     #[error("package scope missing")]
     MissingPackageScope,
-    #[error("lexer error: {0}")]
+    #[error(transparent)]
     LexerError(#[from] LexerError),
     #[error("non-empty definitions")]
     NonEmptyDefinitions,
@@ -23,7 +23,7 @@ pub enum SchedulerError {
     UtilsError(#[from] UtilsError),
 }
 
-pub(crate) type Result<T> = std::result::Result<T, SchedulerError>;
+type Result<T> = std::result::Result<T, SchedulerError>;
 
 #[derive(Debug)]
 pub struct Definition<Str: Clone + std::cmp::Ord> {

@@ -15,28 +15,39 @@ use thiserror::Error;
 use std::convert::AsRef;
 use std::path::Path;
 
-type Result<T> = std::result::Result<T, EngineError>;
+#[derive(Error, Debug)]
+pub enum DataError {
+    #[error("data must be object")]
+    MustBeObject,
+    #[error(transparent)]
+    ValueError(#[from] ValueError),
+}
+
+/// Policy Error
+#[derive(Error, Debug)]
+pub enum PolicyError {
+    #[error(transparent)]
+    IoFailed(#[from] std::io::Error),
+    #[error(transparent)]
+    ParserError(#[from] ParserError),
+}
 
 #[derive(Error, Debug)]
-pub enum EngineError {
-    #[error("interpreter error: {0}")]
+pub enum EvalError {
+    #[error(transparent)]
     InterpreterError(#[from] InterpreterError),
-    #[error("lexer error: {0}")]
-    LexerError(#[from] LexerError),
-    #[error("parser error: {0}")]
+    #[error(transparent)]
     ParserError(#[from] ParserError),
-    #[error("scheduler error: {0}")]
-    SchedulerError(#[from] SchedulerError),
-    #[error("utils error: {0}")]
-    UtilsError(#[from] UtilsError),
-    #[error("value error: {0}")]
-    ValueError(#[from] ValueError),
-    #[error("data must be object")]
-    DataMustBeObject,
     #[error("query did not produce any values")]
     QueryDidNotProduceAnyValues,
     #[error("query produced more than one value")]
     QueryProducedMoreThanOneValue,
+    #[error(transparent)]
+    SchedulerError(#[from] SchedulerError),
+    #[error(transparent)]
+    UtilsError(#[from] UtilsError),
+    #[error(transparent)]
+    ValueError(#[from] ValueError),
 }
 
 /// The Rego evaluation engine.
@@ -88,7 +99,7 @@ impl Engine {
     /// # }
     /// ```
     ///
-    pub fn add_policy(&mut self, path: String, rego: String) -> Result<()> {
+    pub fn add_policy(&mut self, path: String, rego: String) -> Result<(), PolicyError> {
         let source = Source::new(path, rego);
         let mut parser = Parser::new(&source)?;
         self.modules.push(Ref::new(parser.parse()?));
@@ -113,7 +124,7 @@ impl Engine {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn add_policy_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+    pub fn add_policy_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), PolicyError> {
         let source = Source::from_file(path)?;
         let mut parser = Parser::new(&source)?;
         self.modules.push(Ref::new(parser.parse()?));
@@ -144,7 +155,7 @@ impl Engine {
         self.interpreter.set_input(input);
     }
 
-    pub fn set_input_json(&mut self, input_json: &str) -> Result<()> {
+    pub fn set_input_json(&mut self, input_json: &str) -> Result<(), ValueError> {
         self.set_input(Value::from_json_str(input_json)?);
         Ok(())
     }
@@ -203,16 +214,16 @@ impl Engine {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn add_data(&mut self, data: Value) -> Result<()> {
+    pub fn add_data(&mut self, data: Value) -> Result<(), DataError> {
         if data.as_object().is_err() {
-            return Err(EngineError::DataMustBeObject);
+            return Err(DataError::MustBeObject);
         }
         self.prepared = false;
         self.interpreter.get_data_mut().merge(data)?;
         Ok(())
     }
 
-    pub fn add_data_json(&mut self, data_json: &str) -> Result<()> {
+    pub fn add_data_json(&mut self, data_json: &str) -> Result<(), DataError> {
         self.add_data(Value::from_json_str(data_json)?)
     }
 
@@ -273,7 +284,7 @@ impl Engine {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn eval_rule(&mut self, path: String) -> Result<Value> {
+    pub fn eval_rule(&mut self, path: String) -> Result<Value, EvalError> {
         self.prepare_for_eval(false)?;
         self.interpreter.clean_internal_evaluation_state();
         let value = self.interpreter.eval_rule_in_path(path)?;
@@ -314,7 +325,11 @@ impl Engine {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn eval_query(&mut self, query: String, enable_tracing: bool) -> Result<QueryResults> {
+    pub fn eval_query(
+        &mut self,
+        query: String,
+        enable_tracing: bool,
+    ) -> Result<QueryResults, EvalError> {
         self.prepare_for_eval(enable_tracing)?;
         self.interpreter.clean_internal_evaluation_state();
 
@@ -370,15 +385,19 @@ impl Engine {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn eval_bool_query(&mut self, query: String, enable_tracing: bool) -> Result<bool> {
+    pub fn eval_bool_query(
+        &mut self,
+        query: String,
+        enable_tracing: bool,
+    ) -> Result<bool, EvalError> {
         let results = self.eval_query(query, enable_tracing)?;
         match results.result.len() {
-            0 => Err(EngineError::QueryDidNotProduceAnyValues),
+            0 => Err(EvalError::QueryDidNotProduceAnyValues),
             1 if results.result[0].expressions.len() == 1 => {
                 let b = results.result[0].expressions[0].value.as_bool().copied()?;
                 Ok(b)
             }
-            _ => Err(EngineError::QueryProducedMoreThanOneValue),
+            _ => Err(EvalError::QueryProducedMoreThanOneValue),
         }
     }
 
@@ -435,7 +454,7 @@ impl Engine {
         &mut self,
         query: String,
         enable_tracing: bool,
-    ) -> Result<QueryResults> {
+    ) -> Result<QueryResults, EvalError> {
         self.eval_modules(enable_tracing)?;
 
         let query_module = {
@@ -461,7 +480,7 @@ impl Engine {
     }
 
     #[doc(hidden)]
-    fn prepare_for_eval(&mut self, enable_tracing: bool) -> Result<()> {
+    fn prepare_for_eval(&mut self, enable_tracing: bool) -> Result<(), EvalError> {
         self.interpreter.set_traces(enable_tracing);
 
         // if the data/policies have changed or the interpreter has never been prepared
@@ -499,7 +518,7 @@ impl Engine {
         module: &Ref<Module>,
         rule: &Ref<Rule>,
         enable_tracing: bool,
-    ) -> Result<Value> {
+    ) -> Result<Value, EvalError> {
         self.prepare_for_eval(enable_tracing)?;
         self.interpreter.clean_internal_evaluation_state();
 
@@ -509,7 +528,7 @@ impl Engine {
     }
 
     #[doc(hidden)]
-    pub fn eval_modules(&mut self, enable_tracing: bool) -> Result<Value> {
+    pub fn eval_modules(&mut self, enable_tracing: bool) -> Result<Value, EvalError> {
         self.prepare_for_eval(enable_tracing)?;
         self.interpreter.clean_internal_evaluation_state();
 
@@ -637,7 +656,7 @@ impl Engine {
         path: String,
         nargs: u8,
         extension: Box<dyn Extension>,
-    ) -> Result<()> {
+    ) -> Result<(), InterpreterError> {
         self.interpreter.add_extension(path, nargs, extension)?;
         Ok(())
     }
@@ -682,7 +701,7 @@ impl Engine {
     /// ```
     ///
     /// See also [`crate::coverage::Report::to_colored_string`].
-    pub fn get_coverage_report(&self) -> Result<crate::coverage::Report> {
+    pub fn get_coverage_report(&self) -> Result<crate::coverage::Report, InterpreterError> {
         let report = self.interpreter.get_coverage_report()?;
         Ok(report)
     }
@@ -739,7 +758,7 @@ impl Engine {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn take_prints(&mut self) -> Result<Vec<String>> {
+    pub fn take_prints(&mut self) -> Result<Vec<String>, InterpreterError> {
         let strings = self.interpreter.take_prints()?;
         Ok(strings)
     }

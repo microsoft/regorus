@@ -16,9 +16,9 @@ type Result<T> = std::result::Result<T, ParserError>;
 
 #[derive(Error, Debug)]
 pub enum ParserError {
-    #[error("value error: {0}")]
+    #[error(transparent)]
     ValueError(#[from] ValueError),
-    #[error("lexer error: {0}")]
+    #[error(transparent)]
     LexerError(#[from] LexerError),
     #[error("internal error: not a compr")]
     NotACompr,
