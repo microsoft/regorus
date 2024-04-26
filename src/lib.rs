@@ -47,9 +47,9 @@ use std::rc::Rc;
 #[derive(Debug, Clone, Serialize, Eq, PartialEq)]
 pub struct Location {
     /// Line number. Starts at 1.
-    pub row: u16,
+    pub row: u32,
     /// Column number. Starts at 1.
-    pub col: u16,
+    pub col: u32,
 }
 
 /// An expression in a Rego query.

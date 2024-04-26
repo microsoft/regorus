@@ -56,11 +56,9 @@ cases:
 
   - note: comments-within-rstring
     rego: |
-      #Comments aren't allowed within strings,
-      "#This is not a comment
-      "#c
-    tokens:
-    error: unmatched "
+      #Comments aren't lexed within raw strings.
+      "#This is not a comment"#c
+    tokens: ["#This is not a comment", ""]
 
   - note: comment-integer-break
     rego: |
