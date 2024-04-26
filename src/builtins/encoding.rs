@@ -42,6 +42,7 @@ pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     }
     m.insert("json.is_valid", (json_is_valid, 1));
     m.insert("json.marshal", (json_marshal, 1));
+    m.insert("json.marshal_with_options", (json_marshal_with_options, 2));
     m.insert("json.unmarshal", (json_unmarshal, 1));
 
     #[cfg(feature = "yaml")]
@@ -366,6 +367,74 @@ fn json_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool
             .with_context(|| span.error("could not serialize to json"))?
             .into(),
     ))
+}
+
+fn json_marshal_with_options(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
+    let name = "json.marshal_with_options";
+    ensure_args_count(span, name, params, args, 2)?;
+
+    let options = ensure_object(name, &params[1], args[1].clone())?;
+    let (mut pretty, mut indent, mut prefix) = (true, Some("\t".to_owned()), None);
+    for (option, option_value) in options.iter() {
+        match option {
+            Value::String(s) if s.as_ref() == "pretty" && option_value.as_bool().is_ok() => {
+                pretty = option_value == &Value::Bool(true);
+            }
+            Value::String(s) if s.as_ref() == "pretty" => bail!(params[1]
+                .span()
+                .error("marshaling option `pretty` must be true or false")),
+            Value::String(s) if s.as_ref() == "prefix" && option_value.as_string().is_ok() => {
+                prefix = Some(option_value.as_string()?.as_ref().to_string());
+            }
+            Value::String(s) if s.as_ref() == "prefix" => bail!(params[1]
+                .span()
+                .error("marshaling option `pretty` must be string")),
+            Value::String(s) if s.as_ref() == "indent" && option_value.as_string().is_ok() => {
+                indent = Some(option_value.as_string()?.as_ref().to_string());
+            }
+            Value::String(s) if s.as_ref() == "indent" => bail!(params[1]
+                .span()
+                .error("marshaling option `pretty` must be string")),
+            _ => bail!(params[1]
+                .span()
+                .error("marshaling option must be one of `indent`, `prefix` or `pretty`")),
+        }
+    }
+
+    if !pretty || options.is_empty() {
+        return Ok(Value::String(
+            serde_json::to_string(&args[0])
+                .with_context(|| span.error("could not serialize to json"))?
+                .into(),
+        ));
+    }
+
+    let lines: Vec<String> = serde_json::to_string_pretty(&args[0])
+        .with_context(|| span.error("could not serialize to json"))?
+        .split('\n')
+        .map(|line| {
+            let mut line = line.to_string();
+
+            if let Some(indent) = &indent {
+                let start_trimmed = line.trim_start();
+                let leading_spaces = line.len() - start_trimmed.len();
+                let indentation_level = leading_spaces / 2;
+                line = indent.repeat(indentation_level) + start_trimmed;
+            }
+
+            if let Some(prefix) = &prefix {
+                line = prefix.to_owned() + &line;
+            }
+            line
+        })
+        .collect();
+
+    Ok(Value::from(lines.join("\n")))
 }
 
 fn json_unmarshal(

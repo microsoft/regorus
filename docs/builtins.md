@@ -159,24 +159,25 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [type_name](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-types-type_name)   | _       |
   
 - [Encoding](https://www.openpolicyagent.org/docs/latest/policy-reference/#encoding)
-  | Builtin                                                                                                                          | Feature     |
-  |----------------------------------------------------------------------------------------------------------------------------------|-------------|
-  | [base64.is_valid](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-base64is_valid)                 | `base64`    |
-  | [base64url.decode](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-base64urldecode)               | `base64`    |
-  | [base64url.encode](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-base64urlencode)               | `base64url` |
-  | [base64url.encode_no_pad](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-base64urlencode_no_pad) | `base64url` |
-  | [hex.decode](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-hexdecode)                           | `hex`       |
-  | [hex.encode](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-hexencode)                           | `hex`       |
-  | [json.is_valid](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-jsonis_valid)                     | _           |
-  | [json.marshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-jsonmarshal)                       | _           |
-  | [json.unmarshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-jsonunmarshal)                   | _           |
-  | [urlquery.decode](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-urlquerydecode)                 | `urlquery`  |
-  | [urlquery.decode_object](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-urlquerydecode_object)   | `urlquery`  |
-  | [urlquery.encode](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-urlqueryencode)                 | `urlquery`  |
-  | [urlquery.encode_object](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-urlqueryencode_object)   | `urlquery`  |
-  | [yaml.is_valid](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlis_valid)                     | `yaml`      |
-  | [yaml.marshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlmarshal)                       | `yaml`      |
-  | [yaml.unmarshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlunmarshal)                   | `yaml`            |
+  | Builtin                                                                                                                              | Feature     |
+  |--------------------------------------------------------------------------------------------------------------------------------------|-------------|
+  | [base64.is_valid](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-base64is_valid)                     | `base64`    |
+  | [base64url.decode](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-base64urldecode)                   | `base64`    |
+  | [base64url.encode](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-base64urlencode)                   | `base64url` |
+  | [base64url.encode_no_pad](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-base64urlencode_no_pad)     | `base64url` |
+  | [hex.decode](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-hexdecode)                               | `hex`       |
+  | [hex.encode](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-hexencode)                               | `hex`       |
+  | [json.is_valid](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-jsonis_valid)                         | _           |
+  | [json.marshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-jsonmarshal)                           | _           |
+  | [json.marshal_with_options](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-jsonmarshal_with_options) | _           |
+  | [json.unmarshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-jsonunmarshal)                       | _           |
+  | [urlquery.decode](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-urlquerydecode)                     | `urlquery`  |
+  | [urlquery.decode_object](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-urlquerydecode_object)       | `urlquery`  |
+  | [urlquery.encode](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-urlqueryencode)                     | `urlquery`  |
+  | [urlquery.encode_object](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-urlqueryencode_object)       | `urlquery`  |
+  | [yaml.is_valid](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlis_valid)                         | `yaml`      |
+  | [yaml.marshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlmarshal)                           | `yaml`      |
+  | [yaml.unmarshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlunmarshal)                       | `yaml`      |
 
 - [Time](https://www.openpolicyagent.org/docs/latest/policy-reference/#time)
    | Builtin                                                                                                                    | Feature |
