@@ -16,8 +16,8 @@ pub struct Parser<'source> {
     source: Source,
     lexer: Lexer<'source>,
     tok: Token,
-    line: u16,
-    end: u16,
+    line: u32,
+    end: u32,
     future_keywords: BTreeMap<String, Span>,
     rego_v1: bool,
 }
@@ -753,7 +753,7 @@ impl<'source> Parser<'source> {
 
     fn parse_membership_tail(
         &mut self,
-        start: u16,
+        start: u32,
         mut expr1: Expr,
         mut expr2: Option<Expr>,
     ) -> Result<Expr> {

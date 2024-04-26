@@ -38,7 +38,10 @@ fn analyze_file(regos: &[String], expected_scopes: &[Scope]) -> Result<()> {
     let mut sources = vec![];
     let mut modules = vec![];
     for (idx, _) in regos.iter().enumerate() {
-        sources.push(Source::new(format!("rego_{idx}"), regos[idx].clone()));
+        sources.push(Source::from_contents(
+            format!("rego_{idx}"),
+            regos[idx].clone(),
+        )?);
     }
 
     for source in &sources {
