@@ -303,10 +303,12 @@ pub struct QueryResults {
     pub result: Vec<QueryResult>,
 }
 
+pub type FnError = Box<dyn std::error::Error>;
+
 /// A user defined builtin function implementation.
 ///
 /// It is not necessary to implement this trait directly.
-pub trait Extension: FnMut(Vec<Value>) -> anyhow::Result<Value> + Send + Sync {
+pub trait Extension: FnMut(Vec<Value>) -> Result<Value, FnError> + Send + Sync {
     /// Fn, FnMut etc are not sized and cannot be cloned in their boxed form.
     /// clone_box exists to overcome that.
     fn clone_box<'a>(&self) -> Box<dyn 'a + Extension>
@@ -317,7 +319,7 @@ pub trait Extension: FnMut(Vec<Value>) -> anyhow::Result<Value> + Send + Sync {
 /// Automatically make matching closures a valid [`Extension`].
 impl<F> Extension for F
 where
-    F: FnMut(Vec<Value>) -> anyhow::Result<Value> + Clone + Send + Sync,
+    F: FnMut(Vec<Value>) -> Result<Value, FnError> + Clone + Send + Sync,
 {
     fn clone_box<'a>(&self) -> Box<dyn 'a + Extension>
     where
@@ -343,6 +345,11 @@ impl std::fmt::Debug for dyn Extension {
 #[cfg(feature = "coverage")]
 #[cfg_attr(docsrs, doc(cfg(feature = "coverage")))]
 pub mod coverage {
+    use std::io;
+    use std::io::Write;
+    use std::str::Utf8Error;
+    use thiserror::Error;
+
     #[derive(Default, serde::Serialize, serde::Deserialize)]
     /// Coverage information about a rego policy file.
     pub struct File {
@@ -366,6 +373,14 @@ pub mod coverage {
         pub files: Vec<File>,
     }
 
+    #[derive(Error, Debug)]
+    pub enum ReportError {
+        #[error(transparent)]
+        Io(#[from] io::Error),
+        #[error(transparent)]
+        Utf8Error(#[from] Utf8Error),
+    }
+
     impl Report {
         /// Produce an ANSI color encoded version of the report.
         ///
@@ -374,8 +389,7 @@ pub mod coverage {
         ///
         /// <img src="https://github.com/microsoft/regorus/blob/main/docs/coverage.png?raw=true">
 
-        pub fn to_colored_string(&self) -> anyhow::Result<String> {
-            use std::io::Write;
+        pub fn to_colored_string(&self) -> Result<String, ReportError> {
             let mut s = Vec::new();
             writeln!(&mut s, "COVERAGE REPORT:")?;
             for file in self.files.iter() {
@@ -398,7 +412,8 @@ pub mod coverage {
             }
 
             writeln!(&mut s)?;
-            Ok(std::str::from_utf8(&s)?.to_string())
+            let utf8_str = std::str::from_utf8(&s)?;
+            Ok(utf8_str.to_string())
         }
     }
 }

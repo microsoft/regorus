@@ -2,13 +2,15 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
+use crate::bail;
 use crate::builtins;
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::value::Value;
 
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 // TODO: Should we avoid this limit?
 const MAX_ARGS: u8 = std::u8::MAX;

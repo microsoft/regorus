@@ -6,8 +6,28 @@ use crate::builtins::*;
 use crate::lexer::*;
 
 use std::collections::BTreeMap;
+use thiserror::Error;
 
-use anyhow::{bail, Result};
+#[macro_export]
+macro_rules! bail {
+    ($err:literal $(,)?) => {
+        return Err(std::convert::From::from($err))
+    };
+    ($err:expr $(,)?) => {
+        return Err(std::convert::From::from($err))
+    };
+}
+
+type Result<T> = std::result::Result<T, UtilsError>;
+
+#[derive(Error, Debug)]
+pub enum UtilsError {
+    #[error("not a simple ref: {0}")]
+    NotASimpleRef(String),
+    #[error("fullpath {full_path} was previously defined with {arity} arguments.")]
+    PreviouslyDefined { full_path: String, arity: u8 },
+}
+
 pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
     let mut comps: Vec<&str> = vec![];
     let mut expr = Some(refr);
@@ -27,7 +47,10 @@ pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
                 comps.push(v.0.text());
                 expr = None;
             }
-            _ => bail!("internal error: not a simple ref {expr:?}"),
+            _ => {
+                let expr = format!("{:?}", expr);
+                return Err(UtilsError::NotASimpleRef(expr));
+            }
         }
     }
     if let Some(d) = document {
@@ -90,7 +113,6 @@ pub fn gather_functions(modules: &[Ref<Module>]) -> Result<FunctionTable> {
         let module_path = get_path_string(&module.package.refr, Some("data"))?;
         for rule in &module.policy {
             if let Rule::Spec {
-                span,
                 head: RuleHead::Func { refr, args, .. },
                 ..
             } = rule.as_ref()
@@ -99,10 +121,10 @@ pub fn gather_functions(modules: &[Ref<Module>]) -> Result<FunctionTable> {
 
                 if let Some((functions, arity, _)) = table.get_mut(&full_path) {
                     if args.len() as u8 != *arity {
-                        bail!(span.error(
-                            format!("{full_path} was previously defined with {arity} arguments.")
-                                .as_str()
-                        ));
+                        return Err(UtilsError::PreviouslyDefined {
+                            full_path,
+                            arity: *arity,
+                        });
                     }
                     functions.push(rule.clone());
                 } else {

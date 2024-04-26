@@ -122,7 +122,8 @@ fn eval_test_case(case: &TestCase) -> Result<Value> {
 
     let result = Value::from(values);
     // Make result json compatible. (E.g: avoid sets).
-    Value::from_json_str(&result.to_string())
+    let value = Value::from_json_str(&result.to_string())?;
+    Ok(value)
 }
 
 fn json_schema_tests_check(actual: &Value, expected: &Value) -> bool {

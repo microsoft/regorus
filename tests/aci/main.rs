@@ -60,7 +60,8 @@ fn eval_test_case(dir: &Path, case: &TestCase) -> Result<Value> {
     }
     let result = Value::from(values);
     // Make result json compatible. (E.g: avoid sets).
-    Value::from_json_str(&result.to_string())
+    let value = Value::from_json_str(&result.to_string())?;
+    Ok(value)
 }
 
 fn run_aci_tests(dir: &Path) -> Result<()> {

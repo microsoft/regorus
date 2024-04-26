@@ -3,14 +3,14 @@
 
 use core::fmt::{Debug, Formatter};
 use std::cmp::{Ord, Ordering};
+use std::num::ParseFloatError;
 use std::str::FromStr;
-
-use anyhow::{anyhow, bail, Result};
 
 use serde::ser::Serializer;
 use serde::Serialize;
 
 use crate::Rc;
+use thiserror::Error;
 
 pub type BigInt = i128;
 
@@ -132,6 +132,16 @@ impl From<f64> for Number {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum NumberError {
+    #[error("parsing number failed: {0}")]
+    ParsingError(#[from] ParseFloatError),
+    #[error("conversion to big decimal failed")]
+    ToBigFailed,
+    #[error("calculation failed: {0}")]
+    CalculationFailed(String),
+}
+
 impl Number {
     pub fn as_u128(&self) -> Option<u128> {
         match self {
@@ -191,25 +201,20 @@ impl Number {
         })
     }
 
-    pub fn to_big(&self) -> Result<Rc<BigDecimal>> {
-        match self.as_big() {
-            Some(b) => Ok(b),
-            _ => bail!("Number::to_big failed"),
-        }
+    pub fn to_big(&self) -> Result<Rc<BigDecimal>, NumberError> {
+        self.as_big().ok_or(NumberError::ToBigFailed)
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct ParseNumberError;
-
 impl FromStr for Number {
-    type Err = ParseNumberError;
+    type Err = NumberError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Ok(v) = BigFloat::from_str(s) {
             return Ok(v.into());
         }
-        Ok(f64::from_str(s).map_err(|_| ParseNumberError)?.into())
+        let n = f64::from_str(s)?;
+        Ok(n.into())
     }
 }
 
@@ -238,54 +243,56 @@ impl PartialOrd for Number {
 }
 
 impl Number {
-    pub fn add_assign(&mut self, rhs: &Self) -> Result<()> {
+    pub fn add_assign(&mut self, rhs: &Self) -> Result<(), NumberError> {
         *self = self.add(rhs)?;
         Ok(())
     }
 
-    pub fn add(&self, rhs: &Self) -> Result<Number> {
+    pub fn add(&self, rhs: &Self) -> Result<Number, NumberError> {
         match (self, rhs) {
             (Big(a), Big(b)) => Ok(Big(BigDecimal::from(&a.d + &b.d).into())),
         }
     }
 
-    pub fn sub_assign(&mut self, rhs: &Self) -> Result<()> {
+    pub fn sub_assign(&mut self, rhs: &Self) -> Result<(), NumberError> {
         *self = self.sub(rhs)?;
         Ok(())
     }
 
-    pub fn sub(&self, rhs: &Self) -> Result<Number> {
+    pub fn sub(&self, rhs: &Self) -> Result<Number, NumberError> {
         match (self, rhs) {
             (Big(a), Big(b)) => Ok(Big(BigDecimal::from(&a.d - &b.d).into())),
         }
     }
 
-    pub fn mul_assign(&mut self, rhs: &Self) -> Result<()> {
+    pub fn mul_assign(&mut self, rhs: &Self) -> Result<(), NumberError> {
         *self = self.mul(rhs)?;
         Ok(())
     }
 
-    pub fn mul(&self, rhs: &Self) -> Result<Number> {
+    pub fn mul(&self, rhs: &Self) -> Result<Number, NumberError> {
         match (self, rhs) {
             (Big(a), Big(b)) => Ok(Big(BigDecimal::from(&a.d * &b.d).into())),
         }
     }
 
-    pub fn divide(self, rhs: &Self) -> Result<Number> {
+    pub fn divide(self, rhs: &Self) -> Result<Number, NumberError> {
         match (self, rhs) {
             (Big(a), Big(b)) => {
                 let c =
                     a.d.div_truncate(&b.d, PRECISION)
-                        .map_err(|e| anyhow!("{e}"))?;
+                        .map_err(|e| NumberError::CalculationFailed(e.to_string()))?;
                 Ok(Big(BigDecimal::from(c).into()))
             }
         }
     }
 
-    pub fn modulo(self, rhs: &Self) -> Result<Number> {
+    pub fn modulo(self, rhs: &Self) -> Result<Number, NumberError> {
         match (self, rhs) {
             (Big(a), Big(b)) => {
-                let (_, c) = a.d.div_rem(&b.d).map_err(|e| anyhow!("{e}"))?;
+                let (_, c) =
+                    a.d.div_rem(&b.d)
+                        .map_err(|e| NumberError::CalculationFailed(e.to_string()))?;
                 Ok(Big(BigDecimal::from(c).into()))
             }
         }
@@ -400,7 +407,7 @@ impl Number {
         }
     }
 
-    pub fn two_pow(e: i32) -> Result<Number> {
+    pub fn two_pow(e: i32) -> Result<Number, NumberError> {
         if e >= 0 {
             Ok(BigFloat::from(2).powi(e as usize).into())
         } else {
@@ -408,7 +415,7 @@ impl Number {
         }
     }
 
-    pub fn ten_pow(e: i32) -> Result<Number> {
+    pub fn ten_pow(e: i32) -> Result<Number, NumberError> {
         if e >= 0 {
             Ok(BigFloat::from(10).powi(e as usize).into())
         } else {

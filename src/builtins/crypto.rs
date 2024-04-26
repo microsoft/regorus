@@ -2,19 +2,22 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
+use crate::bail;
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_string};
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::value::Value;
 
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
 use constant_time_eq::constant_time_eq;
 use hmac::{Hmac, Mac};
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
+
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("crypto.hmac.equal", (hmac_equal_fixed_time, 2));
@@ -53,8 +56,9 @@ fn hmac_md5(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) ->
     let x = ensure_string(name, &params[0], &args[0])?;
     let key = ensure_string(name, &params[1], &args[1])?;
 
-    let mut hmac = Hmac::<Md5>::new_from_slice(key.as_bytes())
-        .or_else(|_| bail!(span.error("failed to create hmac instance")))?;
+    let Ok(mut hmac) = Hmac::<Md5>::new_from_slice(key.as_bytes()) else {
+        bail!(span.error("failed to create md5 hmac instance"));
+    };
 
     hmac.update(x.as_bytes());
     let result = hmac.finalize();
@@ -69,8 +73,9 @@ fn hmac_sha1(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -
     let x = ensure_string(name, &params[0], &args[0])?;
     let key = ensure_string(name, &params[1], &args[1])?;
 
-    let mut hmac = Hmac::<Sha1>::new_from_slice(key.as_bytes())
-        .or_else(|_| bail!(span.error("failed to create hmac instance")))?;
+    let Ok(mut hmac) = Hmac::<Sha1>::new_from_slice(key.as_bytes()) else {
+        bail!(span.error("failed to sha1 create hmac instance"));
+    };
 
     hmac.update(x.as_bytes());
     let result = hmac.finalize();
@@ -85,8 +90,9 @@ fn hmac_sha256(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
     let x = ensure_string(name, &params[0], &args[0])?;
     let key = ensure_string(name, &params[1], &args[1])?;
 
-    let mut hmac = Hmac::<Sha256>::new_from_slice(key.as_bytes())
-        .or_else(|_| bail!(span.error("failed to create hmac instance")))?;
+    let Ok(mut hmac) = Hmac::<Sha256>::new_from_slice(key.as_bytes()) else {
+        bail!(span.error("failed to create sha256 hmac instance"));
+    };
 
     hmac.update(x.as_bytes());
     let result = hmac.finalize();
@@ -101,8 +107,9 @@ fn hmac_sha512(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
     let x = ensure_string(name, &params[0], &args[0])?;
     let key = ensure_string(name, &params[1], &args[1])?;
 
-    let mut hmac = Hmac::<Sha512>::new_from_slice(key.as_bytes())
-        .or_else(|_| bail!(span.error("failed to create hmac instance")))?;
+    let Ok(mut hmac) = Hmac::<Sha512>::new_from_slice(key.as_bytes()) else {
+        bail!(span.error("failed to create sha512 hmac instance"));
+    };
 
     hmac.update(x.as_bytes());
     let result = hmac.finalize();

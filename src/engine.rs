@@ -6,14 +6,38 @@ use crate::interpreter::*;
 use crate::lexer::*;
 use crate::parser::*;
 use crate::scheduler::*;
-use crate::utils::gather_functions;
+use crate::utils::{gather_functions, UtilsError};
 use crate::value::*;
 use crate::{Extension, QueryResults};
+
+use thiserror::Error;
 
 use std::convert::AsRef;
 use std::path::Path;
 
-use anyhow::{bail, Result};
+type Result<T> = std::result::Result<T, EngineError>;
+
+#[derive(Error, Debug)]
+pub enum EngineError {
+    #[error("interpreter error: {0}")]
+    InterpreterError(#[from] InterpreterError),
+    #[error("lexer error: {0}")]
+    LexerError(#[from] LexerError),
+    #[error("parser error: {0}")]
+    ParserError(#[from] ParserError),
+    #[error("scheduler error: {0}")]
+    SchedulerError(#[from] SchedulerError),
+    #[error("utils error: {0}")]
+    UtilsError(#[from] UtilsError),
+    #[error("value error: {0}")]
+    ValueError(#[from] ValueError),
+    #[error("data must be object")]
+    DataMustBeObject,
+    #[error("query did not produce any values")]
+    QueryDidNotProduceAnyValues,
+    #[error("query produced more than one value")]
+    QueryProducedMoreThanOneValue,
+}
 
 /// The Rego evaluation engine.
 ///
@@ -181,10 +205,11 @@ impl Engine {
     /// ```
     pub fn add_data(&mut self, data: Value) -> Result<()> {
         if data.as_object().is_err() {
-            bail!("data must be object");
+            return Err(EngineError::DataMustBeObject);
         }
         self.prepared = false;
-        self.interpreter.get_data_mut().merge(data)
+        self.interpreter.get_data_mut().merge(data)?;
+        Ok(())
     }
 
     pub fn add_data_json(&mut self, data_json: &str) -> Result<()> {
@@ -251,7 +276,8 @@ impl Engine {
     pub fn eval_rule(&mut self, path: String) -> Result<Value> {
         self.prepare_for_eval(false)?;
         self.interpreter.clean_internal_evaluation_state();
-        self.interpreter.eval_rule_in_path(path)
+        let value = self.interpreter.eval_rule_in_path(path)?;
+        Ok(value)
     }
 
     /// Evaluate a Rego query.
@@ -309,12 +335,13 @@ impl Engine {
             self.eval_modules(enable_tracing)?;
         }
         let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
-        self.interpreter.eval_user_query(
+        let results = self.interpreter.eval_user_query(
             &query_module,
             &query_node,
             &query_schedule,
             enable_tracing,
-        )
+        )?;
+        Ok(results)
     }
 
     /// Evaluate a Rego query that produces a boolean value.
@@ -346,11 +373,12 @@ impl Engine {
     pub fn eval_bool_query(&mut self, query: String, enable_tracing: bool) -> Result<bool> {
         let results = self.eval_query(query, enable_tracing)?;
         match results.result.len() {
-            0 => bail!("query did not produce any values"),
+            0 => Err(EngineError::QueryDidNotProduceAnyValues),
             1 if results.result[0].expressions.len() == 1 => {
-                results.result[0].expressions[0].value.as_bool().copied()
+                let b = results.result[0].expressions[0].value.as_bool().copied()?;
+                Ok(b)
             }
-            _ => bail!("query produced more than one value"),
+            _ => Err(EngineError::QueryProducedMoreThanOneValue),
         }
     }
 
@@ -423,12 +451,13 @@ impl Engine {
         let mut parser = Parser::new(&query_source)?;
         let query_node = parser.parse_user_query()?;
         let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
-        self.interpreter.eval_user_query(
+        let results = self.interpreter.eval_user_query(
             &query_module,
             &query_node,
             &query_schedule,
             enable_tracing,
-        )
+        )?;
+        Ok(results)
     }
 
     #[doc(hidden)]
@@ -532,7 +561,7 @@ impl Engine {
     ///
     /// ```rust
     /// # use regorus::*;
-    /// # use anyhow::{bail, Result};
+    /// # use anyhow::{anyhow, Result};
     /// # fn main() -> Result<()> {
     /// let mut engine = Engine::new();
     ///
@@ -563,7 +592,7 @@ impl Engine {
     ///      }
     ///      // Extensions can raise errors. Regorus will add location information to
     ///      // the error.
-    ///      _ => bail!("do_magic expects i64 value")
+    ///      _ => Err(anyhow!("do_magic expects i64 value").into())
     ///   }
     /// }))?;
     ///
@@ -609,7 +638,8 @@ impl Engine {
         nargs: u8,
         extension: Box<dyn Extension>,
     ) -> Result<()> {
-        self.interpreter.add_extension(path, nargs, extension)
+        self.interpreter.add_extension(path, nargs, extension)?;
+        Ok(())
     }
 
     #[cfg(feature = "coverage")]
@@ -653,7 +683,8 @@ impl Engine {
     ///
     /// See also [`crate::coverage::Report::to_colored_string`].
     pub fn get_coverage_report(&self) -> Result<crate::coverage::Report> {
-        self.interpreter.get_coverage_report()
+        let report = self.interpreter.get_coverage_report()?;
+        Ok(report)
     }
 
     #[cfg(feature = "coverage")]
@@ -709,6 +740,7 @@ impl Engine {
     /// # }
     /// ```
     pub fn take_prints(&mut self) -> Result<Vec<String>> {
-        self.interpreter.take_prints()
+        let strings = self.interpreter.take_prints()?;
+        Ok(strings)
     }
 }

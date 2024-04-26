@@ -2,14 +2,14 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
+use crate::bail;
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_numeric, ensure_string};
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::value::Value;
 
 use std::collections::HashMap;
-
-use anyhow::{bail, Result};
 
 use chrono::{
     DateTime, Datelike, Days, FixedOffset, Local, Months, SecondsFormat, TimeZone, Timelike, Utc,
@@ -19,6 +19,8 @@ use chrono_tz::Tz;
 
 pub(in crate::builtins) mod compat;
 mod diff;
+
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("time.add_date", (add_date, 4));
@@ -198,17 +200,18 @@ fn weekday(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
 }
 
 fn ensure_i32(name: &str, arg: &Expr, v: &Value) -> Result<i32> {
-    ensure_numeric(name, arg, v)?
+    let i = ensure_numeric(name, arg, v)?
         .as_i64()
         .and_then(|n| n.try_into().ok())
-        .ok_or_else(|| arg.span().error("could not convert to int32"))
+        .ok_or_else(|| arg.span().error("could not convert to int32"))?;
+    Ok(i)
 }
 
 fn safe_timestamp_nanos(span: &Span, strict: bool, nanos: Option<i64>) -> Result<Value> {
     match nanos {
         Some(ns) => Ok(Value::Number(ns.into())),
         None if strict => {
-            bail!(span.error("time outside of valid range"))
+            bail!(span.error("time outside of valid range"));
         }
         None => Ok(Value::Undefined),
     }
@@ -250,7 +253,7 @@ fn parse_epoch(
                     _ => {
                         let tz: Tz = match tz.parse() {
                             Ok(tz) => tz,
-                            Err(e) => bail!(e),
+                            Err(e) => bail!(BuiltinError::UnknownTimezone(e)),
                         };
                         tz.timestamp_nanos(ns).fixed_offset()
                     }
@@ -261,7 +264,7 @@ fn parse_epoch(
                     Some(other) => {
                         bail!(arg.span().error(&format!(
                             "`{fcn}` expects 3rd element of `ns` to be a `string`. Got `{other}` instead"
-                        )))
+                        )));
                     }
                     None => None,
                 };
@@ -276,7 +279,7 @@ fn parse_epoch(
 
     bail!(arg.span().error(&format!(
         "`{fcn}` expects `ns` to be a `number` or `array[number, string]`. Got `{val}` instead"
-    )))
+    )));
 }
 
 fn layout_with_predefined_formats(format: &str) -> &str {

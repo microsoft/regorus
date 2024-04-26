@@ -2,18 +2,21 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
+use crate::bail;
 use crate::builtins;
 #[allow(unused)]
 use crate::builtins::utils::{
     ensure_args_count, ensure_object, ensure_string, ensure_string_collection,
 };
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::value::Value;
 
 use std::collections::HashMap;
 
-#[allow(unused)]
-use anyhow::{anyhow, bail, Context, Result};
+pub(crate) use data_encoding::DecodeError;
+
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     #[cfg(feature = "base64")]
@@ -119,7 +122,7 @@ fn base64url_decode(
             {
                 data_encoding::BASE64URL_NOPAD
                     .decode(encoded_str.as_bytes())
-                    .map_err(|_| anyhow!(params[0].span().error("not a valid url")))?
+                    .map_err(|_| params[0].span().error("not a valid url"))?
             }
             #[cfg(not(feature = "base64url"))]
             {
@@ -327,7 +330,7 @@ fn yaml_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool
     ensure_args_count(span, name, params, args, 1)?;
     Ok(Value::String(
         serde_yaml::to_string(&args[0])
-            .with_context(|| span.error("could not serialize to yaml"))?
+            .map_err(|_| BuiltinError::SerializeFailed(span.error("could not serialize to yaml")))?
             .into(),
     ))
 }
@@ -342,7 +345,9 @@ fn yaml_unmarshal(
     let name = "yaml.unmarshal";
     ensure_args_count(span, name, params, args, 1)?;
     let yaml_str = ensure_string(name, &params[0], &args[0])?;
-    Value::from_yaml_str(&yaml_str).with_context(|| span.error("could not deserialize yaml."))
+    let value = Value::from_yaml_str(&yaml_str)
+        .map_err(|_| BuiltinError::DeserializeFailed(span.error("could not deserialize yaml")))?;
+    Ok(value)
 }
 
 fn json_is_valid(
@@ -363,7 +368,7 @@ fn json_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool
     ensure_args_count(span, name, params, args, 1)?;
     Ok(Value::String(
         serde_json::to_string(&args[0])
-            .with_context(|| span.error("could not serialize to json"))?
+            .map_err(|_| BuiltinError::SerializeFailed(span.error("could not serialize to json")))?
             .into(),
     ))
 }
@@ -377,5 +382,7 @@ fn json_unmarshal(
     let name = "json.unmarshal";
     ensure_args_count(span, name, params, args, 1)?;
     let json_str = ensure_string(name, &params[0], &args[0])?;
-    Value::from_json_str(&json_str).with_context(|| span.error("could not deserialize json."))
+    let value = Value::from_json_str(&json_str)
+        .map_err(|_| BuiltinError::DeserializeFailed(span.error("could not deserialize json")))?;
+    Ok(value)
 }

@@ -35,6 +35,7 @@ use std::error::Error;
 use std::fmt;
 use std::iter;
 
+pub(crate) use chrono::ParseError;
 use chrono::TimeZone;
 use chrono::{
     format::{self, Fixed, Parsed},

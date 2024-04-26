@@ -2,16 +2,19 @@
 // Licensed under the MIT License.
 
 use crate::ast::{ArithOp, Expr, Ref};
+use crate::bail;
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_numeric, ensure_string};
+use crate::builtins::BuiltinError;
 use crate::lexer::Span;
 use crate::number::Number;
 use crate::value::Value;
 
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
 use rand::{thread_rng, Rng};
+
+type Result<T> = std::result::Result<T, BuiltinError>;
 
 pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("abs", (abs, 1));

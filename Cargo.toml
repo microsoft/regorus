@@ -69,7 +69,6 @@ full-opa = [
 opa-testutil = []
 
 [dependencies]
-anyhow = { version = "1.0.45", default-features=false }
 serde = {version = "1.0.150", features = ["derive", "rc"] }
 serde_json = "1.0.89"
 serde_yaml = {version = "0.9.16", optional = true }
@@ -98,8 +97,10 @@ chrono = { version = "0.4.31", optional = true }
 chrono-tz = { version = "0.8.5", optional = true }
 jsonwebtoken = { version = "9.2.0", optional = true }
 itertools = "0.12.1"
+thiserror = "1.0.59"
 
 [dev-dependencies]
+anyhow = "1.0"
 cfg-if = "1.0.0"
 clap = { version = "4.4.7", features = ["derive"] }
 prettydiff = { version = "0.6.4", default-features = false }
