@@ -226,7 +226,7 @@ fn invalid_line() -> Result<()> {
 
 #[test]
 fn file_more_than_64_kb_size() -> Result<()> {
-    let source = Source::from_file("tests/coco/data/large.rego")?;
+    let source = Source::from_file("tests/kata/data/large.rego")?;
     let mut lexer = Lexer::new(&source);
 
     let mut count = 0;

@@ -124,6 +124,11 @@ name="aci"
 harness=false
 test=false
 
+[[test]]
+name="kata"
+harness=false
+test=false
+
 [package.metadata.docs.rs]
 # To build locally:
 # RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features --no-deps
