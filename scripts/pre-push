@@ -15,6 +15,7 @@ if [ -f Cargo.toml ]; then
    # Ensure that all tests pass
    cargo test -r
    cargo test -r --test aci
+   cargo test -r --test kata
 
    # Ensure that OPA conformance tests don't regress.
    cargo test -r --features opa-testutil,serde_json/arbitrary_precision --test opa -- $(tr '\n' ' ' < tests/opa.passing)
