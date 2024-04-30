@@ -1,0 +1,8 @@
+{
+    "azureGuestAgentPolicy": {
+        "signingRules": {
+            "extensionSigned": false
+        },
+        "allowListOnly": false
+    }
+}
