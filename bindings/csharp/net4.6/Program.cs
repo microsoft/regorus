@@ -55,9 +55,6 @@ namespace regoregorus_test
             w.Stop();
             var evalTicks = w.ElapsedTicks;
 
-            //Console.WriteLine("{0}", results);
-
-
             Console.WriteLine("Engine creation took {0} msecs", (newEngineTicks * nanosecPerTick) / (1000.0 * 1000.0));
             Console.WriteLine("Load policies and data took {0} msecs", (loadPoliciesTicks * nanosecPerTick) / (1000.0 * 1000.0));
             Console.WriteLine("EvalQuery and print results took {0} msecs", (evalTicks * nanosecPerTick) / (1000.0 * 1000.0));
