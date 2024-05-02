@@ -24,31 +24,60 @@ Regorus is available as a library that can be easily integrated into your Rust p
 Here is an example of evaluating a simple Rego policy:
 
 ```rust
-use anyhow::Result;
-use regorus::*;
-use serde_json;
+fn main() -> anyhow::Result<()> {
+    // Create an engine for evaluating Rego policies.
+    let mut engine = regorus::Engine::new();
 
-fn main() -> Result<()> {
-  // Create an engine for evaluating Rego policies.
-  let mut engine = Engine::new();
+    let policy = String::from(
+        r#"
+       package example
+       import rego.v1
 
-  // Add policy to the engine.
-  engine.add_policy(
-    // Filename to be associated with the policy.
-    "hello.rego".to_string(),
+       allow if {
+          ## All actions are allowed for admins.
+          input.principal == "admin"
+       } else if {
+          ## Check if action is allowed for given user.
+          input.action in data.allowed_actions[input.principal]
+       }
+	"#,
+    );
 
-    // Rego policy that just sets a message.
-    r#"
-       package test
-       message = "Hello, World!"
-    "#.to_string()
-  )?;
+    // Add policy to the engine.
+    engine.add_policy(String::from("policy.rego"), policy)?;
 
-  // Evaluate the policy, fetch the message and print it.
-  let results = engine.eval_query("data.test.message".to_string(), false)?;
-  println!("{}", serde_json::to_string_pretty(&results)?);
+    // Add data to engine.
+    engine.add_data(regorus::Value::from_json_str(
+        r#"{
+     "allowed_actions": {
+        "user1" : ["read", "write"],
+        "user2" : ["read"]
+     }}"#,
+    )?)?;
 
-  Ok(())
+    // Set input and evaluate whether user1 can write.
+    engine.set_input(regorus::Value::from_json_str(
+        r#"{
+      "principal": "user1",
+      "action": "write"
+    }"#,
+    )?);
+
+    let r = engine.eval_rule(String::from("data.example.allow"))?;
+    assert_eq!(r, regorus::Value::from(true));
+
+    // Set input and evaluate whether user2 can write.
+    engine.set_input(regorus::Value::from_json_str(
+        r#"{
+      "principal": "user2",
+      "action": "write"
+    }"#,
+    )?);
+
+    let r = engine.eval_rule(String::from("data.example.allow"))?;
+    assert_eq!(r, regorus::Value::Undefined);
+
+    Ok(())
 }
 ```
 
