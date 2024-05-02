@@ -40,15 +40,15 @@ namespace Microsoft.WindowsAzure.Regorus.IaaS
 	
 	protected virtual void Dispose(bool disposing)
 	{
-		if (!disposed)
+		if (!disposed && disposing)
 		{
-			if (disposing)
+			unsafe
 			{
-				unsafe
-				{
-					RegorusFFI.API.regorus_engine_drop(E);
-				}
+				RegorusFFI.API.regorus_engine_drop(E);
 			}
+		}
+		if (disposing) 
+		{
 			disposed = true;
 		}
 	}

@@ -43,7 +43,7 @@ namespace regoregorus_test
 
             // Set input and eval query.
             engine.SetInputFromJsonFile("../../../examples/extension_list/agent-extension-input.json");
-            var results = engine.EvalQuery("data.agent_extension_policy.extensions_to_download");
+            var results = engine.EvalQuery("data.agent_extension_policy.extensions_to_download=x");
             Console.WriteLine("Download query test: \n {0}", results);
 
             results = engine.EvalQuery("data.agent_extension_policy.extensions_validated");
