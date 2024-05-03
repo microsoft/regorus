@@ -11,13 +11,11 @@
 using System;
 using System.Text;
 using System.IO;
+using System.Threading;
 
 namespace Microsoft.WindowsAzure.Regorus.IaaS
 {
-	//public class Exception : System.Exception
-	//{
-	//public Exception(string message) : base(message) {}
-	//}
+
 	public class PolicyEngine : ICloneable, IDisposable
 	{
 	unsafe private RegorusFFI.RegorusEngine* E;
@@ -30,27 +28,20 @@ namespace Microsoft.WindowsAzure.Regorus.IaaS
 	    }
 	}
 
-	private bool disposed = false;
 
 	public void Dispose()
 	{
-		Dispose(true);
-		GC.SuppressFinalize(this); // Prevent the destructor from being called
-	}
-	
-	protected virtual void Dispose(bool disposing)
-	{
-		if (!disposed && disposing)
+		unsafe
 		{
-			unsafe
+			if (E != null)
 			{
 				RegorusFFI.API.regorus_engine_drop(E);
+				// to avoid Dispose() being called multiple times by mistake.
+				E = null;
 			}
+
 		}
-		if (disposing) 
-		{
-			disposed = true;
-		}
+
 	}
 
 	public object Clone()
@@ -191,12 +182,6 @@ namespace Microsoft.WindowsAzure.Regorus.IaaS
 		return "";
 	    }
 	}
-	
-	~PolicyEngine()
-	{
-		Dispose(false);
-	}
-
 	
 	void CheckAndDropResult(RegorusFFI.RegorusResult result)
 	{
