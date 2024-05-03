@@ -1,27 +1,55 @@
+//-----------------------------------------------------------------------
+// <copyright file="Regorus.cs" company="Microsoft">
+//    Copyright (c)2012 Microsoft. All rights reserved.
+// </copyright>
+// <summary>
+//    Contains code for the Regorus Policy Engine base class for C# and
+// .NET4.6 bindings. Currently this base class is not thread-safe. Make 
+// sure we use it in a signle-threaded environment or add additional 
+// protection when using it. 
+// </summary>
+//-----------------------------------------------------------------------
+
+
 using System;
 using System.Text;
+using System.IO;
+using System.Threading;
 
-namespace Regorus
+namespace Microsoft.WindowsAzure.Regorus.IaaS
 {
-    public class Exception : System.Exception
-    {
-	public Exception(string message) : base(message) {}
-    }
 
-    public class Engine : ICloneable
-    {
-	unsafe private RegorusFFI.RegorusEngine* E;
-	public Engine()
+	public class PolicyEngine : ICloneable, IDisposable
 	{
-	    unsafe
+	unsafe private RegorusFFI.RegorusEngine* E;
+	
+	public PolicyEngine()
+	{
+		unsafe
 	    {
 		E = RegorusFFI.API.regorus_engine_new();
 	    }
 	}
 
+
+	public void Dispose()
+	{
+		unsafe
+		{
+			if (E != null)
+			{
+				RegorusFFI.API.regorus_engine_drop(E);
+				// to avoid Dispose() being called multiple times by mistake.
+				E = null;
+			}
+
+		}
+
+	}
+
 	public object Clone()
 	{
-	    var clone = (Engine)this.MemberwiseClone();
+	    var clone = (PolicyEngine)this.MemberwiseClone();
 	    unsafe
 	    {
 		clone.E = RegorusFFI.API.regorus_engine_clone(E);
@@ -60,6 +88,20 @@ namespace Regorus
 	    }
 	}
 	
+	public void AddPolicyFromPath(string path)
+	{
+		if (!Directory.Exists(path))
+		{
+			return;
+		}
+
+		string[] regoFiles = Directory.GetFiles(path, "*.rego", SearchOption.AllDirectories);
+		foreach (string file in regoFiles)
+		{
+			AddPolicyFromFile(file);
+		}
+	}
+
 	public void AddDataJson(string data)
 	{
 	    var dataBytes = Encoding.UTF8.GetBytes(data);
@@ -143,15 +185,6 @@ namespace Regorus
 		return "";
 	    }
 	}
-	
-	~Engine()
-	{
-	    unsafe
-	    {
-		RegorusFFI.API.regorus_engine_drop(E);
-	    }
-	}
-
 	
 	void CheckAndDropResult(RegorusFFI.RegorusResult result)
 	{
