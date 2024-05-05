@@ -8,12 +8,10 @@ use crate::lexer::Span;
 use crate::number::Number;
 use crate::value::Value;
 
-use std::collections::HashMap;
-
 use anyhow::{bail, Result};
 use rand::{thread_rng, Rng};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("abs", (abs, 1));
     m.insert("ceil", (ceil, 1));
     m.insert("floor", (floor, 1));

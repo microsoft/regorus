@@ -7,11 +7,11 @@ use crate::builtins::utils::{ensure_args_count, ensure_object};
 use crate::lexer::Span;
 use crate::value::Value;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{bail, Result};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("graph.reachable", (reachable, 2));
     m.insert("graph.reachable_paths", (reachable_paths, 2));
     m.insert("walk", (walk, 1));

@@ -8,12 +8,12 @@ use crate::lexer::Span;
 use crate::Rc;
 use crate::Value;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::iter::Iterator;
+use alloc::collections::{BTreeMap, BTreeSet};
+use core::iter::Iterator;
 
 use anyhow::{bail, Result};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("json.filter", (json_filter, 2));
     m.insert("json.remove", (json_remove, 2));
     m.insert("object.filter", (filter, 2));

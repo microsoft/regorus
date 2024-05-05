@@ -7,8 +7,6 @@ use crate::builtins::utils::{ensure_args_count, ensure_string};
 use crate::lexer::Span;
 use crate::value::Value;
 
-use std::collections::HashMap;
-
 use anyhow::{bail, Result};
 use constant_time_eq::constant_time_eq;
 use hmac::{Hmac, Mac};
@@ -16,7 +14,7 @@ use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("crypto.hmac.equal", (hmac_equal_fixed_time, 2));
     m.insert("crypto.hmac.md5", (hmac_md5, 2));
     m.insert("crypto.hmac.sha1", (hmac_sha1, 2));

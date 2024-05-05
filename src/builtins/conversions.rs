@@ -7,11 +7,9 @@ use crate::builtins::utils::ensure_args_count;
 use crate::lexer::Span;
 use crate::value::Value;
 
-use std::collections::HashMap;
-
 use anyhow::{bail, Result};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("to_number", (to_number, 1));
 }
 

@@ -8,11 +8,9 @@ use crate::lexer::Span;
 use crate::number::Number;
 use crate::value::Value;
 
-use std::collections::HashMap;
-
 use anyhow::{bail, Result};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("count", (count, 1));
     m.insert("max", (max, 1));
     m.insert("min", (min, 1));

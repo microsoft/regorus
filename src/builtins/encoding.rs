@@ -10,12 +10,10 @@ use crate::builtins::utils::{
 use crate::lexer::Span;
 use crate::value::Value;
 
-use std::collections::HashMap;
-
 #[allow(unused)]
 use anyhow::{anyhow, bail, Context, Result};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     #[cfg(feature = "base64")]
     {
         m.insert("base64.decode", (base64_decode, 1));
@@ -238,7 +236,7 @@ fn urlquery_decode_object(
         Err(_) => bail!(params[0].span().error("not a valid url query")),
     };
 
-    let mut map = std::collections::BTreeMap::new();
+    let mut map = alloc::collections::BTreeMap::new();
     for (k, v) in url.query_pairs() {
         let key = Value::String(k.clone().into());
         let value = Value::String(v.clone().into());

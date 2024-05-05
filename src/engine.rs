@@ -10,7 +10,7 @@ use crate::utils::gather_functions;
 use crate::value::*;
 use crate::{Extension, QueryResults};
 
-use std::convert::AsRef;
+use core::convert::AsRef;
 use std::path::Path;
 
 use anyhow::{bail, Result};

@@ -6,13 +6,15 @@ use crate::ast::*;
 use crate::lexer::*;
 use crate::utils::*;
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::string::String;
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
+use alloc::string::String;
+use core::cmp;
+use core::fmt;
 
 use anyhow::{bail, Result};
 
 #[derive(Debug)]
-pub struct Definition<Str: Clone + std::cmp::Ord> {
+pub struct Definition<Str: Clone + cmp::Ord> {
     // The variable being defined.
     // This can be an empty string to indicate that
     // no variable is being defined.
@@ -24,7 +26,7 @@ pub struct Definition<Str: Clone + std::cmp::Ord> {
 }
 
 #[derive(Debug)]
-pub struct StmtInfo<Str: Clone + std::cmp::Ord> {
+pub struct StmtInfo<Str: Clone + cmp::Ord> {
     // A statement can define multiple variables.
     // A variable can also be defined by multiple statement.
     pub definitions: Vec<Definition<Str>>,
@@ -39,7 +41,7 @@ pub enum SortResult {
     Cycle(String, Vec<usize>),
 }
 
-pub fn schedule<Str: Clone + std::cmp::Ord + std::fmt::Debug>(
+pub fn schedule<Str: Clone + cmp::Ord + fmt::Debug>(
     infos: &mut [StmtInfo<Str>],
     empty: &Str,
 ) -> Result<SortResult> {
@@ -170,7 +172,7 @@ pub fn schedule<Str: Clone + std::cmp::Ord + std::fmt::Debug>(
         done = true;
 
         // Swap with temporary vec.
-        std::mem::swap(&mut vars_to_process, &mut tmp);
+        core::mem::swap(&mut vars_to_process, &mut tmp);
 
         // Loop through each unscheduled var.
         for var in tmp.iter().cloned() {
@@ -630,7 +632,7 @@ impl Analyzer {
         let mut used_vars = vec![];
         let mut comprs = vec![];
         let full_expr = expr;
-        std::convert::identity(&full_expr);
+        core::convert::identity(&full_expr);
         traverse(expr, &mut |e| match e.as_ref() {
             Var(v) if !matches!(v.0.text(), "_" | "input" | "data") => {
                 let name = v.0.source_str();

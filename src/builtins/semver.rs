@@ -9,12 +9,11 @@ use crate::value::Value;
 
 use semver::Version;
 
-use std::cmp::Ordering;
-use std::collections::HashMap;
+use core::cmp::Ordering;
 
 use anyhow::Result;
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("semver.compare", (compare, 2));
     m.insert("semver.is_valid", (is_valid, 1));
 }

@@ -7,13 +7,11 @@ use crate::builtins::utils::{ensure_args_count, ensure_string, ensure_string_col
 use crate::lexer::Span;
 use crate::value::Value;
 
-use std::collections::HashMap;
-
 use anyhow::{bail, Result};
 //use glob::{Pattern, MatchOptions};
 use wax::{Glob, Pattern};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("glob.match", (glob_match, 3));
     m.insert("glob.quote_meta", (quote_meta, 1));
 }

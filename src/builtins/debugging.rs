@@ -6,14 +6,12 @@ use crate::builtins;
 use crate::lexer::Span;
 use crate::value::Value;
 
-use std::collections::HashMap;
-
 use anyhow::{bail, Result};
 
 // TODO: Should we avoid this limit?
-const MAX_ARGS: u8 = std::u8::MAX;
+const MAX_ARGS: u8 = core::u8::MAX;
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("print", (print, MAX_ARGS));
 }
 

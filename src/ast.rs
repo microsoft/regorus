@@ -5,7 +5,7 @@ use crate::lexer::*;
 use crate::value::Value;
 use crate::Rc;
 
-use std::ops::Deref;
+use core::{cmp, fmt, ops::Deref};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum BinOp {
@@ -48,28 +48,28 @@ impl<T> Clone for NodeRef<T> {
     }
 }
 
-impl<T: std::fmt::Debug> std::fmt::Debug for NodeRef<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T: fmt::Debug> fmt::Debug for NodeRef<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.r.as_ref().fmt(f)
     }
 }
 
-impl<T> std::cmp::PartialEq for NodeRef<T> {
+impl<T> cmp::PartialEq for NodeRef<T> {
     fn eq(&self, other: &Self) -> bool {
         Rc::as_ptr(&self.r).eq(&Rc::as_ptr(&other.r))
     }
 }
 
-impl<T> std::cmp::Eq for NodeRef<T> {}
+impl<T> cmp::Eq for NodeRef<T> {}
 
-impl<T> std::cmp::Ord for NodeRef<T> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+impl<T> cmp::Ord for NodeRef<T> {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
         Rc::as_ptr(&self.r).cmp(&Rc::as_ptr(&other.r))
     }
 }
 
-impl<T> std::cmp::PartialOrd for NodeRef<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+impl<T> cmp::PartialOrd for NodeRef<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }

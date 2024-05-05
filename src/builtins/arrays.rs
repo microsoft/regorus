@@ -8,11 +8,9 @@ use crate::lexer::Span;
 use crate::Rc;
 use crate::Value;
 
-use std::collections::HashMap;
-
 use anyhow::Result;
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("array.concat", (concat, 2));
     m.insert("array.reverse", (reverse, 1));
     m.insert("array.slice", (slice, 3));

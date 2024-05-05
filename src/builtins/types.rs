@@ -7,11 +7,9 @@ use crate::builtins::utils::ensure_args_count;
 use crate::lexer::Span;
 use crate::value::Value;
 
-use std::collections::HashMap;
-
 use anyhow::Result;
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("is_array", (is_array, 1));
     m.insert("is_boolean", (is_boolean, 1));
     m.insert("is_null", (is_null, 1));
