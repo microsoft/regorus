@@ -8,11 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.5](https://github.com/microsoft/regorus/compare/regorus-v0.1.4...regorus-v0.1.5) - 2024-05-07
 
-### Other
-- Improve example in readme ([#224](https://github.com/microsoft/regorus/pull/224))
+### Added
+- Support policy files greater than 64KB in size ([#217](https://github.com/microsoft/regorus/pull/217))
 - Add tests for kata containers policies ([#221](https://github.com/microsoft/regorus/pull/221))
-- Update to OPA v0.64.0 ([#219](https://github.com/microsoft/regorus/pull/219))
-- Enable policy files greater than 64KB in size ([#217](https://github.com/microsoft/regorus/pull/217))
+- Support for OPA v0.64.0 ([#219](https://github.com/microsoft/regorus/pull/219))
+  - New builtin `json.marshal_with_options`
+### Changed
+- Improve example in readme ([#224](https://github.com/microsoft/regorus/pull/224))
+### Fixed
 - OPA Conformance: Do not interpret # within regular string ([#216](https://github.com/microsoft/regorus/pull/216))
 
 ## [0.1.4](https://github.com/microsoft/regorus/compare/regorus-v0.1.3...regorus-v0.1.4) - 2024-04-22
