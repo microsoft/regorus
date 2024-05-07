@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <package>
   <metadata>
-    <id>RegorusCsharp-Lib-x86</id>
+    <id>RegorusCsharp-Lib-x64</id>
     <version>0.0.1</version>
-    <title>RegorusCsharp-Lib-x86</title>
+    <title>RegorusCsharp-Lib-x64</title>
     <authors>yangjie@microsoft.com</authors>
     <owners>yangjie@microsoft.com</owners>
     <projectUrl>https://www.microsoft.com</projectUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <description>Regorus C# library for x86</description>
+    <description>Regorus C# library for x64</description>
     <releaseNotes>Initial version for Regorus C# library</releaseNotes>
     <copyright>Copyright (C) Microsoft Corp</copyright>
     <summary></summary>
