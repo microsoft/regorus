@@ -5,6 +5,7 @@
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+extern crate alloc;
 use serde::Serialize;
 
 mod ast;
@@ -22,10 +23,12 @@ pub use engine::Engine;
 pub use value::Value;
 
 #[cfg(feature = "arc")]
-use std::sync::Arc as Rc;
+use alloc::sync::Arc as Rc;
 
 #[cfg(not(feature = "arc"))]
-use std::rc::Rc;
+use alloc::rc::Rc;
+
+use core::fmt;
 
 /// Location of an [`Expression`] in a Rego query.
 ///
@@ -334,8 +337,8 @@ impl<'a> Clone for Box<dyn 'a + Extension> {
     }
 }
 
-impl std::fmt::Debug for dyn Extension {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+impl fmt::Debug for dyn Extension {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> core::result::Result<(), fmt::Error> {
         f.write_fmt(format_args!("<extension>"))
     }
 }
@@ -353,10 +356,10 @@ pub mod coverage {
         pub code: String,
 
         /// Lines that were evaluated.
-        pub covered: std::collections::BTreeSet<u32>,
+        pub covered: alloc::collections::BTreeSet<u32>,
 
         /// Lines that were not evaluated.
-        pub not_covered: std::collections::BTreeSet<u32>,
+        pub not_covered: alloc::collections::BTreeSet<u32>,
     }
 
     #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -398,7 +401,7 @@ pub mod coverage {
             }
 
             writeln!(&mut s)?;
-            Ok(std::str::from_utf8(&s)?.to_string())
+            Ok(core::str::from_utf8(&s)?.to_string())
         }
     }
 }

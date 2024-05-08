@@ -1,11 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use core::fmt::{Debug, Formatter};
+use core::cmp;
+use core::convert::AsRef;
+use core::fmt::{self, Debug, Formatter};
 use core::iter::Peekable;
 use core::str::CharIndices;
 
-use std::convert::AsRef;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
@@ -26,25 +27,25 @@ pub struct Source {
     src: Rc<SourceInternal>,
 }
 
-impl std::cmp::Ord for Source {
-    fn cmp(&self, other: &Source) -> std::cmp::Ordering {
+impl cmp::Ord for Source {
+    fn cmp(&self, other: &Source) -> cmp::Ordering {
         Rc::as_ptr(&self.src).cmp(&Rc::as_ptr(&other.src))
     }
 }
 
-impl std::cmp::PartialOrd for Source {
-    fn partial_cmp(&self, other: &Source) -> Option<std::cmp::Ordering> {
+impl cmp::PartialOrd for Source {
+    fn partial_cmp(&self, other: &Source) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl std::cmp::PartialEq for Source {
+impl cmp::PartialEq for Source {
     fn eq(&self, other: &Source) -> bool {
         Rc::as_ptr(&self.src) == Rc::as_ptr(&other.src)
     }
 }
 
-impl std::cmp::Eq for Source {}
+impl cmp::Eq for Source {}
 
 impl Hash for Source {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -53,7 +54,7 @@ impl Hash for Source {
 }
 
 impl Debug for Source {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         self.src.file.fmt(f)
     }
 }
@@ -66,14 +67,14 @@ pub struct SourceStr {
 }
 
 impl Debug for SourceStr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         self.text().fmt(f)
     }
 }
 
-impl std::fmt::Display for SourceStr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        std::fmt::Display::fmt(&self.text(), f)
+impl fmt::Display for SourceStr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
+        fmt::Display::fmt(&self.text(), f)
     }
 }
 
@@ -95,22 +96,22 @@ impl SourceStr {
     }
 }
 
-impl std::cmp::PartialEq for SourceStr {
+impl cmp::PartialEq for SourceStr {
     fn eq(&self, other: &Self) -> bool {
         self.text().eq(other.text())
     }
 }
 
-impl std::cmp::Eq for SourceStr {}
+impl cmp::Eq for SourceStr {}
 
-impl std::cmp::PartialOrd for SourceStr {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+impl cmp::PartialOrd for SourceStr {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.text().cmp(other.text()))
     }
 }
 
-impl std::cmp::Ord for SourceStr {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+impl cmp::Ord for SourceStr {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.text().cmp(other.text())
     }
 }
@@ -240,7 +241,7 @@ impl Span {
 }
 
 impl Debug for Span {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         let t = self.text().escape_debug().to_string();
         let max = 32;
         let (txt, trailer) = if t.len() > max {

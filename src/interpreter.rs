@@ -11,10 +11,11 @@ use crate::value::*;
 use crate::Rc;
 use crate::{Expression, Extension, Location, QueryResult, QueryResults};
 
+use alloc::collections::btree_map::Entry as BTreeMapEntry;
+use alloc::collections::{BTreeMap, BTreeSet};
 use anyhow::{anyhow, bail, Result};
-use std::collections::btree_map::Entry as BTreeMapEntry;
-use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
-use std::ops::Bound::*;
+use core::ops::Bound::*;
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 type Scope = BTreeMap<SourceStr, Value>;
 
@@ -399,7 +400,7 @@ impl Interpreter {
                 None => {
                     // Check if ident is a rule.
                     let path = self.current_module_path.clone() + "." + ident.text();
-                    self.rules.get(&path).is_none()
+                    !self.rules.contains_key(&path)
                 }
             },
         }
@@ -612,7 +613,7 @@ impl Interpreter {
                             bail!(rhs_span
                                 .error("mismatch in number of array elements in lhs and rhs"));
                         }
-                        for (lhs, rhs) in std::iter::zip(lhs_items.iter(), rhs_items.iter()) {
+                        for (lhs, rhs) in core::iter::zip(lhs_items.iter(), rhs_items.iter()) {
                             if self.eval_assign_expr(&AssignOp::Eq, lhs, rhs)? != Value::Bool(true)
                             {
                                 return Ok(Value::Bool(false));
@@ -634,7 +635,7 @@ impl Interpreter {
                         }
 
                         for ((_, lhs_key, lhs_value), (_, rhs_key, rhs_value)) in
-                            std::iter::zip(lhs_fields.iter(), rhs_fields.iter())
+                            core::iter::zip(lhs_fields.iter(), rhs_fields.iter())
                         {
                             if self.eval_bool_expr(&BoolOp::Eq, lhs_key, rhs_key)?
                                 != Value::Bool(true)
@@ -712,7 +713,7 @@ impl Interpreter {
                 // Allow variable overwritten inside a loop
                 let lhs_val = self.lookup_local_var(&name);
                 if !matches!(lhs_val, None | Some(Value::Undefined))
-                    && self.loop_var_values.get(rhs).is_none()
+                    && !self.loop_var_values.contains_key(rhs)
                 {
                     bail!(rhs
                         .span()
@@ -1196,7 +1197,8 @@ impl Interpreter {
             let rule_values = self.rule_values.clone();
 
             self.processed.clear();
-            let processed_paths = std::mem::replace(&mut self.processed_paths, Value::new_object());
+            let processed_paths =
+                core::mem::replace(&mut self.processed_paths, Value::new_object());
             self.rule_values.clear();
 
             let mut skip_exec = false;
@@ -1431,7 +1433,7 @@ impl Interpreter {
 
                         Self::clear_scope(self.current_scope_mut()?);
                         if let Some(ctx) = self.contexts.last_mut() {
-                            ctx.result = query_result.clone();
+                            ctx.result.clone_from(&query_result);
                             if ctx.early_return {
                                 break;
                             }
@@ -1458,7 +1460,7 @@ impl Interpreter {
 
                         Self::clear_scope(self.current_scope_mut()?);
                         if let Some(ctx) = self.contexts.last_mut() {
-                            ctx.result = query_result.clone();
+                            ctx.result.clone_from(&query_result);
                             if ctx.early_return {
                                 break;
                             }
@@ -1483,7 +1485,7 @@ impl Interpreter {
 
                         Self::clear_scope(self.current_scope_mut()?);
                         if let Some(ctx) = self.contexts.last_mut() {
-                            ctx.result = query_result.clone();
+                            ctx.result.clone_from(&query_result);
                             if ctx.early_return {
                                 break;
                             }
@@ -2187,7 +2189,7 @@ impl Interpreter {
         }
 
         // Mark as used when deprecated feature is not enabled.
-        std::convert::identity((span, self.allow_deprecated));
+        core::convert::identity((span, self.allow_deprecated));
 
         Ok(None)
     }
@@ -2248,11 +2250,10 @@ impl Interpreter {
         let (fcns_rules, fcn_module) = match self.lookup_function_by_name(&fcn_path) {
             Some((fcns, m)) => (fcns, Some(m.clone())),
             _ => {
-                if self.default_rules.get(&fcn_path).is_some()
+                if self.default_rules.contains_key(&fcn_path)
                     || self
                         .default_rules
-                        .get(&get_path_string(fcn, Some(&self.current_module_path))?)
-                        .is_some()
+                        .contains_key(&get_path_string(fcn, Some(&self.current_module_path))?)
                 {
                     // process default functions later.
                     (&empty, self.module.clone())
@@ -2326,7 +2327,7 @@ impl Interpreter {
 
             // Back up local variables of current function and empty
             // the local variables of callee function.
-            let scopes = std::mem::take(&mut self.scopes);
+            let scopes = core::mem::take(&mut self.scopes);
 
             // Set the arguments scope.
             let args_scope = Scope::new();
@@ -2405,7 +2406,7 @@ impl Interpreter {
         if results.is_empty() {
             // Back up local variables of current function and empty
             // the local variables of callee function.
-            let scopes = std::mem::take(&mut self.scopes);
+            let scopes = core::mem::take(&mut self.scopes);
             if errors.is_empty() {
                 // Check if any default rules can be evaluated.
                 // TODO: with mod
@@ -2648,7 +2649,7 @@ impl Interpreter {
 
             for i in (1..fields.len() + 1).rev() {
                 let path = "data.".to_owned() + &fields[0..i].join(".");
-                if self.rules.get(&path).is_some() || self.default_rules.get(&path).is_some() {
+                if self.rules.contains_key(&path) || self.default_rules.contains_key(&path) {
                     self.ensure_rule_evaluated(path)?;
                     break;
                 }
@@ -2669,9 +2670,9 @@ impl Interpreter {
             let rule_path = "data.".to_owned() + &path.join(".");
 
             if !no_error
-                && self.rules.get(&rule_path).is_none()
-                && self.default_rules.get(&rule_path).is_none()
-                && self.imports.get(&rule_path).is_none()
+                && !self.rules.contains_key(&rule_path)
+                && !self.default_rules.contains_key(&rule_path)
+                && !self.imports.contains_key(&rule_path)
             {
                 bail!(span.error("var is unsafe"));
             }
@@ -2687,7 +2688,7 @@ impl Interpreter {
                     rule_path.clone() + "." + &fields[0..i].join(".")
                 };
 
-                if self.rules.get(&path).is_some() || self.default_rules.get(&path).is_some() {
+                if self.rules.contains_key(&path) || self.default_rules.contains_key(&path) {
                     self.ensure_rule_evaluated(path)?;
                     found = true;
                     break;
@@ -3092,7 +3093,7 @@ impl Interpreter {
                 return Ok(());
             }
 
-            let scopes = std::mem::take(&mut self.scopes);
+            let scopes = core::mem::take(&mut self.scopes);
 
             let mut path =
                 Parser::get_path_ref_components(&self.module.clone().unwrap().package.refr)?;
@@ -3320,7 +3321,7 @@ impl Interpreter {
 
         // Back up local variables of current function and empty
         // the local variables of callee function.
-        let scopes = std::mem::take(&mut self.scopes);
+        let scopes = core::mem::take(&mut self.scopes);
         let prev_module = self.set_current_module(Some(module.clone()))?;
 
         let res = self.eval_rule_impl(module, rule);
@@ -3770,13 +3771,13 @@ impl Interpreter {
     pub fn set_gather_prints(&mut self, b: bool) {
         if b != self.gather_prints {
             // Clear existing prints.
-            std::mem::take(&mut self.prints);
+            core::mem::take(&mut self.prints);
         }
         self.gather_prints = b;
     }
 
     pub fn take_prints(&mut self) -> Result<Vec<String>> {
-        Ok(std::mem::take(&mut self.prints))
+        Ok(core::mem::take(&mut self.prints))
     }
 
     pub fn eval_rule_in_path(&mut self, path: String) -> Result<Value> {

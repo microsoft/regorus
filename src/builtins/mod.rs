@@ -47,7 +47,7 @@ use crate::ast::{Expr, Ref};
 use crate::lexer::Span;
 use crate::value::Value;
 
-use std::collections::HashMap;
+use std::collections::HashMap as BuiltinsMap;
 
 use anyhow::Result;
 use lazy_static::lazy_static;
@@ -61,8 +61,8 @@ pub use deprecated::DEPRECATED;
 
 #[rustfmt::skip]
 lazy_static! {
-    pub static ref BUILTINS: HashMap<&'static str, BuiltinFcn> = {
-	let mut m : HashMap<&'static str, BuiltinFcn>  = HashMap::new();
+    pub static ref BUILTINS: BuiltinsMap<&'static str, BuiltinFcn> = {
+	let mut m : BuiltinsMap<&'static str, BuiltinFcn>  = BuiltinsMap::new();
 	
 	// comparison functions are directly called.
 	numbers::register(&mut m);

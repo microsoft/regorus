@@ -8,11 +8,9 @@ use crate::lexer::Span;
 use crate::number::Number;
 use crate::value::Value;
 
-use std::collections::HashMap;
-
 use anyhow::{bail, Context, Result};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("units.parse", (parse, 1));
     m.insert("units.parse_bytes", (parse_bytes, 1));
 }

@@ -3,10 +3,11 @@
 
 use crate::number::Number;
 
+use alloc::collections::{BTreeMap, BTreeSet};
 use core::fmt;
-use std::collections::{BTreeMap, BTreeSet};
+use core::ops;
+
 use std::convert::AsRef;
-use std::ops;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -100,7 +101,7 @@ struct ValueVisitor;
 impl<'de> Visitor<'de> for ValueVisitor {
     type Value = Value;
 
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("a value")
     }
 
@@ -229,7 +230,7 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match serde_json::to_string(self) {
             Ok(s) => write!(f, "{s}"),
-            Err(_e) => Err(std::fmt::Error),
+            Err(_e) => Err(fmt::Error),
         }
     }
 }
