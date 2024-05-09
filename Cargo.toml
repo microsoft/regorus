@@ -40,9 +40,10 @@ jsonschema = ["dep:jsonschema"]
 opa-runtime = []
 regex = ["dep:regex"]
 semver = ["dep:semver"]
+std = ["serde_json/std"]
+time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
-time = ["dep:chrono", "dep:chrono-tz"]
 yaml = ["serde_yaml"]
 full-opa = [
     "base64",
@@ -59,6 +60,7 @@ full-opa = [
     "opa-runtime",
     "regex",
     "semver",
+    "std",
     "time",
     "uuid",
     "urlquery",
@@ -70,8 +72,8 @@ opa-testutil = []
 
 [dependencies]
 anyhow = { version = "1.0.45", default-features=false }
-serde = {version = "1.0.150", features = ["derive", "rc"] }
-serde_json = "1.0.89"
+serde = {version = "1.0.150", default-features = false, features = ["derive", "rc"] }
+serde_json = { version = "1.0.89", default-features=false, features = ["alloc"] }
 serde_yaml = {version = "0.9.16", optional = true }
 lazy_static = "1.4.0"
 rand = "0.8.5"

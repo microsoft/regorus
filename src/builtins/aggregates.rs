@@ -7,6 +7,7 @@ use crate::builtins::utils::{ensure_args_count, ensure_numeric};
 use crate::lexer::Span;
 use crate::number::Number;
 use crate::value::Value;
+use crate::*;
 
 use anyhow::{bail, Result};
 

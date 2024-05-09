@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::scheduler::*;
+use crate::*;
 use anyhow::{bail, Result};
 
 mod analyzer;
@@ -20,7 +21,7 @@ fn make_info(definitions: &[(&'static str, &[&'static str])]) -> StmtInfo<&'stat
 
 fn print_stmts(stmts: &[&str], order: &[u16]) {
     for idx in order.iter().cloned() {
-        println!("{}", stmts[idx as usize]);
+        std::println!("{}", stmts[idx as usize]);
     }
 }
 
@@ -29,7 +30,7 @@ fn check_result(stmts: &[&str], expected: &[&str], r: SortResult) -> Result<()> 
         SortResult::Order(order) => {
             print_stmts(stmts, &order);
             for (i, o) in order.iter().cloned().enumerate() {
-                println!("{:30}{}", stmts[o as usize], expected[i]);
+                std::println!("{:30}{}", stmts[o as usize], expected[i]);
             }
             for (i, o) in order.iter().cloned().enumerate() {
                 assert_eq!(stmts[o as usize], expected[i]);

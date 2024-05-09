@@ -11,6 +11,9 @@ if [ -f Cargo.toml ]; then
 
    # Ensure that the public API works
    cargo test -r --doc
+
+   # Ensure that we can build with all features
+   cargo build -r --all-features
    
    # Ensure that all tests pass
    cargo test -r

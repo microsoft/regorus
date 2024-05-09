@@ -8,10 +8,8 @@ use crate::parser::*;
 use crate::scheduler::*;
 use crate::utils::gather_functions;
 use crate::value::*;
+use crate::*;
 use crate::{Extension, QueryResults};
-
-use core::convert::AsRef;
-use std::path::Path;
 
 use anyhow::{bail, Result};
 
@@ -89,7 +87,8 @@ impl Engine {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn add_policy_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+    #[cfg(feature = "std")]
+    pub fn add_policy_from_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<()> {
         let source = Source::from_file(path)?;
         let mut parser = Parser::new(&source)?;
         self.modules.push(Ref::new(parser.parse()?));

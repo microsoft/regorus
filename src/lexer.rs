@@ -1,16 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use crate::*;
 use core::cmp;
-use core::convert::AsRef;
 use core::fmt::{self, Debug, Formatter};
 use core::iter::Peekable;
 use core::str::CharIndices;
 
-use std::hash::{Hash, Hasher};
-use std::path::Path;
-
-use crate::Rc;
 use crate::Value;
 
 use anyhow::{anyhow, bail, Result};
@@ -47,8 +43,9 @@ impl cmp::PartialEq for Source {
 
 impl cmp::Eq for Source {}
 
-impl Hash for Source {
-    fn hash<H: Hasher>(&self, state: &mut H) {
+#[cfg(feature = "std")]
+impl std::hash::Hash for Source {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         Rc::as_ptr(&self.src).hash(state)
     }
 }
@@ -156,7 +153,8 @@ impl Source {
         })
     }
 
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Source> {
+    #[cfg(feature = "std")]
+    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Source> {
         let contents = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => bail!("Failed to read {}. {e}", path.as_ref().display()),

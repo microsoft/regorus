@@ -47,7 +47,7 @@ use crate::ast::{Expr, Ref};
 use crate::lexer::Span;
 use crate::value::Value;
 
-use std::collections::HashMap as BuiltinsMap;
+use crate::Map as BuiltinsMap;
 
 use anyhow::Result;
 use lazy_static::lazy_static;

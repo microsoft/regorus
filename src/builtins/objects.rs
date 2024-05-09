@@ -7,6 +7,7 @@ use crate::builtins::utils::{ensure_args_count, ensure_array, ensure_object};
 use crate::lexer::Span;
 use crate::Rc;
 use crate::Value;
+use crate::*;
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use core::iter::Iterator;

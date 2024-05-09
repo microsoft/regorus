@@ -1,10 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr::*;
+use crate::ast::Expr::{Set, *};
 use crate::ast::*;
 use crate::lexer::*;
 use crate::utils::*;
+use crate::*;
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::String;
@@ -196,7 +197,8 @@ pub fn schedule<Str: Clone + cmp::Ord + fmt::Debug>(
     }
 
     if order.len() != num_statements {
-        eprintln!("could not schedule all statements {order:?} {orig_infos:?}");
+        #[cfg(feature = "std")]
+        std::eprintln!("could not schedule all statements {order:?} {orig_infos:?}");
         return Ok(SortResult::Order(
             (0..num_statements).map(|i| i as u16).collect(),
         ));

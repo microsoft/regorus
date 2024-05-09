@@ -4,9 +4,18 @@
 // Use README.md as crate documentation.
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+// We'll default to building for no_std - use core, alloc instead of std.
+#![no_std]
 
 extern crate alloc;
 use serde::Serialize;
+
+// Import std crate if building with std support.
+// We don't import types or macros from std.
+// As a result, types and macros from std must be qualified via `std::`
+// making dependencies on std easier to spot.
+#[cfg(any(feature = "std", test))]
+extern crate std;
 
 mod ast;
 mod builtins;
@@ -27,6 +36,21 @@ use alloc::sync::Arc as Rc;
 
 #[cfg(not(feature = "arc"))]
 use alloc::rc::Rc;
+
+#[cfg(feature = "std")]
+use std::collections::{hash_map::Entry as MapEntry, HashMap as Map, HashSet as Set};
+
+#[cfg(not(feature = "std"))]
+use alloc::collections::{btree_map::Entry as MapEntry, BTreeMap as Map, BTreeSet as Set};
+
+use alloc::{
+    borrow::ToOwned,
+    boxed::Box,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 use core::fmt;
 
@@ -346,6 +370,8 @@ impl fmt::Debug for dyn Extension {
 #[cfg(feature = "coverage")]
 #[cfg_attr(docsrs, doc(cfg(feature = "coverage")))]
 pub mod coverage {
+    use crate::*;
+
     #[derive(Default, serde::Serialize, serde::Deserialize)]
     /// Coverage information about a rego policy file.
     pub struct File {

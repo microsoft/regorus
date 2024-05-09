@@ -6,6 +6,7 @@ use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_set};
 use crate::lexer::Span;
 use crate::value::Value;
+use crate::*;
 
 use alloc::collections::BTreeSet;
 

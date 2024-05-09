@@ -5,6 +5,7 @@ use crate::ast::*;
 use crate::lexer::*;
 use crate::number::*;
 use crate::value::*;
+use crate::*;
 
 use alloc::collections::BTreeMap;
 use core::str::FromStr;
@@ -73,7 +74,8 @@ impl<'source> Parser<'source> {
         let msg = format!(
             "`{kw}` will be treated as identifier due to missing `import future.keywords.{kw}`"
         );
-        println!(
+        #[cfg(feature = "std")]
+        std::println!(
             "{}",
             self.source
                 .message(self.tok.1.line, self.tok.1.col, "warning", &msg)
