@@ -3,12 +3,21 @@
 use regorus::*;
 
 use std::path::Path;
+use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Parser;
 use walkdir::WalkDir;
 
-fn run_kata_tests(tests_dir: &Path, generate: bool) -> Result<()> {
+fn run_kata_tests(
+    tests_dir: &Path,
+    name: &Option<String>,
+    coverage: bool,
+    generate: bool,
+) -> Result<()> {
+    let mut num_tests = 0;
+    let mut num_queries = 0;
+    let mut total_time_ns = 0;
     for entry in WalkDir::new(tests_dir)
         .max_depth(1) // Do not recurse
         .sort_by_file_name()
@@ -20,9 +29,17 @@ fn run_kata_tests(tests_dir: &Path, generate: bool) -> Result<()> {
             continue;
         }
 
+        // If specificed, only execute tests matching given name.
+        if let Some(name) = name {
+            if !path.ends_with(name) {
+                continue;
+            }
+        }
+        num_tests += 1;
+
         let policy_file = path.join("policy.rego");
         let inputs_file = path.join("inputs.txt");
-        let outputs_file = path.join("output.json");
+        let outputs_file = path.join("outputs.json");
 
         let mut engine = Engine::new();
         engine.add_policy_from_file(&policy_file)?;
@@ -37,7 +54,7 @@ fn run_kata_tests(tests_dir: &Path, generate: bool) -> Result<()> {
         let mut results = if generate {
             vec![]
         } else {
-            Value::from_json_str(&std::fs::read_to_string(&outputs_file)?)?
+            Value::from_json_file(&outputs_file)?
                 .as_array()?
                 .iter()
                 .cloned()
@@ -63,12 +80,16 @@ fn run_kata_tests(tests_dir: &Path, generate: bool) -> Result<()> {
 
             // Evaluate using engine.
             engine.set_input(input.clone());
+            let start = Instant::now();
             let r = engine.eval_rule(rule.clone())?;
+            total_time_ns += start.elapsed().as_nanos();
 
             // Evaluate using fresh engine.
             let mut new_engine = engine_base.clone();
             new_engine.set_input(input);
+            let start = Instant::now();
             let r_new = new_engine.eval_rule(rule)?;
+            total_time_ns += start.elapsed().as_nanos();
 
             // Ensure that both evaluations produced the same result.
             assert_eq!(r, r_new);
@@ -79,19 +100,32 @@ fn run_kata_tests(tests_dir: &Path, generate: bool) -> Result<()> {
                 let expected = results.pop().unwrap();
                 assert_eq!(r, expected, "{lineno} failed in {}", inputs_file.display());
             }
+
+            num_queries += 2;
         }
 
         if generate {
             std::fs::write(outputs_file, Value::from(results).to_json_str()?)?;
         }
-        #[cfg(feature = "coverage")]
-        {
-            let report = engine.get_coverage_report()?;
-            println!("{}", report.to_colored_string()?);
+
+        if coverage {
+            #[cfg(feature = "coverage")]
+            {
+                let report = engine.get_coverage_report()?;
+                println!("{}", report.to_colored_string()?);
+            }
         }
     }
 
+    if num_tests == 0 {
+        bail!("no tests found");
+    }
+
+    let millis = total_time_ns as f64 / 1000_000.0;
+    println!("executed {num_queries} queries in {millis:2} millis");
+    println!("time per query is {:2} millis", millis / num_queries as f64);
     println!("kata tests passed");
+
     Ok(())
 }
 
@@ -103,6 +137,15 @@ struct Cli {
     #[clap(default_value = "tests/kata/data")]
     test_dir: String,
 
+    /// Name of a specific test
+    #[arg(long, short)]
+    name: Option<String>,
+
+    /// Display code coverage
+    #[arg(long, short)]
+    #[clap(default_value = "false")]
+    coverage: bool,
+
     /// Generate outputs instead of testing.
     #[arg(long, short)]
     #[clap(default_value = "false")]
@@ -111,5 +154,10 @@ struct Cli {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    run_kata_tests(&Path::new(&cli.test_dir), cli.generate)
+    run_kata_tests(
+        &Path::new(&cli.test_dir),
+        &cli.name,
+        cli.coverage,
+        cli.generate,
+    )
 }
