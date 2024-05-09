@@ -7,8 +7,9 @@ use crate::builtins::utils::{ensure_args_count, ensure_string};
 use crate::lexer::Span;
 use crate::number::Number;
 use crate::value::Value;
+use crate::*;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 
 pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("units.parse", (parse, 1));
@@ -87,12 +88,13 @@ fn parse(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
         _ => (string, ""),
     };
 
+    // Propagating the underlying error is not useful here.
     let v: Value = if number_part.starts_with('.') {
         serde_json::from_str(format!("0{number_part}").as_str())
     } else {
         serde_json::from_str(number_part)
     }
-    .with_context(|| span.error("could not parse number"))?;
+    .map_err(|_| params[0].span().error("could not parse number"))?;
 
     let mut n = match v {
         Value::Number(n) => n.clone(),

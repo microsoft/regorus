@@ -5,6 +5,7 @@ use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::lexer::Span;
 use crate::value::Value;
+use crate::*;
 
 use anyhow::{bail, Result};
 
@@ -43,8 +44,10 @@ pub fn print_to_string(
 fn print(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
     let msg = print_to_string(span, params, args, strict)?;
 
+    #[cfg(feature = "std")]
     if !msg.is_empty() {
-        eprintln!("{}", &msg[1..]);
+        std::eprintln!("{}", &msg[1..]);
     }
+
     Ok(Value::Bool(true))
 }

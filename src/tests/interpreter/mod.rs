@@ -176,7 +176,7 @@ pub fn eval_file(
         let r = engine.eval_query(query.to_string(), enable_tracing)?;
         let r_full = engine_full.eval_query_and_all_rules(query.to_string(), enable_tracing)?;
         if r != r_full {
-            println!(
+            std::println!(
                 "{}\n{}",
                 serde_json::to_string_pretty(&r_full)?,
                 serde_json::to_string_pretty(&r)?
@@ -194,7 +194,7 @@ pub fn eval_file(
             let r = engine.eval_query(query.to_string(), enable_tracing)?;
             let r_full = engine_full.eval_query_and_all_rules(query.to_string(), enable_tracing)?;
             if r != r_full {
-                println!(
+                std::println!(
                     "{}\n{}",
                     serde_json::to_string_pretty(&r_full)?,
                     serde_json::to_string_pretty(&r)?
@@ -277,12 +277,12 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     let yaml_str = std::fs::read_to_string(file)?;
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
-    println!("running {file}");
+    std::println!("running {file}");
 
     for case in test.cases {
-        print!("case {} ", case.note);
+        std::print!("case {} ", case.note);
         if case.skip == Some(true) {
-            println!("skipped");
+            std::println!("skipped");
             continue;
         }
 
@@ -329,13 +329,13 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                             expected
                         );
                     }
-                    println!("{actual}");
+                    std::println!("{actual}");
                 }
                 _ => return Err(actual),
             },
         }
 
-        println!("passed");
+        std::println!("passed");
     }
 
     Ok(())

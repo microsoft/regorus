@@ -4,6 +4,7 @@
 use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::ensure_args_count;
+use crate::*;
 
 use crate::lexer::Span;
 use crate::value::Value;

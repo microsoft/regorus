@@ -3,7 +3,7 @@
 
 use crate::lexer::*;
 use crate::value::Value;
-use crate::Rc;
+use crate::*;
 
 use core::{cmp, fmt, ops::Deref};
 

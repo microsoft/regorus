@@ -4,6 +4,7 @@
 use crate::ast::*;
 use crate::builtins::*;
 use crate::lexer::*;
+use crate::*;
 
 use alloc::collections::BTreeMap;
 

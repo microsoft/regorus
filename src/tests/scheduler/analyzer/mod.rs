@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use crate::*;
 use crate::{ast::*, lexer::*, parser::*, scheduler::*};
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
@@ -73,25 +74,25 @@ fn analyze_file(regos: &[String], expected_scopes: &[Scope]) -> Result<()> {
             to_string_set(scope.inputs.iter()),
             expected_scopes[idx].inputs
         );
-        println!("scope {idx} matched.")
+        std::println!("scope {idx} matched.")
     }
 
     Ok(())
 }
 
 fn yaml_test_impl(file: &str) -> Result<()> {
-    println!("\nrunning {file}");
+    std::println!("\nrunning {file}");
 
     let yaml_str = std::fs::read_to_string(file)?;
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
     for case in &test.cases {
-        print!("\ncase {} ", case.note);
+        std::print!("\ncase {} ", case.note);
         analyze_file(&case.modules, &case.scopes)?;
-        println!("passed");
+        std::println!("passed");
     }
 
-    println!("{} cases passed.", test.cases.len());
+    std::println!("{} cases passed.", test.cases.len());
     Ok(())
 }
 

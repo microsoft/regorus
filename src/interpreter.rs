@@ -8,14 +8,13 @@ use crate::parser::Parser;
 use crate::scheduler::*;
 use crate::utils::*;
 use crate::value::*;
-use crate::Rc;
+use crate::*;
 use crate::{Expression, Extension, Location, QueryResult, QueryResults};
 
 use alloc::collections::btree_map::Entry as BTreeMapEntry;
 use alloc::collections::{BTreeMap, BTreeSet};
 use anyhow::{anyhow, bail, Result};
 use core::ops::Bound::*;
-use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 type Scope = BTreeMap<SourceStr, Value>;
 
@@ -53,8 +52,8 @@ pub struct Interpreter {
     loop_var_values: BTreeMap<ExprRef, Value>,
     contexts: Vec<Context>,
     functions: FunctionTable,
-    rules: HashMap<String, Vec<Ref<Rule>>>,
-    default_rules: HashMap<String, Vec<DefaultRuleInfo>>,
+    rules: Map<String, Vec<Ref<Rule>>>,
+    default_rules: Map<String, Vec<DefaultRuleInfo>>,
     processed: BTreeSet<Ref<Rule>>,
     processed_paths: Value,
     rule_values: BTreeMap<Vec<Value>, (Value, Ref<Expr>)>,
@@ -65,16 +64,16 @@ pub struct Interpreter {
     allow_deprecated: bool,
     strict_builtin_errors: bool,
     imports: BTreeMap<String, Ref<Expr>>,
-    extensions: HashMap<String, (u8, Rc<Box<dyn Extension>>)>,
+    extensions: Map<String, (u8, Rc<Box<dyn Extension>>)>,
 
     #[cfg(feature = "coverage")]
-    coverage: HashMap<Source, Vec<bool>>,
+    coverage: Map<Source, Vec<bool>>,
     #[cfg(feature = "coverage")]
     enable_coverage: bool,
 
     gather_prints: bool,
     prints: Vec<String>,
-    rule_paths: HashSet<String>,
+    rule_paths: Set<String>,
 }
 
 impl Default for Interpreter {
@@ -178,8 +177,8 @@ impl Interpreter {
             contexts: vec![],
             loop_var_values: BTreeMap::new(),
             functions: FunctionTable::new(),
-            rules: HashMap::new(),
-            default_rules: HashMap::new(),
+            rules: Map::new(),
+            default_rules: Map::new(),
             processed: BTreeSet::new(),
             processed_paths: Value::new_object(),
             rule_values: BTreeMap::new(),
@@ -190,16 +189,16 @@ impl Interpreter {
             allow_deprecated: true,
             strict_builtin_errors: true,
             imports: BTreeMap::default(),
-            extensions: HashMap::new(),
+            extensions: Map::new(),
 
             #[cfg(feature = "coverage")]
-            coverage: HashMap::new(),
+            coverage: Map::new(),
             #[cfg(feature = "coverage")]
             enable_coverage: false,
 
             gather_prints: false,
             prints: Vec::default(),
-            rule_paths: HashSet::new(),
+            rule_paths: Set::new(),
         }
     }
 
@@ -3496,10 +3495,10 @@ impl Interpreter {
             }
 
             match self.rules.entry(path) {
-                Entry::Occupied(o) => {
+                MapEntry::Occupied(o) => {
                     o.into_mut().push(rule.clone());
                 }
-                Entry::Vacant(v) => {
+                MapEntry::Vacant(v) => {
                     v.insert(vec![rule.clone()]);
                 }
             }
@@ -3523,7 +3522,7 @@ impl Interpreter {
             }
 
             match self.default_rules.entry(path) {
-                Entry::Occupied(o) => {
+                MapEntry::Occupied(o) => {
                     if idx + 1 == comps.len() {
                         for (_, i) in o.get() {
                             if index.is_some() && i.is_some() {
@@ -3539,7 +3538,7 @@ impl Interpreter {
                     }
                     o.into_mut().push((rule.clone(), index.clone()));
                 }
-                Entry::Vacant(v) => {
+                MapEntry::Vacant(v) => {
                     v.insert(vec![(rule.clone(), index.clone())]);
                 }
             }
@@ -3562,7 +3561,8 @@ impl Interpreter {
                         },
                         Expr::Var(v) if v.0.text() == "input" => {
                             // Warn redundant import of input. Ignore it.
-                            eprintln!(
+                            #[cfg(feature = "std")]
+                            std::eprintln!(
                                 "{}",
                                 import
                                     .refr
@@ -3639,7 +3639,7 @@ impl Interpreter {
         nargs: u8,
         extension: Box<dyn Extension>,
     ) -> Result<()> {
-        if let std::collections::hash_map::Entry::Vacant(v) = self.extensions.entry(path) {
+        if let MapEntry::Vacant(v) = self.extensions.entry(path) {
             v.insert((nargs, Rc::new(extension)));
             Ok(())
         } else {
@@ -3765,7 +3765,7 @@ impl Interpreter {
 
     #[cfg(feature = "coverage")]
     pub fn clear_coverage_data(&mut self) {
-        self.coverage = HashMap::new();
+        self.coverage = Map::new();
     }
 
     pub fn set_gather_prints(&mut self, b: bool) {

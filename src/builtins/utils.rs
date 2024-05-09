@@ -6,6 +6,7 @@ use crate::lexer::Span;
 use crate::number::Number;
 use crate::Rc;
 use crate::Value;
+use crate::*;
 
 use alloc::collections::{BTreeMap, BTreeSet};
 

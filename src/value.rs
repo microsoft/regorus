@@ -7,16 +7,15 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use core::fmt;
 use core::ops;
 
-use std::convert::AsRef;
-use std::path::Path;
-use std::str::FromStr;
+use core::convert::AsRef;
+use core::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
 use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
 
-use crate::Rc;
+use crate::*;
 
 /// A value in a Rego document.
 ///
@@ -310,7 +309,7 @@ impl Value {
     /// # }
     /// ```
     pub fn from_json_str(json: &str) -> Result<Value> {
-        Ok(serde_json::from_str(json)?)
+        serde_json::from_str(json).map_err(anyhow::Error::msg)
     }
 
     /// Deserialize a [`Value`] from a file containing JSON.
@@ -327,7 +326,8 @@ impl Value {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_json_file<P: AsRef<Path>>(path: P) -> Result<Value> {
+    #[cfg(feature = "std")]
+    pub fn from_json_file<P: AsRef<std::path::Path>>(path: P) -> Result<Value> {
         match std::fs::read_to_string(&path) {
             Ok(c) => Self::from_json_str(c.as_str()),
             Err(e) => bail!("Failed to read {}. {e}", path.as_ref().display()),
@@ -394,7 +394,7 @@ impl Value {
     /// # }
     /// ```
     pub fn to_json_str(&self) -> Result<String> {
-        Ok(serde_json::to_string_pretty(self)?)
+        serde_json::to_string_pretty(self).map_err(anyhow::Error::msg)
     }
 
     /// Deserialize a value from YAML.
@@ -1132,9 +1132,9 @@ impl Value {
                         Some(pv) if *pv != *v => {
                             bail!(
                                 "value for key `{}` generated multiple times: `{}` and `{}`",
-                                serde_json::to_string_pretty(&k)?,
-                                serde_json::to_string_pretty(&pv)?,
-                                serde_json::to_string_pretty(&v)?,
+                                serde_json::to_string_pretty(&k).map_err(anyhow::Error::msg)?,
+                                serde_json::to_string_pretty(&pv).map_err(anyhow::Error::msg)?,
+                                serde_json::to_string_pretty(&v).map_err(anyhow::Error::msg)?,
                             )
                         }
                         _ => Rc::make_mut(map).insert(k.clone(), v.clone()),

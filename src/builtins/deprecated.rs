@@ -7,6 +7,7 @@ use crate::builtins::utils::{ensure_args_count, ensure_set};
 use crate::builtins::BuiltinFcn;
 use crate::lexer::Span;
 use crate::value::Value;
+use crate::*;
 
 use anyhow::{bail, Result};
 use lazy_static::lazy_static;
