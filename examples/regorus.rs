@@ -1,7 +1,37 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
+
+#[allow(dead_code)]
+fn read_file(path: &String) -> Result<String> {
+    std::fs::read_to_string(path).map_err(|_| anyhow!("could not read {path}"))
+}
+
+#[allow(unused_variables)]
+fn read_value_from_yaml_file(path: &String) -> Result<regorus::Value> {
+    #[cfg(feature = "yaml")]
+    return regorus::Value::from_yaml_file(path);
+
+    #[cfg(not(feature = "yaml"))]
+    bail!("regorus has not been built with yaml support");
+}
+
+fn read_value_from_json_file(path: &String) -> Result<regorus::Value> {
+    #[cfg(feature = "std")]
+    return regorus::Value::from_json_file(path);
+
+    #[cfg(not(feature = "std"))]
+    regorus::Value::from_json_str(&read_file(path)?)
+}
+
+fn add_policy_from_file(engine: &mut regorus::Engine, path: String) -> Result<()> {
+    #[cfg(feature = "std")]
+    return engine.add_policy_from_file(path);
+
+    #[cfg(not(feature = "std"))]
+    engine.add_policy(path.clone(), read_file(&path)?)
+}
 
 fn rego_eval(
     bundles: &[String],
@@ -35,7 +65,7 @@ fn rego_eval(
                 _ => continue,
             }
 
-            engine.add_policy_from_file(entry.path())?;
+            add_policy_from_file(&mut engine, entry.path().display().to_string())?;
         }
     }
 
@@ -43,15 +73,15 @@ fn rego_eval(
     for file in files.iter() {
         if file.ends_with(".rego") {
             // Read policy file.
-            engine.add_policy_from_file(file)?;
+            add_policy_from_file(&mut engine, file.clone())?;
         } else {
             // Read data file.
             let data = if file.ends_with(".json") {
-                regorus::Value::from_json_file(file)?
+                read_value_from_json_file(file)?
             } else if file.ends_with(".yaml") {
-                regorus::Value::from_yaml_file(file)?
+                read_value_from_yaml_file(file)?
             } else {
-                bail!("Unsupported data file `{file}`. Must be rego, json or yaml.")
+                bail!("Unsupported data file `{file}`. Must be rego, json or yaml.");
             };
 
             // Merge given data.
@@ -61,9 +91,9 @@ fn rego_eval(
 
     if let Some(file) = input {
         let input = if file.ends_with(".json") {
-            regorus::Value::from_json_file(&file)?
+            read_value_from_json_file(&file)?
         } else if file.ends_with(".yaml") {
-            regorus::Value::from_yaml_file(&file)?
+            read_value_from_yaml_file(&file)?
         } else {
             bail!("Unsupported input file `{file}`. Must be json or yaml.")
         };
@@ -95,7 +125,11 @@ fn rego_lex(file: String, verbose: bool) -> Result<()> {
     use regorus::unstable::*;
 
     // Create source.
+    #[cfg(feature = "std")]
     let source = Source::from_file(file)?;
+
+    #[cfg(not(feature = "std"))]
+    let source = Source::from_contents(file.clone(), read_file(&file)?)?;
 
     // Create lexer.
     let mut lexer = Lexer::new(&source);
@@ -122,7 +156,11 @@ fn rego_parse(file: String) -> Result<()> {
     use regorus::unstable::*;
 
     // Create source.
+    #[cfg(feature = "std")]
     let source = Source::from_file(file)?;
+
+    #[cfg(not(feature = "std"))]
+    let source = Source::from_contents(file.clone(), read_file(&file)?)?;
 
     // Create a parser and parse the source.
     let mut parser = Parser::new(&source)?;

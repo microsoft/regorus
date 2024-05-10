@@ -47,7 +47,6 @@ pub fn schedule<Str: Clone + cmp::Ord + fmt::Debug>(
     empty: &Str,
 ) -> Result<SortResult> {
     let num_statements = infos.len();
-    let orig_infos: Vec<&StmtInfo<Str>> = infos.iter().collect();
 
     // Mapping from each var to the list of statements that define it.
     let mut defining_stmts: BTreeMap<Str, Vec<usize>> = BTreeMap::new();
@@ -198,7 +197,7 @@ pub fn schedule<Str: Clone + cmp::Ord + fmt::Debug>(
 
     if order.len() != num_statements {
         #[cfg(feature = "std")]
-        std::eprintln!("could not schedule all statements {order:?} {orig_infos:?}");
+        std::eprintln!("could not schedule all statements {order:?}");
         return Ok(SortResult::Order(
             (0..num_statements).map(|i| i as u16).collect(),
         ));
@@ -633,8 +632,8 @@ impl Analyzer {
     ) -> Result<(Vec<SourceStr>, Vec<Ref<Expr>>)> {
         let mut used_vars = vec![];
         let mut comprs = vec![];
+        #[cfg(feature = "deprecated")]
         let full_expr = expr;
-        core::convert::identity(&full_expr);
         traverse(expr, &mut |e| match e.as_ref() {
             Var(v) if !matches!(v.0.text(), "_" | "input" | "data") => {
                 let name = v.0.source_str();

@@ -277,6 +277,35 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     let yaml_str = std::fs::read_to_string(file)?;
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
+    #[cfg(not(feature = "std"))]
+    {
+        // Skip tests that depend on bultins that need std feature.
+        let skip = [
+            "intn.yaml",
+            "is_valid.yaml",
+            "add_date.yaml",
+            "date.yaml",
+            "clock.yaml",
+            "compare.yaml",
+            "diff.yaml",
+            "format.yaml",
+            "now_ns.yaml",
+            "parse_duration_ns.yaml",
+            "parse_ns.yaml",
+            "parse_rfc3339_ns.yaml",
+            "weekday.yaml",
+            "generate.yaml",
+            "parse.yaml",
+            "tests.yaml",
+        ];
+        for s in skip {
+            if file.contains(s) {
+                std::println!("skipped {file} in no_std mode.");
+                return Ok(());
+            }
+        }
+    }
+
     std::println!("running {file}");
 
     for case in test.cases {

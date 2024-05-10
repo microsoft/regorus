@@ -225,6 +225,7 @@ fn invalid_line() -> Result<()> {
 }
 
 #[test]
+#[cfg(feature = "std")]
 fn file_more_than_64_kb_size() -> Result<()> {
     let source = Source::from_file("tests/kata/data/large.rego")?;
     let mut lexer = Lexer::new(&source);

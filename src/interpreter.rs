@@ -61,6 +61,7 @@ pub struct Interpreter {
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
     traces: Option<Vec<Rc<str>>>,
+    #[cfg(feature = "deprecated")]
     allow_deprecated: bool,
     strict_builtin_errors: bool,
     imports: BTreeMap<String, Ref<Expr>>,
@@ -186,6 +187,7 @@ impl Interpreter {
             builtins_cache: BTreeMap::new(),
             no_rules_lookup: false,
             traces: None,
+            #[cfg(feature = "deprecated")]
             allow_deprecated: true,
             strict_builtin_errors: true,
             imports: BTreeMap::default(),
@@ -1208,7 +1210,7 @@ impl Interpreter {
                 let mut target = path.join(".");
 
                 let mut target_is_function = self.lookup_function_by_name(&target).is_some()
-                    || matches!(self.lookup_builtin(wm.refr.span(), &target), Ok(Some(_)));
+                    || self.is_builtin(wm.refr.span(), &target);
 
                 if !target_is_function
                     && !target.starts_with("data.")
@@ -1217,7 +1219,7 @@ impl Interpreter {
                 {
                     // target must be a function.
                     if self.lookup_function_by_name(&target).is_none()
-                        && !matches!(self.lookup_builtin(wm.refr.span(), &target), Ok(Some(_)))
+                        && !self.is_builtin(wm.refr.span(), &target)
                     {
                         // Prefix target with current module path.
                         target = self.current_module_path.clone() + "." + &target;
@@ -1244,10 +1246,7 @@ impl Interpreter {
                                 // Lookup without current module path prefixed.
                                 function_path = get_path_string(&wm.r#as, None)?;
                                 if self.lookup_function_by_name(&function_path).is_none()
-                                    && !matches!(
-                                        self.lookup_builtin(wm.r#as.span(), &function_path),
-                                        Ok(Some(_))
-                                    )
+                                    && !self.is_builtin(wm.r#as.span(), &function_path)
                                 {
                                     // bail!(wm.r#as.span().error("could not evaluate expression"));
                                     skip_exec = true;
@@ -1743,9 +1742,9 @@ impl Interpreter {
                                     span.col,
                                     format!(
 					"value for key `{}` generated multiple times: `{}` and `{}`",
-					serde_json::to_string_pretty(&key)?,
-					serde_json::to_string_pretty(&pv)?,
-					serde_json::to_string_pretty(&value)?,
+					serde_json::to_string_pretty(&key).map_err(anyhow::Error::msg)?,
+					serde_json::to_string_pretty(&pv).map_err(anyhow::Error::msg)?,
+					serde_json::to_string_pretty(&value).map_err(anyhow::Error::msg)?,
                                     )
                                     .as_str(),
                                 ));
@@ -2121,27 +2120,11 @@ impl Interpreter {
         name: &str,
         builtin: builtins::BuiltinFcn,
         params: &[ExprRef],
+        args: Vec<Value>,
     ) -> Result<Value> {
-        let mut args = vec![];
-        let is_print = name == "print"; // TODO: with modifier
-        let allow_undefined = is_print;
-        for p in params {
-            match self.eval_expr(p)? {
-                // If any argument is undefined, then the call is undefined.
-                Value::Undefined if !allow_undefined => return Ok(Value::Undefined),
-                p => args.push(p),
-            }
-        }
-
-        if is_print && self.gather_prints {
-            // Do not print to stderr. Instead, gather.
-            let msg =
-                builtins::print_to_string(span, params, &args[..], self.strict_builtin_errors)?;
-
-            // Prefix location information.
-            self.prints
-                .push(format!("{}:{}: {msg}", span.source.file(), span.line));
-            return Ok(Value::Bool(true));
+        // If any argument is undefined, then the call is undefined.
+        if args.iter().any(|a| a == &Value::Undefined) {
+            return Ok(Value::Undefined);
         }
 
         let cache = builtins::must_cache(name);
@@ -2173,6 +2156,7 @@ impl Interpreter {
         Ok(v)
     }
 
+    #[allow(unused_variables)]
     fn lookup_builtin(&self, span: &Span, path: &str) -> Result<Option<&BuiltinFcn>> {
         if let Some(builtin) = builtins::BUILTINS.get(path) {
             return Ok(Some(builtin));
@@ -2187,10 +2171,90 @@ impl Interpreter {
             return Ok(Some(builtin));
         }
 
-        // Mark as used when deprecated feature is not enabled.
-        core::convert::identity((span, self.allow_deprecated));
-
         Ok(None)
+    }
+
+    fn is_builtin(&self, span: &Span, path: &str) -> bool {
+        path == "print" || matches!(self.lookup_builtin(span, path), Ok(Some(_)))
+    }
+
+    fn to_printable(v: &Value, s: &mut String) {
+        match v {
+            Value::Array(array) => {
+                s.push('[');
+                for (idx, e) in array.iter().enumerate() {
+                    if idx > 0 {
+                        s.push_str(", ");
+                    }
+                    Self::to_printable(e, s);
+                }
+                s.push(']');
+            }
+            Value::Set(set) => {
+                s.push('{');
+                for (idx, e) in set.iter().enumerate() {
+                    if idx > 0 {
+                        s.push_str(", ");
+                    }
+                    Self::to_printable(e, s);
+                }
+                s.push('}');
+            }
+            Value::Object(map) => {
+                s.push('{');
+                for (idx, (k, v)) in map.iter().enumerate() {
+                    if idx > 0 {
+                        s.push_str(", ");
+                    }
+                    Self::to_printable(k, s);
+                    s.push_str(": ");
+                    Self::to_printable(v, s);
+                }
+                s.push('}');
+            }
+            v => s.push_str(&format!("{v}")),
+        }
+    }
+
+    fn eval_print(&mut self, span: &Span, params: &[ExprRef], args: Vec<Value>) -> Result<Value> {
+        const MAX_ARGS: u8 = 100;
+        if args.len() > MAX_ARGS as usize {
+            bail!(span.error(&format!("print supports upto {MAX_ARGS} arguments")));
+        }
+
+        // If not compiling for std target, return early if gathering is not
+        // requested.
+        #[cfg(not(feature = "std"))]
+        if !self.gather_prints {
+            return Ok(Value::Bool(true));
+        }
+
+        let mut msg = String::default();
+        for (i, p) in params.iter().enumerate() {
+            if i > 0 {
+                msg.push(' ');
+            }
+            match self.eval_expr(p)? {
+                Value::Undefined => msg.push_str("<undefined>"),
+                // Do not print quotes for string values.
+                Value::String(s) => msg.push_str(&format!("{s}")),
+                a => Self::to_printable(&a, &mut msg),
+            }
+        }
+
+        if self.gather_prints {
+            // Prefix location information.
+            self.prints
+                .push(format!("{}:{}: {msg}", span.source.file(), span.line));
+        }
+
+        // Print to stderr only if not gathering.
+        #[cfg(feature = "std")]
+        if !self.gather_prints {
+            std::eprintln!("{msg}");
+        }
+
+        Ok(Value::Bool(true))
     }
 
     fn eval_call_impl(
@@ -2261,10 +2325,18 @@ impl Interpreter {
                 else if let Some(ext) = self.extensions.get_mut(&fcn_path) {
                     extension = Some(ext);
                     (&empty, None)
+                } else if fcn_path == "print" {
+                    return self.eval_print(span, params, param_values);
                 }
                 // Look up builtin function.
                 else if let Some(builtin) = self.lookup_builtin(span, &fcn_path)? {
-                    let r = self.eval_builtin_call(span, &fcn_path.clone(), *builtin, params);
+                    let r = self.eval_builtin_call(
+                        span,
+                        &fcn_path.clone(),
+                        *builtin,
+                        params,
+                        param_values,
+                    );
                     if let Some(with_functions) = with_functions_saved {
                         self.with_functions = with_functions;
                     }

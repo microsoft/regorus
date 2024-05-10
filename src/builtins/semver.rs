@@ -24,8 +24,8 @@ fn compare(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
 
     let v1 = ensure_string(name, &params[0], &args[0])?;
     let v2 = ensure_string(name, &params[1], &args[1])?;
-    let version1 = Version::parse(&v1)?;
-    let version2 = Version::parse(&v2)?;
+    let version1 = Version::parse(&v1).map_err(|_| params[0].span().error("invalid semver"))?;
+    let version2 = Version::parse(&v2).map_err(|_| params[0].span().error("invalid semver"))?;
     let result = match version1.cmp_precedence(&version2) {
         Ordering::Less => -1,
         Ordering::Equal => 0,

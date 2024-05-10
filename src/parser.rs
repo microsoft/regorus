@@ -70,16 +70,19 @@ impl<'source> Parser<'source> {
     }
 
     pub fn warn_future_keyword(&self) {
-        let kw = self.token_text();
-        let msg = format!(
-            "`{kw}` will be treated as identifier due to missing `import future.keywords.{kw}`"
-        );
         #[cfg(feature = "std")]
-        std::println!(
-            "{}",
-            self.source
-                .message(self.tok.1.line, self.tok.1.col, "warning", &msg)
-        );
+        {
+            let kw = self.token_text();
+            let msg = format!(
+                "`{kw}` will be treated as identifier due to missing `import future.keywords.{kw}`"
+            );
+
+            std::println!(
+                "{}",
+                self.source
+                    .message(self.tok.1.line, self.tok.1.col, "warning", &msg)
+            );
+        }
     }
 
     pub fn set_future_keyword(&mut self, kw: &str, span: &Span) -> Result<()> {

@@ -404,30 +404,29 @@ pub mod coverage {
         /// <img src="https://github.com/microsoft/regorus/blob/main/docs/coverage.png?raw=true">
 
         pub fn to_colored_string(&self) -> anyhow::Result<String> {
-            use std::io::Write;
-            let mut s = Vec::new();
-            writeln!(&mut s, "COVERAGE REPORT:")?;
+            let mut s = String::default();
+            s.push_str("COVERAGE REPORT:\n");
             for file in self.files.iter() {
                 if file.not_covered.is_empty() {
-                    writeln!(&mut s, "{} has full coverage", file.path)?;
+                    s.push_str(&format!("{} has full coverage\n", file.path));
                     continue;
                 }
 
-                writeln!(&mut s, "{}:", file.path)?;
+                s.push_str(&format!("{}:", file.path));
                 for (line, code) in file.code.split('\n').enumerate() {
                     let line = line as u32 + 1;
                     if file.not_covered.contains(&line) {
-                        writeln!(&mut s, "\x1b[31m {line:4}  {code}\x1b[0m")?;
+                        s.push_str(&format!("\x1b[31m {line:4}  {code}\x1b[0m\n"));
                     } else if file.covered.contains(&line) {
-                        writeln!(&mut s, "\x1b[32m {line:4}  {code}\x1b[0m")?;
+                        s.push_str(&format!("\x1b[32m {line:4}  {code}\x1b[0m\n"));
                     } else {
-                        writeln!(&mut s, " {line:4}  {code}")?;
+                        s.push_str(&format!(" {line:4}  {code}\n"));
                     }
                 }
             }
 
-            writeln!(&mut s)?;
-            Ok(core::str::from_utf8(&s)?.to_string())
+            s.push('\n');
+            Ok(s)
         }
     }
 }

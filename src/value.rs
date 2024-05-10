@@ -406,6 +406,7 @@ impl Value {
 
     /// Deserialize a value from a file containing YAML.
     /// Note: Deserialization from YAML does not support arbitrary precision numbers.
+    #[cfg(feature = "std")]
     #[cfg(feature = "yaml")]
     pub fn from_yaml_file(path: &String) -> Result<Value> {
         match std::fs::read_to_string(path) {
