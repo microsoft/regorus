@@ -19,11 +19,11 @@ using System.Threading;
 namespace Microsoft.WindowsAzure.Regorus.IaaS
 {
 
-	public class PolicyEngine : ICloneable, IDisposable
+	public class RegorusPolicyEngine : ICloneable, IDisposable
 	{
 	unsafe private RegorusFFI.RegorusEngine* E;
 	
-	public PolicyEngine()
+	public RegorusPolicyEngine()
 	{
 		unsafe
 	    {
@@ -49,7 +49,7 @@ namespace Microsoft.WindowsAzure.Regorus.IaaS
 
 	public object Clone()
 	{
-	    var clone = (PolicyEngine)this.MemberwiseClone();
+	    var clone = (RegorusPolicyEngine)this.MemberwiseClone();
 	    unsafe
 	    {
 		clone.E = RegorusFFI.API.regorus_engine_clone(E);

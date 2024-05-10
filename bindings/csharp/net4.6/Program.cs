@@ -16,13 +16,13 @@ namespace regoregorus_test
 
             // Force load of modules.
             {
-                var _e = new PolicyEngine();
+                var _e = new RegorusPolicyEngine();
                 var _j = System.Text.Json.JsonDocument.Parse("{}");
             }
 
             w.Restart();
 
-            var engine = new PolicyEngine();
+            var engine = new RegorusPolicyEngine();
 
             w.Stop();
             var newEngineTicks = w.ElapsedTicks;
