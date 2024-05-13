@@ -9,7 +9,6 @@ mod conversions;
 
 #[cfg(feature = "crypto")]
 mod crypto;
-mod debugging;
 #[cfg(feature = "deprecated")]
 pub mod deprecated;
 mod encoding;
@@ -53,8 +52,6 @@ use anyhow::Result;
 use lazy_static::lazy_static;
 
 pub type BuiltinFcn = (fn(&Span, &[Ref<Expr>], &[Value], bool) -> Result<Value>, u8);
-
-pub use debugging::print_to_string;
 
 #[cfg(feature = "deprecated")]
 pub use deprecated::DEPRECATED;
@@ -104,7 +101,6 @@ lazy_static! {
 	//rego::register(&mut m);
 	#[cfg(feature = "opa-runtime")]
 	opa::register(&mut m);
-	debugging::register(&mut m);
 	tracing::register(&mut m);
 	units::register(&mut m);
 

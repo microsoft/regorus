@@ -18,6 +18,8 @@ jobs:
     - uses: actions/checkout@v3
     - name: Add musl target
       run: rustup target add x86_64-unknown-linux-musl
+    - name: Add no_std target
+      run: rustup target add thumbv7m-none-eabi
     - name: Install musl-gcc
       run: sudo apt update && sudo apt install -y musl-tools
     - name: Format Check
@@ -26,6 +28,12 @@ jobs:
       run: cargo build -r --all-features --verbose
     - name: Build
       run: cargo build -r --verbose
+    - name: Build no_std
+      run: cd tests/ensure_no_std && cargo build -r --target thumbv7m-none-eabi
+    - name: Test no_std
+      run: cargo test -r --no-default-features
+    - name: Build only std
+      run: cargo build -r --example regorus --no-default-features --features "std"
     - name: Doc Tests
       run: cargo test -r --doc
     - name: Run tests

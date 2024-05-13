@@ -34,7 +34,6 @@
 use crate::*;
 use core::fmt;
 use core::iter;
-use std::error::Error;
 
 use chrono::TimeZone;
 use chrono::{
@@ -71,8 +70,6 @@ impl fmt::Display for ParseDurationError {
         }
     }
 }
-
-impl Error for ParseDurationError {}
 
 // Parses a duration string in the form of `10h12m45s`.
 //

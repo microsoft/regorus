@@ -38,6 +38,7 @@ fn opa_runtime(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
     );
 
     // Emitting environment variables could lead to confidential data being leaked.
+    #[cfg(feature = "std")]
     if false {
         obj.insert(
             Value::String("env".into()),

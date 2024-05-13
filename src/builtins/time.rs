@@ -147,7 +147,7 @@ fn parse_duration_ns(
     ensure_args_count(span, name, params, args, 1)?;
 
     let value = ensure_string(name, &params[0], &args[0])?;
-    let dur = compat::parse_duration(value.as_ref())?;
+    let dur = compat::parse_duration(value.as_ref()).map_err(anyhow::Error::msg)?;
     safe_timestamp_nanos(span, strict, dur.num_nanoseconds())
 }
 

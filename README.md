@@ -88,14 +88,14 @@ features. By default all features are enabled.
 The default build of regorus example program is 6.4M:
 ```bash
 $ cargo build -r --example regorus; strip target/release/examples/regorus; ls -lh target/release/examples/regorus
--rwxr-xr-x  1 anand  staff   6.4M Jan 19 11:23 target/release/examples/regorus*
+-rwxr-xr-x  1 anand  staff   6.3M May 11 22:03 target/release/examples/regorus*
 ```
 
 
-When all features except for `yaml` are disabled, the binary size drops down to 2.9M.
+When all default features are disabled, the binary size drops down to 1.9M.
 ```bash
-$ cargo build -r --example regorus --features "yaml" --no-default-features; strip target/release/examples/regorus; ls -lh target/release/examples/regorus
--rwxr-xr-x  1 anand  staff   2.9M Jan 19 11:26 target/release/examples/regorus*
+$ cargo build -r --example regorus --no-default-features; strip target/release/examples/regorus; ls -lh target/release/examples/regorus
+-rwxr-xr-x  1 anand  staff   1.9M May 11 22:04 target/release/examples/regorus*
 ```
 
 Regorus passes the [OPA v0.64.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
