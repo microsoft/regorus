@@ -90,6 +90,10 @@ RegorusResult regorus_engine_set_input_from_json_file(RegorusEngine *engine, con
 /// * `query`: Rego expression to be evaluate.
 RegorusResult regorus_engine_eval_query(RegorusEngine *engine, const char *query);
 
+extern uint8_t *regorus_aligned_alloc(uintptr_t alignment, uintptr_t size);
+
+extern void regorus_free(uint8_t *ptr);
+
 } // extern "C"
 
 #endif // REGORUS_FFI_HPP

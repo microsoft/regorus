@@ -127,7 +127,6 @@ pub extern "C" fn regorus_engine_drop(engine: *mut RegorusEngine) {
 ///
 /// * `path`: A filename to be associated with the policy.
 /// * `rego`: Rego policy.
-
 #[no_mangle]
 pub extern "C" fn regorus_engine_add_policy(
     engine: *mut RegorusEngine,
@@ -141,6 +140,7 @@ pub extern "C" fn regorus_engine_add_policy(
     }())
 }
 
+#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn regorus_engine_add_policy_from_file(
     engine: *mut RegorusEngine,
@@ -169,6 +169,7 @@ pub extern "C" fn regorus_engine_add_data_json(
     }())
 }
 
+#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn regorus_engine_add_data_from_json_file(
     engine: *mut RegorusEngine,
@@ -209,6 +210,7 @@ pub extern "C" fn regorus_engine_set_input_json(
     }())
 }
 
+#[cfg(feature = "std")]
 #[no_mangle]
 pub extern "C" fn regorus_engine_set_input_from_json_file(
     engine: *mut RegorusEngine,
@@ -245,4 +247,33 @@ pub extern "C" fn regorus_engine_eval_query(
         },
         Err(e) => to_regorus_result(Err(e)),
     }
+}
+
+#[cfg(feature = "custom_allocator")]
+extern "C" {
+    fn regorus_aligned_alloc(alignment: usize, size: usize) -> *mut u8;
+    fn regorus_free(ptr: *mut u8);
+}
+
+#[cfg(feature = "custom_allocator")]
+mod allocator {
+    use std::alloc::{GlobalAlloc, Layout};
+
+    struct RegorusAllocator {}
+
+    unsafe impl GlobalAlloc for RegorusAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let size = layout.size();
+            let align = layout.align();
+
+            crate::regorus_aligned_alloc(align, size)
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+            crate::regorus_free(ptr)
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: RegorusAllocator = RegorusAllocator {};
 }

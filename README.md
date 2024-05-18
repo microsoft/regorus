@@ -8,6 +8,7 @@
 
 Regorus is also
   - *cross-platform* - Written in platform-agnostic Rust.
+  - *no_std compatible* - Regorus can be used in `no_std` environments too. Most of the builtins are supported.
   - *current* - We strive to keep Regorus up to date with latest OPA release. Regorus supports `import rego.v1`.
   - *compliant* - Regorus is mostly compliant with the latest [OPA release v0.64.0](https://github.com/open-policy-agent/opa/releases/tag/v0.64.0). See [OPA Conformance](#opa-conformance) for details. Note that while we behaviorally produce the same results, we don't yet support all the builtins.
   - *extensible* - Extend the Rego language by implementing custom stateful builtins in Rust.
@@ -85,7 +86,7 @@ Regorus is designed with [Confidential Computing](https://confidentialcomputing.
 it is important to be able to control exactly what is being run. Regorus allows enabling and disabling various components using cargo
 features. By default all features are enabled.
 
-The default build of regorus example program is 6.4M:
+The default build of regorus example program is 6.3M:
 ```bash
 $ cargo build -r --example regorus; strip target/release/examples/regorus; ls -lh target/release/examples/regorus
 -rwxr-xr-x  1 anand  staff   6.3M May 11 22:03 target/release/examples/regorus*
@@ -108,6 +109,7 @@ Regorus can be used from a variety of languages:
 - *C*: C binding is generated using [cbindgen](https://github.com/mozilla/cbindgen).
   [corrosion-rs](https://github.com/corrosion-rs/corrosion) can be used to seamlessly use Regorous
    in your CMake based projects. See [bindings/c](https://github.com/microsoft/regorus/tree/main/bindings/c).
+- *C freestanding*: [bindings/c_no_std](https://github.com/microsoft/regorus/tree/main/bindings/c_no_std) shows how to use Regorus from C environments without a libc.
 - *C++*: C++ binding is generated using [cbindgen](https://github.com/mozilla/cbindgen).
   [corrosion-rs](https://github.com/corrosion-rs/corrosion) can be used to seamlessly use Regorous
    in your CMake based projects. See [bindings/cpp](https://github.com/microsoft/regorus/tree/main/bindings/cpp).

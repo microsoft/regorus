@@ -5,12 +5,17 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 anyhow = "1.0"
-regorus = { path  = "../.." }
+regorus = { path  = "../..", default-features = false }
 serde_json = "1.0.113"
+
+[features]
+default = ["std"]
+std = ["regorus/std"]
+custom_allocator = []
 
 [build-dependencies]
 cbindgen = "0.26.0"
