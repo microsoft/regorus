@@ -43,6 +43,7 @@ impl Engine {
     ///
     /// The policy file will be parsed and converted to AST representation.
     /// Multiple policy files may be added to the engine.
+    /// Returns the Rego package name declared in the policy.
     ///
     /// * `path`: A filename to be associated with the policy.
     /// * `rego`: The rego policy code.
@@ -52,29 +53,33 @@ impl Engine {
     /// # fn main() -> anyhow::Result<()> {
     /// let mut engine = Engine::new();
     ///
-    /// engine.add_policy(
+    /// let package = engine.add_policy(
     ///    "test.rego".to_string(),
     ///    r#"
     ///    package test
     ///    allow = input.user == "root"
     ///    "#.to_string())?;
+    ///
+    /// assert_eq!(package, "data.test");
     /// # Ok(())
     /// # }
     /// ```
     ///
-    pub fn add_policy(&mut self, path: String, rego: String) -> Result<()> {
+    pub fn add_policy(&mut self, path: String, rego: String) -> Result<String> {
         let source = Source::from_contents(path, rego)?;
         let mut parser = Parser::new(&source)?;
-        self.modules.push(Ref::new(parser.parse()?));
+        let module = Ref::new(parser.parse()?);
+        self.modules.push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
-        Ok(())
+        Interpreter::get_path_string(&module.package.refr, Some("data"))
     }
 
     /// Add a policy from a given file.
     ///
     /// The policy file will be parsed and converted to AST representation.
     /// Multiple policy files may be added to the engine.
+    /// Returns the Rego package name declared in the policy.
     ///
     /// * `path`: Path to the policy file (.rego).
     ///
@@ -83,17 +88,44 @@ impl Engine {
     /// # fn main() -> anyhow::Result<()> {
     /// let mut engine = Engine::new();
     ///
-    /// engine.add_policy_from_file("tests/aci/framework.rego")?;
+    /// let package = engine.add_policy_from_file("tests/aci/framework.rego")?;
+    ///
+    /// assert_eq!(package, "data.framework");
     /// # Ok(())
     /// # }
     /// ```
     #[cfg(feature = "std")]
-    pub fn add_policy_from_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<()> {
+    pub fn add_policy_from_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<String> {
         let source = Source::from_file(path)?;
         let mut parser = Parser::new(&source)?;
-        self.modules.push(Ref::new(parser.parse()?));
+        let module = Ref::new(parser.parse()?);
+        self.modules.push(module.clone());
+        // if policies change, interpreter needs to be prepared again
         self.prepared = false;
-        Ok(())
+        Interpreter::get_path_string(&module.package.refr, Some("data"))
+    }
+
+    /// Get the list of packages defined by loaded policies.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// let _ = engine.add_policy_from_file("tests/aci/framework.rego")?;
+    ///
+    /// // Package names can be different from file names.
+    /// let _ = engine.add_policy("policy.rego".into(), "package hello.world".into())?;
+    ///
+    /// assert_eq!(engine.get_packages()?, vec!["data.framework", "data.hello.world"]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_packages(&self) -> Result<Vec<String>> {
+        self.modules
+            .iter()
+            .map(|m| Interpreter::get_path_string(&m.package.refr, Some("data")))
+            .collect()
     }
 
     /// Set the input document.
