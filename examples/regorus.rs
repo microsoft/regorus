@@ -25,7 +25,7 @@ fn read_value_from_json_file(path: &String) -> Result<regorus::Value> {
     regorus::Value::from_json_str(&read_file(path)?)
 }
 
-fn add_policy_from_file(engine: &mut regorus::Engine, path: String) -> Result<()> {
+fn add_policy_from_file(engine: &mut regorus::Engine, path: String) -> Result<String> {
     #[cfg(feature = "std")]
     return engine.add_policy_from_file(path);
 
@@ -65,7 +65,7 @@ fn rego_eval(
                 _ => continue,
             }
 
-            add_policy_from_file(&mut engine, entry.path().display().to_string())?;
+            let _package = add_policy_from_file(&mut engine, entry.path().display().to_string())?;
         }
     }
 
@@ -73,7 +73,7 @@ fn rego_eval(
     for file in files.iter() {
         if file.ends_with(".rego") {
             // Read policy file.
-            add_policy_from_file(&mut engine, file.clone())?;
+            let _package = add_policy_from_file(&mut engine, file.clone())?;
         } else {
             // Read data file.
             let data = if file.ends_with(".json") {
