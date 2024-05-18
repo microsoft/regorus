@@ -59,7 +59,8 @@ class TestRegorus < Minitest::Test
   end
 
   def test_policy_addition
-    assert_silent { @engine.add_policy("example.rego", example_policy) }
+    # returns the package name from the REGO, not the filename
+    assert_equal "data.regorus_test", @engine.add_policy("example.rego", example_policy)
   end
 
   def test_object_creation_with_new

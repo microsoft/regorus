@@ -36,14 +36,14 @@ impl Engine {
         }
     }
 
-    fn add_policy(&self, path: String, rego: String) -> Result<(), Error> {
+    fn add_policy(&self, path: String, rego: String) -> Result<String, Error> {
         self.engine
             .borrow_mut()
             .add_policy(path, rego)
             .map_err(|e| Error::new(runtime_error(), format!("Failed to add policy: {}", e)))
     }
 
-    fn add_policy_from_file(&self, path: String) -> Result<(), Error> {
+    fn add_policy_from_file(&self, path: String) -> Result<String, Error> {
         self.engine
             .borrow_mut()
             .add_policy_from_file(path)

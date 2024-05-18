@@ -26,5 +26,5 @@ Gem::Specification.new do |spec|
   spec.executables = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
   spec.require_paths = ["lib"]
   spec.extensions = ["ext/regorusrb/extconf.rb"]
-  spec.add_dependency "rb_sys", "~> 0.9.91"
+  spec.add_dependency "rb_sys", "~> 0.9.97"
 end
