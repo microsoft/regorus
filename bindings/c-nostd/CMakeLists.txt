@@ -20,15 +20,22 @@ corrosion_import_crate(
   PROFILE "release"
   # Only build the "regorus-ffi" crate.
   CRATES "regorus-ffi"
+  
+  # Turn off std support in regorus-ffi.
+  NO_DEFAULT_FEATURES
+  NO_STD
 
-  # Select specific features in regorus.
-  FEATURES "regorus/semver"
+  # custom_allocator allows using a custom memory allocator.
+  # To use malloc/free remove custom_allocator below.
+  # Additionally, select specific features in regorus.
+  # See regorus/opa_no_std
+  FEATURES "custom_allocator,regorus/semver"
 
   # Link statically
-  CRATE_TYPES "staticlib"
+  CRATE_TYPES staticlib FLAGS --crate-type=staticlib
   )
 
-add_executable(regorus_test main.c)
+add_executable(regorus_test_nostd main.c)
 # Add path to <regorus-source-folder>/bindings/ffi
-target_include_directories(regorus_test PRIVATE "../ffi")
-target_link_libraries(regorus_test regorus-ffi)
+target_include_directories(regorus_test_nostd PRIVATE "../ffi")
+target_link_libraries(regorus_test_nostd regorus-ffi)

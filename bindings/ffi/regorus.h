@@ -124,4 +124,8 @@ struct RegorusResult regorus_engine_set_input_from_json_file(struct RegorusEngin
  */
 struct RegorusResult regorus_engine_eval_query(struct RegorusEngine *engine, const char *query);
 
+extern uint8_t *regorus_aligned_alloc(uintptr_t alignment, uintptr_t size);
+
+extern void regorus_free(uint8_t *ptr);
+
 #endif /* REGORUS_H */
