@@ -1,0 +1,30 @@
+name: test-ruby
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Ruby and Rust
+        uses: oxidize-rb/actions/setup-ruby-and-rust@v1
+        with:
+          ruby-version: "3.3.1"
+          rustup-toolchain: "stable"
+          bundler-cache: true
+          cargo-cache: true
+          working-directory: "bindings/ruby"
+
+      - name: Run ruby tests
+        run:  |
+          cd bindings/ruby
+          bundle exec rake
