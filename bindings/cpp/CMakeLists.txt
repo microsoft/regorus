@@ -19,8 +19,14 @@ corrosion_import_crate(
   MANIFEST_PATH "../ffi/Cargo.toml"
   # Always build regorus in Release mode.
   PROFILE "release"
-  # Only build the "regorusc" crate.
-  CRATES "regorus-ffi")
+  # Only build the "regorus-ffi" crate.
+  CRATES "regorus-ffi"
+
+  # Select specific features in regorus.
+  FEATURES "regorus/semver"
+
+  # Link statically
+  CRATE_TYPES "staticlib")
 
 add_executable(regorus_test main.cpp)
 # Add path to <regorus-source-folder>/bindings/ffi

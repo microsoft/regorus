@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
-	"regorus-test/pkg/regorus"
+	"regorus_test/pkg/regorus"
 	"time"
 )
 

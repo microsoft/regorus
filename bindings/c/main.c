@@ -10,16 +10,19 @@ int main() {
     r = regorus_engine_add_policy_from_file(engine, "../../../tests/aci/framework.rego");
     if (r.status != RegorusStatusOk)
 	goto error;
+    printf("Loaded policy %s\n", r.output);
     regorus_result_drop(r);
 
     r = regorus_engine_add_policy_from_file(engine, "../../../tests/aci/api.rego");
     if (r.status != RegorusStatusOk)
 	goto error;
+    printf("Loaded policy %s\n", r.output);
     regorus_result_drop(r);
     
     r = regorus_engine_add_policy_from_file(engine, "../../../tests/aci/policy.rego");
     if (r.status != RegorusStatusOk)
 	goto error;
+    printf("Loaded policy %s\n", r.output);
     regorus_result_drop(r);
 
     // Add data

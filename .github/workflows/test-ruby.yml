@@ -1,4 +1,4 @@
-name: test-ruby
+name: bindings/ruby
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  setup:
+  test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -16,7 +16,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Ruby and Rust
-        uses: oxidize-rb/actions/setup-ruby-and-rust@v1
+        uses: oxidize-rb/actions/setup-ruby-and-rust@7ca44a16e287e5ff7dd72ab53f4bd41cbf34a571 #v1.26
         with:
           ruby-version: "3.3.1"
           rustup-toolchain: "stable"

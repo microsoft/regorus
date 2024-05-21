@@ -1,0 +1,35 @@
+name: bindings/java
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 8
+          distribution: "corretto"
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Building binding
+        run: cargo build --release --manifest-path bindings/java/Cargo.toml
+
+      - name: Build jar
+        run: mvn package
+        working-directory: ./bindings/java
+
+      - name: Test jar
+        run: |
+          javac -cp target/regorus-java-0.1.5.jar Test.java
+          java -Djava.library.path=../../target/release -cp target/regorus-java-0.1.5.jar:. Test
+        working-directory: ./bindings/java

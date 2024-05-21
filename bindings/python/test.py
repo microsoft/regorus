@@ -7,9 +7,14 @@ import regorus
 engine = regorus.Engine()
 
 # Load policies
-engine.add_policy_from_file('../../tests/aci/framework.rego')
-engine.add_policy_from_file('../../tests/aci/api.rego')
-engine.add_policy_from_file('../../tests/aci/policy.rego')
+pkg = engine.add_policy_from_file('../../tests/aci/framework.rego')
+print(' Loaded Policy %s' % pkg)
+
+pkg = engine.add_policy_from_file('../../tests/aci/api.rego')
+print(' Loaded Policy %s' % pkg)
+
+pkg = engine.add_policy_from_file('../../tests/aci/policy.rego')
+print(' Loaded Policy %s' % pkg)
 
 # Add policy data
 data = {

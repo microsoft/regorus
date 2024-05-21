@@ -7,7 +7,7 @@ var regorus = require('./pkg/regorusjs')
 var engine = new regorus.Engine();
 
 // Add Rego policy.
-engine.add_policy(
+var pkg = engine.add_policy(
     // Associate this file name with policy
     'hello.rego',
     
@@ -18,6 +18,7 @@ engine.add_policy(
   # Join messages
   message = concat(", ", [input.message, data.message])
 `)
+console.log("Loaded policy " + pkg)
 
 // Set policy data
 engine.add_data_json(`
@@ -34,7 +35,7 @@ engine.set_input_json(`
 `)
 
 // Eval query
-results = engine.eval_query('data.test.message')
+var results = engine.eval_query('data.test.message')
 
 // Display
 console.log(results)

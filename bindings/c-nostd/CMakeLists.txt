@@ -35,7 +35,7 @@ corrosion_import_crate(
   CRATE_TYPES staticlib FLAGS --crate-type=staticlib
   )
 
-add_executable(regorus_test_nostd main.c)
+add_executable(regorus_test main.c)
 # Add path to <regorus-source-folder>/bindings/ffi
-target_include_directories(regorus_test_nostd PRIVATE "../ffi")
-target_link_libraries(regorus_test_nostd regorus-ffi)
+target_include_directories(regorus_test PRIVATE "../ffi")
+target_link_libraries(regorus_test regorus-ffi)
