@@ -40,6 +40,7 @@ fn run_kata_tests(
         let policy_file = path.join("policy.rego");
         let inputs_file = path.join("inputs.txt");
         let outputs_file = path.join("outputs.json");
+        let prints_file = path.join("prints.json");
 
         let mut engine = Engine::new();
         engine.add_policy_from_file(&policy_file)?;
@@ -58,6 +59,19 @@ fn run_kata_tests(
                 .as_array()?
                 .iter()
                 .cloned()
+                .rev()
+                .collect()
+        };
+
+        let mut prints: Vec<Vec<String>> = if generate {
+            vec![]
+        } else {
+            let prints_json = std::fs::read_to_string(&prints_file).map_err(|e| {
+                anyhow::Error::msg(format!("could not read {}\n{e}", prints_file.display()))
+            })?;
+
+            serde_json::from_str::<Vec<Vec<String>>>(&prints_json)?
+                .into_iter()
                 .rev()
                 .collect()
         };
@@ -96,9 +110,14 @@ fn run_kata_tests(
 
             if generate {
                 results.push(r);
+                prints.push(engine.take_prints()?);
             } else {
                 let expected = results.pop().unwrap();
                 assert_eq!(r, expected, "{lineno} failed in {}", inputs_file.display());
+
+                let p = engine.take_prints()?;
+                assert_eq!(p, new_engine.take_prints()?);
+                assert_eq!(p, prints.pop().unwrap());
             }
 
             num_queries += 2;
@@ -106,6 +125,7 @@ fn run_kata_tests(
 
         if generate {
             std::fs::write(outputs_file, Value::from(results).to_json_str()?)?;
+            std::fs::write(prints_file, serde_json::to_string_pretty(&prints)?)?;
         }
 
         if coverage {
