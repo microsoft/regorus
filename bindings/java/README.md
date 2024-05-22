@@ -30,7 +30,7 @@ You then need to build Java bindings using:
 $ mvn package
 ```
 
-And you will have a JAR at `./target/regorus-java-0.0.1.jar`.
+And you will have a JAR at `./target/regorus-java-0.1.5.jar`.
 
 ## Usage
 
@@ -60,7 +60,7 @@ You need to ensure artifacts built in [previous section](#building) are in Java'
 
 For example with `java` CLI:
 ```bash
-$ java -Djava.library.path=../../target/aarch64-apple-darwin/release/ -cp target/regorus-java-0.0.1.jar Test.java
+$ java -Djava.library.path=../../target/aarch64-apple-darwin/release/ -cp target/regorus-java-0.1.5.jar Test.java
 ```
 
 should gave you the output:

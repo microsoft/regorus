@@ -1,0 +1,37 @@
+name: tests/debug
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build (all features)
+      run: cargo build --all-features
+    - name: Build
+      run: cargo build
+    - name: Test no_std
+      run: cargo test --no-default-features
+    - name: Build only std
+      run: cargo build --example regorus --no-default-features --features "std"
+    - name: Doc Tests
+      run: cargo test --doc
+    - name: Run tests
+      run: cargo test
+    - name: Run tests (ACI)
+      run: cargo test --test aci
+    - name: Run tests (KATA)
+      run: cargo test --test kata
+    - name: Run tests (OPA Conformance)
+      run: >-
+        cargo test --test opa --features opa-testutil,serde_json/arbitrary_precision  -- $(tr '\n' ' ' < tests/opa.passing)

@@ -50,7 +50,7 @@ impl Engine {
     ///
     /// * `path`: A filename to be associated with the policy.
     /// * `rego`: Rego policy.
-    pub fn add_policy(&mut self, path: String, rego: String) -> Result<(), JsValue> {
+    pub fn add_policy(&mut self, path: String, rego: String) -> Result<String, JsValue> {
         self.engine.add_policy(path, rego).map_err(error_to_jsvalue)
     }
 

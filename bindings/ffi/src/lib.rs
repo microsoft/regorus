@@ -39,14 +39,14 @@ fn to_c_str(s: String) -> *mut c_char {
     }
 }
 
-fn from_c_str(s: *const c_char) -> Result<String> {
+fn from_c_str(name: &str, s: *const c_char) -> Result<String> {
     if s.is_null() {
         bail!("null pointer");
     }
     unsafe {
         CStr::from_ptr(s)
             .to_str()
-            .map_err(|_| anyhow!("`path`: invalid utf8"))
+            .map_err(|e| anyhow!("`{name}`: invalid utf8.\n{e}"))
             .map(|s| s.to_string())
     }
 }
@@ -70,6 +70,21 @@ fn to_regorus_result(r: Result<()>) -> RegorusResult {
     }
 }
 
+fn to_regorus_string_result(r: Result<String>) -> RegorusResult {
+    match r {
+        Ok(s) => RegorusResult {
+            status: RegorusStatus::RegorusStatusOk,
+            output: to_c_str(s),
+            error_message: std::ptr::null_mut(),
+        },
+        Err(e) => RegorusResult {
+            status: RegorusStatus::RegorusStatusError,
+            output: std::ptr::null_mut(),
+            error_message: to_c_str(format!("{e}")),
+        },
+    }
+}
+
 /// Wrapper for `regorus::Engine`.
 #[derive(Clone)]
 pub struct RegorusEngine {
@@ -81,9 +96,12 @@ pub struct RegorusEngine {
 /// `output` and `error_message` strings are not valid after drop.
 #[no_mangle]
 pub extern "C" fn regorus_result_drop(r: RegorusResult) {
-    if !r.error_message.is_null() {
-        unsafe {
+    unsafe {
+        if !r.error_message.is_null() {
             let _ = CString::from_raw(r.error_message);
+        }
+        if !r.output.is_null() {
+            let _ = CString::from_raw(r.output);
         }
     }
 }
@@ -133,10 +151,10 @@ pub extern "C" fn regorus_engine_add_policy(
     path: *const c_char,
     rego: *const c_char,
 ) -> RegorusResult {
-    to_regorus_result(|| -> Result<()> {
+    to_regorus_string_result(|| -> Result<String> {
         to_ref(&engine)?
             .engine
-            .add_policy(from_c_str(path)?, from_c_str(rego)?)
+            .add_policy(from_c_str("path", path)?, from_c_str("rego", rego)?)
     }())
 }
 
@@ -146,10 +164,10 @@ pub extern "C" fn regorus_engine_add_policy_from_file(
     engine: *mut RegorusEngine,
     path: *const c_char,
 ) -> RegorusResult {
-    to_regorus_result(|| -> Result<()> {
+    to_regorus_string_result(|| -> Result<String> {
         to_ref(&engine)?
             .engine
-            .add_policy_from_file(from_c_str(path)?)
+            .add_policy_from_file(from_c_str("path", path)?)
     }())
 }
 
@@ -165,7 +183,7 @@ pub extern "C" fn regorus_engine_add_data_json(
     to_regorus_result(|| -> Result<()> {
         to_ref(&engine)?
             .engine
-            .add_data(regorus::Value::from_json_str(&from_c_str(data)?)?)
+            .add_data(regorus::Value::from_json_str(&from_c_str("data", data)?)?)
     }())
 }
 
@@ -178,7 +196,7 @@ pub extern "C" fn regorus_engine_add_data_from_json_file(
     to_regorus_result(|| -> Result<()> {
         to_ref(&engine)?
             .engine
-            .add_data(regorus::Value::from_json_file(&from_c_str(path)?)?)
+            .add_data(regorus::Value::from_json_file(&from_c_str("path", path)?)?)
     }())
 }
 
@@ -205,7 +223,7 @@ pub extern "C" fn regorus_engine_set_input_json(
     to_regorus_result(|| -> Result<()> {
         to_ref(&engine)?
             .engine
-            .set_input(regorus::Value::from_json_str(&from_c_str(input)?)?);
+            .set_input(regorus::Value::from_json_str(&from_c_str("input", input)?)?);
         Ok(())
     }())
 }
@@ -219,7 +237,7 @@ pub extern "C" fn regorus_engine_set_input_from_json_file(
     to_regorus_result(|| -> Result<()> {
         to_ref(&engine)?
             .engine
-            .set_input(regorus::Value::from_json_file(&from_c_str(path)?)?);
+            .set_input(regorus::Value::from_json_file(&from_c_str("path", path)?)?);
         Ok(())
     }())
 }
@@ -236,7 +254,7 @@ pub extern "C" fn regorus_engine_eval_query(
     let output = || -> Result<String> {
         let results = to_ref(&engine)?
             .engine
-            .eval_query(from_c_str(query)?, false)?;
+            .eval_query(from_c_str("query", query)?, false)?;
         Ok(serde_json::to_string_pretty(&results)?)
     }();
     match output {

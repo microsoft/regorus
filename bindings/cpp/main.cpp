@@ -89,6 +89,7 @@ int main() {
 	    std::cerr<<result.error()<<std::endl;
 	    return -1;
 	}
+	std::cout<<"Loaded policy "<<result.output()<< std::endl;
     }
     {
 	auto result = engine.add_data_from_json_file("../../../tests/aci/data.json");

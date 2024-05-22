@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk"> 
+﻿<Project Sdk="Microsoft.NET.Sdk" InitialTargets="BuildRegorusFFI"> 
 
   <Target Name="BuildRegorusFFI">
     <Exec Command="cargo build -r --manifest-path ../ffi/Cargo.toml" />

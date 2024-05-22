@@ -24,7 +24,7 @@ fn main() {
 
     csbindgen::Builder::default()
         .input_extern_file("src/lib.rs")
-        .csharp_dll_name("regorusc")
+        .csharp_dll_name("regorus_ffi")
         .csharp_class_name("API")
         .csharp_namespace("RegorusFFI")
         .generate_csharp_file("./RegorusFFI.g.cs")

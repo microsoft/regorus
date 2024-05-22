@@ -1,0 +1,26 @@
+name: bindings/csharp
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+
+      - name: Build
+        run: dotnet build
+        working-directory: ./bindings/csharp
+
+      - name: Run
+        run: LD_LIBRARY_PATH=. dotnet run
+        working-directory: ./bindings/csharp

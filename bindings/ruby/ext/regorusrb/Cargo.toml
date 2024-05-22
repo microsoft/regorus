@@ -1,6 +1,6 @@
 [package]
 name = "regorusrb"
-version = "0.1.0"
+version = "0.1.5"
 edition = "2021"
 description = "Ruby bindings for Regorus - a fast, lightweight Rego interpreter written in Rust"
 publish = false

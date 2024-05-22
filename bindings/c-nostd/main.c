@@ -7,13 +7,14 @@ char*  file_to_string(const char* file) {
     char * buffer = 0;
     long length;
     FILE * f = fopen (file, "rb");
-    
+
     if (f)
     {
 	fseek (f, 0, SEEK_END);
 	length = ftell (f);
 	fseek (f, 0, SEEK_SET);
-	buffer = malloc (length);
+	buffer = malloc (length + 1);
+	buffer[length] = '\0';
 	if (buffer)
 	{
 	    fread (buffer, 1, length, f);
@@ -26,8 +27,6 @@ char*  file_to_string(const char* file) {
 
 // If regorus is built with custom-allocator, then provide implementation.
 uint8_t* regorus_aligned_alloc(size_t alignment, size_t size) {
-    printf("%ld %ld\n", size, alignment);
-    fflush(stdout);
     return aligned_alloc(alignment, size);
 }
 
@@ -47,18 +46,21 @@ int main() {
     free(buffer);
     if (r.status != RegorusStatusOk)
 	goto error;
+    printf("Loaded policy %s\n", r.output);
     regorus_result_drop(r);
 
     r = regorus_engine_add_policy(engine, "api.rego", (buffer = file_to_string("../../../tests/aci/api.rego")));
     free(buffer);
     if (r.status != RegorusStatusOk)
 	goto error;
+    printf("Loaded policy %s\n", r.output);
     regorus_result_drop(r);
-    
+
     r = regorus_engine_add_policy(engine, "policy.rego", (buffer = file_to_string("../../../tests/aci/policy.rego")));
     free(buffer);
     if (r.status != RegorusStatusOk)
 	goto error;
+    printf("Loaded policy %s\n", r.output);
     regorus_result_drop(r);
 
     // Add data
@@ -83,14 +85,14 @@ int main() {
     // Print output
     printf("%s", r.output);
     regorus_result_drop(r);
-    
-    
+
+
     // Free the engine.
     regorus_engine_drop(engine);
 
     return 0;
 error:
     printf("%s", r.error_message);
-	
+
     return 1;
 }

@@ -1,0 +1,33 @@
+name: bindings/go
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+   
+          
+      - uses: actions/setup-go@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          architecture: x64
+
+      - name: Build ffi
+        run: cargo build -r
+        working-directory: ./bindings/ffi
+
+      - name: Test go
+        run: |
+          go mod tidy
+          go build
+          LD_LIBRARY_PATH=../../target/release ./regorus_test
+        working-directory: ./bindings/go
