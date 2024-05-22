@@ -21,19 +21,7 @@ impl Default for Engine {
     }
 }
 
-impl Clone for Engine {
-    /// Clone a [`Engine`]
-    ///
-    /// To avoid having to parse same policy again, the engine can be cloned
-    /// after policies and data have been added.
-    fn clone(&self) -> Self {
-        Self {
-            engine: self.engine.clone(),
-        }
-    }
-}
-
-fn from<'source>(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
+fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
     // dicts
     Ok(if let Ok(dict) = ob.downcast::<PyDict>() {
         let mut map = BTreeMap::new();
@@ -141,7 +129,7 @@ fn to(mut v: Value, py: Python<'_>) -> Result<PyObject> {
 
         Value::Array(_) => {
             let list = PyList::empty_bound(py);
-            for v in std::mem::replace(v.as_array_mut()?, Vec::new()) {
+            for v in std::mem::take(v.as_array_mut()?) {
                 list.append(to(v, py)?)?;
             }
             list.into()
@@ -149,7 +137,7 @@ fn to(mut v: Value, py: Python<'_>) -> Result<PyObject> {
 
         Value::Set(_) => {
             let set = PySet::empty_bound(py)?;
-            for v in std::mem::replace(v.as_set_mut()?, BTreeSet::new()) {
+            for v in std::mem::take(v.as_set_mut()?) {
                 set.add(to(v, py)?)?;
             }
             set.into()
@@ -157,7 +145,7 @@ fn to(mut v: Value, py: Python<'_>) -> Result<PyObject> {
 
         Value::Object(_) => {
             let dict = PyDict::new_bound(py);
-            for (k, v) in std::mem::replace(v.as_object_mut()?, BTreeMap::new()) {
+            for (k, v) in std::mem::take(v.as_object_mut()?) {
                 dict.set_item(to(k, py)?, to(v, py)?)?;
             }
             dict.into()
@@ -221,7 +209,7 @@ impl Engine {
     ///
     /// * `path`: Path to JSON policy data.
     pub fn add_data_from_json_file(&mut self, path: String) -> Result<()> {
-        let data = Value::from_json_file(&path)?;
+        let data = Value::from_json_file(path)?;
         self.engine.add_data(data)
     }
 
@@ -254,7 +242,7 @@ impl Engine {
     ///
     /// * `path`: Path to JSON input data.
     pub fn set_input_from_json_file(&mut self, path: String) -> Result<()> {
-        let input = Value::from_json_file(&path)?;
+        let input = Value::from_json_file(path)?;
         self.engine.set_input(input);
         Ok(())
     }
@@ -298,6 +286,69 @@ impl Engine {
     pub fn eval_query_as_json(&mut self, query: String) -> Result<String> {
         let results = self.engine.eval_query(query, false)?;
         serde_json::to_string_pretty(&results).map_err(|e| anyhow!("{e}"))
+    }
+
+    /// Evaluate rule.
+    ///
+    /// * `rule`: Full path to the rule.
+    pub fn eval_rule(&mut self, rule: String, py: Python<'_>) -> Result<PyObject> {
+        to(self.engine.eval_rule(rule)?, py)
+    }
+
+    /// Evaluate rule and return value as json.
+    ///
+    /// * `rule`: Full path to the rule.
+    pub fn eval_rule_as_json(&mut self, rule: String) -> Result<String> {
+        let v = self.engine.eval_rule(rule)?;
+        v.to_json_str()
+    }
+
+    /// Enable code coverage
+    ///
+    /// * `enable`: Whether to enable coverage or not.
+    pub fn set_enable_coverage(&mut self, enable: bool) {
+        self.engine.set_enable_coverage(enable)
+    }
+
+    /// Get coverage report as json.
+    ///
+    pub fn get_coverage_report_as_json(&self) -> Result<String> {
+        let report = self.engine.get_coverage_report()?;
+        serde_json::to_string_pretty(&report).map_err(|e| anyhow!("{e}"))
+    }
+
+    /// Get coverage report as pretty printable string.
+    ///
+    pub fn get_coverage_report_pretty(&self) -> Result<String> {
+        self.engine.get_coverage_report()?.to_string_pretty()
+    }
+
+    /// Clear coverage data.
+    ///
+    pub fn clear_coverage_data(&mut self) {
+        self.engine.clear_coverage_data();
+    }
+
+    /// Gather print statements instead of printing to stderr.
+    ///
+    pub fn set_gather_prints(&mut self, b: bool) {
+        self.engine.set_gather_prints(b)
+    }
+
+    /// Take gathered prints.
+    ///
+    pub fn take_prints(&mut self) -> Result<Vec<String>> {
+        self.engine.take_prints()
+    }
+
+    /// Clone a [`Engine`]
+    ///
+    /// To avoid having to parse same policy again, the engine can be cloned
+    /// after policies and data have been added.
+    fn clone(&self) -> Self {
+        Self {
+            engine: self.engine.clone(),
+        }
     }
 }
 

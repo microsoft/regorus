@@ -6,6 +6,8 @@ void example()
     // Create engine
     regorus::Engine engine;
 
+    engine.set_enable_coverage(true);
+    
     // Add policies.
     engine.add_policy("objects.rego",R"(package objects
 
@@ -67,6 +69,14 @@ f := e["dev"])");
     } else {
 	std::cerr<<result.error()<<std::endl;
     }
+
+    // Print coverage report
+    auto result1 = engine.get_coverage_report_pretty();
+    if (result1) {
+	std::cout<<result1.output()<<std::endl;
+    } else {
+	std::cerr<<result1.error()<<std::endl;
+    }
 }
 
 int main() {
@@ -89,7 +99,7 @@ int main() {
 	    std::cerr<<result.error()<<std::endl;
 	    return -1;
 	}
-	std::cout<<"Loaded policy "<<result.output()<< std::endl;
+	std::cout<<"Loaded package "<<result.output()<< std::endl;
     }
     {
 	auto result = engine.add_data_from_json_file("../../../tests/aci/data.json");
@@ -99,7 +109,7 @@ int main() {
 	}
     }
 
-    // Set input and eval query.
+    // Set input and eval rule.
     {
 	auto result = engine.set_input_from_json_file("../../../tests/aci/input.json");
 	if (!result) {
@@ -107,13 +117,13 @@ int main() {
 	    return -1;
 	}
     }
-    auto result = engine.eval_query("data.framework.mount_overlay = x");
+    auto result = engine.eval_rule("data.framework.mount_overlay");
     if (!result) {
 	std::cerr<<result.error()<<std::endl;
 	return -1;
     }
 
     std::cout<<result.output()<<std::endl;
-    
+
     example();
 }

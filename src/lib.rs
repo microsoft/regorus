@@ -402,7 +402,7 @@ pub mod coverage {
         ///
         /// <img src="https://github.com/microsoft/regorus/blob/main/docs/coverage.png?raw=true">
 
-        pub fn to_colored_string(&self) -> anyhow::Result<String> {
+        pub fn to_string_pretty(&self) -> anyhow::Result<String> {
             let mut s = String::default();
             s.push_str("COVERAGE REPORT:\n");
             for file in self.files.iter() {
@@ -411,7 +411,7 @@ pub mod coverage {
                     continue;
                 }
 
-                s.push_str(&format!("{}:", file.path));
+                s.push_str(&format!("{}:\n", file.path));
                 for (line, code) in file.code.split('\n').enumerate() {
                     let line = line as u32 + 1;
                     if file.not_covered.contains(&line) {

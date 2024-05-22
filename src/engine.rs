@@ -240,7 +240,7 @@ impl Engine {
         &self.modules
     }
 
-    /// Evaluate rule(s) at given path.
+    /// Evaluate specified rule(s).
     ///
     /// [`Engine::eval_rule`] is often faster than [`Engine::eval_query`] and should be preferred if
     /// OPA style [`QueryResults`] are not needed.
@@ -280,10 +280,10 @@ impl Engine {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn eval_rule(&mut self, path: String) -> Result<Value> {
+    pub fn eval_rule(&mut self, rule: String) -> Result<Value> {
         self.prepare_for_eval(false)?;
         self.interpreter.clean_internal_evaluation_state();
-        self.interpreter.eval_rule_in_path(path)
+        self.interpreter.eval_rule_in_path(rule)
     }
 
     /// Evaluate a Rego query.

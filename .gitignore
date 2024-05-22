@@ -17,3 +17,10 @@ worktrees/
 
 # build folders
 **/build
+
+# Generated C# bindings
+**/*.g.cs
+
+# Generated C, C++ headers
+bindings/ffi/regorus.h
+bindings/ffi/regorus.ffi.hpp

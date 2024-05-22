@@ -28,7 +28,7 @@ func (e *Engine) Clone() *Engine {
 	return c
 }
 
-func (e *Engine) AddPolicy(path string, rego string) error {
+func (e *Engine) AddPolicy(path string, rego string) (string, error) {
 	path_c := C.CString(path)
 	defer C.free(unsafe.Pointer(path_c))
 
@@ -38,21 +38,21 @@ func (e *Engine) AddPolicy(path string, rego string) error {
 	result := C.regorus_engine_add_policy(e.e, path_c, rego_c)
 	defer C.regorus_result_drop(result)
 	if result.status != C.RegorusStatusOk {
-		return fmt.Errorf("%s", C.GoString(result.error_message))
+		return "", fmt.Errorf("%s", C.GoString(result.error_message))
 	}
-	return nil
+	return C.GoString(result.output), nil
 }
 
-func (e *Engine) AddPolicyFromFile(path string) error {
+func (e *Engine) AddPolicyFromFile(path string) (string, error) {
 	path_c := C.CString(path)
 	defer C.free(unsafe.Pointer(path_c))
 
 	result := C.regorus_engine_add_policy_from_file(e.e, path_c)
 	defer C.regorus_result_drop(result)
 	if result.status != C.RegorusStatusOk {
-		return fmt.Errorf("%s", C.GoString(result.error_message))
+		return "", fmt.Errorf("%s", C.GoString(result.error_message))
 	}
-	return nil
+	return C.GoString(result.output), nil
 }
 
 func (e *Engine) AddDataJson(data string) error {
@@ -108,6 +108,76 @@ func (e *Engine) EvalQuery(query string) (string, error) {
 	defer C.free(unsafe.Pointer(query_c))
 
 	result := C.regorus_engine_eval_query(e.e, query_c)
+	defer C.regorus_result_drop(result)
+	if result.status != C.RegorusStatusOk {
+		return "", fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+
+	return C.GoString(result.output), nil
+}
+
+func (e *Engine) EvalRule(rule string) (string, error) {
+	rule_c := C.CString(rule)
+	defer C.free(unsafe.Pointer(rule_c))
+
+	result := C.regorus_engine_eval_rule(e.e, rule_c)
+	defer C.regorus_result_drop(result)
+	if result.status != C.RegorusStatusOk {
+		return "", fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+
+	return C.GoString(result.output), nil
+}
+
+func (e *Engine) SetEnableCoverage(enable bool) error {
+	result := C.regorus_engine_set_enable_coverage(e.e, C.bool(enable))
+	defer C.regorus_result_drop(result)
+	if result.status != C.RegorusStatusOk {
+		return fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+	return nil
+}
+
+func (e *Engine) ClearCoverageData() error {
+	result := C.regorus_engine_clear_coverage_data(e.e)
+	defer C.regorus_result_drop(result)
+	if result.status != C.RegorusStatusOk {
+		return fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+	return nil
+}
+
+func (e *Engine) GetCoverageReport() (string, error) {
+	result := C.regorus_engine_get_coverage_report(e.e)
+	defer C.regorus_result_drop(result)
+	if result.status != C.RegorusStatusOk {
+		return "", fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+
+	return C.GoString(result.output), nil
+}
+
+func (e *Engine) GetCoverageReportPretty() (string, error) {
+	result := C.regorus_engine_get_coverage_report_pretty(e.e)
+	defer C.regorus_result_drop(result)
+	if result.status != C.RegorusStatusOk {
+		return "", fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+
+	return C.GoString(result.output), nil
+}
+
+func (e *Engine) SetGatherPrints(b bool) error {
+	result := C.regorus_engine_set_gather_prints(e.e, C.bool(b))
+	defer C.regorus_result_drop(result)
+	if result.status != C.RegorusStatusOk {
+		return fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+	return nil
+}
+
+func (e *Engine) TakePrints() (string, error) {
+	result := C.regorus_engine_take_prints(e.e)
 	defer C.regorus_result_drop(result)
 	if result.status != C.RegorusStatusOk {
 		return "", fmt.Errorf("%s", C.GoString(result.error_message))
