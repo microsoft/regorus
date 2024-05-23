@@ -1,0 +1,84 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        
+        x if {
+          every obj in objs {
+            print(obj)
+          }
+
+          # Print twice
+          [ 1 | [1, 2][_]; print(y) ]
+
+          # The following is printed only once due to early return, eventhough there is a loop.
+          [1,2,3,4,5,6][_]
+
+          # Print multiple items
+          # Note that if string is contained within another value, then quotes will be
+          # printed around the string.
+          print("Hello", ["Hello"], [{1:2}, {1,2}])
+          
+          print("done")
+        }
+
+        y if not z
+        z := true
+        
+        objs = [
+          null,
+          true,
+          false,
+          1,
+          0,
+          -0,
+          -1,
+          1.1,
+          0.1,
+          -1.1,
+          "Hello",
+          "hello\nworld",
+          `hello
+          world`,
+          [1,2,3],
+          {1,2,3},
+          {"hello":"world",
+           "வணக்கம்" : "ശുഭദിനം"},
+           set(),
+           {}
+        ]
+        
+    query: data.test.x
+    want_result: true
+    want_prints:
+      - "rego_0:6: null"
+      - "rego_0:6: true"
+      - "rego_0:6: false"
+      - "rego_0:6: 1"
+      - "rego_0:6: 0"
+      - "rego_0:6: 0"
+      - "rego_0:6: -1"
+      - "rego_0:6: 1.1"
+      - "rego_0:6: 0.1"
+      - "rego_0:6: -1.1"
+      - "rego_0:6: Hello"
+      - "rego_0:6: hello\nworld"
+      - "rego_0:6: hello\n  world"
+      - "rego_0:6: [1, 2, 3]"
+      - "rego_0:6: {1, 2, 3}"
+      - "rego_0:6: {\"hello\": \"world\", \"வணக்கம்\": \"ശുഭദിനം\"}"
+      - "rego_0:6: {}"
+      - "rego_0:6: {}"
+      - "rego_0:10: <undefined>"
+      - "rego_0:10: <undefined>"
+      - "rego_0:18: Hello [\"Hello\"] [{1: 2}, {1, 2}]"
+      - "rego_0:20: done"
+        
+        
+      
