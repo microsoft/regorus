@@ -3,7 +3,6 @@
 
 // Use README.md as crate documentation.
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
 // We'll default to building for no_std - use core, alloc instead of std.
 #![no_std]
 

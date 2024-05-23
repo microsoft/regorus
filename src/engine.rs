@@ -95,6 +95,7 @@ impl Engine {
     /// # }
     /// ```
     #[cfg(feature = "std")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     pub fn add_policy_from_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<String> {
         let source = Source::from_file(path)?;
         let mut parser = Parser::new(&source)?;
@@ -644,7 +645,7 @@ impl Engine {
     }
 
     #[cfg(feature = "coverage")]
-    #[cfg_attr(doc_cfg, doc(cfg(feature = "coverage")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "coverage")))]
     /// Get the coverage report.
     ///
     /// ```rust
@@ -688,7 +689,7 @@ impl Engine {
     }
 
     #[cfg(feature = "coverage")]
-    #[cfg_attr(doc_cfg, doc(cfg(feature = "coverage")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "coverage")))]
     /// Enable/disable policy coverage.
     ///
     /// If `enable` is different from the current value, then any existing coverage
@@ -698,7 +699,7 @@ impl Engine {
     }
 
     #[cfg(feature = "coverage")]
-    #[cfg_attr(doc_cfg, doc(cfg(feature = "coverage")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "coverage")))]
     /// Clear the gathered policy coverage data.
     pub fn clear_coverage_data(&mut self) {
         self.interpreter.clear_coverage_data()

@@ -327,6 +327,7 @@ impl Value {
     /// # }
     /// ```
     #[cfg(feature = "std")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     pub fn from_json_file<P: AsRef<std::path::Path>>(path: P) -> Result<Value> {
         match std::fs::read_to_string(&path) {
             Ok(c) => Self::from_json_str(c.as_str()),
@@ -400,6 +401,7 @@ impl Value {
     /// Deserialize a value from YAML.
     /// Note: Deserialization from YAML does not support arbitrary precision numbers.
     #[cfg(feature = "yaml")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     pub fn from_yaml_str(yaml: &str) -> Result<Value> {
         Ok(serde_yaml::from_str(yaml)?)
     }
@@ -408,6 +410,8 @@ impl Value {
     /// Note: Deserialization from YAML does not support arbitrary precision numbers.
     #[cfg(feature = "std")]
     #[cfg(feature = "yaml")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "yaml")))]
     pub fn from_yaml_file(path: &String) -> Result<Value> {
         match std::fs::read_to_string(path) {
             Ok(c) => Self::from_yaml_str(c.as_str()),
@@ -609,6 +613,7 @@ impl From<serde_json::Value> for Value {
 }
 
 #[cfg(feature = "yaml")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yaml")))]
 impl From<serde_yaml::Value> for Value {
     /// Create a [`Value`] from [`serde_yaml::Value`].
     ///
