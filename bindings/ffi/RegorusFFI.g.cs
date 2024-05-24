@@ -12,7 +12,7 @@ namespace RegorusFFI
 {
     internal static unsafe partial class API
     {
-        const string __DllName = "regorusc";
+        const string __DllName = "regorus_ffi";
 
 
 
