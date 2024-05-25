@@ -229,7 +229,7 @@ impl Engine {
                 )
             })?;
 
-        report.to_colored_string().map_err(|e| {
+        report.to_string_pretty().map_err(|e| {
             Error::new(
                 runtime_error(),
                 format!("Failed to convert report to colored string: {}", e),
