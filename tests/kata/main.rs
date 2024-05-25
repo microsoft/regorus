@@ -132,7 +132,7 @@ fn run_kata_tests(
             #[cfg(feature = "coverage")]
             {
                 let report = engine.get_coverage_report()?;
-                println!("{}", report.to_colored_string()?);
+                println!("{}", report.to_string_pretty()?);
             }
         }
     }

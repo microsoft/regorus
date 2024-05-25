@@ -34,4 +34,5 @@ jobs:
         run:  |
           pip3 install dist/regorus-*.whl
           cd bindings/python
+          cargo clippy --all-targets --no-deps -- -Dwarnings
           python3 test.py          

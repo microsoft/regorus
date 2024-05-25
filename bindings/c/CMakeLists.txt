@@ -25,7 +25,7 @@ corrosion_import_crate(
   FEATURES "regorus/semver"
 
   # Link statically
-  CRATE_TYPES "staticlib"
+  CRATE_TYPES "cdylib"
   )
 
 add_executable(regorus_test main.c)

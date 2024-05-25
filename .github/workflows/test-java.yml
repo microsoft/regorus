@@ -22,7 +22,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Building binding
-        run: cargo build --release --manifest-path bindings/java/Cargo.toml
+        run: |
+          cargo clippy --all-targets --no-deps -- -Dwarnings
+          cargo build --release --manifest-path bindings/java/Cargo.toml
 
       - name: Build jar
         run: mvn package

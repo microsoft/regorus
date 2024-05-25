@@ -72,7 +72,7 @@ impl Engine {
     }
 
     fn add_data_from_json_file(&self, path: String) -> Result<(), Error> {
-        let json_data = regorus::Value::from_json_file(&path).map_err(|e| {
+        let json_data = regorus::Value::from_json_file(path).map_err(|e| {
             Error::new(
                 runtime_error(),
                 format!("Failed to parse JSON data file: {}", e),
@@ -112,7 +112,7 @@ impl Engine {
     }
 
     fn add_input_from_json_file(&self, path: String) -> Result<(), Error> {
-        let json_data = regorus::Value::from_json_file(&path).map_err(|e| {
+        let json_data = regorus::Value::from_json_file(path).map_err(|e| {
             Error::new(
                 runtime_error(),
                 format!("Failed to parse JSON input file: {}", e),
@@ -193,7 +193,8 @@ impl Engine {
     }
 
     fn set_enable_coverage(&self, enable: bool) -> Result<(), Error> {
-        Ok(self.engine.borrow_mut().set_enable_coverage(enable))
+        self.engine.borrow_mut().set_enable_coverage(enable);
+        Ok(())
     }
 
     fn get_coverage_report_as_json(&self) -> Result<String, Error> {
@@ -237,12 +238,14 @@ impl Engine {
     }
 
     fn clear_coverage_data(&self) -> Result<(), Error> {
-        Ok(self.engine.borrow_mut().clear_coverage_data())
+        self.engine.borrow_mut().clear_coverage_data();
+        Ok(())
     }
 
     // Print statements can be gathered async instead of printing to stderr
     fn set_gather_prints(&self, enable: bool) -> Result<(), Error> {
-        Ok(self.engine.borrow_mut().set_gather_prints(enable))
+        self.engine.borrow_mut().set_gather_prints(enable);
+        Ok(())
     }
 
     fn take_prints(&self) -> Result<Vec<String>, Error> {

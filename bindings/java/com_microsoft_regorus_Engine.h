@@ -17,18 +17,26 @@ JNIEXPORT jlong JNICALL Java_com_microsoft_regorus_Engine_nativeNewEngine
 
 /*
  * Class:     com_microsoft_regorus_Engine
- * Method:    nativeAddPolicy
- * Signature: (JLjava/lang/String;Ljava/lang/String;)V
+ * Method:    nativeClone
+ * Signature: (J)J
  */
-JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeAddPolicy
+JNIEXPORT jlong JNICALL Java_com_microsoft_regorus_Engine_nativeClone
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeAddPolicy
+ * Signature: (JLjava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_microsoft_regorus_Engine_nativeAddPolicy
   (JNIEnv *, jclass, jlong, jstring, jstring);
 
 /*
  * Class:     com_microsoft_regorus_Engine
  * Method:    nativeAddPolicyFromFile
- * Signature: (JLjava/lang/String;)V
+ * Signature: (JLjava/lang/String;)Ljava/lang/String;
  */
-JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeAddPolicyFromFile
+JNIEXPORT jstring JNICALL Java_com_microsoft_regorus_Engine_nativeAddPolicyFromFile
   (JNIEnv *, jclass, jlong, jstring);
 
 /*
@@ -78,6 +86,62 @@ JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeSetInputJsonFromF
  */
 JNIEXPORT jstring JNICALL Java_com_microsoft_regorus_Engine_nativeEvalQuery
   (JNIEnv *, jclass, jlong, jstring);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeEvalRule
+ * Signature: (JLjava/lang/String;)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_microsoft_regorus_Engine_nativeEvalRule
+  (JNIEnv *, jclass, jlong, jstring);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeSetEnableCoverage
+ * Signature: (JZ)V
+ */
+JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeSetEnableCoverage
+  (JNIEnv *, jclass, jlong, jboolean);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeGetCoverageReport
+ * Signature: (J)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_microsoft_regorus_Engine_nativeGetCoverageReport
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeGetCoverageReportAsColoredString
+ * Signature: (J)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_microsoft_regorus_Engine_nativeGetCoverageReportAsColoredString
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeClearCoverageData
+ * Signature: (J)V
+ */
+JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeClearCoverageData
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeSetGatherPrints
+ * Signature: (JZ)V
+ */
+JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativeSetGatherPrints
+  (JNIEnv *, jclass, jlong, jboolean);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
+ * Method:    nativeTakePrints
+ * Signature: (J)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_microsoft_regorus_Engine_nativeTakePrints
+  (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_microsoft_regorus_Engine

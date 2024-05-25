@@ -8,13 +8,13 @@ engine = regorus.Engine()
 
 # Load policies
 pkg = engine.add_policy_from_file('../../tests/aci/framework.rego')
-print(' Loaded Policy %s' % pkg)
+print(' Loaded package %s' % pkg)
 
 pkg = engine.add_policy_from_file('../../tests/aci/api.rego')
-print(' Loaded Policy %s' % pkg)
+print(' Loaded package %s' % pkg)
 
 pkg = engine.add_policy_from_file('../../tests/aci/policy.rego')
-print(' Loaded Policy %s' % pkg)
+print(' Loaded package %s' % pkg)
 
 # Add policy data
 data = {
@@ -55,3 +55,40 @@ print(results['result'][0])
 # Eval query as json
 results_json = engine.eval_query_as_json('data.framework.mount_overlay=x')
 print(results_json)
+
+# Eval rule
+v = engine.eval_rule('data.framework.mount_overlay')
+print(v)
+
+# Eval rule as json
+v = engine.eval_rule_as_json('data.framework.mount_overlay')
+print(v)
+
+# Enable coverage
+engine.set_enable_coverage(True)
+engine.eval_rule('data.framework.mount_overlay')
+
+# Print coverage
+report_json = engine.get_coverage_report_as_json()
+print(report_json)
+
+# Pretty coverage report
+report = engine.get_coverage_report_pretty()
+print(report)
+
+# Clone engine
+engine1 = engine.clone()
+
+
+# Clear coverage data
+engine.clear_coverage_data();
+
+print(engine1.get_coverage_report_pretty())
+
+# Enable gathering prints
+engine1.set_gather_prints(True)
+
+# Gather prints
+engine1.eval_query('print("Hello")')
+ps = engine1.take_prints()
+print(ps)
