@@ -791,10 +791,9 @@ impl Interpreter {
                     }
                 }
             }
-            Value::Undefined | Value::Null => r = false,
-            // Other types cause every to evaluate to true even though
-            // it is supposed to happen only for empty domain.
-            _ => (),
+            _ => {
+                r = false;
+            }
         };
         self.contexts.pop();
         self.scopes.pop();
