@@ -6,6 +6,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/microsoft/regorus/compare/regorus-v0.1.5...regorus-v0.2.0) - 2024-05-30
+
+Key highlights of this release are:
+- `no_std` support. Regorus can be used in C `freestanding` environments which don't have the standatd C library.
+   `no_std` can be activated by disabling the `default-features`. Most functionality works in `no_std`. For a full list
+   of supported features see https://github.com/microsoft/regorus/blob/536c6ede5cd482239d2274ab6008740a637b8d2d/Cargo.toml#L74.
+   Thanks @mkulke for guiding this.
+- Bindings have been updated and are locked-down with tests. Thanks @thedavemarshall for kickstarting this.
+- Kata containers usecase locked down with more tests. Thanks @danmihai1
+- Engine API tweaks based on suggestion from @lquerel
+
+### Other
+- Fix release-plz hash ([#256](https://github.com/microsoft/regorus/pull/256))
+- non collections should evaluate to false ([#253](https://github.com/microsoft/regorus/pull/253))
+- Fix merge issue ([#252](https://github.com/microsoft/regorus/pull/252))
+- Update bindings to include newer APIs ([#250](https://github.com/microsoft/regorus/pull/250))
+- update ruby bindings version to 0.1.5, bump deps ([#251](https://github.com/microsoft/regorus/pull/251))
+- Use correct docsrs feature annotation ([#248](https://github.com/microsoft/regorus/pull/248))
+- Lockdown kata test prints as well as prints of various values ([#249](https://github.com/microsoft/regorus/pull/249))
+- Fix bindings and add CI tests ([#247](https://github.com/microsoft/regorus/pull/247))
+- Add test-ruby CI for github actions ([#244](https://github.com/microsoft/regorus/pull/244))
+- Update `README.md` for Java bindings to mention we don't publish to ([#246](https://github.com/microsoft/regorus/pull/246))
+- Update itertools requirement from 0.12.1 to 0.13.0 ([#245](https://github.com/microsoft/regorus/pull/245))
+- Update ruby bindings for add_policy and add_policy_from_file to return package name ([#240](https://github.com/microsoft/regorus/pull/240))
+- Provide a way to obtain package names of loaded policies ([#239](https://github.com/microsoft/regorus/pull/239))
+- `c_no_std` binding to show use in C freestanding environments. ([#238](https://github.com/microsoft/regorus/pull/238))
+- Bump rexml in /bindings/ruby in the bundler group across 1 directory ([#236](https://github.com/microsoft/regorus/pull/236))
+- Update prettydiff requirement from 0.6.4 to 0.7.0 ([#234](https://github.com/microsoft/regorus/pull/234))
+- Update jsonschema requirement from 0.17.1 to 0.18.0 ([#235](https://github.com/microsoft/regorus/pull/235))
+- no_std support ([#232](https://github.com/microsoft/regorus/pull/232))
+- add `std` feature ([#231](https://github.com/microsoft/regorus/pull/231))
+- Tests from MSFT fork of kata-containers ([#230](https://github.com/microsoft/regorus/pull/230))
+- Use alloc, core instead of std ([#225](https://github.com/microsoft/regorus/pull/225))
+
 ## [0.1.5](https://github.com/microsoft/regorus/compare/regorus-v0.1.4...regorus-v0.1.5) - 2024-05-07
 
 ### Added
