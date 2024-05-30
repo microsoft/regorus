@@ -1,0 +1,10 @@
+[workspace]
+git_release_enable = false
+git_tag_enable = false
+changelog_update = false
+
+[[package]]
+name = "regorus"
+git_tag_enable = true
+git_release_enable = true
+changelog_update = true
