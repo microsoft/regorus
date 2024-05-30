@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0](https://github.com/microsoft/regorus/compare/regorus-v0.1.5...regorus-v0.2.0) - 2024-05-30
 
+Key highlights of this release are:
+- `no_std` support. Regorus can be used in C `freestanding` environments which don't have the standatd C library.
+   `no_std` can be activated by disabling the `default-features`. Most functionality works in `no_std`. For a full list
+   of supported features see https://github.com/microsoft/regorus/blob/536c6ede5cd482239d2274ab6008740a637b8d2d/Cargo.toml#L74.
+   Thanks @mkulke for guiding this.
+- Bindings have been updated and are locked-down with tests. Thanks @thedavemarshall for kickstarting this.
+- Kata containers usecase locked down with more tests. Thanks @danmihai1
+- Engine API tweaks based on suggestion from @lquerel
+
 ### Other
 - Fix release-plz hash ([#256](https://github.com/microsoft/regorus/pull/256))
 - non collections should evaluate to false ([#253](https://github.com/microsoft/regorus/pull/253))
