@@ -274,6 +274,10 @@ pub struct Lexer<'source> {
     iter: Peekable<CharIndices<'source>>,
     line: u32,
     col: u32,
+    unknown_char_is_symbol: bool,
+    allow_slash_star_escape: bool,
+    comment_starts_with_double_slash: bool,
+    double_colon_token: bool,
 }
 
 impl<'source> Lexer<'source> {
@@ -283,7 +287,27 @@ impl<'source> Lexer<'source> {
             iter: source.contents().char_indices().peekable(),
             line: 1,
             col: 1,
+            unknown_char_is_symbol: false,
+            allow_slash_star_escape: false,
+            comment_starts_with_double_slash: false,
+            double_colon_token: false,
         }
+    }
+
+    pub fn set_unknown_char_is_symbol(&mut self, b: bool) {
+        self.unknown_char_is_symbol = b;
+    }
+
+    pub fn set_allow_slash_star_escape(&mut self, b: bool) {
+        self.allow_slash_star_escape = b;
+    }
+
+    pub fn set_comment_starts_with_double_slash(&mut self, b: bool) {
+        self.comment_starts_with_double_slash = b;
+    }
+
+    pub fn set_double_colon_token(&mut self, b: bool) {
+        self.double_colon_token = b;
     }
 
     fn peek(&mut self) -> (usize, char) {
@@ -465,6 +489,7 @@ impl<'source> Lexer<'source> {
                     match ch {
                         // json escape sequence
                         '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' => (),
+                        '*' if self.allow_slash_star_escape => (),
                         'u' => {
                             for _i in 0..4 {
                                 let (offset, ch) = self.peek();
@@ -528,12 +553,24 @@ impl<'source> Lexer<'source> {
         ))
     }
 
+    #[inline]
+    fn skip_past_newline(&mut self) -> Result<()> {
+        self.iter.next();
+        loop {
+            match self.peek().1 {
+                '\n' | '\x00' => break,
+                _ => self.iter.next(),
+            };
+        }
+        Ok(())
+    }
+
     fn skip_ws(&mut self) -> Result<()> {
         // Only the 4 json whitespace characters are recognized.
         // https://www.crockford.com/mckeeman.html.
         // Additionally, comments are also skipped.
         // A tab is considered 4 space characters.
-        'outer: loop {
+        loop {
             match self.peek().1 {
                 ' ' => self.col += 1,
                 '\t' => self.col += 4,
@@ -550,14 +587,13 @@ impl<'source> Lexer<'source> {
                     self.col = 1;
                     self.line += 1;
                 }
-                '#' => {
-                    self.iter.next();
-                    loop {
-                        match self.peek().1 {
-                            '\n' | '\x00' => continue 'outer,
-                            _ => self.iter.next(),
-                        };
-                    }
+                '#' if !self.comment_starts_with_double_slash => {
+                    self.skip_past_newline()?;
+                    continue;
+                }
+                '/' if self.comment_starts_with_double_slash && self.peekahead(1).1 == '/' => {
+                    self.skip_past_newline()?;
+                    continue;
                 }
                 _ => break,
             }
@@ -601,7 +637,7 @@ impl<'source> Lexer<'source> {
 		self.col += 1;
 		self.iter.next();
 		let mut end = start as u32 + 1;
-		if self.peek().1 == '=' {
+		if self.peek().1 == '=' || (self.peek().1 == ':' && self.double_colon_token) {
 		    self.col += 1;
 		    self.iter.next();
 		    end += 1;
@@ -674,6 +710,17 @@ impl<'source> Lexer<'source> {
 		    }
 		}
 		Ok(ident)
+	    }
+	    _ if self.unknown_char_is_symbol => {
+		self.col += 1;
+		self.iter.next();
+		Ok(Token(TokenKind::Symbol, Span {
+		    source: self.source.clone(),
+		    line: self.line,
+		    col,
+		    start: start as u32,
+		    end: start as u32 + 1,
+		}))
 	    }
 	    _ => Err(self.source.error(self.line, self.col, "invalid character"))
 	}
