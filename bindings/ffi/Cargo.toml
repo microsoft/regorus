@@ -13,7 +13,8 @@ regorus = { path  = "../..", default-features = false }
 serde_json = "1.0.113"
 
 [features]
-default = ["std", "coverage", "regorus/arc", "regorus/full-opa"]
+default = ["ast", "std", "coverage", "regorus/arc", "regorus/full-opa"]
+ast = ["regorus/ast"]
 std = ["regorus/std"]
 coverage = ["regorus/coverage"]
 custom_allocator = []

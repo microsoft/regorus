@@ -170,8 +170,40 @@ fn rego_parse(file: String) -> Result<()> {
     Ok(())
 }
 
+#[allow(unused_variables)]
+fn rego_ast(file: String) -> Result<()> {
+    #[cfg(feature = "ast")]
+    {
+        // Create engine.
+        let mut engine = regorus::Engine::new();
+
+        // Create source.
+        #[cfg(feature = "std")]
+        engine.add_policy_from_file(file)?;
+
+        #[cfg(not(feature = "std"))]
+        engine.add_policy(file.clone(), read_file(&file)?)?;
+
+        let ast = engine.get_ast_as_json()?;
+
+        println!("{ast}");
+        Ok(())
+    }
+
+    #[cfg(not(feature = "ast"))]
+    {
+        bail!("`ast` feature must be enabled");
+    }
+}
+
 #[derive(clap::Subcommand)]
 enum RegorusCommand {
+    /// Parse a Rego policy and dump AST.
+    Ast {
+        /// Rego policy file.
+        file: String,
+    },
+
     /// Evaluate a Rego Query.
     Eval {
         /// Directories containing Rego files.
@@ -254,5 +286,6 @@ fn main() -> Result<()> {
         ),
         RegorusCommand::Lex { file, verbose } => rego_lex(file, verbose),
         RegorusCommand::Parse { file } => rego_parse(file),
+        RegorusCommand::Ast { file } => rego_ast(file),
     }
 }

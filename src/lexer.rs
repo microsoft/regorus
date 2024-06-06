@@ -12,14 +12,18 @@ use crate::Value;
 use anyhow::{anyhow, bail, Result};
 
 #[derive(Clone)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 struct SourceInternal {
     pub file: String,
     pub contents: String,
+    #[cfg_attr(feature = "ast", serde(skip_serializing))]
     pub lines: Vec<(u32, u32)>,
 }
 
 #[derive(Clone)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct Source {
+    #[cfg_attr(feature = "ast", serde(flatten))]
     src: Rc<SourceInternal>,
 }
 
@@ -212,7 +216,9 @@ impl Source {
 }
 
 #[derive(Clone)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct Span {
+    #[cfg_attr(feature = "ast", serde(skip_serializing))]
     pub source: Source,
     pub line: u32,
     pub col: u32,

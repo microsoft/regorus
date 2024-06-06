@@ -8,12 +8,14 @@ use crate::*;
 use core::{cmp, fmt, ops::Deref};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub enum BinOp {
     And,
     Or,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub enum ArithOp {
     Add,
     Sub,
@@ -23,6 +25,7 @@ pub enum ArithOp {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub enum BoolOp {
     Lt,
     Le,
@@ -33,12 +36,15 @@ pub enum BoolOp {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub enum AssignOp {
     Eq,
     ColEq,
 }
 
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct NodeRef<T> {
+    #[cfg_attr(feature = "ast", serde(flatten))]
     r: Rc<T>,
 }
 
@@ -97,6 +103,7 @@ impl<T> NodeRef<T> {
 pub type Ref<T> = NodeRef<T>;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub enum Expr {
     // Simple items that only have a span as content.
     String((Span, Value)),
@@ -230,6 +237,7 @@ impl Expr {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub enum Literal {
     SomeVars {
         span: Span,
@@ -259,6 +267,7 @@ pub enum Literal {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct WithModifier {
     pub span: Span,
     pub refr: Ref<Expr>,
@@ -266,19 +275,23 @@ pub struct WithModifier {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct LiteralStmt {
     pub span: Span,
     pub literal: Literal,
+    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Vec::is_empty"))]
     pub with_mods: Vec<WithModifier>,
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct Query {
     pub span: Span,
     pub stmts: Vec<LiteralStmt>,
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct RuleAssign {
     pub span: Span,
     pub op: AssignOp,
@@ -286,6 +299,7 @@ pub struct RuleAssign {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct RuleBody {
     pub span: Span,
     pub assign: Option<RuleAssign>,
@@ -293,6 +307,7 @@ pub struct RuleBody {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub enum RuleHead {
     Compr {
         span: Span,
@@ -313,6 +328,7 @@ pub enum RuleHead {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub enum Rule {
     Spec {
         span: Span,
@@ -337,22 +353,27 @@ impl Rule {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct Package {
     pub span: Span,
     pub refr: Ref<Expr>,
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct Import {
     pub span: Span,
     pub refr: Ref<Expr>,
+    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Option::is_none"))]
     pub r#as: Option<Span>,
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct Module {
     pub package: Package,
     pub imports: Vec<Import>,
+    #[cfg_attr(feature = "ast", serde(rename(serialize = "rules")))]
     pub policy: Vec<Ref<Rule>>,
     pub rego_v1: bool,
 }

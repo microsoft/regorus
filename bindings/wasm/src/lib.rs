@@ -131,6 +131,7 @@ impl Engine {
     ///
     /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.set_enable_coverage
     /// * `b`: Whether to enable gathering coverage or not.
+    #[cfg(feature = "coverage")]
     pub fn setEnableCoverage(&mut self, enable: bool) {
         self.engine.set_enable_coverage(enable)
     }
@@ -138,6 +139,7 @@ impl Engine {
     /// Get the coverage report as json.
     ///
     /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.get_coverage_report
+    #[cfg(feature = "coverage")]
     pub fn getCoverageReport(&self) -> Result<String, JsValue> {
         let report = self
             .engine
@@ -149,6 +151,7 @@ impl Engine {
     /// Clear gathered coverage data.
     ///
     /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.clear_coverage_data
+    #[cfg(feature = "coverage")]
     pub fn clearCoverageData(&mut self) {
         self.engine.clear_coverage_data()
     }
@@ -156,12 +159,21 @@ impl Engine {
     /// Get ANSI color coded coverage report.
     ///
     /// See https://docs.rs/regorus/latest/regorus/coverage/struct.Report.html#method.to_string_pretty
+    #[cfg(feature = "coverage")]
     pub fn getCoverageReportPretty(&self) -> Result<String, JsValue> {
         let report = self
             .engine
             .get_coverage_report()
             .map_err(error_to_jsvalue)?;
         report.to_string_pretty().map_err(error_to_jsvalue)
+    }
+
+    /// Get AST of policies.
+    ///
+    /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.get_ast_as_json
+    #[cfg(feature = "ast")]
+    pub fn getAstAsJson(&self) -> Result<String, JsValue> {
+        self.engine.get_ast_as_json().map_err(error_to_jsvalue)
     }
 }
 

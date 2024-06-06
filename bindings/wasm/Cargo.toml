@@ -11,7 +11,9 @@ keywords = ["interpreter", "opa", "policy-as-code", "rego"]
 crate-type = ["cdylib"]
 
 [features]
-default = ["regorus/std", "regorus/full-opa"]
+default = ["ast", "coverage", "regorus/std", "regorus/full-opa"]
+ast = ["regorus/ast"]
+coverage = ["regorus/coverage"]
 
 [dependencies]
 regorus = { path  = "../..", default-features = false, features = ["arc"] }
