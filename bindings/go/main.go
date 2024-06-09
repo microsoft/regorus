@@ -82,6 +82,19 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Printf("%s\n", output)
 
+	// Print packages
+	if output, err = engine1.GetPackages(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("%s\n", output)
+
+	// Print policies
+	if output, err = engine1.GetPolicies(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 	fmt.Printf("%s\n", output)
 }

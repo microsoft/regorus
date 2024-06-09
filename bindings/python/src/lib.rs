@@ -184,8 +184,16 @@ impl Engine {
 
     /// Get the list of packages defined by loaded policies.
     ///
-    pub fn get_packages(&mut self) -> Result<Vec<String>> {
+    pub fn get_packages(&self) -> Result<Vec<String>> {
         self.engine.get_packages()
+    }
+
+    /// Get the list of policies.
+    ///
+    pub fn get_policies(&self) -> Result<String> {
+        Ok(serde_json::to_string_pretty(
+            &self.engine.get_policies_as_json()?,
+        )?)
     }
 
     /// Add policy data.

@@ -189,12 +189,21 @@ pub extern "C" fn regorus_engine_add_data_json(
 /// Get list of loaded Rego packages as JSON.
 ///
 /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.get_packages
-/// * `data`: JSON encoded value to be used as policy data.
 #[no_mangle]
 pub extern "C" fn regorus_engine_get_packages(engine: *mut RegorusEngine) -> RegorusResult {
     to_regorus_string_result(|| -> Result<String> {
         serde_json::to_string_pretty(&to_ref(&engine)?.engine.get_packages()?)
             .map_err(anyhow::Error::msg)
+    }())
+}
+
+/// Get list of policies as JSON.
+///
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.get_policies
+#[no_mangle]
+pub extern "C" fn regorus_engine_get_policies(engine: *mut RegorusEngine) -> RegorusResult {
+    to_regorus_string_result(|| -> Result<String> {
+        to_ref(&engine)?.engine.get_policies_as_json()
     }())
 }
 

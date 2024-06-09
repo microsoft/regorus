@@ -26,6 +26,7 @@ public class Engine implements AutoCloseable, Cloneable {
     private static native String nativeAddPolicy(long enginePtr, String path, String rego);
     private static native String nativeAddPolicyFromFile(long enginePtr, String path);
     private static native String nativeGetPackages(long enginePtr);
+    private static native String nativeGetPolicies(long enginePtr);
     private static native void nativeClearData(long enginePtr);
     private static native void nativeAddDataJson(long enginePtr, String data);
     private static native void nativeAddDataJsonFromFile(long enginePtr, String path);
@@ -94,6 +95,15 @@ public class Engine implements AutoCloseable, Cloneable {
      */
     public String getPackages() {
         return nativeGetPackages(enginePtr);
+    }
+    
+    /**
+     * Get list of loaded policies.
+     * 
+     * @return List of Rego policies as a JSON array of sources.
+     */
+    public String getPolicies() {
+        return nativeGetPolicies(enginePtr);
     }
     
     /**

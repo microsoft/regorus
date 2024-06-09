@@ -28,6 +28,7 @@ mod utils;
 mod value;
 
 pub use engine::Engine;
+pub use lexer::Source;
 pub use value::Value;
 
 #[cfg(feature = "arc")]

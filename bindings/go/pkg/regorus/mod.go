@@ -55,6 +55,25 @@ func (e *Engine) AddPolicyFromFile(path string) (string, error) {
 	return C.GoString(result.output), nil
 }
 
+func (e *Engine) GetPackages() (string, error) {
+	result := C.regorus_engine_get_packages(e.e)
+	defer C.regorus_result_drop(result)
+	if result.status != C.RegorusStatusOk {
+		return "", fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+	return C.GoString(result.output), nil
+}
+
+func (e *Engine) GetPolicies() (string, error) {
+	result := C.regorus_engine_get_policies(e.e)
+	defer C.regorus_result_drop(result)
+	if result.status != C.RegorusStatusOk {
+		return "", fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+	return C.GoString(result.output), nil
+}
+
+
 func (e *Engine) AddDataJson(data string) error {
 	data_c := C.CString(data)
 	defer C.free(unsafe.Pointer(data_c))

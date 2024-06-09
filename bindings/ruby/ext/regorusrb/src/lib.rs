@@ -92,6 +92,20 @@ impl Engine {
         Ok(())
     }
 
+    fn get_packages(&self) -> Result<Vec<String>, Error> {
+        self.engine
+            .borrow()
+            .get_packages()
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to get packages: {e}")))
+    }
+
+    fn get_policies(&self) -> Result<String, Error> {
+        self.engine
+            .borrow()
+            .get_policies_as_json()
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to get policies: {e}")))
+    }
+
     fn set_input(&self, ruby_hash: magnus::RHash) -> Result<(), Error> {
         let input_value: regorus::Value = serde_magnus::deserialize(ruby_hash).map_err(|e| {
             Error::new(
@@ -289,6 +303,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         "add_policy_from_file",
         method!(Engine::add_policy_from_file, 1),
     )?;
+    engine_class.define_method("get_packages", method!(Engine::get_packages, 0))?;
+    engine_class.define_method("get_policies", method!(Engine::get_policies, 0))?;
 
     // data operations
     engine_class.define_method("add_data", method!(Engine::add_data, 1))?;

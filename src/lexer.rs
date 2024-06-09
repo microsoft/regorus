@@ -20,11 +20,24 @@ struct SourceInternal {
     pub lines: Vec<(u32, u32)>,
 }
 
+/// A policy file.
 #[derive(Clone)]
 #[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct Source {
     #[cfg_attr(feature = "ast", serde(flatten))]
     src: Rc<SourceInternal>,
+}
+
+impl Source {
+    /// The path associated with the policy file.
+    pub fn get_path(&self) -> &String {
+        &self.src.file
+    }
+
+    /// The contents of the policy file.
+    pub fn get_contents(&self) -> &String {
+        &self.src.contents
+    }
 }
 
 impl cmp::Ord for Source {
