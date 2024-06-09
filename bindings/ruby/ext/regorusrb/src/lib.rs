@@ -192,11 +192,13 @@ impl Engine {
         Ok(self.engine.borrow_mut().eval_deny_query(query, false))
     }
 
+    #[cfg(feature = "coverage")]
     fn set_enable_coverage(&self, enable: bool) -> Result<(), Error> {
         self.engine.borrow_mut().set_enable_coverage(enable);
         Ok(())
     }
 
+    #[cfg(feature = "coverage")]
     fn get_coverage_report_as_json(&self) -> Result<String, Error> {
         let report = self
             .engine
@@ -217,6 +219,7 @@ impl Engine {
         })
     }
 
+    #[cfg(feature = "coverage")]
     fn get_coverage_report_pretty(&self) -> Result<String, Error> {
         let report = self
             .engine
@@ -237,6 +240,7 @@ impl Engine {
         })
     }
 
+    #[cfg(feature = "coverage")]
     fn clear_coverage_data(&self) -> Result<(), Error> {
         self.engine.borrow_mut().clear_coverage_data();
         Ok(())
@@ -255,6 +259,14 @@ impl Engine {
                 format!("Failed to gather print statement: {}", e),
             )
         })
+    }
+
+    #[cfg(feature = "ast")]
+    fn get_ast_as_json(&self) -> Result<String, Error> {
+        self.engine
+            .borrow()
+            .get_ast_as_json()
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to get ast: {e}")))
     }
 }
 
@@ -325,5 +337,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     engine_class.define_method("set_gather_prints", method!(Engine::set_gather_prints, 1))?;
     engine_class.define_method("take_prints", method!(Engine::take_prints, 0))?;
 
+    // ast
+    engine_class.define_method("get_ast_as_json", method!(Engine::get_ast_as_json, 0))?;
     Ok(())
 }

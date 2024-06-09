@@ -205,6 +205,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeEvalRule(
 }
 
 #[no_mangle]
+#[cfg(feature = "coverage")]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetEnableCoverage(
     env: JNIEnv,
     _class: JClass,
@@ -219,6 +220,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetEnableCoverage
 }
 
 #[no_mangle]
+#[cfg(feature = "coverage")]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetCoverageReport(
     env: JNIEnv,
     _class: JClass,
@@ -238,6 +240,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetCoverageReport
 }
 
 #[no_mangle]
+#[cfg(feature = "coverage")]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetCoverageReportPretty(
     env: JNIEnv,
     _class: JClass,
@@ -257,6 +260,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetCoverageReport
 }
 
 #[no_mangle]
+#[cfg(feature = "coverage")]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClearCoverageData(
     env: JNIEnv,
     _class: JClass,
@@ -293,6 +297,26 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeTakePrints(
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
         let prints = engine.take_prints()?;
         let output = env.new_string(serde_json::to_string_pretty(&prints)?)?;
+        Ok(output.into_raw())
+    });
+
+    match res {
+        Ok(val) => val,
+        Err(_) => JObject::null().into_raw(),
+    }
+}
+
+#[no_mangle]
+#[cfg(feature = "ast")]
+pub extern "system" fn Java_com_microsoft_regorus_Engine_getAstAsJson(
+    env: JNIEnv,
+    _class: JClass,
+    engine_ptr: jlong,
+) -> jstring {
+    let res = throw_err(env, |env| {
+        let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
+        let ast = engine.get_ast_as_json()?;
+        let output = env.new_string(&ast)?;
         Ok(output.into_raw())
     });
 

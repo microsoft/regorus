@@ -743,4 +743,42 @@ impl Engine {
     pub fn take_prints(&mut self) -> Result<Vec<String>> {
         self.interpreter.take_prints()
     }
+
+    /// Get the policies and corresponding AST.
+    ///
+    ///
+    /// ```rust
+    /// # use regorus::*;
+    /// # use anyhow::{bail, Result};
+    /// # fn main() -> Result<()> {
+    /// # let mut engine = Engine::new();
+    /// engine.add_policy("test.rego".to_string(), "package test\n x := 1".to_string())?;
+    ///
+    /// let ast = engine.get_ast_as_json()?;
+    /// let value = Value::from_json_str(&ast)?;
+    ///
+    /// assert_eq!(value[0]["ast"]["package"]["refr"]["Var"][1].as_string()?.as_ref(), "test");
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "ast")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
+    pub fn get_ast_as_json(&self) -> Result<String> {
+        #[derive(Serialize)]
+        struct Policy<'a> {
+            source: &'a Source,
+            version: u32,
+            ast: &'a Module,
+        }
+        let mut ast = vec![];
+        for m in &self.modules {
+            ast.push(Policy {
+                source: &m.package.span.source,
+                version: 1,
+                ast: m,
+            });
+        }
+
+        serde_json::to_string_pretty(&ast).map_err(anyhow::Error::msg)
+    }
 }

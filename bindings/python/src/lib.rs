@@ -312,6 +312,7 @@ impl Engine {
 
     /// Get coverage report as json.
     ///
+    #[cfg(feature = "coverage")]
     pub fn get_coverage_report_as_json(&self) -> Result<String> {
         let report = self.engine.get_coverage_report()?;
         serde_json::to_string_pretty(&report).map_err(|e| anyhow!("{e}"))
@@ -319,12 +320,14 @@ impl Engine {
 
     /// Get coverage report as pretty printable string.
     ///
+    #[cfg(feature = "coverage")]
     pub fn get_coverage_report_pretty(&self) -> Result<String> {
         self.engine.get_coverage_report()?.to_string_pretty()
     }
 
     /// Clear coverage data.
     ///
+    #[cfg(feature = "coverage")]
     pub fn clear_coverage_data(&mut self) {
         self.engine.clear_coverage_data();
     }
@@ -349,6 +352,13 @@ impl Engine {
         Self {
             engine: self.engine.clone(),
         }
+    }
+
+    /// Get AST of policies.
+    ///
+    #[cfg(feature = "ast")]
+    pub fn get_ast_as_json(&self) -> Result<String> {
+        self.engine.get_ast_as_json()
     }
 }
 

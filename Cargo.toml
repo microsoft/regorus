@@ -27,6 +27,7 @@ doctest = false
 default = ["full-opa", "arc"]
 
 arc = ["scientific/arc"]
+ast = []
 base64 = ["dep:data-encoding"]
 base64url = ["dep:data-encoding"]
 coverage = []

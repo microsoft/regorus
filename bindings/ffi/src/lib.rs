@@ -411,6 +411,23 @@ pub extern "C" fn regorus_engine_take_prints(engine: *mut RegorusEngine) -> Rego
     }
 }
 
+/// Get AST of policies.
+///
+/// See https://docs.rs/regorus/latest/regorus/coverage/struct.Engine.html#method.get_ast_as_json
+#[no_mangle]
+#[cfg(feature = "ast")]
+pub extern "C" fn regorus_engine_get_ast_as_json(engine: *mut RegorusEngine) -> RegorusResult {
+    let output = || -> Result<String> { to_ref(&engine)?.engine.get_ast_as_json() }();
+    match output {
+        Ok(out) => RegorusResult {
+            status: RegorusStatus::RegorusStatusOk,
+            output: to_c_str(out),
+            error_message: std::ptr::null_mut(),
+        },
+        Err(e) => to_regorus_result(Err(e)),
+    }
+}
+
 #[cfg(feature = "custom_allocator")]
 extern "C" {
     fn regorus_aligned_alloc(alignment: usize, size: usize) -> *mut u8;
