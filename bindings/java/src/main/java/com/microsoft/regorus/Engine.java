@@ -60,7 +60,7 @@ public class Engine implements AutoCloseable, Cloneable {
     /**
      * Efficiently clones an Engine.
      */
-    public Engine Clone() {
+    public Engine clone() {
 	return new Engine(nativeClone(enginePtr));
     }
     
