@@ -387,6 +387,7 @@ pub struct Analyzer {
 
 #[derive(Debug, Clone)]
 pub struct Schedule {
+    #[allow(unused)]
     pub scopes: BTreeMap<Ref<Query>, Scope>,
     pub order: BTreeMap<Ref<Query>, Vec<u16>>,
 }
