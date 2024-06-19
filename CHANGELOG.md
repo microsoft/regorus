@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/microsoft/regorus/compare/regorus-v0.2.0...regorus-v0.2.1) - 2024-06-19
+
+### Added
+- get_policies: Way to obtain policy files and content ([#267](https://github.com/microsoft/regorus/pull/267))
+
+### Other
+- Fix c,cpp,no-std binding examples ([#272](https://github.com/microsoft/regorus/pull/272))
+- Update binding versions for next release ([#270](https://github.com/microsoft/regorus/pull/270))
+- rename method from 'Clone' to 'clone' in 'Engine' class to match the java naming convention and definiont in the of java.lang.Object. ([#268](https://github.com/microsoft/regorus/pull/268))
+- Suppress clippy unused warning ([#269](https://github.com/microsoft/regorus/pull/269))
+- Provide ability to get JSON representation of policy AST ([#266](https://github.com/microsoft/regorus/pull/266))
+- Update OPA tests to v0.65.0 ([#264](https://github.com/microsoft/regorus/pull/264))
+- Allow lexer to be used for other policy languages ([#262](https://github.com/microsoft/regorus/pull/262))
+
 ## [0.2.0](https://github.com/microsoft/regorus/compare/regorus-v0.1.5...regorus-v0.2.0) - 2024-05-30
 
 ### Other
