@@ -18,6 +18,11 @@ jobs:
       - name: Setup gcc, g++, cmake, ninja
         run: sudo apt update && sudo apt install -y gcc g++ cmake ninja-build
 
+      - name: Workaround to ensure that regorus.h is generated
+        run: |
+          cargo build -r
+        working-directory: ./bindings/ffi
+        
       - name: Test c binding
         run: |
           mkdir bindings/c/build
