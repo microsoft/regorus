@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    regorusrb (0.1.5)
+    regorusrb (0.2.1)
       rb_sys (~> 0.9.97)
 
 GEM
@@ -10,9 +10,9 @@ GEM
     ast (2.4.2)
     json (2.7.2)
     language_server-protocol (3.17.0.3)
-    minitest (5.23.1)
-    parallel (1.24.0)
-    parser (3.3.1.0)
+    minitest (5.24.0)
+    parallel (1.25.1)
+    parser (3.3.3.0)
       ast (~> 2.4.1)
       racc
     racc (1.8.0)
@@ -20,12 +20,12 @@ GEM
     rake (13.2.1)
     rake-compiler (1.2.7)
       rake
-    rake-compiler-dock (1.5.0)
+    rake-compiler-dock (1.5.1)
     rb_sys (0.9.97)
     regexp_parser (2.9.2)
-    rexml (3.2.8)
-      strscan (>= 3.0.9)
-    rubocop (1.64.0)
+    rexml (3.3.0)
+      strscan
+    rubocop (1.64.1)
       json (~> 2.3)
       language_server-protocol (>= 3.17.0)
       parallel (~> 1.10)
@@ -62,4 +62,4 @@ DEPENDENCIES
   rubocop-rake
 
 BUNDLED WITH
-   2.5.10
+   2.5.13
