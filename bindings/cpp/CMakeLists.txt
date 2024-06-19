@@ -31,4 +31,4 @@ corrosion_import_crate(
 add_executable(regorus_test main.cpp)
 # Add path to <regorus-source-folder>/bindings/ffi
 target_include_directories(regorus_test PRIVATE "../ffi")
-target_link_libraries(regorus_test regorus-ffi)
+target_link_libraries(regorus_test regorus_ffi)

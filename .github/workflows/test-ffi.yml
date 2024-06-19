@@ -1,4 +1,4 @@
-name: bindings/c-cpp
+name: bindings/ffi
 
 on:
   push:
