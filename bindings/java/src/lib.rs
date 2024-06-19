@@ -90,6 +90,25 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetPackages(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetPolicies(
+    env: JNIEnv,
+    _class: JClass,
+    engine_ptr: jlong,
+) -> jstring {
+    let res = throw_err(env, |env| {
+        let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
+        let policies = engine.get_policies_as_json()?;
+        let policies_json = env.new_string(&policies)?;
+        Ok(policies_json.into_raw())
+    });
+
+    match res {
+        Ok(val) => val,
+        Err(_) => JObject::null().into_raw(),
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClearData(
     env: JNIEnv,
     _class: JClass,

@@ -72,6 +72,13 @@ impl Engine {
         self.engine.get_packages().map_err(error_to_jsvalue)
     }
 
+    /// Get the list of policies.
+    ///
+    /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.get_policies
+    pub fn getPolicies(&self) -> Result<String, JsValue> {
+        self.engine.get_policies_as_json().map_err(error_to_jsvalue)
+    }
+
     /// Clear policy data.
     ///
     /// See https://docs.rs/regorus/0.1.0-alpha.2/regorus/struct.Engine.html#method.clear_data
@@ -179,6 +186,7 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
+    use crate::error_to_jsvalue;
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -216,7 +224,7 @@ mod tests {
         assert_eq!(pkg, "data.test");
 
         let results = engine.evalQuery("data".to_string())?;
-        let r = regorus::Value::from_json_str(&results).map_err(crate::error_to_jsvalue)?;
+        let r = regorus::Value::from_json_str(&results).map_err(error_to_jsvalue)?;
 
         let v = &r["result"][0]["expressions"][0]["value"];
 
@@ -228,7 +236,7 @@ mod tests {
 
         // Use eval_rule to perform same query.
         let v = engine.evalRule("data.test.message".to_owned())?;
-        let v = regorus::Value::from_json_str(&v).map_err(crate::error_to_jsvalue)?;
+        let v = regorus::Value::from_json_str(&v).map_err(error_to_jsvalue)?;
 
         // Ensure that input and policy were evaluated.
         assert_eq!(v, regorus::Value::from("Hello"));
@@ -246,7 +254,7 @@ mod tests {
 
         // Test code coverage.
         let report = engine1.getCoverageReport()?;
-        let r = regorus::Value::from_json_str(&report).map_err(crate::error_to_jsvalue)?;
+        let r = regorus::Value::from_json_str(&report).map_err(error_to_jsvalue)?;
 
         assert_eq!(
             r["files"][0]["covered"]
@@ -258,6 +266,13 @@ mod tests {
         println!("{}", engine1.getCoverageReportPretty()?);
 
         engine1.clearCoverageData();
+
+        let policies = engine1.getPolicies()?;
+        let v = regorus::Value::from_json_str(&policies).map_err(error_to_jsvalue)?;
+        assert_eq!(
+            v[0]["path"].as_string().map_err(error_to_jsvalue)?.as_ref(),
+            "hello.rego"
+        );
         Ok(())
     }
 }

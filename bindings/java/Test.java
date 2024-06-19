@@ -31,6 +31,12 @@ public class Test {
 	    System.out.println(coverageJson);
 
 	    System.out.println(engine.getCoverageReportPretty());
+
+	    String packagesJson = engine.getPackages();
+	    System.out.println(packagesJson);
+
+	    String policiesJson = engine.getPolicies();
+	    System.out.println(policiesJson);
         }
     }
 }

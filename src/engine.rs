@@ -129,6 +129,66 @@ impl Engine {
             .collect()
     }
 
+    /// Get the list of policy files.
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// # let mut engine = Engine::new();
+    ///
+    /// let pkg = engine.add_policy("hello.rego".to_string(), "package test".to_string())?;
+    /// assert_eq!(pkg, "data.test");
+    ///
+    /// let policies = engine.get_policies()?;
+    ///
+    /// assert_eq!(policies[0].get_path(), "hello.rego");
+    /// assert_eq!(policies[0].get_contents(), "package test");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_policies(&self) -> Result<Vec<Source>> {
+        Ok(self
+            .modules
+            .iter()
+            .map(|m| m.package.refr.span().source.clone())
+            .collect())
+    }
+
+    /// Get the list of policy files as a JSON object.
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// # let mut engine = Engine::new();
+    ///
+    /// let pkg = engine.add_policy("hello.rego".to_string(), "package test".to_string())?;
+    /// assert_eq!(pkg, "data.test");
+    ///
+    /// let policies = engine.get_policies_as_json()?;
+    ///
+    /// let v = Value::from_json_str(&policies)?;
+    /// assert_eq!(v[0]["path"].as_string()?.as_ref(), "hello.rego");
+    /// assert_eq!(v[0]["contents"].as_string()?.as_ref(), "package test");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_policies_as_json(&self) -> Result<String> {
+        #[derive(Serialize)]
+        struct Source<'a> {
+            path: &'a String,
+            contents: &'a String,
+        }
+
+        let mut sources = vec![];
+        for m in self.modules.iter() {
+            let source = &m.package.refr.span().source;
+            sources.push(Source {
+                path: source.get_path(),
+                contents: source.get_contents(),
+            });
+        }
+
+        serde_json::to_string_pretty(&sources).map_err(anyhow::Error::msg)
+    }
+
     /// Set the input document.
     ///
     /// * `input`: Input documented. Typically this [Value] is constructed from JSON or YAML.
