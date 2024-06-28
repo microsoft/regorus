@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 const OPA_REPO: &str = "https://github.com/open-policy-agent/opa";
-const OPA_BRANCH: &str = "v0.65.0";
+const OPA_BRANCH: &str = "v0.66.0";
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
