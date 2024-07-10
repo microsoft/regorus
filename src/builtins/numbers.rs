@@ -3,22 +3,24 @@
 
 use crate::ast::{ArithOp, Expr, Ref};
 use crate::builtins;
-use crate::builtins::utils::{ensure_args_count, ensure_numeric, ensure_string};
+use crate::builtins::utils::{ensure_args_count, ensure_numeric};
 use crate::lexer::Span;
 use crate::number::Number;
 use crate::value::Value;
-
-use std::collections::HashMap;
+use crate::*;
 
 use anyhow::{bail, Result};
+
+#[cfg(feature = "std")]
 use rand::{thread_rng, Rng};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("abs", (abs, 1));
     m.insert("ceil", (ceil, 1));
     m.insert("floor", (floor, 1));
     m.insert("numbers.range", (range, 2));
     m.insert("numbers.range_step", (range_step, 3));
+    #[cfg(feature = "std")]
     m.insert("rand.intn", (intn, 2));
     m.insert("round", (round, 1));
 }
@@ -156,10 +158,11 @@ fn round(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
     ))
 }
 
+#[cfg(feature = "std")]
 fn intn(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let fcn = "rand.intn";
     ensure_args_count(span, fcn, params, args, 2)?;
-    let _ = ensure_string(fcn, &params[0], &args[0])?;
+    let _ = crate::builtins::utils::ensure_string(fcn, &params[0], &args[0])?;
     let n = ensure_numeric(fcn, &params[0], &args[1])?;
 
     Ok(match n.as_u64() {

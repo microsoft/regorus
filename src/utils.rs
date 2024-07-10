@@ -4,8 +4,9 @@
 use crate::ast::*;
 use crate::builtins::*;
 use crate::lexer::*;
+use crate::*;
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use anyhow::{bail, Result};
 pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {

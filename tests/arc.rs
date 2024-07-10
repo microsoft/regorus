@@ -1,11 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(unused)]
 use lazy_static::lazy_static;
 use std::sync::Mutex;
 
 use regorus::*;
 
+#[cfg(feature = "arc")]
 // Ensure that types can be s
 lazy_static! {
     static ref VALUE: Value = Value::Null;
@@ -14,6 +16,7 @@ lazy_static! {
 }
 
 #[test]
+#[cfg(feature = "arc")]
 fn shared_engine() -> anyhow::Result<()> {
     let e_guard = ENGINE.lock();
     let mut engine = e_guard.expect("failed to lock engine");

@@ -1,6 +1,6 @@
 [package]
 name = "regorus-java"
-version = "0.1.0"
+version = "0.2.1"
 edition = "2021"
 repository = "https://github.com/microsoft/regorus/bindings/java"
 description = "Java bindings for Regorus - a fast, lightweight Rego interpreter written in Rust"
@@ -10,8 +10,13 @@ keywords = ["interpreter", "opa", "policy-as-code", "rego"]
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+default = ["ast", "coverage", "regorus/std", "regorus/full-opa"]
+coverage = ["regorus/coverage"]
+ast = ["regorus/ast"]
+
 [dependencies]
 anyhow = "1.0"
 serde_json = "1.0.112"
 jni = "0.21.1"
-regorus = { path = "../.." }
+regorus = { path  = "../..", default-features = false, features = ["arc"] }

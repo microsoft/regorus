@@ -6,8 +6,9 @@ use crate::lexer::Span;
 use crate::number::Number;
 use crate::Rc;
 use crate::Value;
+use crate::*;
 
-use std::collections::{BTreeMap, BTreeSet};
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{bail, Result};
 

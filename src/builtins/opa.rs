@@ -4,15 +4,16 @@
 use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::ensure_args_count;
+use crate::*;
 
 use crate::lexer::Span;
 use crate::value::Value;
 
-use std::collections::{BTreeMap, HashMap};
+use alloc::collections::BTreeMap;
 
 use anyhow::Result;
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("opa.runtime", (opa_runtime, 0));
 }
 
@@ -37,6 +38,7 @@ fn opa_runtime(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
     );
 
     // Emitting environment variables could lead to confidential data being leaked.
+    #[cfg(feature = "std")]
     if false {
         obj.insert(
             Value::String("env".into()),

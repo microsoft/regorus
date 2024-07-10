@@ -139,9 +139,10 @@ pub fn eval_file(
     query: &str,
     enable_tracing: bool,
     strict: bool,
-) -> Result<Vec<Value>> {
+) -> Result<(Vec<Value>, Vec<String>)> {
     let mut engine: Engine = Engine::new();
     engine.set_strict_builtin_errors(strict);
+    engine.set_gather_prints(true);
 
     #[cfg(feature = "coverage")]
     engine.set_enable_coverage(true);
@@ -176,7 +177,7 @@ pub fn eval_file(
         let r = engine.eval_query(query.to_string(), enable_tracing)?;
         let r_full = engine_full.eval_query_and_all_rules(query.to_string(), enable_tracing)?;
         if r != r_full {
-            println!(
+            std::println!(
                 "{}\n{}",
                 serde_json::to_string_pretty(&r_full)?,
                 serde_json::to_string_pretty(&r)?
@@ -194,7 +195,7 @@ pub fn eval_file(
             let r = engine.eval_query(query.to_string(), enable_tracing)?;
             let r_full = engine_full.eval_query_and_all_rules(query.to_string(), enable_tracing)?;
             if r != r_full {
-                println!(
+                std::println!(
                     "{}\n{}",
                     serde_json::to_string_pretty(&r_full)?,
                     serde_json::to_string_pretty(&r)?
@@ -206,7 +207,7 @@ pub fn eval_file(
         }
     }
 
-    Ok(results)
+    Ok((results, engine.take_prints()?))
 }
 
 #[derive(PartialEq, Debug)]
@@ -254,6 +255,7 @@ struct TestCase {
     query: String,
     sort_bindings: Option<bool>,
     want_result: Option<ValueOrVec>,
+    want_prints: Option<Vec<String>>,
     no_result: Option<bool>,
     skip: Option<bool>,
     error: Option<String>,
@@ -277,12 +279,41 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     let yaml_str = std::fs::read_to_string(file)?;
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
-    println!("running {file}");
+    #[cfg(not(feature = "std"))]
+    {
+        // Skip tests that depend on bultins that need std feature.
+        let skip = [
+            "intn.yaml",
+            "is_valid.yaml",
+            "add_date.yaml",
+            "date.yaml",
+            "clock.yaml",
+            "compare.yaml",
+            "diff.yaml",
+            "format.yaml",
+            "now_ns.yaml",
+            "parse_duration_ns.yaml",
+            "parse_ns.yaml",
+            "parse_rfc3339_ns.yaml",
+            "weekday.yaml",
+            "generate.yaml",
+            "parse.yaml",
+            "tests.yaml",
+        ];
+        for s in skip {
+            if file.contains(s) {
+                std::println!("skipped {file} in no_std mode.");
+                return Ok(());
+            }
+        }
+    }
+
+    std::println!("running {file}");
 
     for case in test.cases {
-        print!("case {} ", case.note);
+        std::print!("case {} ", case.note);
         if case.skip == Some(true) {
-            println!("skipped");
+            std::println!("skipped");
             continue;
         }
 
@@ -304,7 +335,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
             enable_tracing,
             case.strict,
         ) {
-            Ok(results) => match case.want_result {
+            Ok((results, prints)) => match case.want_result {
                 Some(want_result) => {
                     let mut expected_results = vec![];
                     match want_result {
@@ -315,6 +346,18 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                     }
 
                     check_output(&results, &expected_results)?;
+                    if let Some(expected_prints) = case.want_prints {
+                        assert_eq!(expected_prints.len(), prints.len());
+                        for (idx, ep) in expected_prints.into_iter().enumerate() {
+                            if ep != prints[idx] {
+                                std::println!(
+                                    "print mismatch :\n{}",
+                                    prettydiff::diff_chars(&ep, &prints[idx])
+                                );
+                                panic!("exiting");
+                            }
+                        }
+                    }
                 }
                 _ if case.no_result == Some(true) => (),
                 _ => bail!("eval succeeded and did not produce any errors"),
@@ -329,13 +372,13 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                             expected
                         );
                     }
-                    println!("{actual}");
+                    std::println!("{actual}");
                 }
                 _ => return Err(actual),
             },
         }
 
-        println!("passed");
+        std::println!("passed");
     }
 
     Ok(())

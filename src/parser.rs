@@ -5,9 +5,10 @@ use crate::ast::*;
 use crate::lexer::*;
 use crate::number::*;
 use crate::value::*;
+use crate::*;
 
-use std::collections::BTreeMap;
-use std::str::FromStr;
+use alloc::collections::BTreeMap;
+use core::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
 
@@ -65,19 +66,23 @@ impl<'source> Parser<'source> {
     }
 
     fn is_imported_future_keyword(&self, kw: &str) -> bool {
-        self.future_keywords.get(kw).is_some()
+        self.future_keywords.contains_key(kw)
     }
 
     pub fn warn_future_keyword(&self) {
-        let kw = self.token_text();
-        let msg = format!(
-            "`{kw}` will be treated as identifier due to missing `import future.keywords.{kw}`"
-        );
-        println!(
-            "{}",
-            self.source
-                .message(self.tok.1.line, self.tok.1.col, "warning", &msg)
-        );
+        #[cfg(feature = "std")]
+        {
+            let kw = self.token_text();
+            let msg = format!(
+                "`{kw}` will be treated as identifier due to missing `import future.keywords.{kw}`"
+            );
+
+            std::println!(
+                "{}",
+                self.source
+                    .message(self.tok.1.line, self.tok.1.col, "warning", &msg)
+            );
+        }
     }
 
     pub fn set_future_keyword(&mut self, kw: &str, span: &Span) -> Result<()> {
@@ -515,9 +520,9 @@ impl<'source> Parser<'source> {
         while possible_fcn {
             match expr {
                 Expr::Var(_) => break,
-                Expr::RefDot { refr, .. } => expr = &refr,
+                Expr::RefDot { refr, .. } => expr = refr,
                 Expr::RefBrack { refr, index, .. } => {
-                    expr = &refr;
+                    expr = refr;
                     possible_fcn = matches!(index.as_ref(), Expr::String(_));
                 }
                 _ => {
@@ -787,7 +792,7 @@ impl<'source> Parser<'source> {
         let start = self.tok.1.start;
         let mut expr = self.parse_bool_expr()?;
 
-        while self.token_text() == "in" && self.future_keywords.get("in").is_some() {
+        while self.token_text() == "in" && self.future_keywords.contains_key("in") {
             expr = self.parse_membership_tail(start, expr, None)?;
         }
 
@@ -976,7 +981,7 @@ impl<'source> Parser<'source> {
         match self.token_text() {
             "some" => return self.parse_some_stmt(),
             "every" => {
-                if self.future_keywords.get("every").is_some() {
+                if self.future_keywords.contains_key("every") {
                     return self.parse_every_stmt();
                 }
                 self.warn_future_keyword();
@@ -1326,7 +1331,7 @@ impl<'source> Parser<'source> {
     }
 
     pub fn if_is_keyword(&self) -> bool {
-        self.future_keywords.get("if").is_some()
+        self.future_keywords.contains_key("if")
     }
 
     pub fn parse_query_or_literal_stmt(&mut self) -> Result<Query> {

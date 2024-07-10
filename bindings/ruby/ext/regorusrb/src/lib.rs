@@ -36,14 +36,14 @@ impl Engine {
         }
     }
 
-    fn add_policy(&self, path: String, rego: String) -> Result<(), Error> {
+    fn add_policy(&self, path: String, rego: String) -> Result<String, Error> {
         self.engine
             .borrow_mut()
             .add_policy(path, rego)
             .map_err(|e| Error::new(runtime_error(), format!("Failed to add policy: {}", e)))
     }
 
-    fn add_policy_from_file(&self, path: String) -> Result<(), Error> {
+    fn add_policy_from_file(&self, path: String) -> Result<String, Error> {
         self.engine
             .borrow_mut()
             .add_policy_from_file(path)
@@ -72,7 +72,7 @@ impl Engine {
     }
 
     fn add_data_from_json_file(&self, path: String) -> Result<(), Error> {
-        let json_data = regorus::Value::from_json_file(&path).map_err(|e| {
+        let json_data = regorus::Value::from_json_file(path).map_err(|e| {
             Error::new(
                 runtime_error(),
                 format!("Failed to parse JSON data file: {}", e),
@@ -90,6 +90,20 @@ impl Engine {
     fn clear_data(&self) -> Result<(), Error> {
         self.engine.borrow_mut().clear_data();
         Ok(())
+    }
+
+    fn get_packages(&self) -> Result<Vec<String>, Error> {
+        self.engine
+            .borrow()
+            .get_packages()
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to get packages: {e}")))
+    }
+
+    fn get_policies(&self) -> Result<String, Error> {
+        self.engine
+            .borrow()
+            .get_policies_as_json()
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to get policies: {e}")))
     }
 
     fn set_input(&self, ruby_hash: magnus::RHash) -> Result<(), Error> {
@@ -112,7 +126,7 @@ impl Engine {
     }
 
     fn add_input_from_json_file(&self, path: String) -> Result<(), Error> {
-        let json_data = regorus::Value::from_json_file(&path).map_err(|e| {
+        let json_data = regorus::Value::from_json_file(path).map_err(|e| {
             Error::new(
                 runtime_error(),
                 format!("Failed to parse JSON input file: {}", e),
@@ -191,6 +205,83 @@ impl Engine {
     fn eval_deny_query(&self, query: String) -> Result<bool, Error> {
         Ok(self.engine.borrow_mut().eval_deny_query(query, false))
     }
+
+    #[cfg(feature = "coverage")]
+    fn set_enable_coverage(&self, enable: bool) -> Result<(), Error> {
+        self.engine.borrow_mut().set_enable_coverage(enable);
+        Ok(())
+    }
+
+    #[cfg(feature = "coverage")]
+    fn get_coverage_report_as_json(&self) -> Result<String, Error> {
+        let report = self
+            .engine
+            .borrow_mut()
+            .get_coverage_report()
+            .map_err(|e| {
+                Error::new(
+                    runtime_error(),
+                    format!("Failed to get coverage report as json: {}", e),
+                )
+            })?;
+
+        serde_json::to_string(&report).map_err(|e| {
+            Error::new(
+                runtime_error(),
+                format!("Failed to serialize coverage report: {}", e),
+            )
+        })
+    }
+
+    #[cfg(feature = "coverage")]
+    fn get_coverage_report_pretty(&self) -> Result<String, Error> {
+        let report = self
+            .engine
+            .borrow_mut()
+            .get_coverage_report()
+            .map_err(|e| {
+                Error::new(
+                    runtime_error(),
+                    format!("Failed to get coverage report: {}", e),
+                )
+            })?;
+
+        report.to_string_pretty().map_err(|e| {
+            Error::new(
+                runtime_error(),
+                format!("Failed to convert report to colored string: {}", e),
+            )
+        })
+    }
+
+    #[cfg(feature = "coverage")]
+    fn clear_coverage_data(&self) -> Result<(), Error> {
+        self.engine.borrow_mut().clear_coverage_data();
+        Ok(())
+    }
+
+    // Print statements can be gathered async instead of printing to stderr
+    fn set_gather_prints(&self, enable: bool) -> Result<(), Error> {
+        self.engine.borrow_mut().set_gather_prints(enable);
+        Ok(())
+    }
+
+    fn take_prints(&self) -> Result<Vec<String>, Error> {
+        self.engine.borrow_mut().take_prints().map_err(|e| {
+            Error::new(
+                runtime_error(),
+                format!("Failed to gather print statement: {}", e),
+            )
+        })
+    }
+
+    #[cfg(feature = "ast")]
+    fn get_ast_as_json(&self) -> Result<String, Error> {
+        self.engine
+            .borrow()
+            .get_ast_as_json()
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to get ast: {e}")))
+    }
 }
 
 #[magnus::init]
@@ -212,6 +303,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         "add_policy_from_file",
         method!(Engine::add_policy_from_file, 1),
     )?;
+    engine_class.define_method("get_packages", method!(Engine::get_packages, 0))?;
+    engine_class.define_method("get_policies", method!(Engine::get_policies, 0))?;
 
     // data operations
     engine_class.define_method("add_data", method!(Engine::add_data, 1))?;
@@ -237,5 +330,30 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     engine_class.define_method("eval_bool_query", method!(Engine::eval_bool_query, 1))?;
     engine_class.define_method("eval_allow_query", method!(Engine::eval_allow_query, 1))?;
     engine_class.define_method("eval_deny_query", method!(Engine::eval_deny_query, 1))?;
+
+    // coverage operations
+    engine_class.define_method(
+        "set_enable_coverage",
+        method!(Engine::set_enable_coverage, 1),
+    )?;
+    engine_class.define_method(
+        "get_coverage_report_as_json",
+        method!(Engine::get_coverage_report_as_json, 0),
+    )?;
+    engine_class.define_method(
+        "get_coverage_report_pretty",
+        method!(Engine::get_coverage_report_pretty, 0),
+    )?;
+    engine_class.define_method(
+        "clear_coverage_data",
+        method!(Engine::clear_coverage_data, 0),
+    )?;
+
+    // print statements
+    engine_class.define_method("set_gather_prints", method!(Engine::set_gather_prints, 1))?;
+    engine_class.define_method("take_prints", method!(Engine::take_prints, 0))?;
+
+    // ast
+    engine_class.define_method("get_ast_as_json", method!(Engine::get_ast_as_json, 0))?;
     Ok(())
 }

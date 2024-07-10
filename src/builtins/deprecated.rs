@@ -2,12 +2,12 @@
 // Licensed under the MIT License.
 
 use crate::ast::{Expr, Ref};
+use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_set};
 use crate::builtins::BuiltinFcn;
 use crate::lexer::Span;
 use crate::value::Value;
-
-use std::collections::HashMap;
+use crate::*;
 
 use anyhow::{bail, Result};
 use lazy_static::lazy_static;
@@ -17,8 +17,8 @@ use crate::builtins::regex::regex_match;
 
 #[rustfmt::skip]
 lazy_static! {
-    pub static ref DEPRECATED: HashMap<&'static str, BuiltinFcn> = {
-	let mut m : HashMap<&'static str, BuiltinFcn>  = HashMap::new();
+    pub static ref DEPRECATED: builtins::BuiltinsMap<&'static str, BuiltinFcn> = {
+	let mut m : builtins::BuiltinsMap<&'static str, BuiltinFcn>  = builtins::BuiltinsMap::new();
 	
 	m.insert("all", (all, 1));
 	m.insert("any", (any, 1));

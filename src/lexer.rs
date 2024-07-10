@@ -1,59 +1,74 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use core::fmt::{Debug, Formatter};
+use crate::*;
+use core::cmp;
+use core::fmt::{self, Debug, Formatter};
 use core::iter::Peekable;
 use core::str::CharIndices;
 
-use std::convert::AsRef;
-use std::hash::{Hash, Hasher};
-use std::path::Path;
-
-use crate::Rc;
 use crate::Value;
 
 use anyhow::{anyhow, bail, Result};
 
 #[derive(Clone)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 struct SourceInternal {
     pub file: String,
     pub contents: String,
+    #[cfg_attr(feature = "ast", serde(skip_serializing))]
     pub lines: Vec<(u32, u32)>,
 }
 
+/// A policy file.
 #[derive(Clone)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct Source {
+    #[cfg_attr(feature = "ast", serde(flatten))]
     src: Rc<SourceInternal>,
 }
 
-impl std::cmp::Ord for Source {
-    fn cmp(&self, other: &Source) -> std::cmp::Ordering {
+impl Source {
+    /// The path associated with the policy file.
+    pub fn get_path(&self) -> &String {
+        &self.src.file
+    }
+
+    /// The contents of the policy file.
+    pub fn get_contents(&self) -> &String {
+        &self.src.contents
+    }
+}
+
+impl cmp::Ord for Source {
+    fn cmp(&self, other: &Source) -> cmp::Ordering {
         Rc::as_ptr(&self.src).cmp(&Rc::as_ptr(&other.src))
     }
 }
 
-impl std::cmp::PartialOrd for Source {
-    fn partial_cmp(&self, other: &Source) -> Option<std::cmp::Ordering> {
+impl cmp::PartialOrd for Source {
+    fn partial_cmp(&self, other: &Source) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl std::cmp::PartialEq for Source {
+impl cmp::PartialEq for Source {
     fn eq(&self, other: &Source) -> bool {
         Rc::as_ptr(&self.src) == Rc::as_ptr(&other.src)
     }
 }
 
-impl std::cmp::Eq for Source {}
+impl cmp::Eq for Source {}
 
-impl Hash for Source {
-    fn hash<H: Hasher>(&self, state: &mut H) {
+#[cfg(feature = "std")]
+impl std::hash::Hash for Source {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         Rc::as_ptr(&self.src).hash(state)
     }
 }
 
 impl Debug for Source {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         self.src.file.fmt(f)
     }
 }
@@ -66,14 +81,14 @@ pub struct SourceStr {
 }
 
 impl Debug for SourceStr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         self.text().fmt(f)
     }
 }
 
-impl std::fmt::Display for SourceStr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        std::fmt::Display::fmt(&self.text(), f)
+impl fmt::Display for SourceStr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
+        fmt::Display::fmt(&self.text(), f)
     }
 }
 
@@ -95,22 +110,22 @@ impl SourceStr {
     }
 }
 
-impl std::cmp::PartialEq for SourceStr {
+impl cmp::PartialEq for SourceStr {
     fn eq(&self, other: &Self) -> bool {
         self.text().eq(other.text())
     }
 }
 
-impl std::cmp::Eq for SourceStr {}
+impl cmp::Eq for SourceStr {}
 
-impl std::cmp::PartialOrd for SourceStr {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+impl cmp::PartialOrd for SourceStr {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.text().cmp(other.text()))
     }
 }
 
-impl std::cmp::Ord for SourceStr {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+impl cmp::Ord for SourceStr {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.text().cmp(other.text())
     }
 }
@@ -155,7 +170,8 @@ impl Source {
         })
     }
 
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Source> {
+    #[cfg(feature = "std")]
+    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Source> {
         let contents = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => bail!("Failed to read {}. {e}", path.as_ref().display()),
@@ -213,7 +229,9 @@ impl Source {
 }
 
 #[derive(Clone)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct Span {
+    #[cfg_attr(feature = "ast", serde(skip_serializing))]
     pub source: Source,
     pub line: u32,
     pub col: u32,
@@ -240,7 +258,7 @@ impl Span {
 }
 
 impl Debug for Span {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         let t = self.text().escape_debug().to_string();
         let max = 32;
         let (txt, trailer) = if t.len() > max {
@@ -275,6 +293,10 @@ pub struct Lexer<'source> {
     iter: Peekable<CharIndices<'source>>,
     line: u32,
     col: u32,
+    unknown_char_is_symbol: bool,
+    allow_slash_star_escape: bool,
+    comment_starts_with_double_slash: bool,
+    double_colon_token: bool,
 }
 
 impl<'source> Lexer<'source> {
@@ -284,7 +306,27 @@ impl<'source> Lexer<'source> {
             iter: source.contents().char_indices().peekable(),
             line: 1,
             col: 1,
+            unknown_char_is_symbol: false,
+            allow_slash_star_escape: false,
+            comment_starts_with_double_slash: false,
+            double_colon_token: false,
         }
+    }
+
+    pub fn set_unknown_char_is_symbol(&mut self, b: bool) {
+        self.unknown_char_is_symbol = b;
+    }
+
+    pub fn set_allow_slash_star_escape(&mut self, b: bool) {
+        self.allow_slash_star_escape = b;
+    }
+
+    pub fn set_comment_starts_with_double_slash(&mut self, b: bool) {
+        self.comment_starts_with_double_slash = b;
+    }
+
+    pub fn set_double_colon_token(&mut self, b: bool) {
+        self.double_colon_token = b;
     }
 
     fn peek(&mut self) -> (usize, char) {
@@ -466,6 +508,7 @@ impl<'source> Lexer<'source> {
                     match ch {
                         // json escape sequence
                         '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' => (),
+                        '*' if self.allow_slash_star_escape => (),
                         'u' => {
                             for _i in 0..4 {
                                 let (offset, ch) = self.peek();
@@ -529,12 +572,24 @@ impl<'source> Lexer<'source> {
         ))
     }
 
+    #[inline]
+    fn skip_past_newline(&mut self) -> Result<()> {
+        self.iter.next();
+        loop {
+            match self.peek().1 {
+                '\n' | '\x00' => break,
+                _ => self.iter.next(),
+            };
+        }
+        Ok(())
+    }
+
     fn skip_ws(&mut self) -> Result<()> {
         // Only the 4 json whitespace characters are recognized.
         // https://www.crockford.com/mckeeman.html.
         // Additionally, comments are also skipped.
         // A tab is considered 4 space characters.
-        'outer: loop {
+        loop {
             match self.peek().1 {
                 ' ' => self.col += 1,
                 '\t' => self.col += 4,
@@ -551,14 +606,13 @@ impl<'source> Lexer<'source> {
                     self.col = 1;
                     self.line += 1;
                 }
-                '#' => {
-                    self.iter.next();
-                    loop {
-                        match self.peek().1 {
-                            '\n' | '\x00' => continue 'outer,
-                            _ => self.iter.next(),
-                        };
-                    }
+                '#' if !self.comment_starts_with_double_slash => {
+                    self.skip_past_newline()?;
+                    continue;
+                }
+                '/' if self.comment_starts_with_double_slash && self.peekahead(1).1 == '/' => {
+                    self.skip_past_newline()?;
+                    continue;
                 }
                 _ => break,
             }
@@ -602,7 +656,7 @@ impl<'source> Lexer<'source> {
 		self.col += 1;
 		self.iter.next();
 		let mut end = start as u32 + 1;
-		if self.peek().1 == '=' {
+		if self.peek().1 == '=' || (self.peek().1 == ':' && self.double_colon_token) {
 		    self.col += 1;
 		    self.iter.next();
 		    end += 1;
@@ -675,6 +729,17 @@ impl<'source> Lexer<'source> {
 		    }
 		}
 		Ok(ident)
+	    }
+	    _ if self.unknown_char_is_symbol => {
+		self.col += 1;
+		self.iter.next();
+		Ok(Token(TokenKind::Symbol, Span {
+		    source: self.source.clone(),
+		    line: self.line,
+		    col,
+		    start: start as u32,
+		    end: start as u32 + 1,
+		}))
 	    }
 	    _ => Err(self.source.error(self.line, self.col, "invalid character"))
 	}

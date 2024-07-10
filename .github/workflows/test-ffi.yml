@@ -1,0 +1,22 @@
+name: bindings/ffi
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Test FFI
+        run: |
+          cargo build -r
+          cargo clippy --all-targets --no-deps -- -Dwarnings
+        working-directory: ./bindings/ffi

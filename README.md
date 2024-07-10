@@ -8,8 +8,9 @@
 
 Regorus is also
   - *cross-platform* - Written in platform-agnostic Rust.
+  - *no_std compatible* - Regorus can be used in `no_std` environments too. Most of the builtins are supported.
   - *current* - We strive to keep Regorus up to date with latest OPA release. Regorus supports `import rego.v1`.
-  - *compliant* - Regorus is mostly compliant with the latest [OPA release v0.64.0](https://github.com/open-policy-agent/opa/releases/tag/v0.64.0). See [OPA Conformance](#opa-conformance) for details. Note that while we behaviorally produce the same results, we don't yet support all the builtins.
+  - *compliant* - Regorus is mostly compliant with the latest [OPA release v0.66.0](https://github.com/open-policy-agent/opa/releases/tag/v0.66.0). See [OPA Conformance](#opa-conformance) for details. Note that while we behaviorally produce the same results, we don't yet support all the builtins.
   - *extensible* - Extend the Rego language by implementing custom stateful builtins in Rust.
     See [add_extension](https://github.com/microsoft/regorus/blob/fc68bf9c8bea36427dae9401a7d1f6ada771f7ab/src/engine.rs#L352).
     Support for extensibility using other languages coming soon.
@@ -24,31 +25,60 @@ Regorus is available as a library that can be easily integrated into your Rust p
 Here is an example of evaluating a simple Rego policy:
 
 ```rust
-use anyhow::Result;
-use regorus::*;
-use serde_json;
+fn main() -> anyhow::Result<()> {
+    // Create an engine for evaluating Rego policies.
+    let mut engine = regorus::Engine::new();
 
-fn main() -> Result<()> {
-  // Create an engine for evaluating Rego policies.
-  let mut engine = Engine::new();
+    let policy = String::from(
+        r#"
+       package example
+       import rego.v1
 
-  // Add policy to the engine.
-  engine.add_policy(
-    // Filename to be associated with the policy.
-    "hello.rego".to_string(),
+       allow if {
+          ## All actions are allowed for admins.
+          input.principal == "admin"
+       } else if {
+          ## Check if action is allowed for given user.
+          input.action in data.allowed_actions[input.principal]
+       }
+	"#,
+    );
 
-    // Rego policy that just sets a message.
-    r#"
-       package test
-       message = "Hello, World!"
-    "#.to_string()
-  )?;
+    // Add policy to the engine.
+    engine.add_policy(String::from("policy.rego"), policy)?;
 
-  // Evaluate the policy, fetch the message and print it.
-  let results = engine.eval_query("data.test.message".to_string(), false)?;
-  println!("{}", serde_json::to_string_pretty(&results)?);
+    // Add data to engine.
+    engine.add_data(regorus::Value::from_json_str(
+        r#"{
+     "allowed_actions": {
+        "user1" : ["read", "write"],
+        "user2" : ["read"]
+     }}"#,
+    )?)?;
 
-  Ok(())
+    // Set input and evaluate whether user1 can write.
+    engine.set_input(regorus::Value::from_json_str(
+        r#"{
+      "principal": "user1",
+      "action": "write"
+    }"#,
+    )?);
+
+    let r = engine.eval_rule(String::from("data.example.allow"))?;
+    assert_eq!(r, regorus::Value::from(true));
+
+    // Set input and evaluate whether user2 can write.
+    engine.set_input(regorus::Value::from_json_str(
+        r#"{
+      "principal": "user2",
+      "action": "write"
+    }"#,
+    )?);
+
+    let r = engine.eval_rule(String::from("data.example.allow"))?;
+    assert_eq!(r, regorus::Value::Undefined);
+
+    Ok(())
 }
 ```
 
@@ -56,20 +86,20 @@ Regorus is designed with [Confidential Computing](https://confidentialcomputing.
 it is important to be able to control exactly what is being run. Regorus allows enabling and disabling various components using cargo
 features. By default all features are enabled.
 
-The default build of regorus example program is 6.4M:
+The default build of regorus example program is 6.3M:
 ```bash
 $ cargo build -r --example regorus; strip target/release/examples/regorus; ls -lh target/release/examples/regorus
--rwxr-xr-x  1 anand  staff   6.4M Jan 19 11:23 target/release/examples/regorus*
+-rwxr-xr-x  1 anand  staff   6.3M May 11 22:03 target/release/examples/regorus*
 ```
 
 
-When all features except for `yaml` are disabled, the binary size drops down to 2.9M.
+When all default features are disabled, the binary size drops down to 1.9M.
 ```bash
-$ cargo build -r --example regorus --features "yaml" --no-default-features; strip target/release/examples/regorus; ls -lh target/release/examples/regorus
--rwxr-xr-x  1 anand  staff   2.9M Jan 19 11:26 target/release/examples/regorus*
+$ cargo build -r --example regorus --no-default-features; strip target/release/examples/regorus; ls -lh target/release/examples/regorus
+-rwxr-xr-x  1 anand  staff   1.9M May 11 22:04 target/release/examples/regorus*
 ```
 
-Regorus passes the [OPA v0.64.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
+Regorus passes the [OPA v0.66.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
 builtins. See [OPA Conformance](#opa-conformance) below.
 
 ## Bindings
@@ -79,6 +109,7 @@ Regorus can be used from a variety of languages:
 - *C*: C binding is generated using [cbindgen](https://github.com/mozilla/cbindgen).
   [corrosion-rs](https://github.com/corrosion-rs/corrosion) can be used to seamlessly use Regorous
    in your CMake based projects. See [bindings/c](https://github.com/microsoft/regorus/tree/main/bindings/c).
+- *C freestanding*: [bindings/c_no_std](https://github.com/microsoft/regorus/tree/main/bindings/c_no_std) shows how to use Regorus from C environments without a libc.
 - *C++*: C++ binding is generated using [cbindgen](https://github.com/mozilla/cbindgen).
   [corrosion-rs](https://github.com/corrosion-rs/corrosion) can be used to seamlessly use Regorous
    in your CMake based projects. See [bindings/cpp](https://github.com/microsoft/regorus/tree/main/bindings/cpp).
@@ -245,7 +276,7 @@ Benchmark 1: opa eval -b tests/aci -d tests/aci/data.json -i tests/aci/input.jso
 ```
 ## OPA Conformance
 
-Regorus has been verified to be compliant with [OPA v0.64.0](https://github.com/open-policy-agent/opa/releases/tag/v0.64.0)
+Regorus has been verified to be compliant with [OPA v0.66.0](https://github.com/open-policy-agent/opa/releases/tag/v0.66.0)
 using a [test driver](https://github.com/microsoft/regorus/blob/main/tests/opa.rs) that loads and runs the OPA testsuite using Regorus, and verifies that expected outputs are produced.
 
 The test driver can be invoked by running:

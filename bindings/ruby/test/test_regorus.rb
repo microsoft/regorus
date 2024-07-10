@@ -59,7 +59,8 @@ class TestRegorus < Minitest::Test
   end
 
   def test_policy_addition
-    assert_silent { @engine.add_policy("example.rego", example_policy) }
+    # returns the package name from the REGO, not the filename
+    assert_equal "data.regorus_test", @engine.add_policy("example.rego", example_policy)
   end
 
   def test_object_creation_with_new
@@ -153,6 +154,33 @@ class TestRegorus < Minitest::Test
 
     assert_instance_of ::Regorus::Engine, cloned_engine
     refute_same @engine, cloned_engine
+  end
+
+  def test_coverage_printing_json
+    @engine.set_input(input_for(ALICE))
+    @engine.set_enable_coverage(true)
+    @engine.eval_rule("data.regorus_test.is_employee")
+
+    assert_match(/covered":\[7\],"not_covered":\[3,11,12,15,19\]/, @engine.get_coverage_report_as_json)
+  end
+
+  def test_coverage_printing_pretty
+    @engine.set_input(input_for(ALICE))
+    @engine.set_enable_coverage(true)
+    @engine.eval_rule("data.regorus_test.is_employee")
+
+    # to see the colors in the ruby terminal, use `puts @engine.get_coverage_report``
+    pretty_coverage_report = @engine.get_coverage_report_pretty
+
+    assert_match(/\e\[31m    3    input.name == data.managers\[_\]/, pretty_coverage_report)
+    assert_match(/\e\[32m    7    input.name == data.employees\[_\]/, pretty_coverage_report)
+  end
+
+  def test_gather_print_statements
+    @engine.set_gather_prints(true)
+    @engine.eval_query('print("Hello")')
+
+    assert_equal ["<query.rego>:1: Hello"], @engine.take_prints
   end
 
   def alice_results

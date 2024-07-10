@@ -4,16 +4,16 @@
 use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_string};
+use crate::*;
 
 use crate::lexer::Span;
 use crate::value::Value;
 
 use itertools::Itertools;
-use std::collections::HashMap;
 
 use anyhow::{bail, Result};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("io.jwt.decode", (jwt_decode, 1));
     m.insert("io.jwt.decode_verify", (jwt_decode_verify, 2));
 }

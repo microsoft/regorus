@@ -16,20 +16,30 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Regorus Engine.
  */
-public class Engine implements AutoCloseable {
+public class Engine implements AutoCloseable, Cloneable {
     // Methods exposed from Rust side, you can run
     // `javac -h . src/main/java/com/microsoft/regorus/Engine.java` to update
     // expected native header at `bindings/java/com_microsoft_regorus_Engine.h`
     // if you update the native API.
     private static native long nativeNewEngine();
-    private static native void nativeAddPolicy(long enginePtr, String path, String rego);
-    private static native void nativeAddPolicyFromFile(long enginePtr, String path);
+    private static native long nativeClone(long enginePtr);
+    private static native String nativeAddPolicy(long enginePtr, String path, String rego);
+    private static native String nativeAddPolicyFromFile(long enginePtr, String path);
+    private static native String nativeGetPackages(long enginePtr);
+    private static native String nativeGetPolicies(long enginePtr);
     private static native void nativeClearData(long enginePtr);
     private static native void nativeAddDataJson(long enginePtr, String data);
     private static native void nativeAddDataJsonFromFile(long enginePtr, String path);
     private static native void nativeSetInputJson(long enginePtr, String input);
     private static native void nativeSetInputJsonFromFile(long enginePtr, String path);
     private static native String nativeEvalQuery(long enginePtr, String query);
+    private static native String nativeEvalRule(long enginePtr, String qrule);
+    private static native void nativeSetEnableCoverage(long enginePtr, boolean enable);
+    private static native String nativeGetCoverageReport(long enginePtr);
+    private static native String nativeGetCoverageReportPretty(long enginePtr);
+    private static native void nativeClearCoverageData(long enginePtr);
+    private static native void nativeSetGatherPrints(long enginePtr, boolean b);
+    private static native String nativeTakePrints(long enginePtr);
     private static native void nativeDestroyEngine(long enginePtr);
 
     // Pointer to Engine allocated on Rust's heap, all native methods works on
@@ -43,25 +53,59 @@ public class Engine implements AutoCloseable {
         enginePtr = nativeNewEngine();
     }
 
+    
+    Engine(long ptr) {
+	enginePtr = ptr;
+    }
+
+    /**
+     * Efficiently clones an Engine.
+     */
+    public Engine clone() {
+	return new Engine(nativeClone(enginePtr));
+    }
+    
     /**
      * Adds an inline Rego policy.
      * 
      * @param filename Filename of this Rego policy.
      * @param rego     Rego policy.
+     * 
+     * @return Rego package defined in the policy.
      */
-    public void addPolicy(String filename, String rego) {
-        nativeAddPolicy(enginePtr, filename, rego);
+    public String addPolicy(String filename, String rego) {
+        return nativeAddPolicy(enginePtr, filename, rego);
     }
 
     /**
      * Adds a Rego policy from given path.
      * 
      * @param path Path of the Rego policy.
+     * 
+     * @return Rego package defined in the policy.
      */
-    public void addPolicyFromFile(String path) {
-        nativeAddPolicyFromFile(enginePtr, path);
+    public String addPolicyFromFile(String path) {
+        return nativeAddPolicyFromFile(enginePtr, path);
     }
 
+    /**
+     * Get list of loaded Rego packages.
+     * 
+     * @return List of Rego packages as a JSON array of strings.
+     */
+    public String getPackages() {
+        return nativeGetPackages(enginePtr);
+    }
+    
+    /**
+     * Get list of loaded policies.
+     * 
+     * @return List of Rego policies as a JSON array of sources.
+     */
+    public String getPolicies() {
+        return nativeGetPolicies(enginePtr);
+    }
+    
     /**
      * Clears the data  document.
      */
@@ -136,6 +180,70 @@ public class Engine implements AutoCloseable {
     public String evalQuery(String query) {
         return nativeEvalQuery(enginePtr, query);
     }
+    
+    /**
+     * Evaluates given Rego rule and returns a JSON string as a result.
+     * 
+     * @param rule Path of the  Rego rule.
+     * 
+     * @return Value of the rule as a JSON string.
+     */
+    public String evalRule(String rule) {
+        return nativeEvalRule(enginePtr, rule);
+    }
+    
+    /**
+     * Enable/disable coverage.
+     * 
+     * @param enable Whether to enable coverage or not.
+     * 
+     */
+    public void setEnableCoverage(boolean enable) {
+        nativeSetEnableCoverage(enginePtr, enable);
+    }
+    
+    /**
+     * Clear coverage data.
+     * 
+     */
+    public void clearCoverageData() {
+        nativeClearCoverageData(enginePtr);
+    }
+    
+    /**
+     * Get coverage report as json string.
+     * 
+     */
+    public String getCoverageReport() {
+        return nativeGetCoverageReport(enginePtr);
+    }
+    
+    /**
+     * Get coverage report as ANSI color coded string.
+     * 
+     */
+    public String getCoverageReportPretty() {
+        return nativeGetCoverageReportPretty(enginePtr);
+    }
+    
+    /**
+     * Enable/disable gathering prints.
+     * 
+     * @param b Whether to gather prints or not.
+     * 
+     */
+    public void setGatherPrints(boolean b) {
+        nativeSetGatherPrints(enginePtr, b);
+    }
+    
+    /**
+     * Take gathered prints.
+     * 
+     */
+    public String takePrints() {
+        return nativeTakePrints(enginePtr);
+    }
+
     
     @Override
     public void close() {

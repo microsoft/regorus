@@ -31,9 +31,9 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-use std::error::Error;
-use std::fmt;
-use std::iter;
+use crate::*;
+use core::fmt;
+use core::iter;
 
 use chrono::TimeZone;
 use chrono::{
@@ -70,8 +70,6 @@ impl fmt::Display for ParseDurationError {
         }
     }
 }
-
-impl Error for ParseDurationError {}
 
 // Parses a duration string in the form of `10h12m45s`.
 //
@@ -1242,7 +1240,7 @@ mod tests {
         ];
 
         for tc in test_cases {
-            println!("Test case {}", tc.name);
+            std::println!("Test case {}", tc.name);
             let time = parse(&tc.format, &tc.value).unwrap();
             check_time(time, &tc);
         }
@@ -1313,7 +1311,7 @@ mod tests {
         let time = PST8PDT.timestamp_nanos(1233810057012345600);
 
         for tc in test_cases {
-            println!("Test case {}", tc.name);
+            std::println!("Test case {}", tc.name);
             let result = format(time, &tc.format);
             assert_eq!(result, tc.result);
         }

@@ -1,0 +1,38 @@
+name: bindings/python
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  PYTHON_VERSION: "3.10"
+    
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          architecture: x64
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@63b75c597b83e247fbf4fb7719801cc4220ae9f3 # v1.43.0
+        with:
+          target: x86_64
+          args: --release --out dist --manifest-path bindings/python/Cargo.toml
+          sccache: 'true'
+
+      - name: Test wheel
+        run:  |
+          pip3 install dist/regorus-*.whl
+          cd bindings/python
+          cargo clippy --all-targets --no-deps -- -Dwarnings
+          python3 test.py          

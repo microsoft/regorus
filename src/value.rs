@@ -3,19 +3,19 @@
 
 use crate::number::Number;
 
+use alloc::collections::{BTreeMap, BTreeSet};
 use core::fmt;
-use std::collections::{BTreeMap, BTreeSet};
-use std::convert::AsRef;
-use std::ops;
-use std::path::Path;
-use std::str::FromStr;
+use core::ops;
+
+use core::convert::AsRef;
+use core::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
 use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
 
-use crate::Rc;
+use crate::*;
 
 /// A value in a Rego document.
 ///
@@ -100,7 +100,7 @@ struct ValueVisitor;
 impl<'de> Visitor<'de> for ValueVisitor {
     type Value = Value;
 
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("a value")
     }
 
@@ -229,7 +229,7 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match serde_json::to_string(self) {
             Ok(s) => write!(f, "{s}"),
-            Err(_e) => Err(std::fmt::Error),
+            Err(_e) => Err(fmt::Error),
         }
     }
 }
@@ -309,7 +309,7 @@ impl Value {
     /// # }
     /// ```
     pub fn from_json_str(json: &str) -> Result<Value> {
-        Ok(serde_json::from_str(json)?)
+        serde_json::from_str(json).map_err(anyhow::Error::msg)
     }
 
     /// Deserialize a [`Value`] from a file containing JSON.
@@ -326,7 +326,9 @@ impl Value {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_json_file<P: AsRef<Path>>(path: P) -> Result<Value> {
+    #[cfg(feature = "std")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    pub fn from_json_file<P: AsRef<std::path::Path>>(path: P) -> Result<Value> {
         match std::fs::read_to_string(&path) {
             Ok(c) => Self::from_json_str(c.as_str()),
             Err(e) => bail!("Failed to read {}. {e}", path.as_ref().display()),
@@ -393,19 +395,23 @@ impl Value {
     /// # }
     /// ```
     pub fn to_json_str(&self) -> Result<String> {
-        Ok(serde_json::to_string_pretty(self)?)
+        serde_json::to_string_pretty(self).map_err(anyhow::Error::msg)
     }
 
     /// Deserialize a value from YAML.
     /// Note: Deserialization from YAML does not support arbitrary precision numbers.
     #[cfg(feature = "yaml")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     pub fn from_yaml_str(yaml: &str) -> Result<Value> {
         Ok(serde_yaml::from_str(yaml)?)
     }
 
     /// Deserialize a value from a file containing YAML.
     /// Note: Deserialization from YAML does not support arbitrary precision numbers.
+    #[cfg(feature = "std")]
     #[cfg(feature = "yaml")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "yaml")))]
     pub fn from_yaml_file(path: &String) -> Result<Value> {
         match std::fs::read_to_string(path) {
             Ok(c) => Self::from_yaml_str(c.as_str()),
@@ -607,6 +613,7 @@ impl From<serde_json::Value> for Value {
 }
 
 #[cfg(feature = "yaml")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yaml")))]
 impl From<serde_yaml::Value> for Value {
     /// Create a [`Value`] from [`serde_yaml::Value`].
     ///
@@ -1131,9 +1138,9 @@ impl Value {
                         Some(pv) if *pv != *v => {
                             bail!(
                                 "value for key `{}` generated multiple times: `{}` and `{}`",
-                                serde_json::to_string_pretty(&k)?,
-                                serde_json::to_string_pretty(&pv)?,
-                                serde_json::to_string_pretty(&v)?,
+                                serde_json::to_string_pretty(&k).map_err(anyhow::Error::msg)?,
+                                serde_json::to_string_pretty(&pv).map_err(anyhow::Error::msg)?,
+                                serde_json::to_string_pretty(&v).map_err(anyhow::Error::msg)?,
                             )
                         }
                         _ => Rc::make_mut(map).insert(k.clone(), v.clone()),

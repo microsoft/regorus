@@ -1,4 +1,4 @@
-name: Rust
+name: tests/release
 
 on:
   push:
@@ -10,35 +10,30 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  test:
 
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-    - name: Add musl target
-      run: rustup target add x86_64-unknown-linux-musl
-    - name: Install musl-gcc
-      run: sudo apt update && sudo apt install -y musl-tools
+    - uses: actions/checkout@v4
     - name: Format Check
       run: cargo fmt --check
+    - name: Build (all features)
+      run: cargo build -r --all-features
     - name: Build
-      run: cargo build -r --verbose
+      run: cargo build -r
+    - name: Test no_std
+      run: cargo test -r --no-default-features
+    - name: Build only std
+      run: cargo build -r --example regorus --no-default-features --features "std"
     - name: Doc Tests
       run: cargo test -r --doc
     - name: Run tests
-      run: cargo test -r --verbose
+      run: cargo test -r
     - name: Run tests (ACI)
       run: cargo test -r --test aci
+    - name: Run tests (KATA)
+      run: cargo test -r --test kata
     - name: Run tests (OPA Conformance)
       run: >-
         cargo test -r --test opa --features opa-testutil,serde_json/arbitrary_precision  -- $(tr '\n' ' ' < tests/opa.passing)
-    - name: Build (MUSL)
-      run: cargo build --verbose --all-targets --target x86_64-unknown-linux-musl
-    - name: Run tests (MUSL)
-      run: cargo test -r --verbose --target x86_64-unknown-linux-musl
-    - name: Run tests (MUSL ACI)
-      run: cargo test -r --test aci --target x86_64-unknown-linux-musl
-    - name: Run tests (MUSL OPA Conformance)
-      run: >-
-        cargo test -r --test opa --features opa-testutil,serde_json/arbitrary_precision --target x86_64-unknown-linux-musl  -- $(tr '\n' ' ' < tests/opa.passing)

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 const OPA_REPO: &str = "https://github.com/open-policy-agent/opa";
-const OPA_BRANCH: &str = "v0.64.0";
+const OPA_BRANCH: &str = "v0.66.0";
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
@@ -325,9 +325,9 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
     if npass == 0 && nfail == 0 {
         bail!("no matching tests found.");
     } else if nfail == 0 {
-        println!("\x1b[32m    {:42}: {npass:4} {nfail:4}\x1b[0m", "TOTAL");
+        println!("\x1b[32m    {:40}: {npass:4} {nfail:4}\x1b[0m", "TOTAL");
     } else {
-        println!("\x1b[31m    {:42}: {npass:4} {nfail:4}\x1b[0m", "TOTAL");
+        println!("\x1b[31m    {:40}: {npass:4} {nfail:4}\x1b[0m", "TOTAL");
     }
 
     if !missing_functions.is_empty() {

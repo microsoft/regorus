@@ -8,13 +8,13 @@ use crate::parser::Parser;
 use crate::scheduler::*;
 use crate::utils::*;
 use crate::value::*;
-use crate::Rc;
+use crate::*;
 use crate::{Expression, Extension, Location, QueryResult, QueryResults};
 
+use alloc::collections::btree_map::Entry as BTreeMapEntry;
+use alloc::collections::{BTreeMap, BTreeSet};
 use anyhow::{anyhow, bail, Result};
-use std::collections::btree_map::Entry as BTreeMapEntry;
-use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
-use std::ops::Bound::*;
+use core::ops::Bound::*;
 
 type Scope = BTreeMap<SourceStr, Value>;
 
@@ -52,8 +52,8 @@ pub struct Interpreter {
     loop_var_values: BTreeMap<ExprRef, Value>,
     contexts: Vec<Context>,
     functions: FunctionTable,
-    rules: HashMap<String, Vec<Ref<Rule>>>,
-    default_rules: HashMap<String, Vec<DefaultRuleInfo>>,
+    rules: Map<String, Vec<Ref<Rule>>>,
+    default_rules: Map<String, Vec<DefaultRuleInfo>>,
     processed: BTreeSet<Ref<Rule>>,
     processed_paths: Value,
     rule_values: BTreeMap<Vec<Value>, (Value, Ref<Expr>)>,
@@ -61,19 +61,20 @@ pub struct Interpreter {
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
     traces: Option<Vec<Rc<str>>>,
+    #[cfg(feature = "deprecated")]
     allow_deprecated: bool,
     strict_builtin_errors: bool,
     imports: BTreeMap<String, Ref<Expr>>,
-    extensions: HashMap<String, (u8, Rc<Box<dyn Extension>>)>,
+    extensions: Map<String, (u8, Rc<Box<dyn Extension>>)>,
 
     #[cfg(feature = "coverage")]
-    coverage: HashMap<Source, Vec<bool>>,
+    coverage: Map<Source, Vec<bool>>,
     #[cfg(feature = "coverage")]
     enable_coverage: bool,
 
     gather_prints: bool,
     prints: Vec<String>,
-    rule_paths: HashSet<String>,
+    rule_paths: Set<String>,
 }
 
 impl Default for Interpreter {
@@ -177,8 +178,8 @@ impl Interpreter {
             contexts: vec![],
             loop_var_values: BTreeMap::new(),
             functions: FunctionTable::new(),
-            rules: HashMap::new(),
-            default_rules: HashMap::new(),
+            rules: Map::new(),
+            default_rules: Map::new(),
             processed: BTreeSet::new(),
             processed_paths: Value::new_object(),
             rule_values: BTreeMap::new(),
@@ -186,19 +187,20 @@ impl Interpreter {
             builtins_cache: BTreeMap::new(),
             no_rules_lookup: false,
             traces: None,
+            #[cfg(feature = "deprecated")]
             allow_deprecated: true,
             strict_builtin_errors: true,
             imports: BTreeMap::default(),
-            extensions: HashMap::new(),
+            extensions: Map::new(),
 
             #[cfg(feature = "coverage")]
-            coverage: HashMap::new(),
+            coverage: Map::new(),
             #[cfg(feature = "coverage")]
             enable_coverage: false,
 
             gather_prints: false,
             prints: Vec::default(),
-            rule_paths: HashSet::new(),
+            rule_paths: Set::new(),
         }
     }
 
@@ -399,7 +401,7 @@ impl Interpreter {
                 None => {
                     // Check if ident is a rule.
                     let path = self.current_module_path.clone() + "." + ident.text();
-                    self.rules.get(&path).is_none()
+                    !self.rules.contains_key(&path)
                 }
             },
         }
@@ -612,7 +614,7 @@ impl Interpreter {
                             bail!(rhs_span
                                 .error("mismatch in number of array elements in lhs and rhs"));
                         }
-                        for (lhs, rhs) in std::iter::zip(lhs_items.iter(), rhs_items.iter()) {
+                        for (lhs, rhs) in core::iter::zip(lhs_items.iter(), rhs_items.iter()) {
                             if self.eval_assign_expr(&AssignOp::Eq, lhs, rhs)? != Value::Bool(true)
                             {
                                 return Ok(Value::Bool(false));
@@ -634,7 +636,7 @@ impl Interpreter {
                         }
 
                         for ((_, lhs_key, lhs_value), (_, rhs_key, rhs_value)) in
-                            std::iter::zip(lhs_fields.iter(), rhs_fields.iter())
+                            core::iter::zip(lhs_fields.iter(), rhs_fields.iter())
                         {
                             if self.eval_bool_expr(&BoolOp::Eq, lhs_key, rhs_key)?
                                 != Value::Bool(true)
@@ -712,7 +714,7 @@ impl Interpreter {
                 // Allow variable overwritten inside a loop
                 let lhs_val = self.lookup_local_var(&name);
                 if !matches!(lhs_val, None | Some(Value::Undefined))
-                    && self.loop_var_values.get(rhs).is_none()
+                    && !self.loop_var_values.contains_key(rhs)
                 {
                     bail!(rhs
                         .span()
@@ -789,10 +791,9 @@ impl Interpreter {
                     }
                 }
             }
-            Value::Undefined | Value::Null => r = false,
-            // Other types cause every to evaluate to true even though
-            // it is supposed to happen only for empty domain.
-            _ => (),
+            _ => {
+                r = false;
+            }
         };
         self.contexts.pop();
         self.scopes.pop();
@@ -1196,7 +1197,8 @@ impl Interpreter {
             let rule_values = self.rule_values.clone();
 
             self.processed.clear();
-            let processed_paths = std::mem::replace(&mut self.processed_paths, Value::new_object());
+            let processed_paths =
+                core::mem::replace(&mut self.processed_paths, Value::new_object());
             self.rule_values.clear();
 
             let mut skip_exec = false;
@@ -1207,7 +1209,7 @@ impl Interpreter {
                 let mut target = path.join(".");
 
                 let mut target_is_function = self.lookup_function_by_name(&target).is_some()
-                    || matches!(self.lookup_builtin(wm.refr.span(), &target), Ok(Some(_)));
+                    || self.is_builtin(wm.refr.span(), &target);
 
                 if !target_is_function
                     && !target.starts_with("data.")
@@ -1216,7 +1218,7 @@ impl Interpreter {
                 {
                     // target must be a function.
                     if self.lookup_function_by_name(&target).is_none()
-                        && !matches!(self.lookup_builtin(wm.refr.span(), &target), Ok(Some(_)))
+                        && !self.is_builtin(wm.refr.span(), &target)
                     {
                         // Prefix target with current module path.
                         target = self.current_module_path.clone() + "." + &target;
@@ -1243,10 +1245,7 @@ impl Interpreter {
                                 // Lookup without current module path prefixed.
                                 function_path = get_path_string(&wm.r#as, None)?;
                                 if self.lookup_function_by_name(&function_path).is_none()
-                                    && !matches!(
-                                        self.lookup_builtin(wm.r#as.span(), &function_path),
-                                        Ok(Some(_))
-                                    )
+                                    && !self.is_builtin(wm.r#as.span(), &function_path)
                                 {
                                     // bail!(wm.r#as.span().error("could not evaluate expression"));
                                     skip_exec = true;
@@ -1431,7 +1430,7 @@ impl Interpreter {
 
                         Self::clear_scope(self.current_scope_mut()?);
                         if let Some(ctx) = self.contexts.last_mut() {
-                            ctx.result = query_result.clone();
+                            ctx.result.clone_from(&query_result);
                             if ctx.early_return {
                                 break;
                             }
@@ -1458,7 +1457,7 @@ impl Interpreter {
 
                         Self::clear_scope(self.current_scope_mut()?);
                         if let Some(ctx) = self.contexts.last_mut() {
-                            ctx.result = query_result.clone();
+                            ctx.result.clone_from(&query_result);
                             if ctx.early_return {
                                 break;
                             }
@@ -1483,7 +1482,7 @@ impl Interpreter {
 
                         Self::clear_scope(self.current_scope_mut()?);
                         if let Some(ctx) = self.contexts.last_mut() {
-                            ctx.result = query_result.clone();
+                            ctx.result.clone_from(&query_result);
                             if ctx.early_return {
                                 break;
                             }
@@ -1742,9 +1741,9 @@ impl Interpreter {
                                     span.col,
                                     format!(
 					"value for key `{}` generated multiple times: `{}` and `{}`",
-					serde_json::to_string_pretty(&key)?,
-					serde_json::to_string_pretty(&pv)?,
-					serde_json::to_string_pretty(&value)?,
+					serde_json::to_string_pretty(&key).map_err(anyhow::Error::msg)?,
+					serde_json::to_string_pretty(&pv).map_err(anyhow::Error::msg)?,
+					serde_json::to_string_pretty(&value).map_err(anyhow::Error::msg)?,
                                     )
                                     .as_str(),
                                 ));
@@ -2120,27 +2119,11 @@ impl Interpreter {
         name: &str,
         builtin: builtins::BuiltinFcn,
         params: &[ExprRef],
+        args: Vec<Value>,
     ) -> Result<Value> {
-        let mut args = vec![];
-        let is_print = name == "print"; // TODO: with modifier
-        let allow_undefined = is_print;
-        for p in params {
-            match self.eval_expr(p)? {
-                // If any argument is undefined, then the call is undefined.
-                Value::Undefined if !allow_undefined => return Ok(Value::Undefined),
-                p => args.push(p),
-            }
-        }
-
-        if is_print && self.gather_prints {
-            // Do not print to stderr. Instead, gather.
-            let msg =
-                builtins::print_to_string(span, params, &args[..], self.strict_builtin_errors)?;
-
-            // Prefix location information.
-            self.prints
-                .push(format!("{}:{}: {msg}", span.source.file(), span.line));
-            return Ok(Value::Bool(true));
+        // If any argument is undefined, then the call is undefined.
+        if args.iter().any(|a| a == &Value::Undefined) {
+            return Ok(Value::Undefined);
         }
 
         let cache = builtins::must_cache(name);
@@ -2172,6 +2155,7 @@ impl Interpreter {
         Ok(v)
     }
 
+    #[allow(unused_variables)]
     fn lookup_builtin(&self, span: &Span, path: &str) -> Result<Option<&BuiltinFcn>> {
         if let Some(builtin) = builtins::BUILTINS.get(path) {
             return Ok(Some(builtin));
@@ -2186,10 +2170,90 @@ impl Interpreter {
             return Ok(Some(builtin));
         }
 
-        // Mark as used when deprecated feature is not enabled.
-        std::convert::identity((span, self.allow_deprecated));
-
         Ok(None)
+    }
+
+    fn is_builtin(&self, span: &Span, path: &str) -> bool {
+        path == "print" || matches!(self.lookup_builtin(span, path), Ok(Some(_)))
+    }
+
+    fn to_printable(v: &Value, s: &mut String) {
+        match v {
+            Value::Array(array) => {
+                s.push('[');
+                for (idx, e) in array.iter().enumerate() {
+                    if idx > 0 {
+                        s.push_str(", ");
+                    }
+                    Self::to_printable(e, s);
+                }
+                s.push(']');
+            }
+            Value::Set(set) => {
+                s.push('{');
+                for (idx, e) in set.iter().enumerate() {
+                    if idx > 0 {
+                        s.push_str(", ");
+                    }
+                    Self::to_printable(e, s);
+                }
+                s.push('}');
+            }
+            Value::Object(map) => {
+                s.push('{');
+                for (idx, (k, v)) in map.iter().enumerate() {
+                    if idx > 0 {
+                        s.push_str(", ");
+                    }
+                    Self::to_printable(k, s);
+                    s.push_str(": ");
+                    Self::to_printable(v, s);
+                }
+                s.push('}');
+            }
+            v => s.push_str(&format!("{v}")),
+        }
+    }
+
+    fn eval_print(&mut self, span: &Span, params: &[ExprRef], args: Vec<Value>) -> Result<Value> {
+        const MAX_ARGS: u8 = 100;
+        if args.len() > MAX_ARGS as usize {
+            bail!(span.error(&format!("print supports upto {MAX_ARGS} arguments")));
+        }
+
+        // If not compiling for std target, return early if gathering is not
+        // requested.
+        #[cfg(not(feature = "std"))]
+        if !self.gather_prints {
+            return Ok(Value::Bool(true));
+        }
+
+        let mut msg = String::default();
+        for (i, p) in params.iter().enumerate() {
+            if i > 0 {
+                msg.push(' ');
+            }
+            match self.eval_expr(p)? {
+                Value::Undefined => msg.push_str("<undefined>"),
+                // Do not print quotes for string values.
+                Value::String(s) => msg.push_str(&format!("{s}")),
+                a => Self::to_printable(&a, &mut msg),
+            }
+        }
+
+        if self.gather_prints {
+            // Prefix location information.
+            self.prints
+                .push(format!("{}:{}: {msg}", span.source.file(), span.line));
+        }
+
+        // Print to stderr only if not gathering.
+        #[cfg(feature = "std")]
+        if !self.gather_prints {
+            std::eprintln!("{msg}");
+        }
+
+        Ok(Value::Bool(true))
     }
 
     fn eval_call_impl(
@@ -2248,11 +2312,10 @@ impl Interpreter {
         let (fcns_rules, fcn_module) = match self.lookup_function_by_name(&fcn_path) {
             Some((fcns, m)) => (fcns, Some(m.clone())),
             _ => {
-                if self.default_rules.get(&fcn_path).is_some()
+                if self.default_rules.contains_key(&fcn_path)
                     || self
                         .default_rules
-                        .get(&get_path_string(fcn, Some(&self.current_module_path))?)
-                        .is_some()
+                        .contains_key(&get_path_string(fcn, Some(&self.current_module_path))?)
                 {
                     // process default functions later.
                     (&empty, self.module.clone())
@@ -2261,10 +2324,18 @@ impl Interpreter {
                 else if let Some(ext) = self.extensions.get_mut(&fcn_path) {
                     extension = Some(ext);
                     (&empty, None)
+                } else if fcn_path == "print" {
+                    return self.eval_print(span, params, param_values);
                 }
                 // Look up builtin function.
                 else if let Some(builtin) = self.lookup_builtin(span, &fcn_path)? {
-                    let r = self.eval_builtin_call(span, &fcn_path.clone(), *builtin, params);
+                    let r = self.eval_builtin_call(
+                        span,
+                        &fcn_path.clone(),
+                        *builtin,
+                        params,
+                        param_values,
+                    );
                     if let Some(with_functions) = with_functions_saved {
                         self.with_functions = with_functions;
                     }
@@ -2326,7 +2397,7 @@ impl Interpreter {
 
             // Back up local variables of current function and empty
             // the local variables of callee function.
-            let scopes = std::mem::take(&mut self.scopes);
+            let scopes = core::mem::take(&mut self.scopes);
 
             // Set the arguments scope.
             let args_scope = Scope::new();
@@ -2405,7 +2476,7 @@ impl Interpreter {
         if results.is_empty() {
             // Back up local variables of current function and empty
             // the local variables of callee function.
-            let scopes = std::mem::take(&mut self.scopes);
+            let scopes = core::mem::take(&mut self.scopes);
             if errors.is_empty() {
                 // Check if any default rules can be evaluated.
                 // TODO: with mod
@@ -2648,7 +2719,7 @@ impl Interpreter {
 
             for i in (1..fields.len() + 1).rev() {
                 let path = "data.".to_owned() + &fields[0..i].join(".");
-                if self.rules.get(&path).is_some() || self.default_rules.get(&path).is_some() {
+                if self.rules.contains_key(&path) || self.default_rules.contains_key(&path) {
                     self.ensure_rule_evaluated(path)?;
                     break;
                 }
@@ -2669,9 +2740,9 @@ impl Interpreter {
             let rule_path = "data.".to_owned() + &path.join(".");
 
             if !no_error
-                && self.rules.get(&rule_path).is_none()
-                && self.default_rules.get(&rule_path).is_none()
-                && self.imports.get(&rule_path).is_none()
+                && !self.rules.contains_key(&rule_path)
+                && !self.default_rules.contains_key(&rule_path)
+                && !self.imports.contains_key(&rule_path)
             {
                 bail!(span.error("var is unsafe"));
             }
@@ -2687,7 +2758,7 @@ impl Interpreter {
                     rule_path.clone() + "." + &fields[0..i].join(".")
                 };
 
-                if self.rules.get(&path).is_some() || self.default_rules.get(&path).is_some() {
+                if self.rules.contains_key(&path) || self.default_rules.contains_key(&path) {
                     self.ensure_rule_evaluated(path)?;
                     found = true;
                     break;
@@ -3092,7 +3163,7 @@ impl Interpreter {
                 return Ok(());
             }
 
-            let scopes = std::mem::take(&mut self.scopes);
+            let scopes = core::mem::take(&mut self.scopes);
 
             let mut path =
                 Parser::get_path_ref_components(&self.module.clone().unwrap().package.refr)?;
@@ -3320,7 +3391,7 @@ impl Interpreter {
 
         // Back up local variables of current function and empty
         // the local variables of callee function.
-        let scopes = std::mem::take(&mut self.scopes);
+        let scopes = core::mem::take(&mut self.scopes);
         let prev_module = self.set_current_module(Some(module.clone()))?;
 
         let res = self.eval_rule_impl(module, rule);
@@ -3495,10 +3566,10 @@ impl Interpreter {
             }
 
             match self.rules.entry(path) {
-                Entry::Occupied(o) => {
+                MapEntry::Occupied(o) => {
                     o.into_mut().push(rule.clone());
                 }
-                Entry::Vacant(v) => {
+                MapEntry::Vacant(v) => {
                     v.insert(vec![rule.clone()]);
                 }
             }
@@ -3522,7 +3593,7 @@ impl Interpreter {
             }
 
             match self.default_rules.entry(path) {
-                Entry::Occupied(o) => {
+                MapEntry::Occupied(o) => {
                     if idx + 1 == comps.len() {
                         for (_, i) in o.get() {
                             if index.is_some() && i.is_some() {
@@ -3538,7 +3609,7 @@ impl Interpreter {
                     }
                     o.into_mut().push((rule.clone(), index.clone()));
                 }
-                Entry::Vacant(v) => {
+                MapEntry::Vacant(v) => {
                     v.insert(vec![(rule.clone(), index.clone())]);
                 }
             }
@@ -3561,7 +3632,8 @@ impl Interpreter {
                         },
                         Expr::Var(v) if v.0.text() == "input" => {
                             // Warn redundant import of input. Ignore it.
-                            eprintln!(
+                            #[cfg(feature = "std")]
+                            std::eprintln!(
                                 "{}",
                                 import
                                     .refr
@@ -3638,7 +3710,7 @@ impl Interpreter {
         nargs: u8,
         extension: Box<dyn Extension>,
     ) -> Result<()> {
-        if let std::collections::hash_map::Entry::Vacant(v) = self.extensions.entry(path) {
+        if let MapEntry::Vacant(v) = self.extensions.entry(path) {
             v.insert((nargs, Rc::new(extension)));
             Ok(())
         } else {
@@ -3764,19 +3836,19 @@ impl Interpreter {
 
     #[cfg(feature = "coverage")]
     pub fn clear_coverage_data(&mut self) {
-        self.coverage = HashMap::new();
+        self.coverage = Map::new();
     }
 
     pub fn set_gather_prints(&mut self, b: bool) {
         if b != self.gather_prints {
             // Clear existing prints.
-            std::mem::take(&mut self.prints);
+            core::mem::take(&mut self.prints);
         }
         self.gather_prints = b;
     }
 
     pub fn take_prints(&mut self) -> Result<Vec<String>> {
-        Ok(std::mem::take(&mut self.prints))
+        Ok(core::mem::take(&mut self.prints))
     }
 
     pub fn eval_rule_in_path(&mut self, path: String) -> Result<Value> {

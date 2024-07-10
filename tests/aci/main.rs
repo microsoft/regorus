@@ -157,7 +157,7 @@ fn run_aci_tests_coverage(dir: &Path) -> Result<()> {
     }
 
     let report = engine.get_coverage_report()?;
-    println!("{}", report.to_colored_string()?);
+    println!("{}", report.to_string_pretty()?);
 
     Ok(())
 }

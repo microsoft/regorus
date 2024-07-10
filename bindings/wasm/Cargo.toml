@@ -1,6 +1,6 @@
 [package]
 name = "regorusjs"
-version = "0.1.0"
+version = "0.2.1"
 edition = "2021"
 repository = "https://github.com/microsoft/regorus/bindings/wasm"
 description = "WASM bindings for Regorus - a fast, lightweight Rego interpreter written in Rust"
@@ -10,8 +10,13 @@ keywords = ["interpreter", "opa", "policy-as-code", "rego"]
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+default = ["ast", "coverage", "regorus/std", "regorus/full-opa"]
+ast = ["regorus/ast"]
+coverage = ["regorus/coverage"]
+
 [dependencies]
-regorus = { path  = "../.." }
+regorus = { path  = "../..", default-features = false, features = ["arc"] }
 serde_json = "1.0.111"
 wasm-bindgen = "0.2.90"
 

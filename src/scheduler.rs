@@ -1,18 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr::*;
+use crate::ast::Expr::{Set, *};
 use crate::ast::*;
 use crate::lexer::*;
 use crate::utils::*;
+use crate::*;
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::string::String;
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
+use alloc::string::String;
+use core::cmp;
+use core::fmt;
 
 use anyhow::{bail, Result};
 
 #[derive(Debug)]
-pub struct Definition<Str: Clone + std::cmp::Ord> {
+pub struct Definition<Str: Clone + cmp::Ord> {
     // The variable being defined.
     // This can be an empty string to indicate that
     // no variable is being defined.
@@ -24,7 +27,7 @@ pub struct Definition<Str: Clone + std::cmp::Ord> {
 }
 
 #[derive(Debug)]
-pub struct StmtInfo<Str: Clone + std::cmp::Ord> {
+pub struct StmtInfo<Str: Clone + cmp::Ord> {
     // A statement can define multiple variables.
     // A variable can also be defined by multiple statement.
     pub definitions: Vec<Definition<Str>>,
@@ -39,12 +42,11 @@ pub enum SortResult {
     Cycle(String, Vec<usize>),
 }
 
-pub fn schedule<Str: Clone + std::cmp::Ord + std::fmt::Debug>(
+pub fn schedule<Str: Clone + cmp::Ord + fmt::Debug>(
     infos: &mut [StmtInfo<Str>],
     empty: &Str,
 ) -> Result<SortResult> {
     let num_statements = infos.len();
-    let orig_infos: Vec<&StmtInfo<Str>> = infos.iter().collect();
 
     // Mapping from each var to the list of statements that define it.
     let mut defining_stmts: BTreeMap<Str, Vec<usize>> = BTreeMap::new();
@@ -170,7 +172,7 @@ pub fn schedule<Str: Clone + std::cmp::Ord + std::fmt::Debug>(
         done = true;
 
         // Swap with temporary vec.
-        std::mem::swap(&mut vars_to_process, &mut tmp);
+        core::mem::swap(&mut vars_to_process, &mut tmp);
 
         // Loop through each unscheduled var.
         for var in tmp.iter().cloned() {
@@ -194,7 +196,8 @@ pub fn schedule<Str: Clone + std::cmp::Ord + std::fmt::Debug>(
     }
 
     if order.len() != num_statements {
-        eprintln!("could not schedule all statements {order:?} {orig_infos:?}");
+        #[cfg(feature = "std")]
+        std::eprintln!("could not schedule all statements {order:?}");
         return Ok(SortResult::Order(
             (0..num_statements).map(|i| i as u16).collect(),
         ));
@@ -384,6 +387,7 @@ pub struct Analyzer {
 
 #[derive(Debug, Clone)]
 pub struct Schedule {
+    #[allow(unused)]
     pub scopes: BTreeMap<Ref<Query>, Scope>,
     pub order: BTreeMap<Ref<Query>, Vec<u16>>,
 }
@@ -629,8 +633,8 @@ impl Analyzer {
     ) -> Result<(Vec<SourceStr>, Vec<Ref<Expr>>)> {
         let mut used_vars = vec![];
         let mut comprs = vec![];
+        #[cfg(feature = "deprecated")]
         let full_expr = expr;
-        std::convert::identity(&full_expr);
         traverse(expr, &mut |e| match e.as_ref() {
             Var(v) if !matches!(v.0.text(), "_" | "input" | "data") => {
                 let name = v.0.source_str();

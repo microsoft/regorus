@@ -9,13 +9,12 @@ use crate::builtins::utils::{
 };
 use crate::lexer::Span;
 use crate::value::Value;
-
-use std::collections::HashMap;
+use crate::*;
 
 #[allow(unused)]
 use anyhow::{anyhow, bail, Context, Result};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     #[cfg(feature = "base64")]
     {
         m.insert("base64.decode", (base64_decode, 1));
@@ -64,7 +63,13 @@ fn base64_decode(
     ensure_args_count(span, name, params, args, 1)?;
 
     let encoded_str = ensure_string(name, &params[0], &args[0])?;
-    let decoded_bytes = data_encoding::BASE64.decode(encoded_str.as_bytes())?;
+    let decoded_bytes = data_encoding::BASE64
+        .decode(encoded_str.as_bytes())
+        .map_err(|e| {
+            params[0]
+                .span()
+                .error(&format!("decode failed\nCaused by\n{e}"))
+        })?;
     Ok(Value::String(
         String::from_utf8_lossy(&decoded_bytes).into(),
     ))
@@ -174,7 +179,13 @@ fn hex_decode(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) 
     ensure_args_count(span, name, params, args, 1)?;
 
     let encoded_str = ensure_string(name, &params[0], &args[0])?;
-    let decoded_bytes = data_encoding::HEXLOWER_PERMISSIVE.decode(encoded_str.as_bytes())?;
+    let decoded_bytes = data_encoding::HEXLOWER_PERMISSIVE
+        .decode(encoded_str.as_bytes())
+        .map_err(|e| {
+            params[0]
+                .span()
+                .error(&format!("decode failure\nCaused by\n{e}"))
+        })?;
     Ok(Value::String(
         String::from_utf8_lossy(&decoded_bytes).into(),
     ))
@@ -238,7 +249,7 @@ fn urlquery_decode_object(
         Err(_) => bail!(params[0].span().error("not a valid url query")),
     };
 
-    let mut map = std::collections::BTreeMap::new();
+    let mut map = alloc::collections::BTreeMap::new();
     for (k, v) in url.query_pairs() {
         let key = Value::String(k.clone().into());
         let value = Value::String(v.clone().into());
@@ -362,11 +373,9 @@ fn json_is_valid(
 fn json_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "json.marshal";
     ensure_args_count(span, name, params, args, 1)?;
-    Ok(Value::String(
-        serde_json::to_string(&args[0])
-            .with_context(|| span.error("could not serialize to json"))?
-            .into(),
-    ))
+    Ok(Value::from(serde_json::to_string(&args[0]).map_err(
+        |e| span.error(&format!("could not serialize to json\nCaused by\n{e}")),
+    )?))
 }
 
 fn json_marshal_with_options(
@@ -407,15 +416,13 @@ fn json_marshal_with_options(
     }
 
     if !pretty || options.is_empty() {
-        return Ok(Value::String(
-            serde_json::to_string(&args[0])
-                .with_context(|| span.error("could not serialize to json"))?
-                .into(),
-        ));
+        return Ok(Value::from(serde_json::to_string(&args[0]).map_err(
+            |e| span.error(&format!("could not serialize to json\nCaused by\n{e}")),
+        )?));
     }
 
     let lines: Vec<String> = serde_json::to_string_pretty(&args[0])
-        .with_context(|| span.error("could not serialize to json"))?
+        .map_err(|e| span.error(&format!("could not serialize to json\nCaused by\n{e}")))?
         .split('\n')
         .map(|line| {
             let mut line = line.to_string();

@@ -6,12 +6,13 @@ use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_set};
 use crate::lexer::Span;
 use crate::value::Value;
+use crate::*;
 
-use std::collections::{BTreeSet, HashMap};
+use alloc::collections::BTreeSet;
 
 use anyhow::{bail, Result};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("intersection", (intersection_of_set_of_sets, 1));
     m.insert("union", (union_of_set_of_sets, 1));
 }
@@ -56,7 +57,7 @@ fn intersection_of_set_of_sets(
         };
 
         if first {
-            res = (**s).clone();
+            res.clone_from(s);
             first = false;
         } else {
             res = res.intersection(s).cloned().collect();

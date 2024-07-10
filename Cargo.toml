@@ -6,16 +6,17 @@ members = [
     "bindings/wasm",
     "bindings/java",
     "bindings/ruby/ext/regorusrb",
+    "tests/ensure_no_std",
 ]
 
 [package]
 name = "regorus"
 description = "A fast, lightweight Rego (OPA policy language) interpreter"
-version = "0.1.4"
+version = "0.2.1"
 edition = "2021"
 license-file = "LICENSE"
 repository = "https://github.com/microsoft/regorus"
-keywords = ["interpreter", "opa", "policy-as-code", "rego"]
+keywords = ["interpreter", "no_std", "opa", "policy-as-code", "rego"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -26,6 +27,7 @@ doctest = false
 default = ["full-opa", "arc"]
 
 arc = ["scientific/arc"]
+ast = []
 base64 = ["dep:data-encoding"]
 base64url = ["dep:data-encoding"]
 coverage = []
@@ -33,16 +35,18 @@ crypto = ["dep:constant_time_eq", "dep:hmac", "dep:hex", "dep:md-5", "dep:sha1",
 deprecated = []
 hex = ["dep:data-encoding"]
 http = []
-jwt = ["dep:jsonwebtoken", "dep:data-encoding"]
 glob = ["dep:wax"]
 graph = []
 jsonschema = ["dep:jsonschema"]
+jwt = ["dep:jsonwebtoken", "dep:data-encoding", "dep:itertools"]
+no_std = ["lazy_static/spin_no_std"]
 opa-runtime = []
 regex = ["dep:regex"]
 semver = ["dep:semver"]
+std = ["rand/std", "rand/std_rng", "serde_json/std"]
+time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
-time = ["dep:chrono", "dep:chrono-tz"]
 yaml = ["serde_yaml"]
 full-opa = [
     "base64",
@@ -59,50 +63,72 @@ full-opa = [
     "opa-runtime",
     "regex",
     "semver",
+    "std",
     "time",
     "uuid",
     "urlquery",
     "yaml"
 ]
 
+# Features that can be used in no_std environments.
+# Note that: the spin_no_std feature in lazy_static must be specified.
+opa-no-std = [
+  "arc",
+  "base64",
+  "base64url",
+  "coverage",
+  "crypto",
+  "deprecated",
+  "graph",
+  "hex",
+  "no_std",
+  "opa-runtime",
+  "regex",
+  "semver",
+  # Configure lazy_static to use spinlocks.
+  "lazy_static/spin_no_std"
+]
+
 # This feature enables some testing utils for OPA tests.
 opa-testutil = []
+rand = ["dep:rand"]
 
 [dependencies]
-anyhow = { version = "1.0.45", default-features=false }
-serde = {version = "1.0.150", features = ["derive", "rc"] }
-serde_json = "1.0.89"
-serde_yaml = {version = "0.9.16", optional = true }
-lazy_static = "1.4.0"
-rand = "0.8.5"
-num = "0.4.1"
+anyhow = { version = "1.0.45", default-features = false }
+serde = {version = "1.0.150", default-features = false, features = ["derive", "rc"] }
+serde_json = { version = "1.0.89", default-features = false, features = ["alloc"] }
+lazy_static =  { version = "1.4.0", default-features = false }
 
 # Crypto
-constant_time_eq = {version = "0.3.0", optional = true}
-hmac = {version = "0.12.1", optional = true}
-sha2 = {version= "0.10.8", optional = true}
-hex = {version = "0.4.3", optional = true}
-sha1 = {version = "0.10.6", optional = true}
-md-5 = {version = "0.10.6", optional = true}
+constant_time_eq = {version = "0.3.0", optional = true, default-features = false }
+hmac = {version = "0.12.1", optional = true, default-features = false}
+sha2 = {version= "0.10.8", optional = true, default-features = false }
+hex = {version = "0.4.3", optional = true, default-features = false, features = ["alloc"] }
+sha1 = {version = "0.10.6", optional = true, default-features = false }
+md-5 = {version = "0.10.6", optional = true, default-features = false }
 
-data-encoding = { version = "2.4.0", optional = true }
+data-encoding = { version = "2.4.0", optional = true, default-features=false, features = ["alloc"] }
 scientific = { version = "0.5.2" }
 
-regex = {version = "1.10.2", optional = true}
-semver = {version = "1.0.20", optional = true}
+regex = {version = "1.10.2", optional = true, default-features = false }
+semver = {version = "1.0.20", optional = true, default-features = false }
 wax = { version = "0.6.0", features = [], default-features = false, optional = true }
 url = { version = "2.5.0", optional = true }
-uuid = { version = "1.6.1", features = ["v4", "fast-rng"], optional = true }
-jsonschema = { version = "0.17.1", default-features = false, optional = true }
+uuid = { version = "1.6.1", default-features = false, features = ["v4", "fast-rng"], optional = true }
+jsonschema = { version = "0.18.0", default-features = false, optional = true }
 chrono = { version = "0.4.31", optional = true }
 chrono-tz = { version = "0.8.5", optional = true }
 jsonwebtoken = { version = "9.2.0", optional = true }
-itertools = "0.12.1"
+itertools = { version = "0.13.0", default-features = false, optional = true }
+
+serde_yaml = {version = "0.9.16", default-features = false, optional = true }
+rand = { version = "0.8.5", default-features = false, optional = true }
 
 [dev-dependencies]
+anyhow = "1.0.45"
 cfg-if = "1.0.0"
 clap = { version = "4.4.7", features = ["derive"] }
-prettydiff = { version = "0.6.4", default-features = false }
+prettydiff = { version = "0.7.0", default-features = false }
 serde_yaml = "0.9.16"
 test-generator = "0.3.1"
 walkdir = "2.3.2"
@@ -123,6 +149,17 @@ required-features = ["full-opa"]
 name="aci"
 harness=false
 test=false
+
+[[test]]
+name="kata"
+harness=false
+test=false
+
+[[example]]
+name="regorus"
+harness=false
+test=false
+doctest=false
 
 [package.metadata.docs.rs]
 # To build locally:

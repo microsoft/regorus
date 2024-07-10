@@ -10,7 +10,7 @@ Regorus can be used in Python via `regorus` package. (It is not yet available in
 
 See [Repository](https://github.com/microsoft/regorus).
 
-To build this binding, see [building](https://github.com/microsoft/regorus/bindings/python/building.md)
+To build this binding, see [building](https://github.com/microsoft/regorus/blob/main/bindings/python/building.md)
 
 ## Usage
 ```Python
@@ -54,14 +54,11 @@ input = {
 }
 engine.set_input(input)
 
-# Eval query
-results = engine.eval_query('data.framework.mount_overlay=x')
+# Eval rule
+value = engine.eval_rule('data.framework.mount_overlay')
 
-# Print results
-print(results['result'][0])
+# Print value
+print(value)
 
-# Eval query as json
-results_json = engine.eval_query_as_json('data.framework.mount_overlay=x')
-print(results_json)
 ```
 

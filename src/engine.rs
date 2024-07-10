@@ -8,10 +8,8 @@ use crate::parser::*;
 use crate::scheduler::*;
 use crate::utils::gather_functions;
 use crate::value::*;
+use crate::*;
 use crate::{Extension, QueryResults};
-
-use std::convert::AsRef;
-use std::path::Path;
 
 use anyhow::{bail, Result};
 
@@ -45,6 +43,7 @@ impl Engine {
     ///
     /// The policy file will be parsed and converted to AST representation.
     /// Multiple policy files may be added to the engine.
+    /// Returns the Rego package name declared in the policy.
     ///
     /// * `path`: A filename to be associated with the policy.
     /// * `rego`: The rego policy code.
@@ -54,29 +53,33 @@ impl Engine {
     /// # fn main() -> anyhow::Result<()> {
     /// let mut engine = Engine::new();
     ///
-    /// engine.add_policy(
+    /// let package = engine.add_policy(
     ///    "test.rego".to_string(),
     ///    r#"
     ///    package test
     ///    allow = input.user == "root"
     ///    "#.to_string())?;
+    ///
+    /// assert_eq!(package, "data.test");
     /// # Ok(())
     /// # }
     /// ```
     ///
-    pub fn add_policy(&mut self, path: String, rego: String) -> Result<()> {
+    pub fn add_policy(&mut self, path: String, rego: String) -> Result<String> {
         let source = Source::from_contents(path, rego)?;
         let mut parser = Parser::new(&source)?;
-        self.modules.push(Ref::new(parser.parse()?));
+        let module = Ref::new(parser.parse()?);
+        self.modules.push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
-        Ok(())
+        Interpreter::get_path_string(&module.package.refr, Some("data"))
     }
 
     /// Add a policy from a given file.
     ///
     /// The policy file will be parsed and converted to AST representation.
     /// Multiple policy files may be added to the engine.
+    /// Returns the Rego package name declared in the policy.
     ///
     /// * `path`: Path to the policy file (.rego).
     ///
@@ -85,16 +88,105 @@ impl Engine {
     /// # fn main() -> anyhow::Result<()> {
     /// let mut engine = Engine::new();
     ///
-    /// engine.add_policy_from_file("tests/aci/framework.rego")?;
+    /// let package = engine.add_policy_from_file("tests/aci/framework.rego")?;
+    ///
+    /// assert_eq!(package, "data.framework");
     /// # Ok(())
     /// # }
     /// ```
-    pub fn add_policy_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+    #[cfg(feature = "std")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    pub fn add_policy_from_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<String> {
         let source = Source::from_file(path)?;
         let mut parser = Parser::new(&source)?;
-        self.modules.push(Ref::new(parser.parse()?));
+        let module = Ref::new(parser.parse()?);
+        self.modules.push(module.clone());
+        // if policies change, interpreter needs to be prepared again
         self.prepared = false;
-        Ok(())
+        Interpreter::get_path_string(&module.package.refr, Some("data"))
+    }
+
+    /// Get the list of packages defined by loaded policies.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// let _ = engine.add_policy_from_file("tests/aci/framework.rego")?;
+    ///
+    /// // Package names can be different from file names.
+    /// let _ = engine.add_policy("policy.rego".into(), "package hello.world".into())?;
+    ///
+    /// assert_eq!(engine.get_packages()?, vec!["data.framework", "data.hello.world"]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_packages(&self) -> Result<Vec<String>> {
+        self.modules
+            .iter()
+            .map(|m| Interpreter::get_path_string(&m.package.refr, Some("data")))
+            .collect()
+    }
+
+    /// Get the list of policy files.
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// # let mut engine = Engine::new();
+    ///
+    /// let pkg = engine.add_policy("hello.rego".to_string(), "package test".to_string())?;
+    /// assert_eq!(pkg, "data.test");
+    ///
+    /// let policies = engine.get_policies()?;
+    ///
+    /// assert_eq!(policies[0].get_path(), "hello.rego");
+    /// assert_eq!(policies[0].get_contents(), "package test");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_policies(&self) -> Result<Vec<Source>> {
+        Ok(self
+            .modules
+            .iter()
+            .map(|m| m.package.refr.span().source.clone())
+            .collect())
+    }
+
+    /// Get the list of policy files as a JSON object.
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// # let mut engine = Engine::new();
+    ///
+    /// let pkg = engine.add_policy("hello.rego".to_string(), "package test".to_string())?;
+    /// assert_eq!(pkg, "data.test");
+    ///
+    /// let policies = engine.get_policies_as_json()?;
+    ///
+    /// let v = Value::from_json_str(&policies)?;
+    /// assert_eq!(v[0]["path"].as_string()?.as_ref(), "hello.rego");
+    /// assert_eq!(v[0]["contents"].as_string()?.as_ref(), "package test");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_policies_as_json(&self) -> Result<String> {
+        #[derive(Serialize)]
+        struct Source<'a> {
+            path: &'a String,
+            contents: &'a String,
+        }
+
+        let mut sources = vec![];
+        for m in self.modules.iter() {
+            let source = &m.package.refr.span().source;
+            sources.push(Source {
+                path: source.get_path(),
+                contents: source.get_contents(),
+            });
+        }
+
+        serde_json::to_string_pretty(&sources).map_err(anyhow::Error::msg)
     }
 
     /// Set the input document.
@@ -208,7 +300,7 @@ impl Engine {
         &self.modules
     }
 
-    /// Evaluate rule(s) at given path.
+    /// Evaluate specified rule(s).
     ///
     /// [`Engine::eval_rule`] is often faster than [`Engine::eval_query`] and should be preferred if
     /// OPA style [`QueryResults`] are not needed.
@@ -248,10 +340,10 @@ impl Engine {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn eval_rule(&mut self, path: String) -> Result<Value> {
+    pub fn eval_rule(&mut self, rule: String) -> Result<Value> {
         self.prepare_for_eval(false)?;
         self.interpreter.clean_internal_evaluation_state();
-        self.interpreter.eval_rule_in_path(path)
+        self.interpreter.eval_rule_in_path(rule)
     }
 
     /// Evaluate a Rego query.
@@ -613,7 +705,7 @@ impl Engine {
     }
 
     #[cfg(feature = "coverage")]
-    #[cfg_attr(doc_cfg, doc(cfg(feature = "coverage")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "coverage")))]
     /// Get the coverage report.
     ///
     /// ```rust
@@ -657,7 +749,7 @@ impl Engine {
     }
 
     #[cfg(feature = "coverage")]
-    #[cfg_attr(doc_cfg, doc(cfg(feature = "coverage")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "coverage")))]
     /// Enable/disable policy coverage.
     ///
     /// If `enable` is different from the current value, then any existing coverage
@@ -667,7 +759,7 @@ impl Engine {
     }
 
     #[cfg(feature = "coverage")]
-    #[cfg_attr(doc_cfg, doc(cfg(feature = "coverage")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "coverage")))]
     /// Clear the gathered policy coverage data.
     pub fn clear_coverage_data(&mut self) {
         self.interpreter.clear_coverage_data()
@@ -710,5 +802,43 @@ impl Engine {
     /// ```
     pub fn take_prints(&mut self) -> Result<Vec<String>> {
         self.interpreter.take_prints()
+    }
+
+    /// Get the policies and corresponding AST.
+    ///
+    ///
+    /// ```rust
+    /// # use regorus::*;
+    /// # use anyhow::{bail, Result};
+    /// # fn main() -> Result<()> {
+    /// # let mut engine = Engine::new();
+    /// engine.add_policy("test.rego".to_string(), "package test\n x := 1".to_string())?;
+    ///
+    /// let ast = engine.get_ast_as_json()?;
+    /// let value = Value::from_json_str(&ast)?;
+    ///
+    /// assert_eq!(value[0]["ast"]["package"]["refr"]["Var"][1].as_string()?.as_ref(), "test");
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "ast")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
+    pub fn get_ast_as_json(&self) -> Result<String> {
+        #[derive(Serialize)]
+        struct Policy<'a> {
+            source: &'a Source,
+            version: u32,
+            ast: &'a Module,
+        }
+        let mut ast = vec![];
+        for m in &self.modules {
+            ast.push(Policy {
+                source: &m.package.span.source,
+                version: 1,
+                ast: m,
+            });
+        }
+
+        serde_json::to_string_pretty(&ast).map_err(anyhow::Error::msg)
     }
 }

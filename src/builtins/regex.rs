@@ -6,13 +6,12 @@ use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_numeric, ensure_string};
 use crate::lexer::Span;
 use crate::value::Value;
-
-use std::collections::HashMap;
+use crate::*;
 
 use anyhow::{bail, Result};
 use regex::Regex;
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert(
         "regex.find_all_string_submatch_n",
         (find_all_string_submatch_n, 3),

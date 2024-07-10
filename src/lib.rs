@@ -3,9 +3,18 @@
 
 // Use README.md as crate documentation.
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
+// We'll default to building for no_std - use core, alloc instead of std.
+#![no_std]
 
+extern crate alloc;
 use serde::Serialize;
+
+// Import std crate if building with std support.
+// We don't import types or macros from std.
+// As a result, types and macros from std must be qualified via `std::`
+// making dependencies on std easier to spot.
+#[cfg(any(feature = "std", test))]
+extern crate std;
 
 mod ast;
 mod builtins;
@@ -19,13 +28,31 @@ mod utils;
 mod value;
 
 pub use engine::Engine;
+pub use lexer::Source;
 pub use value::Value;
 
 #[cfg(feature = "arc")]
-use std::sync::Arc as Rc;
+use alloc::sync::Arc as Rc;
 
 #[cfg(not(feature = "arc"))]
-use std::rc::Rc;
+use alloc::rc::Rc;
+
+#[cfg(feature = "std")]
+use std::collections::{hash_map::Entry as MapEntry, HashMap as Map, HashSet as Set};
+
+#[cfg(not(feature = "std"))]
+use alloc::collections::{btree_map::Entry as MapEntry, BTreeMap as Map, BTreeSet as Set};
+
+use alloc::{
+    borrow::ToOwned,
+    boxed::Box,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+
+use core::fmt;
 
 /// Location of an [`Expression`] in a Rego query.
 ///
@@ -334,8 +361,8 @@ impl<'a> Clone for Box<dyn 'a + Extension> {
     }
 }
 
-impl std::fmt::Debug for dyn Extension {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+impl fmt::Debug for dyn Extension {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> core::result::Result<(), fmt::Error> {
         f.write_fmt(format_args!("<extension>"))
     }
 }
@@ -343,6 +370,8 @@ impl std::fmt::Debug for dyn Extension {
 #[cfg(feature = "coverage")]
 #[cfg_attr(docsrs, doc(cfg(feature = "coverage")))]
 pub mod coverage {
+    use crate::*;
+
     #[derive(Default, serde::Serialize, serde::Deserialize)]
     /// Coverage information about a rego policy file.
     pub struct File {
@@ -353,10 +382,10 @@ pub mod coverage {
         pub code: String,
 
         /// Lines that were evaluated.
-        pub covered: std::collections::BTreeSet<u32>,
+        pub covered: alloc::collections::BTreeSet<u32>,
 
         /// Lines that were not evaluated.
-        pub not_covered: std::collections::BTreeSet<u32>,
+        pub not_covered: alloc::collections::BTreeSet<u32>,
     }
 
     #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -374,31 +403,30 @@ pub mod coverage {
         ///
         /// <img src="https://github.com/microsoft/regorus/blob/main/docs/coverage.png?raw=true">
 
-        pub fn to_colored_string(&self) -> anyhow::Result<String> {
-            use std::io::Write;
-            let mut s = Vec::new();
-            writeln!(&mut s, "COVERAGE REPORT:")?;
+        pub fn to_string_pretty(&self) -> anyhow::Result<String> {
+            let mut s = String::default();
+            s.push_str("COVERAGE REPORT:\n");
             for file in self.files.iter() {
                 if file.not_covered.is_empty() {
-                    writeln!(&mut s, "{} has full coverage", file.path)?;
+                    s.push_str(&format!("{} has full coverage\n", file.path));
                     continue;
                 }
 
-                writeln!(&mut s, "{}:", file.path)?;
+                s.push_str(&format!("{}:\n", file.path));
                 for (line, code) in file.code.split('\n').enumerate() {
                     let line = line as u32 + 1;
                     if file.not_covered.contains(&line) {
-                        writeln!(&mut s, "\x1b[31m {line:4}  {code}\x1b[0m")?;
+                        s.push_str(&format!("\x1b[31m {line:4}  {code}\x1b[0m\n"));
                     } else if file.covered.contains(&line) {
-                        writeln!(&mut s, "\x1b[32m {line:4}  {code}\x1b[0m")?;
+                        s.push_str(&format!("\x1b[32m {line:4}  {code}\x1b[0m\n"));
                     } else {
-                        writeln!(&mut s, " {line:4}  {code}")?;
+                        s.push_str(&format!(" {line:4}  {code}\n"));
                     }
                 }
             }
 
-            writeln!(&mut s)?;
-            Ok(std::str::from_utf8(&s)?.to_string())
+            s.push('\n');
+            Ok(s)
         }
     }
 }

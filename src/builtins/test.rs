@@ -7,13 +7,13 @@ use crate::builtins::time;
 use crate::builtins::utils::{ensure_args_count, ensure_string};
 use crate::lexer::Span;
 use crate::value::Value;
+use crate::*;
 
-use std::collections::HashMap;
 use std::thread;
 
 use anyhow::{Ok, Result};
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("test.sleep", (sleep, 1));
 }
 
@@ -22,7 +22,8 @@ fn sleep(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
     ensure_args_count(span, name, params, args, 1)?;
 
     let val = ensure_string(name, &params[0], &args[0])?;
-    let dur = time::compat::parse_duration(val.as_ref())?;
+    let dur = time::compat::parse_duration(val.as_ref())
+        .map_err(|e| params[0].span().error(&format!("{e}")))?;
 
     thread::sleep(dur.to_std()?);
 

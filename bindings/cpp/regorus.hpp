@@ -83,6 +83,26 @@ namespace regorus {
 	    return Result(regorus_engine_eval_query(engine, query));
 	}
 	
+	Result eval_rule(const char* rule) {
+	    return Result(regorus_engine_eval_rule(engine, rule));
+	}
+	
+	Result set_enable_coverage(bool enable) {
+	    return Result(regorus_engine_set_enable_coverage(engine, enable));
+	}
+	
+	Result clear_coverage_data() {
+            return Result(regorus_engine_clear_coverage_data(engine));
+	}
+	
+	Result get_coverage_report() {
+            return Result(regorus_engine_get_coverage_report(engine));
+	}
+	
+	Result get_coverage_report_pretty() {
+            return Result(regorus_engine_get_coverage_report_pretty(engine));
+	}
+	
 	~Engine() {
 	    regorus_engine_drop(engine);
 	}

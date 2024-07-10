@@ -21,24 +21,12 @@ impl Default for Engine {
     }
 }
 
-impl Clone for Engine {
-    /// Clone a [`Engine`]
-    ///
-    /// To avoid having to parse same policy again, the engine can be cloned
-    /// after policies and data have been added.
-    fn clone(&self) -> Self {
-        Self {
-            engine: self.engine.clone(),
-        }
-    }
-}
-
-fn from<'source>(ob: &'source PyAny) -> Result<Value, PyErr> {
+fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
     // dicts
     Ok(if let Ok(dict) = ob.downcast::<PyDict>() {
         let mut map = BTreeMap::new();
         for (k, v) in dict {
-            map.insert(from(k)?, from(v)?);
+            map.insert(from(&k)?, from(&v)?);
         }
         map.into()
     }
@@ -46,7 +34,7 @@ fn from<'source>(ob: &'source PyAny) -> Result<Value, PyErr> {
     else if let Ok(pset) = ob.downcast::<PySet>() {
         let mut set = BTreeSet::new();
         for v in pset {
-            set.insert(from(v)?);
+            set.insert(from(&v)?);
         }
         set.into()
     }
@@ -55,7 +43,7 @@ fn from<'source>(ob: &'source PyAny) -> Result<Value, PyErr> {
         //
         let mut set = BTreeSet::new();
         for v in pfset {
-            set.insert(from(v)?);
+            set.insert(from(&v)?);
         }
         set.into()
     }
@@ -63,30 +51,30 @@ fn from<'source>(ob: &'source PyAny) -> Result<Value, PyErr> {
     else if let Ok(plist) = ob.downcast::<PyList>() {
         let mut array = Vec::new();
         for v in plist {
-            array.push(from(v)?);
+            array.push(from(&v)?);
         }
         array.into()
     } else if let Ok(ptuple) = ob.downcast::<PyTuple>() {
         let mut array = Vec::new();
         for v in ptuple {
-            array.push(from(v)?);
+            array.push(from(&v)?);
         }
         array.into()
     }
     // String
-    else if let Ok(s) = String::extract(ob) {
+    else if let Ok(s) = ob.extract::<String>() {
         s.into()
     }
     // Numeric
-    else if let Ok(v) = i64::extract(ob) {
+    else if let Ok(v) = ob.extract::<i64>() {
         v.into()
-    } else if let Ok(v) = u64::extract(ob) {
+    } else if let Ok(v) = ob.extract::<u64>() {
         v.into()
-    } else if let Ok(v) = f64::extract(ob) {
+    } else if let Ok(v) = ob.extract::<f64>() {
         v.into()
     }
     // Boolean
-    else if let Ok(b) = bool::extract(ob) {
+    else if let Ok(b) = ob.extract::<bool>() {
         b.into()
     }
     // None
@@ -97,7 +85,7 @@ fn from<'source>(ob: &'source PyAny) -> Result<Value, PyErr> {
     else if let Ok(pseq) = ob.downcast::<PySequence>() {
         let mut array = Vec::new();
         for i in 0..pseq.len()? {
-            array.push(from(pseq.get_item(i)?)?);
+            array.push(from(&pseq.get_item(i)?)?);
         }
         array.into()
     }
@@ -109,7 +97,7 @@ fn from<'source>(ob: &'source PyAny) -> Result<Value, PyErr> {
         for i in 0..keys.len()? {
             let key = keys.get_item(i)?;
             let value = values.get_item(i)?;
-            map.insert(from(key)?, from(value)?);
+            map.insert(from(&key)?, from(&value)?);
         }
         map.into()
     } else {
@@ -140,24 +128,24 @@ fn to(mut v: Value, py: Python<'_>) -> Result<PyObject> {
         }
 
         Value::Array(_) => {
-            let list = PyList::empty(py);
-            for v in std::mem::replace(v.as_array_mut()?, Vec::new()) {
+            let list = PyList::empty_bound(py);
+            for v in std::mem::take(v.as_array_mut()?) {
                 list.append(to(v, py)?)?;
             }
             list.into()
         }
 
         Value::Set(_) => {
-            let set = PySet::empty(py)?;
-            for v in std::mem::replace(v.as_set_mut()?, BTreeSet::new()) {
+            let set = PySet::empty_bound(py)?;
+            for v in std::mem::take(v.as_set_mut()?) {
                 set.add(to(v, py)?)?;
             }
             set.into()
         }
 
         Value::Object(_) => {
-            let dict = PyDict::new(py);
-            for (k, v) in std::mem::replace(v.as_object_mut()?, BTreeMap::new()) {
+            let dict = PyDict::new_bound(py);
+            for (k, v) in std::mem::take(v.as_object_mut()?) {
                 dict.set_item(to(k, py)?, to(v, py)?)?;
             }
             dict.into()
@@ -181,7 +169,7 @@ impl Engine {
     ///
     /// * `path`: A filename to be associated with the policy.
     /// * `rego`: Rego policy.
-    pub fn add_policy(&mut self, path: String, rego: String) -> Result<()> {
+    pub fn add_policy(&mut self, path: String, rego: String) -> Result<String> {
         self.engine.add_policy(path, rego)
     }
 
@@ -190,15 +178,29 @@ impl Engine {
     /// The policy is parsed into AST.
     ///
     /// * `path`: Path to the policy file.
-    pub fn add_policy_from_file(&mut self, path: String) -> Result<()> {
+    pub fn add_policy_from_file(&mut self, path: String) -> Result<String> {
         self.engine.add_policy_from_file(path)
+    }
+
+    /// Get the list of packages defined by loaded policies.
+    ///
+    pub fn get_packages(&self) -> Result<Vec<String>> {
+        self.engine.get_packages()
+    }
+
+    /// Get the list of policies.
+    ///
+    pub fn get_policies(&self) -> Result<String> {
+        Ok(serde_json::to_string_pretty(
+            &self.engine.get_policies_as_json()?,
+        )?)
     }
 
     /// Add policy data.
     ///
     /// * `data`: Rego value. A Rego value is a number, bool, string, None
     ///           or a list/set/map whose items themselves are Rego values.
-    pub fn add_data(&mut self, data: &PyAny) -> Result<()> {
+    pub fn add_data(&mut self, data: &Bound<'_, PyAny>) -> Result<()> {
         let data = from(data)?;
         self.engine.add_data(data)
     }
@@ -215,7 +217,7 @@ impl Engine {
     ///
     /// * `path`: Path to JSON policy data.
     pub fn add_data_from_json_file(&mut self, path: String) -> Result<()> {
-        let data = Value::from_json_file(&path)?;
+        let data = Value::from_json_file(path)?;
         self.engine.add_data(data)
     }
 
@@ -229,7 +231,7 @@ impl Engine {
     ///
     /// * `input`: Rego value. A Rego value is a number, bool, string, None
     ///            or a list/set/map whose items themselves are Rego values.
-    pub fn set_input(&mut self, input: &PyAny) -> Result<()> {
+    pub fn set_input(&mut self, input: &Bound<'_, PyAny>) -> Result<()> {
         let input = from(input)?;
         self.engine.set_input(input);
         Ok(())
@@ -248,7 +250,7 @@ impl Engine {
     ///
     /// * `path`: Path to JSON input data.
     pub fn set_input_from_json_file(&mut self, path: String) -> Result<()> {
-        let input = Value::from_json_file(&path)?;
+        let input = Value::from_json_file(path)?;
         self.engine.set_input(input);
         Ok(())
     }
@@ -259,17 +261,17 @@ impl Engine {
     pub fn eval_query(&mut self, query: String, py: Python<'_>) -> Result<PyObject> {
         let results = self.engine.eval_query(query, false)?;
 
-        let rlist = PyList::empty(py);
+        let rlist = PyList::empty_bound(py);
         for result in results.result.into_iter() {
-            let rdict = PyDict::new(py);
+            let rdict = PyDict::new_bound(py);
 
-            let elist = PyList::empty(py);
+            let elist = PyList::empty_bound(py);
             for expr in result.expressions.into_iter() {
-                let edict = PyDict::new(py);
+                let edict = PyDict::new_bound(py);
                 edict.set_item("value".to_object(py), to(expr.value, py)?)?;
                 edict.set_item("text".to_object(py), expr.text.as_ref().to_object(py))?;
 
-                let ldict = PyDict::new(py);
+                let ldict = PyDict::new_bound(py);
                 ldict.set_item("row".to_object(py), expr.location.row.to_object(py))?;
                 ldict.set_item("col".to_object(py), expr.location.col.to_object(py))?;
 
@@ -281,7 +283,7 @@ impl Engine {
             rdict.set_item("bindings".to_object(py), to(result.bindings, py)?)?;
             rlist.append(rdict)?;
         }
-        let dict = PyDict::new(py);
+        let dict = PyDict::new_bound(py);
         dict.set_item("result".to_object(py), rlist)?;
         Ok(dict.into())
     }
@@ -293,9 +295,82 @@ impl Engine {
         let results = self.engine.eval_query(query, false)?;
         serde_json::to_string_pretty(&results).map_err(|e| anyhow!("{e}"))
     }
+
+    /// Evaluate rule.
+    ///
+    /// * `rule`: Full path to the rule.
+    pub fn eval_rule(&mut self, rule: String, py: Python<'_>) -> Result<PyObject> {
+        to(self.engine.eval_rule(rule)?, py)
+    }
+
+    /// Evaluate rule and return value as json.
+    ///
+    /// * `rule`: Full path to the rule.
+    pub fn eval_rule_as_json(&mut self, rule: String) -> Result<String> {
+        let v = self.engine.eval_rule(rule)?;
+        v.to_json_str()
+    }
+
+    /// Enable code coverage
+    ///
+    /// * `enable`: Whether to enable coverage or not.
+    pub fn set_enable_coverage(&mut self, enable: bool) {
+        self.engine.set_enable_coverage(enable)
+    }
+
+    /// Get coverage report as json.
+    ///
+    #[cfg(feature = "coverage")]
+    pub fn get_coverage_report_as_json(&self) -> Result<String> {
+        let report = self.engine.get_coverage_report()?;
+        serde_json::to_string_pretty(&report).map_err(|e| anyhow!("{e}"))
+    }
+
+    /// Get coverage report as pretty printable string.
+    ///
+    #[cfg(feature = "coverage")]
+    pub fn get_coverage_report_pretty(&self) -> Result<String> {
+        self.engine.get_coverage_report()?.to_string_pretty()
+    }
+
+    /// Clear coverage data.
+    ///
+    #[cfg(feature = "coverage")]
+    pub fn clear_coverage_data(&mut self) {
+        self.engine.clear_coverage_data();
+    }
+
+    /// Gather print statements instead of printing to stderr.
+    ///
+    pub fn set_gather_prints(&mut self, b: bool) {
+        self.engine.set_gather_prints(b)
+    }
+
+    /// Take gathered prints.
+    ///
+    pub fn take_prints(&mut self) -> Result<Vec<String>> {
+        self.engine.take_prints()
+    }
+
+    /// Clone a [`Engine`]
+    ///
+    /// To avoid having to parse same policy again, the engine can be cloned
+    /// after policies and data have been added.
+    fn clone(&self) -> Self {
+        Self {
+            engine: self.engine.clone(),
+        }
+    }
+
+    /// Get AST of policies.
+    ///
+    #[cfg(feature = "ast")]
+    pub fn get_ast_as_json(&self) -> Result<String> {
+        self.engine.get_ast_as_json()
+    }
 }
 
 #[pymodule]
-pub fn regorus(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+pub fn regorus(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<crate::Engine>()
 }

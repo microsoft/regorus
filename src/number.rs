@@ -1,16 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use alloc::str::FromStr;
+use core::cmp::{Ord, Ordering};
 use core::fmt::{Debug, Formatter};
-use std::cmp::{Ord, Ordering};
-use std::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
 
 use serde::ser::Serializer;
 use serde::Serialize;
 
-use crate::Rc;
+use crate::*;
 
 pub type BigInt = i128;
 
@@ -61,7 +61,7 @@ pub enum Number {
 }
 
 impl Debug for Number {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), core::fmt::Error> {
         match self {
             Number::Big(b) => b.d.fmt(f),
         }

@@ -6,8 +6,7 @@ use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_numeric, ensure_string};
 use crate::lexer::Span;
 use crate::value::Value;
-
-use std::collections::HashMap;
+use crate::*;
 
 use anyhow::{bail, Result};
 
@@ -20,7 +19,7 @@ use chrono_tz::Tz;
 pub(in crate::builtins) mod compat;
 mod diff;
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("time.add_date", (add_date, 4));
     m.insert("time.clock", (clock, 1));
     m.insert("time.date", (date, 1));
@@ -148,7 +147,7 @@ fn parse_duration_ns(
     ensure_args_count(span, name, params, args, 1)?;
 
     let value = ensure_string(name, &params[0], &args[0])?;
-    let dur = compat::parse_duration(value.as_ref())?;
+    let dur = compat::parse_duration(value.as_ref()).map_err(anyhow::Error::msg)?;
     safe_timestamp_nanos(span, strict, dur.num_nanoseconds())
 }
 

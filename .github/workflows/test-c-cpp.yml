@@ -1,0 +1,48 @@
+name: bindings/c-cpp
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup gcc, g++, cmake, ninja
+        run: sudo apt update && sudo apt install -y gcc g++ cmake ninja-build
+
+      - name: Workaround to ensure that regorus.h is generated
+        run: |
+          cargo build -r
+        working-directory: ./bindings/ffi
+        
+      - name: Test c binding
+        run: |
+          mkdir bindings/c/build
+          cd bindings/c/build
+          cmake -G Ninja ..
+          ninja
+          ./regorus_test
+
+      - name: Test c-nostd binding
+        run: |
+          mkdir bindings/c-nostd/build
+          cd bindings/c-nostd/build
+          cmake -G Ninja ..
+          ninja
+          ./regorus_test
+
+      - name: Test cpp binding
+        run: |
+          mkdir bindings/cpp/build
+          cd bindings/cpp/build
+          cmake -G Ninja ..
+          ninja
+          ./regorus_test

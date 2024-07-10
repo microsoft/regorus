@@ -8,11 +8,9 @@ use crate::builtins::utils::{ensure_args_count, ensure_numeric};
 use crate::lexer::Span;
 use crate::value::Value;
 
-use std::collections::HashMap;
-
 use anyhow::Result;
 
-pub fn register(m: &mut HashMap<&'static str, builtins::BuiltinFcn>) {
+pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("bits.and", (and, 2));
     m.insert("bits.lsh", (lsh, 2));
     m.insert("bits.negate", (negate, 1));
