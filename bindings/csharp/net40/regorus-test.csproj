@@ -5,7 +5,6 @@
     <Copy SourceFiles="../../ffi/RegorusFFI.g.cs" DestinationFolder="." />
     <ItemGroup>
         <RegorusDylib Include="..\..\..\target\release\*regorus_ffi*" />
-        <PackageReference Include="System.Text.Json" Version="8.0.0" />
     </ItemGroup>    
     <Copy SourceFiles="@(RegorusDylib)" DestinationFolder="." />
     <Copy SourceFiles=".\regorus_ffi.dll"  DestinationFiles="$(OutDir)regorusc.dll" />
@@ -14,7 +13,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net4.6.2</TargetFramework>
+    <TargetFramework>net40</TargetFramework>
     <RootNamespace>regorus_test</RootNamespace>
     <StartupObject>regoregorus_test.Program</StartupObject>
     <ImplicitUsings>enable</ImplicitUsings> 

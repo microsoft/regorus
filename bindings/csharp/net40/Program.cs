@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Text;
-using System.Text.Json;
+
 using System.Diagnostics;
 using Microsoft.WindowsAzure.Regorus.IaaS;
 
@@ -12,14 +12,6 @@ namespace regoregorus_test
         {
             long nanosecPerTick = (1000L * 1000L * 1000L) / Stopwatch.Frequency;
             var w = new Stopwatch();
-
-
-            // Force load of modules.
-            {
-                var _e = new RegorusPolicyEngine();
-                var _j = System.Text.Json.JsonDocument.Parse("{}");
-            }
-
             w.Restart();
 
             var engine = new RegorusPolicyEngine();
