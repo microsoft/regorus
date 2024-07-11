@@ -19,8 +19,8 @@ jobs:
 
       - name: Build
         run: dotnet build
-        working-directory: ./bindings/csharp
+        working-directory: ./bindings/csharp/net8.0
 
       - name: Run
         run: LD_LIBRARY_PATH=. dotnet run
-        working-directory: ./bindings/csharp
+        working-directory: ./bindings/csharp/net8.0
