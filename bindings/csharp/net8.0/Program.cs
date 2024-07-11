@@ -21,10 +21,10 @@ var newEngineTicks = w.ElapsedTicks;
 w.Restart();
 
 // Load policies and data.
-engine.AddPolicyFromFile("../../tests/aci/framework.rego");
-engine.AddPolicyFromFile("../../tests/aci/api.rego");
-engine.AddPolicyFromFile("../../tests/aci/policy.rego");
-engine.AddDataFromJsonFile("../../tests/aci/data.json");
+engine.AddPolicyFromFile("../../../tests/aci/framework.rego");
+engine.AddPolicyFromFile("../../../tests/aci/api.rego");
+engine.AddPolicyFromFile("../../../tests/aci/policy.rego");
+engine.AddDataFromJsonFile("../../../tests/aci/data.json");
 
 
 w.Stop();
@@ -34,7 +34,7 @@ var loadPoliciesTicks = w.ElapsedTicks;
 w.Restart();
 
 // Set input and eval rule.
-engine.SetInputFromJsonFile("../../tests/aci/input.json");
+engine.SetInputFromJsonFile("../../../tests/aci/input.json");
 var value = engine.EvalQuery("data.framework.mount_overlay");
 var valueDoc = System.Text.Json.JsonDocument.Parse(value);
 
