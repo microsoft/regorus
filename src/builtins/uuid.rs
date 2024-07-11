@@ -121,6 +121,7 @@ fn timestamp(uuid: &Uuid) -> Option<Timestamp> {
     // https://github.com/uuid-rs/uuid/blob/94ecea893fadac93248f1bd6f47673c09cec5912/src/lib.rs#L900-L904
     if uuid.get_version_num() == 2 {
         let (ticks, counter) = decode_rfc4122_timestamp(uuid);
+        #[allow(deprecated)]
         return Some(Timestamp::from_rfc4122(ticks, counter));
     }
 
