@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 name: bindings/csharp
+=======
+name: bindings/csharp40
+>>>>>>> 91bd55a (fix errors by changing to early versions.)
 
 on:
   push:
@@ -15,7 +19,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v1
         with:
             dotnet-version: "5.0.x"
 
