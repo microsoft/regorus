@@ -1,4 +1,14 @@
-﻿using System.Diagnostics;
+﻿//-----------------------------------------------------------------------
+// <copyright file="Program.cs" company="Microsoft">
+//    Copyright (c)2012 Microsoft. All rights reserved.
+// </copyright>
+// <summary>
+//    Contains code to test the Regorus class for C#
+// and .NET 8.0 bindings. 
+// </summary>
+//-----------------------------------------------------------------------
+
+using System.Diagnostics;
 
 long nanosecPerTick = (1000L*1000L*1000L) / Stopwatch.Frequency;
 var w = new Stopwatch();
@@ -21,10 +31,10 @@ var newEngineTicks = w.ElapsedTicks;
 w.Restart();
 
 // Load policies and data.
-engine.AddPolicyFromFile("../../tests/aci/framework.rego");
-engine.AddPolicyFromFile("../../tests/aci/api.rego");
-engine.AddPolicyFromFile("../../tests/aci/policy.rego");
-engine.AddDataFromJsonFile("../../tests/aci/data.json");
+engine.AddPolicyFromFile("../../../tests/aci/framework.rego");
+engine.AddPolicyFromFile("../../../tests/aci/api.rego");
+engine.AddPolicyFromFile("../../../tests/aci/policy.rego");
+engine.AddDataFromJsonFile("../../../tests/aci/data.json");
 
 
 w.Stop();
@@ -34,7 +44,7 @@ var loadPoliciesTicks = w.ElapsedTicks;
 w.Restart();
 
 // Set input and eval rule.
-engine.SetInputFromJsonFile("../../tests/aci/input.json");
+engine.SetInputFromJsonFile("../../../tests/aci/input.json");
 var value = engine.EvalQuery("data.framework.mount_overlay");
 var valueDoc = System.Text.Json.JsonDocument.Parse(value);
 

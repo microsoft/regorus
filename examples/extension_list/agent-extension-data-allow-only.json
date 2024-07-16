@@ -1,0 +1,19 @@
+{
+    "azureGuestAgentPolicy": {
+        "signingRules": {
+            "extensionSigned": true
+        },
+        "allowListOnly": true
+    },
+    "azureGuestExtensionsPolicy": {
+        "test3": {
+            "runtimeRules": {}
+        },
+        "test2": {
+            "signingRules": {
+                "extensionSigned": false
+            },
+            "runtimeRules": {}
+        }
+    }
+}
