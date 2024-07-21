@@ -386,6 +386,7 @@ pub struct Analyzer {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Schedule {
     #[allow(unused)]
     pub scopes: BTreeMap<Ref<Query>, Scope>,
