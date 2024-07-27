@@ -412,7 +412,7 @@ impl Analyzer {
     }
 
     pub fn analyze(mut self, modules: &[Ref<Module>]) -> Result<Schedule> {
-        self.add_rules(modules)?;
+        self.add_rules_and_aliases(modules)?;
         self.functions = gather_functions(modules)?;
 
         for m in modules {
@@ -430,7 +430,7 @@ impl Analyzer {
         modules: &[Ref<Module>],
         query: &Ref<Query>,
     ) -> Result<Schedule> {
-        self.add_rules(modules)?;
+        self.add_rules_and_aliases(modules)?;
         self.analyze_query(None, None, query, Scope::default())?;
 
         Ok(Schedule {
@@ -439,7 +439,7 @@ impl Analyzer {
         })
     }
 
-    fn add_rules(&mut self, modules: &[Ref<Module>]) -> Result<()> {
+    fn add_rules_and_aliases(&mut self, modules: &[Ref<Module>]) -> Result<()> {
         for m in modules {
             let path = get_path_string(&m.package.refr, Some("data"))?;
             let scope: &mut Scope = self.packages.entry(path).or_default();
@@ -455,6 +455,12 @@ impl Analyzer {
                     } => get_root_var(refr)?,
                 };
                 scope.unscoped.insert(var);
+            }
+
+            for import in &m.imports {
+                if let Some(var) = &import.r#as {
+                    scope.unscoped.insert(var.source_str());
+                }
             }
         }
 

@@ -34,6 +34,7 @@ cases:
         
       - |
         package b
+        import rego.v1
         # Both the following imports are overridden by rules
         #import data.a.b as a
         #import data.a.b
@@ -43,6 +44,10 @@ cases:
 
         a = 10
         c = C + b
+
+        r if {
+          some v in [C]
+        }
     query: data
     want_result:
       a:
@@ -50,6 +55,7 @@ cases:
       b:
         a: 10
         c: 22
+        r: true
         
   - note: import overridden by rule
     modules:

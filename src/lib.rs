@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(unknown_lints)]
+#![allow(clippy::doc_lazy_continuation)]
 // Use README.md as crate documentation.
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
 // We'll default to building for no_std - use core, alloc instead of std.
