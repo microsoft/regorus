@@ -28,6 +28,7 @@ pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn
     m.insert("startswith", (startswith, 2));
     m.insert("strings.any_prefix_match", (any_prefix_match, 2));
     m.insert("strings.any_suffix_match", (any_suffix_match, 2));
+    m.insert("strings.count", (strings_count, 2));
     m.insert("strings.replace_n", (replace_n, 2));
     m.insert("strings.reverse", (reverse, 1));
     m.insert("substring", (substring, 3));
@@ -509,6 +510,27 @@ fn any_suffix_match(
 
     Ok(Value::Bool(
         search.iter().any(|s| base.iter().any(|b| s.ends_with(b))),
+    ))
+}
+
+fn strings_count(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
+    let name = "strings.count";
+    ensure_args_count(span, name, params, args, 2)?;
+
+    let search = ensure_string(name, &params[0], &args[0])?;
+    let substring = ensure_string(name, &params[0], &args[1])?;
+
+    Ok(Value::from(
+        search
+            .as_bytes()
+            .windows(substring.len())
+            .filter(|&w| w == substring.as_bytes())
+            .count(),
     ))
 }
 
