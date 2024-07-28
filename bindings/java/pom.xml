@@ -9,7 +9,7 @@
 
   <groupId>com.microsoft.regorus</groupId>
   <artifactId>regorus-java</artifactId>
-  <version>0.1.5</version>
+  <version>0.2.2</version>
 
   <name>Regorus Java</name>
   <description>Java bindings for Regorus - a fast, lightweight Rego interpreter written in Rust</description>
