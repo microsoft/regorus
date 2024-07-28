@@ -10,7 +10,7 @@ Regorus is also
   - *cross-platform* - Written in platform-agnostic Rust.
   - *no_std compatible* - Regorus can be used in `no_std` environments too. Most of the builtins are supported.
   - *current* - We strive to keep Regorus up to date with latest OPA release. Regorus supports `import rego.v1`.
-  - *compliant* - Regorus is mostly compliant with the latest [OPA release v0.66.0](https://github.com/open-policy-agent/opa/releases/tag/v0.66.0). See [OPA Conformance](#opa-conformance) for details. Note that while we behaviorally produce the same results, we don't yet support all the builtins.
+  - *compliant* - Regorus is mostly compliant with the latest [OPA release v0.67.0](https://github.com/open-policy-agent/opa/releases/tag/v0.67.0). See [OPA Conformance](#opa-conformance) for details. Note that while we behaviorally produce the same results, we don't yet support all the builtins.
   - *extensible* - Extend the Rego language by implementing custom stateful builtins in Rust.
     See [add_extension](https://github.com/microsoft/regorus/blob/fc68bf9c8bea36427dae9401a7d1f6ada771f7ab/src/engine.rs#L352).
     Support for extensibility using other languages coming soon.
@@ -99,7 +99,7 @@ $ cargo build -r --example regorus --no-default-features; strip target/release/e
 -rwxr-xr-x  1 anand  staff   1.9M May 11 22:04 target/release/examples/regorus*
 ```
 
-Regorus passes the [OPA v0.66.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
+Regorus passes the [OPA v0.67.0 test-suite](https://www.openpolicyagent.org/docs/latest/ir/#test-suite) barring a few
 builtins. See [OPA Conformance](#opa-conformance) below.
 
 ## Bindings
@@ -276,7 +276,7 @@ Benchmark 1: opa eval -b tests/aci -d tests/aci/data.json -i tests/aci/input.jso
 ```
 ## OPA Conformance
 
-Regorus has been verified to be compliant with [OPA v0.66.0](https://github.com/open-policy-agent/opa/releases/tag/v0.66.0)
+Regorus has been verified to be compliant with [OPA v0.67.0](https://github.com/open-policy-agent/opa/releases/tag/v0.67.0)
 using a [test driver](https://github.com/microsoft/regorus/blob/main/tests/opa.rs) that loads and runs the OPA testsuite using Regorus, and verifies that expected outputs are produced.
 
 The test driver can be invoked by running:
