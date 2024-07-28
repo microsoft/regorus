@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/microsoft/regorus/compare/regorus-v0.2.1...regorus-v0.2.2) - 2024-07-28
+
+### Added
+- Update to opa v0.67.0 ([#286](https://github.com/microsoft/regorus/pull/286))
+
+### Fixed
+- Handle aliases in scheduler ([#285](https://github.com/microsoft/regorus/pull/285))
+
+### Other
+- Update readme ([#288](https://github.com/microsoft/regorus/pull/288))
+- Update binding versions ([#287](https://github.com/microsoft/regorus/pull/287))
+- build.rs create hooks dir if not exists ([#283](https://github.com/microsoft/regorus/pull/283))
+- add extension_list example ([#281](https://github.com/microsoft/regorus/pull/281))
+- Fix build break ([#278](https://github.com/microsoft/regorus/pull/278))
+- Update pyo3 requirement from 0.21.0 to 0.22.0 ([#275](https://github.com/microsoft/regorus/pull/275))
+- Update to OPA v0.66.0 ([#274](https://github.com/microsoft/regorus/pull/274))
+
 ## [0.2.1](https://github.com/microsoft/regorus/compare/regorus-v0.2.0...regorus-v0.2.1) - 2024-06-19
 
 ### Added
