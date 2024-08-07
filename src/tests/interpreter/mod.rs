@@ -422,3 +422,32 @@ fn one_yaml() -> Result<()> {
 fn run(path: &str) {
     yaml_test(path).unwrap()
 }
+
+#[test]
+fn test_get_data() -> Result<()> {
+    let mut engine = Engine::new();
+
+    // Merge { "x" : 1, "y" : {} }
+    engine.add_data(Value::from_json_str(r#"{ "x" : 1, "y" : {}}"#)?)?;
+
+    // Merge { "z" : 2 }
+    engine.add_data(Value::from_json_str(r#"{ "z" : 2 }"#)?)?;
+
+    // Add a policy
+    engine.add_policy("policy.rego".to_string(), "package a".to_string())?;
+
+    // Evaluate virtual data document. The virtual document includes all rules as well.
+    let v_data = engine.eval_query("data".to_string(), false)?.result[0].expressions[0]
+        .value
+        .clone();
+    // There must be an empty package.
+    assert_eq!(v_data["a"], Value::new_object());
+
+    // Get the data document.
+    let data = engine.get_data();
+
+    // There must NOT be any value of `a`.
+    assert_eq!(data["a"], Value::Undefined);
+
+    Ok(())
+}

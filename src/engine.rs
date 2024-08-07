@@ -239,7 +239,7 @@ impl Engine {
     /// # }
     /// ```
     pub fn clear_data(&mut self) {
-        self.interpreter.set_data(Value::new_object());
+        self.interpreter.set_init_data(Value::new_object());
         self.prepared = false;
     }
 
@@ -276,7 +276,40 @@ impl Engine {
             bail!("data must be object");
         }
         self.prepared = false;
-        self.interpreter.get_data_mut().merge(data)
+        self.interpreter.get_init_data_mut().merge(data)
+    }
+
+    /// Get the data document.
+    ///
+    /// The returned value is the data document that has been constructed using
+    /// one or more calls to [`Engine::add_data`]. The values of policy rules are
+    /// not included in the returned document.
+    ///
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// // If not set, data document is empty.
+    /// assert_eq!(engine.get_data(), Value::new_object());
+    ///
+    /// // Merge { "x" : 1, "y" : {} }
+    /// assert!(engine.add_data(Value::from_json_str(r#"{ "x" : 1, "y" : {}}"#)?).is_ok());
+    ///
+    /// // Merge { "z" : 2 }
+    /// assert!(engine.add_data(Value::from_json_str(r#"{ "z" : 2 }"#)?).is_ok());
+    ///
+    /// let data = engine.get_data();
+    /// assert_eq!(data["x"], Value::from(1));
+    /// assert_eq!(data["y"], Value::new_object());
+    /// assert_eq!(data["z"], Value::from(2));
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_data(&self) -> Value {
+        self.interpreter.get_init_data().clone()
     }
 
     pub fn add_data_json(&mut self, data_json: &str) -> Result<()> {
@@ -537,11 +570,7 @@ impl Engine {
             self.interpreter.set_modules(&self.modules);
 
             self.interpreter.clear_builtins_cache();
-            // when the interpreter is prepared the initial data is saved
-            // the data will be reset to init_data each time clean_internal_evaluation_state is called
-            let init_data = self.interpreter.get_data_mut().clone();
-            self.interpreter.set_init_data(init_data);
-
+            // clean_internal_evaluation_state will set data to an efficient clont of use supplied init_data
             // Initialize the with-document with initial data values.
             // with-modifiers will be applied to this document.
             self.interpreter.init_with_document()?;

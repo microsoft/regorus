@@ -216,16 +216,20 @@ impl Interpreter {
         self.modules = modules.to_vec();
     }
 
-    pub fn set_init_data(&mut self, init_data: Value) {
-        self.init_data = init_data;
-    }
-
-    pub fn set_data(&mut self, data: Value) {
-        self.data = data;
-    }
-
     pub fn get_data_mut(&mut self) -> &mut Value {
         &mut self.data
+    }
+
+    pub fn set_init_data(&mut self, data: Value) {
+        self.init_data = data;
+    }
+
+    pub fn get_init_data(&self) -> &Value {
+        &self.init_data
+    }
+
+    pub fn get_init_data_mut(&mut self) -> &mut Value {
+        &mut self.init_data
     }
 
     pub fn set_traces(&mut self, enable_tracing: bool) {
