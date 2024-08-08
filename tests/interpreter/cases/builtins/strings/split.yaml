@@ -1,0 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: empty separator
+    data: {}
+    modules: []
+    query: "x := split(\"test\", \"\")"
+    want_result:
+      x: ["t", "e", "s", "t"]
+      
+  - note: empty separator, empty string
+    data: {}
+    modules: []
+    query: "x := split(\"\", \"\")"
+    want_result:
+      x: []
