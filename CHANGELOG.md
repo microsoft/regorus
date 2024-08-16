@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3](https://github.com/microsoft/regorus/compare/regorus-v0.2.2...regorus-v0.2.3) - 2024-08-16
+
+### Fixed
+- Match OPA behavior for split ([#295](https://github.com/microsoft/regorus/pull/295))
+- Merge data to init document ([#293](https://github.com/microsoft/regorus/pull/293))
+
+### Other
+- Update cbindgen requirement from 0.26.0 to 0.27.0 ([#296](https://github.com/microsoft/regorus/pull/296))
+- Bump rexml in /bindings/ruby in the bundler group across 1 directory ([#294](https://github.com/microsoft/regorus/pull/294))
+- Update csbindgen requirement from =1.9.0 to =1.9.3 ([#292](https://github.com/microsoft/regorus/pull/292))
+
 ## [0.2.2](https://github.com/microsoft/regorus/compare/regorus-v0.2.1...regorus-v0.2.2) - 2024-07-28
 
 ### Added
