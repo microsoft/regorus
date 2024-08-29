@@ -1,0 +1,26 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: undefined components
+    data: {}
+    modules:
+      - |
+        package test
+        
+        import rego.v1
+        
+        principal := input.principal
+        action := input.action
+        
+        p[principal][action] := 1 if {
+          some a in []					    
+        }
+
+        q[principal][action] contains 1 if {
+          some a in []					    
+        }
+    query: data.test
+    want_result:
+      p: {}
+      q: {}
