@@ -1558,6 +1558,10 @@ impl Interpreter {
         let mut obj = &mut self.data;
         let len = path.len();
         for (idx, p) in path.into_iter().enumerate() {
+            // Stop at the first undefined component in the path
+            if p == Value::Undefined {
+                break;
+            }
             if idx == len - 1 {
                 // last key.
                 if is_set {
@@ -1692,6 +1696,7 @@ impl Interpreter {
                 }
 
                 if output == Value::Undefined || !comps_defined {
+                    ctx.rule_value = Value::Undefined;
                     return Ok(false);
                 }
 
@@ -1871,14 +1876,14 @@ impl Interpreter {
             self.hoist_loops_impl(oe, &mut loops);
         }
 
-        self.eval_output_expr_in_loop(&loops[..])?;
+        let r = self.eval_output_expr_in_loop(&loops[..])?;
 
         let ctx = self.get_current_context()?;
         if let Some(_oe) = &ctx.output_expr {
             // Ensure that at least one output was generated.
-            Ok(ctx.value != Value::Undefined)
+            Ok(ctx.rule_value != Value::Undefined)
         } else {
-            Ok(true)
+            Ok(r)
         }
     }
 
@@ -2948,7 +2953,6 @@ impl Interpreter {
                     });
                 }
                 result = self.eval_query(&body.query);
-
                 if matches!(&result, Ok(true) | Err(_)) {
                     break;
                 }

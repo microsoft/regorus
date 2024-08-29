@@ -2,17 +2,34 @@
 # Licensed under the MIT License.
 
 cases:
-  - note: else without body
+  # - note: else without body
+  #   data: {}
+  #   modules:
+  #     - |
+  #       package test
+  #       x = 4 {
+  #         false
+  #       } else = 5
+
+  #       y = 6
+  #   query: data.test
+  #   want_result:
+  #     x: 5
+  #     y: 6
+  - note: undefined values being assigned
     data: {}
     modules:
       - |
         package test
-        x = 4 {
-          false
-        } else = 5
-
-        y = 6
+        
+        import rego.v1
+        
+        x := data.y if {
+          true
+        } else := 2 if {
+          true
+        }        
     query: data.test
     want_result:
-      x: 5
-      y: 6
+      x: 2
+        
