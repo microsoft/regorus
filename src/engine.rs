@@ -20,6 +20,7 @@ pub struct Engine {
     modules: Vec<Ref<Module>>,
     interpreter: Interpreter,
     prepared: bool,
+    rego_v1: bool,
 }
 
 /// Create a default engine.
@@ -36,7 +37,33 @@ impl Engine {
             modules: vec![],
             interpreter: Interpreter::new(),
             prepared: false,
+            rego_v1: false,
         }
+    }
+
+    /// Turn rego.v1 on/off for subsequently added policies.
+    ///
+    /// Explicit import rego.v1 is not needed if set.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// engine.set_rego_v1(true);
+    /// engine.add_policy(
+    ///    "test.rego".to_string(),
+    ///    r#"
+    ///    package test
+    ///    allow if true # if keyword is automatically imported
+    ///    "#.to_string())?;
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    pub fn set_rego_v1(&mut self, rego_v1: bool) {
+        self.rego_v1 = rego_v1;
     }
 
     /// Add a policy.
@@ -67,7 +94,7 @@ impl Engine {
     ///
     pub fn add_policy(&mut self, path: String, rego: String) -> Result<String> {
         let source = Source::from_contents(path, rego)?;
-        let mut parser = Parser::new(&source)?;
+        let mut parser = self.make_parser(&source)?;
         let module = Ref::new(parser.parse()?);
         self.modules.push(module.clone());
         // if policies change, interpreter needs to be prepared again
@@ -98,7 +125,7 @@ impl Engine {
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     pub fn add_policy_from_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<String> {
         let source = Source::from_file(path)?;
-        let mut parser = Parser::new(&source)?;
+        let mut parser = self.make_parser(&source)?;
         let module = Ref::new(parser.parse()?);
         self.modules.push(module.clone());
         // if policies change, interpreter needs to be prepared again
@@ -428,7 +455,7 @@ impl Engine {
 
         // Parse the query.
         let query_source = Source::from_contents("<query.rego>".to_string(), query)?;
-        let mut parser = Parser::new(&query_source)?;
+        let mut parser = self.make_parser(&query_source)?;
         let query_node = parser.parse_user_query()?;
         if query_node.span.text() == "data" {
             self.eval_modules(enable_tracing)?;
@@ -545,7 +572,7 @@ impl Engine {
 
         // Parse the query.
         let query_source = Source::from_contents("<query.rego>".to_string(), query)?;
-        let mut parser = Parser::new(&query_source)?;
+        let mut parser = self.make_parser(&query_source)?;
         let query_node = parser.parse_user_query()?;
         let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
         self.interpreter.eval_user_query(
@@ -869,5 +896,13 @@ impl Engine {
         }
 
         serde_json::to_string_pretty(&ast).map_err(anyhow::Error::msg)
+    }
+
+    fn make_parser<'a>(&self, source: &'a Source) -> Result<Parser<'a>> {
+        let mut parser = Parser::new(source)?;
+        if self.rego_v1 {
+            parser.enable_rego_v1()?;
+        }
+        Ok(parser)
     }
 }

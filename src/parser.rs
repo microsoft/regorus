@@ -40,6 +40,18 @@ impl<'source> Parser<'source> {
         })
     }
 
+    pub fn enable_rego_v1(&mut self) -> Result<()> {
+        self.turn_on_rego_v1(self.tok.1.clone())
+    }
+
+    fn turn_on_rego_v1(&mut self, span: Span) -> Result<()> {
+        self.rego_v1 = true;
+        for kw in FUTURE_KEYWORDS {
+            self.set_future_keyword(kw, &span)?;
+        }
+        Ok(())
+    }
+
     pub fn token_text(&self) -> &str {
         match self.tok.0 {
             TokenKind::Symbol | TokenKind::Number | TokenKind::Ident | TokenKind::Eof => {
@@ -1648,10 +1660,7 @@ impl<'source> Parser<'source> {
 
             let is_future_kw =
                 if comps.len() == 2 && comps[0].text() == "rego" && comps[1].text() == "v1" {
-                    self.rego_v1 = true;
-                    for kw in FUTURE_KEYWORDS {
-                        self.set_future_keyword(kw, &span)?;
-                    }
+                    self.turn_on_rego_v1(span.clone())?;
                     true
                 } else {
                     self.handle_import_future_keywords(&comps)?

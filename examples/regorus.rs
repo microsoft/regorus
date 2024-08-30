@@ -33,6 +33,7 @@ fn add_policy_from_file(engine: &mut regorus::Engine, path: String) -> Result<St
     engine.add_policy(path.clone(), read_file(&path)?)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rego_eval(
     bundles: &[String],
     files: &[String],
@@ -41,6 +42,7 @@ fn rego_eval(
     enable_tracing: bool,
     non_strict: bool,
     #[cfg(feature = "coverage")] coverage: bool,
+    v1: bool,
 ) -> Result<()> {
     // Create engine.
     let mut engine = regorus::Engine::new();
@@ -49,6 +51,8 @@ fn rego_eval(
 
     #[cfg(feature = "coverage")]
     engine.set_enable_coverage(coverage);
+
+    engine.set_rego_v1(v1);
 
     // Load files from given bundles.
     for dir in bundles.iter() {
@@ -233,6 +237,10 @@ enum RegorusCommand {
         #[cfg(feature = "coverage")]
         #[arg(long, short)]
         coverage: bool,
+
+        /// Turn on rego.v1
+        #[arg(long)]
+        v1: bool,
     },
 
     /// Tokenize a Rego policy.
@@ -274,6 +282,7 @@ fn main() -> Result<()> {
             non_strict,
             #[cfg(feature = "coverage")]
             coverage,
+            v1,
         } => rego_eval(
             &bundles,
             &data,
@@ -283,6 +292,7 @@ fn main() -> Result<()> {
             non_strict,
             #[cfg(feature = "coverage")]
             coverage,
+            v1,
         ),
         RegorusCommand::Lex { file, verbose } => rego_lex(file, verbose),
         RegorusCommand::Parse { file } => rego_parse(file),
