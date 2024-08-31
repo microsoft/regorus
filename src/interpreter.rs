@@ -2283,15 +2283,8 @@ impl Interpreter {
         };
 
         let mut param_values = Vec::with_capacity(params.len());
-        let mut error = None;
         for p in params {
-            match self.eval_expr(p) {
-                Ok(v) => param_values.push(v),
-                Err(e) => {
-                    error = Some(Err(e));
-                    break;
-                }
-            }
+            param_values.push(self.eval_expr(p)?);
         }
 
         let orig_fcn_path = fcn_path;
@@ -2308,9 +2301,6 @@ impl Interpreter {
                 if param_values.iter().any(|v| v == &Value::Undefined) {
                     return Ok(Value::Undefined);
                 }
-                if let Some(err) = error {
-                    err?;
-                };
                 return Ok(v.clone());
             }
             _ => orig_fcn_path.clone(),
