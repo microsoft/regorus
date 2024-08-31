@@ -59,3 +59,20 @@ cases:
         a1 = inc(5)
     query: data.test
     want_result: {}
+
+  - note: call parameter raises error
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        
+        bar := 1 if {
+          1 + "hello"
+        }
+        foo := 1 if {
+          count(bar)
+        }
+    query: data.test
+    error: expects numeric argument.
+    
