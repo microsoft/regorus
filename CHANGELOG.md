@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4](https://github.com/microsoft/regorus/compare/regorus-v0.2.3...regorus-v0.2.4) - 2024-09-04
+
+### Added
+- OPA v0.68.0. Engine::set_rego_v1 ([#305](https://github.com/microsoft/regorus/pull/305))
+
+### Fixed
+- Handle parsing corner cases ([#309](https://github.com/microsoft/regorus/pull/309))
+- Propagate errors encountered in argument evaluation ([#308](https://github.com/microsoft/regorus/pull/308))
+- Issues [#302](https://github.com/microsoft/regorus/pull/302), [#303](https://github.com/microsoft/regorus/pull/303) ([#304](https://github.com/microsoft/regorus/pull/304))
+
 ## [0.2.3](https://github.com/microsoft/regorus/compare/regorus-v0.2.2...regorus-v0.2.3) - 2024-08-16
 
 ### Fixed
