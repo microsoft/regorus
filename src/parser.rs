@@ -1038,6 +1038,23 @@ impl<'source> Parser<'source> {
         let mut literals = vec![];
 
         let stmt = match self.parse_literal_stmt() {
+            Ok(_) if self.token_text() == ":" => {
+                // This is likely an object comprehension.
+                // Restore the state and return.
+                *self = state;
+                bail!("try parsing as comprehension");
+            }
+            Ok(stmt) if self.token_text() == end_delim => {
+                // Treat { 1 | 1 } as a comprehension instead of a
+                // set of 1 element.
+                if let Literal::Expr { expr: e, .. } = &stmt.literal {
+                    if matches!(e.as_ref(), Expr::BinExpr { op: BinOp::Or, .. }) {
+                        *self = state;
+                        bail!("try parse as comprehension");
+                    }
+                }
+                stmt
+            }
             Ok(stmt) => stmt,
             Err(e) if is_definite_query => return Err(e),
             Err(e) if matches!(self.token_text(), "=" | ":=") => return Err(e),

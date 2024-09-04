@@ -1,0 +1,45 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: treat { 1 | 1 } as comprehension
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        x if { 1 | 1 }
+        y := { 1 | 1 }
+        z := { (1) | 1}
+
+        # Parsed as a set
+        a := { ({1} | {2}) }
+
+        b := v if { { 1 | 1 } = v } 
+      
+    query: data.test
+    want_result:
+      x: true
+      y:
+        set!: [1]
+      z:
+        set!: [1]
+      a:
+        set!:
+          - set!: [1, 2]
+      b:
+        set!: [1]
+        
+  - note: rule body is object comprehension
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords
+        x if { 1:2 | some p in [1,2] }
+        y := 2 if { 1:2 | some p in [1,2] }
+    query: data.test
+    want_result:
+      x: true
+      y: 2
