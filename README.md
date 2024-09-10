@@ -184,11 +184,11 @@ This produces the following output
 }
 ```
 
-Next, evaluate a sample [policy](https://github.com/microsoft/regorus/blob/main/examples/example.rego) and [input](https://github.com/microsoft/regorus/blob/main/examples/input.json)
+Next, evaluate a sample [policy](https://github.com/microsoft/regorus/blob/main/examples/server/allowed_server.rego) and [input](https://github.com/microsoft/regorus/blob/main/examples/server/input.json)
 (borrowed from [Rego tutorial](https://www.openpolicyagent.org/docs/latest/#2-try-opa-eval)):
 
 ```bash
-$ regorus eval -d examples/example.rego -i examples/input.json data.example
+$ regorus eval -d examples/server/allowed_server.rego -i examples/server/input.json data.example
 ```
 
 Finally, evaluate real-world [policies](tests/aci/) used in Azure Container Instances (ACI)
@@ -204,7 +204,7 @@ Regorus allows determining which lines of a policy have been executed using the 
 We can try it out using the `regorus` example program by passing in the `--coverage` flag.
 
 ```shell
-$ regorus eval -d examples/example.rego -i examples/input.json data.example --coverage
+$ regorus eval -d examples/server/allowed_server.rego -i examples/server/input.json data.example --coverage
 ```
 
 It produces the following coverage report which shows that all lines are executed except the line that sets `allow` to true.

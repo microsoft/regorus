@@ -30,6 +30,8 @@ jobs:
       run: cargo test -r --doc
     - name: Run tests
       run: cargo test -r
+    - name: Run example
+      run: cargo run --example regorus -- eval -d examples/server/allowed_server.rego -i examples/server/input.json data.example
     - name: Run tests (ACI)
       run: cargo test -r --test aci
     - name: Run tests (KATA)
