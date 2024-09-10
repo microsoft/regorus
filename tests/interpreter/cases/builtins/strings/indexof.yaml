@@ -1,0 +1,151 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: base
+    data: {}
+    modules:
+      - |
+        package test
+
+        v1 = indexof("Hello world", "llo") # valid substring
+        v2 = indexof("Hello world", "hel") # case sensitive
+        v3 = indexof("Hello world", "l") # single character
+        v4 = indexof("", ",") # empty string
+        v5 = indexof("", "") # empty substring and string
+
+    query: data.test
+    want_result:
+      v1: 2
+      v2: -1
+      v3: 2
+      v4: -1
+      v5: -1
+
+  - note: unicode-char
+    data: {}
+    modules:
+      - |
+        package test
+
+        v1 = indexof("μx", "x")
+
+    query: data.test
+    want_result:
+      v1: 1
+
+  - note: unicode-chars-not-found
+    data: {}
+    modules:
+      - |
+        package test
+
+        v1 = indexof("μ", "μμ")
+
+    query: data.test
+    want_result:
+      v1: -1
+
+  - note: unicode-string
+    data: {}
+    modules:
+      - |
+        package test
+
+        v1 = indexof("skön var våren", "vår")
+
+    query: data.test
+    want_result:
+      v1: 9
+
+  - note: undefined-string
+    data: {}
+    modules:
+      - |
+        package test
+        x { false }
+        y = indexof(x, "")
+    query: data.test
+    want_result: {}
+
+  - note: undefined-substring
+    data: {}
+    modules:
+      - |
+        package test
+        x { false }
+        y = indexof(",", x)
+    query: data.test
+    want_result: {}
+
+  - note: invalid-null-string
+    data: {}
+    modules: ["package test\nx=indexof(null, ``)"]
+    query: data.test
+    error: "`indexof` expects string argument."
+
+  - note: invalid-bool-string
+    data: {}
+    modules: ["package test\nx=indexof(true, ``)"]
+    query: data.test
+    error: "`indexof` expects string argument."
+
+  - note: invalid-number-string
+    data: {}
+    modules: ["package test\nx=indexof(1, ``)"]
+    query: data.test
+    error: "`indexof` expects string argument."
+
+  - note: invalid-array-string
+    data: {}
+    modules: ["package test\nx=indexof([], ``)"]
+    query: data.test
+    error: "`indexof` expects string argument."
+
+  - note: invalid-set-string
+    data: {}
+    modules: ["package test\nx=indexof(set(), ``)"]
+    query: data.test
+    error: "`indexof` expects string argument."
+
+  - note: invalid-object-string
+    data: {}
+    modules: ["package test\nx=indexof({}, ``)"]
+    query: data.test
+    error: "`indexof` expects string argument."
+
+  - note: invalid-null-substring
+    data: {}
+    modules: ["package test\nx=indexof(``, null)"]
+    query: data.test
+    error: "`indexof` expects string argument."
+
+  - note: invalid-bool-substring
+    data: {}
+    modules: ["package test\nx=indexof(``, true)"]
+    query: data.test
+    error: "`indexof` expects string argument."
+
+  - note: invalid-number-substring
+    data: {}
+    modules: ["package test\nx=indexof(``, 1)"]
+    query: data.test
+    error: "`indexof` expects string argument."
+
+  - note: invalid-array-substring
+    data: {}
+    modules: ["package test\nx=indexof(``, [])"]
+    query: data.test
+    error: "`indexof` expects string argument."
+
+  - note: invalid-set-substring
+    data: {}
+    modules: ["package test\nx=indexof(``, set())"]
+    query: data.test
+    error: "`indexof` expects string argument."
+
+  - note: invalid-object-substring
+    data: {}
+    modules: ["package test\nx=indexof(``, {})"]
+    query: data.test
+    error: "`indexof` expects string argument."
