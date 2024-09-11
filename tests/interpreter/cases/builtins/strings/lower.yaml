@@ -1,0 +1,79 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: base
+    data: {}
+    modules:
+      - |
+        package test
+
+        v1 = lower("") # empty string
+        v2 = lower("a")
+        v3 = lower("A")
+        v4 = lower("AbCd")
+        v5 = lower("aBcD109")
+        v6 = lower("aabAB09_")
+        v7 = lower("longStrinGwitHmixofsmaLLandcAps")
+
+    query: data.test
+    want_result:
+      v1: ""
+      v2: "a"
+      v3: "a"
+      v4: "abcd"
+      v5: "abcd109"
+      v6: "aabab09_"
+      v7: "longstringwithmixofsmallandcaps"
+
+  - note: unicode string
+    data: {}
+    modules:
+      - |
+        package test
+
+        v1 = lower("Σ")
+        v2 = lower("ὈΔΥΣΣΕΎΣ")
+        v3 = lower("LONG\u2C6FSTRING\u2C6FWITH\u2C6FNONASCII\u2C6FCHARS")
+
+    query: data.test
+    want_result:
+      v1: "σ"
+      v2: "ὀδυσσεύς"
+      v3: "long\u0250string\u0250with\u0250nonascii\u0250chars"
+
+  - note: invalid-null-string
+    data: {}
+    modules: ["package test\nx=lower(null)"]
+    query: data.test
+    error: "`lower` expects string argument."
+
+  - note: invalid-bool-string
+    data: {}
+    modules: ["package test\nx=lower(true)"]
+    query: data.test
+    error: "`lower` expects string argument."
+
+  - note: invalid-number-string
+    data: {}
+    modules: ["package test\nx=lower(1)"]
+    query: data.test
+    error: "`lower` expects string argument."
+
+  - note: invalid-array-string
+    data: {}
+    modules: ["package test\nx=lower([])"]
+    query: data.test
+    error: "`lower` expects string argument."
+
+  - note: invalid-set-string
+    data: {}
+    modules: ["package test\nx=lower(set())"]
+    query: data.test
+    error: "`lower` expects string argument."
+
+  - note: invalid-object-string
+    data: {}
+    modules: ["package test\nx=lower({})"]
+    query: data.test
+    error: "`lower` expects string argument."
