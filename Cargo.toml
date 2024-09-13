@@ -67,7 +67,9 @@ full-opa = [
     "time",
     "uuid",
     "urlquery",
-    "yaml"
+    "yaml",
+
+    #"rego-extensions"
 ]
 
 # Features that can be used in no_std environments.
@@ -88,6 +90,9 @@ opa-no-std = [
   # Configure lazy_static to use spinlocks.
   "lazy_static/spin_no_std"
 ]
+
+# Rego language extensions
+rego-extensions = []
 
 # This feature enables some testing utils for OPA tests.
 opa-testutil = []

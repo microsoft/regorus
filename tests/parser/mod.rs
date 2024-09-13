@@ -198,6 +198,13 @@ fn match_expr_impl(e: &Expr, v: &Value) -> Result<()> {
             match_expr(value, &v["inexpr"]["value"])?;
             match_expr(collection, &v["inexpr"]["collection"])
         }
+
+        #[cfg(feature = "rego-extensions")]
+        Expr::OrExpr { span, lhs, rhs } => {
+            match_span_opt(span, &v["orexpr"]["span"])?;
+            match_expr(lhs, &v["orexpr"]["lhs"])?;
+            match_expr(rhs, &v["orexpr"]["rhs"])
+        }
     }
 }
 
@@ -324,8 +331,8 @@ fn match_expr_opt(s: &Span, e: &Option<Ref<Expr>>, v: &Value) -> Result<()> {
 
 fn match_bin_op(s: &Span, op: &BinOp, v: &Value) -> Result<()> {
     match (op, v) {
-        (BinOp::And, Value::String(s)) if s.as_ref() == "&" => Ok(()),
-        (BinOp::Or, Value::String(s)) if s.as_ref() == "|" => Ok(()),
+        (BinOp::Intersection, Value::String(s)) if s.as_ref() == "&" => Ok(()),
+        (BinOp::Union, Value::String(s)) if s.as_ref() == "|" => Ok(()),
         _ => bail!(
             "{}",
             s.source.message(

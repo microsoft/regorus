@@ -385,6 +385,11 @@ fn yaml_test_impl(file: &str) -> Result<()> {
 }
 
 fn yaml_test(file: &str) -> Result<()> {
+    #[cfg(not(feature = "rego-extensions"))]
+    if file.contains("rego-extensions") {
+        return Ok(());
+    }
+
     match yaml_test_impl(file) {
         Ok(_) => Ok(()),
         Err(e) => {

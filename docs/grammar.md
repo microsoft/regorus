@@ -61,9 +61,9 @@ in-expr          ::= in-expr 'in' bool-expr
 bool-expr        ::= bool-expr bool-op or-expr
                  | or-expr
 bool-op          ::= '<' | '<=' | '==' | '>=' | '>' | '!='
-or-expr          ::= or-expr '|' and-expr
-                 | and-expr
-and-expr         ::= and-expr '&' arith-expr
+set-union-expr   ::= set-union-expr '|' set-intersection-expr
+                 | set-intersection-expr
+set-intersection-expr ::= set-intersection-expr '&' arith-expr
                  | arith-expr
 arith-expr       ::= arith-expr ('+' | '-') mul-div-expr
                  | mul-div-expr

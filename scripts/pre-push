@@ -30,6 +30,11 @@ if [ -f Cargo.toml ]; then
    cargo test -r --test aci
    cargo test -r --test kata
 
+   # Ensure that all tests pass with extensions
+   cargo test -r --features rego-extensions
+   cargo test -r --test aci rego-extensions
+   cargo test -r --test kata rego-extensions
+
    # Ensure that OPA conformance tests don't regress.
-   cargo test -r --features opa-testutil,serde_json/arbitrary_precision --test opa -- $(tr '\n' ' ' < tests/opa.passing)
+   cargo test -r --features opa-testutil,serde_json/arbitrary_precision,rego-extensions --test opa -- $(tr '\n' ' ' < tests/opa.passing)
 fi
