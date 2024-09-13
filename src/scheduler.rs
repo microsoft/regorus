@@ -258,6 +258,12 @@ pub fn traverse(expr: &Ref<Expr>, f: &mut dyn FnMut(&Ref<Expr>) -> Result<bool>)
             traverse(rhs, f)?;
         }
 
+        #[cfg(feature = "rego-extensions")]
+        OrExpr { lhs, rhs, .. } => {
+            traverse(lhs, f)?;
+            traverse(rhs, f)?;
+        }
+
         Membership {
             key,
             value,

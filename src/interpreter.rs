@@ -484,6 +484,12 @@ impl Interpreter {
                 self.hoist_loops_impl(rhs, loops);
             }
 
+            #[cfg(feature = "rego-extensions")]
+            OrExpr { lhs, rhs, .. } => {
+                self.hoist_loops_impl(lhs, loops);
+                self.hoist_loops_impl(rhs, loops);
+            }
+
             Membership {
                 key,
                 value,
@@ -554,8 +560,8 @@ impl Interpreter {
         }
 
         match op {
-            BinOp::Or => builtins::sets::union(lhs, rhs, lhs_value, rhs_value),
-            BinOp::And => builtins::sets::intersection(lhs, rhs, lhs_value, rhs_value),
+            BinOp::Union => builtins::sets::union(lhs, rhs, lhs_value, rhs_value),
+            BinOp::Intersection => builtins::sets::intersection(lhs, rhs, lhs_value, rhs_value),
         }
     }
 
@@ -2831,6 +2837,15 @@ impl Interpreter {
                 ..
             } => self.eval_membership(key, value, collection),
 
+            #[cfg(feature = "rego-extensions")]
+            Expr::OrExpr { lhs, rhs, .. } => {
+                let lhs = self.eval_expr(lhs)?;
+                match lhs {
+                    Value::Bool(false) | Value::Null | Value::Undefined => self.eval_expr(rhs),
+                    _ => Ok(lhs),
+                }
+            }
+
             // Creation expression
             Expr::Array { items, .. } => self.eval_array(items),
             Expr::Object { fields, .. } => self.eval_object(fields),
@@ -3126,6 +3141,8 @@ impl Interpreter {
             ArithExpr { span, .. } => ("arithexpr", span),
             AssignExpr { span, .. } => ("assignexpr", span),
             Membership { span, .. } => ("membership", span),
+            #[cfg(feature = "rego-extensions")]
+            OrExpr { span, .. } => ("orexpr", span),
         };
 
         Err(span.error(format!("invalid `{kind}` in default value").as_str()))

@@ -10,8 +10,8 @@ use core::{cmp, fmt, ops::Deref};
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub enum BinOp {
-    And,
-    Or,
+    Intersection,
+    Union,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -209,6 +209,13 @@ pub enum Expr {
         value: Ref<Expr>,
         collection: Ref<Expr>,
     },
+
+    #[cfg(feature = "rego-extensions")]
+    OrExpr {
+        span: Span,
+        lhs: Ref<Expr>,
+        rhs: Ref<Expr>,
+    },
 }
 
 impl Expr {
@@ -232,6 +239,8 @@ impl Expr {
             | ArithExpr { span, .. }
             | AssignExpr { span, .. }
             | Membership { span, .. } => span,
+            #[cfg(feature = "rego-extensions")]
+            OrExpr { span, .. } => span,
         }
     }
 }

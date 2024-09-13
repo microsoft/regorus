@@ -1,0 +1,52 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: basic
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        x := data.foo or 2 # undefined lhs
+        y := false or 3 # false rhs
+        z := null or 4
+        a := data.foo or false or null or 5
+        b := startswith("a", "b") or startswith("a", "a")
+        c := 5 in [1,2] or 6 in [6]
+        d := x if {
+           x := false or [1, 2][_]
+           x > 1
+        }
+        e if 1 > 2 or false
+    query: data.test
+    want_result:
+      x: 2
+      y: 3
+      z: 4
+      a: 5
+      b: true
+      c: true
+      d: 2
+  - note: Azure Policy
+    modules:
+      - |
+        package policy
+
+        effect := parameters.effect if {
+          resource.type == "Microsoft.Storage/storageaccounts"
+          resource.properties.networkAcls.defaultAction == "Deny" 
+            or count(resource.properties.networkAcls.ipRules) >= 1
+        }
+
+        resource := input.resource
+        parameters := input.parameters
+    input:
+      resource:
+        type: "Microsoft.Storage/storageaccounts"
+        properties:
+        networksAcls:
+          ipRules: ["rule1", "rule2"]
+      parameters:
+        effect: "Deny"
+    query: data.policy.effect
+    want_result: "Deny"

@@ -1,0 +1,33 @@
+name: tests/release
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build only std
+      run: cargo build -r --example regorus --no-default-features --features "std,rego-extensions"
+    - name: Doc Tests
+      run: cargo test -r --doc --features rego-extensions
+    - name: Run tests
+      run: cargo test -r --features rego-extensions
+    - name: Run example
+      run: cargo run --example regorus --features rego-extensions -- eval -d examples/server/allowed_server.rego -i examples/server/input.json data.example
+    - name: Run tests (ACI)
+      run: cargo test -r --test aci --features rego-extensions
+    - name: Run tests (KATA)
+      run: cargo test -r --test kata --features rego-extensions
+    - name: Run tests (OPA Conformance)
+      run: >-
+        cargo test -r --test opa --features opa-testutil,serde_json/arbitrary_precision,rego-extensions  -- $(tr '\n' ' ' < tests/opa.passing)

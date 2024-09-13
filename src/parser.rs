@@ -499,7 +499,7 @@ impl<'source> Parser<'source> {
 
     fn parse_parens_expr(&mut self) -> Result<Expr> {
         self.next_token()?;
-        let expr = self.parse_membership_expr()?;
+        let expr = self.parse_expr()?;
         self.expect(")", "while parsing parenthesized expression")?;
         //TODO: if needed introduce a parens-expr node or adjust expr's span.
         Ok(expr)
@@ -700,7 +700,7 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn parse_and_expr(&mut self) -> Result<Expr> {
+    fn parse_set_intersection_expr(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let mut expr = self.parse_arith_expr()?;
 
@@ -712,7 +712,7 @@ impl<'source> Parser<'source> {
             span.end = self.end;
             expr = Expr::BinExpr {
                 span,
-                op: BinOp::And,
+                op: BinOp::Intersection,
                 lhs: Ref::new(expr),
                 rhs: Ref::new(right),
             };
@@ -720,19 +720,19 @@ impl<'source> Parser<'source> {
         Ok(expr)
     }
 
-    fn parse_or_expr(&mut self) -> Result<Expr> {
+    fn parse_set_union_expr(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
-        let mut expr = self.parse_and_expr()?;
+        let mut expr = self.parse_set_intersection_expr()?;
 
         while self.token_text() == "|" {
             let mut span = self.tok.1.clone();
             span.start = start;
             self.next_token()?;
-            let right = self.parse_and_expr()?;
+            let right = self.parse_set_intersection_expr()?;
             span.end = self.end;
             expr = Expr::BinExpr {
                 span,
-                op: BinOp::Or,
+                op: BinOp::Union,
                 lhs: Ref::new(expr),
                 rhs: Ref::new(right),
             };
@@ -742,7 +742,7 @@ impl<'source> Parser<'source> {
 
     fn parse_bool_expr(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
-        let mut expr = self.parse_or_expr()?;
+        let mut expr = self.parse_set_union_expr()?;
         loop {
             let mut span = self.tok.1.clone();
             span.start = start;
@@ -756,7 +756,7 @@ impl<'source> Parser<'source> {
                 _ => break,
             };
             self.next_token()?;
-            let right = self.parse_or_expr()?;
+            let right = self.parse_set_union_expr()?;
             span.end = self.end;
             expr = Expr::BoolExpr {
                 span,
@@ -811,6 +811,32 @@ impl<'source> Parser<'source> {
         Ok(expr)
     }
 
+    pub fn parse_expr(&mut self) -> Result<Expr> {
+        #[cfg(feature = "rego-extensions")]
+        return self.parse_or_expr();
+
+        #[cfg(not(feature = "rego-extensions"))]
+        return self.parse_membership_expr();
+    }
+
+    #[cfg(feature = "rego-extensions")]
+    pub fn parse_or_expr(&mut self) -> Result<Expr> {
+        let start = self.tok.1.start;
+        let mut expr = self.parse_membership_expr()?;
+        while self.token_text() == "or" {
+            let mut span = self.tok.1.clone();
+            span.start = start;
+            self.next_token()?;
+            let rhs = self.parse_membership_expr()?;
+            expr = Expr::OrExpr {
+                span,
+                lhs: Ref::new(expr),
+                rhs: Ref::new(rhs),
+            };
+        }
+        Ok(expr)
+    }
+
     pub fn parse_membership_expr(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let mut expr = self.parse_bool_expr()?;
@@ -851,12 +877,12 @@ impl<'source> Parser<'source> {
             ":=" => AssignOp::ColEq,
             _ => {
                 *self = state;
-                return self.parse_membership_expr();
+                return self.parse_expr();
             }
         };
 
         self.next_token()?;
-        let right = self.parse_membership_expr()?;
+        let right = self.parse_expr()?;
         span.end = self.end;
         Ok(Expr::AssignExpr {
             span,
@@ -1048,7 +1074,13 @@ impl<'source> Parser<'source> {
                 // Treat { 1 | 1 } as a comprehension instead of a
                 // set of 1 element.
                 if let Literal::Expr { expr: e, .. } = &stmt.literal {
-                    if matches!(e.as_ref(), Expr::BinExpr { op: BinOp::Or, .. }) {
+                    if matches!(
+                        e.as_ref(),
+                        Expr::BinExpr {
+                            op: BinOp::Union,
+                            ..
+                        }
+                    ) {
                         *self = state;
                         bail!("try parse as comprehension");
                     }
@@ -1116,7 +1148,7 @@ impl<'source> Parser<'source> {
             _ => return Ok(None),
         };
 
-        let expr = Ref::new(self.parse_membership_expr()?);
+        let expr = Ref::new(self.parse_expr()?);
         span.end = self.end;
         Ok(Some(RuleAssign {
             span,
@@ -1264,7 +1296,7 @@ impl<'source> Parser<'source> {
                 }
                 "[" => {
                     self.next_token()?;
-                    let index = self.parse_membership_expr()?;
+                    let index = self.parse_expr()?;
                     span.end = self.end;
                     self.expect("]", "while parsing bracketed reference")?;
                     term = Expr::RefBrack {
@@ -1312,7 +1344,7 @@ impl<'source> Parser<'source> {
             }
             "contains" => {
                 self.next_token()?;
-                let key = Ref::new(self.parse_membership_expr()?);
+                let key = Ref::new(self.parse_expr()?);
                 span.end = self.end;
                 Ok(RuleHead::Set {
                     span,
