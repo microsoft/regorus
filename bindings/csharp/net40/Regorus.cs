@@ -19,185 +19,195 @@ using System.Threading;
 namespace Microsoft.WindowsAzure.Regorus.IaaS
 {
 
-	public class RegorusPolicyEngine : ICloneable, IDisposable
-	{
-	unsafe private RegorusFFI.RegorusEngine* E;
-	
-	public RegorusPolicyEngine()
-	{
-		unsafe
-	    {
-		E = RegorusFFI.API.regorus_engine_new();
-	    }
-	}
+    public class RegorusPolicyEngine : ICloneable, IDisposable
+    {
+        unsafe private RegorusFFI.RegorusEngine* E;
+
+        public RegorusPolicyEngine()
+        {
+            unsafe
+            {
+                E = RegorusFFI.API.regorus_engine_new();
+            }
+        }
 
 
-	public void Dispose()
-	{
-		unsafe
-		{
-			if (E != null)
-			{
-				RegorusFFI.API.regorus_engine_drop(E);
-				// to avoid Dispose() being called multiple times by mistake.
-				E = null;
-			}
+        public void Dispose()
+        {
+            unsafe
+            {
+                if (E != null)
+                {
+                    RegorusFFI.API.regorus_engine_drop(E);
+                    // to avoid Dispose() being called multiple times by mistake.
+                    E = null;
+                }
 
-		}
+            }
 
-	}
+        }
 
-	public object Clone()
-	{
-	    var clone = (RegorusPolicyEngine)this.MemberwiseClone();
-	    unsafe
-	    {
-		clone.E = RegorusFFI.API.regorus_engine_clone(E);
-	    }
-	    return clone;
+        public object Clone()
+        {
+            var clone = (RegorusPolicyEngine)this.MemberwiseClone();
+            unsafe
+            {
+                clone.E = RegorusFFI.API.regorus_engine_clone(E);
+            }
+            return clone;
 
-	}
+        }
 
-	public void AddPolicy(string path, string rego)
-	{
-	    var pathBytes = Encoding.UTF8.GetBytes(path);
-	    var regoBytes = Encoding.UTF8.GetBytes(rego);
-	    
-	    unsafe
-	    {
-		fixed (byte* pathPtr = pathBytes)
-		{
-		    fixed(byte* regoPtr = regoBytes)
-		    {
-			CheckAndDropResult(RegorusFFI.API.regorus_engine_add_policy(E, pathPtr, regoPtr));
-		    }
-		}		
-	    }
-	}
+        byte[] NullTerminatedUTF8Bytes(string s)
+        {
+            return Encoding.UTF8.GetBytes(s + char.MinValue);
+        }
 
-	public void AddPolicyFromFile(string path)
-	{
-	    var pathBytes = Encoding.UTF8.GetBytes(path);
-	    
-	    unsafe
-	    {
-		fixed (byte* pathPtr = pathBytes)
-		{
-		    CheckAndDropResult(RegorusFFI.API.regorus_engine_add_policy_from_file(E, pathPtr));
-		}		
-	    }
-	}
-	
-	public void AddPolicyFromPath(string path)
-	{
-		if (!Directory.Exists(path))
-		{
-			return;
-		}
+        public void AddPolicy(string path, string rego)
+        {
+            var pathBytes = NullTerminatedUTF8Bytes(path);
+            var regoBytes = NullTerminatedUTF8Bytes(rego);
 
-		string[] regoFiles = Directory.GetFiles(path, "*.rego", SearchOption.AllDirectories);
-		foreach (string file in regoFiles)
-		{
-			AddPolicyFromFile(file);
-		}
-	}
+            unsafe
+            {
+                fixed (byte* pathPtr = pathBytes)
+                {
+                    fixed (byte* regoPtr = regoBytes)
+                    {
+                        CheckAndDropResult(RegorusFFI.API.regorus_engine_add_policy(E, pathPtr, regoPtr));
+                    }
+                }
+            }
+        }
 
-	public void AddDataJson(string data)
-	{
-	    var dataBytes = Encoding.UTF8.GetBytes(data);
-	    
-	    unsafe
-	    {
-		fixed (byte* dataPtr = dataBytes)
-		{
-		    CheckAndDropResult(RegorusFFI.API.regorus_engine_add_data_json(E, dataPtr));
+        public void AddPolicyFromFile(string path)
+        {
+            var pathBytes = NullTerminatedUTF8Bytes(path);
 
-		}		
-	    }
-	}
-	
-	public void AddDataFromJsonFile(string path)
-	{
-	    var pathBytes = Encoding.UTF8.GetBytes(path);
-	    
-	    unsafe
-	    {
-		fixed (byte* pathPtr = pathBytes)
-		{
-		    CheckAndDropResult(RegorusFFI.API.regorus_engine_add_data_from_json_file(E, pathPtr));
+            unsafe
+            {
+                fixed (byte* pathPtr = pathBytes)
+                {
+                    CheckAndDropResult(RegorusFFI.API.regorus_engine_add_policy_from_file(E, pathPtr));
+                }
+            }
+        }
 
-		}		
-	    }
-	}
-	
-	public void SetInputJson(string input)
-	{
-	    var inputBytes = Encoding.UTF8.GetBytes(input);
-	    
-	    unsafe
-	    {
-		fixed (byte* inputPtr = inputBytes)
-		{
-		    CheckAndDropResult(RegorusFFI.API.regorus_engine_set_input_json(E, inputPtr));
+        public void AddPolicyFromPath(string path)
+        {
+            if (!Directory.Exists(path))
+            {
+                return;
+            }
 
-		}		
-	    }
-	}
-	
-	public void SetInputFromJsonFile(string path)
-	{
-	    var pathBytes = Encoding.UTF8.GetBytes(path);
-	    
-	    unsafe
-	    {
-		fixed (byte* pathPtr = pathBytes)
-		{
-		    CheckAndDropResult(RegorusFFI.API.regorus_engine_set_input_from_json_file(E, pathPtr));
+            string[] regoFiles = Directory.GetFiles(path, "*.rego", SearchOption.AllDirectories);
+            foreach (string file in regoFiles)
+            {
+                AddPolicyFromFile(file);
+            }
+        }
 
-		}		
-	    }
-	}
-	
-	public string EvalQuery(string query)
-	{
-	    var queryBytes = Encoding.UTF8.GetBytes(query);
+        public void AddDataJson(string data)
+        {
+            var dataBytes = NullTerminatedUTF8Bytes(data);
 
-	    var resultJson = "";
-	    unsafe
-	    {
-		fixed (byte* queryPtr = queryBytes)
-		{
-		    var result = RegorusFFI.API.regorus_engine_eval_query(E, queryPtr);
-		    if (result.status == RegorusFFI.RegorusStatus.RegorusStatusOk) {
-			if (result.output != null) {
-			    resultJson = System.Runtime.InteropServices.Marshal.PtrToStringAnsi((IntPtr)result.output);
-			}
-			RegorusFFI.API.regorus_result_drop(result);
-		    } else {
-			CheckAndDropResult(result);
-		    }
-		    
-		}		
-	    }
-	    if (resultJson != null) {
-		return resultJson;
-	    } else {
-		return "";
-	    }
-	}
-	
-	void CheckAndDropResult(RegorusFFI.RegorusResult result)
-	{
-	    if (result.status != RegorusFFI.RegorusStatus.RegorusStatusOk) {
-		unsafe {
-		    var message = System.Runtime.InteropServices.Marshal.PtrToStringAnsi((IntPtr)result.error_message);
-		    var ex = new Exception(message);
-		    RegorusFFI.API.regorus_result_drop(result);
-		    throw ex;
-		}
-	    }
-	    RegorusFFI.API.regorus_result_drop(result);		    
-	}
+            unsafe
+            {
+                fixed (byte* dataPtr = dataBytes)
+                {
+                    CheckAndDropResult(RegorusFFI.API.regorus_engine_add_data_json(E, dataPtr));
+                }
+            }
+        }
+
+        public void AddDataFromJsonFile(string path)
+        {
+            var pathBytes = NullTerminatedUTF8Bytes(path);
+
+            unsafe
+            {
+                fixed (byte* pathPtr = pathBytes)
+                {
+                    CheckAndDropResult(RegorusFFI.API.regorus_engine_add_data_from_json_file(E, pathPtr));
+
+                }
+            }
+        }
+
+        public void SetInputJson(string input)
+        {
+            var inputBytes = NullTerminatedUTF8Bytes(input);
+
+            unsafe
+            {
+                fixed (byte* inputPtr = inputBytes)
+                {
+                    CheckAndDropResult(RegorusFFI.API.regorus_engine_set_input_json(E, inputPtr));
+                }
+            }
+        }
+
+        public void SetInputFromJsonFile(string path)
+        {
+            var pathBytes = NullTerminatedUTF8Bytes(path);
+
+            unsafe
+            {
+                fixed (byte* pathPtr = pathBytes)
+                {
+                    CheckAndDropResult(RegorusFFI.API.regorus_engine_set_input_from_json_file(E, pathPtr));
+                }
+            }
+        }
+
+        public string EvalQuery(string query)
+        {
+            var queryBytes = NullTerminatedUTF8Bytes(query);
+
+            var resultJson = "";
+            unsafe
+            {
+                fixed (byte* queryPtr = queryBytes)
+                {
+                    var result = RegorusFFI.API.regorus_engine_eval_query(E, queryPtr);
+                    if (result.status == RegorusFFI.RegorusStatus.RegorusStatusOk)
+                    {
+                        if (result.output != null)
+                        {
+                            resultJson = System.Runtime.InteropServices.Marshal.PtrToStringAnsi((IntPtr)result.output);
+                        }
+                        RegorusFFI.API.regorus_result_drop(result);
+                    }
+                    else
+                    {
+                        CheckAndDropResult(result);
+                    }
+                }
+            }
+            if (resultJson != null)
+            {
+                return resultJson;
+            }
+            else
+            {
+                return "";
+            }
+        }
+
+        void CheckAndDropResult(RegorusFFI.RegorusResult result)
+        {
+            if (result.status != RegorusFFI.RegorusStatus.RegorusStatusOk)
+            {
+                unsafe
+                {
+                    var message = System.Runtime.InteropServices.Marshal.PtrToStringAnsi((IntPtr)result.error_message);
+                    var ex = new Exception(message);
+                    RegorusFFI.API.regorus_result_drop(result);
+                    throw ex;
+                }
+            }
+            RegorusFFI.API.regorus_result_drop(result);
+        }
 
     }
 }
