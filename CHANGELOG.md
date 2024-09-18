@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5](https://github.com/microsoft/regorus/compare/regorus-v0.2.4...regorus-v0.2.5) - 2024-09-18
+
+### Added
+- or keyword ([#315](https://github.com/microsoft/regorus/pull/315))
+
+### Fixed
+- Null terminate C# strings in Rust boundary ([#318](https://github.com/microsoft/regorus/pull/318))
+- Update readme with correct path to example policy ([#312](https://github.com/microsoft/regorus/pull/312))
+
+### Other
+- Update jsonschema requirement from 0.18.0 to 0.19.1 ([#317](https://github.com/microsoft/regorus/pull/317))
+- Update chrono-tz requirement from 0.8.5 to 0.10.0 ([#316](https://github.com/microsoft/regorus/pull/316))
+- Add tests for builtin strings::lower method ([#313](https://github.com/microsoft/regorus/pull/313))
+- Add tests for builtin strings::indexof method ([#311](https://github.com/microsoft/regorus/pull/311))
+
 ## [0.2.4](https://github.com/microsoft/regorus/compare/regorus-v0.2.3...regorus-v0.2.4) - 2024-09-04
 
 ### Added
