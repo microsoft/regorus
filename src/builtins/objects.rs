@@ -391,14 +391,14 @@ fn object_union_n(
 }
 
 #[cfg(feature = "jsonschema")]
-fn compile_json_schema(param: &Ref<Expr>, arg: &Value) -> Result<jsonschema::JSONSchema> {
+fn compile_json_schema(param: &Ref<Expr>, arg: &Value) -> Result<jsonschema::Validator> {
     let schema_str = match arg {
         Value::String(schema_str) => schema_str.as_ref().to_string(),
         _ => arg.to_json_str()?,
     };
 
     if let Ok(schema) = serde_json::from_str(&schema_str) {
-        match jsonschema::JSONSchema::compile(&schema) {
+        match jsonschema::validator_for(&schema) {
             Ok(schema) => return Ok(schema),
             Err(e) => bail!(e.to_string()),
         }
