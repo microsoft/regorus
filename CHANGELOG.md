@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6](https://github.com/microsoft/regorus/compare/regorus-v0.2.5...regorus-v0.2.6) - 2024-10-09
+
+### Added
+- integer conversion functions for Value ([#328](https://github.com/microsoft/regorus/pull/328))
+
+### Other
+- update to OPA v0.69.0 ([#327](https://github.com/microsoft/regorus/pull/327))
+- *(deps)* update jsonschema requirement from 0.21.0 to 0.22.3 ([#326](https://github.com/microsoft/regorus/pull/326))
+- *(deps)* update jsonschema requirement from 0.20.0 to 0.21.0 ([#325](https://github.com/microsoft/regorus/pull/325))
+- update to jsonschema 0.20.0 ([#323](https://github.com/microsoft/regorus/pull/323))
+
 ## [0.2.5](https://github.com/microsoft/regorus/compare/regorus-v0.2.4...regorus-v0.2.5) - 2024-09-18
 
 ### Added
