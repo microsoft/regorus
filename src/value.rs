@@ -904,6 +904,180 @@ impl Value {
         }
     }
 
+    /// Cast value to [`& u32`] if [`Value::Number`].
+    ///
+    /// Error is raised if the value is not a number or if the numeric value
+    /// does not fit in a u32.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let v = Value::from(10);
+    /// assert_eq!(v.as_u32()?, 10u32);
+    ///
+    /// let v = Value::from(-10);
+    /// assert!(v.as_u32().is_err());
+    /// # Ok(())
+    /// # }
+    pub fn as_u32(&self) -> Result<u32> {
+        match self {
+            Value::Number(b) => {
+                if let Some(n) = b.as_u64() {
+                    if let Ok(v) = u32::try_from(n) {
+                        return Ok(v);
+                    }
+                }
+                bail!("not a u32");
+            }
+            _ => Err(anyhow!("not a u32")),
+        }
+    }
+
+    /// Cast value to [`& i32`] if [`Value::Number`].
+    ///
+    /// Error is raised if the value is not a number or if the numeric value
+    /// does not fit in a i32.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let v = Value::from(-10);
+    /// assert_eq!(v.as_i32()?, -10i32);
+    ///
+    /// let v = Value::from(2_147_483_648i64);
+    /// assert!(v.as_i32().is_err());
+    /// # Ok(())
+    /// # }
+    pub fn as_i32(&self) -> Result<i32> {
+        match self {
+            Value::Number(b) => {
+                if let Some(n) = b.as_i64() {
+                    if let Ok(v) = i32::try_from(n) {
+                        return Ok(v);
+                    }
+                }
+                bail!("not an i32");
+            }
+            _ => Err(anyhow!("not an i32")),
+        }
+    }
+
+    /// Cast value to [`& u16`] if [`Value::Number`].
+    ///
+    /// Error is raised if the value is not a number or if the numeric value
+    /// does not fit in a u16.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let v = Value::from(10);
+    /// assert_eq!(v.as_u16()?, 10u16);
+    ///
+    /// let v = Value::from(-10);
+    /// assert!(v.as_u16().is_err());
+    /// # Ok(())
+    /// # }
+    pub fn as_u16(&self) -> Result<u16> {
+        match self {
+            Value::Number(b) => {
+                if let Some(n) = b.as_u64() {
+                    if let Ok(v) = u16::try_from(n) {
+                        return Ok(v);
+                    }
+                }
+                bail!("not a u16");
+            }
+            _ => Err(anyhow!("not a u16")),
+        }
+    }
+
+    /// Cast value to [`& i16`] if [`Value::Number`].
+    ///
+    /// Error is raised if the value is not a number or if the numeric value
+    /// does not fit in a i16.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let v = Value::from(-10);
+    /// assert_eq!(v.as_i16()?, -10i16);
+    ///
+    /// let v = Value::from(32768i64);
+    /// assert!(v.as_i16().is_err());
+    /// # Ok(())
+    /// # }
+    pub fn as_i16(&self) -> Result<i16> {
+        match self {
+            Value::Number(b) => {
+                if let Some(n) = b.as_i64() {
+                    if let Ok(v) = i16::try_from(n) {
+                        return Ok(v);
+                    }
+                }
+                bail!("not an i16");
+            }
+            _ => Err(anyhow!("not an i16")),
+        }
+    }
+
+    /// Cast value to [`& u8`] if [`Value::Number`].
+    ///
+    /// Error is raised if the value is not a number or if the numeric value
+    /// does not fit in a u8.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let v = Value::from(10);
+    /// assert_eq!(v.as_u8()?, 10u8);
+    ///
+    /// let v = Value::from(-10);
+    /// assert!(v.as_u8().is_err());
+    /// # Ok(())
+    /// # }
+    pub fn as_u8(&self) -> Result<u8> {
+        match self {
+            Value::Number(b) => {
+                if let Some(n) = b.as_u64() {
+                    if let Ok(v) = u8::try_from(n) {
+                        return Ok(v);
+                    }
+                }
+                bail!("not a u8");
+            }
+            _ => Err(anyhow!("not a u8")),
+        }
+    }
+
+    /// Cast value to [`& i8`] if [`Value::Number`].
+    ///
+    /// Error is raised if the value is not a number or if the numeric value
+    /// does not fit in a i8.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let v = Value::from(-10);
+    /// assert_eq!(v.as_i8()?, -10i8);
+    ///
+    /// let v = Value::from(128);
+    /// assert!(v.as_i8().is_err());
+    /// # Ok(())
+    /// # }
+    pub fn as_i8(&self) -> Result<i8> {
+        match self {
+            Value::Number(b) => {
+                if let Some(n) = b.as_i64() {
+                    if let Ok(v) = i8::try_from(n) {
+                        return Ok(v);
+                    }
+                }
+                bail!("not an i8");
+            }
+            _ => Err(anyhow!("not an i8")),
+        }
+    }
+
     /// Cast value to [`& f64`] if [`Value::Number`].
     /// Error is raised if the value is not a number or if the numeric value
     /// does not fit in a i64.
