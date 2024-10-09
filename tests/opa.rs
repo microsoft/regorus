@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 const OPA_REPO: &str = "https://github.com/open-policy-agent/opa";
-const OPA_BRANCH: &str = "v0.68.0";
+const OPA_BRANCH: &str = "v0.69.0";
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
@@ -174,7 +174,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
             continue;
         }
 
-        let is_rego_v1_test = path_dir_str.starts_with("v1/");
+        let is_rego_v1_test = path_dir_str.starts_with("v1/") || path_dir.starts_with("v1\\");
         let entry = status.entry(path_dir_str).or_insert((0, 0, 0));
 
         let yaml_str = std::fs::read_to_string(&path_str)?;

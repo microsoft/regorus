@@ -322,7 +322,8 @@ impl Value {
     /// // Convert the value back to json.
     /// let json_str = value.to_json_str()?;
     ///
-    /// assert_eq!(json_str.trim(), std::fs::read_to_string("tests/aci/input.json")?.trim());
+    /// assert_eq!(json_str.trim(),
+    ///            std::fs::read_to_string("tests/aci/input.json")?.trim().replace("\r\n", "\n"));
     /// # Ok(())
     /// # }
     /// ```
@@ -345,7 +346,8 @@ impl Value {
     /// // Convert the value back to json.
     /// let json_str = value.to_json_str()?;
     ///
-    /// assert_eq!(json_str.trim(), std::fs::read_to_string("tests/aci/input.json")?.trim());
+    /// assert_eq!(json_str.trim(),
+    ///            std::fs::read_to_string("tests/aci/input.json")?.trim().replace("\r\n", "\n"));
     /// # Ok(())
     /// # }
     /// ```
