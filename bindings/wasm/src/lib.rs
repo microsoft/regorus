@@ -191,6 +191,7 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[wasm_bindgen_test]
+    #[allow(dead_code)]
     pub fn basic() -> Result<(), JsValue> {
         let mut engine = crate::Engine::new();
         engine.setEnableCoverage(true);
