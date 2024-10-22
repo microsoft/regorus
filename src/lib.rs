@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![allow(unknown_lints)]
 #![allow(clippy::doc_lazy_continuation)]
 // Use README.md as crate documentation.
