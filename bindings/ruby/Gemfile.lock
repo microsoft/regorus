@@ -23,8 +23,7 @@ GEM
     rake-compiler-dock (1.5.1)
     rb_sys (0.9.99)
     regexp_parser (2.9.2)
-    rexml (3.3.6)
-      strscan
+    rexml (3.3.9)
     rubocop (1.65.0)
       json (~> 2.3)
       language_server-protocol (>= 3.17.0)
@@ -44,7 +43,6 @@ GEM
     rubocop-rake (0.6.0)
       rubocop (~> 1.0)
     ruby-progressbar (1.13.0)
-    strscan (3.1.0)
     unicode-display_width (2.5.0)
 
 PLATFORMS
