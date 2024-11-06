@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8](https://github.com/microsoft/regorus/compare/regorus-v0.2.7...regorus-v0.2.8) - 2024-11-06
+
+### Other
+- *(deps)* update jsonschema requirement from 0.24.0 to 0.26.1 ([#343](https://github.com/microsoft/regorus/pull/343))
+- Update to OPA v0.70.0 ([#341](https://github.com/microsoft/regorus/pull/341))
+
 ## [0.2.7](https://github.com/microsoft/regorus/compare/regorus-v0.2.6...regorus-v0.2.7) - 2024-10-22
 
 ### Fixed
