@@ -445,10 +445,7 @@ fn json_match_schema(
         match compile_json_schema(&params[1], &args[1]) {
             Ok(schema) => match schema.validate(&document) {
                 Ok(_) => [Value::Bool(true), Value::Null],
-                Err(e) => [
-                    Value::Bool(false),
-                    Value::from_array(e.map(|e| Value::String(e.to_string().into())).collect()),
-                ],
+                Err(e) => [Value::Bool(false), Value::from(e.to_string())],
             },
             Err(e) if strict => bail!(params[1]
                 .span()
