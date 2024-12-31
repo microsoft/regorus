@@ -158,7 +158,8 @@ fn parse_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> 
     let layout = ensure_string(name, &params[0], &args[0])?;
     let value = ensure_string(name, &params[1], &args[1])?;
 
-    let datetime = compat::parse(layout_with_predefined_formats(&layout), &value)?;
+    let datetime = compat::parse(layout_with_predefined_formats(&layout), &value)
+        .map_err(|err| anyhow::anyhow!("Failed to parse datetime: {}", err))?;
     safe_timestamp_nanos(span, strict, datetime.timestamp_nanos_opt())
 }
 
@@ -173,7 +174,8 @@ fn parse_rfc3339_ns(
 
     let value = ensure_string(name, &params[0], &args[0])?;
 
-    let datetime = DateTime::parse_from_rfc3339(&value)?;
+    let datetime = DateTime::parse_from_rfc3339(&value)
+        .map_err(|err| anyhow::anyhow!("Failed to parse datetime: {}", err))?;
     safe_timestamp_nanos(span, strict, datetime.timestamp_nanos_opt())
 }
 

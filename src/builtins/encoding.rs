@@ -337,11 +337,11 @@ fn yaml_is_valid(
 fn yaml_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "yaml.marshal";
     ensure_args_count(span, name, params, args, 1)?;
-    Ok(Value::String(
-        serde_yaml::to_string(&args[0])
-            .with_context(|| span.error("could not serialize to yaml"))?
-            .into(),
-    ))
+
+    let serialized = serde_yaml::to_string(&args[0])
+        .map_err(|err| span.error(&format!("could not serialize to yaml: {}", err)))?;
+
+    Ok(Value::String(serialized.into()))
 }
 
 #[cfg(feature = "yaml")]

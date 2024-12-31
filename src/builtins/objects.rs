@@ -439,7 +439,8 @@ fn json_match_schema(
     ensure_args_count(span, name, params, args, 2)?;
 
     // The following is expected to succeed.
-    let document: serde_json::Value = serde_json::from_str(&args[0].to_json_str()?)?;
+    let document: serde_json::Value = serde_json::from_str(&args[0].to_json_str()?)
+        .map_err(|err| span.error(&format!("Failed to parse JSON: {}", err)))?;
 
     Ok(Value::from_array(
         match compile_json_schema(&params[1], &args[1]) {

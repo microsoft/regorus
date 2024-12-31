@@ -25,7 +25,11 @@ fn sleep(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
     let dur = time::compat::parse_duration(val.as_ref())
         .map_err(|e| params[0].span().error(&format!("{e}")))?;
 
-    thread::sleep(dur.to_std()?);
+    let std_dur = dur
+        .to_std()
+        .map_err(|err| anyhow::anyhow!("Failed to convert to std::time::Duration: {err}"))?;
+
+    thread::sleep(std_dur);
 
     Ok(Value::Null)
 }
