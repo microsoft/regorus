@@ -358,7 +358,7 @@ where
 }
 
 /// Implement clone for a boxed extension using [`Extension::clone_box`].
-impl<'a> Clone for Box<dyn 'a + Extension> {
+impl Clone for Box<dyn '_ + Extension> {
     fn clone(&self) -> Self {
         (**self).clone_box()
     }
@@ -405,7 +405,6 @@ pub mod coverage {
         /// Lines that are not covered are red.
         ///
         /// <img src="https://github.com/microsoft/regorus/blob/main/docs/coverage.png?raw=true">
-
         pub fn to_string_pretty(&self) -> anyhow::Result<String> {
             let mut s = String::default();
             s.push_str("COVERAGE REPORT:\n");

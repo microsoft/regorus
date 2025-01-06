@@ -266,7 +266,7 @@ struct GoTimeFormatItems<'a> {
     mode: GoTimeFormatItemsMode,
 }
 
-impl<'a> GoTimeFormatItems<'a> {
+impl GoTimeFormatItems<'_> {
     fn parse(reminder: &str) -> GoTimeFormatItems {
         GoTimeFormatItems {
             reminder,

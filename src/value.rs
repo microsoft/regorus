@@ -405,7 +405,9 @@ impl Value {
     #[cfg(feature = "yaml")]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     pub fn from_yaml_str(yaml: &str) -> Result<Value> {
-        Ok(serde_yaml::from_str(yaml)?)
+        let value = serde_yaml::from_str(yaml)
+            .map_err(|err| anyhow::anyhow!("Failed to parse YAML: {}", err))?;
+        Ok(value)
     }
 
     /// Deserialize a value from a file containing YAML.
