@@ -2970,10 +2970,7 @@ impl Interpreter {
             _ => bail!("internal error: rule's context already popped"),
         };
 
-        let result = match result {
-            Ok(r) => r,
-            Err(e) => return Err(e),
-        };
+        let result = result?;
 
         assert_eq!(self.scopes.len(), n_scopes);
 
