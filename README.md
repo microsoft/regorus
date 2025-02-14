@@ -288,7 +288,7 @@ $ cargo test -r --test opa --features opa-testutil,serde_json/arbitrary_precisio
 Currently, Regorus passes all the non-builtin specific tests.
 See [passing tests suites](https://github.com/microsoft/regorus/blob/main/tests/opa.passing).
 
-The following test suites don't pass fully due to mising builtins:
+The following test suites don't pass fully due to missing builtins:
 - `cryptoparsersaprivatekeys`
 - `cryptox509parseandverifycertificates`
 - `cryptox509parsecertificaterequest`
