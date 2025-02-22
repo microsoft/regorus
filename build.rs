@@ -26,5 +26,8 @@ fn main() -> Result<()> {
         println!("cargo:rustc-env=GIT_HASH={}", git_hash);
     }
 
+    // Add this line to force WebAssembly to use the correct random backend
+    println!("cargo:rustc-cfg=getrandom_backend=\"wasm_js\"");
+
     Ok(())
 }
