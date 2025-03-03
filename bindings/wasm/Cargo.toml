@@ -17,8 +17,14 @@ coverage = ["regorus/coverage"]
 
 [dependencies]
 regorus = { path  = "../..", default-features = false, features = ["arc"] }
-serde_json = "1.0.111"
+serde_json = "1.0.140"
 wasm-bindgen = "=0.2.93"
+# Specify uuid as a mandatory dependency so as to enable `js` feature which is now required
+# when targeting wasm32-unknown-unknown.
+uuid = { version = "1.15.1", default-features = false, features = ["v4", "fast-rng", "js"]}
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.40"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(wasm_bindgen_unstable_test_coverage)'] }
