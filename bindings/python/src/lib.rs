@@ -4,6 +4,7 @@ use anyhow::{anyhow, Result};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::*;
+use pyo3::IntoPyObjectExt;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -94,7 +95,7 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
         let mut map = BTreeMap::new();
         let keys = pmap.keys()?;
         let values = pmap.values()?;
-        for i in 0..keys.len()? {
+        for i in 0..keys.len() {
             let key = keys.get_item(i)?;
             let value = values.get_item(i)?;
             map.insert(from(&key)?, from(&value)?);
@@ -108,49 +109,53 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
 }
 
 fn to(mut v: Value, py: Python<'_>) -> Result<PyObject> {
-    Ok(match v {
-        Value::Null => None::<u64>.to_object(py),
+    let obj = match v {
+        Value::Null => None::<u64>.into_bound_py_any(py),
 
         // TODO: Revisit this mapping
-        Value::Undefined => None::<u64>.to_object(py),
+        Value::Undefined => None::<u64>.into_bound_py_any(py),
 
-        Value::Bool(b) => b.to_object(py),
-        Value::String(s) => s.to_object(py),
+        Value::Bool(b) => b.into_bound_py_any(py),
+        Value::String(s) => s.into_bound_py_any(py),
 
         Value::Number(_) => {
             if let Ok(f) = v.as_f64() {
-                f.to_object(py)
+                f.into_bound_py_any(py)
             } else if let Ok(u) = v.as_u64() {
-                u.to_object(py)
+                u.into_bound_py_any(py)
             } else {
-                v.as_i64()?.to_object(py)
+                v.as_i64()?.into_bound_py_any(py)
             }
         }
 
         Value::Array(_) => {
-            let list = PyList::empty_bound(py);
+            let list = PyList::empty(py);
             for v in std::mem::take(v.as_array_mut()?) {
                 list.append(to(v, py)?)?;
             }
-            list.into()
+            list.into_bound_py_any(py)
         }
 
         Value::Set(_) => {
-            let set = PySet::empty_bound(py)?;
+            let set = PySet::empty(py)?;
             for v in std::mem::take(v.as_set_mut()?) {
                 set.add(to(v, py)?)?;
             }
-            set.into()
+            set.into_bound_py_any(py)
         }
 
         Value::Object(_) => {
-            let dict = PyDict::new_bound(py);
+            let dict = PyDict::new(py);
             for (k, v) in std::mem::take(v.as_object_mut()?) {
                 dict.set_item(to(k, py)?, to(v, py)?)?;
             }
-            dict.into()
+            dict.into_bound_py_any(py)
         }
-    })
+    };
+    match obj {
+        Ok(v) => Ok(v.into()),
+        Err(e) => Err(anyhow!("{e}")),
+    }
 }
 
 #[pymethods]
@@ -261,30 +266,30 @@ impl Engine {
     pub fn eval_query(&mut self, query: String, py: Python<'_>) -> Result<PyObject> {
         let results = self.engine.eval_query(query, false)?;
 
-        let rlist = PyList::empty_bound(py);
+        let rlist = PyList::empty(py);
         for result in results.result.into_iter() {
-            let rdict = PyDict::new_bound(py);
+            let rdict = PyDict::new(py);
 
-            let elist = PyList::empty_bound(py);
+            let elist = PyList::empty(py);
             for expr in result.expressions.into_iter() {
-                let edict = PyDict::new_bound(py);
-                edict.set_item("value".to_object(py), to(expr.value, py)?)?;
-                edict.set_item("text".to_object(py), expr.text.as_ref().to_object(py))?;
+                let edict = PyDict::new(py);
+                edict.set_item("value", to(expr.value, py)?)?;
+                edict.set_item("text", expr.text.as_ref())?;
 
-                let ldict = PyDict::new_bound(py);
-                ldict.set_item("row".to_object(py), expr.location.row.to_object(py))?;
-                ldict.set_item("col".to_object(py), expr.location.col.to_object(py))?;
+                let ldict = PyDict::new(py);
+                ldict.set_item("row", expr.location.row)?;
+                ldict.set_item("col", expr.location.col)?;
 
-                edict.set_item("location".to_object(py), ldict)?;
+                edict.set_item("location", ldict)?;
                 elist.append(edict)?;
             }
 
-            rdict.set_item("expressions".to_object(py), elist)?;
-            rdict.set_item("bindings".to_object(py), to(result.bindings, py)?)?;
+            rdict.set_item("expressions", elist)?;
+            rdict.set_item("bindings", to(result.bindings, py)?)?;
             rlist.append(rdict)?;
         }
-        let dict = PyDict::new_bound(py);
-        dict.set_item("result".to_object(py), rlist)?;
+        let dict = PyDict::new(py);
+        dict.set_item("result", rlist)?;
         Ok(dict.into())
     }
 
