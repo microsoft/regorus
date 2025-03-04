@@ -12,7 +12,7 @@ use crate::*;
 use anyhow::{bail, Result};
 
 #[cfg(feature = "std")]
-use rand::{thread_rng, Rng};
+use rand::Rng;
 
 pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("abs", (abs, 1));
@@ -169,8 +169,7 @@ fn intn(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Res
         Some(0) => Value::from(0u64),
         Some(n) => {
             // TODO: bounds checking; arbitrary precision
-            let mut rng = thread_rng();
-            let v = rng.gen_range(0..n);
+            let v = rand::rng().random_range(0..n);
             Value::from(v)
         }
         _ => Value::Undefined,
