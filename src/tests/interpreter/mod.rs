@@ -141,6 +141,7 @@ pub fn eval_file(
     strict: bool,
 ) -> Result<(Vec<Value>, Vec<String>)> {
     let mut engine: Engine = Engine::new();
+    engine.set_rego_v0(true);
     engine.set_strict_builtin_errors(strict);
     engine.set_gather_prints(true);
 

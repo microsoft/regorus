@@ -62,6 +62,13 @@ namespace Microsoft.WindowsAzure.Regorus.IaaS
         {
             return Encoding.UTF8.GetBytes(s + char.MinValue);
         }
+		public void SetRegoV0(bool enable)
+		{
+			unsafe
+			{
+				CheckAndDropResult(RegorusFFI.API.regorus_engine_set_rego_v0(E, enable));
+			}
+		}
 
         public void AddPolicy(string path, string rego)
         {

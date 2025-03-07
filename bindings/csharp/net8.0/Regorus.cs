@@ -51,6 +51,14 @@ namespace Regorus
 			}
 		}
 
+		public void SetRegoV0(bool enable)
+		{
+			unsafe
+			{
+				CheckAndDropResult(RegorusFFI.API.regorus_engine_set_rego_v0(E, enable));
+			}
+		}		
+
 		public string AddPolicyFromFile(string path)
 		{
 			var pathBytes = NullTerminatedUTF8Bytes(path);

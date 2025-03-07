@@ -1,6 +1,6 @@
 [package]
 name = "regorusjs"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 repository = "https://github.com/microsoft/regorus/bindings/wasm"
 description = "WASM bindings for Regorus - a fast, lightweight Rego interpreter written in Rust"

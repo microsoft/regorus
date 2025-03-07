@@ -37,33 +37,37 @@ impl Engine {
             modules: vec![],
             interpreter: Interpreter::new(),
             prepared: false,
-            rego_v1: false,
+            rego_v1: true,
         }
     }
 
-    /// Turn rego.v1 on/off for subsequently added policies.
+    /// Enable rego v0.
     ///
-    /// Explicit import rego.v1 is not needed if set.
-    ///
+    /// Note that regorus now defaults to v1.
     /// ```
     /// # use regorus::*;
     /// # fn main() -> anyhow::Result<()> {
     /// let mut engine = Engine::new();
     ///
-    /// engine.set_rego_v1(true);
+    /// // Enable v0 for old style policies.
+    /// engine.set_rego_v0(true);
+    ///
     /// engine.add_policy(
     ///    "test.rego".to_string(),
     ///    r#"
     ///    package test
-    ///    allow if true # if keyword is automatically imported
+    ///
+    ///    allow { # v0 syntax does not require if keyword
+    ///       1 < 2
+    ///    }
     ///    "#.to_string())?;
     ///
     /// # Ok(())
     /// # }
     /// ```
     ///
-    pub fn set_rego_v1(&mut self, rego_v1: bool) {
-        self.rego_v1 = rego_v1;
+    pub fn set_rego_v0(&mut self, rego_v0: bool) {
+        self.rego_v1 = !rego_v0;
     }
 
     /// Add a policy.
@@ -114,6 +118,8 @@ impl Engine {
     /// # use regorus::*;
     /// # fn main() -> anyhow::Result<()> {
     /// let mut engine = Engine::new();
+    /// // framework.rego does not conform to v1.
+    /// engine.set_rego_v0(true);
     ///
     /// let package = engine.add_policy_from_file("tests/aci/framework.rego")?;
     ///
@@ -139,6 +145,8 @@ impl Engine {
     /// # use regorus::*;
     /// # fn main() -> anyhow::Result<()> {
     /// let mut engine = Engine::new();
+    /// // framework.rego does not conform to v1.
+    /// engine.set_rego_v0(true);
     ///
     /// let _ = engine.add_policy_from_file("tests/aci/framework.rego")?;
     ///
@@ -414,6 +422,7 @@ impl Engine {
     /// let mut engine = Engine::new();
     ///
     /// // Add policies
+    /// engine.set_rego_v0(true);
     /// engine.add_policy_from_file("tests/aci/framework.rego")?;
     /// engine.add_policy_from_file("tests/aci/api.rego")?;
     /// engine.add_policy_from_file("tests/aci/policy.rego")?;
@@ -739,7 +748,7 @@ impl Engine {
     /// engine.add_policy(
     ///   "policy.rego".to_string(),
     ///   r#"package invalid
-    ///      x = y {
+    ///      x = y if {
     ///       # y = do_magic(2)
     ///       do_magic(2, y)  # y is supplied as an out parameter.
     ///     }
@@ -775,7 +784,7 @@ impl Engine {
     ///    r#"
     /// package test    # Line 2
     ///
-    /// x = y {         # Line 4
+    /// x = y if {         # Line 4
     ///   input.a > 2   # Line 5
     ///   y = 5         # Line 6
     /// }

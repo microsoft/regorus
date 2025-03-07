@@ -17,11 +17,11 @@ class TestRegorus < Minitest::Test
   def example_policy
     <<~REGO
       package regorus_test
-      is_manager {
+      is_manager if {
         input.name == data.managers[_]
       }
 
-      is_employee {
+      is_employee if {
         input.name == data.employees[_]
       }
 
@@ -29,11 +29,11 @@ class TestRegorus < Minitest::Test
       default is_manager_bool = false
       default is_employee_bool = false
 
-      is_manager_bool {
+      is_manager_bool if {
         is_manager
       }
 
-      is_employee_bool {
+      is_employee_bool if {
         is_employee
       }
     REGO

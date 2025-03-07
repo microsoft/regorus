@@ -36,6 +36,11 @@ impl Engine {
         }
     }
 
+    fn set_rego_v0(&self, enable: bool) -> Result<(), Error> {
+        self.engine.borrow_mut().set_rego_v0(enable);
+        Ok(())
+    }
+
     fn add_policy(&self, path: String, rego: String) -> Result<String, Error> {
         self.engine
             .borrow_mut()
@@ -296,6 +301,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     engine_class.define_method("<=>", method!(Engine::compare, 1))?;
     // defines <, <=, >, >=, and == based on <=>
     engine_class.include_module(module::comparable())?;
+
+    // rego language configuration
+    engine_class.define_method("set_rego_v0", method!(Engine::set_rego_v0, 1))?;
 
     // policy operations
     engine_class.define_method("add_policy", method!(Engine::add_policy, 2))?;
