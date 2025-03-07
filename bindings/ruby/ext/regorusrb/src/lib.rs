@@ -1,4 +1,4 @@
-use magnus::{exception::runtime_error, method, module, prelude::*, Error, Ruby};
+use magnus::{Error, Ruby, exception::runtime_error, method, module, prelude::*};
 use regorus::Engine as RegorusEngine;
 use std::cell::RefCell;
 use std::cmp::Ordering;

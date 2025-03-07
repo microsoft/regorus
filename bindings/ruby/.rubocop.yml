@@ -3,7 +3,7 @@ require:
   - rubocop-rake
 
 AllCops:
-  TargetRubyVersion: 3.0
+  TargetRubyVersion: 3.4
   NewCops: enable
 
 Layout/LineLength:

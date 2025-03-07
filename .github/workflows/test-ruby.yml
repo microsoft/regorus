@@ -18,7 +18,7 @@ jobs:
       - name: Setup Ruby and Rust
         uses: oxidize-rb/actions/setup-ruby-and-rust@7ca44a16e287e5ff7dd72ab53f4bd41cbf34a571 #v1.26
         with:
-          ruby-version: "3.3.1"
+          ruby-version: "3.4.2"
           rustup-toolchain: "stable"
           bundler-cache: true
           cargo-cache: true
