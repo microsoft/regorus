@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    regorusrb (0.2.2)
+    regorusrb (0.2.3)
       rb_sys (~> 0.9.111)
 
 GEM
