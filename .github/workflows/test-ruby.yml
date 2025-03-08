@@ -18,7 +18,9 @@ jobs:
       - name: Setup Ruby and Rust
         uses: oxidize-rb/actions/setup-ruby-and-rust@7ca44a16e287e5ff7dd72ab53f4bd41cbf34a571 #v1.26
         with:
-          ruby-version: "3.3.1"
+          bundler: 2.6.5
+          rubygems: 3.6.5
+          ruby-version: "3.4.2"
           rustup-toolchain: "stable"
           bundler-cache: true
           cargo-cache: true
@@ -27,5 +29,7 @@ jobs:
       - name: Run ruby tests
         run:  |
           cd bindings/ruby
+          gem install bundler
+          bundle install
           cargo clippy --all-targets --no-deps -- -Dwarnings
           bundle exec rake
