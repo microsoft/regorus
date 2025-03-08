@@ -16,8 +16,11 @@ func main() {
 	// Create new engine
 	engine := regorus.NewEngine()
 	defer engine.Close()
-	elapsed1 := time.Since(t)
 
+	engine.setRegoV0(true)
+	elapsed1 := time.Since(t)
+	
+	
 	t = time.Now()
 	// Add policies and data.
 	policies := []string{

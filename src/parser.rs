@@ -19,7 +19,7 @@ pub struct Parser<'source> {
     tok: Token,
     line: u32,
     end: u32,
-    future_keywords: BTreeMap<String, Span>,
+    future_keywords: BTreeMap<String, Option<Span>>,
     rego_v1: bool,
 }
 
@@ -41,13 +41,13 @@ impl<'source> Parser<'source> {
     }
 
     pub fn enable_rego_v1(&mut self) -> Result<()> {
-        self.turn_on_rego_v1(self.tok.1.clone())
+        self.turn_on_rego_v1(&None)
     }
 
-    fn turn_on_rego_v1(&mut self, span: Span) -> Result<()> {
+    fn turn_on_rego_v1(&mut self, span: &Option<Span>) -> Result<()> {
         self.rego_v1 = true;
         for kw in FUTURE_KEYWORDS {
-            self.set_future_keyword(kw, &span)?;
+            self.set_future_keyword(kw, span)?;
         }
         Ok(())
     }
@@ -97,9 +97,9 @@ impl<'source> Parser<'source> {
         }
     }
 
-    pub fn set_future_keyword(&mut self, kw: &str, span: &Span) -> Result<()> {
-        match &self.future_keywords.get(kw) {
-            Some(s) if self.rego_v1 => Err(self.source.error(
+    pub fn set_future_keyword(&mut self, kw: &str, span: &Option<Span>) -> Result<()> {
+        match (span, self.future_keywords.get(kw)) {
+            (Some(span), Some(Some(s))) if self.rego_v1 => Err(self.source.error(
                 span.line,
                 span.col,
                 format!(
@@ -155,11 +155,11 @@ impl<'source> Parser<'source> {
     fn handle_import_future_keywords(&mut self, comps: &[Span]) -> Result<bool> {
         if comps.len() >= 2 && comps[0].text() == "future" && comps[1].text() == "keywords" {
             match comps.len() - 2 {
-                1 => self.set_future_keyword(comps[2].text(), &comps[2])?,
+                1 => self.set_future_keyword(comps[2].text(), &Some(comps[2].clone()))?,
                 0 => {
                     let span = &comps[1];
                     for kw in FUTURE_KEYWORDS.iter() {
-                        self.set_future_keyword(kw, span)?;
+                        self.set_future_keyword(kw, &Some(span.clone()))?;
                     }
                 }
                 _ => {
@@ -1709,7 +1709,7 @@ impl<'source> Parser<'source> {
 
             let is_future_kw =
                 if comps.len() == 2 && comps[0].text() == "rego" && comps[1].text() == "v1" {
-                    self.turn_on_rego_v1(span.clone())?;
+                    self.turn_on_rego_v1(&Some(span.clone()))?;
                     true
                 } else {
                     self.handle_import_future_keywords(&comps)?

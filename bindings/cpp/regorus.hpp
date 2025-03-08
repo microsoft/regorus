@@ -54,6 +54,9 @@ namespace regorus {
 	    return std::unique_ptr<Engine>(new Engine(regorus_engine_clone(engine)));
 	}
 
+	Result set_rego_v0(bool enable) {
+		return Result(regorus_engine_set_rego_v0(engine, enable));
+	}
 
 	Result add_policy(const char* path, const char* policy) {
 	    return Result(regorus_engine_add_policy(engine, path, policy));

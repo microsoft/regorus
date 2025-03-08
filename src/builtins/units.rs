@@ -83,8 +83,8 @@ fn parse(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
         bail!(span.error("spaces not allowed in resource strings"));
     }
 
-    let (number_part, suffix) = match string.find(|c: char| c.is_alphabetic()) {
-        Some(p) => (&string[0..p], &string[p..]),
+    let (number_part, suffix) = match string.rfind(|c: char| c.is_ascii_digit()) {
+        Some(p) => (&string[0..p + 1], &string[p + 1..]),
         _ => (string, ""),
     };
 
@@ -161,8 +161,8 @@ fn parse_bytes(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) 
         bail!(span.error("spaces not allowed in resource strings"));
     }
 
-    let (number_part, suffix) = match string.find(|c: char| c.is_alphabetic()) {
-        Some(p) => (&string[0..p], &string[p..]),
+    let (number_part, suffix) = match string.rfind(|c: char| c.is_ascii_digit()) {
+        Some(p) => (&string[0..p + 1], &string[p + 1..]),
         _ => (string, ""),
     };
 

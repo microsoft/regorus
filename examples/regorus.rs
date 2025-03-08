@@ -42,7 +42,7 @@ fn rego_eval(
     enable_tracing: bool,
     non_strict: bool,
     #[cfg(feature = "coverage")] coverage: bool,
-    v1: bool,
+    v0: bool,
 ) -> Result<()> {
     // Create engine.
     let mut engine = regorus::Engine::new();
@@ -52,7 +52,7 @@ fn rego_eval(
     #[cfg(feature = "coverage")]
     engine.set_enable_coverage(coverage);
 
-    engine.set_rego_v1(v1);
+    engine.set_rego_v0(v0);
 
     // Load files from given bundles.
     for dir in bundles.iter() {
@@ -238,9 +238,9 @@ enum RegorusCommand {
         #[arg(long, short)]
         coverage: bool,
 
-        /// Turn on rego.v1
+        /// Turn on Rego language v0.
         #[arg(long)]
-        v1: bool,
+        v0: bool,
     },
 
     /// Tokenize a Rego policy.
@@ -282,7 +282,7 @@ fn main() -> Result<()> {
             non_strict,
             #[cfg(feature = "coverage")]
             coverage,
-            v1,
+            v0,
         } => rego_eval(
             &bundles,
             &data,
@@ -292,7 +292,7 @@ fn main() -> Result<()> {
             non_strict,
             #[cfg(feature = "coverage")]
             coverage,
-            v1,
+            v0,
         ),
         RegorusCommand::Lex { file, verbose } => rego_lex(file, verbose),
         RegorusCommand::Parse { file } => rego_parse(file),

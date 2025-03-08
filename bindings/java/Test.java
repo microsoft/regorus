@@ -37,6 +37,12 @@ public class Test {
 
 	    String policiesJson = engine.getPolicies();
 	    System.out.println(policiesJson);
+
+		engine.setRegoV0(true);
+		engine.addPolicy(
+                "world.rego",
+                "package world\nx { true }"
+            )
         }
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "regoruspy"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 repository = "https://github.com/microsoft/regorus/bindings/python"
 description = "Python bindings for Regorus - a fast, lightweight Rego interpreter written in Rust"

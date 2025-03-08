@@ -222,7 +222,7 @@ pub extern "C" fn regorus_engine_add_data_from_json_file(
 
 /// Clear policy data.
 ///
-/// See https://docs.rs/regorus/0.1.0-alpha.2/regorus/struct.Engine.html#method.clear_data
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.clear_data
 #[no_mangle]
 pub extern "C" fn regorus_engine_clear_data(engine: *mut RegorusEngine) -> RegorusResult {
     to_regorus_result(|| -> Result<()> {
@@ -233,7 +233,7 @@ pub extern "C" fn regorus_engine_clear_data(engine: *mut RegorusEngine) -> Regor
 
 /// Set input.
 ///
-/// See https://docs.rs/regorus/0.1.0-alpha.2/regorus/struct.Engine.html#method.set_input
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.set_input
 /// * `input`: JSON encoded value to be used as input to query.
 #[no_mangle]
 pub extern "C" fn regorus_engine_set_input_json(
@@ -264,7 +264,7 @@ pub extern "C" fn regorus_engine_set_input_from_json_file(
 
 /// Evaluate query.
 ///
-/// See https://docs.rs/regorus/0.1.0-alpha.2/regorus/struct.Engine.html#method.eval_query
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.eval_query
 /// * `query`: Rego expression to be evaluate.
 #[no_mangle]
 pub extern "C" fn regorus_engine_eval_query(
@@ -289,7 +289,7 @@ pub extern "C" fn regorus_engine_eval_query(
 
 /// Evaluate specified rule.
 ///
-/// See https://docs.rs/regorus/0.1.0-alpha.2/regorus/struct.Engine.html#method.eval_rule
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.eval_rule
 /// * `rule`: Path to the rule.
 #[no_mangle]
 pub extern "C" fn regorus_engine_eval_rule(
@@ -314,7 +314,7 @@ pub extern "C" fn regorus_engine_eval_rule(
 
 /// Enable/disable coverage.
 ///
-/// See https://docs.rs/regorus/0.1.0-alpha.2/regorus/struct.Engine.html#method.set_enable_coverage
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.set_enable_coverage
 /// * `enable`: Whether to enable or disable coverage.
 #[no_mangle]
 #[cfg(feature = "coverage")]
@@ -330,7 +330,7 @@ pub extern "C" fn regorus_engine_set_enable_coverage(
 
 /// Get coverage report.
 ///
-/// See https://docs.rs/regorus/0.1.0-alpha.2/regorus/struct.Engine.html#method.get_coverage_report
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.get_coverage_report
 #[no_mangle]
 #[cfg(feature = "coverage")]
 pub extern "C" fn regorus_engine_get_coverage_report(engine: *mut RegorusEngine) -> RegorusResult {
@@ -375,7 +375,7 @@ pub extern "C" fn regorus_engine_get_coverage_report_pretty(
 
 /// Clear coverage data.
 ///
-/// See https://docs.rs/regorus/0.1.0-alpha.2/regorus/struct.Engine.html#method.clear_coverage_data
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.clear_coverage_data
 #[no_mangle]
 #[cfg(feature = "coverage")]
 pub extern "C" fn regorus_engine_clear_coverage_data(engine: *mut RegorusEngine) -> RegorusResult {
@@ -387,7 +387,7 @@ pub extern "C" fn regorus_engine_clear_coverage_data(engine: *mut RegorusEngine)
 
 /// Whether to gather output of print statements.
 ///
-/// See https://docs.rs/regorus/0.1.0-alpha.2/regorus/struct.Engine.html#method.set_gather_prints
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.set_gather_prints
 /// * `enable`: Whether to enable or disable gathering print statements.
 #[no_mangle]
 pub extern "C" fn regorus_engine_set_gather_prints(
@@ -402,7 +402,7 @@ pub extern "C" fn regorus_engine_set_gather_prints(
 
 /// Take all the gathered print statements.
 ///
-/// See https://docs.rs/regorus/0.1.0-alpha.2/regorus/struct.Engine.html#method.take_prints
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.take_prints
 #[no_mangle]
 pub extern "C" fn regorus_engine_take_prints(engine: *mut RegorusEngine) -> RegorusResult {
     let output = || -> Result<String> {
@@ -431,6 +431,28 @@ pub extern "C" fn regorus_engine_get_ast_as_json(engine: *mut RegorusEngine) -> 
         Ok(out) => RegorusResult {
             status: RegorusStatus::RegorusStatusOk,
             output: to_c_str(out),
+            error_message: std::ptr::null_mut(),
+        },
+        Err(e) => to_regorus_result(Err(e)),
+    }
+}
+
+/// Enable/disable rego v1.
+///
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.set_rego_v0
+#[no_mangle]
+pub extern "C" fn regorus_engine_set_rego_v0(
+    engine: *mut RegorusEngine,
+    enable: bool,
+) -> RegorusResult {
+    let output = || -> Result<()> {
+        to_ref(&engine)?.engine.set_rego_v0(enable);
+        Ok(())
+    }();
+    match output {
+        Ok(()) => RegorusResult {
+            status: RegorusStatus::RegorusStatusOk,
+            output: std::ptr::null_mut(),
             error_message: std::ptr::null_mut(),
         },
         Err(e) => to_regorus_result(Err(e)),

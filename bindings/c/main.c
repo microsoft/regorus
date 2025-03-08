@@ -6,6 +6,11 @@ int main() {
     RegorusEngine* engine = regorus_engine_new();
     RegorusResult r;
 
+    // Turn on rego v0 since policy uses v0.
+    r = regorus_engine_set_rego_v0(engine, true);
+    if (r.status != RegorusStatusOk)
+	goto error;
+
     // Load policies.
     r = regorus_engine_add_policy_from_file(engine, "../../../tests/aci/framework.rego");
     if (r.status != RegorusStatusOk)

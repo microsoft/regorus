@@ -27,6 +27,7 @@ struct YamlTest {
 
 fn eval_test_case(dir: &Path, case: &TestCase) -> Result<Value> {
     let mut engine = Engine::new();
+    engine.set_rego_v0(true);
 
     engine.add_data(case.data.clone())?;
     engine.set_input(case.input.clone());
@@ -116,6 +117,7 @@ fn run_aci_tests(dir: &Path) -> Result<()> {
 #[cfg(feature = "coverage")]
 fn run_aci_tests_coverage(dir: &Path) -> Result<()> {
     let mut engine = Engine::new();
+    engine.set_rego_v0(true);
     engine.set_enable_coverage(true);
 
     let mut added = std::collections::BTreeSet::new();

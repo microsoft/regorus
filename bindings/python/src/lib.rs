@@ -168,6 +168,15 @@ impl Engine {
         }
     }
 
+    /// Turn on rego v0.
+    ///
+    /// Regorus now defaults to v1.
+    ///
+    /// * `enable`: Whether to enable/disable v0.
+    pub fn set_rego_v0(&mut self, enable: bool) {
+        self.engine.set_rego_v0(enable)
+    }
+
     /// Add a policy
     ///
     /// The policy is parsed into AST.
