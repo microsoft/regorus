@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/microsoft/regorus/compare/regorus-v0.2.8...regorus-v0.3.0) - 2025-03-10
+
+### Added
+- [**breaking**] Update to OPA v1.2.0 ([#373](https://github.com/microsoft/regorus/pull/373))
+
+### Other
+- *(deps)* update pyo3 requirement from 0.23.5 to 0.24.0 ([#375](https://github.com/microsoft/regorus/pull/375))
+- Update ruby binding deps, ruby gem version 0.2.3 ([#374](https://github.com/microsoft/regorus/pull/374))
+- *(deps)* update pyo3 requirement from 0.22.0 to 0.23.5 ([#372](https://github.com/microsoft/regorus/pull/372))
+- *(deps)* update rand requirement from 0.8.5 to 0.9.0 ([#370](https://github.com/microsoft/regorus/pull/370))
+- *(deps)* update cbindgen requirement from 0.27.0 to 0.28.0 ([#361](https://github.com/microsoft/regorus/pull/361))
+- Fix typo in README.md ([#366](https://github.com/microsoft/regorus/pull/366))
+- Update dependencies ([#369](https://github.com/microsoft/regorus/pull/369))
+- Fix clippy warning for result? ([#362](https://github.com/microsoft/regorus/pull/362))
+- *(deps)* update itertools requirement from 0.13.0 to 0.14.0 ([#357](https://github.com/microsoft/regorus/pull/357))
+- *(deps)* update jsonschema requirement from 0.26.1 to 0.28.1 ([#356](https://github.com/microsoft/regorus/pull/356))
+- resolve anyhow compile errors ([#355](https://github.com/microsoft/regorus/pull/355))
+- *(deps)* update prettydiff requirement from 0.7.0 to 0.8.0 ([#348](https://github.com/microsoft/regorus/pull/348))
+
 ## [0.2.8](https://github.com/microsoft/regorus/compare/regorus-v0.2.7...regorus-v0.2.8) - 2024-11-06
 
 ### Other
