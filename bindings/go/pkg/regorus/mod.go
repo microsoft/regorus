@@ -28,6 +28,17 @@ func (e *Engine) Clone() *Engine {
 	return c
 }
 
+func (e *Engine) SetRegoV0(enable bool) (error) {
+	result := C.regorus_engine_set_rego_v0(e.e, C.bool(enable))
+	defer C.regorus_result_drop(result)
+
+	if result.status != C.RegorusStatusOk {
+		return fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+
+	return nil
+}
+
 func (e *Engine) AddPolicy(path string, rego string) (string, error) {
 	path_c := C.CString(path)
 	defer C.free(unsafe.Pointer(path_c))

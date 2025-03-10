@@ -45,6 +45,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
 
         let mut engine = Engine::new();
         engine.set_enable_coverage(true);
+        engine.set_rego_v0(true);
 
         for (idx, rego) in case.modules.iter().enumerate() {
             engine.add_policy(format!("rego_{idx}"), rego.clone())?;

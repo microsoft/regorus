@@ -4,39 +4,45 @@
 import com.microsoft.regorus.Engine;
 
 public class Test {
+
     public static void main(String[] args) {
         try (Engine engine = new Engine()) {
             String pkg = engine.addPolicy(
-                "hello.rego",
-                "package test\nx=1\nmessage = concat(\", \", [input.message, data.message])"
+                    "hello.rego",
+                    "package test\nx=1\nmessage = concat(\", \", [input.message, data.message])"
             );
-	    System.out.println("Loaded package " + pkg);
+            System.out.println("Loaded package " + pkg);
 
-	    
             engine.addDataJson("{\"message\":\"World!\"}");
             engine.setInputJson("{\"message\":\"Hello\"}");
 
-	    // Evaluate query.
-	    String resJson = engine.evalQuery("data.test.message");
+            // Evaluate query.
+            String resJson = engine.evalQuery("data.test.message");
             System.out.println(resJson);
 
-	    // Enable coverage.
-	    engine.setEnableCoverage(true);
+            // Enable coverage.
+            engine.setEnableCoverage(true);
 
-	    // Evaluate rule.
-	    String valueJson = engine.evalRule("data.test.message");
+            // Evaluate rule.
+            String valueJson = engine.evalRule("data.test.message");
             System.out.println(valueJson);
 
-	    String coverageJson = engine.getCoverageReport();
-	    System.out.println(coverageJson);
+            String coverageJson = engine.getCoverageReport();
+            System.out.println(coverageJson);
 
-	    System.out.println(engine.getCoverageReportPretty());
+            System.out.println(engine.getCoverageReportPretty());
 
-	    String packagesJson = engine.getPackages();
-	    System.out.println(packagesJson);
+            String packagesJson = engine.getPackages();
+            System.out.println(packagesJson);
 
-	    String policiesJson = engine.getPolicies();
-	    System.out.println(policiesJson);
+            String policiesJson = engine.getPolicies();
+            System.out.println(policiesJson);
+
+            engine.setRegoV0(true);
+            engine.addPolicy(
+                    "world.rego",
+                    "package world\nx { true }"
+            );
         }
     }
 }

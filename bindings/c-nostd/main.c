@@ -27,7 +27,7 @@ char*  file_to_string(const char* file) {
 
 // If regorus is built with custom-allocator, then provide implementation.
 uint8_t* regorus_aligned_alloc(size_t alignment, size_t size) {
-    return aligned_alloc(alignment, size);
+    return (uint8_t*) aligned_alloc(alignment, size);
 }
 
 void regorus_free(uint8_t* ptr) {
@@ -40,6 +40,11 @@ int main() {
     RegorusEngine* engine = regorus_engine_new();
     RegorusResult r;
     char* buffer = NULL;
+
+    // Turn on rego v0 since policy uses v0.
+    r = regorus_engine_set_rego_v0(engine, true);
+    if (r.status != RegorusStatusOk)
+	goto error;
 
     // Load policies.
     r = regorus_engine_add_policy(engine, "framework.rego", (buffer = file_to_string("../../../tests/aci/framework.rego")));

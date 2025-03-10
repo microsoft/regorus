@@ -6,6 +6,8 @@ import regorus
 # Create engine
 engine = regorus.Engine()
 
+engine.set_rego_v0(True)
+
 # Load policies
 pkg = engine.add_policy_from_file('../../tests/aci/framework.rego')
 print(' Loaded package %s' % pkg)

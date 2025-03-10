@@ -9,6 +9,16 @@ use anyhow::{bail, Result};
 use clap::Parser;
 use walkdir::WalkDir;
 
+fn normalize_printed_paths(mut prints: Vec<String>) -> Vec<String> {
+    prints.iter_mut().for_each(|p| {
+        *p = p
+            .replace("\\", "/")
+            .replace("//", "/")
+            .replace("\r\n", "\n");
+    });
+    prints
+}
+
 fn run_kata_tests(
     tests_dir: &Path,
     name: &Option<String>,
@@ -43,6 +53,7 @@ fn run_kata_tests(
         let prints_file = path.join("prints.json");
 
         let mut engine = Engine::new();
+        engine.set_rego_v0(true);
         engine.add_policy_from_file(&policy_file)?;
         engine.set_gather_prints(true);
         engine.set_strict_builtin_errors(false);
@@ -110,14 +121,14 @@ fn run_kata_tests(
 
             if generate {
                 results.push(r);
-                prints.push(engine.take_prints()?);
+                prints.push(normalize_printed_paths(engine.take_prints()?));
             } else {
                 let expected = results.pop().unwrap();
                 assert_eq!(r, expected, "{lineno} failed in {}", inputs_file.display());
 
-                let p = engine.take_prints()?;
-                assert_eq!(p, new_engine.take_prints()?);
-                assert_eq!(p, prints.pop().unwrap());
+                let p = normalize_printed_paths(engine.take_prints()?);
+                assert_eq!(p, normalize_printed_paths(new_engine.take_prints()?));
+                assert_eq!(p, normalize_printed_paths(prints.pop().unwrap()));
             }
 
             num_queries += 2;
@@ -179,7 +190,6 @@ fn stateful_policy_test() -> Result<()> {
     let policy = String::from(
         r#"
        package example
-       import rego.v1
 
        default allow := false
 

@@ -43,6 +43,9 @@ require "regorus"
 
 engine = Regorus::Engine.new
 
+# Policy is old-style.
+engine.set_rego_v0(true)
+
 engine.add_policy_from_file('../../tests/aci/framework.rego')
 engine.add_policy_from_file('../../tests/aci/api.rego')
 engine.add_policy_from_file('../../tests/aci/policy.rego')

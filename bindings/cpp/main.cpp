@@ -6,6 +6,7 @@ void example()
     // Create engine
     regorus::Engine engine;
 
+    engine.set_rego_v0(true);
     engine.set_enable_coverage(true);
     
     // Add policies.
@@ -83,6 +84,7 @@ int main() {
 
     // Create engine.
     regorus::Engine engine;
+    engine.set_rego_v0(true);
 
 
     // Load policies.

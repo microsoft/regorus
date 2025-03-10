@@ -8,10 +8,8 @@ package com.microsoft.regorus;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Regorus Engine.
@@ -23,6 +21,7 @@ public class Engine implements AutoCloseable, Cloneable {
     // if you update the native API.
     private static native long nativeNewEngine();
     private static native long nativeClone(long enginePtr);
+    private static native void nativeSetRegoV0(long enginePtr, boolean enable);
     private static native String nativeAddPolicy(long enginePtr, String path, String rego);
     private static native String nativeAddPolicyFromFile(long enginePtr, String path);
     private static native String nativeGetPackages(long enginePtr);
@@ -55,7 +54,7 @@ public class Engine implements AutoCloseable, Cloneable {
 
     
     Engine(long ptr) {
-	enginePtr = ptr;
+        enginePtr = ptr;
     }
 
     /**
@@ -65,6 +64,16 @@ public class Engine implements AutoCloseable, Cloneable {
 	return new Engine(nativeClone(enginePtr));
     }
     
+     /**
+     * Enable/disable Rego v0.
+     * 
+     * @param enable Whether to enable v0 or not.
+     * 
+     */
+    public void setRegoV0(boolean enable) {
+        nativeSetRegoV0(enginePtr, enable);
+    }
+
     /**
      * Adds an inline Rego policy.
      * 

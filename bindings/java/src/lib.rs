@@ -29,6 +29,20 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClone(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetRegoV0(
+    env: JNIEnv,
+    _class: JClass,
+    engine_ptr: jlong,
+    enable: bool,
+) {
+    let _ = throw_err(env, |_env| {
+        let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
+        engine.set_rego_v0(enable);
+        Ok(())
+    });
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddPolicy(
     env: JNIEnv,
     _class: JClass,

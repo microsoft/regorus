@@ -23,6 +23,7 @@ var w = new Stopwatch();
 w.Restart();
 
 var engine = new Regorus.Engine();
+engine.SetRegoV0(true);
 
 w.Stop();
 var newEngineTicks = w.ElapsedTicks;
