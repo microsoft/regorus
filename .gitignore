@@ -26,3 +26,5 @@ worktrees/
 # Generated C, C++ headers
 bindings/ffi/regorus.h
 bindings/ffi/regorus.ffi.hpp
+
+bindings/*/target

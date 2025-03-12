@@ -18,7 +18,6 @@ jobs:
           
       - uses: actions/setup-go@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
           architecture: x64
 
       - name: Build ffi
@@ -29,5 +28,5 @@ jobs:
         run: |
           go mod tidy
           go build
-          LD_LIBRARY_PATH=../../target/release ./regorus_test
+          LD_LIBRARY_PATH=../ffi/target/release ./regorus_test
         working-directory: ./bindings/go

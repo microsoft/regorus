@@ -1,4 +1,4 @@
-name: tests/release
+name: tests/release-extensions
 
 on:
   push:
