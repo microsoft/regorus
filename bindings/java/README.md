@@ -23,7 +23,7 @@ Afterwards, you can build native library for that target using:
 $ cargo build --release --target aarch64-apple-darwin
 ```
 
-You will then have a native library at `../../target/aarch64-apple-darwin/release/libregorus_java.dylib` depending on your target.
+You will then have a native library at `target/aarch64-apple-darwin/release/libregorus_java.dylib` depending on your target.
 
 You then need to build Java bindings using:
 ```bash

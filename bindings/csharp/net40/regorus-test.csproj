@@ -4,7 +4,7 @@
     <Exec Command="cargo build -r --manifest-path ../../ffi/Cargo.toml" />
     <Copy SourceFiles="../../ffi/RegorusFFI.g.cs" DestinationFolder="." />
     <ItemGroup>
-        <RegorusDylib Include="..\..\..\target\release\*regorus_ffi*" />
+        <RegorusDylib Include="..\..\ffi\target\release\*regorus_ffi*" />
     </ItemGroup>    
     <Copy SourceFiles="@(RegorusDylib)" DestinationFolder="." />
   </Target>

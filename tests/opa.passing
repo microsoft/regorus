@@ -22,11 +22,9 @@ v0/comprehensions
 v0/containskeyword
 v0/cryptohmacequal
 v0/cryptohmacmd5
-v0/cryptohmacsha1
 v0/cryptohmacsha256
 v0/cryptohmacsha512
 v0/cryptomd5
-v0/cryptosha1
 v0/cryptosha256
 v0/dataderef
 v0/defaultkeyword
@@ -137,11 +135,9 @@ v1/comprehensions
 v1/containskeyword
 v1/cryptohmacequal
 v1/cryptohmacmd5
-v1/cryptohmacsha1
 v1/cryptohmacsha256
 v1/cryptohmacsha512
 v1/cryptomd5
-v1/cryptosha1
 v1/cryptosha256
 v1/dataderef
 v1/defaultkeyword

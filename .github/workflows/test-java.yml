@@ -33,5 +33,5 @@ jobs:
       - name: Test jar
         run: |
           javac -cp target/regorus-java-0.2.2.jar Test.java
-          java -Djava.library.path=../../target/release -cp target/regorus-java-0.2.2.jar:. Test
+          java -Djava.library.path=target/release -cp target/regorus-java-0.2.2.jar:. Test
         working-directory: ./bindings/java

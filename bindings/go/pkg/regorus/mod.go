@@ -1,6 +1,6 @@
 package regorus
 
-// #cgo LDFLAGS: -L ../../../../target/release -lregorus_ffi
+// #cgo LDFLAGS: -L ../../../ffi/target/release -lregorus_ffi
 // #include "../../../ffi/regorus.h"
 import "C"
 import (
@@ -28,7 +28,7 @@ func (e *Engine) Clone() *Engine {
 	return c
 }
 
-func (e *Engine) SetRegoV0(enable bool) (error) {
+func (e *Engine) SetRegoV0(enable bool) error {
 	result := C.regorus_engine_set_rego_v0(e.e, C.bool(enable))
 	defer C.regorus_result_drop(result)
 
@@ -83,7 +83,6 @@ func (e *Engine) GetPolicies() (string, error) {
 	}
 	return C.GoString(result.output), nil
 }
-
 
 func (e *Engine) AddDataJson(data string) error {
 	data_c := C.CString(data)
