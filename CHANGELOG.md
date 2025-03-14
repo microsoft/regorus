@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/microsoft/regorus/compare/regorus-v0.3.0...regorus-v0.4.0) - 2025-03-14
+
+### Fixed
+- [**breaking**] Update ruby json dependency ([#381](https://github.com/microsoft/regorus/pull/381))
+- [**breaking**] Remove ring dependency ([#380](https://github.com/microsoft/regorus/pull/380))
+- [**breaking**] Remove sha1 dependency ([#379](https://github.com/microsoft/regorus/pull/379))
+
+### Other
+- Specify optimization flags ([#378](https://github.com/microsoft/regorus/pull/378))
+
 ## [0.3.0](https://github.com/microsoft/regorus/compare/regorus-v0.2.8...regorus-v0.3.0) - 2025-03-10
 
 ### Added
