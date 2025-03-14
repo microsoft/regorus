@@ -18,8 +18,6 @@ mod glob;
 mod graph;
 #[cfg(feature = "http")]
 mod http;
-#[cfg(feature = "jwt")]
-mod jwt;
 pub mod numbers;
 mod objects;
 #[cfg(feature = "opa-runtime")]
@@ -83,8 +81,6 @@ lazy_static! {
 	//units::register(&mut m);
 	types::register(&mut m);
 	encoding::register(&mut m);
-	#[cfg(feature = "jwt")]
-	jwt::register(&mut m);
 	#[cfg(feature = "time")]
 	time::register(&mut m);
 

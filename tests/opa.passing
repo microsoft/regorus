@@ -52,7 +52,6 @@ v0/jsonfilteridempotent
 v0/jsonremove
 v0/jsonremoveidempotent
 v0/jsonschema
-v0/jwtbuiltins
 v0/negation
 v0/nestedreferences
 v0/numbersrange
@@ -165,7 +164,6 @@ v1/jsonfilteridempotent
 v1/jsonremove
 v1/jsonremoveidempotent
 v1/jsonschema
-v1/jwtbuiltins
 v1/negation
 v1/nestedreferences
 v1/numbersrange

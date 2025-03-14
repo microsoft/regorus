@@ -210,6 +210,10 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                 if let Some(ref mut want_result) = &mut case.want_result {
                     want_result.as_array_mut()?.sort();
                 }
+            } else if case.note == "withkeyword/builtin: nested, multiple mocks" {
+                // Mocks non-existent jwt builtin.
+                println!("skipping mock test for io.jwt.decode_verify: {}", case.note);
+                continue;
             }
 
             // Normalize for comparison.
