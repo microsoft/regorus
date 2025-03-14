@@ -67,8 +67,6 @@ fn opa_runtime(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
         "hex",
         #[cfg(feature = "http")]
         "http",
-        #[cfg(feature = "jwt")]
-        "jwt",
         #[cfg(feature = "jsonschema")]
         "jsonschema",
         #[cfg(feature = "opa-runtime")]

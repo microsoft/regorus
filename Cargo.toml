@@ -33,7 +33,6 @@ http = []
 glob = ["dep:wax"]
 graph = []
 jsonschema = ["dep:jsonschema"]
-jwt = ["dep:jsonwebtoken", "dep:data-encoding", "dep:itertools"]
 no_std = ["lazy_static/spin_no_std"]
 opa-runtime = []
 regex = ["dep:regex"]
@@ -53,7 +52,6 @@ full-opa = [
     "graph",
     "hex",
     "http",
-    "jwt",
     "jsonschema",
     "opa-runtime",
     "regex",
@@ -117,8 +115,6 @@ uuid = { version = "1.15.1", default-features = false, features = ["v4", "fast-r
 jsonschema = { version = "0.29.0", default-features = false, optional = true }
 chrono = { version = "0.4.40", optional = true }
 chrono-tz = { version = "0.10.1", optional = true }
-jsonwebtoken = { version = "9.3.1", optional = true }
-itertools = { version = "0.14.0", default-features = false, optional = true }
 
 serde_yaml = {version = "0.9.16", default-features = false, optional = true }
 # Specify thread_rng for in order to use random_range

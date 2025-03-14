@@ -298,8 +298,11 @@ The following test suites don't pass fully due to missing builtins:
 - `graphql`
 - `invalidkeyerror`
 - `jsonpatch`
+- `jwtbuiltins`
 - `jwtdecodeverify`
 - `jwtencodesign`
+- `jwtencodesignheadererrors`
+- `jwtencodesignpayloaderrors`
 - `jwtencodesignraw`
 - `jwtverifyhs256`
 - `jwtverifyhs384`
@@ -319,10 +322,9 @@ The following test suites don't pass fully due to missing builtins:
 - `regoparsemodule`
 - `rendertemplate`
 
-Cryptographically insecure `sha1` related builtins are intentionally not supported to discourage their use.
-
 They are captured in the following [github issues](https://github.com/microsoft/regorus/issues?q=is%3Aopen+is%3Aissue+label%3Alib).
 
+Cryptographically insecure `sha1` related builtins are intentionally not supported to discourage their use.
 
 ### Grammar
 
