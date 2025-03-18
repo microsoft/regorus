@@ -1,4 +1,0 @@
-The Regorus C# binding library can be built via command "dotnet build". We can use the Regorus C# binding library built from this 
-directory to create a Nuget. This Nuget will contain the Regorus C# binding library with definitions that 
-work for .NET framework 4.0 (net40) and above. Note the Nuget can only be created after the binding library has been built.
-RegorusCsharp-Lib-x64.nuspec is built for x64 architecture. 
