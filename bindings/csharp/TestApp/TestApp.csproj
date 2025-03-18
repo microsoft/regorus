@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk"> 
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0</TargetFrameworks>
+    <RootNamespace>TestApp</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>10.0</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="regorus" Version="0.4.0-preview.1"/>
+  </ItemGroup>
+</Project>

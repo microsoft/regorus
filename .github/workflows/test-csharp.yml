@@ -17,10 +17,27 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
 
-      - name: Build
-        run: dotnet build
-        working-directory: ./bindings/csharp/net8.0
+      - name: Build Regorus binding
+        run: dotnet build /p:Configuration=Release
+        working-directory: ./bindings/csharp/Regorus
 
-      - name: Run
-        run: LD_LIBRARY_PATH=. dotnet run
-        working-directory: ./bindings/csharp/net8.0
+      # On Linux, build /p:Configuration=Release and pack must be done separately.
+      # Otherwise the rust shared library, which is built using a target executed
+      # before Compiler, is not packaged into the nuget.
+      # This is likely a bug or a subtle difference in behavior of msbuild/dotnet
+      # between Windows and Linux.
+      - name: Pack Regorus nuget
+        run: dotnet pack; unzip -l bin/Release/Regorus*.nupkg
+        working-directory: ./bindings/csharp/Regorus
+        
+      - name: Restore Test App
+        run: dotnet restore /p:RestoreSources=./../Regorus/bin/Release
+        working-directory: ./bindings/csharp/TestApp
+
+      - name: Build Test App 8.0
+        run: dotnet build --framework net8.0
+        working-directory: ./bindings/csharp/TestApp
+
+      - name: Run Test App 8.0
+        run: dotnet run --framework net8.0
+        working-directory: ./bindings/csharp/TestApp
