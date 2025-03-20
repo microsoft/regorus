@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Microsoft.Regorus</RootNamespace>
+    <TargetFrameworks>netstandard2.0;netstandard2.1</TargetFrameworks>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Version>0.4.0-preview.1</Version>
+    <LangVersion>10.0</LangVersion>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+
+  <!-- Determine build os/arch -->
+  <PropertyGroup>
+    <IsLinuxX64>false</IsLinuxX64>
+    <IsWindowsArm64>false</IsWindowsArm64>
+    <IsWindowsX64>false</IsWindowsX64>
+    <IsOSXArm64>false</IsOSXArm64>
+
+    <IsLinuxX64 Condition="$([MSBuild]::IsOsPlatform('Linux')) And $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) == X64">true</IsLinuxX64>
+    <IsWindowsArm64 Condition="$([MSBuild]::IsOsPlatform('Windows')) And $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) == Arm64">true</IsWindowsArm64>
+    <IsWindowsX64 Condition="$([MSBuild]::IsOsPlatform('Windows')) And $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) == X64">true</IsWindowsX64>
+    <IsOSXArm64 Condition="$([MSBuild]::IsOsPlatform('OSX')) And $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) == Arm64">true</IsOSXArm64>
+  </PropertyGroup>
+
+  <!-- Determine Rust target -->
+  <PropertyGroup>
+    <RustTarget Condition="$(IsLinuxX64)">x86_64-unknown-linux-gnu</RustTarget>
+    <RustTarget Condition="$(IsWindowsArm64)">aarch64-pc-windows-msvc</RustTarget>
+    <RustTarget Condition="$(IsWindowsX64)">x86_64-pc-windows-msvc</RustTarget>
+    <RustTarget Condition="$(IsOSXArm64)">aarch64-apple-darwin</RustTarget>
+  </PropertyGroup>
+
+  <!-- Determine Regorus FFI Build Command -->
+  <PropertyGroup>
+    <!-- ProjectDir is empty here. Use MSBuildProjectDirectory instead -->
+    <RegorusFFIDir>$(MSBuildProjectDirectory)/../../ffi</RegorusFFIDir>
+    <CargoCmd Condition="'$(Configuration)' == 'Release'" >cargo build -r --target $(RustTarget)</CargoCmd>
+    <CargoCmd Condition="'$(Configuration)' != 'Release'" >cargo build --target $(RustTarget)</CargoCmd>
+  </PropertyGroup>
+
+  <!-- Build Regorus FFI before building C# -->
+  <Target Name="Build Regorus FFI " BeforeTargets="Compile">
+    <Exec Command="echo 'Configuration: $(Configuration)'"/>
+    <Exec Command="echo 'Platform: $(Platform)'"/>
+    <Exec Command="$(CargoCmd)" WorkingDirectory="$(RegorusFFIDir)"/>
+  </Target>
+
+  <!-- Include Regorus FFI shared library into nuget package -->
+  <ItemGroup>
+    <None Include="docs/README.md" Pack="true" PackagePath="\"/>
+
+    <None Include="$(RegorusFFIDir)/target/x86_64-pc-windows-msvc/$(Configuration.ToLower())/*.dll" Pack="true" PackagePath="runtimes/win-x64/native/" />
+    
+    <None Include="$(RegorusFFIDir)/target/aarch64-pc-windows-msvc/$(Configuration.ToLower())/*.dll" Pack="true" PackagePath="runtimes/win-arm64/native/" />  
+   
+    <None Include="$(RegorusFFIDir)/target/x86_64-unknown-linux-gnu/$(Configuration.ToLower())/lib*.so" Pack="true" PackagePath="runtimes/linux-x64/native/" />  
+
+    <None Include="$(RegorusFFIDir)/target/aarch64-apple-darwin/$(Configuration.ToLower())/lib*.dylib" Pack="true" PackagePath="runtimes/osx-arm64/native/" />  
+</ItemGroup>
+</Project>
