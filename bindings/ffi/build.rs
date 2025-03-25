@@ -26,7 +26,7 @@ fn main() {
         .input_extern_file("src/lib.rs")
         .csharp_dll_name("regorus_ffi")
         .csharp_class_name("API")
-        .csharp_namespace("RegorusFFI")
+        .csharp_namespace("Regorus.Internal")
         .generate_csharp_file("./RegorusFFI.g.cs")
         .unwrap();
 }

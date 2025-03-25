@@ -6,9 +6,101 @@ on:
   pull_request:
     branches: [ "main" ]
 
-jobs:
-  test:
+jobs:  
+  build-ffi:
+    name: 'Build Regorus FFI: (${{ matrix.runtime.target }})'
+    runs-on: ${{ matrix.runtime.os }}
+    strategy:
+      # let us get failures from other jobs even if one fails
+      fail-fast: false
+      matrix:
+        runtime:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            libpath: |
+              **/release/regorus_ffi.dll
+              **/release/regorus_ffi.pdb
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            libpath: |
+              **/release/libregorus_ffi.so
+          # Disabled for now
+          #- os: macos-latest
+          #  target: aarch64-apple-darwin
+          #  libpath: |
+          #    **/release/libregorus_ffi.dylib
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build Regorus binding
+        run: cargo build -r --target ${{ matrix.runtime.target }}
+        working-directory: ./bindings/ffi
+        
+      - name: Upload regorus ffi shared library
+        uses: actions/upload-artifact@v4
+        with:
+          name: regorus-ffi-artifacts-${{ matrix.runtime.target }}
+          # Note: The full path of each artifact relative to . is preserved.
+          path: ${{ matrix.runtime.libpath }}
+          if-no-files-found: error
+          retention-days: 1
+
+  build-nuget:
+    name: 'Build Regorus nuget'
     runs-on: ubuntu-latest
+    needs: build-ffi
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  
+      - uses: actions/setup-dotnet@v4
+
+      - name: Download regorus ffi shared libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: regorus-ffi-artifacts-*
+          merge-multiple: true
+          path: ./bindings/csharp/Regorus/tmp
+
+      - name: Display regorus ffi artifacts
+        run: ls -R ./bindings/csharp/Regorus/tmp
+
+      # Note that we need to supply the target folder within the folder where artifacts are downloaded.
+      - name: Build Regorus binding
+        run: dotnet build /p:Configuration=Release /p:RegorusFFIArtifactsDir=./tmp/bindings/ffi/target
+        working-directory: ./bindings/csharp/Regorus
+
+      - name: Pack
+        run: dotnet pack /p:RegorusFFIArtifactsDir=./tmp/bindings/ffi/target
+        working-directory: ./bindings/csharp/Regorus
+
+      - name: Upload Regorus nuget
+        uses: actions/upload-artifact@v4
+        with:
+          name: regorus-nuget
+          path: bindings/csharp/Regorus/bin/Release/Regorus*.nupkg
+          if-no-files-found: error
+          retention-days: 1
+
+  test-nuget:
+    name: 'Test Regorus Nuget: (${{ matrix.runtime.target }})'
+    needs: build-nuget
+    runs-on: ${{ matrix.runtime.os }}
+    strategy:
+      # let us get failures from other jobs even if one fails
+      fail-fast: false
+      matrix:
+        runtime:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          #- os: macos-latest
+          #  target: aarch64-apple-darwin
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -17,10 +109,21 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
 
-      - name: Build
-        run: dotnet build
-        working-directory: ./bindings/csharp/net8.0
+      - name: Download regorus nuget
+        uses: actions/download-artifact@v4
+        with:
+          name: regorus-nuget
+          path: ./bindings/csharp/TestApp/regorus-nuget/
+        
+      - name: Restore Test App
+        run: dotnet restore /p:RestoreSources=./regorus-nuget/
+        working-directory: ./bindings/csharp/TestApp
 
-      - name: Run
-        run: LD_LIBRARY_PATH=. dotnet run
-        working-directory: ./bindings/csharp/net8.0
+      - name: Build Test App 8.0
+        run: dotnet build --framework net8.0
+        working-directory: ./bindings/csharp/TestApp
+
+      - name: Run Test App 8.0
+        run: dotnet run --framework net8.0
+        working-directory: ./bindings/csharp/TestApp
+  
