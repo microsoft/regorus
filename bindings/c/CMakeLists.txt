@@ -25,6 +25,8 @@ corrosion_import_crate(
   # Select specific features in regorus.
   FEATURES "regorus/semver"
 
+  LOCKED
+  
   # Link statically
   CRATE_TYPES "cdylib"
   )

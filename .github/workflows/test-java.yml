@@ -24,7 +24,7 @@ jobs:
       - name: Building binding
         run: |
           cargo clippy --all-targets --no-deps -- -Dwarnings
-          cargo build --release --manifest-path bindings/java/Cargo.toml
+          cargo build --release --manifest-path bindings/java/Cargo.toml --locked
 
       - name: Build jar
         run: mvn package

@@ -20,7 +20,8 @@ jobs:
 
       - name: Workaround to ensure that regorus.h is generated
         run: |
-          cargo build -r
+          cargo fetch
+          cargo build -r --frozen
         working-directory: ./bindings/ffi
         
       - name: Test c binding
