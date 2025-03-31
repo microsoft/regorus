@@ -36,7 +36,7 @@ jobs:
           fetch-depth: 0
 
       - name: Build Regorus binding
-        run: cargo build -r --target ${{ matrix.runtime.target }}
+        run: cargo build -r --target ${{ matrix.runtime.target }} --locked
         working-directory: ./bindings/ffi
         
       - name: Upload regorus ffi shared library
@@ -58,6 +58,10 @@ jobs:
         with:
           fetch-depth: 0  
       - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: ./bindings/csharp/global.json
+
+      - run: echo '${{ steps.stepid.outputs.dotnet-version }}'
 
       - name: Download regorus ffi shared libraries
         uses: actions/download-artifact@v4
@@ -108,6 +112,10 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: ./bindings/csharp/global.json
+
+      - run: echo '${{ steps.stepid.outputs.dotnet-version }}'
 
       - name: Download regorus nuget
         uses: actions/download-artifact@v4

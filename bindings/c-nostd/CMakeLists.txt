@@ -32,6 +32,8 @@ corrosion_import_crate(
   # See regorus/opa_no_std
   FEATURES "custom_allocator,regorus/semver"
 
+  LOCKED
+  
   # Link statically
   CRATE_TYPES staticlib FLAGS --crate-type=staticlib
   )

@@ -48,7 +48,8 @@ jobs:
           python-version: "3.11"
       - if: ${{ matrix.build_cmd == 'zigbuild' }}
         run: pip install cargo-zigbuild
-      - run: cargo ${{ matrix.build_cmd || 'build' }} --release --target ${{ matrix.target }}${{ matrix.glibc && format('.{0}', matrix.glibc) || '' }} --manifest-path ./bindings/java/Cargo.toml
+      - run: cargo fetch
+      - run: cargo ${{ matrix.build_cmd || 'build' }} --release --frozen --target ${{ matrix.target }}${{ matrix.glibc && format('.{0}', matrix.glibc) || '' }} --manifest-path ./bindings/java/Cargo.toml
       - run: mkdir -p native/${{ matrix.target }}
       - run: mv target/${{ matrix.target }}/release/*.${{ matrix.extension }} ./native/${{ matrix.target }}/
       - uses: actions/upload-artifact@v4

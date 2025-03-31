@@ -40,11 +40,15 @@ jobs:
       - name: Install required cargo
         run: cargo install clippy-sarif sarif-fmt
 
+      - name: Fetch
+        run: cargo fetch
+
       - name: Run rust-clippy
         run:
           cargo clippy
           --all-features
           --message-format=json | clippy-sarif | tee rust-clippy-results.sarif | sarif-fmt
+          --frozen
         continue-on-error: true
 
       - name: Upload analysis results to GitHub

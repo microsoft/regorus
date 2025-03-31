@@ -16,22 +16,24 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Fetch
+      run: cargo fetch
     - name: Build (all features)
-      run: cargo build --all-features
+      run: cargo build --all-features --frozen
     - name: Build
-      run: cargo build
+      run: cargo build --frozen
     - name: Test no_std
-      run: cargo test --no-default-features
+      run: cargo test --no-default-features --frozen
     - name: Build only std
-      run: cargo build --example regorus --no-default-features --features "std"
+      run: cargo build --example regorus --no-default-features --features "std" --frozen
     - name: Doc Tests
-      run: cargo test --doc
+      run: cargo test --doc --frozen
     - name: Run tests
-      run: cargo test
+      run: cargo test --frozen
     - name: Run tests (ACI)
-      run: cargo test --test aci
+      run: cargo test --test aci --frozen
     - name: Run tests (KATA)
-      run: cargo test --test kata
+      run: cargo test --test kata --frozen
     - name: Run tests (OPA Conformance)
       run: >-
-        cargo test --test opa --features opa-testutil,serde_json/arbitrary_precision  -- $(tr '\n' ' ' < tests/opa.passing)
+        cargo test --test opa --frozen --features opa-testutil,serde_json/arbitrary_precision  -- $(tr '\n' ' ' < tests/opa.passing)

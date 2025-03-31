@@ -18,24 +18,26 @@ jobs:
     - uses: actions/checkout@v4
     - name: Format Check
       run: cargo fmt --check
+    - name: Fetch
+      run: cargo fetch
     - name: Build (all features)
-      run: cargo build -r --all-features
+      run: cargo build -r --all-features --frozen
     - name: Build
-      run: cargo build -r
+      run: cargo build -r --frozen
     - name: Test no_std
-      run: cargo test -r --no-default-features
+      run: cargo test -r --no-default-features --frozen
     - name: Build only std
-      run: cargo build -r --example regorus --no-default-features --features "std"
+      run: cargo build -r --example regorus --no-default-features --features "std" --frozen
     - name: Doc Tests
-      run: cargo test -r --doc
+      run: cargo test -r --doc --frozen
     - name: Run tests
-      run: cargo test -r
+      run: cargo test -r --frozen
     - name: Run example
-      run: cargo run --example regorus -- eval -d examples/server/allowed_server.rego -i examples/server/input.json data.example
+      run: cargo run --example regorus --frozen -- eval -d examples/server/allowed_server.rego -i examples/server/input.json data.example
     - name: Run tests (ACI)
-      run: cargo test -r --test aci
+      run: cargo test -r --test aci --frozen
     - name: Run tests (KATA)
-      run: cargo test -r --test kata
+      run: cargo test -r --test kata --frozen
     - name: Run tests (OPA Conformance)
       run: >-
-        cargo test -r --test opa --features opa-testutil,serde_json/arbitrary_precision  -- $(tr '\n' ' ' < tests/opa.passing)
+        cargo test -r --test opa --frozen --features opa-testutil,serde_json/arbitrary_precision  -- $(tr '\n' ' ' < tests/opa.passing)
