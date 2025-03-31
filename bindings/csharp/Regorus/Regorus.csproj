@@ -5,8 +5,11 @@
         <RootNamespace>Microsoft.Regorus</RootNamespace>
         <TargetFrameworks>netstandard2.0;netstandard2.1</TargetFrameworks>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <Version>0.4.0-preview.1</Version>
-        <LangVersion>10.0</LangVersion>
+       <LangVersion>10.0</LangVersion>
+
+        <!-- See https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-pack -->
+        <VersionPrefix>0.4.0</VersionPrefix>
+        <VersionSuffix>$(VersionSuffix)</VersionSuffix>
         <PackageReadmeFile>README.md</PackageReadmeFile>
     </PropertyGroup>
 
