@@ -135,40 +135,28 @@ impl From<f64> for Number {
 impl Number {
     pub fn as_u128(&self) -> Option<u128> {
         match self {
-            Big(b) if b.is_integer() => match u128::try_from(&b.d) {
-                Ok(v) => Some(v),
-                _ => None,
-            },
+            Big(b) if b.is_integer() => u128::try_from(&b.d).ok(),
             _ => None,
         }
     }
 
     pub fn as_i128(&self) -> Option<i128> {
         match self {
-            Big(b) if b.is_integer() => match i128::try_from(&b.d) {
-                Ok(v) => Some(v),
-                _ => None,
-            },
+            Big(b) if b.is_integer() => i128::try_from(&b.d).ok(),
             _ => None,
         }
     }
 
     pub fn as_u64(&self) -> Option<u64> {
         match self {
-            Big(b) if b.is_integer() => match u64::try_from(&b.d) {
-                Ok(v) => Some(v),
-                _ => None,
-            },
+            Big(b) if b.is_integer() => u64::try_from(&b.d).ok(),
             _ => None,
         }
     }
 
     pub fn as_i64(&self) -> Option<i64> {
         match self {
-            Big(b) if b.is_integer() => match i64::try_from(&b.d) {
-                Ok(v) => Some(v),
-                _ => None,
-            },
+            Big(b) if b.is_integer() => i64::try_from(&b.d).ok(),
             _ => None,
         }
     }
@@ -317,10 +305,7 @@ impl Number {
 
     fn ensure_integer(&self) -> Option<BigInt> {
         match self {
-            Big(a) if a.is_integer() => match BigInt::try_from(&a.d) {
-                Ok(v) => Some(v),
-                _ => None,
-            },
+            Big(a) if a.is_integer() => BigInt::try_from(&a.d).ok(),
             _ => None,
         }
     }
