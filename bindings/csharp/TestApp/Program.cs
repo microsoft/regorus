@@ -42,7 +42,7 @@ w.Restart();
 
 // Set input and eval rule.
 engine.SetInputFromJsonFile("../../../tests/aci/input.json");
-var value = engine.EvalQuery("data.framework.mount_overlay");
+var value = engine.EvalRule("data.framework.mount_overlay");
 
 #if NET8_0_OR_GREATER
 var valueDoc = System.Text.Json.JsonDocument.Parse(value);
@@ -59,7 +59,7 @@ var evalTicks = w.ElapsedTicks;
 
 Console.WriteLine("Engine creation took {0} msecs", (newEngineTicks * nanosecPerTick) / (1000.0 * 1000.0));
 Console.WriteLine("Load policies and data took {0} msecs", (loadPoliciesTicks * nanosecPerTick) / (1000.0 * 1000.0));
-Console.WriteLine("EvalQuery took {0} msecs", (evalTicks * nanosecPerTick) / (1000.0 * 1000.0));
+Console.WriteLine("EvalRule took {0} msecs", (evalTicks * nanosecPerTick) / (1000.0 * 1000.0));
 
 engine = new Regorus.Engine();
 engine.AddPolicy(
@@ -67,5 +67,16 @@ engine.AddPolicy(
   "package test\nx = 1\nmessage = `Hello`");
 
 engine.SetEnableCoverage(true);
-Console.WriteLine("{0}", engine.EvalRule("data.test.message"));
-Console.WriteLine("{0}", engine.GetCoverageReportPretty());
+Console.WriteLine("data.test.message: {0}", engine.EvalRule("data.test.message"));
+Console.WriteLine("Coverage Report:\n{0}", engine.GetCoverageReportPretty());
+
+if (engine.EvalRule("data.test.message") != "\"Hello\"")
+{
+    Console.WriteLine("Failure.");
+    System.Environment.Exit(1);
+}
+else
+{
+    Console.WriteLine("Success.");
+}
+

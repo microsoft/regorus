@@ -168,7 +168,7 @@ namespace Regorus
             var ruleBytes = NullTerminatedUTF8Bytes(rule);
             fixed (byte* rulePtr = ruleBytes)
             {
-                return CheckAndDropResult(Regorus.Internal.API.regorus_engine_eval_query(E, rulePtr));
+                return CheckAndDropResult(Regorus.Internal.API.regorus_engine_eval_rule(E, rulePtr));
             }
         }
 

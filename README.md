@@ -107,11 +107,11 @@ Regorus can be used from a variety of languages:
 
 - *C*: C binding is generated using [cbindgen](https://github.com/mozilla/cbindgen).
   [corrosion-rs](https://github.com/corrosion-rs/corrosion) can be used to seamlessly use Regorous
-   in your CMake based projects. See [bindings/c](https://github.com/microsoft/regorus/tree/main/bindings/c).
+  in your CMake based projects. See [bindings/c](https://github.com/microsoft/regorus/tree/main/bindings/c).
 - *C freestanding*: [bindings/c_no_std](https://github.com/microsoft/regorus/tree/main/bindings/c_no_std) shows how to use Regorus from C environments without a libc.
 - *C++*: C++ binding is generated using [cbindgen](https://github.com/mozilla/cbindgen).
   [corrosion-rs](https://github.com/corrosion-rs/corrosion) can be used to seamlessly use Regorous
-   in your CMake based projects. See [bindings/cpp](https://github.com/microsoft/regorus/tree/main/bindings/cpp).
+  in your CMake based projects. See [bindings/cpp](https://github.com/microsoft/regorus/tree/main/bindings/cpp).
 - *C#*: C# binding is generated using [csbindgen](https://github.com/Cysharp/csbindgen). See [bindings/csharp](https://github.com/microsoft/regorus/tree/main/bindings/csharp) for an example of how to build and use Regorus in your C# projects.
 - *Golang*: The C bindings are exposed to Golang via [CGo](https://pkg.go.dev/cmd/cgo). See [bindings/go](https://github.com/microsoft/regorus/tree/main/bindings/go) for an example of how to build and use Regorus in your Go projects.
 - *Python*: Python bindings are generated using [pyo3](https://github.com/PyO3/pyo3). Wheels are created using [maturin](https://github.com/PyO3/maturin). See [bindings/python](https://github.com/microsoft/regorus/tree/main/bindings/python).

@@ -224,7 +224,7 @@ fn urlquery_decode(
     let mut query_str = "".to_owned();
     for (k, v) in url.query_pairs() {
         query_str += &k;
-        if v != "" {
+        if !v.is_empty() {
             query_str += "=";
             query_str += &v;
         }
