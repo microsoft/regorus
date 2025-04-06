@@ -8,10 +8,17 @@ on:
 
 env:
   PYTHON_VERSION: "3.10"
-    
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      matrix:
+        host:
+          - name: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - name: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.host.name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,16 +30,60 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           architecture: x64
 
-      - name: Build wheels
+      - name: Build Python extension
+        run: |
+          cargo fetch
+          cargo clippy --all-targets --no-deps -- -Dwarnings
+          cargo build --release --target ${{ matrix.host.target }} --frozen
+        working-directory: bindings/python
+
+      - name: Build Wheel
         uses: PyO3/maturin-action@63b75c597b83e247fbf4fb7719801cc4220ae9f3 # v1.43.0
         with:
           target: x86_64
-          args: --release --out dist --manifest-path bindings/python/Cargo.toml
+          args: --release --out dist --manifest-path bindings/python/Cargo.toml --offline --strip
           sccache: 'true'
 
-      - name: Test wheel
+      - name: Upload Wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: regorus-wheel-${{ matrix.host.name }}
+          path: dist/regorus-*.whl
+
+  test:
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        host:
+          - name: ubuntu-24.04
+            wheel: regorus-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl
+          - name: ubuntu-22.04
+            wheel: regorus-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl
+          - name: windows-latest
+            wheel: regorus-0.4.0-cp310-abi3-win_amd64.whl
+
+    needs: build
+    runs-on: ${{ matrix.host.name }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Regorus wheel
+        uses: actions/download-artifact@v4
+        with:
+          path: wheels
+          pattern: regorus-wheel-*
+          merge-multiple: true
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x64
+
+      - name: Test Wheel
         run:  |
-          pip3 install dist/regorus-*.whl
-          cd bindings/python
-          cargo clippy --all-targets --no-deps -- -Dwarnings
-          python3 test.py          
+          pip3 install ../../wheels/${{ matrix.host.wheel }}
+          python3 test.py
+        working-directory: bindings/python
