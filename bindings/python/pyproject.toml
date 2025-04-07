@@ -13,4 +13,8 @@ classifiers = [
 dynamic = ["version"]
 
 [tool.maturin]
+binding = ["cffi"]
+# See https://github.com/mayeut/pep600_compliance?tab=readme-ov-file#distro-compatibility
+# GLIBC releases: https://www.sourceware.org/glibc/wiki/Glibc%20Timeline
+compatibility = "manylinux_2_34"
 features = ["pyo3/extension-module"]

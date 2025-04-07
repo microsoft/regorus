@@ -2,7 +2,7 @@
 
 [package]
 name = "regoruspy"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 repository = "https://github.com/microsoft/regorus/bindings/python"
 description = "Python bindings for Regorus - a fast, lightweight Rego interpreter written in Rust"
@@ -21,7 +21,7 @@ coverage = ["regorus/coverage"]
 [dependencies]
 anyhow = "1.0"
 ordered-float = "5.0.0"
-pyo3 = {version = "0.24.1", features = ["anyhow", "extension-module"] }
+pyo3 = { version = "0.24.1", features = ["abi3-py310", "anyhow", "extension-module"] }
 regorus = { path  = "../..", default-features = false, features = ["arc"] }
 serde_json = "1.0.140"
 
