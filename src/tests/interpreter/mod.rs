@@ -292,6 +292,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
             "compare.yaml",
             "diff.yaml",
             "format.yaml",
+            "globmatch.yaml",
             "now_ns.yaml",
             "parse_duration_ns.yaml",
             "parse_ns.yaml",

@@ -9,8 +9,7 @@ use crate::value::Value;
 use crate::*;
 
 use anyhow::{bail, Result};
-//use glob::{Pattern, MatchOptions};
-use wax::{Glob, Pattern};
+use globset::{GlobBuilder, GlobMatcher};
 
 pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("glob.match", (glob_match, 3));
@@ -50,8 +49,12 @@ fn make_delimiters_unix_style(s: &str, delimiters: &[char]) -> Result<String> {
     Ok(s)
 }
 
-fn make_glob<'a>(pattern: &'a str, span: &'a Span) -> Result<Glob<'a>> {
-    Glob::new(pattern).or_else(|_| bail!(span.error("invalid glob")))
+fn make_glob(pattern: &str, span: &Span) -> Result<GlobMatcher> {
+    Ok(GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()
+        .or_else(|_| bail!(span.error("invalid glob")))?
+        .compile_matcher())
 }
 
 fn glob_match(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {

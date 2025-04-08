@@ -1,0 +1,60 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: all
+    data: {}
+    modules:
+      - |
+        package play
+        import rego.v1
+
+        # Examples from MS Graph
+        m1:= glob.match("api://*/appId", null, "api://foo.com/appId")
+        # Examples from https://www.openpolicyagent.org/docs/latest/policy-reference/#glob
+        m2 := glob.match("*.github.com", [], "api.github.com") # true
+        m3 := glob.match("*.github.com", [], "api.cdn.github.com") # false
+        m4 := glob.match("*hub.com", null, "api.cdn.github.com")
+        m5 := glob.match("*:github:com", [":"], "api:github:com")
+        m6 := glob.match("api.**.com", [], "api.github.com")
+        m7 := glob.match("api.**.com", [], "api.cdn.github.com")
+        m8 := glob.match("?at", [], "cat")
+        m9 := glob.match("?at", [], "at")
+        m10 := glob.match("[abc]at", [], "bat")
+        m11 := glob.match("[abc]at", [], "cat")
+        m12 := glob.match("[abc]at", [], "lat")
+        m13 :=  glob.match("[!abc]at", [], "cat")
+        m14 := glob.match("[!a-c]at", [], "lat")
+        m15 :=  glob.match("{cat,bat,[fr]at}", [], "cat")
+        m16 := glob.match("{cat,bat,[fr]at}", [], "bat")
+        m17 := glob.match("{cat,bat,[fr]at}", [], "rat")
+        m18 :=  glob.match("{cat,bat,[fr]at}", [], "at")
+
+        matches := [
+            m1 == true,
+            m2 == true,
+            m3 == false,
+            m4 == true,
+            m5 == true,
+            m6 == true,
+            m7 == true,
+            m8 == true,
+            m9 == false,
+            m10 == true,
+            m11 == true,
+            m12 == false,
+            m13 == false,
+            m14 == true,
+            m15 == true,
+            m16 == true,
+            m17 == true,
+            m18 == false,
+        ]
+
+        pass if {
+            every m in matches {
+                m == true
+            }
+        }
+    query: data.play.pass
+    want_result: true
