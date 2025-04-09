@@ -43,13 +43,6 @@ pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn
     m.insert("json.marshal", (json_marshal, 1));
     m.insert("json.marshal_with_options", (json_marshal_with_options, 2));
     m.insert("json.unmarshal", (json_unmarshal, 1));
-
-    #[cfg(feature = "yaml")]
-    {
-        m.insert("yaml.is_valid", (yaml_is_valid, 1));
-        m.insert("yaml.marshal", (yaml_marshal, 1));
-        m.insert("yaml.unmarshal", (yaml_unmarshal, 1));
-    }
 }
 
 #[cfg(feature = "base64")]
@@ -317,44 +310,6 @@ fn urlquery_encode_object(
     }
 
     Ok(Value::String(url.query().unwrap_or("").into()))
-}
-
-#[cfg(feature = "yaml")]
-fn yaml_is_valid(
-    span: &Span,
-    params: &[Ref<Expr>],
-    args: &[Value],
-    _strict: bool,
-) -> Result<Value> {
-    let name = "yaml.is_valid";
-    ensure_args_count(span, name, params, args, 1)?;
-
-    let yaml_str = ensure_string(name, &params[0], &args[0])?;
-    Ok(Value::Bool(Value::from_yaml_str(&yaml_str).is_ok()))
-}
-
-#[cfg(feature = "yaml")]
-fn yaml_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
-    let name = "yaml.marshal";
-    ensure_args_count(span, name, params, args, 1)?;
-
-    let serialized = serde_yaml::to_string(&args[0])
-        .map_err(|err| span.error(&format!("could not serialize to yaml: {}", err)))?;
-
-    Ok(Value::String(serialized.into()))
-}
-
-#[cfg(feature = "yaml")]
-fn yaml_unmarshal(
-    span: &Span,
-    params: &[Ref<Expr>],
-    args: &[Value],
-    _strict: bool,
-) -> Result<Value> {
-    let name = "yaml.unmarshal";
-    ensure_args_count(span, name, params, args, 1)?;
-    let yaml_str = ensure_string(name, &params[0], &args[0])?;
-    Value::from_yaml_str(&yaml_str).with_context(|| span.error("could not deserialize yaml."))
 }
 
 fn json_is_valid(

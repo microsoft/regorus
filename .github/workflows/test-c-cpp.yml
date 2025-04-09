@@ -2,9 +2,9 @@ name: bindings/c-cpp
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "azure-policy" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "azure-policy" ]
 
 jobs:
   test:
@@ -23,7 +23,7 @@ jobs:
           cargo fetch
           cargo build -r --frozen
         working-directory: ./bindings/ffi
-        
+
       - name: Test c binding
         run: |
           mkdir bindings/c/build

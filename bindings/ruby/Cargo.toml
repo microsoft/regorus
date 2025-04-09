@@ -1,3 +1,0 @@
-[workspace]
-members = ["ext/regorusrb"]
-resolver = "2"

@@ -399,29 +399,6 @@ impl Value {
     pub fn to_json_str(&self) -> Result<String> {
         serde_json::to_string_pretty(self).map_err(anyhow::Error::msg)
     }
-
-    /// Deserialize a value from YAML.
-    /// Note: Deserialization from YAML does not support arbitrary precision numbers.
-    #[cfg(feature = "yaml")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-    pub fn from_yaml_str(yaml: &str) -> Result<Value> {
-        let value = serde_yaml::from_str(yaml)
-            .map_err(|err| anyhow::anyhow!("Failed to parse YAML: {}", err))?;
-        Ok(value)
-    }
-
-    /// Deserialize a value from a file containing YAML.
-    /// Note: Deserialization from YAML does not support arbitrary precision numbers.
-    #[cfg(feature = "std")]
-    #[cfg(feature = "yaml")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-    #[cfg_attr(docsrs, doc(cfg(feature = "yaml")))]
-    pub fn from_yaml_file(path: &String) -> Result<Value> {
-        match std::fs::read_to_string(path) {
-            Ok(c) => Self::from_yaml_str(c.as_str()),
-            Err(e) => bail!("Failed to read {path}. {e}"),
-        }
-    }
 }
 
 impl From<bool> for Value {
@@ -610,34 +587,6 @@ impl From<serde_json::Value> for Value {
     /// # }
     fn from(v: serde_json::Value) -> Self {
         match serde_json::from_value(v) {
-            Ok(v) => v,
-            _ => Value::Undefined,
-        }
-    }
-}
-
-#[cfg(feature = "yaml")]
-#[cfg_attr(docsrs, doc(cfg(feature = "yaml")))]
-impl From<serde_yaml::Value> for Value {
-    /// Create a [`Value`] from [`serde_yaml::Value`].
-    ///
-    /// Returns [`Value::Undefined`] in case of error.
-    /// ```
-    /// # use regorus::*;
-    /// # fn main() -> anyhow::Result<()> {
-    /// let yaml = "
-    ///   x: 10
-    ///   y: 20
-    /// ";
-    /// let yaml_v : serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
-    /// let v = Value::from(yaml_v);
-    ///
-    /// assert_eq!(v["x"].as_u64()?, 10);
-    /// assert_eq!(v["y"].as_u64()?, 20);
-    /// # Ok(())
-    /// # }
-    fn from(v: serde_yaml::Value) -> Self {
-        match serde_yaml::from_value(v) {
             Ok(v) => v,
             _ => Value::Undefined,
         }

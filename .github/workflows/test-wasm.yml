@@ -2,9 +2,9 @@ name: bindings/wasm
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "azure-policy" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "azure-policy" ]
 
 jobs:
   test:

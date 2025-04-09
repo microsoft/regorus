@@ -55,10 +55,6 @@ fn opa_runtime(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
         "base64",
         #[cfg(feature = "base64url")]
         "base64url",
-        #[cfg(feature = "crypto")]
-        "crypto",
-        #[cfg(feature = "deprecated")]
-        "deprecated",
         #[cfg(feature = "glob")]
         "glob",
         #[cfg(feature = "graph")]
@@ -81,8 +77,6 @@ fn opa_runtime(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
         "uuid",
         #[cfg(feature = "urlquery")]
         "urlquery",
-        #[cfg(feature = "yaml")]
-        "yaml",
         "",
     ];
 
@@ -109,22 +103,6 @@ fn opa_runtime(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
                 .collect(),
         ),
     );
-
-    #[cfg(feature = "deprecated")]
-    {
-        let mut deprecated: Vec<&&str> = builtins::deprecated::DEPRECATED.keys().collect();
-        deprecated.sort();
-
-        obj.insert(
-            Value::String("deprecated".into()),
-            Value::from_array(
-                deprecated
-                    .iter()
-                    .map(|f| Value::String(f.to_string().into()))
-                    .collect(),
-            ),
-        );
-    }
 
     Ok(Value::from_map(obj))
 }

@@ -56,13 +56,6 @@ fn get_extra_arg_impl(
             } else if let Some((_, n_args)) = BUILTINS.get(path.as_str()) {
                 *n_args
             } else {
-                #[cfg(feature = "deprecated")]
-                if let Some((_, n_args)) = DEPRECATED.get(path.as_str()) {
-                    *n_args
-                } else {
-                    return Ok(None);
-                }
-                #[cfg(not(feature = "deprecated"))]
                 return Ok(None);
             }
         };

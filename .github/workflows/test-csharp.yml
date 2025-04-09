@@ -2,11 +2,11 @@ name: bindings/csharp
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "azure-policy" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "azure-policy" ]
 
-jobs:  
+jobs:
   build-ffi:
     name: 'Build Regorus FFI: (${{ matrix.runtime.target }})'
     runs-on: ${{ matrix.runtime.os }}
@@ -38,7 +38,7 @@ jobs:
       - name: Build Regorus binding
         run: cargo build -r --target ${{ matrix.runtime.target }} --locked
         working-directory: ./bindings/ffi
-        
+
       - name: Upload regorus ffi shared library
         uses: actions/upload-artifact@v4
         with:
@@ -56,7 +56,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  
+          fetch-depth: 0
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: ./bindings/csharp/global.json
@@ -122,7 +122,7 @@ jobs:
         with:
           name: regorus-nuget
           path: ./bindings/csharp/TestApp/regorus-nuget/
-        
+
       - name: Restore Test App
         run: dotnet restore /p:RestoreSources=./regorus-nuget/
         working-directory: ./bindings/csharp/TestApp
@@ -134,4 +134,3 @@ jobs:
       - name: Run Test App 8.0
         run: dotnet run --framework net8.0
         working-directory: ./bindings/csharp/TestApp
-  

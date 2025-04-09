@@ -214,6 +214,32 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                 // Mocks non-existent jwt builtin.
                 println!("skipping mock test for io.jwt.decode_verify: {}", case.note);
                 continue;
+            } else {
+                let tests_with_unsupported_builtins = ["jsonbuiltins/yaml round-trip"];
+                if tests_with_unsupported_builtins.contains(&case.note.as_str()) {
+                    // The test expects unsupported built-in to be called.
+                    println!("skipping test using unsupported builtins: {}", case.note);
+                    continue;
+                }
+
+                let tests_with_deprecated_builtins = [
+                    "regexmatch/re_match: ref",
+                    "regexmatch/re_match: raw",
+                    "regexmatch/re_match: raw: undefined",
+                    "regexmatch/re_match",
+                    "regexmatch/re_match: undefined",
+                    "sets/set_diff: refs",
+                    "withkeyword/builtin: http.send example",
+                    "withkeyword/builtin-builtin: arity 1, replacement is simple",
+                    "withkeyword/function: direct call, built-in replacement, arity 1, result captured",
+                    "withkeyword/builtin-builtin: arity 1, replacement is compound",
+                    "withkeyword/function: direct call, built-in replacement, arity 1",
+                ];
+                if tests_with_deprecated_builtins.contains(&case.note.as_str()) {
+                    // The test expects deprecated built-in to be called.
+                    println!("skipping test using deprecated builtins: {}", case.note);
+                    continue;
+                }
             }
 
             // Normalize for comparison.

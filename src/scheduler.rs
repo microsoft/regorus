@@ -646,8 +646,6 @@ impl Analyzer {
     ) -> Result<(Vec<SourceStr>, Vec<Ref<Expr>>)> {
         let mut used_vars = vec![];
         let mut comprs = vec![];
-        #[cfg(feature = "deprecated")]
-        let full_expr = expr;
         traverse(expr, &mut |e| match e.as_ref() {
             Var(v) if !matches!(v.0.text(), "_" | "input" | "data") => {
                 let name = v.0.source_str();
@@ -664,17 +662,6 @@ impl Analyzer {
                         first_use.entry(name).or_insert(v.0.clone());
                     }
                 } else if !scope.inputs.contains(&name) {
-                    #[cfg(feature = "deprecated")]
-                    {
-                        if let Ok(path) = get_path_string(full_expr, None) {
-                            if crate::builtins::BUILTINS.contains_key(path.as_str())
-                                || crate::builtins::deprecated::DEPRECATED
-                                    .contains_key(path.as_str())
-                            {
-                                return Ok(false);
-                            }
-                        }
-                    }
                     bail!(v
                         .0
                         .error(format!("use of undefined variable `{name}` is unsafe").as_str()));

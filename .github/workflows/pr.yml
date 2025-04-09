@@ -2,9 +2,9 @@ name: tests/release
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "azure-policy" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "azure-policy" ]
 
 env:
   CARGO_TERM_COLOR: always

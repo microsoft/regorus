@@ -14,7 +14,7 @@ keywords = ["interpreter", "opa", "policy-as-code", "rego"]
 crate-type = ["cdylib"]
 
 [features]
-default = ["ast", "coverage", "regorus/std", "regorus/full-opa"]
+default = ["ast", "coverage", "regorus/std", "regorus/msft-rego"]
 ast = ["regorus/ast"]
 coverage = ["regorus/coverage"]
 

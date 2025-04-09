@@ -7,4 +7,4 @@ edition = "2021"
 
 [dependencies]
 anyhow = { version = "1.0.83", default-features = false }
-regorus = { path = "../..", default-features = false, features = ["opa-no-std"] }
+regorus = { path = "../..", default-features = false, features = ["msft-rego-no-std"] }

@@ -8,15 +8,6 @@ fn read_file(path: &String) -> Result<String> {
     std::fs::read_to_string(path).map_err(|_| anyhow!("could not read {path}"))
 }
 
-#[allow(unused_variables)]
-fn read_value_from_yaml_file(path: &String) -> Result<regorus::Value> {
-    #[cfg(feature = "yaml")]
-    return regorus::Value::from_yaml_file(path);
-
-    #[cfg(not(feature = "yaml"))]
-    bail!("regorus has not been built with yaml support");
-}
-
 fn read_value_from_json_file(path: &String) -> Result<regorus::Value> {
     #[cfg(feature = "std")]
     return regorus::Value::from_json_file(path);
@@ -82,10 +73,8 @@ fn rego_eval(
             // Read data file.
             let data = if file.ends_with(".json") {
                 read_value_from_json_file(file)?
-            } else if file.ends_with(".yaml") {
-                read_value_from_yaml_file(file)?
             } else {
-                bail!("Unsupported data file `{file}`. Must be rego, json or yaml.");
+                bail!("Unsupported data file `{file}`. Must be rego or json.");
             };
 
             // Merge given data.
@@ -96,10 +85,8 @@ fn rego_eval(
     if let Some(file) = input {
         let input = if file.ends_with(".json") {
             read_value_from_json_file(&file)?
-        } else if file.ends_with(".yaml") {
-            read_value_from_yaml_file(&file)?
         } else {
-            bail!("Unsupported input file `{file}`. Must be json or yaml.")
+            bail!("Unsupported input file `{file}`. Must be json.")
         };
         engine.set_input(input);
     }
@@ -214,11 +201,11 @@ enum RegorusCommand {
         #[arg(long, short, value_name = "bundle")]
         bundles: Vec<String>,
 
-        /// Policy or data files. Rego, json or yaml.
-        #[arg(long, short, value_name = "policy.rego|data.json|data.yaml")]
+        /// Policy or data files. Rego, json.
+        #[arg(long, short, value_name = "policy.rego|data.json")]
         data: Vec<String>,
 
-        /// Input file. json or yaml.
+        /// Input file. json.
         #[arg(long, short, value_name = "input.rego")]
         input: Option<String>,
 

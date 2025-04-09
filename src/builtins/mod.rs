@@ -7,17 +7,11 @@ mod bitwise;
 pub mod comparison;
 mod conversions;
 
-#[cfg(feature = "crypto")]
-mod crypto;
-#[cfg(feature = "deprecated")]
-pub mod deprecated;
 mod encoding;
 #[cfg(feature = "glob")]
 mod glob;
 #[cfg(feature = "graph")]
 mod graph;
-#[cfg(feature = "http")]
-mod http;
 pub mod numbers;
 mod objects;
 #[cfg(feature = "opa-runtime")]
@@ -51,14 +45,11 @@ use lazy_static::lazy_static;
 
 pub type BuiltinFcn = (fn(&Span, &[Ref<Expr>], &[Value], bool) -> Result<Value>, u8);
 
-#[cfg(feature = "deprecated")]
-pub use deprecated::DEPRECATED;
-
 #[rustfmt::skip]
 lazy_static! {
     pub static ref BUILTINS: BuiltinsMap<&'static str, BuiltinFcn> = {
 	let mut m : BuiltinsMap<&'static str, BuiltinFcn>  = BuiltinsMap::new();
-	
+
 	// comparison functions are directly called.
 	numbers::register(&mut m);
 	aggregates::register(&mut m);
@@ -66,16 +57,16 @@ lazy_static! {
 	sets::register(&mut m);
 	objects::register(&mut m);
 	strings::register(&mut m);
-	
+
 	#[cfg(feature = "regex")]
 	regex::register(&mut m);
-	
+
 	#[cfg(feature = "glob")]
 	glob::register(&mut m);
-	
+
 	#[cfg(feature = "graph")]
 	graph::register(&mut m);
-	
+
 	bitwise::register(&mut m);
 	conversions::register(&mut m);
 	//units::register(&mut m);
@@ -84,11 +75,7 @@ lazy_static! {
 	#[cfg(feature = "time")]
 	time::register(&mut m);
 
-	#[cfg(feature = "crypto")]
-	crypto::register(&mut m);
 	//graphql::register(&mut m);
-	#[cfg(feature = "http")]
-	http::register(&mut m);
 	//net::register(&mut m);
 	#[cfg(feature = "uuid")]
 	uuid::register(&mut m);

@@ -465,9 +465,8 @@ cases:
           cast_array([1])
         }
     query: data.test
-    want_result:
-      x: true
-      
+    error: could not find function cast_array
+
   - note: invalid-deprecated-function
     data: {}
     modules:
@@ -478,4 +477,4 @@ cases:
           cast_array([1])
         }
     query: data.test
-    error: is deprecated
+    error: could not find function cast_array
