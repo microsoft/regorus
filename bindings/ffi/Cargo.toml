@@ -24,3 +24,6 @@ custom_allocator = []
 [build-dependencies]
 cbindgen = "0.28.0"
 csbindgen = "=1.9.3"
+
+[dev-dependencies]
+csbindgen = "=1.9.3"

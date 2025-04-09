@@ -4,6 +4,10 @@
 use anyhow::{anyhow, bail, Result};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use std::os::raw::c_void;
+use std::cell::RefCell;
+use std::thread_local;
+use std::collections::HashMap;
 
 /// Status of a call on `RegorusEngine`.
 #[repr(C)]
@@ -13,6 +17,60 @@ pub enum RegorusStatus {
 
     /// The operation was unsuccessful.
     RegorusStatusError,
+}
+
+// Define callback function type for orchestration to Regorus communication
+pub type RegorusCallbackFn = extern "C" fn(payload: *const c_char, context: *mut c_void) -> *mut c_char;
+
+// RegorusCallbackFn uses context pointer, so it doesn't provide Send/Sync
+// Using thread_local instead of lazy_static to avoid Send/Sync requirements
+// It limits invoke to single-threaded usage
+thread_local! {
+    static CALLBACK_MAP: RefCell<HashMap<String, (RegorusCallbackFn, *mut c_void)>> = RefCell::new(HashMap::new());
+}
+
+// Store a callback function and its context
+#[no_mangle]
+pub extern "C" fn regorus_register_callback(
+    name: *const c_char, 
+    callback: RegorusCallbackFn, 
+    context: *mut c_void
+) -> RegorusStatus {
+    if name.is_null() {
+        return RegorusStatus::RegorusStatusError;
+    }
+    
+    let name_str = match from_c_str("name", name) {
+        Ok(s) => s,
+        Err(_) => return RegorusStatus::RegorusStatusError,
+    };
+    
+    let result = CALLBACK_MAP.with(|callbacks| {
+        callbacks.borrow_mut().insert(name_str, (callback, context));
+        RegorusStatus::RegorusStatusOk
+    });
+    
+    result
+}
+
+// Remove a callback function
+#[no_mangle]
+pub extern "C" fn regorus_unregister_callback(name: *const c_char) -> RegorusStatus {
+    if name.is_null() {
+        return RegorusStatus::RegorusStatusError;
+    }
+    
+    let name_str = match from_c_str("name", name) {
+        Ok(s) => s,
+        Err(_) => return RegorusStatus::RegorusStatusError,
+    };
+    
+    let result = CALLBACK_MAP.with(|callbacks| {
+        callbacks.borrow_mut().remove(&name_str);
+        RegorusStatus::RegorusStatusOk
+    });
+    
+    result
 }
 
 /// Result of a call on `RegorusEngine`.
@@ -105,13 +163,69 @@ pub extern "C" fn regorus_result_drop(r: RegorusResult) {
         }
     }
 }
+// Extension function to invoke callback
+fn invoke_callback(mut params: Vec<::regorus::Value>) -> Result<::regorus::Value> {
+    if params.len() != 2 {
+        bail!("invoke requires exactly two parameters: function_name and payload");
+    }
+    
+    let function_name = match params.remove(0) {
+        ::regorus::Value::String(s) => s.as_ref().to_string(),
+        _ => bail!("function_name must be a string"),
+    };
+    
+    // Serialize the payload to JSON
+    let payload = serde_json::to_string(&params.remove(0))
+        .map_err(|e| anyhow!("Failed to serialize payload: {}", e))?;
+    
+    // Look up the callback function using thread_local storage
+    let callback_option = CALLBACK_MAP.with(|callbacks| {
+        callbacks.borrow().get(&function_name).cloned()
+    });
+    
+    let (callback_fn, context) = match callback_option {
+        Some(cb) => cb,
+        None => bail!("No callback registered with name: {}", function_name),
+    };
+    
+    // Convert payload to C string
+    let payload_c_str = match CString::new(payload) {
+        Ok(cs) => cs,
+        Err(_) => bail!("Failed to convert payload to C string"),
+    };
+    
+    // Call the orchestration function
+    let result_ptr = callback_fn(payload_c_str.as_ptr(), context);
+    
+    if result_ptr.is_null() {
+        return Ok(::regorus::Value::Null);
+    }
+    
+    // Convert the result back to a Value
+    let result_str = unsafe {
+        let result = CStr::from_ptr(result_ptr)
+            .to_str()
+            .map_err(|e| anyhow!("Invalid UTF-8 in callback result: {}", e))?
+            .to_string();
+            
+        // Free the memory allocated by C#
+        let _ = CString::from_raw(result_ptr as *mut c_char);
+        
+        result
+    };
+    
+    // Convert result string to Value
+    ::regorus::Value::from_json_str(&result_str)
+        .map_err(|e| anyhow!("Failed to parse callback result as JSON: {}", e))
+}
 
 #[no_mangle]
 /// Construct a new Engine
 ///
 /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html
 pub extern "C" fn regorus_engine_new() -> *mut RegorusEngine {
-    let engine = ::regorus::Engine::new();
+    let mut engine = ::regorus::Engine::new();
+    let _ = engine.add_extension("invoke".to_string(), 2, Box::new(invoke_callback));
     Box::into_raw(Box::new(RegorusEngine { engine }))
 }
 

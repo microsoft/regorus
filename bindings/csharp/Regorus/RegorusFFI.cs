@@ -10,11 +10,13 @@ using System.Runtime.InteropServices;
 
 namespace Regorus.Internal
 {
+    // Add the callback delegate definition
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal unsafe delegate byte* RegorusCallbackDelegate(byte* payload, void* context);
+    
     internal static unsafe partial class API
     {
         const string __DllName = "regorus_ffi";
-
-
 
         /// <summary>
         ///  Drop a `RegorusResult`.
@@ -192,7 +194,17 @@ namespace Regorus.Internal
         [DllImport(__DllName, EntryPoint = "regorus_engine_set_rego_v0", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_engine_set_rego_v0(RegorusEngine* engine, [MarshalAs(UnmanagedType.U1)] bool enable);
 
+        /// <summary>
+        /// Register a callback function that can be called from Rego policies
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "regorus_register_callback", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusStatus regorus_register_callback(byte* name, RegorusCallbackDelegate callback, void* context);
 
+        /// <summary>
+        /// Unregister a previously registered callback function
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "regorus_unregister_callback", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusStatus regorus_unregister_callback(byte* name);
     }
 
     [StructLayout(LayoutKind.Sequential)]
