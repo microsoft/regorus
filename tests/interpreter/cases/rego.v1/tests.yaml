@@ -456,18 +456,6 @@ cases:
     query: data.test
     error: data cannot be shadowed
 
-  - note: deprecated-function
-    data: {}
-    modules:
-      - |
-        package test
-        x {
-          cast_array([1])
-        }
-    query: data.test
-    want_result:
-      x: true
-      
   - note: invalid-deprecated-function
     data: {}
     modules:
@@ -478,4 +466,4 @@ cases:
           cast_array([1])
         }
     query: data.test
-    error: is deprecated
+    error: could not find function cast_array
