@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Nullable>Enable</Nullable>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableMSTestRunner>true</EnableMSTestRunner>
+    <!-- More info about dotnet test integration https://learn.microsoft.com/dotnet/core/testing/unit-testing-platform-integration-dotnet-test -->
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <TestingPlatformShowTestsFailure>true</TestingPlatformShowTestsFailure>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../../tests/**/*.*" Link="tests/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MSTest" Version="3.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Regorus" Version="0.5.0"/>
+  </ItemGroup>
+</Project>

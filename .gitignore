@@ -28,4 +28,3 @@ bindings/*/target
 # C# build folders
 **bin
 **obj
-*.sln
