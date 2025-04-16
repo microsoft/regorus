@@ -288,12 +288,6 @@ Currently, Regorus passes all the non-builtin specific tests.
 See [passing tests suites](https://github.com/microsoft/regorus/blob/main/tests/opa.passing).
 
 The following test suites don't pass fully due to missing builtins:
-- `cryptoparsersaprivatekeys`
-- `cryptox509parseandverifycertificates`
-- `cryptox509parsecertificaterequest`
-- `cryptox509parsecertificates`
-- `cryptox509parsekeypair`
-- `cryptox509parsersaprivatekey`
 - `globsmatch`
 - `graphql`
 - `invalidkeyerror`
@@ -324,7 +318,7 @@ The following test suites don't pass fully due to missing builtins:
 
 They are captured in the following [github issues](https://github.com/microsoft/regorus/issues?q=is%3Aopen+is%3Aissue+label%3Alib).
 
-Cryptographically insecure `sha1` related builtins are intentionally not supported to discourage their use.
+Cryptographic builtins are not supported by design. Users that need cryptographic builtins are encouraged to use [extensions](https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.add_extension).
 
 ### Grammar
 

@@ -61,8 +61,6 @@ pub struct Interpreter {
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
     traces: Option<Vec<Rc<str>>>,
-    #[cfg(feature = "deprecated")]
-    allow_deprecated: bool,
     strict_builtin_errors: bool,
     imports: BTreeMap<String, Ref<Expr>>,
     extensions: Map<String, (u8, Rc<Box<dyn Extension>>)>,
@@ -187,8 +185,6 @@ impl Interpreter {
             builtins_cache: BTreeMap::new(),
             no_rules_lookup: false,
             traces: None,
-            #[cfg(feature = "deprecated")]
-            allow_deprecated: true,
             strict_builtin_errors: true,
             imports: BTreeMap::default(),
             extensions: Map::new(),
@@ -2175,16 +2171,6 @@ impl Interpreter {
         if let Some(builtin) = builtins::BUILTINS.get(path) {
             return Ok(Some(builtin));
         }
-
-        #[cfg(feature = "deprecated")]
-        if let Some(builtin) = builtins::DEPRECATED.get(path) {
-            let allow = self.allow_deprecated && !self.current_module()?.rego_v1;
-            if !allow {
-                bail!(span.error(format!("{path} is deprecated").as_str()))
-            }
-            return Ok(Some(builtin));
-        }
-
         Ok(None)
     }
 
