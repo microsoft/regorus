@@ -41,7 +41,7 @@ cases:
                   - literal:
                       expr:
                         true
-    
+
   - note: no-else
     rego: |
       package test
@@ -77,7 +77,7 @@ cases:
     rego: |
       package test
       import future.keywords.if
-      
+
       x = 10 if {
         false
       } {
@@ -108,7 +108,7 @@ cases:
   - note: rule-named-if
     rego: |
       package test
-      
+
       x = 10 if {
         false
       } {
@@ -141,11 +141,11 @@ cases:
                   - literal:
                       expr:
                          true
-                        
+
   - note: query-else
     rego: |
       package test
-      
+
       x = 10 {
         false
       } else {
@@ -172,12 +172,12 @@ cases:
                   - literal:
                       expr:
                         true
- 
+
   - note: if-literal-else
     rego: |
       package test
       import future.keywords.if
-      
+
       x = 10 if 1 < 0 else {
         true
       }
@@ -212,7 +212,7 @@ cases:
     rego: |
       package test
       import future.keywords.if
-      
+
       # This will evaluate to 10
       x = 10 if 1 < 0 else := 20 {
         true
@@ -247,4 +247,26 @@ cases:
                   - literal:
                       expr:
                         true
-                        
+
+  - note: contains-else-error
+    rego: |
+      package test
+      import rego.v1
+
+      a contains "b" if {
+        false
+      } else if {
+        true
+      }
+    error: else cannot be used with set rules
+
+  - note: old-style-set-else-error
+    rego: |
+      package test
+
+      a["b"] {
+        false
+      } else {
+        true
+      }
+    error: else cannot be used with set rules
