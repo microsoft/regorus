@@ -1617,6 +1617,12 @@ impl<'source> Parser<'source> {
         let bodies = self.parse_rule_bodies()?;
         span.end = self.end;
 
+        if let RuleHead::Set { .. } = &head {
+            if let Some(RuleBody { span, .. }) = bodies.get(1) {
+                bail!(span.error("else cannot be used with set rules"));
+            }
+        }
+
         if self.rego_v1 && bodies.is_empty() {
             match &head {
                 RuleHead::Compr { assign, .. } | RuleHead::Func { assign, .. }
