@@ -8,16 +8,16 @@
        <LangVersion>10.0</LangVersion>
 
         <!-- See https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-pack -->
-        <VersionPrefix>0.5.0</VersionPrefix>
+        <VersionPrefix>0.6.0</VersionPrefix>
         <VersionSuffix>$(VersionSuffix)</VersionSuffix>
         <PackageReadmeFile>README.md</PackageReadmeFile>
     </PropertyGroup>
 
     <!--
-        $(RegorusFFIArtifactsDir) is the location where regorus shared libraries have been 
+        $(RegorusFFIArtifactsDir) is the location where regorus shared libraries have been
         built for various platforms and copied to. RegorusFFIArtifactsDir is passed in
-        by the publishing pipeline. 
-        
+        by the publishing pipeline.
+
         For each target triple, `Pack` expects the regorus ffi shared library
         to be found in $(RegorusFFIArtifactsDir)/<target-triple>/release.
     -->
@@ -25,14 +25,14 @@
         <Error Text="RegorusFFIArtifactsDir must be supplied." Condition="$(RegorusFFIArtifactsDir) == ''" />
 
         <!-- Ensure that the binaries for officially supported platforms exists. -->
-        <Error Text="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/release/regorus_ffi.dll missing." 
+        <Error Text="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/release/regorus_ffi.dll missing."
                Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/release/regorus_ffi.dll')" />
-        <Error Text="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/release/regorus_ffi.pdb missing." 
+        <Error Text="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/release/regorus_ffi.pdb missing."
                Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/release/regorus_ffi.pdb')" />
 
-        <Error Text="$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/release/libregorus_ffi.so missing." 
+        <Error Text="$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/release/libregorus_ffi.so missing."
                Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/release/libregorus_ffi.so')" />
-    </Target> 
+    </Target>
 
     <ItemGroup>
         <None Include="docs/README.md" Pack="true"  PackagePath="/" />
