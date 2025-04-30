@@ -9,6 +9,12 @@ using System.Text;
 #nullable enable
 namespace Regorus
 {
+    /// <summary>
+    /// C# Wrapper for the Regorus engine.
+    /// This class is not thread-safe. For multithreaded use, prefer cloning after adding policies and data to an instance.
+    /// Cloning is cheap and involves only incrementing reference counts for shared immutable objects like parsed policies,
+    /// data etc. Mutable state is deep copied as needed.
+    /// </summary>
     public unsafe sealed class Engine : System.IDisposable
     {
         private Regorus.Internal.RegorusEngine* E;
@@ -80,6 +86,10 @@ namespace Regorus
 
         public Engine Clone() => new(Internal.API.regorus_engine_clone(E));
 
+        public void SetStrictBuiltinErrors(bool strict)
+        {
+            CheckAndDropResult(Regorus.Internal.API.regorus_engine_set_strict_builtin_errors(E, strict));
+        }
         byte[] NullTerminatedUTF8Bytes(string s)
         {
             return Encoding.UTF8.GetBytes(s + char.MinValue);
@@ -202,7 +212,10 @@ namespace Regorus
             return CheckAndDropResult(Regorus.Internal.API.regorus_engine_take_prints(E));
         }
 
-
+        public string? GetAstAsJson()
+        {
+            return CheckAndDropResult(Regorus.Internal.API.regorus_engine_get_ast_as_json(E));
+        }
 
         string? StringFromUTF8(IntPtr ptr)
         {
@@ -236,5 +249,6 @@ namespace Regorus
             Regorus.Internal.API.regorus_result_drop(result);
             return resultString;
         }
+
     }
 }
