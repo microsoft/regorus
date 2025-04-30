@@ -144,6 +144,15 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_engine_get_coverage_report(RegorusEngine* engine);
 
         /// <summary>
+        ///  Enable/disable strict builtin errors.
+        ///
+        ///  See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.set_strict_builtin_errors
+        ///  * `strict`: Whether to raise errors or return undefined on certain scenarios.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "regorus_engine_set_strict_builtin_errors", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_set_strict_builtin_errors(RegorusEngine* engine, [MarshalAs(UnmanagedType.U1)] bool strict);
+
+        /// <summary>
         ///  Get pretty printed coverage report.
         ///
         ///  See https://docs.rs/regorus/latest/regorus/coverage/struct.Report.html#method.to_string_pretty

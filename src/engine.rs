@@ -832,7 +832,7 @@ impl Engine {
 
     /// Gather output from print statements instead of emiting to stderr.
     ///
-    /// See [`Engine::take_prints`].    
+    /// See [`Engine::take_prints`].
     pub fn set_gather_prints(&mut self, b: bool) {
         self.interpreter.set_gather_prints(b);
     }

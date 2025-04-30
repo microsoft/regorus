@@ -111,7 +111,12 @@ pub extern "C" fn regorus_result_drop(r: RegorusResult) {
 ///
 /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html
 pub extern "C" fn regorus_engine_new() -> *mut RegorusEngine {
-    let engine = ::regorus::Engine::new();
+    let mut engine = ::regorus::Engine::new();
+
+    // For more OPA compatibility out of the box, we ask builtins to return undefined
+    // instead of raising errors in certain failure scenarios.
+    engine.set_strict_builtin_errors(false);
+
     Box::into_raw(Box::new(RegorusEngine { engine }))
 }
 
@@ -347,6 +352,21 @@ pub extern "C" fn regorus_engine_get_coverage_report(engine: *mut RegorusEngine)
         },
         Err(e) => to_regorus_result(Err(e)),
     }
+}
+
+/// Enable/disable strict builtin errors.
+///
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.set_strict_builtin_errors
+/// * `strict`: Whether to raise errors or return undefined on certain scenarios.
+#[no_mangle]
+pub extern "C" fn regorus_engine_set_strict_builtin_errors(
+    engine: *mut RegorusEngine,
+    strict: bool,
+) -> RegorusResult {
+    to_regorus_result(|| -> Result<()> {
+        to_ref(&engine)?.engine.set_strict_builtin_errors(strict);
+        Ok(())
+    }())
 }
 
 /// Get pretty printed coverage report.
