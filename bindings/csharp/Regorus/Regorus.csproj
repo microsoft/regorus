@@ -13,6 +13,10 @@
         <PackageReadmeFile>README.md</PackageReadmeFile>
     </PropertyGroup>
 
+    <ItemGroup>
+        <PackageReference Include="System.Text.Json" Version="9.0.4" />
+    </ItemGroup>
+
     <!--
         $(RegorusFFIArtifactsDir) is the location where regorus shared libraries have been
         built for various platforms and copied to. RegorusFFIArtifactsDir is passed in
