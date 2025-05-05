@@ -5,6 +5,11 @@
 
 // Create a new engine
 var engine = new Regorus.Engine();
+
+// Enable the invoke extension
+bool enableResult = engine.EnableInvoke();
+Console.WriteLine($"Invoke extension enabled: {enableResult}");
+
 // Register a callback function
 bool registerResult = engine.RegisterCallback("test_callback", payload => {
     Console.WriteLine($"Called with payload: {payload}");

@@ -27,8 +27,7 @@ namespace Regorus
         private int isDisposed;
         
         // Store callback delegates to prevent garbage collection
-        private readonly Dictionary<string, (Internal.RegorusCallbackDelegate Delegate, GCHandle Handle)> callbackDelegates 
-            = new Dictionary<string, (Internal.RegorusCallbackDelegate, GCHandle)>();
+        private readonly Dictionary<string, GCHandle> callbackHandles = new Dictionary<string, GCHandle>();
         
         // Store user callbacks
         private readonly Dictionary<string, RegoCallback> callbacks = new Dictionary<string, RegoCallback>();
@@ -75,7 +74,7 @@ namespace Regorus
                 if (disposing)
                 {
                     // Unregister all callbacks
-                    foreach (var name in new List<string>(callbackDelegates.Keys))
+                    foreach (var name in new List<string>(callbackHandles.Keys))
                     {
                         UnregisterCallback(name);
                     }
@@ -229,78 +228,113 @@ namespace Regorus
             return CheckAndDropResult(Regorus.Internal.API.regorus_engine_take_prints(E));
         }
 
-        // Generic callback handler that routes to the appropriate user-provided callback
-        private static unsafe byte* CallbackHandler(byte* payloadPtr, void* contextPtr)
+        /// <summary>
+        /// Enable a builtin extension by name
+        /// </summary>
+        /// <param name="name">The name of the builtin extension to enable</param>
+        /// <returns>True if the operation succeeded, otherwise false</returns>
+        public bool EnableBuiltinExtension(string name)
         {
             try
             {
-                // Context pointer contains the engine instance and callback name
-                var context = GCHandle.FromIntPtr(new IntPtr(contextPtr));
-                var contextData = (CallbackContext)context.Target!;
-                
-                if (contextData == null || contextData.Engine == null)
+                var nameBytes = NullTerminatedUTF8Bytes(name);
+                fixed (byte* namePtr = nameBytes)
                 {
-                    return null;
+                    CheckAndDropResult(Internal.API.regorus_engine_enable_builtin_extension(E, namePtr));
+                    return true;
                 }
-                
-                // Convert the payload to a string
-                var payload = Marshal.PtrToStringUTF8(new IntPtr(payloadPtr));
-                if (payload == null)
-                {
-                    return null;
-                }
-                
-                // Deserialize the payload to an object
-                var payloadObject = JsonSerializer.Deserialize<object>(payload, JsonOptions);
-                if (payloadObject == null)
-                {
-                    return null;
-                }
-                
-                // Get the user callback
-                if (!contextData.Engine.callbacks.TryGetValue(contextData.CallbackName, out var callback))
-                {
-                    return null;
-                }
-                
-                // Call the user callback
-                var result = callback(payloadObject);
-                
-                if (result == null)
-                {
-                    return null;
-                }
-                
-                // Always serialize the result to JSON, even if it's a string
-                string jsonResult = JsonSerializer.Serialize(result, JsonOptions);
-                
-                // Convert the result back to a C string that Rust will free
-                return (byte*)Marshal.StringToCoTaskMemUTF8(jsonResult).ToPointer();
             }
             catch
             {
-                return null;
+                return false;
             }
         }
-        
-        private class CallbackContext
-        {
-            public Engine Engine { get; set; }
-            public string CallbackName { get; set; }
-            
-            public CallbackContext(Engine engine, string name)
-            {
-                Engine = engine;
-                CallbackName = name;
-            }
-        }
-        
+
         /// <summary>
-        /// Register a callback function that can be invoked from Rego policies
+        /// Enable the invoke capability to allow Rego policies to call registered callbacks
         /// </summary>
-        /// <param name="name">Name of the callback function to register</param>
-        /// <param name="callback">Callback function to be invoked</param>
-        /// <returns>True if registration succeeded, otherwise false</returns>
+        /// <returns>True if the operation succeeded, otherwise false</returns>
+        public bool EnableInvoke()
+        {
+            return EnableBuiltinExtension("invoke");
+        }
+
+        // Generate a closure that wraps the user's callback function
+        private static Internal.RegorusCallbackDelegate GenerateRegorusCallback(RegoCallback callback)
+        {
+            return delegate (byte* payloadPtr, void* contextPtr)
+            {
+                try
+                {
+                    // Convert the payload to a string
+#if NETSTANDARD2_1
+                    var payload = Marshal.PtrToStringUTF8(new IntPtr(payloadPtr));
+#else
+                    var payload = StringFromUTF8Raw(new IntPtr(payloadPtr));
+#endif
+                    if (payload == null)
+                    {
+                        return null;
+                    }
+                    
+                    // Deserialize the payload to an object
+                    var payloadObject = JsonSerializer.Deserialize<object>(payload, JsonOptions);
+                    if (payloadObject == null)
+                    {
+                        return null;
+                    }
+                    
+                    // Call the user's callback function
+                    var result = callback(payloadObject);
+                    
+                    if (result == null)
+                    {
+                        return null;
+                    }
+                    
+                    // Always serialize the result to JSON, even if it's a string
+                    string jsonResult = JsonSerializer.Serialize(result, JsonOptions);
+                    
+                    // Convert the result back to a C string that Rust will free
+#if NETSTANDARD2_1
+                    return (byte*)Marshal.StringToCoTaskMemUTF8(jsonResult).ToPointer();
+#else
+                    return StringToCoTaskMemUTF8Raw(jsonResult);
+#endif
+                }
+                catch
+                {
+                    return null;
+                }
+            };
+        }
+
+        // Helper for .NET Standard 2.0 to convert string to UTF8 allocated memory
+        private static byte* StringToCoTaskMemUTF8Raw(string str)
+        {
+            if (str == null)
+                return null;
+
+            var bytes = Encoding.UTF8.GetBytes(str);
+            var ptr = Marshal.AllocCoTaskMem(bytes.Length + 1);
+            Marshal.Copy(bytes, 0, ptr, bytes.Length);
+            Marshal.WriteByte(ptr, bytes.Length, 0);
+            return (byte*)ptr.ToPointer();
+        }
+
+        // Helper for .NET Standard 2.0 to convert UTF8 to string
+        private static string StringFromUTF8Raw(IntPtr ptr)
+        {
+            if (ptr == IntPtr.Zero)
+                return null;
+
+            int len = 0;
+            while (Marshal.ReadByte(ptr, len) != 0) { ++len; }
+            byte[] buffer = new byte[len];
+            Marshal.Copy(ptr, buffer, 0, buffer.Length);
+            return Encoding.UTF8.GetString(buffer);
+        }
+
         public bool RegisterCallback(string name, RegoCallback callback)
         {
             if (string.IsNullOrEmpty(name) || callback == null)
@@ -311,22 +345,18 @@ namespace Regorus
             // Store the callback in our dictionary
             callbacks[name] = callback;
             
-            // Create a context object and GCHandle
-            var contextData = new CallbackContext(this, name);
-            var contextHandle = GCHandle.Alloc(contextData);
-            var contextPtr = GCHandle.ToIntPtr(contextHandle);
+            // Generate a closure for this callback
+            var callbackDelegate = GenerateRegorusCallback(callback);
             
-            // Create a delegate for the callback handler
-            var callbackDelegate = new Internal.RegorusCallbackDelegate(CallbackHandler);
-            
-            // Store the delegate to prevent garbage collection
-            callbackDelegates[name] = (callbackDelegate, contextHandle);
+            // Create a GCHandle to prevent garbage collection
+            var handle = GCHandle.Alloc(callbackDelegate);
+            callbackHandles[name] = handle;
             
             // Register the callback with the native code
             var nameBytes = NullTerminatedUTF8Bytes(name);
             fixed (byte* namePtr = nameBytes)
             {
-                var result = Internal.API.regorus_register_callback(namePtr, callbackDelegate, (void*)contextPtr);
+                var result = Internal.API.regorus_register_callback(namePtr, callbackDelegate, (void*)IntPtr.Zero);
                 return result == Internal.RegorusStatus.RegorusStatusOk;
             }
         }
@@ -353,10 +383,10 @@ namespace Regorus
                 var result = Internal.API.regorus_unregister_callback(namePtr);
                 
                 // Free the GCHandle if we have it
-                if (callbackDelegates.TryGetValue(name, out var delegateInfo))
+                if (callbackHandles.TryGetValue(name, out var handle))
                 {
-                    delegateInfo.Handle.Free();
-                    callbackDelegates.Remove(name);
+                    handle.Free();
+                    callbackHandles.Remove(name);
                 }
                 
                 return result == Internal.RegorusStatus.RegorusStatusOk;

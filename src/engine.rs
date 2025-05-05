@@ -70,6 +70,49 @@ impl Engine {
         self.rego_v1 = !rego_v0;
     }
 
+    /// Enable a builtin extension.
+    /// 
+    /// This allows enabling builtin extensions that are registered in the system.
+    /// Each extension is created with its default implementation.
+    /// Thread safety behavior is determined by the extension's configuration.
+    /// 
+    /// ```rust
+    /// # use regorus::*;
+    /// # use anyhow::{Result};
+    /// # fn main() -> Result<()> {
+    /// let mut engine = Engine::new();
+    /// 
+    /// // Enable the invoke extension with default implementation
+    /// engine.enable_builtin_extension("invoke")?;
+    /// 
+    /// # Ok(())
+    /// # }
+    /// ```
+    /// 
+    #[cfg(feature = "rego-builtin-extensions")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "rego-builtin-extensions")))]
+    pub fn enable_builtin_extension(&mut self, name: &str) -> Result<()> {
+        // Find the builtin extension with the given name
+        let extension = crate::extensions::BUILTIN_EXTENSIONS
+            .iter()
+            .find(|ext| ext.name == name)
+            .ok_or_else(|| anyhow::anyhow!("Unknown builtin extension: {}", name))?;
+        
+        // Get the factory function (should always be available for builtin extensions)
+        let factory = extension.default_factory
+            .expect("Builtin extension is missing its implementation factory");
+        
+        // Create a handler that uses the default implementation
+        // The factory returns BuiltinExtensionTrait, but we need a standard Extension for the engine
+        let handler = Box::new(move |params: Vec<Value>| -> Result<Value> {
+            let ext = factory();
+            ext.call(params)
+        });
+        
+        // Use add_extension directly with the extension's thread safety setting
+        self.add_extension(name.to_string(), extension.nargs, handler, extension.thread_safe)
+    }
+
     /// Add a policy.
     ///
     /// The policy file will be parsed and converted to AST representation.
@@ -686,6 +729,9 @@ impl Engine {
     /// * `path`: The fully qualified path of the builtin.
     /// * `nargs`: The number of arguments the builtin takes.
     /// * `extension`: The [`Extension`] instance.
+    /// * `thread_safe`: If true, the extension is used directly without mutex protection.
+    ///                 If false (default), the extension is wrapped with a mutex to ensure thread safety.
+    ///                 Set to true only for truly stateless extensions to avoid the mutex overhead.
     ///
     /// ```rust
     /// # use regorus::*;
@@ -709,7 +755,6 @@ impl Engine {
     /// engine.add_extension("do_magic".to_string(), 1 , Box::new(move | mut params: Vec<Value> | {
     ///   // params is mut and therefore individual values can be removed from it and modified.
     ///   // The number of parameters (1) has already been validated.
-    ///
     ///   match &params[0].as_i64() {
     ///      Ok(i) => {
     ///         // Compute value
@@ -722,7 +767,7 @@ impl Engine {
     ///      // the error.
     ///      _ => bail!("do_magic expects i64 value")
     ///   }
-    /// }))?;
+    /// }), false)?;
     ///
     /// // Evaluation will now succeed.
     /// let r = engine.eval_query("data.test.x".to_string(), false)?;
@@ -742,7 +787,7 @@ impl Engine {
     /// // Once added, the extension cannot be replaced or removed.
     /// assert!(engine.add_extension("do_magic".to_string(), 1, Box::new(|_:Vec<Value>| {
     ///   Ok(Value::Undefined)
-    /// })).is_err());
+    /// }), false).is_err());
     ///
     /// // Extensions don't support out-parameter syntax.
     /// engine.add_policy(
@@ -765,8 +810,34 @@ impl Engine {
         path: String,
         nargs: u8,
         extension: Box<dyn Extension>,
+        thread_safe: bool,
     ) -> Result<()> {
-        self.interpreter.add_extension(path, nargs, extension)
+        if !thread_safe {
+            // Create a thread-safe wrapper for the extension
+            use std::sync::{Arc, Mutex};
+            
+            // Create a mutex that will be used to ensure exclusive access during extension execution
+            let extension_lock = Arc::new(Mutex::new(()));
+            
+            // Need to move the extension into the closure
+            let mut ext = extension;
+            
+            // Wrap the extension in a closure that acquires the lock before execution
+            let thread_safe_handler = Box::new(move |params: Vec<Value>| -> Result<Value> {
+                // Acquire the lock before executing the extension
+                let _guard = extension_lock.lock()
+                    .map_err(|e| anyhow::anyhow!("Failed to acquire lock for extension execution: {}", e))?;
+                
+                // Call the extension function (uses the FnMut trait implementation from Extension)
+                (ext)(params)
+                // Lock is automatically released when _guard goes out of scope
+            });
+            
+            self.interpreter.add_extension(path, nargs, thread_safe_handler)
+        } else {
+            // Use the extension directly without wrapping
+            self.interpreter.add_extension(path, nargs, extension)
+        }
     }
 
     #[cfg(feature = "coverage")]

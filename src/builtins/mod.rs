@@ -44,7 +44,12 @@ use crate::ast::{Expr, Ref};
 use crate::lexer::Span;
 use crate::value::Value;
 
-use crate::Map as BuiltinsMap;
+// Define BuiltinsMap directly instead of re-exporting
+#[cfg(feature = "std")]
+pub use std::collections::HashMap as BuiltinsMap;
+
+#[cfg(not(feature = "std"))]
+pub use alloc::collections::BTreeMap as BuiltinsMap;
 
 use anyhow::Result;
 use lazy_static::lazy_static;
@@ -75,6 +80,9 @@ lazy_static! {
 	
 	#[cfg(feature = "graph")]
 	graph::register(&mut m);
+
+	#[cfg(feature = "rego-extensions")]
+	crate::extensions::register_builtins(&mut m);
 	
 	bitwise::register(&mut m);
 	conversions::register(&mut m);

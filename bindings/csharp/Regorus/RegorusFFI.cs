@@ -205,6 +205,12 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(__DllName, EntryPoint = "regorus_unregister_callback", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusStatus regorus_unregister_callback(byte* name);
+
+        /// <summary>
+        /// Enable a builtin extension by name
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "regorus_engine_enable_builtin_extension", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_enable_builtin_extension(RegorusEngine* engine, byte* name);
     }
 
     [StructLayout(LayoutKind.Sequential)]
