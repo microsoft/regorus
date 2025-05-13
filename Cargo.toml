@@ -118,6 +118,7 @@ prettydiff = { version = "0.8.0", default-features = false }
 serde_yaml = "0.9.16"
 test-generator = "0.3.1"
 walkdir = "2.3.2"
+criterion = { version = "0.5" }
 
 [build-dependencies]
 anyhow = "1.0"
@@ -142,6 +143,10 @@ test=false
 name="kata"
 harness=false
 test=false
+
+[[bench]]
+name = "regorus_benchmark"
+harness = false
 
 [[example]]
 name="regorus"
