@@ -156,7 +156,7 @@ fn rego_lex(file: String, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn rego_parse(file: String) -> Result<()> {
+fn rego_parse(file: String, v0: bool) -> Result<()> {
     use regorus::unstable::*;
 
     // Create source.
@@ -168,6 +168,11 @@ fn rego_parse(file: String) -> Result<()> {
 
     // Create a parser and parse the source.
     let mut parser = Parser::new(&source)?;
+
+    if !v0 {
+        parser.enable_rego_v1()?;
+    }
+
     let ast = parser.parse()?;
     println!("{ast:#?}");
 
@@ -257,6 +262,10 @@ enum RegorusCommand {
     Parse {
         /// Rego policy file.
         file: String,
+
+        /// Turn on Rego language v0.
+        #[arg(long)]
+        v0: bool,
     },
 }
 
@@ -295,7 +304,7 @@ fn main() -> Result<()> {
             v0,
         ),
         RegorusCommand::Lex { file, verbose } => rego_lex(file, verbose),
-        RegorusCommand::Parse { file } => rego_parse(file),
+        RegorusCommand::Parse { file, v0 } => rego_parse(file, v0),
         RegorusCommand::Ast { file } => rego_ast(file),
     }
 }
