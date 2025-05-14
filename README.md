@@ -145,6 +145,7 @@ $ regorus
 Usage: regorus <COMMAND>
 
 Commands:
+  ast    Parse a Rego policy and dump AST
   eval   Evaluate a Rego Query
   lex    Tokenize a Rego policy
   parse  Parse a Rego policy
