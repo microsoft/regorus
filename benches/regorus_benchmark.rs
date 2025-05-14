@@ -51,7 +51,6 @@ fn allow_with_simple_equality(c: &mut Criterion) {
 fn allow_with_simple_membership(c: &mut Criterion) {
     let generate_principals = |n: usize| {
         (0..n)
-            .into_iter()
             .map(|i| i.to_string())
             .chain(std::iter::once("admin".to_string()))
             .collect::<Vec<_>>()
@@ -78,12 +77,12 @@ fn allow_with_simple_membership(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("with data", size), size, |b, &size| {
             let principals = generate_principals(size);
-            let mut engine = engine_with_policy(&format!(
+            let mut engine = engine_with_policy(
                 r#"
                 package bench
                 allow if input.principal in data.allowed_principals
-                "#
-            ));
+                "#,
+            );
             engine
                 .add_data(json!({"allowed_principals": principals}).into())
                 .unwrap();
