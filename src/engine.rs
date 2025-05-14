@@ -615,6 +615,7 @@ impl Engine {
                 .set_functions(gather_functions(&self.modules)?);
             self.interpreter.gather_rules()?;
             self.interpreter.process_imports()?;
+            self.interpreter.constant_fold()?;
             self.prepared = true;
         }
 

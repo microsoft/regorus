@@ -37,6 +37,13 @@ enum FunctionModifier {
 }
 
 #[derive(Debug, Clone)]
+struct Optimized {
+    data: Value,
+    processed: BTreeSet<Ref<Rule>>,
+    processed_paths: Value,
+}
+
+#[derive(Debug, Clone)]
 pub struct Interpreter {
     modules: Vec<Ref<Module>>,
     module: Option<Ref<Module>>,
@@ -73,6 +80,10 @@ pub struct Interpreter {
     gather_prints: bool,
     prints: Vec<String>,
     rule_paths: Set<String>,
+    is_constant_folding: bool,
+    optimized: Option<Optimized>,
+    has_side_effects: bool,
+    rule_value_conflict_error: bool,
 }
 
 impl Default for Interpreter {
@@ -197,6 +208,10 @@ impl Interpreter {
             gather_prints: false,
             prints: Vec::default(),
             rule_paths: Set::new(),
+            is_constant_folding: false,
+            has_side_effects: false,
+            optimized: None,
+            rule_value_conflict_error: false,
         }
     }
 
@@ -255,9 +270,16 @@ impl Interpreter {
     }
 
     pub fn clean_internal_evaluation_state(&mut self) {
-        self.data = self.init_data.clone();
-        self.processed.clear();
-        self.processed_paths = Value::new_object();
+        if let Some(optimized) = &self.optimized {
+            self.data = optimized.data.clone();
+            // TODO: Check use of processed and processed_paths
+            self.processed = optimized.processed.clone();
+            self.processed_paths = optimized.processed_paths.clone();
+        } else {
+            self.data = self.init_data.clone();
+            self.processed.clear();
+            self.processed_paths = Value::new_object();
+        }
         self.loop_var_values.clear();
         self.scopes = vec![Scope::new()];
         self.contexts = vec![];
@@ -1281,6 +1303,7 @@ impl Interpreter {
                         // Mark modified rules as processed.
                         if let Some(rules) = self.rules.get(&target) {
                             for r in rules {
+                                // TODO: check if this is correct for constant folding
                                 self.processed.insert(r.clone());
                             }
                         }
@@ -1506,6 +1529,15 @@ impl Interpreter {
             }
 
             self.scopes.pop();
+
+            // When constant folding, evaluate one iteration of the loop so as to
+            // fold constants within the loop body. But return false to prevent
+            // the loop itself from ptentially being treated as a constant.
+            //if self.is_constant_folding {
+            //    return Ok(false);
+            //}
+            // Ignore previous comment.
+            // TODO: Implement expression value caching for constant values.
 
             // Return true if at least on iteration returned true
             Ok(result)
@@ -2055,6 +2087,8 @@ impl Interpreter {
     }
 
     fn eval_array_compr(&mut self, term: &ExprRef, query: &Ref<Query>) -> Result<Value> {
+        let hse = self.has_side_effects;
+        self.has_side_effects = false;
         // Push new context
         self.contexts.push(Context {
             output_expr: Some(term.clone()),
@@ -2066,6 +2100,11 @@ impl Interpreter {
         // Evaluate body first.
         self.eval_query(query)?;
 
+        self.has_side_effects = hse || self.has_side_effects;
+        if self.is_constant_folding && self.has_side_effects {
+            return Ok(Value::Undefined);
+        }
+
         match self.contexts.pop() {
             Some(ctx) => Ok(ctx.value),
             None => bail!("internal error: context already popped"),
@@ -2073,6 +2112,9 @@ impl Interpreter {
     }
 
     fn eval_set_compr(&mut self, term: &ExprRef, query: &Ref<Query>) -> Result<Value> {
+        let hse = self.has_side_effects;
+        self.has_side_effects = false;
+
         // Push new context
         self.contexts.push(Context {
             output_expr: Some(term.clone()),
@@ -2082,6 +2124,11 @@ impl Interpreter {
         });
 
         self.eval_query(query)?;
+
+        self.has_side_effects = hse || self.has_side_effects;
+        if self.is_constant_folding && self.has_side_effects {
+            return Ok(Value::Undefined);
+        }
 
         match self.contexts.pop() {
             Some(ctx) => Ok(ctx.value),
@@ -2095,6 +2142,9 @@ impl Interpreter {
         value: &ExprRef,
         query: &Ref<Query>,
     ) -> Result<Value> {
+        let hse = self.has_side_effects;
+        self.has_side_effects = false;
+
         // Push new context
         self.contexts.push(Context {
             key_expr: Some(key.clone()),
@@ -2105,6 +2155,11 @@ impl Interpreter {
         });
 
         self.eval_query(query)?;
+
+        self.has_side_effects = hse || self.has_side_effects;
+        if self.is_constant_folding && self.has_side_effects {
+            return Ok(Value::Undefined);
+        }
 
         match self.contexts.pop() {
             Some(ctx) => Ok(ctx.value),
@@ -2134,6 +2189,12 @@ impl Interpreter {
     ) -> Result<Value> {
         // If any argument is undefined, then the call is undefined.
         if args.iter().any(|a| a == &Value::Undefined) {
+            return Ok(Value::Undefined);
+        }
+
+        // TODO: Allow builtins that can be constant folded
+        if self.is_constant_folding {
+            self.has_side_effects = true;
             return Ok(Value::Undefined);
         }
 
@@ -2316,6 +2377,10 @@ impl Interpreter {
                     extension = Some(ext);
                     (&empty, None)
                 } else if fcn_path == "print" {
+                    if self.is_constant_folding {
+                        // Ignore side-effects in constant folding.
+                        return Ok(Value::Undefined);
+                    }
                     return self.eval_print(span, params, param_values);
                 }
                 // Look up builtin function.
@@ -2344,6 +2409,11 @@ impl Interpreter {
         }
 
         if let Some((nargs, ext)) = extension {
+            if self.is_constant_folding {
+                // Extensions are not supported in constant folding.
+                return Ok(Value::Undefined);
+            }
+
             if param_values.len() != *nargs as usize {
                 bail!(span.error("incorrect number of parameters supplied to extension"));
             }
@@ -2621,14 +2691,20 @@ impl Interpreter {
         }
 
         // Evaluate the associated default rules after non-default rules
-        if let Some(rules) = self.default_rules.get(&path) {
-            matched = true;
-            for (r, _) in rules.clone() {
-                if !self.processed.contains(&r) {
-                    let module = self.get_rule_module(&r)?;
-                    let prev_module = self.set_current_module(Some(module))?;
-                    self.eval_default_rule(&r)?;
-                    self.set_current_module(prev_module)?;
+        if self.is_constant_folding {
+            // We don't want to evaluate default rules at this point.
+            // A non default rule with the same path could have failed due to it needing input.
+            // TODO: Cleanup rule evaluation bookmarking.
+        } else {
+            if let Some(rules) = self.default_rules.get(&path) {
+                matched = true;
+                for (r, _) in rules.clone() {
+                    if !self.processed.contains(&r) {
+                        let module = self.get_rule_module(&r)?;
+                        let prev_module = self.set_current_module(Some(module))?;
+                        self.eval_default_rule(&r)?;
+                        self.set_current_module(prev_module)?;
+                    }
                 }
             }
         }
@@ -2660,6 +2736,12 @@ impl Interpreter {
 
     fn mark_processed(&mut self, path: &[&str]) -> Result<()> {
         let obj = self.processed_paths.make_or_get_value_mut(path)?;
+
+        if self.is_constant_folding && obj == &Value::Undefined {
+            // If constant folding, then do not register undefined values.
+            return Ok(());
+        }
+
         if obj == &Value::Undefined {
             *obj = Value::new_object();
         }
@@ -2677,6 +2759,11 @@ impl Interpreter {
 
         // Handle input.
         if name.text() == "input" {
+            if self.is_constant_folding {
+                // When constant folding, expressions cannot depend on input.
+                self.has_side_effects = true;
+                return Ok(Value::Undefined);
+            }
             return Ok(Self::get_value_chained(self.input.clone(), fields));
         }
 
@@ -3259,11 +3346,13 @@ impl Interpreter {
         }
 
         if let Some((_, r)) = conflict {
+            self.rule_value_conflict_error = true;
             bail!(refr.span().error(&format!(
                 "rule conflicts with the following rule:\n{}",
                 r.span().message("", "defined here")
             )));
         }
+
         self.rule_values
             .insert(path.to_vec(), (value.clone(), refr.clone()));
 
@@ -3285,19 +3374,31 @@ impl Interpreter {
 
                         let value = self.eval_rule_bodies(ctx, span, rule_body)?;
                         let package_components = self.eval_rule_ref(&module.package.refr)?;
-
                         if value != Value::Undefined {
                             for (path, value) in value.as_object()? {
                                 let mut full_path = package_components.clone();
                                 full_path.append(&mut path.as_array()?.clone());
                                 self.check_rule_path(refr, &full_path, value, is_set)?;
+                                /*if self.is_constant_folding && self.has_side_effects {
+                                    // Do not update rule value.
+                                } else {*/
                                 self.update_rule_value(span, full_path, value.clone(), is_set)?;
+                                //}
                             }
                         } else if is_set {
                             if let Ok(mut comps) = self.eval_rule_ref(refr) {
                                 let mut full_path = package_components;
                                 full_path.append(&mut comps);
-                                self.update_rule_value(span, full_path, Value::new_set(), true)?;
+                                if self.is_constant_folding && self.has_side_effects {
+                                    // Do not create empty set if constant folding and rule failed to evaluate.
+                                } else {
+                                    self.update_rule_value(
+                                        span,
+                                        full_path,
+                                        Value::new_set(),
+                                        true,
+                                    )?;
+                                }
                             }
                         } else if is_object {
                             // Fetch the rule, ignoring the key.
@@ -3314,7 +3415,15 @@ impl Interpreter {
                                 }
                             }
                         }
-                        self.processed.insert(rule.clone());
+
+                        if self.is_constant_folding {
+                            if value != Value::Undefined && !self.has_side_effects {
+                                // When constant folding, record only those rules that have successfully evaluated.
+                                self.processed.insert(rule.clone());
+                            }
+                        } else {
+                            self.processed.insert(rule.clone());
+                        }
                     }
                     RuleHead::Func {
                         refr, args, assign, ..
@@ -3392,7 +3501,10 @@ impl Interpreter {
         let scopes = core::mem::take(&mut self.scopes);
         let prev_module = self.set_current_module(Some(module.clone()))?;
 
+        let hse = self.has_side_effects;
+        self.has_side_effects = false;
         let res = self.eval_rule_impl(module, rule);
+        self.has_side_effects = hse || self.has_side_effects;
 
         self.set_current_module(prev_module)?;
         self.scopes = scopes;
@@ -3483,6 +3595,34 @@ impl Interpreter {
             Ok(_) => Ok(results),
             Err(e) => Err(e),
         }
+    }
+
+    pub fn constant_fold(&mut self) -> Result<()> {
+        self.is_constant_folding = true;
+        self.optimized = None;
+        self.clean_internal_evaluation_state();
+        self.rule_value_conflict_error = false;
+        // TODO: Maybe use scheduler information to determine which rules to evaluate and in which order.
+        for module in &self.modules.clone() {
+            for rule in &module.policy {
+                if let Rule::Spec { head, .. } = rule.as_ref() {
+                    if matches!(&head, RuleHead::Compr { .. } | RuleHead::Set { .. }) {
+                        if let Err(e) = self.eval_rule(module, rule) {
+                            if self.rule_value_conflict_error {
+                                bail!(e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.is_constant_folding = false;
+        self.optimized = Some(Optimized {
+            data: self.data.clone(),
+            processed: self.processed.clone(),
+            processed_paths: self.processed_paths.clone(),
+        });
+        Ok(())
     }
 
     fn get_rule_path_components(mut refr: &Ref<Expr>) -> Result<Vec<Rc<str>>> {
