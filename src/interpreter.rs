@@ -2027,7 +2027,7 @@ impl Interpreter {
                     let key = self.eval_expr(key)?;
                     collection[&key] == value
                 } else {
-                    array.iter().any(|item| *item == value)
+                    array.contains(&value)
                 }
             }
             Value::Object(object) => {
