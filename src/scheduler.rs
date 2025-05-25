@@ -219,7 +219,12 @@ pub fn traverse(expr: &Ref<Expr>, f: &mut dyn FnMut(&Ref<Expr>) -> Result<bool>)
         return Ok(());
     }
     match expr.as_ref() {
-        String(_) | RawString(_) | Number(_) | True(_) | False(_) | Null(_) | Var(_) => (),
+        Expr::String { .. }
+        | RawString { .. }
+        | Number { .. }
+        | Bool { .. }
+        | Null { .. }
+        | Var { .. } => (),
 
         Array { items, .. } | Set { items, .. } => {
             for i in items {
@@ -308,23 +313,23 @@ fn gather_assigned_vars(
 ) -> Result<()> {
     traverse(expr, &mut |e| match e.as_ref() {
         // Ignore _, input, data.
-        Var(v) if matches!(v.0.text(), "_" | "input" | "data") => Ok(false),
+        Var { span: v, .. } if matches!(v.text(), "_" | "input" | "data") => Ok(false),
 
         // Record local var that can shadow input var.
-        Var(v) if can_shadow => {
-            scope.locals.insert(v.0.source_str(), v.0.clone());
+        Var { span: v, .. } if can_shadow => {
+            scope.locals.insert(v.source_str(), v.clone());
             Ok(false)
         }
 
         // Record input vars.
-        Var(v) if var_exists(&v.0, parent_scopes) => {
-            scope.inputs.insert(v.0.source_str());
+        Var { span: v, .. } if var_exists(v, parent_scopes) => {
+            scope.inputs.insert(v.source_str());
             Ok(false)
         }
 
         // Record local var.
-        Var(v) => {
-            scope.unscoped.insert(v.0.source_str());
+        Var { span: v, .. } => {
+            scope.unscoped.insert(v.source_str());
             Ok(false)
         }
 
@@ -336,10 +341,10 @@ fn gather_assigned_vars(
 
 fn gather_input_vars(expr: &Ref<Expr>, parent_scopes: &[Scope], scope: &mut Scope) -> Result<()> {
     traverse(expr, &mut |e| match e.as_ref() {
-        Var(v)
-            if !scope.unscoped.contains(&v.0.source_str()) && var_exists(&v.0, parent_scopes) =>
+        Var { span: v, .. }
+            if !scope.unscoped.contains(&v.source_str()) && var_exists(v, parent_scopes) =>
         {
-            scope.inputs.insert(v.0.source_str());
+            scope.inputs.insert(v.source_str());
             Ok(false)
         }
         _ => Ok(true),
@@ -555,8 +560,8 @@ impl Analyzer {
             RuleHead::Func { args, assign, .. } => {
                 for a in args.iter() {
                     traverse(a, &mut |e| {
-                        if let Var(v) = e.as_ref() {
-                            scope.unscoped.insert(v.0.source_str());
+                        if let Var { span: v, .. } = e.as_ref() {
+                            scope.unscoped.insert(v.source_str());
                         }
                         Ok(true)
                     })?;
@@ -647,10 +652,10 @@ impl Analyzer {
         let mut used_vars = vec![];
         let mut comprs = vec![];
         traverse(expr, &mut |e| match e.as_ref() {
-            Var(v) if !matches!(v.0.text(), "_" | "input" | "data") => {
-                let name = v.0.source_str();
+            Var { span: v, .. } if !matches!(v.text(), "_" | "input" | "data") => {
+                let name = v.source_str();
                 let is_extra_arg = match assigned_vars {
-                    Some(vars) => vars.contains(&v.0.source_str()),
+                    Some(vars) => vars.contains(&v.source_str()),
                     _ => false,
                 };
 
@@ -659,20 +664,18 @@ impl Analyzer {
                 {
                     if !is_extra_arg {
                         used_vars.push(name.clone());
-                        first_use.entry(name).or_insert(v.0.clone());
+                        first_use.entry(name).or_insert(v.clone());
                     }
                 } else if !scope.inputs.contains(&name) {
-                    bail!(v
-                        .0
-                        .error(format!("use of undefined variable `{name}` is unsafe").as_str()));
+                    bail!(v.error(format!("use of undefined variable `{name}` is unsafe").as_str()));
                 }
                 Ok(false)
             }
 
             RefBrack { refr, index, .. } => {
                 traverse(index, &mut |e| match e.as_ref() {
-                    Var(v) => {
-                        let var = v.0.source_str();
+                    Var { span: v, .. } => {
+                        let var = v.source_str();
                         if scope.locals.contains_key(&var) || scope.unscoped.contains(&var) {
                             let (rb_used_vars, rb_comprs) =
                                 Self::gather_used_vars_comprs_index_vars(
@@ -765,11 +768,11 @@ impl Analyzer {
     ) -> Result<Vec<SourceStr>> {
         let mut vars = vec![];
         traverse(expr, &mut |e| match e.as_ref() {
-            Var(v) => {
-                let var = v.0.source_str();
+            Var { span: v, .. } => {
+                let var = v.source_str();
                 if scope.locals.contains_key(&var) {
                     if check_first_use {
-                        Self::check_first_use(&v.0, first_use)?;
+                        Self::check_first_use(v, first_use)?;
                     }
                     vars.push(var);
                 } else if scope.unscoped.contains(&var) {
@@ -955,8 +958,8 @@ impl Analyzer {
         non_vars: &mut Vec<Ref<Expr>>,
     ) -> Result<()> {
         traverse(expr, &mut |e| match e.as_ref() {
-            Var(v) if scope.locals.contains_key(&v.0.source_str()) => {
-                vars.push(v.0.source_str());
+            Var { span: v, .. } if scope.locals.contains_key(&v.source_str()) => {
+                vars.push(v.source_str());
                 Ok(false)
             }
             // TODO: Object key/value

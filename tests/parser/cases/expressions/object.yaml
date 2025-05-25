@@ -47,6 +47,9 @@ cases:
         "p" : "q", "r" in "d" : "e"
 
       }
+    num_expressions: 54
+    num_statements: 0
+    num_queries: 0
     policy:
       - spec:
           span: x = {}
@@ -55,18 +58,21 @@ cases:
               span: x = {}
               refr:
                 var: x
+                eidx: 4
               assign:
                 span: = {}
                 op: =
                 value:
                   object:
                     fields: []
+                  eidx: 5
           bodies: []
       - spec:
           head:
             compr:
               refr:
                 var: y
+                eidx: 6
               assign:
                 op: =
                 value:
@@ -74,14 +80,18 @@ cases:
                     fields:
                       - key:
                           string: a
+                          eidx: 7
                         value:
                           number: 5
+                          eidx: 8
+                  eidx: 9
           bodies: []
       - spec:
           head:
             compr:
               refr:
                 var: z
+                eidx: 10
               assign:
                 op: =
                 value:
@@ -89,75 +99,121 @@ cases:
                     fields:
                       - key:
                           string: a
+                          eidx: 11
                         value:
                           number: 5
+                          eidx: 12
                       - key:
                           string: b
+                          eidx: 13
                         value:
                           array:
                             - number: 1
+                              eidx: 14
                             - number: 2
+                              eidx: 15
                             - number: 3
+                              eidx: 16
+                          eidx: 17
                       - key:
                           string: c
+                          eidx: 18
                         value:
                           set:
                             - number: 4
+                              eidx: 19
                             - number: 5
+                              eidx: 20
                             - number : 6
+                              eidx: 21
+                          eidx: 22
                       - key:
                           string: d
+                          eidx: 23
                         value:
                           object:
                             fields:
                               - key:
                                   string: a
+                                  eidx: 24
                                 value:
                                   number: 5
+                                  eidx: 25
                               - key:
                                   string: b
+                                  eidx: 26
                                 value:
                                   set: []
+                                  eidx: 27
+                          eidx: 28
                       - key:
                           array:
                             - number: 1
+                              eidx: 29
                             - number: 2
+                              eidx: 30
                             - number: 3
+                              eidx: 31
+                          eidx: 32
                         value:
                           number: 4
+                          eidx: 33
                       - key:
                           set:
                             - number: 1
+                              eidx: 34
+                          eidx: 35
                         value:
                           number: 2
+                          eidx: 36
                       - key:
                           object:
                             fields:
                               - key:
                                   string: a
+                                  eidx: 37
                                 value:
                                   number: 1
+                                  eidx: 38
                               - key:
                                   string: b
+                                  eidx: 39
                                 value:
                                   number: 2
+                                  eidx: 40
+                          eidx: 41
                         value:
                           rawstring: "hello,\n  world"
-                      - key: null
-                        value: false
-                      - key: true
-                        value: true
+                          eidx: 42
+                      - key:
+                          "null": null
+                          eidx: 43
+                        value:
+                          bool: false
+                          eidx: 44
+                      - key:
+                          bool: true
+                          eidx: 45
+                        value:
+                          bool: true
+                          eidx: 46
                       - key:
                           string: p
+                          eidx: 47
                         value:
                           string: q
+                          eidx: 48
                       - key:
                           inexpr:
                             value:
                               string: r
+                              eidx: 49
                             collection:
                               string: d
+                              eidx: 50
+                          eidx: 51
                         value:
                           string: e
-
+                          eidx: 52
+                  eidx: 53
           bodies: []

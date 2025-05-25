@@ -22,6 +22,7 @@ extern crate std;
 mod ast;
 mod builtins;
 mod engine;
+mod indexchecker;
 mod interpreter;
 mod lexer;
 mod number;

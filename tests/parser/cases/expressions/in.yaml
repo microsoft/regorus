@@ -13,29 +13,38 @@ cases:
       # The following will be parsed as
       # (5 in [4, 5]) in (set() | {true})
       z = 5 in [4, 5] in set() | {true}
-
+    num_expressions: 21
+    num_statements: 0
+    num_queries: 0
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 4
               assign:
                 op: "="
                 value:
                   inexpr:
                     value:
                       number: 5
+                      eidx: 5
                     collection:
                       array:
                         - number: 4
+                          eidx: 6
                         - number: 5
+                          eidx: 7
+                      eidx: 8
+                  eidx: 9
           bodies: []
       - spec:
           head:
             compr:
               refr:
                 var: z
+                eidx: 10
               assign:
                 op: "="
                 value:
@@ -44,16 +53,26 @@ cases:
                       inexpr:
                         value:
                           number: 5
+                          eidx: 11
                         collection:
                           array:
                             - number: 4
+                              eidx: 12
                             - number: 5
+                              eidx: 13
+                          eidx: 14
+                      eidx: 15
                     collection:
                       binexpr:
                         op: "|"
                         lhs:
                           set: []
+                          eidx: 16
                         rhs:
                           set:
-                            - true
+                            - bool: true
+                              eidx: 17
+                          eidx: 18
+                      eidx: 19
+                  eidx: 20
           bodies: []
