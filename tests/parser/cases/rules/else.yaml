@@ -12,6 +12,9 @@ cases:
     error: unexpected keyword `else`
 
   - note: no-query
+    num_expressions: 5
+    num_statements: 2
+    num_queries: 2
     rego: |
       package test
 
@@ -26,21 +29,29 @@ cases:
             compr:
               refr:
                 var: x
+                eidx: 1
               assign:
                 op: "="
                 value:
                   number: 10
+                  eidx: 2
           bodies:
             - query:
+                qidx: 0
                 stmts:
                   - literal:
                       expr:
-                        false
+                        bool: false
+                        eidx: 3
+                    sidx: 0
             - query:
+                qidx: 1
                 stmts:
                   - literal:
                       expr:
-                        true
+                        bool: true
+                        eidx: 4
+                    sidx: 1
 
   - note: no-else
     rego: |
@@ -51,27 +62,38 @@ cases:
       } {
         true
       }
+    num_expressions: 5
+    num_statements: 2
+    num_queries: 2
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 1
               assign:
                 op: "="
                 value:
                   number: 10
+                  eidx: 2
           bodies:
             - query:
+                qidx: 0
                 stmts:
                   - literal:
                       expr:
-                        false
+                        bool: false
+                        eidx: 3
+                    sidx: 0
             - query:
+                qidx: 1
                 stmts:
                   - literal:
                       expr:
-                        true
+                        bool: true
+                        eidx: 4
+                    sidx: 1
 
   - note: if-no-else
     rego: |
@@ -83,27 +105,38 @@ cases:
       } {
         true
       }
+    num_expressions: 8
+    num_statements: 2
+    num_queries: 2
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 4
               assign:
                 op: "="
                 value:
                   number: 10
+                  eidx: 5
           bodies:
             - query:
+                qidx: 0
                 stmts:
                   - literal:
                       expr:
-                        false
+                        bool: false
+                        eidx: 6
+                    sidx: 0
             - query:
+                qidx: 1
                 stmts:
                   - literal:
                       expr:
-                        true
+                        bool: true
+                        eidx: 7
+                    sidx: 1
 
   - note: rule-named-if
     rego: |
@@ -114,33 +147,45 @@ cases:
       } {
         true
       }
+    num_expressions: 6
+    num_statements: 2
+    num_queries: 2
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 1
               assign:
                 op: "="
                 value:
                   number: 10
+                  eidx: 2
           bodies: []
       - spec:
           head:
             compr:
               refr:
                 var: if
+                eidx: 3
           bodies:
             - query:
+                qidx: 0
                 stmts:
                   - literal:
                       expr:
-                        false
+                        bool: false
+                        eidx: 4
+                    sidx: 0
             - query:
+                qidx: 1
                 stmts:
                   - literal:
                       expr:
-                         true
+                         bool: true
+                         eidx: 5
+                    sidx: 1
 
   - note: query-else
     rego: |
@@ -151,27 +196,38 @@ cases:
       } else {
         true
       }
+    num_expressions: 5
+    num_queries: 2
+    num_statements: 2
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 1
               assign:
                 op: "="
                 value:
                   number: 10
+                  eidx: 2
           bodies:
             - query:
+                qidx: 0
                 stmts:
                   - literal:
                       expr:
-                        false
+                        bool: false
+                        eidx: 3
+                    sidx: 0
             - query:
+                qidx: 1
                 stmts:
                   - literal:
                       expr:
-                        true
+                        bool: true
+                        eidx: 4
+                    sidx: 1
 
   - note: if-literal-else
     rego: |
@@ -181,18 +237,24 @@ cases:
       x = 10 if 1 < 0 else {
         true
       }
+    num_expressions: 10
+    num_statements: 2
+    num_queries: 2
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 4
               assign:
                 op: "="
                 value:
                   number: 10
+                  eidx: 5
           bodies:
             - query:
+                qidx: 0
                 stmts:
                   - literal:
                       expr:
@@ -200,13 +262,20 @@ cases:
                           op: "<"
                           lhs:
                             number: 1
+                            eidx: 6
                           rhs:
                             number: 0
+                            eidx: 7
+                        eidx: 8
+                    sidx: 0
             - query:
+                qidx: 1
                 stmts:
                   - literal:
                       expr:
-                        true
+                        bool: true
+                        eidx: 9
+                    sidx: 1
 
   - note: if-literal-else-assign
     rego: |
@@ -217,18 +286,24 @@ cases:
       x = 10 if 1 < 0 else := 20 {
         true
       }
+    num_expressions: 11
+    num_statements: 2
+    num_queries: 2
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 4
               assign:
                 op: "="
                 value:
                   number: 10
+                  eidx: 5
           bodies:
             - query:
+                qidx: 0
                 stmts:
                   - literal:
                       expr:
@@ -236,17 +311,25 @@ cases:
                           op: "<"
                           lhs:
                             number: 1
+                            eidx: 6
                           rhs:
                             number: 0
+                            eidx: 7
+                        eidx: 8
+                    sidx: 0
             - assign:
                 op: ":="
                 value:
                   number: 20
+                  eidx: 9
               query:
+                qidx: 1
                 stmts:
                   - literal:
                       expr:
-                        true
+                        bool: true
+                        eidx: 10
+                    sidx: 1
 
   - note: contains-else-error
     rego: |

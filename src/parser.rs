@@ -21,6 +21,13 @@ pub struct Parser<'source> {
     end: u32,
     future_keywords: BTreeMap<String, Option<Span>>,
     rego_v1: bool,
+
+    // The index of the last expression that was parsed.
+    eidx: u32,
+    // The index of the last statement that was parsed.
+    sidx: u32,
+    // The index of the last query that was parsed.
+    qidx: u32,
 }
 
 const FUTURE_KEYWORDS: [&str; 4] = ["contains", "every", "if", "in"];
@@ -37,7 +44,28 @@ impl<'source> Parser<'source> {
             end: 0,
             future_keywords: BTreeMap::new(),
             rego_v1: false,
+            eidx: 0,
+            sidx: 0,
+            qidx: 0,
         })
+    }
+
+    fn next_eidx(&mut self) -> u32 {
+        let eidx = self.eidx;
+        self.eidx += 1;
+        eidx
+    }
+
+    fn next_sidx(&mut self) -> u32 {
+        let sidx = self.sidx;
+        self.sidx += 1;
+        sidx
+    }
+
+    fn next_qidx(&mut self) -> u32 {
+        let qidx = self.qidx;
+        self.qidx += 1;
+        qidx
     }
 
     pub fn enable_rego_v1(&mut self) -> Result<()> {
@@ -129,13 +157,13 @@ impl<'source> Parser<'source> {
                 Self::get_path_ref_components_into(refr, comps)?;
                 Self::get_path_ref_components_into(index, comps)?;
             }
-            Expr::Var(v) => comps.push(v.0.clone()),
-            Expr::String(s) => comps.push(s.0.clone()),
-            Expr::True(s) | Expr::False(s) | Expr::Null(s) => comps.push(s.clone()),
-            Expr::Number(s) => {
+            Expr::Var { span: v, .. } => comps.push(v.clone()),
+            Expr::String { span: s, .. } => comps.push(s.clone()),
+            Expr::Bool { span: s, .. } | Expr::Null { span: s, .. } => comps.push(s.clone()),
+            Expr::Number { span, value, .. } => {
                 // Ensure that the span will be the serialized representation.
-                if *s.0.text() == s.1.to_json_str()? {
-                    comps.push(s.0.clone());
+                if span.text() == value.to_json_str()? {
+                    comps.push(span.clone());
                 } else {
                     bail!(refr.span().error("not a valid ref"));
                 }
@@ -262,9 +290,13 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn read_number(span: Span) -> Result<Expr> {
+    fn read_number(&mut self, span: Span) -> Result<Expr> {
         match Number::from_str(span.text()) {
-            Ok(v) => Ok(Expr::Number((span, Value::Number(v)))),
+            Ok(v) => Ok(Expr::Number {
+                span,
+                value: Value::Number(v),
+                eidx: self.next_eidx(),
+            }),
             Err(_) => bail!(span.error("could not parse number")),
         }
     }
@@ -272,27 +304,51 @@ impl<'source> Parser<'source> {
     fn parse_scalar_or_var(&mut self) -> Result<Expr> {
         let span = self.tok.1.clone();
         let node = match &self.tok.0 {
-            TokenKind::Number => Self::read_number(span)?,
+            TokenKind::Number => self.read_number(span)?,
             TokenKind::String => {
                 let v = match serde_json::from_str::<Value>(format!("\"{}\"", span.text()).as_str())
                 {
                     Ok(v) => v,
                     Err(e) => bail!(span.error(format!("invalid string literal. {e}").as_str())),
                 };
-                Expr::String((span, v))
+                Expr::String {
+                    span,
+                    value: v,
+                    eidx: self.next_eidx(),
+                }
             }
             TokenKind::RawString => {
                 let v = Value::from(span.text().to_string());
-                Expr::RawString((span, v))
+                Expr::RawString {
+                    span,
+                    value: v,
+                    eidx: self.next_eidx(),
+                }
             }
             TokenKind::Ident => match self.token_text() {
-                "null" => Expr::Null(span),
-                "true" => Expr::True(span),
-                "false" => Expr::False(span),
+                "null" => Expr::Null {
+                    span,
+                    value: Value::Null,
+                    eidx: self.next_eidx(),
+                },
+                "true" => Expr::Bool {
+                    span,
+                    value: Value::from(true),
+                    eidx: self.next_eidx(),
+                },
+                "false" => Expr::Bool {
+                    span,
+                    value: Value::from(false),
+                    eidx: self.next_eidx(),
+                },
                 _ => {
                     let ident = self.parse_var()?;
-                    let v = Value::from(ident.text());
-                    return Ok(Expr::Var((ident, v)));
+                    let value = Value::from(ident.text());
+                    return Ok(Expr::Var {
+                        span: ident,
+                        value,
+                        eidx: self.next_eidx(),
+                    });
                 }
             },
             _ => {
@@ -353,6 +409,7 @@ impl<'source> Parser<'source> {
                     span,
                     term: Ref::new(term),
                     query: Ref::new(query),
+                    eidx: self.next_eidx(),
                 })
             }
             Err(_) if self.end == pos => {
@@ -372,7 +429,11 @@ impl<'source> Parser<'source> {
                 }
                 self.expect("]", "while parsing array")?;
                 span.end = self.end;
-                Ok(Expr::Array { span, items })
+                Ok(Expr::Array {
+                    span,
+                    items,
+                    eidx: self.next_eidx(),
+                })
             }
             Err(err) => Err(err),
         }
@@ -390,6 +451,7 @@ impl<'source> Parser<'source> {
                     span,
                     term: Ref::new(term),
                     query: Ref::new(query),
+                    eidx: self.next_eidx(),
                 });
             }
             Err(err) if self.end != pos => {
@@ -408,6 +470,7 @@ impl<'source> Parser<'source> {
             return Ok(Expr::Object {
                 span,
                 fields: vec![],
+                eidx: self.next_eidx(),
             });
         }
 
@@ -427,7 +490,11 @@ impl<'source> Parser<'source> {
             }
             self.expect("}", "while parsing set")?;
             span.end = self.end;
-            return Ok(Expr::Set { span, items });
+            return Ok(Expr::Set {
+                span,
+                items,
+                eidx: self.next_eidx(),
+            });
         }
 
         // Parse as object.
@@ -442,6 +509,7 @@ impl<'source> Parser<'source> {
                     key: Ref::new(first),
                     value: Ref::new(term),
                     query: Ref::new(query),
+                    eidx: self.next_eidx(),
                 });
             }
             Err(err) if self.end != pos => {
@@ -483,6 +551,7 @@ impl<'source> Parser<'source> {
         Ok(Expr::Object {
             span,
             fields: items,
+            eidx: self.next_eidx(),
         })
     }
 
@@ -494,6 +563,7 @@ impl<'source> Parser<'source> {
         Ok(Expr::Set {
             span,
             items: vec![],
+            eidx: self.next_eidx(),
         })
     }
 
@@ -513,6 +583,7 @@ impl<'source> Parser<'source> {
         Ok(Expr::UnaryExpr {
             span,
             expr: Ref::new(expr),
+            eidx: self.next_eidx(),
         })
     }
 
@@ -531,18 +602,18 @@ impl<'source> Parser<'source> {
         let mut expr = &term;
         while possible_fcn {
             match expr {
-                Expr::Var(_) => break,
+                Expr::Var { .. } => break,
                 Expr::RefDot { refr, .. } => expr = refr,
                 Expr::RefBrack { refr, index, .. } => {
                     expr = refr;
-                    possible_fcn = matches!(index.as_ref(), Expr::String(_));
+                    possible_fcn = matches!(index.as_ref(), Expr::String { .. });
                 }
                 _ => {
                     possible_fcn = false;
                 }
             }
         }
-        matches!(&term, Expr::Var(_));
+        matches!(&term, Expr::Var { .. });
 
         loop {
             let mut span = self.tok.1.clone();
@@ -586,6 +657,7 @@ impl<'source> Parser<'source> {
                         span,
                         refr: Ref::new(term),
                         field: (field, fieldv),
+                        eidx: self.next_eidx(),
                     };
                 }
                 "[" => {
@@ -593,7 +665,7 @@ impl<'source> Parser<'source> {
                     let index = self.parse_in_expr()?;
 
                     // If the index is a string, the ref could be path to a function.
-                    possible_fcn = possible_fcn && matches!(&index, Expr::String(_));
+                    possible_fcn = possible_fcn && matches!(&index, Expr::String { .. });
 
                     self.expect("]", "while parsing bracketed reference")?;
                     span.end = self.end;
@@ -602,6 +674,7 @@ impl<'source> Parser<'source> {
                         span,
                         refr: Ref::new(term),
                         index: Ref::new(index),
+                        eidx: self.next_eidx(),
                     };
                 }
                 "(" if possible_fcn => {
@@ -624,6 +697,7 @@ impl<'source> Parser<'source> {
                         span,
                         fcn: Ref::new(term),
                         params: args,
+                        eidx: self.next_eidx(),
                     };
 
                     // The expression can no longer be a function after the call.
@@ -661,6 +735,7 @@ impl<'source> Parser<'source> {
                 op,
                 lhs: Ref::new(expr),
                 rhs: Ref::new(right),
+                eidx: self.next_eidx(),
             };
         }
     }
@@ -685,7 +760,7 @@ impl<'source> Parser<'source> {
                 rhs_span.col += 1;
 
                 self.next_token()?;
-                Self::read_number(rhs_span)?
+                self.read_number(rhs_span)?
             } else {
                 self.next_token()?;
                 self.parse_mul_div_mod_expr()?
@@ -696,6 +771,7 @@ impl<'source> Parser<'source> {
                 op,
                 lhs: Ref::new(expr),
                 rhs: Ref::new(right),
+                eidx: self.next_eidx(),
             };
         }
     }
@@ -715,6 +791,7 @@ impl<'source> Parser<'source> {
                 op: BinOp::Intersection,
                 lhs: Ref::new(expr),
                 rhs: Ref::new(right),
+                eidx: self.next_eidx(),
             };
         }
         Ok(expr)
@@ -735,6 +812,7 @@ impl<'source> Parser<'source> {
                 op: BinOp::Union,
                 lhs: Ref::new(expr),
                 rhs: Ref::new(right),
+                eidx: self.next_eidx(),
             };
         }
         Ok(expr)
@@ -763,6 +841,7 @@ impl<'source> Parser<'source> {
                 op,
                 lhs: Ref::new(expr),
                 rhs: Ref::new(right),
+                eidx: self.next_eidx(),
             };
         }
         Ok(expr)
@@ -789,6 +868,7 @@ impl<'source> Parser<'source> {
                 key,
                 value,
                 collection: Ref::new(expr3),
+                eidx: self.next_eidx(),
             };
             expr2 = None;
 
@@ -832,6 +912,7 @@ impl<'source> Parser<'source> {
                 span,
                 lhs: Ref::new(expr),
                 rhs: Ref::new(rhs),
+                eidx: self.next_eidx(),
             };
         }
         Ok(expr)
@@ -864,11 +945,11 @@ impl<'source> Parser<'source> {
         let op = match self.token_text() {
             "=" => AssignOp::Eq,
             ":=" if self.rego_v1 => {
-                if let Expr::Var(v) = &expr {
-                    if v.0.text() == "input" {
+                if let Expr::Var { span: v, .. } = &expr {
+                    if v.text() == "input" {
                         bail!(span.error("input cannot be shadowed"));
                     }
-                    if v.0.text() == "data" {
+                    if v.text() == "data" {
                         bail!(span.error("data cannot be shadowed"));
                     }
                 }
@@ -889,6 +970,7 @@ impl<'source> Parser<'source> {
             op,
             lhs: Ref::new(expr),
             rhs: Ref::new(right),
+            eidx: self.next_eidx(),
         })
     }
 
@@ -973,7 +1055,7 @@ impl<'source> Parser<'source> {
             for (idx, ref_expr) in refs.iter().enumerate() {
                 let span = &vars[idx];
                 match ref_expr.as_ref() {
-                    Expr::Var(_) => (),
+                    Expr::Var { .. } => (),
                     _ => {
                         return Err(anyhow!(
                             "{}:{}:{} error: encountered `{}` while expecting identifier",
@@ -987,6 +1069,8 @@ impl<'source> Parser<'source> {
             }
 
             span.end = self.end;
+            // Since exprs are discarded, adjust the expression index counter.
+            self.eidx -= vars.len() as u32;
             return Ok(Literal::SomeVars { span, vars });
         }
 
@@ -1053,6 +1137,7 @@ impl<'source> Parser<'source> {
             span,
             literal,
             with_mods,
+            sidx: self.next_sidx(),
         })
     }
 
@@ -1130,6 +1215,7 @@ impl<'source> Parser<'source> {
         Ok(Query {
             span,
             stmts: literals,
+            qidx: self.next_qidx(),
         })
     }
 
@@ -1166,7 +1252,12 @@ impl<'source> Parser<'source> {
         let start = self.tok.1.start;
         let var = self.parse_var()?;
 
-        let mut refr = Expr::Var(Self::span_and_value(var));
+        let (span, value) = Self::span_and_value(var);
+        let mut refr = Expr::Var {
+            span,
+            value,
+            eidx: self.next_eidx(),
+        };
         loop {
             let mut span = self.tok.1.clone();
             let sep_pos = span.start;
@@ -1203,12 +1294,20 @@ impl<'source> Parser<'source> {
                         span,
                         refr: Ref::new(refr),
                         field: Self::span_and_value(field),
+                        eidx: self.next_eidx(),
                     };
                 }
                 "[" => {
                     self.next_token()?;
                     let index = match &self.tok.0 {
-                        TokenKind::String => Expr::String(Self::span_and_value(self.tok.1.clone())),
+                        TokenKind::String => {
+                            let (span, value) = Self::span_and_value(self.tok.1.clone());
+                            Expr::String {
+                                span,
+                                value,
+                                eidx: self.next_eidx(),
+                            }
+                        }
                         _ => {
                             return Err(self.source.error(
                                 self.tok.1.line,
@@ -1224,6 +1323,7 @@ impl<'source> Parser<'source> {
                         span,
                         refr: Ref::new(refr),
                         index: Ref::new(index),
+                        eidx: self.next_eidx(),
                     };
                 }
                 _ => break,
@@ -1247,7 +1347,12 @@ impl<'source> Parser<'source> {
                     bail!(span.error("data cannot be shadowed"));
                 }
             }
-            Expr::Var(Self::span_and_value(v))
+            let (span, value) = Self::span_and_value(v);
+            Expr::Var {
+                span,
+                value,
+                eidx: self.next_eidx(),
+            }
         } else {
             return Err(self.source.error(
                 span.line,
@@ -1292,6 +1397,7 @@ impl<'source> Parser<'source> {
                         span,
                         refr: Ref::new(term),
                         field: Self::span_and_value(field),
+                        eidx: self.next_eidx(),
                     };
                 }
                 "[" => {
@@ -1303,6 +1409,7 @@ impl<'source> Parser<'source> {
                         span,
                         refr: Ref::new(term),
                         index: Ref::new(index),
+                        eidx: self.next_eidx(),
                     };
                 }
                 _ => break,
@@ -1362,15 +1469,17 @@ impl<'source> Parser<'source> {
                 if assign.is_none() && is_set_follower {
                     match rule_ref.as_ref() {
                         Expr::RefBrack { refr, index, .. }
-                            if matches!(refr.as_ref(), Expr::Var(_)) =>
+                            if matches!(refr.as_ref(), Expr::Var { .. }) =>
                         {
+                            // Adjust the expression counter since we are discarding the RefBrack expression.
+                            self.eidx -= 1;
                             return Ok(RuleHead::Set {
                                 span,
                                 refr: refr.clone(),
                                 key: Some(index.clone()),
                             });
                         }
-                        Expr::RefDot { refr, .. } if matches!(refr.as_ref(), Expr::Var(_)) => {
+                        Expr::RefDot { refr, .. } if matches!(refr.as_ref(), Expr::Var { .. }) => {
                             return Ok(RuleHead::Set {
                                 span,
                                 refr: rule_ref,
@@ -1416,7 +1525,11 @@ impl<'source> Parser<'source> {
         *self = state;
         let stmts = vec![self.parse_literal_stmt()?];
         span.end = self.end;
-        Ok(Query { span, stmts })
+        Ok(Query {
+            span,
+            stmts,
+            qidx: self.next_qidx(),
+        })
     }
 
     pub fn parse_rule_bodies(&mut self) -> Result<Vec<RuleBody>> {
@@ -1539,6 +1652,7 @@ impl<'source> Parser<'source> {
                     let query = Ref::new(Query {
                         span: query_span,
                         stmts: vec![],
+                        qidx: self.next_qidx(),
                     });
                     span.end = self.end;
                     bodies.push(RuleBody {
@@ -1597,7 +1711,14 @@ impl<'source> Parser<'source> {
             refr: rule_ref,
             args: args
                 .into_iter()
-                .map(|a| Ref::new(Expr::Var(Self::span_and_value(a))))
+                .map(|a| {
+                    let (span, value) = Self::span_and_value(a);
+                    Ref::new(Expr::Var {
+                        span,
+                        value,
+                        eidx: self.next_eidx(),
+                    })
+                })
                 .collect(),
             op,
             value,
@@ -1769,12 +1890,21 @@ impl<'source> Parser<'source> {
             policy.push(Ref::new(self.parse_rule()?));
         }
 
-        Ok(Module {
+        let m = Module {
             package,
             imports,
             policy,
             rego_v1: self.rego_v1,
-        })
+            num_expressions: self.eidx,
+            num_statements: self.sidx,
+            num_queries: self.qidx,
+        };
+
+        #[cfg(debug_assertions)]
+        {
+            indexchecker::IndexChecker::default().check_module(&m)?;
+        }
+        Ok(m)
     }
 
     pub fn parse_user_query(&mut self) -> Result<Ref<Query>> {

@@ -106,29 +106,60 @@ pub type Ref<T> = NodeRef<T>;
 #[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub enum Expr {
     // Simple items that only have a span as content.
-    String((Span, Value)),
-    RawString((Span, Value)),
-    Number((Span, Value)),
-    True(Span),
-    False(Span),
-    Null(Span),
-    Var((Span, Value)),
+    String {
+        span: Span,
+        value: Value,
+        eidx: u32,
+    },
+
+    RawString {
+        span: Span,
+        value: Value,
+        eidx: u32,
+    },
+
+    Number {
+        span: Span,
+        value: Value,
+        eidx: u32,
+    },
+
+    Bool {
+        span: Span,
+        value: Value,
+        eidx: u32,
+    },
+
+    Null {
+        span: Span,
+        value: Value,
+        eidx: u32,
+    },
+
+    Var {
+        span: Span,
+        value: Value,
+        eidx: u32,
+    },
 
     // array
     Array {
         span: Span,
         items: Vec<Ref<Expr>>,
+        eidx: u32,
     },
 
     // set
     Set {
         span: Span,
         items: Vec<Ref<Expr>>,
+        eidx: u32,
     },
 
     Object {
         span: Span,
         fields: Vec<(Span, Ref<Expr>, Ref<Expr>)>,
+        eidx: u32,
     },
 
     // Comprehensions
@@ -136,12 +167,14 @@ pub enum Expr {
         span: Span,
         term: Ref<Expr>,
         query: Ref<Query>,
+        eidx: u32,
     },
 
     SetCompr {
         span: Span,
         term: Ref<Expr>,
         query: Ref<Query>,
+        eidx: u32,
     },
 
     ObjectCompr {
@@ -149,17 +182,20 @@ pub enum Expr {
         key: Ref<Expr>,
         value: Ref<Expr>,
         query: Ref<Query>,
+        eidx: u32,
     },
 
     Call {
         span: Span,
         fcn: Ref<Expr>,
         params: Vec<Ref<Expr>>,
+        eidx: u32,
     },
 
     UnaryExpr {
         span: Span,
         expr: Ref<Expr>,
+        eidx: u32,
     },
 
     // ref
@@ -167,12 +203,14 @@ pub enum Expr {
         span: Span,
         refr: Ref<Expr>,
         field: (Span, Value),
+        eidx: u32,
     },
 
     RefBrack {
         span: Span,
         refr: Ref<Expr>,
         index: Ref<Expr>,
+        eidx: u32,
     },
 
     // Infix expressions
@@ -181,12 +219,15 @@ pub enum Expr {
         op: BinOp,
         lhs: Ref<Expr>,
         rhs: Ref<Expr>,
+        eidx: u32,
     },
+
     BoolExpr {
         span: Span,
         op: BoolOp,
         lhs: Ref<Expr>,
         rhs: Ref<Expr>,
+        eidx: u32,
     },
 
     ArithExpr {
@@ -194,6 +235,7 @@ pub enum Expr {
         op: ArithOp,
         lhs: Ref<Expr>,
         rhs: Ref<Expr>,
+        eidx: u32,
     },
 
     AssignExpr {
@@ -201,6 +243,7 @@ pub enum Expr {
         op: AssignOp,
         lhs: Ref<Expr>,
         rhs: Ref<Expr>,
+        eidx: u32,
     },
 
     Membership {
@@ -208,6 +251,7 @@ pub enum Expr {
         key: Option<Ref<Expr>>,
         value: Ref<Expr>,
         collection: Ref<Expr>,
+        eidx: u32,
     },
 
     #[cfg(feature = "rego-extensions")]
@@ -215,6 +259,7 @@ pub enum Expr {
         span: Span,
         lhs: Ref<Expr>,
         rhs: Ref<Expr>,
+        eidx: u32,
     },
 }
 
@@ -222,9 +267,13 @@ impl Expr {
     pub fn span(&self) -> &Span {
         use Expr::*;
         match self {
-            String(s) | RawString(s) | Number(s) | Var(s) => &s.0,
-            True(s) | False(s) | Null(s) => s,
-            Array { span, .. }
+            String { span, .. }
+            | RawString { span, .. }
+            | Number { span, .. }
+            | Bool { span, .. }
+            | Null { span, .. }
+            | Var { span, .. }
+            | Array { span, .. }
             | Set { span, .. }
             | Object { span, .. }
             | ArrayCompr { span, .. }
@@ -241,6 +290,35 @@ impl Expr {
             | Membership { span, .. } => span,
             #[cfg(feature = "rego-extensions")]
             OrExpr { span, .. } => span,
+        }
+    }
+
+    pub fn eidx(&self) -> u32 {
+        use Expr::*;
+        match self {
+            String { eidx, .. }
+            | RawString { eidx, .. }
+            | Number { eidx, .. }
+            | Bool { eidx, .. }
+            | Null { eidx, .. }
+            | Var { eidx, .. }
+            | Array { eidx, .. }
+            | Set { eidx, .. }
+            | Object { eidx, .. }
+            | ArrayCompr { eidx, .. }
+            | SetCompr { eidx, .. }
+            | ObjectCompr { eidx, .. }
+            | Call { eidx, .. }
+            | UnaryExpr { eidx, .. }
+            | RefDot { eidx, .. }
+            | RefBrack { eidx, .. }
+            | BinExpr { eidx, .. }
+            | BoolExpr { eidx, .. }
+            | ArithExpr { eidx, .. }
+            | AssignExpr { eidx, .. }
+            | Membership { eidx, .. } => *eidx,
+            #[cfg(feature = "rego-extensions")]
+            OrExpr { eidx, .. } => *eidx,
         }
     }
 }
@@ -290,6 +368,7 @@ pub struct LiteralStmt {
     pub literal: Literal,
     #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Vec::is_empty"))]
     pub with_mods: Vec<WithModifier>,
+    pub sidx: u32,
 }
 
 #[derive(Debug)]
@@ -297,6 +376,7 @@ pub struct LiteralStmt {
 pub struct Query {
     pub span: Span,
     pub stmts: Vec<LiteralStmt>,
+    pub qidx: u32,
 }
 
 #[derive(Debug)]
@@ -385,6 +465,12 @@ pub struct Module {
     #[cfg_attr(feature = "ast", serde(rename(serialize = "rules")))]
     pub policy: Vec<Ref<Rule>>,
     pub rego_v1: bool,
+    // Number of expressions in the module.
+    pub num_expressions: u32,
+    // Number of statements in the module.
+    pub num_statements: u32,
+    // Number of queries in the module.
+    pub num_queries: u32,
 }
 
 pub type ExprRef = Ref<Expr>;

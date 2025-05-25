@@ -101,23 +101,27 @@ fn match_expr_impl(e: &Expr, v: &Value) -> Result<()> {
     if skip_value(v) {
         return Ok(());
     }
+
     match e {
-        Expr::String(s) => match_span(&s.0, &v["string"]),
-        Expr::RawString(s) => match_span(&s.0, &v["rawstring"]),
-        Expr::Number(s) => match_span(&s.0, &v["number"]),
-        Expr::True(s) => match_span(s, v),
-        Expr::False(s) => match_span(s, v),
-        Expr::Null(s) => match_span(s, v),
-        Expr::Var(s) => match_span(&s.0, &v["var"]),
-        Expr::Array { span, items } => match_vec(span, items, &v["array"]),
-        Expr::Set { span, items } => match_vec(span, items, &v["set"]),
-        Expr::Object { span, fields } => match_object(span, fields, &v["object"]),
-        Expr::ArrayCompr { span, term, query } => {
+        Expr::String { span: s, .. } => match_span(s, &v["string"]),
+        Expr::RawString { span: s, .. } => match_span(s, &v["rawstring"]),
+        Expr::Number { span: s, .. } => match_span(s, &v["number"]),
+        Expr::Bool { span: s, .. } => match_span(s, &v["bool"]),
+        Expr::Null { span: s, .. } => match_span(s, &v["null"]),
+        Expr::Var { span: s, .. } => match_span(s, &v["var"]),
+        Expr::Array { span, items, .. } => match_vec(span, items, &v["array"]),
+        Expr::Set { span, items, .. } => match_vec(span, items, &v["set"]),
+        Expr::Object { span, fields, .. } => match_object(span, fields, &v["object"]),
+        Expr::ArrayCompr {
+            span, term, query, ..
+        } => {
             match_span_opt(span, &v["arraycompr"]["span"])?;
             match_expr(term, &v["arraycompr"]["term"])?;
             match_query(query, &v["arraycompr"]["query"])
         }
-        Expr::SetCompr { span, term, query } => {
+        Expr::SetCompr {
+            span, term, query, ..
+        } => {
             match_span_opt(span, &v["setcompr"]["span"])?;
             match_expr(term, &v["setcompr"]["term"])?;
             match_query(query, &v["setcompr"]["query"])
@@ -127,28 +131,35 @@ fn match_expr_impl(e: &Expr, v: &Value) -> Result<()> {
             key,
             value,
             query,
+            ..
         } => {
             match_span_opt(span, &v["objectcompr"]["span"])?;
             match_expr(key, &v["objectcompr"]["key"])?;
             match_expr(value, &v["objectcompr"]["value"])?;
             match_query(query, &v["objectcompr"]["query"])
         }
-        Expr::Call { span, fcn, params } => {
+        Expr::Call {
+            span, fcn, params, ..
+        } => {
             match_span_opt(span, &v["call"]["span"])?;
             match_expr(fcn, &v["call"]["fcn"])?;
             match_vec(span /*dummy*/, params, &v["call"]["params"])
         }
-        Expr::RefDot { span, refr, field } => {
+        Expr::RefDot {
+            span, refr, field, ..
+        } => {
             match_span_opt(span, &v["refdot"]["span"])?;
             match_expr(refr, &v["refdot"]["refr"])?;
             match_span(&field.0, &v["refdot"]["field"])
         }
-        Expr::RefBrack { span, refr, index } => {
+        Expr::RefBrack {
+            span, refr, index, ..
+        } => {
             match_span_opt(span, &v["refbrack"]["span"])?;
             match_expr(refr, &v["refbrack"]["refr"])?;
             match_expr(index, &v["refbrack"]["index"])
         }
-        Expr::UnaryExpr { span, expr } => {
+        Expr::UnaryExpr { span, expr, .. } => {
             match_span_opt(span, &v["span"])?;
             my_assert_eq!(
                 &Value::String("-".into()),
@@ -163,25 +174,33 @@ fn match_expr_impl(e: &Expr, v: &Value) -> Result<()> {
             );
             match_expr(expr, &v["expr"])
         }
-        Expr::BinExpr { span, op, lhs, rhs } => {
+        Expr::BinExpr {
+            span, op, lhs, rhs, ..
+        } => {
             match_span_opt(span, &v["binexpr"]["span"])?;
             match_bin_op(span, op, &v["binexpr"]["op"])?;
             match_expr(lhs, &v["binexpr"]["lhs"])?;
             match_expr(rhs, &v["binexpr"]["rhs"])
         }
-        Expr::ArithExpr { span, op, lhs, rhs } => {
+        Expr::ArithExpr {
+            span, op, lhs, rhs, ..
+        } => {
             match_span_opt(span, &v["arithexpr"]["span"])?;
             match_arith_op(span, op, &v["arithexpr"]["op"])?;
             match_expr(lhs, &v["arithexpr"]["lhs"])?;
             match_expr(rhs, &v["arithexpr"]["rhs"])
         }
-        Expr::BoolExpr { span, op, lhs, rhs } => {
+        Expr::BoolExpr {
+            span, op, lhs, rhs, ..
+        } => {
             match_span_opt(span, &v["boolexpr"]["span"])?;
             match_bool_op(span, op, &v["boolexpr"]["op"])?;
             match_expr(lhs, &v["boolexpr"]["lhs"])?;
             match_expr(rhs, &v["boolexpr"]["rhs"])
         }
-        Expr::AssignExpr { span, op, lhs, rhs } => {
+        Expr::AssignExpr {
+            span, op, lhs, rhs, ..
+        } => {
             match_span_opt(span, &v["assignexpr"]["span"])?;
             match_assign_op(span, op, &v["assignexpr"]["op"])?;
             match_expr(lhs, &v["assignexpr"]["lhs"])?;
@@ -192,6 +211,7 @@ fn match_expr_impl(e: &Expr, v: &Value) -> Result<()> {
             key,
             value,
             collection,
+            ..
         } => {
             match_span_opt(span, &v["inexpr"]["span"])?;
             match_expr_opt(span, key, &v["inexpr"]["key"])?;
@@ -200,22 +220,45 @@ fn match_expr_impl(e: &Expr, v: &Value) -> Result<()> {
         }
 
         #[cfg(feature = "rego-extensions")]
-        Expr::OrExpr { span, lhs, rhs } => {
+        Expr::OrExpr { span, lhs, rhs, .. } => {
             match_span_opt(span, &v["orexpr"]["span"])?;
             match_expr(lhs, &v["orexpr"]["lhs"])?;
             match_expr(rhs, &v["orexpr"]["rhs"])
         }
+    }?;
+
+    match (e.eidx(), &v["eidx"]) {
+        (eidx, Value::Number(n)) if n.as_u64() == Some(eidx as u64) => Ok(()),
+        _ => {
+            bail!(
+                "{}",
+                e.span().message(
+                    "mismatch-error",
+                    format!(
+                        "eidx mismatch: expected {:?}, got {:?}",
+                        v["eidx"],
+                        e.eidx(),
+                    )
+                    .as_str()
+                )
+            );
+        }
     }
 }
 
+#[allow(clippy::let_and_return)]
 fn match_expr(expr: &Expr, v: &Value) -> Result<()> {
-    match match_expr_impl(expr, v) {
-        Ok(()) => Ok(()),
-        Err(e) => bail!(
-            "{e}\nexpr = {expr:#?}\nv={}\n-----------------------\n",
-            serde_json::to_string_pretty(v)?
-        ),
-    }
+    let r = match_expr_impl(expr, v);
+
+    // Uncomment the following lines to print mismatch at each expression
+    // nesting level.
+    // if let Err(e) = &r {
+    //     bail!(
+    //         "{e}\nexpr = {expr:#?}\nv={}\n-----------------------\n",
+    //         serde_json::to_string_pretty(v)?
+    //     );
+    // }
+    r
 }
 
 fn match_with_mod(m: &WithModifier, v: &Value) -> Result<()> {
@@ -231,6 +274,20 @@ fn match_literal_stmt(ls: &LiteralStmt, v: &Value) -> Result<()> {
     if skip_value(v) {
         return Ok(());
     }
+
+    match &v["sidx"] {
+        Value::Number(n) if n.as_u64() == Some(ls.sidx as u64) => (),
+        _ => {
+            bail!(
+                "{}",
+                ls.span.message(
+                    "mismatch-error",
+                    format!("sidx mismatch: expected {:?}, got {:?}", v["sidx"], ls.sidx).as_str()
+                )
+            );
+        }
+    }
+
     match_span_opt(&ls.span, &v["span"])?;
     match_literal(&ls.literal, &v["literal"])?;
 
@@ -273,6 +330,19 @@ fn match_literal_stmt(ls: &LiteralStmt, v: &Value) -> Result<()> {
 }
 
 fn match_query(q: &Query, v: &Value) -> Result<()> {
+    match &v["qidx"] {
+        Value::Number(n) if n.as_u64() == Some(q.qidx as u64) => (),
+        _ => {
+            bail!(
+                "{}",
+                q.span.message(
+                    "mismatch-error",
+                    format!("qidx mismatch: expected {:?}, got {:?}", v["qidx"], q.qidx).as_str()
+                )
+            );
+        }
+    }
+
     match_span_opt(&q.span, &v["span"])?;
     let stmts = &v["stmts"].as_array();
     let stmts = match &stmts {
@@ -622,6 +692,15 @@ struct TestCase {
     imports: Option<Vec<Value>>,
     policy: Option<Vec<Value>>,
     error: Option<String>,
+
+    #[serde(default)]
+    num_expressions: u32,
+
+    #[serde(default)]
+    num_statements: u32,
+
+    #[serde(default)]
+    num_queries: u32,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -644,6 +723,25 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                 if let Some(e) = &case.error {
                     bail!("error `{}` not raised by parser.", e);
                 }
+
+                my_assert_eq!(
+                    module.num_expressions,
+                    case.num_expressions,
+                    "mismatch in num_expressions"
+                );
+
+                my_assert_eq!(
+                    module.num_statements,
+                    case.num_statements,
+                    "mismatch in num_statements"
+                );
+
+                my_assert_eq!(
+                    module.num_queries,
+                    case.num_queries,
+                    "mismatch in num_queries"
+                );
+
                 if let Some(p) = &case.package {
                     match_package(&module.package, p)?;
                 }

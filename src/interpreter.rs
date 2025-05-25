@@ -325,9 +325,9 @@ impl Interpreter {
             }
             match expr.as_ref() {
                 // Stop path collection upon encountering the leading variable.
-                Expr::Var(v) => {
+                Expr::Var { span, .. } => {
                     path.reverse();
-                    return self.lookup_var(&v.0, &path[..], false);
+                    return self.lookup_var(span, &path[..], false);
                 }
                 // Accumulate chained . field accesses.
                 Expr::RefDot { refr, field, .. } => {
@@ -336,9 +336,9 @@ impl Interpreter {
                 }
                 Expr::RefBrack { refr, index, .. } => match index.as_ref() {
                     // refr["field"] is the same as refr.field
-                    Expr::String(s) => {
+                    Expr::String { span, .. } => {
                         expr = refr;
-                        path.push(s.0.text());
+                        path.push(span.text());
                     }
                     // Handle other forms of refr.
                     // Note, we have the choice to evaluate a non-string index
@@ -410,7 +410,9 @@ impl Interpreter {
     fn hoist_loops_impl(&self, expr: &ExprRef, loops: &mut Vec<LoopExpr>) {
         use Expr::*;
         match expr.as_ref() {
-            RefBrack { refr, index, span } => {
+            RefBrack {
+                refr, index, span, ..
+            } => {
                 // First hoist any loops in refr
                 self.hoist_loops_impl(refr, loops);
 
@@ -420,8 +422,8 @@ impl Interpreter {
                 // Then hoist the current bracket operation.
                 let mut indices = Vec::with_capacity(1);
                 let _ = traverse(index, &mut |e| match e.as_ref() {
-                    Var(ident) if self.is_loop_index_var(&ident.0.source_str()) => {
-                        indices.push(ident.0.source_str());
+                    Var { span: ident, .. } if self.is_loop_index_var(&ident.source_str()) => {
+                        indices.push(ident.source_str());
                         Ok(false)
                     }
                     Array { .. } | Object { .. } => Ok(true),
@@ -438,7 +440,12 @@ impl Interpreter {
             }
 
             // Primitives
-            String(_) | RawString(_) | Number(_) | True(_) | False(_) | Null(_) | Var(_) => (),
+            String { .. }
+            | RawString { .. }
+            | Number { .. }
+            | Bool { .. }
+            | Null { .. }
+            | Var { .. } => (),
 
             // Recurse into expressions in other variants.
             Array { items, .. } | Set { items, .. } | Call { params: items, .. } => {
@@ -595,17 +602,17 @@ impl Interpreter {
         let (name, value) = match op {
             AssignOp::Eq => {
                 match (lhs.as_ref(), rhs.as_ref()) {
-                    (_, Expr::Var(var))
-                        if var.0.source_str().text() != "input"
-                            && self.lookup_var(&var.0, &[], true)? == Value::Undefined =>
+                    (_, Expr::Var { span: var, .. })
+                        if var.source_str().text() != "input"
+                            && self.lookup_var(var, &[], true)? == Value::Undefined =>
                     {
-                        (var.0.source_str(), self.eval_expr(lhs)?)
+                        (var.source_str(), self.eval_expr(lhs)?)
                     }
-                    (Expr::Var(var), _)
-                        if var.0.source_str().text() != "input"
-                            && self.lookup_var(&var.0, &[], true)? == Value::Undefined =>
+                    (Expr::Var { span: var, .. }, _)
+                        if var.source_str().text() != "input"
+                            && self.lookup_var(var, &[], true)? == Value::Undefined =>
                     {
-                        (var.0.source_str(), self.eval_expr(rhs)?)
+                        (var.source_str(), self.eval_expr(rhs)?)
                     }
                     (
                         Expr::Array {
@@ -614,6 +621,7 @@ impl Interpreter {
                         Expr::Array {
                             items: rhs_items,
                             span: rhs_span,
+                            ..
                         },
                     ) => {
                         if lhs_items.len() != rhs_items.len() {
@@ -635,6 +643,7 @@ impl Interpreter {
                         Expr::Object {
                             fields: rhs_fields,
                             span: rhs_span,
+                            ..
                         },
                     ) => {
                         if lhs_fields.len() != rhs_fields.len() {
@@ -706,8 +715,8 @@ impl Interpreter {
                     return Ok(rhs_value);
                 }
 
-                let name = if let Expr::Var(s) = lhs.as_ref() {
-                    s.0.source_str()
+                let name = if let Expr::Var { span: s, .. } = lhs.as_ref() {
+                    s.source_str()
                 } else {
                     let mut cache = BTreeMap::new();
                     let mut type_match = BTreeSet::new();
@@ -838,16 +847,16 @@ impl Interpreter {
         let raise_error = is_last && type_match.get(expr).is_none();
 
         match (expr.as_ref(), value) {
-            (Expr::Var(ident), _) if ident.0.text() == "_" => Ok(true),
-            (Expr::Var(ident), _)
+            (Expr::Var { span: ident, .. }, _) if ident.text() == "_" => Ok(true),
+            (Expr::Var { span: ident, .. }, _)
                 if check_existing_value
-                    && self.lookup_local_var(&ident.0.source_str()) == Some(value.clone()) =>
+                    && self.lookup_local_var(&ident.source_str()) == Some(value.clone()) =>
             {
                 Ok(false)
             }
 
-            (Expr::Var(ident), _) => {
-                self.add_variable(&ident.0.source_str(), value.clone())?;
+            (Expr::Var { span: ident, .. }, _) => {
+                self.add_variable(&ident.source_str(), value.clone())?;
                 Ok(true)
             }
 
@@ -1076,7 +1085,9 @@ impl Interpreter {
         Ok(match &stmt.literal {
             Literal::Expr { span, expr, .. } => {
                 let value = match expr.as_ref() {
-                    Expr::Call { span, fcn, params } => self.eval_call(
+                    Expr::Call {
+                        span, fcn, params, ..
+                    } => self.eval_call(
                         span,
                         expr,
                         fcn,
@@ -1116,7 +1127,9 @@ impl Interpreter {
             Literal::NotExpr { span, expr, .. } => {
                 let value = match expr.as_ref() {
                     // Extra parameter is allowed; but a return argument is not allowed.
-                    Expr::Call { span, fcn, params } => self.eval_call(
+                    Expr::Call {
+                        span, fcn, params, ..
+                    } => self.eval_call(
                         span,
                         expr,
                         fcn,
@@ -1368,7 +1381,9 @@ impl Interpreter {
             let (saved_state, _) = self.apply_with_modifiers(stmts[0])?;
 
             let loop_expr_value = loop_expr.value();
-            let loop_expr_value = if let Expr::Call { span, fcn, params } = loop_expr_value.as_ref()
+            let loop_expr_value = if let Expr::Call {
+                span, fcn, params, ..
+            } = loop_expr_value.as_ref()
             {
                 // Handle walk(obj, output_param)
                 let extra_arg = get_extra_arg(
@@ -1395,8 +1410,11 @@ impl Interpreter {
             // (this can happen if the same index is used for two different collections),
             // then evaluate statements only if the index applies to this collection.
             let loop_expr_index = loop_expr.index();
-            if let Some(Expr::Var(index_var)) = loop_expr_index.as_ref().map(|r| r.as_ref()) {
-                if let Some(idx) = self.lookup_local_var(&index_var.0.source_str()) {
+            if let Some(Expr::Var {
+                span: index_var, ..
+            }) = loop_expr_index.as_ref().map(|r| r.as_ref())
+            {
+                if let Some(idx) = self.lookup_local_var(&index_var.source_str()) {
                     if loop_expr_value[&idx] != Value::Undefined {
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         return Ok(result);
@@ -1517,8 +1535,8 @@ impl Interpreter {
         let mut expr = refr;
         loop {
             match expr.as_ref() {
-                Expr::Var(v) => {
-                    comps.push(Value::String(v.0.text().into()));
+                Expr::Var { span: v, .. } => {
+                    comps.push(Value::String(v.text().into()));
                     break;
                 }
                 Expr::RefBrack { refr, index, .. } => {
@@ -1613,7 +1631,7 @@ impl Interpreter {
     fn is_constant_ref(&self, mut expr: &Ref<Expr>) -> Result<bool> {
         loop {
             match expr.as_ref() {
-                Expr::Var(_) => break,
+                Expr::Var { .. } => break,
                 Expr::RefDot { refr, .. } => expr = refr,
                 Expr::RefBrack { refr, index, .. } if self.is_simple_literal(index)? => expr = refr,
                 _ => return Ok(false),
@@ -1625,12 +1643,11 @@ impl Interpreter {
     fn is_simple_literal(&self, expr: &Ref<Expr>) -> Result<bool> {
         Ok(matches!(
             expr.as_ref(),
-            Expr::String(_)
-                | Expr::RawString(_)
-                | Expr::True(_)
-                | Expr::False(_)
-                | Expr::Null(_)
-                | Expr::Number(_)
+            Expr::String { .. }
+                | Expr::RawString { .. }
+                | Expr::Bool { .. }
+                | Expr::Null { .. }
+                | Expr::Number { .. }
         ))
     }
 
@@ -2529,13 +2546,13 @@ impl Interpreter {
         // TODO: global var check; interop with `some var`
         if let Some(ea) = extra_arg {
             match ea.as_ref() {
-                Expr::Var(var)
-                    if allow_return_arg && self.lookup_local_var(&var.0.source_str()).is_none() =>
+                Expr::Var { span: var, .. }
+                    if allow_return_arg && self.lookup_local_var(&var.source_str()).is_none() =>
                 {
                     let value =
                         self.eval_call_impl(span, expr, fcn, &params[..params.len() - 1])?;
-                    if var.0.text() != "_" {
-                        self.add_variable(&var.0.source_str(), value)?;
+                    if var.text() != "_" {
+                        self.add_variable(&var.source_str(), value)?;
                     }
                     Ok(Value::Bool(true))
                 }
@@ -2799,15 +2816,14 @@ impl Interpreter {
         }
 
         match expr.as_ref() {
-            Expr::Null(_) => Ok(Value::Null),
-            Expr::True(_) => Ok(Value::Bool(true)),
-            Expr::False(_) => Ok(Value::Bool(false)),
-            Expr::Number((_, v)) => Ok(v.clone()),
+            Expr::Null { value: v, .. }
+            | Expr::Bool { value: v, .. }
+            | Expr::Number { value: v, .. } => Ok(v.clone()),
             // TODO: Handle string vs rawstring
-            Expr::String((_, v)) => Ok(v.clone()),
-            Expr::RawString((_, v)) => Ok(v.clone()),
+            Expr::String { value: v, .. } => Ok(v.clone()),
+            Expr::RawString { value: v, .. } => Ok(v.clone()),
             // TODO: Handle undefined variables
-            Expr::Var(_) => self.eval_chained_ref_dot_or_brack(expr),
+            Expr::Var { .. } => self.eval_chained_ref_dot_or_brack(expr),
             Expr::RefDot { .. } => self.eval_chained_ref_dot_or_brack(expr),
             Expr::RefBrack { .. } => self.eval_chained_ref_dot_or_brack(expr),
 
@@ -2843,8 +2859,10 @@ impl Interpreter {
                 key, value, query, ..
             } => self.eval_object_compr(key, value, query),
             Expr::SetCompr { term, query, .. } => self.eval_set_compr(term, query),
-            Expr::UnaryExpr { span, expr: uexpr } => match uexpr.as_ref() {
-                Expr::Number(_) if !uexpr.span().text().starts_with('-') => {
+            Expr::UnaryExpr {
+                span, expr: uexpr, ..
+            } => match uexpr.as_ref() {
+                Expr::Number { .. } if !uexpr.span().text().starts_with('-') => {
                     builtins::numbers::arithmetic_operation(
                         span,
                         &ArithOp::Sub,
@@ -2859,9 +2877,9 @@ impl Interpreter {
                     .span()
                     .error("unary - can only be used with numeric literals")),
             },
-            Expr::Call { span, fcn, params } => {
-                self.eval_call(span, expr, fcn, params, None, false)
-            }
+            Expr::Call {
+                span, fcn, params, ..
+            } => self.eval_call(span, expr, fcn, params, None, false),
         }
     }
 
@@ -3041,14 +3059,16 @@ impl Interpreter {
                     comps.push(field.0.text());
                     expr = Some(refr);
                 }
-                Expr::RefBrack { refr, index, .. } if matches!(index.as_ref(), Expr::String(_)) => {
-                    if let Expr::String(s) = index.as_ref() {
-                        comps.push(s.0.text());
+                Expr::RefBrack { refr, index, .. }
+                    if matches!(index.as_ref(), Expr::String { .. }) =>
+                {
+                    if let Expr::String { span: s, .. } = index.as_ref() {
+                        comps.push(s.text());
                         expr = Some(refr);
                     }
                 }
-                Expr::Var(v) => {
-                    comps.push(v.0.text());
+                Expr::Var { span: v, .. } => {
+                    comps.push(v.text());
                     expr = None;
                 }
                 _ => bail!(e.span().error("invalid ref expression")),
@@ -3088,10 +3108,12 @@ impl Interpreter {
         use Expr::*;
         let (kind, span) = match expr.as_ref() {
             // Scalars are supported
-            String(_) | RawString(_) | Number(_) | True(_) | False(_) | Null(_) => return Ok(()),
+            String { .. } | RawString { .. } | Number { .. } | Bool { .. } | Null { .. } => {
+                return Ok(())
+            }
 
             // Uminus of number is treated as a single expression,
-            UnaryExpr { expr, .. } if matches!(expr.as_ref(), Number(_)) => return Ok(()),
+            UnaryExpr { expr, .. } if matches!(expr.as_ref(), Number { .. }) => return Ok(()),
 
             // Comprehensions are supported since they won't evaluate to undefined.
             ArrayCompr { .. } | SetCompr { .. } | ObjectCompr { .. } => return Ok(()),
@@ -3114,7 +3136,7 @@ impl Interpreter {
             }
 
             // The following may evaluate to undefined.
-            Var((span, _)) => ("var", span),
+            Var { span, .. } => ("var", span),
             Call { span, .. } => ("call", span),
             UnaryExpr { span, .. } => ("unaryexpr", span),
             RefDot { span, .. } => ("ref", span),
@@ -3169,7 +3191,7 @@ impl Interpreter {
             let (refr, index) = match refr.as_ref() {
                 Expr::RefBrack { refr, index, .. } => (refr, Some(index.clone())),
                 Expr::RefDot { .. } => (refr, None),
-                Expr::Var(_) => (refr, None),
+                Expr::Var { .. } => (refr, None),
                 _ => bail!(refr.span().error(&format!(
                     "invalid token {:?} with the default keyword",
                     refr
@@ -3489,13 +3511,13 @@ impl Interpreter {
         let mut components: Vec<Rc<str>> = vec![];
         loop {
             refr = match refr.as_ref() {
-                Expr::Var(v) => {
-                    components.push(v.0.text().into());
+                Expr::Var { span: v, .. } => {
+                    components.push(v.text().into());
                     break;
                 }
                 Expr::RefBrack { refr, index, .. } => {
-                    if let Expr::String(s) = index.as_ref() {
-                        components.push(s.0.text().into());
+                    if let Expr::String { span: s, .. } = index.as_ref() {
+                        components.push(s.text().into());
                     } else {
                         components.clear();
                     }
@@ -3625,10 +3647,10 @@ impl Interpreter {
                     _ => match import.refr.as_ref() {
                         Expr::RefDot { field, .. } => field.0.text(),
                         Expr::RefBrack { index, .. } => match index.as_ref() {
-                            Expr::String(s) => s.0.text(),
+                            Expr::String { span: s, .. } => s.text(),
                             _ => "",
                         },
-                        Expr::Var(v) if v.0.text() == "input" => {
+                        Expr::Var { span: v, .. } if v.text() == "input" => {
                             // Warn redundant import of input. Ignore it.
                             #[cfg(feature = "std")]
                             std::eprintln!(
@@ -3667,7 +3689,7 @@ impl Interpreter {
                     // TODO: refactor.
                     let refr = match refr.as_ref() {
                         Expr::RefBrack { index, .. }
-                            if matches!(index.as_ref(), Expr::String(_)) =>
+                            if matches!(index.as_ref(), Expr::String { .. }) =>
                         {
                             refr
                         }
@@ -3681,7 +3703,7 @@ impl Interpreter {
                         Expr::RefBrack { refr, index, .. } => {
                             if !matches!(
                                 index.as_ref(),
-                                Expr::True(_) | Expr::False(_) | Expr::Number(_) | Expr::String(_)
+                                Expr::Bool { .. } | Expr::Number { .. } | Expr::String { .. }
                             ) {
                                 // OPA's behavior is ignoring the non-scalar index
                                 bail!(index.span().error("index is not a scalar value"));

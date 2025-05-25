@@ -3,7 +3,7 @@
 
 cases:
   - note: basic
-    rego: |      
+    rego: |
       package test
       import future.keywords
 
@@ -13,48 +13,69 @@ cases:
           every a, b in vals { check(a) }
         }
       }
+    num_expressions: 14
+    num_queries: 3
+    num_statements: 4
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: y
+                eidx: 3
               assign:
                 op: "="
                 value:
                   number: 8
+                  eidx: 4
           bodies:
             - query:
+                qidx: 2
                 stmts:
-                  - literal:
+                  - sidx: 3
+                    literal:
                       every:
                         value: x
                         domain:
                           array:
                             - number: 2
+                              eidx: 5
+                          eidx: 6
                         query:
+                          qidx: 1
                           stmts:
-                            - literal:
+                            - sidx: 0
+                              literal:
                                 expr:
                                   boolexpr:
                                     op: ">"
                                     lhs:
                                       var: x
+                                      eidx: 7
                                     rhs:
                                       number: 0
-                            - literal:
+                                      eidx: 8
+                                  eidx: 9
+                            - sidx: 2
+                              literal:
                                 every:
                                   key: a
                                   value: b
                                   domain:
                                     var: vals
+                                    eidx: 10
                                   query:
+                                    qidx: 0
                                     stmts:
-                                      - literal:
+                                      - sidx: 1
+                                        literal:
                                           expr:
                                             call:
                                               fcn:
                                                 var: check
+                                                eidx: 11
                                               params:
                                                 - var: a
-                            
+                                                  eidx: 12
+                                            eidx: 13
+

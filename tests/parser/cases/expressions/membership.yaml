@@ -12,29 +12,37 @@ cases:
 
       # Chained in-exprs
       y = 0, 5 in c in d
+    num_expressions: 17
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 4
               assign:
                 op: "="
                 value:
                   inexpr:
                     key:
                       number: 0
+                      eidx: 5
                     value:
                       number: 5
+                      eidx: 6
                     collection:
                       array:
                         - number: 5
+                          eidx: 7
+                      eidx: 8
+                  eidx: 9
           bodies: []
       - spec:
           head:
             compr:
               refr:
                 var: y
+                eidx: 10
               assign:
                 op: "="
                 value:
@@ -43,10 +51,16 @@ cases:
                       inexpr:
                         key:
                           number: 0
+                          eidx: 11
                         value:
                           number: 5
+                          eidx: 12
                         collection:
                           var: c
+                          eidx: 13
+                      eidx: 14
                     collection:
                       var: d
+                      eidx: 15
+                  eidx: 16
           bodies: []

@@ -13,11 +13,15 @@ cases:
          d,e,
          f
       }
+    num_expressions: 3
+    num_statements: 2
+    num_queries: 1
     policy:
       - spec:
           head: --skip--
           bodies:
             - query:
+                qidx: 0
                 stmts:
                   - span: some a
                     literal:
@@ -25,11 +29,13 @@ cases:
                         span: some a
                         vars:
                           - a
+                    sidx: 0
                   - span: "some\n   d,e,\n   f"
                     literal:
                       some-vars:
                         span: "some\n   d,e,\n   f"
                         vars: [d, e, f]
+                    sidx: 1
 
   - note: same-line-error
     rego: |
@@ -58,7 +64,7 @@ cases:
       package test
       some y
     error: unexpected keyword `some`
-    
+
   - note: some-in-set
     rego: |
       package test
