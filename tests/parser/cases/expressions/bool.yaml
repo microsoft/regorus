@@ -13,13 +13,16 @@ cases:
       # different types against object
       # different types against set
       # strings etc
-      
+    num_expressions: 9
+    num_queries: 0
+    num_statements: 0
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 1
               assign:
                 op: =
                 value:
@@ -29,15 +32,22 @@ cases:
                       arithexpr:
                         op: "+"
                         lhs:
-                          number: 1
+                            number: 1
+                            eidx: 2
                         rhs:
                           number: 2
+                          eidx: 3
+                      eidx: 4
                     rhs:
                       arithexpr:
                         op: "-"
                         lhs:
                           number: 3
+                          eidx: 5
                         rhs:
                           number: 2
-                    
+                          eidx: 6
+                      eidx: 7
+                  eidx: 8
+
           bodies: []

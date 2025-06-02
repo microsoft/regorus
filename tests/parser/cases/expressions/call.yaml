@@ -11,6 +11,9 @@ cases:
 
       # Trailing comma
       x = inc(5,)
+    num_expressions: 13
+    num_statements: 0
+    num_queries: 0
     policy:
       - spec:
           head:
@@ -19,30 +22,42 @@ cases:
                 refbrack:
                   refr:
                     var: deny
+                    eidx: 1
                   index:
                     call:
                       fcn:
                         var: sprintf
+                        eidx: 2
                       params:
                         - string: "Hello %v"
+                          eidx: 3
                         - array:
                             - string: "world"
+                              eidx: 4
+                          eidx: 5
+                    eidx: 6
+                eidx: 7
               assign:
                 op: =
                 value:
                   number: 1
+                  eidx: 8
           bodies: []
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 9
               assign:
                 op: "="
                 value:
                   call:
                     fcn:
                       var: inc
+                      eidx: 10
                     params:
                       - number: 5
+                        eidx: 11
+                  eidx: 12
           bodies: []

@@ -17,19 +17,24 @@ cases:
           # Nested empty
           [[[[[]]]]]
       ]
-
+    num_expressions: 17
+    num_statements: 0
+    num_queries: 0
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 1
               assign:
                 span: = {1}
                 op: "="
                 value:
                   set:
                     - number: 1
+                      eidx: 2
+                  eidx: 3
           bodies: --skip--
 
       - spec:
@@ -37,21 +42,34 @@ cases:
             compr:
               refr:
                 var: y
+                eidx: 4
               assign:
                 op: "="
                 value:
                   array:
                     - number: 2.5
+                      eidx: 5
                     - string: abc
+                      eidx: 6
                     - array:
                         - number: 4
+                          eidx: 7
                         - rawstring: raw
+                          eidx: 8
+                      eidx: 9
                     - array: []
+                      eidx: 10
                     - array:
                         - array:
                             - array:
                               - array:
                                 - array: []
+                                  eidx: 11
+                                eidx: 12
+                              eidx: 13
+                          eidx: 14
+                      eidx: 15
+                  eidx: 16
           bodies: []
 
   - note: trailing-comma
@@ -60,12 +78,16 @@ cases:
       x = [1,]
       y = [1,2
       ,]
+    num_expressions: 8
+    num_statements: 0
+    num_queries: 0
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 1
               assign:
                 op: "="
                 value:
@@ -73,12 +95,15 @@ cases:
                     span: "[1,]"
                     values:
                       - number: 1
+                        eidx: 2
+                  eidx: 3
           bodies: []
       - spec:
           head:
             compr:
               refr:
                 var: y
+                eidx: 4
               assign:
                 op: "="
                 value:
@@ -86,7 +111,10 @@ cases:
                     span: "[1,2\n,]"
                     values:
                       - number: 1
+                        eidx: 5
                       - number: 2
+                        eidx: 6
+                  eidx: 7
           bodies: []
 
   - note: no-comma

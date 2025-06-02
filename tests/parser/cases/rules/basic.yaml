@@ -6,6 +6,9 @@ cases:
     rego: |
       package test
       add(x, y) := 5 sub(x, y) = 5
+    num_expressions: 9
+    num_statements: 0
+    num_queries: 0
     package: --skip--
     imports:
     policy:
@@ -16,14 +19,18 @@ cases:
               span: add(x, y) := 5
               refr:
                 var: add
+                eidx: 1
               args:
                 - var: x
+                  eidx: 2
                 - var: y
+                  eidx: 3
               assign:
                 span: := 5
                 op: :=
                 value:
                   number: 5
+                  eidx: 4
           bodies: []
       - spec:
           span: sub(x, y) = 5
@@ -32,13 +39,17 @@ cases:
               span: sub(x, y) = 5
               refr:
                 var: sub
+                eidx: 5
               args:
                 - var: x
+                  eidx: 6
                 - var: y
+                  eidx: 7
               assign:
                 span: = 5
                 op: =
                 value:
                   number: 5
+                  eidx: 8
           bodies: []
-      
+
