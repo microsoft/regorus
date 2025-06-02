@@ -15,6 +15,8 @@ FetchContent_MakeAvailable(Corrosion)
 project("regorus-test")
 set(CMAKE_CXX_STANDARD 17)
 
+# installable ffi target
+
 corrosion_import_crate(
   # Path to <regorus-source-folder>/bindings/ffi/Cargo.toml
   MANIFEST_PATH "../ffi/Cargo.toml"
@@ -31,7 +33,53 @@ corrosion_import_crate(
   # Link statically
   CRATE_TYPES "cdylib")
 
+include(GNUInstallDirs)
+
+set(regorus_ffi_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}/regorus_ffi)
+set(regorus_ffi_CONFIGDIR ${CMAKE_INSTALL_LIBDIR}/cmake/regorus_ffi)
+set(regorus_ffi_LIBDIR ${CMAKE_INSTALL_LIBDIR})
+set(regorus_ffi_BINDIR ${CMAKE_INSTALL_BINDIR})
+
+add_library(regorus_ffi::regorus_ffi ALIAS regorus_ffi)
+corrosion_install(TARGETS regorus_ffi EXPORT regorus_ffi_targets LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
+target_include_directories(regorus_ffi
+INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../ffi>
+    $<INSTALL_INTERFACE:${regorus_ffi_INCLUDEDIR}>
+)
+
+set(regorus_ffi_HEADER_FILES
+  regorus.hpp
+  ../ffi/regorus.ffi.hpp
+)
+
+install(FILES ${regorus_ffi_HEADER_FILES}
+  DESTINATION ${regorus_ffi_INCLUDEDIR}
+  COMPONENT Devel
+)
+
+install(EXPORT regorus_ffi_targets
+  FILE regorus_ffi_targets.cmake
+  NAMESPACE regorus_ffi::
+  DESTINATION ${regorus_ffi_CONFIGDIR}
+)
+
+include(CMakePackageConfigHelpers)
+
+configure_package_config_file(${CMAKE_CURRENT_LIST_DIR}/regorus_ffiConfig.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/regorus_ffiConfig.cmake
+  INSTALL_DESTINATION ${regorus_ffi_CONFIGDIR}
+)
+
+install(FILES
+  ${CMAKE_CURRENT_BINARY_DIR}/regorus_ffiConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/corrosion/regorus_ffiCorrosion.cmake
+  DESTINATION ${regorus_ffi_CONFIGDIR}
+)
+
+# test binary
+
 add_executable(regorus_test main.cpp)
-# Add path to <regorus-source-folder>/bindings/ffi
-target_include_directories(regorus_test PRIVATE "../ffi")
-target_link_libraries(regorus_test regorus_ffi)
+target_link_libraries(regorus_test regorus_ffi::regorus_ffi)
