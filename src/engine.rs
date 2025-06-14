@@ -914,4 +914,9 @@ impl Engine {
         }
         Ok(parser)
     }
+
+    pub fn type_check(&mut self, input_type: Rc<crate::typing::Type>) -> Result<()> {
+        self.prepare_for_eval(false)?;
+        self.interpreter.type_check(input_type)
+    }
 }

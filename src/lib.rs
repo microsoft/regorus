@@ -28,11 +28,13 @@ mod lexer;
 mod number;
 mod parser;
 mod scheduler;
+mod typing;
 mod utils;
 mod value;
 
 pub use engine::Engine;
 pub use lexer::Source;
+pub use typing::{Type, TypeCheck};
 pub use value::Value;
 
 #[cfg(feature = "arc")]

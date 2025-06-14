@@ -179,6 +179,28 @@ fn rego_parse(file: String, v0: bool) -> Result<()> {
     Ok(())
 }
 
+fn rego_type_check(files: Vec<String>, input: String) -> Result<()> {
+    // Create engine.
+    let mut engine = regorus::Engine::new();
+
+    // Load given files.
+    for file in files.iter() {
+        if file.ends_with(".rego") {
+            // Read policy file.
+            let _package = add_policy_from_file(&mut engine, file.clone())?;
+        } else {
+            bail!("Unsupported data file `{file}`. Must be a rego file.");
+        }
+    }
+
+    let input_type = if input.ends_with(".json") {
+        serde_json::from_str(&read_file(&input)?)?
+    } else {
+        bail!("Unsupported input file `{input}`. Must be json.")
+    };
+    engine.type_check(input_type)
+}
+
 #[allow(unused_variables)]
 fn rego_ast(file: String) -> Result<()> {
     #[cfg(feature = "ast")]
@@ -267,6 +289,16 @@ enum RegorusCommand {
         #[arg(long)]
         v0: bool,
     },
+
+    /// Type check rego policies.
+    TypeCheck {
+        /// Input schema.
+        #[arg(long, short, value_name = "input_type.json")]
+        input_type: String,
+
+        /// Policy files.
+        files: Vec<String>,
+    },
 }
 
 #[derive(clap::Parser)]
@@ -306,5 +338,6 @@ fn main() -> Result<()> {
         RegorusCommand::Lex { file, verbose } => rego_lex(file, verbose),
         RegorusCommand::Parse { file, v0 } => rego_parse(file, v0),
         RegorusCommand::Ast { file } => rego_ast(file),
+        RegorusCommand::TypeCheck { files, input_type } => rego_type_check(files, input_type),
     }
 }

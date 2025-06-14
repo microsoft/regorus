@@ -3894,4 +3894,9 @@ impl Interpreter {
 
         Ok(Self::get_value_chained(self.data.clone(), &parts[1..]))
     }
+
+    pub fn type_check(&mut self, input_type: Rc<crate::typing::Type>) -> Result<()> {
+        let mut type_checker = TypeCheck::new(self.rules.clone(), input_type);
+        type_checker.check()
+    }
 }
