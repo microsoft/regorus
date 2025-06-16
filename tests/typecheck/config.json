@@ -1,0 +1,49 @@
+{
+  "input": {
+    "type": "object",
+    "fields": {
+      "type": {
+        "type": "string"
+      },
+      "location": {
+        "type": "string"
+      }
+    }
+  },
+  "target": {
+    "builtins": {
+      "concat": {
+        "arguments": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "item_type": {
+              "type": "string"
+            }
+          }
+        ],
+        "returns": {
+          "type": "string"
+        }
+      }
+    },
+    "rules": {
+      "data.test.is_valid": {
+        "type": "bool"
+      },
+      "data.test.modify": {
+        "type": "object",
+        "fields": {
+          "action": {
+            "type": "string"
+          },
+          "param": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}
