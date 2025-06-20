@@ -26,5 +26,7 @@ fn main() -> Result<()> {
         println!("cargo:rustc-env=GIT_HASH={}", git_hash);
     }
 
+    // Rerun only if build.rs changes.
+    println!("cargo:rerun-if-changed=build.rs");
     Ok(())
 }

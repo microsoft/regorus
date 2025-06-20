@@ -24,68 +24,97 @@ cases:
              some a, b in d
           }
       }
-
+    num_expressions: 25
+    num_statements: 6
+    num_queries: 2
     policy:
       - spec:
           head: --skip--
           bodies:
             - query:
+                qidx: 1
                 stmts:
                   - span: some a in {1}
+                    sidx: 0
                     literal:
                       some-decl:
                         value:
                           var: a
+                          eidx: 6
                         collection:
                           set:
                             - number: 1
+                              eidx: 7
+                          eidx: 8
                   - span: "some a\n    , b in r"
+                    sidx: 1
                     literal:
                       some-decl:
                         key:
                           var: a
+                          eidx: 9
                         value:
                           var: b
+                          eidx: 10
                         collection:
                           var: r
+                          eidx: 11
                   - span: "some 5, x in array"
+                    sidx: 2
                     literal:
                       some-decl:
                         key:
                           number: 5
+                          eidx: 12
                         value:
                           var: x
+                          eidx: 13
                         collection:
                           var: array
+                          eidx: 14
                   - span: "some \"hello\", \"world\" in map"
+                    sidx: 3
                     literal:
                       some-decl:
                         key:
                           string: hello
+                          eidx: 15
                         value:
                           string: world
+                          eidx: 16
                         collection:
                           var: map
-                  - literal:
+                          eidx: 17
+                  - sidx: 5
+                    literal:
                       some-decl:
                         key:
                           var: p
+                          eidx: 18
                         value:
                           var: q
+                          eidx: 19
                         collection:
                           setcompr:
                             term:
                               var: r
+                              eidx: 20
                             query:
+                              qidx: 0
                               stmts:
                                 - literal:
                                     some-decl:
                                       key:
                                         var: a
+                                        eidx: 21
                                       value:
                                         var: b
+                                        eidx: 22
                                       collection:
                                         var: d
+                                        eidx: 23
+                                  sidx: 4
+                          eidx: 24
 
 
   - note: unimported-in
@@ -156,6 +185,9 @@ cases:
           [1, 2, 3][a] == 3
           y = a
       }
+    num_expressions: 24
+    num_statements: 4
+    num_queries: 1
     policy:
       - spec:
           head:
@@ -163,10 +195,12 @@ cases:
               span: b := 5
               refr:
                 var: b
+                eidx: 4
               assign:
                 op: :=
                 value:
                   number: 5
+                  eidx: 5
           bodies: []
       - spec:
           head:
@@ -174,28 +208,38 @@ cases:
               span: x = y
               refr:
                 var: x
+                eidx: 6
               assign:
                 op: =
                 value:
                   var: y
+                  eidx: 7
           bodies:
             - query:
+                qidx: 0
                 stmts:
                   - literal:
                       some-vars:
                         span: some a
                         vars:
                           - a
+                    sidx: 0
                   - literal:
                       expr:
                         inexpr:
                           span: b in {4, 5}
                           value:
                             var: b
+                            eidx: 8
                           collection:
                             set:
                             - number: 4
+                              eidx: 9
                             - number: 5
+                              eidx: 10
+                            eidx: 11
+                        eidx: 12
+                    sidx: 1
                   - literal:
                       expr:
                         boolexpr:
@@ -207,12 +251,21 @@ cases:
                               refr:
                                 array:
                                   - number: 1
+                                    eidx: 13
                                   - number: 2
+                                    eidx: 14
                                   - number: 3
+                                    eidx: 15
+                                eidx: 16
                               index:
                                 var: a
+                                eidx: 17
+                            eidx: 18
                           rhs:
                             number: 3
+                            eidx: 19
+                        eidx: 20
+                    sidx: 2
                   - literal:
                       expr:
                         assignexpr:
@@ -220,5 +273,9 @@ cases:
                           op: =
                           lhs:
                             var: y
+                            eidx: 21
                           rhs:
                             var: a
+                            eidx: 22
+                        eidx: 23
+                    sidx: 3

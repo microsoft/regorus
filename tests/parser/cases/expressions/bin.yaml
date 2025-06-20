@@ -10,12 +10,16 @@ cases:
       # If not the following expressions would evaluate to empty set.
       x = {1, 2, 3} | {2} & {4}
       y = {2} & {4} | {1, 2, 3}
+    num_expressions: 23
+    num_statements: 0
+    num_queries: 0
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 1
               assign:
                 op: =
                 value:
@@ -24,23 +28,34 @@ cases:
                     lhs:
                       set:
                         - number: 1
+                          eidx: 2
                         - number: 2
+                          eidx: 3
                         - number: 3
+                          eidx: 4
+                      eidx: 5
                     rhs:
                       binexpr:
                         op: "&"
                         lhs:
                           set:
                             - number: 2
+                              eidx: 6
+                          eidx: 7
                         rhs:
                           set:
                             - number: 4
+                              eidx: 8
+                          eidx: 9
+                      eidx: 10
+                  eidx: 11
           bodies: []
       - spec:
           head:
             compr:
               refr:
                 var: y
+                eidx: 12
               assign:
                 op: =
                 value:
@@ -49,16 +64,26 @@ cases:
                     rhs:
                       set:
                         - number: 1
+                          eidx: 18
                         - number: 2
+                          eidx: 19
                         - number: 3
+                          eidx: 20
+                      eidx: 21
                     lhs:
                       binexpr:
                         op: "&"
                         lhs:
                           set:
                             - number: 2
+                              eidx: 13
+                          eidx: 14
                         rhs:
                           set:
                             - number: 4
+                              eidx: 15
+                          eidx: 16
+                      eidx: 17
+                  eidx: 22
           bodies: []
-    
+

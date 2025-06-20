@@ -8,6 +8,9 @@ cases:
       import future.keywords
 
       deny.a contains  0, "bar" in ["bar1"] if true
+    num_expressions: 11
+    num_statements: 1
+    num_queries: 1
     policy:
       - spec:
           head:
@@ -16,27 +19,37 @@ cases:
                 refdot:
                   refr:
                     var: deny
+                    eidx: 3
                   field: a
+                eidx: 4
               key:
                 inexpr:
                   key:
                     number: 0
+                    eidx: 5
                   value:
                     string: bar
+                    eidx: 6
                   collection:
                     array:
                       - string: bar1
+                        eidx: 7
+                    eidx: 8
+                eidx: 9
           bodies:
             - query:
+                qidx: 0
                 stmts:
                   - literal:
                       expr:
-                        true
+                        bool: true
+                        eidx: 10
+                    sidx: 0
   - note: old-syntax
     rego: |
       package test
       import future.keywords.if
-      
+
       # The following are not sets
       x1 if true
       x2 { true }
@@ -48,31 +61,41 @@ cases:
       # The following are not sets
       z.a if { true }
       z["b"] if { true }
-      
+    num_expressions: 21
+    num_statements: 6
+    num_queries: 6
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x1
+                eidx: 4
           bodies:
             - query:
+                qidx: 0
                 stmts:
                   - literal:
                       expr:
-                        true
+                        bool: true
+                        eidx: 5
+                    sidx: 0
       - spec:
           head:
             compr:
               refr:
                 var: x2
+                eidx: 6
           bodies:
             - query:
+                qidx: 1
                 stmts:
                   - literal:
                       expr:
-                        true
-                    
+                        bool: true
+                        eidx: 7
+                    sidx: 1
+
       - spec:
           head:
             set:
@@ -80,27 +103,37 @@ cases:
                 refdot:
                   refr:
                     var: y
+                    eidx: 8
                   field: a
+                eidx: 9
           bodies:
             - query:
+                qidx: 2
                 stmts:
                   - literal:
                       expr:
-                        true
-                        
+                        bool: true
+                        eidx: 10
+                    sidx: 2
+
       - spec:
           head:
             set:
               refr:
                   var: y
+                  eidx: 11
               key:
                 string: b
+                eidx: 12
           bodies:
             - query:
+                qidx: 3
                 stmts:
                   - literal:
                       expr:
-                        true
+                        bool: true
+                        eidx: 13
+                    sidx: 3
 
       - spec:
           head:
@@ -109,13 +142,18 @@ cases:
                 refdot:
                   refr:
                     var: z
+                    eidx: 14
                   field: a
+                eidx: 15
           bodies:
             - query:
+                qidx: 4
                 stmts:
                   - literal:
                       expr:
-                        true
+                        bool: true
+                        eidx: 16
+                    sidx: 4
 
       - spec:
           head:
@@ -124,12 +162,17 @@ cases:
                 refbrack:
                   refr:
                     var: z
+                    eidx: 17
                   index:
                     string: b
+                    eidx: 18
+                eidx: 19
           bodies:
             - query:
+                qidx: 5
                 stmts:
                   - literal:
                       expr:
-                        true
-                        
+                        bool: true
+                        eidx: 20
+                    sidx: 5

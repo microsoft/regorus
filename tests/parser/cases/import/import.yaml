@@ -7,68 +7,96 @@ cases:
       package test
       import data
       import input
+    num_expressions: 3
+    num_statements: 0
+    num_queries: 0
     imports:
       - span: import data
         refr:
           var: data
+          eidx: 1
       - span: import input
         refr:
           var: input
+          eidx: 2
 
   - note: input
     rego: |
       package test
       import input
+    num_expressions: 2
+    num_statements: 0
+    num_queries: 0
     imports:
       - span: import input
         refr:
           var: input
+          eidx: 1
 
   - note: dot
     rego: |
       package test
       import input.a
       import data.b
+    num_expressions: 5
+    num_statements: 0
+    num_queries: 0
     imports:
       - span: import input.a
         refr:
           refdot:
             refr:
               var: input
+              eidx: 1
             field: a
+          eidx: 2
       - span: import data.b
         refr:
           refdot:
             refr:
               var: data
+              eidx: 3
             field: b
+          eidx: 4
 
   - note: bracket
     rego: |
       package test
       import input["a"]
       import data["b"]
+    num_expressions: 7
+    num_statements: 0
+    num_queries: 0
     imports:
       - span: import input["a"]
         refr:
           refbrack:
             refr:
               var: input
+              eidx: 1
             index:
               string: a
+              eidx: 2
+          eidx: 3
       - span: import data["b"]
         refr:
           refbrack:
             refr:
               var: data
+              eidx: 4
             index:
               string: b
+              eidx: 5
+          eidx: 6
 
   - note: multi-dot
     rego: |
       package test
       import input.a.b
       import data.c.d
+    num_expressions: 7
+    num_statements: 0
+    num_queries: 0
     imports:
       - span: import input.a.b
         refr:
@@ -79,8 +107,11 @@ cases:
                 span: input.a
                 refr:
                   var: input
+                  eidx: 1
                 field: a
+              eidx: 2
             field: b
+          eidx: 3
       - span: import data.c.d
         refr:
           refdot:
@@ -90,8 +121,11 @@ cases:
                 span: data.c
                 refr:
                   var: data
+                  eidx: 4
                 field: c
+              eidx: 5
             field: d
+          eidx: 6
     policy: []
 
 
@@ -100,6 +134,9 @@ cases:
       package test
       import    input["b.c"].d["e.f"].g
       import      data.a["b.c"].d["e.f"]
+    num_expressions: 15
+    num_statements: 0
+    num_queries: 0
     package: --skip--
     imports:
       - span: import    input["b.c"].d["e.f"].g
@@ -117,12 +154,19 @@ cases:
                         span: input["b.c"]
                         refr:
                           var: input
+                          eidx: 1
                         index:
                           string: b.c
+                          eidx: 2
+                      eidx: 3
                     field: d
+                  eidx: 4
                 index:
                   string: e.f
+                  eidx: 5
+              eidx: 6
             field: g
+          eidx: 7
       - span: import      data.a["b.c"].d["e.f"]
         refr:
           refbrack:
@@ -138,12 +182,19 @@ cases:
                         span: data.a
                         refr:
                           var: data
+                          eidx: 8
                         field: a
+                      eidx: 9
                     index:
                       string: b.c
+                      eidx: 10
+                  eidx: 11
                 field: d
+              eidx: 12
             index:
               string: e.f
+              eidx: 13
+          eidx: 14
 
   - note:  same-line
     rego: package test import input.a["b"] import data["c"].d
@@ -151,6 +202,10 @@ cases:
       span: package test
       refr:
         var: test
+        eidx: 0
+    num_expressions: 9
+    num_statements: 0
+    num_queries: 0
     imports:
       - span: import input.a["b"]
         refr:
@@ -161,9 +216,13 @@ cases:
                 span: input.a
                 refr:
                   var: input
+                  eidx: 1
                 field: a
+              eidx: 2
             index:
               string: b
+              eidx: 3
+          eidx: 4
       - span: import data["c"].d
         refr:
           refdot:
@@ -173,14 +232,20 @@ cases:
                 span: data["c"]
                 refr:
                   var: data
+                  eidx: 5
                 index:
                   string: c
+                  eidx: 6
+              eidx: 7
             field: d
-
+          eidx: 8
   - note: as
     rego: |
       package test
       import input.x as y
+    num_expressions: 3
+    num_statements: 0
+    num_queries: 0
     imports:
       - span: import input.x as y
         refr:
@@ -188,7 +253,9 @@ cases:
             span: input.x
             refr:
               var: input
+              eidx: 1
             field: x
+          eidx: 2
         as: y
 
   - note: as/newline
@@ -198,6 +265,9 @@ cases:
       input.x
       as
       y
+    num_expressions: 3
+    num_statements: 0
+    num_queries: 0
     imports:
       - span: "import\ninput.x\nas\ny"
         refr:
@@ -205,7 +275,9 @@ cases:
             span: input.x
             refr:
               var: input
+              eidx: 1
             field: x
+          eidx: 2
         as: y
 
   - note: missing-ref

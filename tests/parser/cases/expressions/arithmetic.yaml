@@ -7,12 +7,16 @@ cases:
       package test
 
       x = 1 - 2 * 3 / 4 + 2
+    num_expressions: 11
+    num_queries: 0
+    num_statements: 0
     policy:
       - spec:
           head:
             compr:
               refr:
                 var: x
+                eidx: 1
               assign:
                 op: =
                 value:
@@ -23,6 +27,7 @@ cases:
                         op: "-"
                         lhs:
                           number: 1
+                          eidx: 2
                         rhs:
                           arithexpr:
                             op: "/"
@@ -31,10 +36,18 @@ cases:
                                 op: "*"
                                 lhs:
                                   number: 2
+                                  eidx: 3
                                 rhs:
                                   number: 3
+                                  eidx: 4
+                              eidx: 5
                             rhs:
                               number: 4
+                              eidx: 6
+                          eidx: 7
+                      eidx: 8
                     rhs:
                       number: 2
+                      eidx: 9
+                  eidx: 10
           bodies: []
