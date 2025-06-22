@@ -14,6 +14,9 @@ mod glob;
 mod graph;
 #[cfg(feature = "http")]
 mod http;
+#[cfg(feature = "net")]
+mod net;
+
 pub mod numbers;
 mod objects;
 #[cfg(feature = "opa-runtime")]
@@ -80,6 +83,8 @@ lazy_static! {
 	//graphql::register(&mut m);
 	#[cfg(feature = "http")]
 	http::register(&mut m);
+	#[cfg(feature = "net")]
+	net::register(&mut m);
 	//net::register(&mut m);
 	#[cfg(feature = "uuid")]
 	uuid::register(&mut m);
