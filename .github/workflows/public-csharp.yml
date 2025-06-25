@@ -1,10 +1,11 @@
-name: bindings/csharp
+name: publish-csharp
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+  contents: write
 
 jobs:  
   build-ffi:
@@ -129,3 +130,31 @@ jobs:
       - name: Run Regorus.Tests
         run: dotnet test --no-restore
         working-directory: ./bindings/csharp/Regorus.Tests
+
+  # publish-nuget:
+  #   name: 'Publish Regorus NuGet Package'
+  #   needs: test-nuget
+  #   runs-on: ubuntu-latest
+    
+  #   steps:
+  #     - name: Download regorus nuget package
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: regorus-nuget
+  #         path: ./nuget-packages/
+
+  #     - name: Setup .NET
+  #       uses: actions/setup-dotnet@v4
+  #       with:
+  #         global-json-file: ./bindings/csharp/global.json
+
+  #     - name: Checkout repository for version info
+  #       uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0
+
+  #     - name: Display Package to be Published
+  #       run: ls -la ./nuget-packages/
+
+  #     - name: Publish NuGet package
+  #       run: dotnet nuget push "./nuget-packages/Regorus*.nupkg" --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate        

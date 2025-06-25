@@ -2,15 +2,24 @@
 
     <PropertyGroup>
         <OutputType>Library</OutputType>
-        <RootNamespace>Microsoft.Regorus</RootNamespace>
+        <RootNamespace>Octo.Regorus.Fork</RootNamespace>
         <TargetFrameworks>netstandard2.0;netstandard2.1</TargetFrameworks>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-       <LangVersion>10.0</LangVersion>
+        <LangVersion>10.0</LangVersion>
 
         <!-- See https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-pack -->
-        <VersionPrefix>0.6.0</VersionPrefix>
-        <VersionSuffix>$(VersionSuffix)</VersionSuffix>
+        <PackageId>Octo.Regorus.Fork</PackageId>
+        <Authors>denys-octopus</Authors>
+        <Company></Company>
+        <Description>Fork of C# bindings for Regorus, a Rego language interpreter written in Rust</Description>
+        <PackageTags>opa;rego;policy;regorus</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/denys-octopus/regorus-cs-binding</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/denys-octopus/regorus-cs-binding.git</RepositoryUrl>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <RepositoryType>git</RepositoryType>
+        <VersionPrefix>0.6.0</VersionPrefix>
+        <IsPackagePrerelease>true</IsPackagePrerelease>
     </PropertyGroup>
 
     <!--
