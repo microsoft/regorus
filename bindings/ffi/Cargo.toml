@@ -23,8 +23,9 @@ lto = true
 codegen-units = 1
 
 [features]
-default = ["ast", "std", "coverage", "regorus/arc", "regorus/full-opa"]
+default = ["ast", "azure_policy", "std", "coverage", "regorus/arc", "regorus/full-opa"]
 ast = ["regorus/ast"]
+azure_policy = ["regorus/azure_policy"]
 std = ["regorus/std"]
 coverage = ["regorus/coverage"]
 custom_allocator = []

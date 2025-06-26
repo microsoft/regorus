@@ -457,6 +457,40 @@ pub extern "C" fn regorus_engine_get_ast_as_json(engine: *mut RegorusEngine) -> 
     }
 }
 
+/// Gets the package names defined in each policy added to the engine.
+///
+/// See https://docs.rs/regorus/latest/regorus/coverage/struct.Engine.html#method.get_policy_package_names
+#[no_mangle]
+#[cfg(feature = "azure_policy")]
+pub extern "C" fn regorus_engine_get_policy_package_names(engine: *mut RegorusEngine) -> RegorusResult {
+    let output = || -> Result<String> { serde_json::to_string_pretty(&to_ref(engine)?.engine.get_policy_package_names()?).map_err(anyhow::Error::msg) }();
+    match output {
+        Ok(out) => RegorusResult {
+            status: RegorusStatus::RegorusStatusOk,
+            output: to_c_str(out),
+            error_message: std::ptr::null_mut(),
+        },
+        Err(e) => to_regorus_result(Err(e)),
+    }
+}
+
+/// Gets the parameters defined in each policy added to the engine.
+///
+/// See https://docs.rs/regorus/latest/regorus/coverage/struct.Engine.html#method.get_policy_parameters
+#[no_mangle]
+#[cfg(feature = "azure_policy")]
+pub extern "C" fn regorus_engine_get_policy_parameters(engine: *mut RegorusEngine) -> RegorusResult {
+    let output = || -> Result<String> { serde_json::to_string_pretty(&to_ref(engine)?.engine.get_policy_parameters()?).map_err(anyhow::Error::msg) }();
+    match output {
+        Ok(out) => RegorusResult {
+            status: RegorusStatus::RegorusStatusOk,
+            output: to_c_str(out),
+            error_message: std::ptr::null_mut(),
+        },
+        Err(e) => to_regorus_result(Err(e)),
+    }
+}
+
 /// Enable/disable rego v1.
 ///
 /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.set_rego_v0

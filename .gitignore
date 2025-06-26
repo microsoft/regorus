@@ -28,3 +28,6 @@ bindings/*/target
 # C# build folders
 **bin
 **obj
+
+# Visual Studio folders
+**/*.vs

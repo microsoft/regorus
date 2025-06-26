@@ -23,6 +23,7 @@ default = ["full-opa", "arc"]
 
 arc = ["scientific/arc"]
 ast = []
+azure_policy = []
 base64 = ["dep:data-encoding"]
 base64url = ["dep:data-encoding"]
 coverage = []
