@@ -511,6 +511,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "mimalloc"
+version = "2.1.2"
+dependencies = [
+ "mimalloc-sys",
+]
+
+[[package]]
+name = "mimalloc-sys"
+version = "0.0.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "msvc_spectre_libs"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -934,6 +948,7 @@ dependencies = [
  "globset",
  "jsonschema",
  "lazy_static",
+ "mimalloc",
  "msvc_spectre_libs",
  "rand 0.9.1",
  "regex",

@@ -31,6 +31,7 @@ http = []
 glob = ["dep:globset"]
 graph = []
 jsonschema = ["dep:jsonschema"]
+mimalloc = ["dep:mimalloc"]
 no_std = ["lazy_static/spin_no_std"]
 opa-runtime = []
 regex = ["dep:regex"]
@@ -49,6 +50,7 @@ full-opa = [
     "hex",
     "http",
     "jsonschema",
+    "mimalloc",
     "opa-runtime",
     "regex",
     "semver",
@@ -109,6 +111,7 @@ rand = { version = "0.9.0", default-features = false, features = ["thread_rng"],
 
 # Causes the project to link with the Spectre-mitigated CRT and libs.
 msvc_spectre_libs = { version = "0.1", features = ["error"], optional = true }
+mimalloc = { path = "mimalloc", optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.45"
@@ -146,6 +149,10 @@ test=false
 
 [[bench]]
 name = "regorus_benchmark"
+harness = false
+
+[[bench]]
+name = "aci_benchmark"
 harness = false
 
 [[example]]
