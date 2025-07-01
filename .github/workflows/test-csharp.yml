@@ -1,6 +1,7 @@
 name: bindings/csharp
 
 on:
+  workflow_dispatch:
   push:
     branches: [ "main" ]
   pull_request:
@@ -8,6 +9,9 @@ on:
   schedule:
     # Run at 8:00 AM every day
     - cron: "0 8 * * *"
+
+env:
+  VersionSuffix: ${{ github.event_name == 'workflow_dispatch' && 'manualtrigger' || null }}
 
 jobs:  
   build-ffi:

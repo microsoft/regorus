@@ -7,6 +7,11 @@
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
     <TestingPlatformShowTestsFailure>true</TestingPlatformShowTestsFailure>
   </PropertyGroup>
+  
+  <PropertyGroup>
+    <!-- If the environment variable is set (such as in a Github Action run), append the suffix to the version number -->
+    <RegorusPackageVersionSuffix Condition="'$(VersionSuffix)' != ''">-$(VersionSuffix)</RegorusPackageVersionSuffix>
+  </PropertyGroup>
 
   <ItemGroup>
     <None Include="../../../tests/**/*.*" Link="tests/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
@@ -17,6 +22,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Regorus" Version="0.5.0"/>
+    <PackageReference Include="Regorus" Version="0.6.0$(RegorusPackageVersionSuffix)"/>
   </ItemGroup>
 </Project>
