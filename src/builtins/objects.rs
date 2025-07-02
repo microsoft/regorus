@@ -440,7 +440,7 @@ fn json_match_schema(
 
     // The following is expected to succeed.
     let document: serde_json::Value = serde_json::from_str(&args[0].to_json_str()?)
-        .map_err(|err| span.error(&format!("Failed to parse JSON: {}", err)))?;
+        .map_err(|err| span.error(&format!("Failed to parse JSON: {err}")))?;
 
     Ok(Value::from_array(
         match compile_json_schema(&params[1], &args[1]) {

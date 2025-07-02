@@ -733,7 +733,7 @@ impl Interpreter {
                 {
                     bail!(rhs
                         .span()
-                        .error(&format!("redefinition for variable {}", name)));
+                        .error(&format!("redefinition for variable {name}")));
                 }
 
                 (name, rhs_value)
@@ -3192,10 +3192,9 @@ impl Interpreter {
                 Expr::RefBrack { refr, index, .. } => (refr, Some(index.clone())),
                 Expr::RefDot { .. } => (refr, None),
                 Expr::Var { .. } => (refr, None),
-                _ => bail!(refr.span().error(&format!(
-                    "invalid token {:?} with the default keyword",
-                    refr
-                ))),
+                _ => bail!(refr
+                    .span()
+                    .error(&format!("invalid token {refr:?} with the default keyword"))),
             };
 
             Parser::get_path_ref_components_into(refr, &mut path)?;

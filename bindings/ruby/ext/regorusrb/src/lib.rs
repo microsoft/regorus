@@ -45,49 +45,49 @@ impl Engine {
         self.engine
             .borrow_mut()
             .add_policy(path, rego)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to add policy: {}", e)))
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to add policy: {e}")))
     }
 
     fn add_policy_from_file(&self, path: String) -> Result<String, Error> {
         self.engine
             .borrow_mut()
             .add_policy_from_file(path)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to add policy: {}", e)))
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to add policy: {e}")))
     }
 
     fn add_data(&self, ruby_hash: magnus::RHash) -> Result<(), Error> {
         let data_value: regorus::Value = serde_magnus::deserialize(ruby_hash).map_err(|e| {
             Error::new(
                 runtime_error(),
-                format!("Failed to deserialize Ruby value: {}", e),
+                format!("Failed to deserialize Ruby value: {e}"),
             )
         })?;
 
         self.engine
             .borrow_mut()
             .add_data(data_value)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to add data: {}", e)))
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to add data: {e}")))
     }
 
     fn add_data_json(&self, json_string: String) -> Result<(), Error> {
         self.engine
             .borrow_mut()
             .add_data_json(&json_string)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to add data json: {}", e)))
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to add data json: {e}")))
     }
 
     fn add_data_from_json_file(&self, path: String) -> Result<(), Error> {
         let json_data = regorus::Value::from_json_file(path).map_err(|e| {
             Error::new(
                 runtime_error(),
-                format!("Failed to parse JSON data file: {}", e),
+                format!("Failed to parse JSON data file: {e}"),
             )
         })?;
 
         self.engine.borrow_mut().add_data(json_data).map_err(|e| {
             Error::new(
                 runtime_error(),
-                format!("Failed to add data from file: {}", e),
+                format!("Failed to add data from file: {e}"),
             )
         })
     }
@@ -115,7 +115,7 @@ impl Engine {
         let input_value: regorus::Value = serde_magnus::deserialize(ruby_hash).map_err(|e| {
             Error::new(
                 runtime_error(),
-                format!("Failed to deserialize Ruby value: {}", e),
+                format!("Failed to deserialize Ruby value: {e}"),
             )
         })?;
 
@@ -127,14 +127,14 @@ impl Engine {
         self.engine
             .borrow_mut()
             .set_input_json(&json_string)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to set input JSON: {}", e)))
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to set input JSON: {e}")))
     }
 
     fn add_input_from_json_file(&self, path: String) -> Result<(), Error> {
         let json_data = regorus::Value::from_json_file(path).map_err(|e| {
             Error::new(
                 runtime_error(),
-                format!("Failed to parse JSON input file: {}", e),
+                format!("Failed to parse JSON input file: {e}"),
             )
         })?;
 
@@ -147,12 +147,12 @@ impl Engine {
             .engine
             .borrow_mut()
             .eval_query(query, false)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to evaluate query: {}", e)))?;
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to evaluate query: {e}")))?;
 
         serde_magnus::serialize(&results).map_err(|e| {
             Error::new(
                 runtime_error(),
-                format!("Failed to serailzie query results: {}", e),
+                format!("Failed to serailzie query results: {e}"),
             )
         })
     }
@@ -165,14 +165,14 @@ impl Engine {
             .map_err(|e| {
                 Error::new(
                     runtime_error(),
-                    format!("Failed to evaluate query as json: {}", e),
+                    format!("Failed to evaluate query as json: {e}"),
                 )
             })?;
 
         serde_json::to_string(&results).map_err(|e| {
             Error::new(
                 runtime_error(),
-                format!("Failed to serialize query results: {}", e),
+                format!("Failed to serialize query results: {e}"),
             )
         })
     }
@@ -180,7 +180,7 @@ impl Engine {
     fn eval_rule(&self, query: String) -> Result<Option<magnus::Value>, Error> {
         let result =
             self.engine.borrow_mut().eval_rule(query).map_err(|e| {
-                Error::new(runtime_error(), format!("Failed to evaluate rule: {}", e))
+                Error::new(runtime_error(), format!("Failed to evaluate rule: {e}"))
             })?;
 
         match result {
@@ -190,7 +190,7 @@ impl Engine {
                 .map_err(|e| {
                     magnus::Error::new(
                         runtime_error(),
-                        format!("Failed to serialize the rule evaluation result: {}", e),
+                        format!("Failed to serialize the rule evaluation result: {e}"),
                     )
                 }),
         }
@@ -200,7 +200,7 @@ impl Engine {
         self.engine
             .borrow_mut()
             .eval_bool_query(query, false)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to evaluate query: {}", e)))
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to evaluate query: {e}")))
     }
 
     fn eval_allow_query(&self, query: String) -> Result<bool, Error> {
@@ -226,14 +226,14 @@ impl Engine {
             .map_err(|e| {
                 Error::new(
                     runtime_error(),
-                    format!("Failed to get coverage report as json: {}", e),
+                    format!("Failed to get coverage report as json: {e}"),
                 )
             })?;
 
         serde_json::to_string(&report).map_err(|e| {
             Error::new(
                 runtime_error(),
-                format!("Failed to serialize coverage report: {}", e),
+                format!("Failed to serialize coverage report: {e}"),
             )
         })
     }
@@ -247,14 +247,14 @@ impl Engine {
             .map_err(|e| {
                 Error::new(
                     runtime_error(),
-                    format!("Failed to get coverage report: {}", e),
+                    format!("Failed to get coverage report: {e}"),
                 )
             })?;
 
         report.to_string_pretty().map_err(|e| {
             Error::new(
                 runtime_error(),
-                format!("Failed to convert report to colored string: {}", e),
+                format!("Failed to convert report to colored string: {e}"),
             )
         })
     }
@@ -275,7 +275,7 @@ impl Engine {
         self.engine.borrow_mut().take_prints().map_err(|e| {
             Error::new(
                 runtime_error(),
-                format!("Failed to gather print statement: {}", e),
+                format!("Failed to gather print statement: {e}"),
             )
         })
     }

@@ -34,7 +34,7 @@ pub fn arithmetic_operation(
     v2: Value,
     strict: bool,
 ) -> Result<Value> {
-    let op_name = format!("{:?}", op).to_lowercase();
+    let op_name = format!("{op:?}").to_lowercase();
     let v1 = ensure_numeric(op_name.as_str(), expr1, &v1)?;
     let v2 = ensure_numeric(op_name.as_str(), expr2, &v2)?;
 
