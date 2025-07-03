@@ -31,6 +31,7 @@ http = []
 glob = ["dep:globset"]
 graph = []
 jsonschema = ["dep:jsonschema"]
+net = []
 no_std = ["lazy_static/spin_no_std"]
 opa-runtime = []
 regex = ["dep:regex"]
@@ -49,6 +50,7 @@ full-opa = [
     "hex",
     "http",
     "jsonschema",
+    "net",
     "opa-runtime",
     "regex",
     "semver",
