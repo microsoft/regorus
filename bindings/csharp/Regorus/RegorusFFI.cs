@@ -194,6 +194,22 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_engine_get_ast_as_json(RegorusEngine* engine);
 
         /// <summary>
+        ///  Gets the package names of policies added to the engine.
+        ///
+        ///  See https://docs.rs/regorus/latest/regorus/coverage/struct.Engine.html#method.get_policy_package_names
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "regorus_engine_get_policy_package_names", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_get_policy_package_names(RegorusEngine* engine);
+
+        /// <summary>
+        ///  Gets the parameters defined in each policy added to the engine
+        ///
+        ///  See https://docs.rs/regorus/latest/regorus/coverage/struct.Engine.html#method.get_policy_parameters
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "regorus_engine_get_policy_parameters", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_get_policy_parameters(RegorusEngine* engine);
+
+        /// <summary>
         ///  Enable/disable rego v1.
         ///
         ///  See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.set_rego_v0

@@ -101,3 +101,98 @@ fn extension_with_state() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+#[cfg(feature = "ast")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
+fn get_policy_package_names() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"package test
+               
+                deny if {
+                    1 == 2
+                }
+        "#
+        .to_string(),
+    )?;
+
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"package test.nested.name
+                deny if {
+                    1 == 2
+                }
+        "#
+        .to_string(),
+    )?;
+
+    let result = engine.get_policy_package_names()?;
+    let package_names = Value::from_json_str(&result)?;
+
+    assert_eq!(2, package_names.as_array()?.len());
+    assert_eq!(
+        "test",
+        package_names[0]["package_name"].as_string()?.as_ref()
+    );
+    assert_eq!(
+        "test.nested.name",
+        package_names[1]["package_name"].as_string()?.as_ref()
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "ast")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
+fn get_policy_parameters() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"package test
+                default parameters.a = 5
+                default parameters.b = { asdf: 10}
+
+                deny if {
+                    parameter.a == parameter.b.asdf
+                }
+        "#
+        .to_string(),
+    )?;
+
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"package test
+                default parameters = {
+                    a: 5,
+                    b: { asdf: 10 }
+                }
+
+                deny if {
+                    parameters.a == parameters.b.asdf
+                }
+        "#
+        .to_string(),
+    )?;
+
+    let result = engine.get_policy_parameters()?;
+    let parameters = Value::from_json_str(&result)?;
+
+    println!("parameters: {}", result);
+    assert_eq!(2, parameters.as_array()?.len());
+    assert_eq!(2, parameters[0]["parameters"].as_array()?.len());
+    assert_eq!(
+        "a",
+        parameters[0]["parameters"][0]["name"].as_string()?.as_ref()
+    );
+    assert_eq!(
+        "b",
+        parameters[0]["parameters"][1]["name"].as_string()?.as_ref()
+    );
+
+    // We expect parameters to be defined separately, so the second policy does not have any parameters
+    assert_eq!(0, parameters[1]["parameters"].as_array()?.len());
+
+    Ok(())
+}

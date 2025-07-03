@@ -907,6 +907,112 @@ impl Engine {
         serde_json::to_string_pretty(&ast).map_err(anyhow::Error::msg)
     }
 
+    /// Get the package names of each policy added to the engine.
+    ///
+    ///
+    /// ```rust
+    /// # use regorus::*;
+    /// # use anyhow::{bail, Result};
+    /// # fn main() -> Result<()> {
+    /// # let mut engine = Engine::new();
+    /// engine.add_policy("test.rego".to_string(), "package test\n x := 1".to_string())?;
+    /// engine.add_policy("test2.rego".to_string(), "package test.multi.segment\n x := 1".to_string())?;
+    ///
+    /// let package_names = engine.get_policy_package_names()?;
+    /// let value = Value::from_json_str(&package_names)?;
+    ///
+    /// assert_eq!(value[0]["package_name"].as_string()?.as_ref(), "test");
+    /// assert_eq!(value[1]["package_name"].as_string()?.as_ref(), "test.multi.segment");
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "ast")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
+    pub fn get_policy_package_names(&self) -> Result<String> {
+        #[derive(Serialize)]
+        struct Policy<'a> {
+            source: &'a Source,
+            version: u32,
+            package_name: String,
+        }
+
+        let mut package_names = vec![];
+        for m in &self.modules {
+            let package_name = Interpreter::get_path_string(&m.package.refr, None)?;
+            package_names.push(Policy {
+                source: &m.package.span.source,
+                version: 1,
+                package_name: package_name,
+            });
+        }
+
+        serde_json::to_string_pretty(&package_names).map_err(anyhow::Error::msg)
+    }
+
+    /// Get the parameters defined in each policy.
+    ///
+    ///
+    /// ```rust
+    /// # use regorus::*;
+    /// # use anyhow::{bail, Result};
+    /// # fn main() -> Result<()> {
+    /// # let mut engine = Engine::new();
+    /// engine.add_policy("test.rego".to_string(), "package test\n x := 1".to_string())?;
+    ///
+    /// let package_names = engine.get_policy_parameters()?;
+    /// let value = Value::from_json_str(&package_names)?;
+    ///
+    /// println!("{}", package_names);
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "ast")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
+    pub fn get_policy_parameters(&self) -> Result<String> {
+        #[derive(Serialize)]
+        struct PolicyParameter {
+            name: String,
+            modifiable: bool,
+            required: bool,
+        }
+
+        #[derive(Serialize)]
+        struct Policy<'a> {
+            source: &'a Source,
+            version: u32,
+            parameters: Vec<PolicyParameter>,
+        }
+
+        let mut policies = vec![];
+        for m in &self.modules {
+            let mut parameters = vec![];
+            for rule in &m.policy {
+                if let Rule::Default { refr, .. } = rule.as_ref() {
+                    let path = Parser::get_path_ref_components(refr)?;
+                    let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
+
+                    if paths.len() == 2 && paths[0] == "parameters".to_string() {
+                        // Todo: Fetch fields other than name from rego metadoc for the parameter
+                        parameters.push(PolicyParameter {
+                            name: paths[1].to_string(),
+                            modifiable: false,
+                            required: false,
+                        })
+                    }
+                }
+            }
+
+            policies.push(Policy {
+                source: &m.package.span.source,
+                version: 1,
+                parameters: parameters,
+            });
+        }
+
+        serde_json::to_string_pretty(&policies).map_err(anyhow::Error::msg)
+    }
+
     fn make_parser<'a>(&self, source: &'a Source) -> Result<Parser<'a>> {
         let mut parser = Parser::new(source)?;
         if self.rego_v1 {
