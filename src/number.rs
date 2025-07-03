@@ -403,13 +403,13 @@ impl Number {
 
     pub fn format_bin(&self) -> String {
         self.ensure_integer()
-            .map(|a| format!("{:b}", a))
+            .map(|a| format!("{a:b}"))
             .unwrap_or("".to_string())
     }
 
     pub fn format_octal(&self) -> String {
         self.ensure_integer()
-            .map(|a| format!("{:o}", a))
+            .map(|a| format!("{a:o}"))
             .unwrap_or("".to_string())
     }
 
@@ -469,13 +469,13 @@ impl Number {
 
     pub fn format_hex(&self) -> String {
         self.ensure_integer()
-            .map(|a| format!("{:x}", a))
+            .map(|a| format!("{a:x}"))
             .unwrap_or("".to_string())
     }
 
     pub fn format_big_hex(&self) -> String {
         self.ensure_integer()
-            .map(|a| format!("{:X}", a))
+            .map(|a| format!("{a:X}"))
             .unwrap_or("".to_string())
     }
 }

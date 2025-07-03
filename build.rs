@@ -23,7 +23,7 @@ fn main() -> Result<()> {
             .output()
             .expect("`git rev-parse HEAD` failed.");
         let git_hash = String::from_utf8(output.stdout).unwrap();
-        println!("cargo:rustc-env=GIT_HASH={}", git_hash);
+        println!("cargo:rustc-env=GIT_HASH={git_hash}");
     }
 
     // Rerun only if build.rs changes.
