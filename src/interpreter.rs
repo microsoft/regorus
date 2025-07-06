@@ -1017,6 +1017,11 @@ impl Interpreter {
 
                     if self.eval_stmts(stmts)? {
                         count += 1;
+                        if let Some(ctx) = self.contexts.last() {
+                            if ctx.early_return {
+                                break;
+                            }
+                        }
                     }
                     *self.current_scope_mut()? = scope_saved.clone();
                 }
@@ -1035,6 +1040,11 @@ impl Interpreter {
 
                     if self.eval_stmts(stmts)? {
                         count += 1;
+                        if let Some(ctx) = self.contexts.last() {
+                            if ctx.early_return {
+                                break;
+                            }
+                        }
                     }
                     *self.current_scope_mut()? = scope_saved.clone();
                 }
@@ -1054,6 +1064,11 @@ impl Interpreter {
 
                     if self.eval_stmts(stmts)? {
                         count += 1;
+                        if let Some(ctx) = self.contexts.last() {
+                            if ctx.early_return {
+                                break;
+                            }
+                        }
                     }
                     *self.current_scope_mut()? = scope_saved.clone();
                 }
