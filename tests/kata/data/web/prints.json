@@ -390,11 +390,7 @@
     "tests/kata/data/web/policy.rego:395: allow_readonly_paths 1: true",
     "tests/kata/data/web/policy.rego:398: allow_readonly_paths 2: start",
     "tests/kata/data/web/policy.rego:346: allow_linux: true",
-    "tests/kata/data/web/policy.rego:85: CreateContainerRequest: true",
-    "tests/kata/data/web/policy.rego:63: ======== CreateContainerRequest: trying next policy container",
-    "tests/kata/data/web/policy.rego:67: CreateContainerRequest: p_pidns = false i_pidns = false",
-    "tests/kata/data/web/policy.rego:72: CreateContainerRequest: p Version = 1.1.0-rc.1 i Version = 1.1.0-rc.1",
-    "tests/kata/data/web/policy.rego:75: CreateContainerRequest: p Readonly = false i Readonly = true"
+    "tests/kata/data/web/policy.rego:85: CreateContainerRequest: true"
   ],
   [],
   [],

@@ -307,11 +307,7 @@
     "tests/kata/data/k8s-policy-rc/policy.rego:389: allow_readonly_paths 1: true",
     "tests/kata/data/k8s-policy-rc/policy.rego:392: allow_readonly_paths 2: start",
     "tests/kata/data/k8s-policy-rc/policy.rego:340: allow_linux: true",
-    "tests/kata/data/k8s-policy-rc/policy.rego:79: CreateContainerRequest: true",
-    "tests/kata/data/k8s-policy-rc/policy.rego:57: ======== CreateContainerRequest: trying next policy container",
-    "tests/kata/data/k8s-policy-rc/policy.rego:61: CreateContainerRequest: p_pidns = false i_pidns = false",
-    "tests/kata/data/k8s-policy-rc/policy.rego:66: CreateContainerRequest: p Version = 1.1.0 i Version = 1.1.0",
-    "tests/kata/data/k8s-policy-rc/policy.rego:69: CreateContainerRequest: p Readonly = false i Readonly = true"
+    "tests/kata/data/k8s-policy-rc/policy.rego:79: CreateContainerRequest: true"
   ],
   [],
   [],

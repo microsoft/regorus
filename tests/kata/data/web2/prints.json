@@ -390,9 +390,7 @@
     "tests/kata/data/web2/policy.rego:395: allow_readonly_paths 1: true",
     "tests/kata/data/web2/policy.rego:398: allow_readonly_paths 2: start",
     "tests/kata/data/web2/policy.rego:346: allow_linux: true",
-    "tests/kata/data/web2/policy.rego:85: CreateContainerRequest: true",
-    "tests/kata/data/web2/policy.rego:63: ======== CreateContainerRequest: trying next policy container",
-    "tests/kata/data/web2/policy.rego:67: CreateContainerRequest: p_pidns = true i_pidns = false"
+    "tests/kata/data/web2/policy.rego:85: CreateContainerRequest: true"
   ],
   [],
   [],
