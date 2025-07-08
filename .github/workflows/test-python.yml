@@ -59,11 +59,11 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         host:
           - name: ubuntu-24.04
-            wheel: regorus-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl
+            wheel: regorus-0.5.0-cp310-abi3-manylinux_2_34_x86_64.whl
           - name: ubuntu-22.04
-            wheel: regorus-0.4.0-cp310-abi3-manylinux_2_34_x86_64.whl
+            wheel: regorus-0.5.0-cp310-abi3-manylinux_2_34_x86_64.whl
           - name: windows-latest
-            wheel: regorus-0.4.0-cp310-abi3-win_amd64.whl
+            wheel: regorus-0.5.0-cp310-abi3-win_amd64.whl
 
     needs: build
     runs-on: ${{ matrix.host.name }}
