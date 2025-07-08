@@ -51,7 +51,7 @@ fn from_c_str(name: &str, s: *const c_char) -> Result<String> {
     }
 }
 
-fn to_ref<T>(t: &*mut T) -> Result<&mut T> {
+fn to_ref<'a, T>(t: *mut T) -> Result<&'a mut T> {
     unsafe { t.as_mut().ok_or_else(|| anyhow!("null pointer")) }
 }
 
@@ -127,7 +127,7 @@ pub extern "C" fn regorus_engine_new() -> *mut RegorusEngine {
 ///
 #[no_mangle]
 pub extern "C" fn regorus_engine_clone(engine: *mut RegorusEngine) -> *mut RegorusEngine {
-    match to_ref(&engine) {
+    match to_ref(engine) {
         Ok(e) => Box::into_raw(Box::new(e.clone())),
         _ => std::ptr::null_mut(),
     }
@@ -135,7 +135,7 @@ pub extern "C" fn regorus_engine_clone(engine: *mut RegorusEngine) -> *mut Regor
 
 #[no_mangle]
 pub extern "C" fn regorus_engine_drop(engine: *mut RegorusEngine) {
-    if let Ok(e) = to_ref(&engine) {
+    if let Ok(e) = to_ref(engine) {
         unsafe {
             let _ = Box::from_raw(std::ptr::from_mut(e));
         }
@@ -156,7 +156,7 @@ pub extern "C" fn regorus_engine_add_policy(
     rego: *const c_char,
 ) -> RegorusResult {
     to_regorus_string_result(|| -> Result<String> {
-        to_ref(&engine)?
+        to_ref(engine)?
             .engine
             .add_policy(from_c_str("path", path)?, from_c_str("rego", rego)?)
     }())
@@ -169,7 +169,7 @@ pub extern "C" fn regorus_engine_add_policy_from_file(
     path: *const c_char,
 ) -> RegorusResult {
     to_regorus_string_result(|| -> Result<String> {
-        to_ref(&engine)?
+        to_ref(engine)?
             .engine
             .add_policy_from_file(from_c_str("path", path)?)
     }())
@@ -185,7 +185,7 @@ pub extern "C" fn regorus_engine_add_data_json(
     data: *const c_char,
 ) -> RegorusResult {
     to_regorus_result(|| -> Result<()> {
-        to_ref(&engine)?
+        to_ref(engine)?
             .engine
             .add_data(regorus::Value::from_json_str(&from_c_str("data", data)?)?)
     }())
@@ -197,7 +197,7 @@ pub extern "C" fn regorus_engine_add_data_json(
 #[no_mangle]
 pub extern "C" fn regorus_engine_get_packages(engine: *mut RegorusEngine) -> RegorusResult {
     to_regorus_string_result(|| -> Result<String> {
-        serde_json::to_string_pretty(&to_ref(&engine)?.engine.get_packages()?)
+        serde_json::to_string_pretty(&to_ref(engine)?.engine.get_packages()?)
             .map_err(anyhow::Error::msg)
     }())
 }
@@ -208,7 +208,7 @@ pub extern "C" fn regorus_engine_get_packages(engine: *mut RegorusEngine) -> Reg
 #[no_mangle]
 pub extern "C" fn regorus_engine_get_policies(engine: *mut RegorusEngine) -> RegorusResult {
     to_regorus_string_result(|| -> Result<String> {
-        to_ref(&engine)?.engine.get_policies_as_json()
+        to_ref(engine)?.engine.get_policies_as_json()
     }())
 }
 
@@ -219,7 +219,7 @@ pub extern "C" fn regorus_engine_add_data_from_json_file(
     path: *const c_char,
 ) -> RegorusResult {
     to_regorus_result(|| -> Result<()> {
-        to_ref(&engine)?
+        to_ref(engine)?
             .engine
             .add_data(regorus::Value::from_json_file(from_c_str("path", path)?)?)
     }())
@@ -231,7 +231,7 @@ pub extern "C" fn regorus_engine_add_data_from_json_file(
 #[no_mangle]
 pub extern "C" fn regorus_engine_clear_data(engine: *mut RegorusEngine) -> RegorusResult {
     to_regorus_result(|| -> Result<()> {
-        to_ref(&engine)?.engine.clear_data();
+        to_ref(engine)?.engine.clear_data();
         Ok(())
     }())
 }
@@ -246,7 +246,7 @@ pub extern "C" fn regorus_engine_set_input_json(
     input: *const c_char,
 ) -> RegorusResult {
     to_regorus_result(|| -> Result<()> {
-        to_ref(&engine)?
+        to_ref(engine)?
             .engine
             .set_input(regorus::Value::from_json_str(&from_c_str("input", input)?)?);
         Ok(())
@@ -260,7 +260,7 @@ pub extern "C" fn regorus_engine_set_input_from_json_file(
     path: *const c_char,
 ) -> RegorusResult {
     to_regorus_result(|| -> Result<()> {
-        to_ref(&engine)?
+        to_ref(engine)?
             .engine
             .set_input(regorus::Value::from_json_file(from_c_str("path", path)?)?);
         Ok(())
@@ -277,7 +277,7 @@ pub extern "C" fn regorus_engine_eval_query(
     query: *const c_char,
 ) -> RegorusResult {
     let output = || -> Result<String> {
-        let results = to_ref(&engine)?
+        let results = to_ref(engine)?
             .engine
             .eval_query(from_c_str("query", query)?, false)?;
         Ok(serde_json::to_string_pretty(&results)?)
@@ -302,7 +302,7 @@ pub extern "C" fn regorus_engine_eval_rule(
     rule: *const c_char,
 ) -> RegorusResult {
     let output = || -> Result<String> {
-        to_ref(&engine)?
+        to_ref(engine)?
             .engine
             .eval_rule(from_c_str("rule", rule)?)?
             .to_json_str()
@@ -328,7 +328,7 @@ pub extern "C" fn regorus_engine_set_enable_coverage(
     enable: bool,
 ) -> RegorusResult {
     to_regorus_result(|| -> Result<()> {
-        to_ref(&engine)?.engine.set_enable_coverage(enable);
+        to_ref(engine)?.engine.set_enable_coverage(enable);
         Ok(())
     }())
 }
@@ -341,7 +341,7 @@ pub extern "C" fn regorus_engine_set_enable_coverage(
 pub extern "C" fn regorus_engine_get_coverage_report(engine: *mut RegorusEngine) -> RegorusResult {
     let output = || -> Result<String> {
         Ok(serde_json::to_string_pretty(
-            &to_ref(&engine)?.engine.get_coverage_report()?,
+            &to_ref(engine)?.engine.get_coverage_report()?,
         )?)
     }();
     match output {
@@ -364,7 +364,7 @@ pub extern "C" fn regorus_engine_set_strict_builtin_errors(
     strict: bool,
 ) -> RegorusResult {
     to_regorus_result(|| -> Result<()> {
-        to_ref(&engine)?.engine.set_strict_builtin_errors(strict);
+        to_ref(engine)?.engine.set_strict_builtin_errors(strict);
         Ok(())
     }())
 }
@@ -378,7 +378,7 @@ pub extern "C" fn regorus_engine_get_coverage_report_pretty(
     engine: *mut RegorusEngine,
 ) -> RegorusResult {
     let output = || -> Result<String> {
-        to_ref(&engine)?
+        to_ref(engine)?
             .engine
             .get_coverage_report()?
             .to_string_pretty()
@@ -400,7 +400,7 @@ pub extern "C" fn regorus_engine_get_coverage_report_pretty(
 #[cfg(feature = "coverage")]
 pub extern "C" fn regorus_engine_clear_coverage_data(engine: *mut RegorusEngine) -> RegorusResult {
     to_regorus_result(|| -> Result<()> {
-        to_ref(&engine)?.engine.clear_coverage_data();
+        to_ref(engine)?.engine.clear_coverage_data();
         Ok(())
     }())
 }
@@ -415,7 +415,7 @@ pub extern "C" fn regorus_engine_set_gather_prints(
     enable: bool,
 ) -> RegorusResult {
     to_regorus_result(|| -> Result<()> {
-        to_ref(&engine)?.engine.set_gather_prints(enable);
+        to_ref(engine)?.engine.set_gather_prints(enable);
         Ok(())
     }())
 }
@@ -427,7 +427,7 @@ pub extern "C" fn regorus_engine_set_gather_prints(
 pub extern "C" fn regorus_engine_take_prints(engine: *mut RegorusEngine) -> RegorusResult {
     let output = || -> Result<String> {
         Ok(serde_json::to_string_pretty(
-            &to_ref(&engine)?.engine.take_prints()?,
+            &to_ref(engine)?.engine.take_prints()?,
         )?)
     }();
     match output {
@@ -446,7 +446,7 @@ pub extern "C" fn regorus_engine_take_prints(engine: *mut RegorusEngine) -> Rego
 #[no_mangle]
 #[cfg(feature = "ast")]
 pub extern "C" fn regorus_engine_get_ast_as_json(engine: *mut RegorusEngine) -> RegorusResult {
-    let output = || -> Result<String> { to_ref(&engine)?.engine.get_ast_as_json() }();
+    let output = || -> Result<String> { to_ref(engine)?.engine.get_ast_as_json() }();
     match output {
         Ok(out) => RegorusResult {
             status: RegorusStatus::RegorusStatusOk,
@@ -466,7 +466,7 @@ pub extern "C" fn regorus_engine_set_rego_v0(
     enable: bool,
 ) -> RegorusResult {
     let output = || -> Result<()> {
-        to_ref(&engine)?.engine.set_rego_v0(enable);
+        to_ref(engine)?.engine.set_rego_v0(enable);
         Ok(())
     }();
     match output {
