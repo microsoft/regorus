@@ -6,6 +6,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/microsoft/regorus/compare/regorus-v0.4.0...regorus-v0.5.0) - 2025-07-08
+
+### Added
+
+- [**breaking**] Indexes for nodes in the AST ([#414](https://github.com/anakrish/regorus/pull/414))
+- Updates for Policy Framework ([#405](https://github.com/anakrish/regorus/pull/405))
+- Regorus nuget package ([#383](https://github.com/anakrish/regorus/pull/383))
+
+### Fixed
+
+- emit import warning to stderr ([#430](https://github.com/anakrish/regorus/pull/430))
+- Clippy warnings ([#424](https://github.com/anakrish/regorus/pull/424))
+- Disallow else blocks for set rules ([#403](https://github.com/anakrish/regorus/pull/403))
+- [**breaking**] Remove cryptographic builtins ([#396](https://github.com/anakrish/regorus/pull/396))
+- [**breaking**] Fix glob.match behavior in presence of : ([#390](https://github.com/anakrish/regorus/pull/390))
+- C# EvalRule ([#387](https://github.com/anakrish/regorus/pull/387))
+
+### Other
+
+- Update release-plz action to v0.5.108 ([#431](https://github.com/anakrish/regorus/pull/431))
+- Early return for 'some in' statement ([#427](https://github.com/anakrish/regorus/pull/427))
+- Support manually generating C# bindings via Github action and add a README ([#423](https://github.com/anakrish/regorus/pull/423))
+- Make the bindings/cpp CMake project installable ([#416](https://github.com/anakrish/regorus/pull/416))
+- *(deps)* bump clap from 4.5.38 to 4.5.39 ([#415](https://github.com/anakrish/regorus/pull/415))
+- *(deps)* Update criterion and other deps ([#412](https://github.com/anakrish/regorus/pull/412))
+- Basic benchmarking setup with Criterion ([#408](https://github.com/anakrish/regorus/pull/408))
+- Default to Rego v1 in `regorus parse` ([#407](https://github.com/anakrish/regorus/pull/407))
+- *(deps)* bump clap from 4.5.37 to 4.5.38 ([#406](https://github.com/anakrish/regorus/pull/406))
+- Update dependencies ([#401](https://github.com/anakrish/regorus/pull/401))
+- Add C# test examples ([#397](https://github.com/anakrish/regorus/pull/397))
+- *(deps)* bump clap from 4.5.35 to 4.5.36 ([#395](https://github.com/anakrish/regorus/pull/395))
+- Python binding portability ([#388](https://github.com/anakrish/regorus/pull/388))
+- *(deps)* bump clap from 4.5.34 to 4.5.35 ([#389](https://github.com/anakrish/regorus/pull/389))
+- Use VersionPrefix and VersionSuffix ([#385](https://github.com/anakrish/regorus/pull/385))
+- Check-in Cargo.lock files and lockdown .net ([#384](https://github.com/anakrish/regorus/pull/384))
+
 ## [0.4.0](https://github.com/microsoft/regorus/compare/regorus-v0.3.0...regorus-v0.4.0) - 2025-03-14
 
 ### Fixed
