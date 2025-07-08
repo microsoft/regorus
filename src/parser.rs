@@ -117,7 +117,7 @@ impl<'source> Parser<'source> {
                 "`{kw}` will be treated as identifier due to missing `import future.keywords.{kw}`"
             );
 
-            std::println!(
+            std::eprintln!(
                 "{}",
                 self.source
                     .message(self.tok.1.line, self.tok.1.col, "warning", &msg)
