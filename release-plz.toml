@@ -2,9 +2,22 @@
 git_release_enable = false
 git_tag_enable = false
 changelog_update = false
+dependencies_update = false
+publish = false
+
+# These files show up as modified (dirty) to release-plz:
+#     bindings/ruby/bin/console
+#     bindings/ruby/bin/setup
+# As a result, release-plz fails during update.
+# As a workaround, allow dirty workding directory.
+allow_dirty = true
+# But don't allow release-plz to publish dirty packages.
+publish_allow_dirty = false
+
 
 [[package]]
 name = "regorus"
 git_tag_enable = true
 git_release_enable = true
 changelog_update = true
+publish = true
