@@ -274,6 +274,84 @@ Benchmark 1: opa eval -b tests/aci -d tests/aci/data.json -i tests/aci/input.jso
   Range (min … max):    43.8 ms …  46.7 ms    62 runs
 
 ```
+
+Note that the above comparison includes the overhead of parsing and processing policies as well as launching 
+the regorus and opa executables each time. OPA is intended to preload the policies (bundle) beforehand and then evaluate
+the same policies on different inputs. See [details](https://github.com/open-policy-agent/opa/pull/7298).
+
+Regorus microbenchmarks can be run for a deeper look:
+
+```bash
+$ cargo bench --frozen aci
+    Finished `bench` profile [optimized + debuginfo] target(s) in 0.40s
+     Running unittests src/lib.rs (target/release/deps/regorus-9c0b72d40d272320)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 112 filtered out; finished in 0.00s
+
+     Running benches/aci_benchmark.rs (target/release/deps/aci_benchmark-9a0c12733454b523)
+Gnuplot not found, using plotters backend
+case /aci/mount_device data.policy.mount_device
+                        time:   [11.539 µs 11.549 µs 11.562 µs]
+Found 18 outliers among 100 measurements (18.00%)
+  7 (7.00%) high mild
+  11 (11.00%) high severe
+
+case /aci/mount_overlay data.policy.mount_overlay
+                        time:   [27.436 µs 27.481 µs 27.550 µs]
+Found 11 outliers among 100 measurements (11.00%)
+  2 (2.00%) high mild
+  9 (9.00%) high severe
+
+case /aci/scratch_mount data.policy.scratch_mount
+                        time:   [7.1673 µs 7.1756 µs 7.1877 µs]
+Found 11 outliers among 100 measurements (11.00%)
+  3 (3.00%) high mild
+  8 (8.00%) high severe
+
+case /aci/create_container data.policy.create_container
+                        time:   [290.22 µs 290.52 µs 290.77 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  2 (2.00%) high mild
+  8 (8.00%) high severe
+
+case /aci/shutdown_container data.policy.shutdown_container
+                        time:   [4.0729 µs 4.0886 µs 4.1024 µs]
+Found 8 outliers among 100 measurements (8.00%)
+  4 (4.00%) high mild
+  4 (4.00%) high severe
+
+case /aci/scratch_unmount data.policy.scratch_unmount
+                        time:   [3.4765 µs 3.4808 µs 3.4861 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  2 (2.00%) high mild
+  8 (8.00%) high severe
+
+case /aci/unmount_overlay data.policy.unmount_overlay
+                        time:   [3.4646 µs 3.4793 µs 3.4958 µs]
+Found 28 outliers among 100 measurements (28.00%)
+  16 (16.00%) low mild
+  3 (3.00%) high mild
+  9 (9.00%) high severe
+
+case /aci/unmount_device data.policy.unmount_device
+                        time:   [3.5041 µs 3.5080 µs 3.5120 µs]
+Found 14 outliers among 100 measurements (14.00%)
+  2 (2.00%) high mild
+  12 (12.00%) high severe
+
+case /aci/load_fragment data.policy.load_fragment
+                        time:   [45.028 µs 45.081 µs 45.130 µs]
+Found 26 outliers among 100 measurements (26.00%)
+  16 (16.00%) low mild
+  1 (1.00%) high mild
+  9 (9.00%) high severe
+
+     Running benches/regorus_benchmark.rs (target/release/deps/regorus_benchmark-c6a3f929bb7168bc)
+```
+
+
 ## OPA Conformance
 
 Regorus has been verified to be compliant with [OPA v1.2.0](https://github.com/open-policy-agent/opa/releases/tag/v1.2.0)

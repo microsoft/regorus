@@ -19,6 +19,9 @@ use serde::Serialize;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
+#[cfg(feature = "mimalloc")]
+mimalloc::assign_global!();
+
 mod ast;
 mod builtins;
 mod engine;

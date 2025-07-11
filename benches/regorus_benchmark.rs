@@ -1,6 +1,6 @@
 use std::hint::black_box;
 
-use regorus::Engine;
+use regorus::{Engine, Value};
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use serde_json::json;
@@ -93,9 +93,44 @@ fn allow_with_simple_membership(c: &mut Criterion) {
     group.finish();
 }
 
+fn aci_policy_eval(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ACI Policy Eval");
+    let rules = ["data.policy.mount_overlay", "data.policy.mount_device"];
+    for rule in rules {
+        group.bench_with_input(BenchmarkId::new("rule", rule), &rule, |b, rule| {
+            let mut engine = Engine::new();
+            engine.set_rego_v0(true);
+
+            engine
+                .add_policy_from_file("tests/aci/api.rego")
+                .expect("failed to add api.rego");
+            engine
+                .add_policy_from_file("tests/aci/framework.rego")
+                .expect("failed to add framework.rego");
+            engine
+                .add_policy_from_file("tests/aci/policy.rego")
+                .expect("failed to add policy.rego");
+            engine
+                .add_data(
+                    Value::from_json_file("tests/aci/data.json").expect("failed to load data.json"),
+                )
+                .expect("failed to add data");
+            let input =
+                Value::from_json_file("tests/aci/input.json").expect("failed to load input.json");
+            engine.set_input(input.clone());
+            engine.eval_rule(rule.to_string()).unwrap();
+            b.iter(|| {
+                engine.eval_rule(rule.to_string()).unwrap();
+            })
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     allow_with_simple_equality,
-    allow_with_simple_membership
+    allow_with_simple_membership,
+    aci_policy_eval
 );
 criterion_main!(benches);

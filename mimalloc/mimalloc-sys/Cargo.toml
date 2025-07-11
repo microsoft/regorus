@@ -1,0 +1,10 @@
+[package]
+name = "mimalloc-sys"
+build = "build.rs"
+links = "mimalloc"
+edition = "2021"
+
+[dependencies]
+
+[build-dependencies]
+cc = "1.0"
