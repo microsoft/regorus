@@ -38,7 +38,6 @@ pub use engine::Engine;
 pub use lexer::Source;
 #[cfg(feature = "targets")]
 pub use target::{add_target, remove_target};
-pub use typing::{Type, TypeCheck};
 pub use value::Value;
 
 #[cfg(feature = "arc")]

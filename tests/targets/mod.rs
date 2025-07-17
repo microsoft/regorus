@@ -3,7 +3,7 @@
 
 use regorus::*;
 
-use anyhow::Result;
+use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 use test_generator::test_resources;
 
@@ -27,6 +27,27 @@ struct YamlTest {
 fn yaml_test_impl(file: &str) -> Result<()> {
     let yaml_str = std::fs::read_to_string(file)?;
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
+
+    // Load all targets
+    let targets_dir = "tests/targets/targets";
+    let entries = std::fs::read_dir(&targets_dir)
+        .or_else(|e| bail!("failed to read targets directory {targets_dir}.\n{e}"))?;
+    // Loop through each entry in the bundle folder.
+    for entry in entries {
+        let entry = entry.or_else(|e| bail!("failed to unwrap entry. {e}"))?;
+        let path = entry.path();
+
+        // Process only .json files.
+        match (path.is_file(), path.extension()) {
+            (true, Some(ext)) if ext == "json" => {}
+            _ => continue,
+        }
+
+        let target_json = std::fs::read_to_string(&entry.path().display().to_string())
+            .map_err(|e| anyhow!("could not read {}. {e}", path.display()))?;
+        regorus::add_target(&target_json)
+            .map_err(|e| anyhow!("Failed to add target {} {e}", path.display()))?;
+    }
 
     std::eprintln!("running {file}");
 

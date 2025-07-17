@@ -3,11 +3,11 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use alloc::collections::BTreeMap;
-
 use crate::*;
+use alloc::collections::BTreeMap;
+use anyhow::{bail, Result};
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Eq, PartialEq, Ord, PartialOrd, Clone)]
 #[serde(rename_all = "camelCase")]
 pub enum SimpleType {
     Array,
@@ -23,7 +23,7 @@ pub enum SimpleType {
     Undefined,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Eq, PartialEq, Ord, PartialOrd)]
 #[serde(rename_all = "camelCase")]
 pub enum Constraint {
     Id(String),
@@ -76,14 +76,14 @@ pub enum Constraint {
     Not(Rc<Schema>),
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Eq, PartialEq, Ord, PartialOrd)]
 #[serde(untagged)]
 pub enum Items {
     Schema(Rc<Schema>),
     Array(Vec<Rc<Schema>>),
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Eq, PartialEq, Ord, PartialOrd, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(untagged)]
 pub enum Type {
@@ -91,7 +91,7 @@ pub enum Type {
     Array(Rc<Vec<SimpleType>>),
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone, Default, Eq, PartialEq, Ord, PartialOrd, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Schema {
     #[serde(rename = "type")]
@@ -305,5 +305,21 @@ impl<'de> Deserialize<'de> for Schema {
         };
 
         Ok(schema)
+    }
+}
+
+impl Schema {
+    pub fn get_property(&self, name: &str) -> Result<Schema> {
+        for c in self.constraints.iter() {
+            if let Constraint::Properties(props) = c {
+                match props.get(name) {
+                    Some(s) => return Ok(s.clone()),
+                    _ => {
+                        bail!("Invalid key `{name}`. Valid keys are {:?}", props.keys())
+                    }
+                }
+            }
+        }
+        bail!("cannot index into a non-object")
     }
 }

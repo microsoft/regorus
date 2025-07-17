@@ -3,47 +3,13 @@
 
 use crate::ast::*;
 use crate::*;
+use crate::{schema::*, target::Target};
+
 use alloc::collections::BTreeMap;
 use anyhow::{bail, Result};
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
-#[serde(tag = "type")]
-#[serde(rename_all = "camelCase")]
-pub enum Type {
-    Undetermined,
-
-    Null,
-    Bool,
-    Number,
-    String,
-
-    // Homogenous arrays and sets
-    Array { item_type: Box<Type> },
-    Set { item_type: Box<Type> },
-
-    // Objects with string keys
-    Object { fields: Rc<BTreeMap<String, Type>> },
-    // TODO:
-    // Heterogenous arrays and sets
-    // Objects with non string keys
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct BuiltinType {
-    pub arguments: Vec<Type>,
-    pub returns: Type,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Target {
-    builtins: Map<String, BuiltinType>,
-    rules: Map<String, Type>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
-    input: Type,
+    input: Schema,
     target: Rc<Target>,
 }
 
@@ -51,7 +17,7 @@ pub struct Config {
 struct Context {
     //key: Option<Ref<Expr>>,
     value: Option<Ref<Expr>>,
-    inferred_type: Option<Type>,
+    inferred_schema: Option<Schema>,
 }
 
 pub struct TypeCheck {
@@ -61,7 +27,7 @@ pub struct TypeCheck {
     // Inference.
     //rule_types: Map<String, Type>,
     contexts: Vec<Context>,
-    bindings: Map<String, Type>,
+    bindings: Map<String, Schema>,
 }
 
 impl TypeCheck {
@@ -75,7 +41,7 @@ impl TypeCheck {
         }
     }
 
-    fn check_chained_ref_dot_or_brack(&mut self, mut expr: &Expr) -> Result<Type> {
+    fn check_chained_ref_dot_or_brack(&mut self, mut expr: &Expr) -> Result<Schema> {
         // Collect a chaing of '.field' or '["field"]'
         let mut path = vec![];
         loop {
@@ -85,7 +51,7 @@ impl TypeCheck {
                     path.push(span.clone());
                     path.reverse();
                     let v = path[0].text();
-                    let mut t = if v == "input" {
+                    let mut schema = if v == "input" {
                         self.config.input.clone()
                     } else if v == "data" {
                         unimplemented!("indexing into data");
@@ -99,25 +65,11 @@ impl TypeCheck {
                     };
 
                     for p in &path[1..] {
-                        match t {
-                            Type::Object { fields, .. } => {
-                                let f = p.text();
-                                match fields.get(f) {
-                                    Some(ft) => t = ft.clone(),
-                                    _ => {
-                                        bail!(p.error(&format!(
-                                            "{f} is not a valid field. Valid fields are {:?}",
-                                            fields.keys()
-                                        )));
-                                    }
-                                }
-                            }
-                            _ => {
-                                bail!(p.error("cannot index non object type {t:?}"));
-                            }
-                        }
+                        schema = schema
+                            .get_property(p.text())
+                            .map_err(|e| p.error(&e.to_string()))?;
                     }
-                    return Ok(t);
+                    return Ok(schema);
                 }
                 // Accumulate chained . field accesses.
                 Expr::RefDot { refr, field, .. } => {
@@ -143,23 +95,29 @@ impl TypeCheck {
         }
     }
 
-    fn check_expr(&mut self, expr: &Expr) -> Result<Type> {
+    fn primitive_schema(simple_type: SimpleType) -> Schema {
+        Schema {
+            type_: Type::One(simple_type),
+            ..Schema::default()
+        }
+    }
+
+    fn check_expr(&mut self, expr: &Expr) -> Result<Schema> {
         match expr {
-            Expr::String { .. } | Expr::RawString { .. } => Ok(Type::String),
-            Expr::Number { .. } => Ok(Type::Number),
-            Expr::Bool { .. } => Ok(Type::Bool),
-            Expr::Null { .. } => Ok(Type::Null),
-            Expr::Array { items, .. } => {
-                let mut item_type = Type::Undetermined;
+            Expr::String { .. } | Expr::RawString { .. } => Ok(Self::primitive_schema(SimpleType::String)),
+	    // TODO: Int vs number
+            Expr::Number { .. } => Ok(Self::primitive_schema(SimpleType::Number)),
+            Expr::Bool { .. } => Ok(Self::primitive_schema(SimpleType::Boolean)),
+            Expr::Null { .. } => Ok(Self::primitive_schema(SimpleType::Null)),
+/*            Expr::Array { items, .. } => {
+                let mut item_type = Type::Undefined;
                 for item in items {
                     let t = self.check_expr(item)?;
-                    if item_type == Type::Undetermined {
+                    if item_type == Type::Undefined {
                         item_type = t;
-                    } else {
-                        if t != item_type {
-                            bail!(item.span().error(
-				&format!("heterogenous array detected. Element has type {item_type:?}. Array has type {t:?}")));
-                        }
+                    } else if t != item_type {
+                        bail!(item.span().error(
+                    				&format!("heterogenous array detected. Element has type {item_type:?}. Array has type {t:?}")));
                     }
                 }
                 Ok(Type::Array {
@@ -167,16 +125,14 @@ impl TypeCheck {
                 })
             }
             Expr::Set { items, .. } => {
-                let mut item_type = Type::Undetermined;
+                let mut item_type = Type::Undefined;
                 for item in items {
                     let t = self.check_expr(item)?;
-                    if item_type == Type::Undetermined {
+                    if item_type == Type::Undefined {
                         item_type = t;
-                    } else {
-                        if t != item_type {
-                            bail!(item.span().error(
-				&format!("heterogenous array detected. Element has type {item_type:?}. Set has type {t:?}")));
-                        }
+                    } else if t != item_type {
+                        bail!(item.span().error(
+                    				&format!("heterogenous array detected. Element has type {item_type:?}. Set has type {t:?}")));
                     }
                 }
                 Ok(Type::Set {
@@ -186,8 +142,8 @@ impl TypeCheck {
             Expr::Object { fields, .. } => {
                 let mut inferred_fields = BTreeMap::default();
                 for (_, key, value) in fields {
-                    let key_type = self.check_expr(&key)?;
-                    let value_type = self.check_expr(&value)?;
+                    let key_type = self.check_expr(key)?;
+                    let value_type = self.check_expr(value)?;
                     if key_type != Type::String {
                         bail!(key
                             .span()
@@ -218,8 +174,8 @@ impl TypeCheck {
             }
 
             Expr::BinExpr { span, lhs, rhs, .. } => {
-                let lhs_t = self.check_expr(&lhs)?;
-                let rhs_t = self.check_expr(&rhs)?;
+                let lhs_t = self.check_expr(lhs)?;
+                let rhs_t = self.check_expr(rhs)?;
                 if lhs_t != rhs_t {
                     bail!(span.error(&format!("Operand type mismatch. {lhs_t:?} != {rhs_t:?}.")))
                 }
@@ -232,8 +188,8 @@ impl TypeCheck {
             }
 
             Expr::BoolExpr { span, lhs, rhs, .. } => {
-                let lhs_t = self.check_expr(&lhs)?;
-                let rhs_t = self.check_expr(&rhs)?;
+                let lhs_t = self.check_expr(lhs)?;
+                let rhs_t = self.check_expr(rhs)?;
                 if lhs_t != rhs_t {
                     bail!(span.error(&format!("Operand type mismatch. {lhs_t:?} != {rhs_t:?}.")))
                 }
@@ -248,27 +204,25 @@ impl TypeCheck {
             Expr::ArithExpr {
                 span, op, lhs, rhs, ..
             } => {
-                let lhs_t = self.check_expr(&lhs)?;
-                let rhs_t = self.check_expr(&rhs)?;
+                let lhs_t = self.check_expr(lhs)?;
+                let rhs_t = self.check_expr(rhs)?;
                 if lhs_t != rhs_t {
                     bail!(span.error(&format!("Operand type mismatch. {lhs_t:?} != {rhs_t:?}.")))
                 }
                 if let Type::Set { .. } = &lhs_t {
                     if op != &ArithOp::Sub {
-                        bail!(span.error(&format!("Only - is supported for set operands.")))
+                        bail!(span.error("Only - is supported for set operands."))
                     }
-                } else {
-                    if lhs_t != Type::Number {
-                        bail!(span.error(&format!(
-                            "Arithmetic can only be done on numbers. Got {lhs_t:?}"
-                        )));
-                    }
+                } else if lhs_t != Type::Number {
+                    bail!(span.error(&format!(
+                        "Arithmetic can only be done on numbers. Got {lhs_t:?}"
+                    )));
                 }
 
                 Ok(Type::Number)
             }
             Expr::RefDot { .. } | Expr::RefBrack { .. } | Expr::Var { .. } => {
-                self.check_chained_ref_dot_or_brack(&expr)
+                self.check_chained_ref_dot_or_brack(expr)
             }
             Expr::Membership {
                 span,
@@ -278,7 +232,7 @@ impl TypeCheck {
                 ..
             } => {
                 let col_type = self.check_expr(collection)?;
-                let val_type = self.check_expr(&value)?;
+                let val_type = self.check_expr(value)?;
                 if key.is_some() {
                     unimplemented!("key membership");
                 }
@@ -311,8 +265,8 @@ impl TypeCheck {
     fn check_stmt(&mut self, stmt: &LiteralStmt) -> Result<()> {
         // TODO: with mod
         match &stmt.literal {
-            Literal::Expr { expr, .. } => self.check_expr(&expr)?,
-            Literal::NotExpr { expr, .. } => self.check_expr(&expr)?,
+            Literal::Expr { expr, .. } => self.check_expr(expr)?,
+            Literal::NotExpr { expr, .. } => self.check_expr(expr)?,
             _ => unimplemented!(),
         };
         Ok(())
@@ -321,7 +275,7 @@ impl TypeCheck {
     fn check_query(&mut self, query: &Query) -> Result<()> {
         // TODO: Correct order.
         for stmt in &query.stmts {
-            self.check_stmt(&stmt)?;
+            self.check_stmt(stmt)?;
         }
 
         // TODO: avoid unwrap.
@@ -360,9 +314,9 @@ impl TypeCheck {
         Ok(())
     }
 
-    fn check_rule(&mut self, name: &String, rule: &Ref<Rule>) -> Result<Type> {
-        let contexts = core::mem::replace(&mut self.contexts, Vec::default());
-        let bindings = core::mem::replace(&mut self.bindings, Map::default());
+    fn check_rule(&mut self, name: &String, rule: &Ref<Rule>) -> Result<Schema> {
+        let contexts = core::mem::take(&mut self.contexts);
+        let bindings = core::mem::take(&mut self.bindings);
 
         match rule.as_ref() {
             Rule::Spec { head, bodies, .. } => {
@@ -373,22 +327,18 @@ impl TypeCheck {
 
                 for body in bodies {
                     if body.assign.is_some() {
-                        assign = &assign;
+                        assign = &body.assign;
                     }
-                    let rule_rhs = if let Some(assign) = assign.as_ref() {
-                        Some(assign.value.clone())
-                    } else {
-                        None
-                    };
+                    let rule_rhs = assign.as_ref().map(|assign| assign.value.clone());
 
                     self.contexts.clear();
                     self.contexts.push(Context {
                         // rule_lhs: rule_lhs.clone(),
                         // key: None,
                         value: rule_rhs.clone(),
-                        inferred_type: None,
+                        inferred_schema: None,
                     });
-                    self.check_rule_body(name, &body)?;
+                    self.check_rule_body(name, body)?;
                 }
             }
             _ => unimplemented!(),
@@ -396,7 +346,7 @@ impl TypeCheck {
 
         self.contexts = contexts;
         self.bindings = bindings;
-        Ok(Type::Null)
+        Ok(Schema::default())
     }
 
     fn check_rules(&mut self, name: &String, rules: &[Ref<Rule>]) -> Result<()> {

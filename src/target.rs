@@ -14,14 +14,14 @@ use std::collections::HashMap;
 #[serde(rename_all = "camelCase")]
 pub struct Target {
     /// Target identifier.
-    id: String,
+    pub id: String,
 
     /// Schemas of the entities that will be validated
     /// via policies written for this target.
-    resource_types: HashMap<String, Schema>,
+    pub resource_types: HashMap<String, Schema>,
 
     /// Schemas of the effects that policies can return.
-    effects: HashMap<String, Schema>,
+    pub effects: HashMap<String, Schema>,
 }
 
 lazy_static! {

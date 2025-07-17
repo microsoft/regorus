@@ -7,4 +7,11 @@ cases:
         __target__ := "foo"
     want_error: target does not exist
 
+  - note: Valid target
+    modules:
+      - |
+        package test
+
+        __target__ := "target1"
+    want_error: target does not exist
       
