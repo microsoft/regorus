@@ -91,15 +91,15 @@ pub enum Type {
     Array(Rc<Vec<SimpleType>>),
 }
 
-#[derive(Serialize, Debug, Clone, Default, Eq, PartialEq, Ord, PartialOrd, Clone)]
+#[derive(Serialize, Debug, Clone, Default, Eq, PartialEq, Ord, PartialOrd)]
 #[serde(rename_all = "camelCase")]
 pub struct Schema {
     #[serde(rename = "type")]
-    type_: Option<Type>,
+    pub type_: Option<Type>,
 
-    constraints: Rc<Vec<Constraint>>,
+    pub constraints: Rc<Vec<Constraint>>,
 
-    extra: Rc<BTreeMap<String, Value>>,
+    pub extra: Rc<BTreeMap<String, Value>>,
 }
 
 impl<'de> Deserialize<'de> for Schema {

@@ -97,19 +97,21 @@ impl TypeCheck {
 
     fn primitive_schema(simple_type: SimpleType) -> Schema {
         Schema {
-            type_: Type::One(simple_type),
+            type_: Some(Type::One(simple_type)),
             ..Schema::default()
         }
     }
 
     fn check_expr(&mut self, expr: &Expr) -> Result<Schema> {
         match expr {
-            Expr::String { .. } | Expr::RawString { .. } => Ok(Self::primitive_schema(SimpleType::String)),
-	    // TODO: Int vs number
+            Expr::String { .. } | Expr::RawString { .. } => {
+                Ok(Self::primitive_schema(SimpleType::String))
+            }
+            // TODO: Int vs number
             Expr::Number { .. } => Ok(Self::primitive_schema(SimpleType::Number)),
             Expr::Bool { .. } => Ok(Self::primitive_schema(SimpleType::Boolean)),
             Expr::Null { .. } => Ok(Self::primitive_schema(SimpleType::Null)),
-/*            Expr::Array { items, .. } => {
+            /*            Expr::Array { items, .. } => {
                 let mut item_type = Type::Undefined;
                 for item in items {
                     let t = self.check_expr(item)?;
@@ -117,7 +119,7 @@ impl TypeCheck {
                         item_type = t;
                     } else if t != item_type {
                         bail!(item.span().error(
-                    				&format!("heterogenous array detected. Element has type {item_type:?}. Array has type {t:?}")));
+                                    &format!("heterogenous array detected. Element has type {item_type:?}. Array has type {t:?}")));
                     }
                 }
                 Ok(Type::Array {
@@ -132,7 +134,7 @@ impl TypeCheck {
                         item_type = t;
                     } else if t != item_type {
                         bail!(item.span().error(
-                    				&format!("heterogenous array detected. Element has type {item_type:?}. Set has type {t:?}")));
+                                    &format!("heterogenous array detected. Element has type {item_type:?}. Set has type {t:?}")));
                     }
                 }
                 Ok(Type::Set {
@@ -142,9 +144,10 @@ impl TypeCheck {
             Expr::Object { fields, .. } => {
                 let mut inferred_fields = BTreeMap::default();
                 for (_, key, value) in fields {
-                    let key_type = self.check_expr(key)?;
-                    let value_type = self.check_expr(value)?;
-                    if key_type != Type::String {
+                    let key_schema = self.check_expr(key)?;
+                    let value_schema = self.check_expr(value)?;
+            if let Some(Type::One(SimpleType::String)) = &key_type {
+            } else {
                         bail!(key
                             .span()
                             .error(&format!("non string key type. Key has type {key_type:?}")));
@@ -153,13 +156,13 @@ impl TypeCheck {
                     match key.as_ref() {
                         Expr::String { value, .. } | Expr::RawString { value, .. } => {
                             if let Value::String(s) = &value {
-                                inferred_fields.insert(s.to_string(), value_type);
+                                inferred_fields.insert(s.to_string(), value_schema);
                             }
                         }
                         _ => unimplemented!(),
                     }
                 }
-                Ok(Type::Object {
+                Ok(
                     fields: Rc::new(inferred_fields),
                 })
             }
@@ -256,8 +259,7 @@ impl TypeCheck {
                 } else {
                     unimplemented!("complex assignment");
                 }
-            }
-
+            }*/
             _ => unimplemented!(),
         }
     }
@@ -282,14 +284,14 @@ impl TypeCheck {
         let mut ctx = self.contexts.pop().unwrap();
         if let Some(value) = &ctx.value {
             let vt = self.check_expr(value)?;
-            if let Some(pvt) = &ctx.inferred_type {
+            if let Some(pvt) = &ctx.inferred_schema {
                 if pvt != &vt {
                     bail!(value
                         .span()
                         .error(&format!("Multiple types inferred. {pvt:?} and {vt:?}")));
                 }
             } else {
-                ctx.inferred_type = Some(vt);
+                ctx.inferred_schema = Some(vt);
             }
         }
 
@@ -300,9 +302,12 @@ impl TypeCheck {
     fn check_rule_body(&mut self, name: &String, body: &RuleBody) -> Result<()> {
         self.check_query(&body.query)?;
         let ctx = self.contexts.last().unwrap();
-        let it = ctx.inferred_type.clone().unwrap_or(Type::Bool);
+        let it = ctx
+            .inferred_schema
+            .clone()
+            .unwrap_or(Self::primitive_schema(SimpleType::Boolean));
 
-        if let Some(t) = self.config.target.rules.get(name) {
+        if let Some(t) = self.config.target.effects.get(name) {
             if t != &it {
                 bail!(body.span.error(&format!(
                     "Rule must produce {t:?}. It produces {it:?} instead.",
