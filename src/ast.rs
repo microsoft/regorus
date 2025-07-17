@@ -471,6 +471,7 @@ pub struct Module {
     pub num_statements: u32,
     // Number of queries in the module.
     pub num_queries: u32,
+    pub target: Option<String>,
 }
 
 pub type ExprRef = Ref<Expr>;

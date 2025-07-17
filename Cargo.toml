@@ -36,6 +36,7 @@ opa-runtime = []
 regex = ["dep:regex"]
 semver = ["dep:semver"]
 std = ["rand/std", "rand/std_rng", "serde_json/std", "msvc_spectre_libs" ]
+targets = ["std"]
 time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
@@ -53,6 +54,7 @@ full-opa = [
     "regex",
     "semver",
     "std",
+    "targets",
     "time",
     "uuid",
     "urlquery",
@@ -109,6 +111,7 @@ rand = { version = "0.9.0", default-features = false, features = ["thread_rng"],
 
 # Causes the project to link with the Spectre-mitigated CRT and libs.
 msvc_spectre_libs = { version = "0.1", features = ["error"], optional = true }
+dashmap = "6.1.0"
 
 [dev-dependencies]
 anyhow = "1.0.45"

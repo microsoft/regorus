@@ -915,8 +915,8 @@ impl Engine {
         Ok(parser)
     }
 
-    pub fn check(&mut self, config: Rc<crate::typing::Config>) -> Result<()> {
+    pub fn validate(&mut self) -> Result<()> {
         self.prepare_for_eval(false)?;
-        self.interpreter.check(config)
+        self.interpreter.validate()
     }
 }

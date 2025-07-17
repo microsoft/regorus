@@ -3895,8 +3895,9 @@ impl Interpreter {
         Ok(Self::get_value_chained(self.data.clone(), &parts[1..]))
     }
 
-    pub fn check(&mut self, config: Rc<crate::typing::Config>) -> Result<()> {
-        let mut type_checker = TypeCheck::new(self.rules.clone(), config);
-        type_checker.check()
+    pub fn validate(&mut self) -> Result<()> {
+        //        let mut type_checker = TypeCheck::new(self.rules.clone(), config);
+        //        type_checker.check()
+        Ok(())
     }
 }

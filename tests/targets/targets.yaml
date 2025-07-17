@@ -1,0 +1,10 @@
+cases:
+  - note: Non existent target
+    modules:
+      - |
+        package test
+
+        __target__ := "foo"
+    want_error: target does not exist
+
+      

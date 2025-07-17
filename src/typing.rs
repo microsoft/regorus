@@ -49,7 +49,7 @@ pub struct Config {
 
 #[derive(Debug)]
 struct Context {
-    key: Option<Ref<Expr>>,
+    //key: Option<Ref<Expr>>,
     value: Option<Ref<Expr>>,
     inferred_type: Option<Type>,
 }
@@ -59,7 +59,7 @@ pub struct TypeCheck {
     config: Rc<Config>,
 
     // Inference.
-    rule_types: Map<String, Type>,
+    //rule_types: Map<String, Type>,
     contexts: Vec<Context>,
     bindings: Map<String, Type>,
 }
@@ -69,7 +69,7 @@ impl TypeCheck {
         Self {
             rules,
             config,
-            rule_types: Map::default(),
+            // rule_types: Map::default(),
             contexts: Vec::default(),
             bindings: Map::default(),
         }
@@ -217,9 +217,7 @@ impl TypeCheck {
                 Ok(t)
             }
 
-            Expr::BinExpr {
-                span, op, lhs, rhs, ..
-            } => {
+            Expr::BinExpr { span, lhs, rhs, .. } => {
                 let lhs_t = self.check_expr(&lhs)?;
                 let rhs_t = self.check_expr(&rhs)?;
                 if lhs_t != rhs_t {
@@ -233,9 +231,7 @@ impl TypeCheck {
                 }
             }
 
-            Expr::BoolExpr {
-                span, op, lhs, rhs, ..
-            } => {
+            Expr::BoolExpr { span, lhs, rhs, .. } => {
                 let lhs_t = self.check_expr(&lhs)?;
                 let rhs_t = self.check_expr(&rhs)?;
                 if lhs_t != rhs_t {
@@ -292,12 +288,12 @@ impl TypeCheck {
                     {
                         bail!(span.error(&format!("Operand type mismatch. Collection has type {col_type:?}. Element has type {val_type:?}")))
                     }
-                    Type::Array { item_type, .. } | Type::Set { item_type, .. } => Ok(Type::Bool),
+                    Type::Array { .. } | Type::Set { .. } => Ok(Type::Bool),
                     _ => unimplemented!(),
                 }
             }
 
-            Expr::AssignExpr { lhs, rhs, op, .. } => {
+            Expr::AssignExpr { lhs, rhs, .. } => {
                 if let Expr::Var { span: lhs, .. } = lhs.as_ref() {
                     // TODO: = vs :=
                     let t = self.check_expr(rhs)?;
@@ -370,7 +366,7 @@ impl TypeCheck {
 
         match rule.as_ref() {
             Rule::Spec { head, bodies, .. } => {
-                let (rule_lhs, mut assign) = match &head {
+                let (_, mut assign) = match &head {
                     RuleHead::Compr { refr, assign, .. } => (refr.clone(), assign),
                     _ => unimplemented!(),
                 };
@@ -387,8 +383,8 @@ impl TypeCheck {
 
                     self.contexts.clear();
                     self.contexts.push(Context {
-                        //                        rule_lhs: rule_lhs.clone(),
-                        key: None,
+                        // rule_lhs: rule_lhs.clone(),
+                        // key: None,
                         value: rule_rhs.clone(),
                         inferred_type: None,
                     });

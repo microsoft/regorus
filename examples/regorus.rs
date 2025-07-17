@@ -43,6 +43,7 @@ fn rego_eval(
     non_strict: bool,
     #[cfg(feature = "coverage")] coverage: bool,
     v0: bool,
+    #[cfg(feature = "targets")] targets_dir: String,
 ) -> Result<()> {
     // Create engine.
     let mut engine = regorus::Engine::new();
@@ -51,6 +52,26 @@ fn rego_eval(
 
     #[cfg(feature = "coverage")]
     engine.set_enable_coverage(coverage);
+
+    #[cfg(feature = "targets")]
+    {
+        let entries = std::fs::read_dir(&targets_dir)
+            .or_else(|e| bail!("failed to read targets directory {targets_dir}.\n{e}"))?;
+        // Loop through each entry in the bundle folder.
+        for entry in entries {
+            let entry = entry.or_else(|e| bail!("failed to unwrap entry. {e}"))?;
+            let path = entry.path();
+
+            // Process only .json files.
+            match (path.is_file(), path.extension()) {
+                (true, Some(ext)) if ext == "json" => {}
+                _ => continue,
+            }
+
+            let target_json = read_file(&entry.path().display().to_string())?;
+            regorus::add_target(&target_json)?;
+        }
+    }
 
     engine.set_rego_v0(v0);
 
@@ -179,28 +200,6 @@ fn rego_parse(file: String, v0: bool) -> Result<()> {
     Ok(())
 }
 
-fn rego_check(files: Vec<String>, config: String) -> Result<()> {
-    // Create engine.
-    let mut engine = regorus::Engine::new();
-
-    // Load given files.
-    for file in files.iter() {
-        if file.ends_with(".rego") {
-            // Read policy file.
-            let _package = add_policy_from_file(&mut engine, file.clone())?;
-        } else {
-            bail!("Unsupported data file `{file}`. Must be a rego file.");
-        }
-    }
-
-    let config = if config.ends_with(".json") {
-        serde_json::from_str(&read_file(&config)?)?
-    } else {
-        bail!("Unsupported config file `{config}`. Must be json.")
-    };
-    engine.check(config)
-}
-
 #[allow(unused_variables)]
 fn rego_ast(file: String) -> Result<()> {
     #[cfg(feature = "ast")]
@@ -268,6 +267,11 @@ enum RegorusCommand {
         /// Turn on Rego language v0.
         #[arg(long)]
         v0: bool,
+
+        /// Specify folder containing target files (JSON).
+        #[cfg(feature = "targets")]
+        #[arg(long, short)]
+        targets_dir: String,
     },
 
     /// Tokenize a Rego policy.
@@ -288,16 +292,6 @@ enum RegorusCommand {
         /// Turn on Rego language v0.
         #[arg(long)]
         v0: bool,
-    },
-
-    /// Check rego policies.
-    Check {
-        /// Input schema.
-        #[arg(long, short, value_name = "config.json")]
-        config: String,
-
-        /// Policy files.
-        files: Vec<String>,
     },
 }
 
@@ -324,6 +318,7 @@ fn main() -> Result<()> {
             #[cfg(feature = "coverage")]
             coverage,
             v0,
+            targets_dir,
         } => rego_eval(
             &bundles,
             &data,
@@ -334,10 +329,10 @@ fn main() -> Result<()> {
             #[cfg(feature = "coverage")]
             coverage,
             v0,
+            targets_dir,
         ),
         RegorusCommand::Lex { file, verbose } => rego_lex(file, verbose),
         RegorusCommand::Parse { file, v0 } => rego_parse(file, v0),
         RegorusCommand::Ast { file } => rego_ast(file),
-        RegorusCommand::Check { files, config } => rego_check(files, config),
     }
 }
