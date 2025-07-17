@@ -1,0 +1,21 @@
+{
+  "id": "target1",
+  "resourceTypes": {
+    "domainServices": {
+      "location": {
+        "type": "string"
+      },
+      "DomainSecuritySettingsTlsV1": {
+        "type": "string"
+      }
+    }
+  },
+  "effects": {
+    "allow": {
+      "type": "boolean"
+    },
+    "deny": {
+      "type": "boolean"
+    }
+  }
+}

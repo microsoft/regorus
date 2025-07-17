@@ -22,10 +22,10 @@ fn opa_runtime(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
     ensure_args_count(span, name, params, args, 0)?;
     let mut obj = BTreeMap::new();
 
-    obj.insert(
+    /*obj.insert(
         Value::String("commit".into()),
         Value::String(env!("GIT_HASH").into()),
-    );
+    );*/
 
     obj.insert(
         Value::String("regorus-version".into()),

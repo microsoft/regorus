@@ -914,4 +914,9 @@ impl Engine {
         }
         Ok(parser)
     }
+
+    pub fn validate(&mut self) -> Result<()> {
+        self.prepare_for_eval(false)?;
+        self.interpreter.validate()
+    }
 }

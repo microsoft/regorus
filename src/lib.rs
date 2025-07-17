@@ -28,11 +28,16 @@ mod lexer;
 mod number;
 mod parser;
 mod scheduler;
+mod schema;
+mod target;
+mod typing;
 mod utils;
 mod value;
 
 pub use engine::Engine;
 pub use lexer::Source;
+#[cfg(feature = "targets")]
+pub use target::{add_target, remove_target};
 pub use value::Value;
 
 #[cfg(feature = "arc")]

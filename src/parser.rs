@@ -28,6 +28,9 @@ pub struct Parser<'source> {
     sidx: u32,
     // The index of the last query that was parsed.
     qidx: u32,
+
+    #[cfg(feature = "targets")]
+    target: Option<String>,
 }
 
 const FUTURE_KEYWORDS: [&str; 4] = ["contains", "every", "if", "in"];
@@ -47,6 +50,7 @@ impl<'source> Parser<'source> {
             eidx: 0,
             sidx: 0,
             qidx: 0,
+            target: None,
         })
     }
 
@@ -1727,6 +1731,7 @@ impl<'source> Parser<'source> {
 
     pub fn parse_rule(&mut self) -> Result<Rule> {
         let pos = self.end;
+
         match self.parse_default_rule() {
             Ok(r) => return Ok(r),
             Err(e) if pos != self.end => return Err(e),
@@ -1881,13 +1886,55 @@ impl<'source> Parser<'source> {
         Ok(imports)
     }
 
+    #[cfg(feature = "targets")]
+    pub fn parse_meta_data_rules(&mut self) -> Result<()> {
+        let eidx = self.eidx;
+
+        if self.token_text() == "__target__" {
+            if self.target.is_some() {
+                bail!(self.tok.1.error("target already specified"));
+            }
+            self.next_token()?;
+            self.expect(":=", "while parsing target specification")?;
+            std::dbg!("here");
+            match self.parse_scalar_or_var()? {
+                Expr::String { value, .. } | Expr::RawString { value, .. } => {
+                    if let Value::String(s) = value {
+                        self.target = Some(s.to_string());
+                    }
+                }
+                e => bail!(e.span().error("expecting target identifier string")),
+            }
+        } else {
+            bail!(self.tok.1.error("invalid meta data rule name"));
+        }
+
+        // Ignore expressions in meta data rules.
+        self.eidx = eidx;
+        Ok(())
+    }
+
     pub fn parse(&mut self) -> Result<Module> {
         let package = self.parse_package()?;
         let imports = self.parse_imports()?;
 
         let mut policy = vec![];
+
+        #[cfg(feature = "targets")]
+        while self.token_text().starts_with("__") {
+            self.parse_meta_data_rules()?;
+        }
+
         while self.tok.0 != TokenKind::Eof {
             policy.push(Ref::new(self.parse_rule()?));
+
+            #[cfg(feature = "targets")]
+            if self.token_text().starts_with("__") {
+                bail!(self
+                    .tok
+                    .1
+                    .error("meta data rules must be specified before other rules."));
+            }
         }
 
         let m = Module {
@@ -1898,6 +1945,8 @@ impl<'source> Parser<'source> {
             num_expressions: self.eidx,
             num_statements: self.sidx,
             num_queries: self.qidx,
+            #[cfg(feature = "targets")]
+            target: self.target.clone(),
         };
 
         #[cfg(debug_assertions)]

@@ -3894,4 +3894,17 @@ impl Interpreter {
 
         Ok(Self::get_value_chained(self.data.clone(), &parts[1..]))
     }
+
+    pub fn validate(&mut self) -> Result<()> {
+        let mut target = None;
+        for m in self.modules.iter() {
+            if m.target.is_some() {
+                target = m.target.clone();
+                break;
+            }
+        }
+        //let mut type_checker = TypeCheck::new(self.rules.clone(), config);
+        //type_checker.check()
+        Ok(())
+    }
 }
