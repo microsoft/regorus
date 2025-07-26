@@ -1,0 +1,212 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: basic add operation
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"a": {"foo": 1}}
+        patches = [{"op": "add", "path": "/a/bar", "value": 2}]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      a:
+        foo: 1
+        bar: 2
+
+  - note: basic remove operation
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"a": {"foo": 1, "bar": 2}}
+        patches = [{"op": "remove", "path": "/a/bar"}]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      a:
+        foo: 1
+
+  - note: basic replace operation
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"a": {"foo": 1}}
+        patches = [{"op": "replace", "path": "/a/foo", "value": 42}]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      a:
+        foo: 42
+
+  - note: basic move operation
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"a": {"foo": 1}, "b": {}}
+        patches = [{"op": "move", "from": "/a/foo", "path": "/b/foo"}]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      a: {}
+      b:
+        foo: 1
+
+  - note: basic copy operation
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"a": {"foo": 1}, "b": {}}
+        patches = [{"op": "copy", "from": "/a/foo", "path": "/b/foo"}]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      a:
+        foo: 1
+      b:
+        foo: 1
+
+  - note: basic test operation (successful)
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"a": {"foo": 1}}
+        patches = [{"op": "test", "path": "/a/foo", "value": 1}]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      a:
+        foo: 1
+
+  - note: multiple operations
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"a": {"foo": 1}}
+        patches = [
+          {"op": "add", "path": "/a/bar", "value": 2},
+          {"op": "replace", "path": "/a/foo", "value": 42}
+        ]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      a:
+        foo: 42
+        bar: 2
+
+  - note: array operations - add to array
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"arr": [1, 2, 3]}
+        patches = [{"op": "add", "path": "/arr/1", "value": "inserted"}]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      arr: [1, "inserted", 2, 3]
+
+  - note: array operations - add to end of array
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"arr": [1, 2, 3]}
+        patches = [{"op": "add", "path": "/arr/-", "value": 4}]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      arr: [1, 2, 3, 4]
+
+  - note: array operations - remove from array
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"arr": [1, 2, 3]}
+        patches = [{"op": "remove", "path": "/arr/1"}]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      arr: [1, 3]
+
+  - note: nested object operations
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"a": {"b": {"c": {"d": 1}}}}
+        patches = [{"op": "add", "path": "/a/b/c/e", "value": 2}]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      a:
+        b:
+          c:
+            d: 1
+            e: 2
+
+  - note: special characters in keys
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"foo/bar": {"baz~": 1}}
+        patches = [{"op": "add", "path": "/foo~1bar/baz~0test", "value": 2}]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      "foo/bar":
+        "baz~": 1
+        "baz~test": 2
+
+  - note: empty object and array handling
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {}
+        patches = [{"op": "add", "path": "/newkey", "value": {"nested": []}}]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      newkey:
+        nested: []
+
+  - note: complex value types
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"data": null}
+        patches = [
+          {"op": "replace", "path": "/data", "value": {"bool": true, "num": 3.14, "str": "hello"}}
+        ]
+        result = json.patch(obj, patches)
+    query: data.test.result
+    want_result:
+      data:
+        bool: true
+        num: 3.14
+        str: "hello"

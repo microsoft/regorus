@@ -30,6 +30,11 @@ pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn
         m.insert("json.match_schema", (json_match_schema, 2));
         m.insert("json.verify_schema", (json_verify_schema, 1));
     }
+
+    #[cfg(feature = "jsonpatch")]
+    {
+        m.insert("json.patch", (json_patch, 2));
+    }
 }
 
 fn json_filter_impl(v: &Value, filter: &Value) -> Value {
@@ -438,7 +443,6 @@ fn json_match_schema(
     let name = "json.match_schema";
     ensure_args_count(span, name, params, args, 2)?;
 
-    // The following is expected to succeed.
     let document: serde_json::Value = serde_json::from_str(&args[0].to_json_str()?)
         .map_err(|err| span.error(&format!("Failed to parse JSON: {err}")))?;
 
@@ -455,4 +459,49 @@ fn json_match_schema(
         }
         .to_vec(),
     ))
+}
+
+#[cfg(feature = "jsonpatch")]
+fn json_patch(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
+    let name = "json.patch";
+    ensure_args_count(span, name, params, args, 2)?;
+
+    let object_str = args[0].to_json_str()?;
+    let mut object: serde_json::Value = serde_json::from_str(&object_str)
+        .map_err(|err| span.error(&format!("Failed to parse object as JSON: {err}")))?;
+
+    ensure_array(name, &params[1], args[1].clone())?;
+
+    let patches_str = args[1].to_json_str()?;
+    let patches_json: serde_json::Value = serde_json::from_str(&patches_str)
+        .map_err(|err| span.error(&format!("Failed to parse patches as JSON: {err}")))?;
+
+    let patch: json_patch::Patch = serde_json::from_value(patches_json).map_err(|err| {
+        if strict {
+            params[1]
+                .span()
+                .error(&format!("Invalid patch format: {err}"))
+        } else {
+            span.error(&format!("Invalid patch format: {err}"))
+        }
+    })?;
+
+    match json_patch::patch(&mut object, &patch) {
+        Ok(_) => {
+            let result_str = serde_json::to_string(&object)
+                .map_err(|err| span.error(&format!("Failed to serialize patched object: {err}")))?;
+            Value::from_json_str(&result_str).map_err(|err| {
+                span.error(&format!(
+                    "Failed to convert patched object back to Value: {err}"
+                ))
+            })
+        }
+        Err(err) => {
+            if strict {
+                bail!(span.error(&format!("Failed to apply patch: {err}")));
+            } else {
+                Ok(Value::Undefined)
+            }
+        }
+    }
 }

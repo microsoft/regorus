@@ -31,6 +31,7 @@ http = []
 glob = ["dep:globset"]
 graph = []
 jsonschema = ["dep:jsonschema"]
+jsonpatch = ["dep:json-patch"]
 no_std = ["lazy_static/spin_no_std"]
 opa-runtime = []
 regex = ["dep:regex"]
@@ -49,6 +50,7 @@ full-opa = [
     "hex",
     "http",
     "jsonschema",
+    "jsonpatch",
     "opa-runtime",
     "regex",
     "semver",
@@ -100,6 +102,7 @@ semver = {version = "1.0.25", optional = true, default-features = false }
 url = { version = "2.5.4", optional = true }
 uuid = { version = "1.15.1", default-features = false, features = ["v4", "fast-rng"], optional = true }
 jsonschema = { version = "0.30.0", default-features = false, optional = true }
+json-patch = { version = "4.0.0", default-features = false, optional = true }
 chrono = { version = "0.4.40", optional = true }
 chrono-tz = { version = "0.10.1", optional = true }
 
