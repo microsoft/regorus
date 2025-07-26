@@ -18,12 +18,12 @@ fn main() -> Result<()> {
     // Supply information as compile-time environment variables.
     #[cfg(feature = "opa-runtime")]
     {
-        let output = std::process::Command::new("git")
+        let git_hash = std::process::Command::new("git")
             .args(["rev-parse", "HEAD"])
             .output()
-            .expect("`git rev-parse HEAD` failed.");
-        let git_hash = String::from_utf8(output.stdout).unwrap();
-        println!("cargo:rustc-env=GIT_HASH={git_hash}");
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        println!("cargo:rustc-env=GIT_HASH={}", git_hash);
     }
 
     // Rerun only if build.rs changes.
