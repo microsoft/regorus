@@ -36,14 +36,42 @@ enum FunctionModifier {
     Value(Value),
 }
 
-#[derive(Debug, Clone)]
-pub struct Interpreter {
-    modules: Vec<Ref<Module>>,
-    module: Option<Ref<Module>>,
+#[derive(Debug, Clone, Default)]
+pub struct CompiledPolicy {
+    modules: Rc<Vec<Ref<Module>>>,
     schedule: Option<Schedule>,
+    rules: Map<String, Vec<Ref<Rule>>>,
+    default_rules: Map<String, Vec<DefaultRuleInfo>>,
+    imports: BTreeMap<String, Ref<Expr>>,
+    functions: FunctionTable,
+    rule_paths: Set<String>,
+}
+
+type RuleValues = BTreeMap<Vec<Value>, (Value, Ref<Expr>)>;
+
+#[derive(Debug)]
+pub struct Interpreter {
+    compiled_policy: Rc<CompiledPolicy>,
+
+    data: Value,
+
+    #[cfg(feature = "coverage")]
+    coverage: Map<Source, Vec<bool>>,
+    #[cfg(feature = "coverage")]
+    enable_coverage: bool,
+
+    traces: Option<Vec<Rc<str>>>,
+    strict_builtin_errors: bool,
+
+    gather_prints: bool,
+    prints: Vec<String>,
+
+    extensions: Map<String, (u8, Rc<Box<dyn Extension>>)>,
+
+    module: Option<Ref<Module>>,
     current_module_path: String,
     input: Value,
-    data: Value,
+
     init_data: Value,
     with_document: Value,
     with_functions: BTreeMap<String, FunctionModifier>,
@@ -51,33 +79,59 @@ pub struct Interpreter {
     // TODO: handle recursive calls where same expr could have different values.
     loop_var_values: BTreeMap<ExprRef, Value>,
     contexts: Vec<Context>,
-    functions: FunctionTable,
-    rules: Map<String, Vec<Ref<Rule>>>,
-    default_rules: Map<String, Vec<DefaultRuleInfo>>,
+
     processed: BTreeSet<Ref<Rule>>,
     processed_paths: Value,
-    rule_values: BTreeMap<Vec<Value>, (Value, Ref<Expr>)>,
+    rule_values: RuleValues,
     active_rules: Vec<Ref<Rule>>,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
-    traces: Option<Vec<Rc<str>>>,
-    strict_builtin_errors: bool,
-    imports: BTreeMap<String, Ref<Expr>>,
-    extensions: Map<String, (u8, Rc<Box<dyn Extension>>)>,
-
-    #[cfg(feature = "coverage")]
-    coverage: Map<Source, Vec<bool>>,
-    #[cfg(feature = "coverage")]
-    enable_coverage: bool,
-
-    gather_prints: bool,
-    prints: Vec<String>,
-    rule_paths: Set<String>,
 }
 
 impl Default for Interpreter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Clone for Interpreter {
+    fn clone(&self) -> Self {
+        Self {
+            compiled_policy: self.compiled_policy.clone(),
+
+            data: self.data.clone(),
+            init_data: self.init_data.clone(),
+            input: self.input.clone(),
+            with_document: self.with_document.clone(),
+            with_functions: self.with_functions.clone(),
+
+            gather_prints: self.gather_prints,
+            prints: self.prints.clone(),
+            strict_builtin_errors: self.strict_builtin_errors,
+            traces: self.traces.clone(),
+
+            extensions: self.extensions.clone(),
+
+            #[cfg(feature = "coverage")]
+            coverage: self.coverage.clone(),
+            #[cfg(feature = "coverage")]
+            enable_coverage: self.enable_coverage,
+
+            // The following fields always get cleared during an evaluation.
+            // Hence, they need not be copied.
+            processed: BTreeSet::default(),
+            processed_paths: Value::new_object(),
+            loop_var_values: BTreeMap::default(),
+            scopes: Vec::default(),
+            rule_values: BTreeMap::default(),
+
+            builtins_cache: BTreeMap::default(),
+            active_rules: Vec::default(),
+            contexts: Vec::default(),
+            current_module_path: String::default(),
+            module: None,
+            no_rules_lookup: false,
+        }
     }
 }
 
@@ -163,30 +217,29 @@ impl LoopExpr {
 impl Interpreter {
     pub fn new() -> Interpreter {
         Interpreter {
-            modules: vec![],
+            compiled_policy: Rc::new(CompiledPolicy::default()),
+
+            data: Value::new_object(),
             module: None,
-            schedule: None,
+
             current_module_path: String::default(),
             input: Value::Undefined,
-            data: Value::new_object(),
+
             init_data: Value::new_object(),
             with_document: Value::new_object(),
             with_functions: BTreeMap::new(),
             scopes: vec![Scope::new()],
             contexts: vec![],
             loop_var_values: BTreeMap::new(),
-            functions: FunctionTable::new(),
-            rules: Map::new(),
-            default_rules: Map::new(),
-            processed: BTreeSet::new(),
+
+            processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
-            rule_values: BTreeMap::new(),
+            rule_values: BTreeMap::default(),
             active_rules: vec![],
             builtins_cache: BTreeMap::new(),
             no_rules_lookup: false,
             traces: None,
             strict_builtin_errors: true,
-            imports: BTreeMap::default(),
             extensions: Map::new(),
 
             #[cfg(feature = "coverage")]
@@ -196,20 +249,23 @@ impl Interpreter {
 
             gather_prints: false,
             prints: Vec::default(),
-            rule_paths: Set::new(),
         }
     }
 
+    fn compiled_policy_mut(&mut self) -> &mut CompiledPolicy {
+        Rc::make_mut(&mut self.compiled_policy)
+    }
+
     pub fn set_schedule(&mut self, schedule: Option<Schedule>) {
-        self.schedule = schedule;
+        self.compiled_policy_mut().schedule = schedule;
     }
 
     pub fn set_functions(&mut self, functions: FunctionTable) {
-        self.functions = functions;
+        self.compiled_policy_mut().functions = functions;
     }
 
-    pub fn set_modules(&mut self, modules: &[Ref<Module>]) {
-        self.modules = modules.to_vec();
+    pub fn set_modules(&mut self, modules: Rc<Vec<Ref<Module>>>) {
+        self.compiled_policy_mut().modules = modules;
     }
 
     pub fn get_data_mut(&mut self) -> &mut Value {
@@ -401,7 +457,7 @@ impl Interpreter {
                 None => {
                     // Check if ident is a rule.
                     let path = self.current_module_path.clone() + "." + ident.text();
-                    !self.rules.contains_key(&path)
+                    !self.compiled_policy.rules.contains_key(&path)
                 }
             },
         }
@@ -1110,7 +1166,7 @@ impl Interpreter {
                         get_extra_arg(
                             expr,
                             Some(self.current_module_path.as_str()),
-                            &self.functions,
+                            &self.compiled_policy.functions,
                         ),
                         true,
                     )?,
@@ -1152,7 +1208,7 @@ impl Interpreter {
                         get_extra_arg(
                             expr,
                             Some(self.current_module_path.as_str()),
-                            &self.functions,
+                            &self.compiled_policy.functions,
                         ),
                         false,
                     )?,
@@ -1307,7 +1363,7 @@ impl Interpreter {
                         }
                         *obj = value;
                         // Mark modified rules as processed.
-                        if let Some(rules) = self.rules.get(&target) {
+                        if let Some(rules) = self.compiled_policy.rules.get(&target) {
                             for r in rules {
                                 self.processed.insert(r.clone());
                             }
@@ -1404,7 +1460,7 @@ impl Interpreter {
                 let extra_arg = get_extra_arg(
                     &loop_expr_value,
                     Some(self.current_module_path.as_str()),
-                    &self.functions,
+                    &self.compiled_policy.functions,
                 );
                 // If there is an extra arg, ignore it while computing the loop value.
                 let params = if extra_arg.is_some() {
@@ -1976,17 +2032,18 @@ impl Interpreter {
     fn eval_query(&mut self, query: &Ref<Query>) -> Result<bool> {
         // Execute the query in a new scope
         self.scopes.push(Scope::new());
-        let ordered_stmts: Vec<&LiteralStmt> = if let Some(schedule) = &self.schedule {
-            match schedule.order.get(query) {
-                Some(ord) => ord.iter().map(|i| &query.stmts[*i as usize]).collect(),
-                // TODO
-                _ => bail!(query
-                    .span
-                    .error("statements not scheduled in query {query:?}")),
-            }
-        } else {
-            query.stmts.iter().collect()
-        };
+        let ordered_stmts: Vec<&LiteralStmt> =
+            if let Some(schedule) = &self.compiled_policy.schedule {
+                match schedule.order.get(query) {
+                    Some(ord) => ord.iter().map(|i| &query.stmts[*i as usize]).collect(),
+                    // TODO
+                    _ => bail!(query
+                        .span
+                        .error("statements not scheduled in query {query:?}")),
+                }
+            } else {
+                query.stmts.iter().collect()
+            };
 
         let r = self.eval_stmts(&ordered_stmts);
         self.scopes.pop();
@@ -2150,7 +2207,7 @@ impl Interpreter {
             path = self.current_module_path.clone() + "." + &path;
         }
 
-        match self.functions.get(&path) {
+        match self.compiled_policy.functions.get(&path) {
             Some((f, _, m)) => Some((f, m)),
             _ => None,
         }
@@ -2335,8 +2392,9 @@ impl Interpreter {
         let (fcns_rules, fcn_module) = match self.lookup_function_by_name(&fcn_path) {
             Some((fcns, m)) => (fcns, Some(m.clone())),
             _ => {
-                if self.default_rules.contains_key(&fcn_path)
+                if self.compiled_policy.default_rules.contains_key(&fcn_path)
                     || self
+                        .compiled_policy
                         .default_rules
                         .contains_key(&get_path_string(fcn, Some(&self.current_module_path))?)
                 {
@@ -2503,11 +2561,11 @@ impl Interpreter {
             if errors.is_empty() {
                 // Check if any default rules can be evaluated.
                 // TODO: with mod
-                let rules = match self.default_rules.get(&fcn_path).cloned() {
+                let rules = match self.compiled_policy.default_rules.get(&fcn_path).cloned() {
                     Some(rules) => Some(rules),
                     None => {
                         let fcn_path = get_path_string(fcn, Some(&self.current_module_path))?;
-                        self.default_rules.get(&fcn_path).cloned()
+                        self.compiled_policy.default_rules.get(&fcn_path).cloned()
                     }
                 };
 
@@ -2602,7 +2660,7 @@ impl Interpreter {
     }
 
     fn ensure_module_evaluated(&mut self, path: String) -> Result<()> {
-        for module in self.modules.clone() {
+        for module in self.compiled_policy.modules.clone().iter().cloned() {
             if Some(&module) == self.module.as_ref() {
                 // Prevent cyclic evaluation.
                 continue;
@@ -2642,7 +2700,7 @@ impl Interpreter {
 
     fn ensure_rule_evaluated(&mut self, path: String) -> Result<()> {
         let mut matched = false;
-        if let Some(rules) = self.rules.get(&path) {
+        if let Some(rules) = self.compiled_policy.rules.get(&path) {
             matched = true;
             for r in rules.clone() {
                 if !self.processed.contains(&r) {
@@ -2653,7 +2711,7 @@ impl Interpreter {
         }
 
         // Evaluate the associated default rules after non-default rules
-        if let Some(rules) = self.default_rules.get(&path) {
+        if let Some(rules) = self.compiled_policy.default_rules.get(&path) {
             matched = true;
             for (r, _) in rules.clone() {
                 if !self.processed.contains(&r) {
@@ -2728,9 +2786,9 @@ impl Interpreter {
 
             // If "data" is used in a query, without any fields, then evaluate all the modules.
             if fields.is_empty() && self.active_rules.is_empty() {
-                for module in self.modules.clone() {
+                for module in self.compiled_policy.modules.clone().iter() {
                     for rule in &module.policy {
-                        self.eval_rule(&module, rule)?;
+                        self.eval_rule(module, rule)?;
                     }
                 }
             }
@@ -2742,14 +2800,16 @@ impl Interpreter {
 
             for i in (1..fields.len() + 1).rev() {
                 let path = "data.".to_owned() + &fields[0..i].join(".");
-                if self.rules.contains_key(&path) || self.default_rules.contains_key(&path) {
+                if self.compiled_policy.rules.contains_key(&path)
+                    || self.compiled_policy.default_rules.contains_key(&path)
+                {
                     self.ensure_rule_evaluated(path)?;
                     break;
                 }
             }
 
             Ok(Self::get_value_chained(self.data.clone(), fields))
-        } else if !self.modules.is_empty() {
+        } else if !self.compiled_policy.modules.is_empty() {
             let path = Parser::get_path_ref_components(&self.module.clone().unwrap().package.refr)?;
             let mut path: Vec<&str> = path.iter().map(|s| s.text()).collect();
             path.push(name.text());
@@ -2763,9 +2823,9 @@ impl Interpreter {
             let rule_path = "data.".to_owned() + &path.join(".");
 
             if !no_error
-                && !self.rules.contains_key(&rule_path)
-                && !self.default_rules.contains_key(&rule_path)
-                && !self.imports.contains_key(&rule_path)
+                && !self.compiled_policy.rules.contains_key(&rule_path)
+                && !self.compiled_policy.default_rules.contains_key(&rule_path)
+                && !self.compiled_policy.imports.contains_key(&rule_path)
             {
                 bail!(span.error("var is unsafe"));
             }
@@ -2781,7 +2841,9 @@ impl Interpreter {
                     rule_path.clone() + "." + &fields[0..i].join(".")
                 };
 
-                if self.rules.contains_key(&path) || self.default_rules.contains_key(&path) {
+                if self.compiled_policy.rules.contains_key(&path)
+                    || self.compiled_policy.default_rules.contains_key(&path)
+                {
                     self.ensure_rule_evaluated(path)?;
                     found = true;
                     break;
@@ -2789,7 +2851,7 @@ impl Interpreter {
             }
 
             if !found {
-                if let Some(imported_var) = self.imports.get(&rule_path).cloned() {
+                if let Some(imported_var) = self.compiled_policy.imports.get(&rule_path).cloned() {
                     return Ok(Self::get_value_chained(
                         self.eval_expr(&imported_var)?,
                         fields,
@@ -2943,7 +3005,7 @@ impl Interpreter {
     }
 
     fn get_rule_module(&self, rule: &Ref<Rule>) -> Result<Ref<Module>> {
-        for m in &self.modules {
+        for m in self.compiled_policy.modules.iter() {
             if m.policy.iter().any(|r| r == rule) {
                 return Ok(m.clone());
             }
@@ -3169,7 +3231,7 @@ impl Interpreter {
     }
 
     pub fn check_default_rules(&self) -> Result<()> {
-        for module in &self.modules {
+        for module in self.compiled_policy.modules.iter() {
             for rule in &module.policy {
                 if let Rule::Default { value, .. } = rule.as_ref() {
                     Self::check_default_value(value)?;
@@ -3451,7 +3513,7 @@ impl Interpreter {
         };
 
         // Add schedules for queries.
-        if let Some(self_schedule) = &mut self.schedule {
+        if let Some(ref mut self_schedule) = &mut self.compiled_policy_mut().schedule {
             for (k, v) in schedule.order.iter() {
                 self_schedule.order.insert(k.clone(), v.clone());
             }
@@ -3476,7 +3538,7 @@ impl Interpreter {
         };
 
         // Restore schedules.
-        if let Some(self_schedule) = &mut self.schedule {
+        if let Some(ref mut self_schedule) = &mut self.compiled_policy_mut().schedule {
             for (k, ord) in schedule.order.iter() {
                 if k == query {
                     for idx in 0..results.result.len() {
@@ -3549,7 +3611,7 @@ impl Interpreter {
     }
 
     pub fn create_rule_prefixes(&mut self) -> Result<()> {
-        for module in self.modules.clone() {
+        for module in self.compiled_policy.modules.clone().iter() {
             let module_path = Self::get_rule_path_components(&module.package.refr)?;
 
             for rule in &module.policy {
@@ -3596,10 +3658,12 @@ impl Interpreter {
         for c in 0..comps.len() {
             let path = self.current_module_path.clone() + "." + &comps[0..c + 1].join(".");
             if c + 1 == comps.len() {
-                self.rule_paths.insert(path.clone());
+                Rc::make_mut(&mut self.compiled_policy)
+                    .rule_paths
+                    .insert(path.clone());
             }
 
-            match self.rules.entry(path) {
+            match self.compiled_policy_mut().rules.entry(path) {
                 MapEntry::Occupied(o) => {
                     o.into_mut().push(rule.clone());
                 }
@@ -3623,10 +3687,12 @@ impl Interpreter {
         for (idx, c) in (0..comps.len()).enumerate() {
             let path = self.current_module_path.clone() + "." + &comps[0..c + 1].join(".");
             if c + 1 == comps.len() {
-                self.rule_paths.insert(path.clone());
+                Rc::make_mut(&mut self.compiled_policy)
+                    .rule_paths
+                    .insert(path.clone());
             }
 
-            match self.default_rules.entry(path) {
+            match self.compiled_policy_mut().default_rules.entry(path) {
                 MapEntry::Occupied(o) => {
                     if idx + 1 == comps.len() {
                         for (_, i) in o.get() {
@@ -3653,7 +3719,7 @@ impl Interpreter {
     }
 
     pub fn process_imports(&mut self) -> Result<()> {
-        for module in &self.modules {
+        for module in self.compiled_policy.modules.clone().iter() {
             let module_path = get_path_string(&module.package.refr, Some("data"))?;
             for import in &module.imports {
                 let target = match &import.r#as {
@@ -3685,7 +3751,8 @@ impl Interpreter {
                         .span()
                         .message("warning", "invalid ref in import"));
                 }
-                self.imports
+                self.compiled_policy_mut()
+                    .imports
                     .insert(module_path.clone() + "." + target, import.refr.clone());
             }
         }
@@ -3693,7 +3760,7 @@ impl Interpreter {
     }
 
     pub fn gather_rules(&mut self) -> Result<()> {
-        for module in self.modules.clone() {
+        for module in self.compiled_policy.modules.clone().iter() {
             let prev_module = self.set_current_module(Some(module.clone()))?;
             for rule in &module.policy {
                 let refr = Self::get_rule_refr(rule);
@@ -3813,7 +3880,7 @@ impl Interpreter {
     pub fn get_coverage_report(&self) -> Result<crate::coverage::Report> {
         let mut report = crate::coverage::Report::default();
 
-        for module in self.modules.iter() {
+        for module in self.compiled_policy.modules.iter() {
             let span = module.package.refr.span();
 
             // Get coverage information for the module.
@@ -3886,7 +3953,7 @@ impl Interpreter {
     }
 
     pub fn eval_rule_in_path(&mut self, path: String) -> Result<Value> {
-        if !self.rule_paths.contains(&path) {
+        if !self.compiled_policy.rule_paths.contains(&path) {
             bail!("not a valid rule path");
         }
         self.ensure_rule_evaluated(path.clone())?;

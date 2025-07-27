@@ -17,7 +17,7 @@ use anyhow::{bail, Result};
 ///
 #[derive(Debug, Clone)]
 pub struct Engine {
-    modules: Vec<Ref<Module>>,
+    modules: Rc<Vec<Ref<Module>>>,
     interpreter: Interpreter,
     prepared: bool,
     rego_v1: bool,
@@ -34,7 +34,7 @@ impl Engine {
     /// Create an instance of [Engine].
     pub fn new() -> Self {
         Self {
-            modules: vec![],
+            modules: Rc::new(vec![]),
             interpreter: Interpreter::new(),
             prepared: false,
             rego_v1: true,
@@ -100,7 +100,7 @@ impl Engine {
         let source = Source::from_contents(path, rego)?;
         let mut parser = self.make_parser(&source)?;
         let module = Ref::new(parser.parse()?);
-        self.modules.push(module.clone());
+        Rc::make_mut(&mut self.modules).push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
         Interpreter::get_path_string(&module.package.refr, Some("data"))
@@ -133,7 +133,7 @@ impl Engine {
         let source = Source::from_file(path)?;
         let mut parser = self.make_parser(&source)?;
         let module = Ref::new(parser.parse()?);
-        self.modules.push(module.clone());
+        Rc::make_mut(&mut self.modules).push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
         Interpreter::get_path_string(&module.package.refr, Some("data"))
@@ -603,7 +603,7 @@ impl Engine {
             let schedule = analyzer.analyze(&self.modules)?;
 
             self.interpreter.set_schedule(Some(schedule));
-            self.interpreter.set_modules(&self.modules);
+            self.interpreter.set_modules(self.modules.clone());
 
             self.interpreter.clear_builtins_cache();
             // clean_internal_evaluation_state will set data to an efficient clont of use supplied init_data
@@ -653,13 +653,13 @@ impl Engine {
         }
 
         self.interpreter.check_default_rules()?;
-        for module in self.modules.clone() {
+        for module in self.modules.clone().iter() {
             for rule in &module.policy {
-                self.interpreter.eval_rule(&module, rule)?;
+                self.interpreter.eval_rule(module, rule)?;
             }
         }
         // Defer the evaluation of the default rules to here
-        for module in self.modules.clone() {
+        for module in self.modules.clone().iter() {
             let prev_module = self.interpreter.set_current_module(Some(module.clone()))?;
             for rule in &module.policy {
                 self.interpreter.eval_default_rule(rule)?;
@@ -668,7 +668,7 @@ impl Engine {
         }
 
         // Ensure that all modules are created.
-        for m in &self.modules {
+        for m in self.modules.iter() {
             let path = Parser::get_path_ref_components(&m.package.refr)?;
             let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
             let vref =
@@ -896,7 +896,7 @@ impl Engine {
             ast: &'a Module,
         }
         let mut ast = vec![];
-        for m in &self.modules {
+        for m in self.modules.iter() {
             ast.push(Policy {
                 source: &m.package.span.source,
                 version: 1,

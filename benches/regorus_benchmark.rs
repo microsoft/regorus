@@ -1,6 +1,6 @@
 use std::hint::black_box;
 
-use regorus::Engine;
+use regorus::{Engine, Value};
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use serde_json::json;
@@ -93,9 +93,59 @@ fn allow_with_simple_membership(c: &mut Criterion) {
     group.finish();
 }
 
+fn clone(c: &mut Criterion) {
+    // Use Arc<BtreeMap> as a reference. Clone will only increment
+    // the reference count.
+    let mut m = std::collections::BTreeMap::default();
+    m.insert(1, 2);
+    let m = std::sync::Arc::new(m);
+
+    c.bench_function("clone: Arc<BTreeMap>", |b| {
+        b.iter(|| {
+            let _ = m.clone();
+        })
+    });
+
+    let mut engine = Engine::new();
+    engine.set_rego_v0(true);
+    engine
+        .add_policy_from_file("tests/aci/framework.rego")
+        .unwrap();
+    engine.add_policy_from_file("tests/aci/api.rego").unwrap();
+    engine
+        .add_policy_from_file("tests/aci/policy.rego")
+        .unwrap();
+    engine
+        .add_data(Value::from_json_file("tests/aci/data.json").expect("failed to load data.json"))
+        .expect("failed to add data");
+    engine.set_input(
+        Value::from_json_file("tests/aci/input.json").expect("failed to load input.json"),
+    );
+
+    // An engine without preparation will not have processed fields populated.
+    c.bench_function("clone: engine with aci policies", |b| {
+        b.iter(|| {
+            let _ = engine.clone();
+        })
+    });
+
+    // Trigger engine preparation.
+    let _ = engine.eval_query("data.framework.mount_overlay".to_string(), false);
+
+    // Prepared engine will have many more fields populated. But the fields are
+    // immutable after preparation and will be shared between clones.
+    c.bench_function("clone: prepared engine with aci policies", |b| {
+        b.iter(|| {
+            let _ = engine.clone();
+        })
+    });
+}
+
 criterion_group!(
     benches,
     allow_with_simple_equality,
-    allow_with_simple_membership
+    allow_with_simple_membership,
+    clone
 );
+
 criterion_main!(benches);
