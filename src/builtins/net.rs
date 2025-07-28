@@ -1,3 +1,4 @@
+use core::net::IpAddr;
 use std::sync::Arc;
 
 use crate::ast::{Expr, Ref};
@@ -6,7 +7,7 @@ use crate::builtins::utils::ensure_args_count;
 use crate::lexer::Span;
 use crate::value::Value;
 
-use anyhow::{bail, Ok, Result};
+use anyhow::{bail, Ok as aOk, Result};
 
 use super::utils::ensure_string;
 
@@ -14,11 +15,10 @@ pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn
     m.insert("net.cidr_is_valid", (cidr_is_valid, 1));
 }
 
-/// Checks if a CIDR string is valid or invalid. Based on the
-/// golang standard library implementation, as that is how the
-/// built-in is implemented in the Open Policy Agent rego standardt
-/// lib.
-/// https://github.com/golang/go/blob/master/src/net/ip.go#L550
+/// Checks if a CIDR string is valid or invalid. Uses the
+/// `net::IpAddr` type to determine if the string is a valid IP,
+/// and checks to ensure that the mask is in bounds for the parsed
+/// IP address type (v4 or v6).
 pub fn cidr_is_valid(
     span: &Span,
     params: &[Ref<Expr>],
@@ -27,108 +27,37 @@ pub fn cidr_is_valid(
 ) -> Result<Value> {
     ensure_args_count(span, "cidr_is_valid", params, args, 1)?;
     let cidr = ensure_string("cidr_is_valid", &params[0], &args[0])?;
-    _cidr_is_valid(cidr)
+
+    match is_valid_cidr(cidr) {
+        Ok(result) => aOk(result),
+        Err(_) => bail!(span.error("invalid CIDR")),
+    }
 }
 
-fn _cidr_is_valid(cidr: Arc<str>) -> Result<Value> {
-    let mut pieces = cidr.split("/");
-    let addr_piece = pieces.next();
-    let mask_piece = pieces.next();
-    // TODO(tjons): check if there are more segments here...
-    let mut v4: bool = false;
-    let mut v6: bool = false;
-    match addr_piece {
-        None => bail!("cidr not valid"),
-        Some(addr) => {
-            for c in addr.chars() {
-                match c {
-                    '.' => {
-                        v4 = true;
-                        break;
+fn is_valid_cidr(cidr: Arc<str>) -> Result<Value> {
+    let Some((ip_addr, prefix_len)) = cidr.split_once("/") else {
+        bail!("invalid CIDR")
+    };
+    match ip_addr.parse::<IpAddr>() {
+        Ok(addr) => {
+            let mask = prefix_len.parse::<i16>()?;
+
+            match addr {
+                IpAddr::V4(_) => {
+                    if !(0..=32).contains(&mask) {
+                        bail!("invalid CIDR")
                     }
-                    ':' => {
-                        v6 = true;
-                        break;
+                }
+                IpAddr::V6(_) => {
+                    if !(0..=128).contains(&mask) {
+                        bail!("invalid CIDR")
                     }
-                    _ => continue,
                 }
             }
+            aOk(Value::Bool(true))
         }
-    };
-
-    if v4 {
-        let _retval = parse_ipv4_or_err(addr_piece.unwrap())?;
-    } else if v6 {
-        let _retval = parse_ipv6(addr_piece.unwrap());
+        Err(_) => bail!("Invalid CIDR"),
     }
-
-    let mask = mask_piece
-        .expect("CIDR mask invalid")
-        .parse::<i16>()
-        .unwrap();
-    if mask < 0 {
-        bail!("subnet mask cannot be less than 0");
-    }
-    if v4 && mask > 32 {
-        bail!("ipv4 CIDR cannot have a mask greater than 32");
-    }
-
-    if v6 && mask > 128 {
-        bail!("ipv6 CIDR cannot have a mask greater than 128");
-    }
-
-    Ok(Value::Bool(true))
-}
-
-fn parse_ipv4_or_err(addr: &str) -> Result<[u32; 4]> {
-    // store each octet in the array
-    let mut fields: [u32; 4] = [0; 4];
-    let mut cur_octet: u32 = 0;
-    let mut octet_digits = 0;
-    let mut pos = 0;
-    let mut prev: char = '\0';
-
-    for c in addr.chars() {
-        if c.is_ascii_digit() {
-            // safe to unwrap this value because we check above that it is indeed a digit
-            cur_octet = cur_octet * 10 + c.to_digit(10).unwrap();
-            // if this is the second character of octets 2, 3, or 4; and the
-            // octet == 0, like `1.00.x.x`, the CIDR cannot be valid.
-            // if this is the first character of octet 1 and it is 0,
-            // this is an invalid CIDR.
-            if (octet_digits == 1 || pos == 0) && cur_octet == 0 {
-                bail!("IPv4 field has octet with leading zero");
-            }
-            octet_digits += 1;
-
-            if cur_octet > 255 {
-                bail!("IPv4 field has value >255");
-            }
-        } else if c == '.' {
-            // the CIDR may not start with a `.`, and there may not
-            // be two consecutive `.` characters.
-            if octet_digits == 0 || prev == '.' {
-                bail!("IPv4 field must have at least one digit");
-            }
-
-            if pos == 3 {
-                bail!("IPv4 address too long");
-            }
-            fields[pos] = cur_octet;
-            pos += 1;
-            cur_octet = 0;
-            octet_digits = 0;
-        } else {
-            bail!("unexpected character");
-        }
-        prev = c;
-    }
-
-    Ok(fields)
-}
-
-fn parse_ipv6(_addr: &str) -> Result<(&str, i64)> {
-    bail!("not implemented yet")
 }
 
 #[cfg(test)]
@@ -139,13 +68,12 @@ mod net_tests {
 
     #[test]
     fn test_cidr_is_valid() {
-        let valids = Vec::from(["127.0.0.1/32", "10.0.0.0/8"]);
-
-        let invalids = Vec::from(["0.1.2.3/32", "256.0.0.0/8"]);
+        let valids = Vec::from(["127.0.0.1/32", "10.0.0.0/8", "0.1.2.3/32", "::1/128"]);
+        let invalids = Vec::from(["256.0.0.0/8", "127.0.0.1/33", "::1/129"]);
 
         for cidr in valids {
             assert_eq!(
-                _cidr_is_valid(Arc::from(cidr)).unwrap(),
+                is_valid_cidr(Arc::from(cidr)).unwrap(),
                 Value::Bool(true),
                 "Valid CIDR {} deemed invalid",
                 cidr
@@ -153,7 +81,7 @@ mod net_tests {
         }
 
         for cidr in invalids {
-            _cidr_is_valid(Arc::from(cidr))
+            is_valid_cidr(Arc::from(cidr))
                 .expect_err(format!("Invalid CIDR {} deemed valid", cidr).as_str());
         }
     }
