@@ -1,4 +1,5 @@
 use core::net::IpAddr;
+use std::format;
 use std::sync::Arc;
 
 use crate::ast::{Expr, Ref};
@@ -7,7 +8,7 @@ use crate::builtins::utils::ensure_args_count;
 use crate::lexer::Span;
 use crate::value::Value;
 
-use anyhow::{bail, Ok as aOk, Result};
+use anyhow::{anyhow, bail, Result};
 
 use super::utils::ensure_string;
 
@@ -28,10 +29,7 @@ pub fn cidr_is_valid(
     ensure_args_count(span, "cidr_is_valid", params, args, 1)?;
     let cidr = ensure_string("cidr_is_valid", &params[0], &args[0])?;
 
-    match is_valid_cidr(cidr) {
-        Ok(result) => aOk(result),
-        Err(_) => bail!(span.error("invalid CIDR")),
-    }
+    is_valid_cidr(cidr).map_err(|e| span.error(&format!("{}", e)))
 }
 
 fn is_valid_cidr(cidr: Arc<str>) -> Result<Value> {
@@ -40,23 +38,28 @@ fn is_valid_cidr(cidr: Arc<str>) -> Result<Value> {
     };
     match ip_addr.parse::<IpAddr>() {
         Ok(addr) => {
-            let mask = prefix_len.parse::<i16>()?;
+            let mask = prefix_len
+                .parse::<i16>()
+                .map_err(|_| anyhow!("failed to parse prefix length"))?;
 
             match addr {
                 IpAddr::V4(_) => {
                     if !(0..=32).contains(&mask) {
-                        bail!("invalid CIDR")
+                        bail!("invalid CIDR: {} is not a valid IPv4 CIDR mask", &mask)
                     }
                 }
                 IpAddr::V6(_) => {
                     if !(0..=128).contains(&mask) {
-                        bail!("invalid CIDR")
+                        bail!("invalid CIDR: {} is not a valid IPv6 CIDR mask", &mask)
                     }
                 }
             }
-            aOk(Value::Bool(true))
+            Ok(Value::Bool(true))
         }
-        Err(_) => bail!("Invalid CIDR"),
+        Err(_) => bail!(
+            "Invalid CIDR: {} could not be parsed as a IPv4 or IPv6 address",
+            ip_addr
+        ),
     }
 }
 
