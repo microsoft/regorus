@@ -75,7 +75,7 @@ configure_package_config_file(${CMAKE_CURRENT_LIST_DIR}/regorus_ffiConfig.cmake.
 
 install(FILES
   ${CMAKE_CURRENT_BINARY_DIR}/regorus_ffiConfig.cmake
-  ${CMAKE_CURRENT_BINARY_DIR}/corrosion/regorus_ffiCorrosion.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/corrosion/regorus_ffi_targetsCorrosion.cmake
   DESTINATION ${regorus_ffi_CONFIGDIR}
 )
 
