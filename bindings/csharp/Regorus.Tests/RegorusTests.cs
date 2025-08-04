@@ -173,4 +173,43 @@ public class RegorusTests
 
         Assert.IsTrue(JsonNode.DeepEquals(JsonNode.Parse(expected), JsonNode.Parse(result!)), $"Actual: {result}");
     }
+
+    [TestMethod]
+    public void GetPolicyPackageNames_succeeds()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy(
+            "test.rego",
+            "package test\nx = 1\nmessage = `Hello`");
+
+        engine.AddPolicy(
+            "test.rego",
+            "package test.nested.name\nx = 1\nmessage = `Hello`");
+
+        var result = engine.GetPolicyPackageNames();
+
+        var packageNames = JsonNode.Parse(result!);
+
+        Assert.AreEqual("test", packageNames![0]["package_name"].ToString());
+        Assert.AreEqual("test.nested.name", packageNames![1]["package_name"].ToString());
+    }
+
+    [TestMethod]
+    public void GetPolicyParameters_succeeds()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy(
+            "test.rego",
+            "package test\n default parameters.a = 5\nparameters.b = 10\nx = 1\nmessage = `Hello`");
+
+        var result = engine.GetPolicyParameters();
+
+        var parameters = JsonNode.Parse(result!);
+
+        Assert.AreEqual(1, parameters![0]["parameters"].AsArray().Count);
+        Assert.AreEqual(1, parameters![0]["modifiers"].AsArray().Count);
+
+        Assert.AreEqual("a", parameters![0]["parameters"][0]["name"].ToString());
+        Assert.AreEqual("b", parameters![0]["modifiers"][0]["name"].ToString());
+    }
 }

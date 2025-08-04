@@ -23,6 +23,31 @@ pub struct Engine {
     rego_v1: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PolicyPackageNameDefinition {
+    pub source_file: String,
+    pub package_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PolicyParameter {
+    pub name: String,
+    pub modifiable: bool,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PolicyModifier {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PolicyParameters {
+    pub source_file: String,
+    pub parameters: Vec<PolicyParameter>,
+    pub modifiers: Vec<PolicyModifier>,
+}
+
 /// Create a default engine.
 impl Default for Engine {
     fn default() -> Self {
@@ -905,6 +930,113 @@ impl Engine {
         }
 
         serde_json::to_string_pretty(&ast).map_err(anyhow::Error::msg)
+    }
+
+    /// Get the package names of each policy added to the engine.
+    ///
+    ///
+    /// ```rust
+    /// # use regorus::*;
+    /// # use anyhow::{bail, Result};
+    /// # fn main() -> Result<()> {
+    /// # let mut engine = Engine::new();
+    /// engine.add_policy("test.rego".to_string(), "package test\n x := 1".to_string())?;
+    /// engine.add_policy("test2.rego".to_string(), "package test.multi.segment\n x := 1".to_string())?;
+    ///
+    /// let package_names = engine.get_policy_package_names()?;
+    ///
+    /// assert_eq!("test", package_names[0].package_name);
+    /// assert_eq!("test.multi.segment", package_names[1].package_name);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "azure_policy")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
+    pub fn get_policy_package_names(&self) -> Result<Vec<PolicyPackageNameDefinition>> {
+        let mut package_names = vec![];
+        for m in &self.modules {
+            let package_name = Interpreter::get_path_string(&m.package.refr, None)?;
+            package_names.push(PolicyPackageNameDefinition {
+                source_file: m.package.span.source.file().to_string(),
+                package_name,
+            });
+        }
+
+        Ok(package_names)
+    }
+
+    /// Get the parameters defined in each policy.
+    ///
+    ///
+    /// ```rust
+    /// # use regorus::*;
+    /// # use anyhow::{bail, Result};
+    /// # fn main() -> Result<()> {
+    /// # let mut engine = Engine::new();
+    /// engine.add_policy("test.rego".to_string(), "package test default parameters.a = 5 parameters.b = 10\n x := 1".to_string())?;
+    ///
+    /// let parameters = engine.get_policy_parameters()?;
+    ///
+    /// assert_eq!("a", parameters[0].parameters[0].name);
+    /// assert_eq!("b", parameters[0].modifiers[0].name);
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "azure_policy")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
+    pub fn get_policy_parameters(&self) -> Result<Vec<PolicyParameters>> {
+        let mut policy_parameter_definitions = vec![];
+        for m in &self.modules {
+            let mut parameters = vec![];
+            let mut modifiers = vec![];
+
+            for rule in &m.policy {
+                // Extract parameter definitions from the policy rule
+                // e.g. default parameters.a = 5
+                if let Rule::Default { refr, .. } = rule.as_ref() {
+                    let path = Parser::get_path_ref_components(refr)?;
+                    let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
+
+                    if paths.len() == 2 && paths[0] == "parameters" {
+                        // Todo: Fetch fields other than name from rego metadoc for the parameter
+                        parameters.push(PolicyParameter {
+                            name: paths[1].to_string(),
+                            modifiable: false,
+                            required: false,
+                        })
+                    }
+                }
+
+                // Extract modifiers to the parameters from the policy rule
+                // e.g. parameters.a = 5
+                if let Rule::Spec { head, .. } = rule.as_ref() {
+                    match head {
+                        RuleHead::Compr { refr, .. } => {
+                            let path = Parser::get_path_ref_components(refr)?;
+                            let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
+
+                            if paths.len() == 2 && paths[0] == "parameters" {
+                                // Todo: Fetch fields other than name from rego metadoc for the parameter
+                                modifiers.push(PolicyModifier {
+                                    name: paths[1].to_string(),
+                                })
+                            }
+                        }
+                        RuleHead::Func { .. } => {}
+                        RuleHead::Set { .. } => {}
+                    }
+                }
+            }
+
+            policy_parameter_definitions.push(PolicyParameters {
+                source_file: m.package.span.source.file().to_string(),
+                parameters,
+                modifiers,
+            });
+        }
+
+        Ok(policy_parameter_definitions)
     }
 
     fn make_parser<'a>(&self, source: &'a Source) -> Result<Parser<'a>> {

@@ -217,6 +217,16 @@ namespace Regorus
             return CheckAndDropResult(Regorus.Internal.API.regorus_engine_get_ast_as_json(E));
         }
 
+        public string? GetPolicyPackageNames()
+        {
+            return CheckAndDropResult(Regorus.Internal.API.regorus_engine_get_policy_package_names(E));
+        }
+
+        public string? GetPolicyParameters()
+        {
+            return CheckAndDropResult(Regorus.Internal.API.regorus_engine_get_policy_parameters(E));
+        }
+
         string? StringFromUTF8(IntPtr ptr)
         {
 
