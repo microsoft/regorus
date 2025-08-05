@@ -35,6 +35,8 @@ mod value;
 
 pub use engine::Engine;
 pub use lexer::Source;
+#[cfg(feature = "azure_policy")]
+pub use schema::{validate::SchemaValidator, Schema};
 pub use value::Value;
 
 #[cfg(feature = "arc")]

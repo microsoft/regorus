@@ -200,6 +200,8 @@ use crate::{format, Box, Rc, Value, Vec};
 type String = Rc<str>;
 
 mod meta;
+pub mod registry;
+pub mod validate;
 
 /// A schema represents a type definition that can be used for validation.
 ///
@@ -305,7 +307,7 @@ impl Schema {
 
     /// Parse a JSON Schema document into a `Schema` instance.
     /// Provides better error messages than `serde_json::from_value`.
-    fn from_serde_json_value(
+    pub fn from_serde_json_value(
         schema: serde_json::Value,
     ) -> Result<Self, Box<dyn core::error::Error + Send + Sync>> {
         let meta_schema_validation_result = meta::validate_schema_detailed(&schema);
@@ -319,7 +321,7 @@ impl Schema {
 
     /// Parse a JSON Schema document from a string into a `Schema` instance.
     /// Provides better error messages than `serde_json::from_str`.
-    fn from_json_str(s: &str) -> Result<Self, Box<dyn core::error::Error + Send + Sync>> {
+    pub fn from_json_str(s: &str) -> Result<Self, Box<dyn core::error::Error + Send + Sync>> {
         let value: serde_json::Value =
             serde_json::from_str(s).map_err(|e| format!("Failed to parse schema: {e}"))?;
         Self::from_serde_json_value(value)
