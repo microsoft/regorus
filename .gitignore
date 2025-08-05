@@ -31,3 +31,6 @@ bindings/*/target
 
 # Visual Studio folders
 **/*.vs
+
+# Visual Studio solution files
+*.sln
