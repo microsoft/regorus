@@ -28,6 +28,8 @@ mod lexer;
 mod number;
 mod parser;
 mod scheduler;
+#[cfg(feature = "azure_policy")]
+mod schema;
 mod utils;
 mod value;
 
