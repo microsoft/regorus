@@ -41,6 +41,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      
+      - name: Fetch crates
+        run: cargo fetch
+        working-directory: ./bindings/ffi
+
+      - name: Check Regorus binding formatting
+        run: cargo fmt --check
+        working-directory: ./bindings/ffi
+
+      - name: Check Clippy linting for Regorus binding
+        run: cargo clippy --frozen -- -D warnings
+        working-directory: ./bindings/ffi
 
       - name: Build Regorus binding
         run: cargo build -r --target ${{ matrix.runtime.target }} --locked
