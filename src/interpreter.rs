@@ -3696,9 +3696,7 @@ impl Interpreter {
                 MapEntry::Occupied(o) => {
                     if idx + 1 == comps.len() {
                         for (_, i) in o.get() {
-                            if index.is_some() && i.is_some() {
-                                let old = i.as_ref().unwrap();
-                                let new = index.as_ref().unwrap();
+                            if let (Some(old), Some(new)) = (i, &index) {
                                 if old == new {
                                     bail!(refr.span().error("multiple default rules for the variable with the same index"));
                                 }

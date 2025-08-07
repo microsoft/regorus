@@ -23,12 +23,14 @@ pub struct Engine {
     rego_v1: bool,
 }
 
+#[cfg(feature = "azure_policy")]
 #[derive(Debug, Clone, Serialize)]
 pub struct PolicyPackageNameDefinition {
     pub source_file: String,
     pub package_name: String,
 }
 
+#[cfg(feature = "azure_policy")]
 #[derive(Debug, Clone, Serialize)]
 pub struct PolicyParameter {
     pub name: String,
@@ -36,11 +38,13 @@ pub struct PolicyParameter {
     pub required: bool,
 }
 
+#[cfg(feature = "azure_policy")]
 #[derive(Debug, Clone, Serialize)]
 pub struct PolicyModifier {
     pub name: String,
 }
 
+#[cfg(feature = "azure_policy")]
 #[derive(Debug, Clone, Serialize)]
 pub struct PolicyParameters {
     pub source_file: String,
@@ -954,7 +958,7 @@ impl Engine {
     #[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
     pub fn get_policy_package_names(&self) -> Result<Vec<PolicyPackageNameDefinition>> {
         let mut package_names = vec![];
-        for m in &self.modules {
+        for m in self.modules.iter() {
             let package_name = Interpreter::get_path_string(&m.package.refr, None)?;
             package_names.push(PolicyPackageNameDefinition {
                 source_file: m.package.span.source.file().to_string(),
@@ -987,7 +991,7 @@ impl Engine {
     #[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
     pub fn get_policy_parameters(&self) -> Result<Vec<PolicyParameters>> {
         let mut policy_parameter_definitions = vec![];
-        for m in &self.modules {
+        for m in self.modules.iter() {
             let mut parameters = vec![];
             let mut modifiers = vec![];
 

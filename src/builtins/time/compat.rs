@@ -267,7 +267,7 @@ struct GoTimeFormatItems<'a> {
 }
 
 impl GoTimeFormatItems<'_> {
-    fn parse(reminder: &str) -> GoTimeFormatItems {
+    fn parse(reminder: &str) -> GoTimeFormatItems<'_> {
         GoTimeFormatItems {
             reminder,
             queue: &[],
@@ -275,7 +275,7 @@ impl GoTimeFormatItems<'_> {
         }
     }
 
-    fn format(reminder: &str) -> GoTimeFormatItems {
+    fn format(reminder: &str) -> GoTimeFormatItems<'_> {
         GoTimeFormatItems {
             reminder,
             queue: &[],

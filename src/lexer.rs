@@ -120,7 +120,7 @@ impl cmp::Eq for SourceStr {}
 
 impl cmp::PartialOrd for SourceStr {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.text().cmp(other.text()))
+        Some(self.cmp(other))
     }
 }
 
