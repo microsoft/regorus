@@ -108,7 +108,7 @@ fn parse(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
         n.mul_assign(&Number::two_pow(e)?)?;
         Ok(Value::from(n))
     } else {
-        return Ok(Value::Undefined);
+        Ok(Value::Undefined)
     }
 }
 
