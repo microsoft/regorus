@@ -39,7 +39,6 @@ pub fn validate_schema_detailed(schema: &serde_json::Value) -> Result<(), Vec<St
             .map(|e| format!("{}: {}", e.instance_location(), e.error_description()))
             .collect();
         let msgs: Vec<String> = msgs.into_iter().collect();
-        std::eprintln!("{}", msgs.join("\n"));
         return Err(msgs);
     }
 

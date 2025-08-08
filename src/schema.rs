@@ -1,210 +1,205 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+/// There are two type systems of interest:
+///     1. JSON Schema used by Azure Policy for some of its metadata.
+///     2. Bicep's type system generated from Azure API swagger files.
+///        https://github.com/Azure/bicep-types/blob/main/src/Bicep.Types/ConcreteTypes
+///
+/// JSON Schema is standardized and well documented, with good tooling support.
+/// JSON Schema is quite flexible. The following schema:
+/// {
+///   "allOf": [
+///     {
+///       "properties": {
+///         "name": {"type": "string" }
+///       },
+///       "required": ["name"]
+///     },
+///     {
+///       "properties": {
+///         "age": {"type": "integer" }
+///       },
+///       "required": ["age"]
+///     },
+///     {
+///       "minLength": 5
+///     }
+///   ]
+/// }
+///
+/// expresses the constraint that if a value happens to be an object, then it must have a string field `name`,
+/// and also an integer field 'age'. If it happens to be a string, it must have a minimum length of 5.
+/// There are also different ways to express the same contraint.
+///
+/// Such flexibility is not needed for our use cases as shown by Bicep's type system which only allows a subset of
+/// the constraints expressible in JSON Schema yet represents Azure Resources. Note that Bicep's type system models
+/// some JSON schema concepts such as `oneOf` differently.
+///
+/// For Regorus' type system, we will use a subset of JSON Schema that is needed to support Azure Policy.
+/// This subset is initially derived from the Bicep type system, but has a few other JSON Schema concepts like
+/// `enum`, `const` that are needed for Azure Policy. Additional JSON Schema features will be supported as needed.
+/// This approach is consistent with Azure Policy's use of JSON Schema for metadata.
+/// We can also potentially reuse the type schemas  (https://github.com/Azure/bicep-types-az)
+/// that the Bicep team generates from Azure API swagger files, using a custom deserializer to convert them to our type system.
+///
+/// Here is the mapping between Bicep's type system and JSON Schema:
+///
+/// AnyType
+/// Bicep:      { "$type": "AnyType" }
+/// JSON Schema: {}
+///
+/// BooleanType
+/// Bicep:      { "$type": "BooleanType" }
+/// JSON Schema: { "type": "boolean" }
+///
+/// NullType
+/// Bicep:      { "$type": "NullType" }
+/// JSON Schema: { "type": "null" }
+///
+/// IntegerType
+/// Bicep:      { "$type": "IntegerType", "minValue": X, "maxValue": Y }
+/// JSON Schema: { "type": "integer", "minimum": X, "maximum": Y }
+///
+/// NumberType (no Bicep equivalent)
+/// Bicep:      No equivalent
+/// JSON Schema: { "type": "number", "minimum": X, "maximum": Y }
+///
+/// StringType
+/// Bicep:      {
+///               "$type": "StringType",
+///               "minLength": X,
+///               "maxLength": Y,
+//               "pattern": "..."
+///             }
+/// JSON Schema: {
+///               "type": "string",
+///               "minLength": X,
+///               "maxLength": Y,
+///               "pattern": "..."
+///             }
+///
+/// Integer Constant (no Bicep equivalent)
+/// Bicep:      No equivalent
+/// JSON Schema: { "const": 5 }
+///
+/// UnionType
+/// Bicep:      { "$type": "UnionType", "elements": [...] }
+/// JSON Schema: { "enum": [...] } or { "anyOf": [...] }
+///
+/// Enum with inline values (no Bicep equivalent)
+/// Bicep:      No equivalent
+/// JSON Schema: { "enum": [8, 10] }
+///
+/// ObjectType
+/// Bicep:      {
+///               "$type": "ObjectType",
+///               "name": "Test.Rp1/testType1",
+///               "properties": {
+///                 "id": {
+///                   "type": { "$ref": "#/2" },
+///                   "flags": 10,
+///                   "description": "The resource id"
+///                 }
+///               },
+///               "additionalProperties": { "$ref": "#/3" }
+///             }
+/// JSON Schema: {
+///               "type": "object",
+///               "properties": {
+///                 "id": {
+///                   "type": "integer",
+///                   "description": "The resource id"
+///                 }
+///               },
+///               "required": ["id"],
+///               "additionalProperties": { "type": "boolean" }
+///             }
+///
+/// DiscriminatedObjectType
+/// Bicep:      {
+///               "$type": "DiscriminatedObjectType",
+///               "name": "Microsoft.Security/settings",
+///               "discriminator": "kind",
+///               "baseProperties": {
+///                 "name": {
+///                   "type": { "$ref": "#/5" },
+///                   "flags": 9,
+///                   "description": "The resource name"
+///                 }
+///               },
+///               "elements": {
+///                 "ASubObject": { "$ref": "#/9" },
+///                 "BSubObject": { "$ref": "#/13" }
+///               }
+///             }
+/// JSON Schema: {
+///               "type": "object",
+///               "properties": {
+///                 "name": {
+///                   "type": "string",
+///                   "description": "The resource name"
+///                 },
+///                 "kind": {
+///                   "description": "The kind of the resource",
+///                   "enum": ["ASubObject", "BSubObject"]
+///                 }
+///               },
+///               "allOf": [
+///                 {
+///                   "if": {
+///                     "properties": {
+///                       "kind": { "const": "ASubObject" }
+///                     }
+///                   },
+///                   "then": {
+///                     "properties": {
+///                       "apropertyA": {
+///                         "type": "string",
+///                         "description": "Property A of ASubObject"
+///                       }
+///                     },
+///                     "required": ["apropertyA"]
+///                   }
+///                 },
+///                 {
+///                   "if": {
+///                     "properties": {
+///                       "kind": { "const": "BSubObject" }
+///                     }
+///                   },
+///                   "then": {
+///                     "properties": {
+///                       "bpropertyB": {
+///                         "type": "string",
+///                         "description": "Property B of BSubObject"
+///                       }
+///                     },
+///                     "required": ["bpropertyB"]
+///                   }
+///                 }
+///               ]
+///             }
+///
+/// The type system is implemented with the following principles:
+///     - Types are immutable and can be shared safely across threads, allowing parallel schema validation using the same type.
+///     - Any unsupported JSON Schema feature should raise an error during type creation. Otherwise, the user will not know whether
+///       parts of their schema are ignored or not.
+///     - Leverage serde as much as possible for serialization and deserialization, avoiding custom serialization logic.
+///
+/// We use a Rust enum to represent the type system, with each variant representing a different type. In each variant,
+/// we list the properties that are relevant to that type, using `Option<T>` for properties that are not required.
+/// `deny_unknown_fields` is used to ensure that any unsupported fields in the JSON Schema will raise an error during deserialization.
+/// Some properties like `description` are duplicated in each variant, since `deny_unknown_fields` cannot be used with `#[serde(flatten)]`
+/// which would have allowed us to refactor the common properties into a single struct to avoid duplication.
 use alloc::collections::BTreeMap;
 use serde::{Deserialize, Deserializer};
 
-use crate::{format, Rc, Value, Vec};
+use crate::{format, Box, Rc, Value, Vec};
 
 type String = Rc<str>;
 
 mod meta;
-
-// There are two type systems of interest:
-//     1. JSON Schema used by Azure Policy for some of its metadata.
-//     2. Bicep's type system generated from Azure API swagger files.
-//        https://github.com/Azure/bicep-types/blob/main/src/Bicep.Types/ConcreteTypes
-//
-// JSON Schema is standardized and well documented, with good tooling support.
-// JSON Schema is quite flexible. The following schema:
-// {
-//   "allOf": [
-//     {
-//       "properties": {
-//         "name": {"type": "string" }
-//       },
-//       "required": ["name"]
-//     },
-//     {
-//       "properties": {
-//         "age": {"type": "integer" }
-//       },
-//       "required": ["age"]
-//     },
-//     {
-//       "minLength": 5
-//     }
-//   ]
-// }
-//
-// expresses the constraint that if a value happens to be an object, then it must have a string field `name`,
-// and also an integer field 'age'. If it happens to be a string, it must have a minimum length of 5.
-// There are also different ways to express the same contraint.
-//
-// Such flexibility is not needed for our use cases as shown by Bicep's type system which only allows a subset of
-// the constraints expressible in JSON Schema yet represents Azure Resources. Note that Bicep's type system models
-// some JSON schema concepts such as `oneOf` differently.
-//
-// For Regorus' type system, we will use a subset of JSON Schema that is needed to support Azure Policy.
-// This subset is initially derived from the Bicep type system, but has a few other JSON Schema concepts like
-// `enum`, `const` that are needed for Azure Policy. Additional JSON Schema features will be supported as needed.
-// This approach is consistent with Azure Policy's use of JSON Schema for metadata.
-// We can also potentially reuse the type schemas  (https://github.com/Azure/bicep-types-az)
-// that the Bicep team generates from Azure API swagger files, using a custom deserializer to convert them to our type system.
-//
-// Here is the mapping between Bicep's type system and JSON Schema:
-//
-// AnyType
-// Bicep:      { "$type": "AnyType" }
-// JSON Schema: {}
-//
-// BooleanType
-// Bicep:      { "$type": "BooleanType" }
-// JSON Schema: { "type": "boolean" }
-//
-// NullType
-// Bicep:      { "$type": "NullType" }
-// JSON Schema: { "type": "null" }
-//
-// IntegerType
-// Bicep:      { "$type": "IntegerType", "minValue": X, "maxValue": Y }
-// JSON Schema: { "type": "integer", "minimum": X, "maximum": Y }
-//
-// NumberType (no Bicep equivalent)
-// Bicep:      No equivalent
-// JSON Schema: { "type": "number", "minimum": X, "maximum": Y }
-//
-// StringType
-// Bicep:      {
-//               "$type": "StringType",
-//               "minLength": X,
-//               "maxLength": Y,
-//               "pattern": "..."
-//             }
-// JSON Schema: {
-//               "type": "string",
-//               "minLength": X,
-//               "maxLength": Y,
-//               "pattern": "..."
-//             }
-// StringLiteralType
-// Bicep:      { "$type": "StringLiteralType", "value": "MCAS" }
-// JSON Schema: { "const": "MCAS" }
-//
-// Integer Constant (no Bicep equivalent)
-// Bicep:      No equivalent
-// JSON Schema: { "const": 5 }
-//
-// UnionType
-// Bicep:      { "$type": "UnionType", "elements": [...] }
-// JSON Schema: { "enum": [...] } or { "anyOf": [...] }
-//
-// Enum with inline values (no Bicep equivalent)
-// Bicep:      No equivalent
-// JSON Schema: { "enum": [8, 10] }
-//
-// ObjectType
-// Bicep:      {
-//               "$type": "ObjectType",
-//               "name": "Test.Rp1/testType1",
-//               "properties": {
-//                 "id": {
-//                   "type": { "$ref": "#/2" },
-//                   "flags": 10,
-//                   "description": "The resource id"
-//                 }
-//               },
-//               "additionalProperties": { "$ref": "#/3" }
-//             }
-// JSON Schema: {
-//               "type": "object",
-//               "properties": {
-//                 "id": {
-//                   "type": "integer",
-//                   "description": "The resource id"
-//                 }
-//               },
-//               "required": ["id"],
-//               "additionalProperties": { "type": "boolean" }
-//             }
-//
-// DiscriminatedObjectType
-// Bicep:      {
-//               "$type": "DiscriminatedObjectType",
-//               "name": "Microsoft.Security/settings",
-//               "discriminator": "kind",
-//               "baseProperties": {
-//                 "name": {
-//                   "type": { "$ref": "#/5" },
-//                   "flags": 9,
-//                   "description": "The resource name"
-//                 }
-//               },
-//               "elements": {
-//                 "ASubObject": { "$ref": "#/9" },
-//                 "BSubObject": { "$ref": "#/13" }
-//               }
-//             }
-// JSON Schema: {
-//               "type": "object",
-//               "properties": {
-//                 "name": {
-//                   "type": "string",
-//                   "description": "The resource name"
-//                 },
-//                 "kind": {
-//                   "description": "The kind of the resource",
-//                   "enum": ["ASubObject", "BSubObject"]
-//                 }
-//               },
-//               "allOf": [
-//                 {
-//                   "if": {
-//                     "properties": {
-//                       "kind": { "const": "ASubObject" }
-//                     }
-//                   },
-//                   "then": {
-//                     "properties": {
-//                       "apropertyA": {
-//                         "type": "string",
-//                         "description": "Property A of ASubObject"
-//                       }
-//                     },
-//                     "required": ["apropertyA"]
-//                   }
-//                 },
-//                 {
-//                   "if": {
-//                     "properties": {
-//                       "kind": { "const": "BSubObject" }
-//                     }
-//                   },
-//                   "then": {
-//                     "properties": {
-//                       "bpropertyB": {
-//                         "type": "string",
-//                         "description": "Property B of BSubObject"
-//                       }
-//                     },
-//                     "required": ["bpropertyB"]
-//                   }
-//                 }
-//               ]
-//             }
-//
-//
-// The type system is implemented with the following principles:
-//     - Types are immutable and can be shared safely across threads, allowing parallel schema validation using the same type.
-//     - Any unsupported JSON Schema feature should raise an error during type creation. Otherwise, the user will not know whether
-//       parts of their schema are ignored or not.
-//     - Leverage serde as much as possible for serialization and deserialization, avoiding custom serialization logic.
-//
-// We use a Rust enum to represent the type system, with each variant representing a different type. In each variant,
-// we list the properties that are relevant to that type, using `Option<T>` for properties that are not required.
-// `deny_unknown_fields` is used to ensure that any unsupported fields in the JSON Schema will raise an error during deserialization.
-// Some properties like `description` are duplicated in each variant, since `deny_unknown_fields` cannot be used with `#[serde(flatten)]`
-// which would have allowed us to refactor the common properties into a single struct to avoid duplication.
 
 /// A schema represents a type definition that can be used for validation.
 ///
@@ -310,28 +305,21 @@ impl Schema {
 
     /// Parse a JSON Schema document into a `Schema` instance.
     /// Provides better error messages than `serde_json::from_value`.
-    fn from_serde_json_value(schema: serde_json::Value) -> Result<Self, String> {
+    fn from_serde_json_value(
+        schema: serde_json::Value,
+    ) -> Result<Self, Box<dyn core::error::Error + Send + Sync>> {
         let meta_schema_validation_result = meta::validate_schema_detailed(&schema);
         let result = serde_json::from_value::<Schema>(schema)
-            .map_err(|e| format!("Failed to parse schema: {e}").into());
-
+            .map_err(|e| format!("Failed to parse schema: {e}"))?;
         if let Err(errors) = meta_schema_validation_result {
-            if let Err(e) = result {
-                return Err(format!(
-                    "Schema validation failed: {}\nDeserialization error: {}",
-                    errors.join("\n"),
-                    e
-                )
-                .into());
-            }
             return Err(format!("Schema validation failed: {}", errors.join("\n")).into());
         }
-
-        result
+        Ok(result)
     }
+
     /// Parse a JSON Schema document from a string into a `Schema` instance.
     /// Provides better error messages than `serde_json::from_str`.
-    fn from_json_str(s: &str) -> Result<Self, String> {
+    fn from_json_str(s: &str) -> Result<Self, Box<dyn core::error::Error + Send + Sync>> {
         let value: serde_json::Value =
             serde_json::from_str(s).map_err(|e| format!("Failed to parse schema: {e}"))?;
         Self::from_serde_json_value(value)

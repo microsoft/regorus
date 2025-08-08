@@ -966,7 +966,7 @@ fn test_deserialize_array_items_with_fields() {
             assert_eq!(max_items, &Some(2));
             assert_eq!(
                 default,
-                &Some(Value::Array(Rc::new(alloc::vec![Value::from("bar")])))
+                &Some(Value::Array(Rc::new(vec![Value::from("bar")])))
             );
             match items.as_type() {
                 Type::String {
