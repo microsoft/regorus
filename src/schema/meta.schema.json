@@ -1,0 +1,376 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://github.com/microsoft/regorus/schema/meta-schema",
+    "title": "Regorus Schema Meta-Schema",
+    "description": "JSON Schema describing the structure of Regorus schema definitions",
+    "type": "object",
+    "$defs": {
+        "schemaCore": {
+            "oneOf": [
+                {
+                    "description": "Union type schema using anyOf",
+                    "type": "object",
+                    "properties": {
+                        "anyOf": {
+                            "type": "array",
+                            "description": "Array of schemas where at least one must match",
+                            "items": {
+                                "$ref": "#/$defs/schemaCore"
+                            },
+                            "minItems": 0
+                        }
+                    },
+                    "required": [
+                        "anyOf"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Constant value schema",
+                    "type": "object",
+                    "properties": {
+                        "const": {
+                            "description": "The exact value that must match"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Human-readable description of the schema"
+                        }
+                    },
+                    "required": [
+                        "const"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Enumeration schema",
+                    "type": "object",
+                    "properties": {
+                        "enum": {
+                            "type": "array",
+                            "description": "Array of allowed values",
+                            "minItems": 0
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Human-readable description of the schema"
+                        }
+                    },
+                    "required": [
+                        "enum"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Any type schema",
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "const": "any"
+                        },
+                        "description": {
+                            "type": "string"
+                        },
+                        "default": true
+                    },
+                    "required": [
+                        "type"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Integer type schema",
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "const": "integer"
+                        },
+                        "description": {
+                            "type": "string"
+                        },
+                        "minimum": {
+                            "type": "integer"
+                        },
+                        "maximum": {
+                            "type": "integer"
+                        },
+                        "default": true
+                    },
+                    "required": [
+                        "type"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Number type schema",
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "const": "number"
+                        },
+                        "description": {
+                            "type": "string"
+                        },
+                        "minimum": {
+                            "type": "number"
+                        },
+                        "maximum": {
+                            "type": "number"
+                        },
+                        "default": true
+                    },
+                    "required": [
+                        "type"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Boolean type schema",
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "const": "boolean"
+                        },
+                        "description": {
+                            "type": "string"
+                        },
+                        "default": true
+                    },
+                    "required": [
+                        "type"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Null type schema",
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "const": "null"
+                        },
+                        "description": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "type"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "String type schema",
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "const": "string"
+                        },
+                        "description": {
+                            "type": "string"
+                        },
+                        "minLength": {
+                            "type": "integer",
+                            "minimum": 0
+                        },
+                        "maxLength": {
+                            "type": "integer",
+                            "minimum": 0
+                        },
+                        "pattern": {
+                            "type": "string"
+                        },
+                        "default": true
+                    },
+                    "required": [
+                        "type"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Array type schema",
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "const": "array"
+                        },
+                        "description": {
+                            "type": "string"
+                        },
+                        "items": {
+                            "$ref": "#/$defs/schemaCore",
+                            "description": "Schema for array items"
+                        },
+                        "minItems": {
+                            "type": "integer",
+                            "minimum": 0
+                        },
+                        "maxItems": {
+                            "type": "integer",
+                            "minimum": 0
+                        },
+                        "default": true
+                    },
+                    "required": [
+                        "type",
+                        "items"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Set type schema",
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "const": "set"
+                        },
+                        "description": {
+                            "type": "string"
+                        },
+                        "items": {
+                            "$ref": "#/$defs/schemaCore",
+                            "description": "Schema for set items"
+                        },
+                        "default": true
+                    },
+                    "required": [
+                        "type",
+                        "items"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Object type schema",
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "const": "object"
+                        },
+                        "description": {
+                            "type": "string"
+                        },
+                        "properties": {
+                            "type": "object",
+                            "description": "Object property definitions",
+                            "additionalProperties": {
+                                "$ref": "#/$defs/schemaCore"
+                            },
+                            "default": {}
+                        },
+                        "required": {
+                            "type": "array",
+                            "description": "Required property names",
+                            "items": {
+                                "type": "string"
+                            },
+                            "uniqueItems": true
+                        },
+                        "additionalProperties": {
+                            "oneOf": [
+                                {
+                                    "type": "boolean",
+                                    "description": "Whether additional properties are allowed (true) or not (false)"
+                                },
+                                {
+                                    "$ref": "#/$defs/schemaCore",
+                                    "description": "Schema for additional properties"
+                                }
+                            ]
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Optional name for the object type"
+                        },
+                        "default": true,
+                        "allOf": {
+                            "type": "array",
+                            "description": "Discriminated subobject definitions",
+                            "items": {
+                                "$ref": "#/$defs/discriminatedSubobject"
+                            }
+                        }
+                    },
+                    "required": [
+                        "type"
+                    ],
+                    "additionalProperties": false
+                }
+            ]
+        },
+        "discriminatedSubobject": {
+            "type": "object",
+            "properties": {
+                "if": {
+                    "type": "object",
+                    "properties": {
+                        "properties": {
+                            "type": "object",
+                            "patternProperties": {
+                                ".*": {
+                                    "type": "object",
+                                    "properties": {
+                                        "const": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "const"
+                                    ],
+                                    "additionalProperties": false
+                                }
+                            },
+                            "minProperties": 1,
+                            "maxProperties": 1
+                        }
+                    },
+                    "required": [
+                        "properties"
+                    ],
+                    "additionalProperties": false
+                },
+                "then": {
+                    "type": "object",
+                    "properties": {
+                        "description": {
+                            "type": "string"
+                        },
+                        "properties": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "$ref": "#/$defs/schemaCore"
+                            },
+                            "default": {}
+                        },
+                        "required": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "uniqueItems": true
+                        },
+                        "additionalProperties": {
+                            "oneOf": [
+                                {
+                                    "type": "boolean",
+                                    "description": "Whether additional properties are allowed (true) or not (false)"
+                                },
+                                {
+                                    "$ref": "#/$defs/schemaCore",
+                                    "description": "Schema for additional properties"
+                                }
+                            ]
+                        },
+                        "name": {
+                            "type": "string"
+                        }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            "required": [
+                "if",
+                "then"
+            ],
+            "additionalProperties": false
+        }
+    },
+    "$ref": "#/$defs/schemaCore"
+}
