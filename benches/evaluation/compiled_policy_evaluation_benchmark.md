@@ -5,6 +5,7 @@
 - **CPU**: 16 cores
 - **Architecture**: ARM64 (aarch64-apple-darwin)
 - **Rust Version**: 1.82.0
+- **Allocator**: mimalloc (default allocator)
 - **Benchmark Framework**: Criterion.rs
 - **Test Data**: 20,000 inputs per evaluation (1000 per thread)
 - **Policy**: Complex authorization policy with nested rules
@@ -25,111 +26,135 @@ The compiled policy evaluation benchmark tests Regorus compiled policy performan
 ### Compiled Shared Policies, Cloned Inputs (Best Performance)
 | Threads | Total Evaluation Time (ms) | Throughput (Kelem/s) |
 |--------:|---------------------------:|---------------------:|
-|       1 |                       3.30 |                  303 |
-|       2 |                       8.53 |                  234 |
-|       4 |                      18.78 |                  213 |
-|       6 |                      32.35 |                  186 |
-|       8 |                      73.12 |                  109 |
-|      10 |                     108.97 |                   92 |
-|      12 |                     145.56 |                   82 |
-|      14 |                     196.14 |                   71 |
-|      16 |                     248.77 |                   64 |
-|      18 |                     290.01 |                   62 |
-|      20 |                     317.16 |                   63 |
-|      22 |                     348.83 |                   63 |
-|      24 |                     361.05 |                   66 |
-|      26 |                     389.70 |                   67 |
-|      28 |                     418.66 |                   67 |
-|      30 |                     444.40 |                   68 |
-|      32 |                     476.53 |                   67 |
+|       1 |                       2.35 |                  426 |
+|       2 |                       5.36 |                  373 |
+|       4 |                      11.70 |                  342 |
+|       6 |                      20.33 |                  295 |
+|       8 |                      43.26 |                  185 |
+|      10 |                      61.93 |                  162 |
+|      12 |                      79.30 |                  151 |
+|      14 |                      94.45 |                  148 |
+|      16 |                     113.39 |                  141 |
+|      18 |                     154.41 |                  117 |
+|      20 |                     184.37 |                  108 |
+|      22 |                     204.00 |                  108 |
+|      24 |                     220.45 |                  109 |
+|      26 |                     237.07 |                  110 |
+|      28 |                     252.58 |                  111 |
+|      30 |                     273.57 |                  110 |
+|      32 |                     292.69 |                  109 |
 
 ### Compiled Shared Policies, Fresh Inputs
 | Threads | Total Evaluation Time (ms) | Throughput (Kelem/s) |
 |--------:|---------------------------:|---------------------:|
-|       1 |                       4.51 |                  222 |
-|       2 |                       9.77 |                  205 |
-|       4 |                      23.36 |                  171 |
-|       6 |                      38.12 |                  157 |
-|       8 |                      85.02 |                   94 |
-|      10 |                     133.66 |                   75 |
-|      12 |                     180.46 |                   66 |
-|      14 |                     238.23 |                   59 |
-|      16 |                     318.78 |                   50 |
-|      18 |                     353.15 |                   51 |
-|      20 |                     389.29 |                   51 |
-|      22 |                     459.61 |                   48 |
-|      24 |                     507.62 |                   47 |
-|      26 |                     539.43 |                   48 |
-|      28 |                     554.99 |                   50 |
-|      30 |                     625.57 |                   48 |
-|      32 |                     690.55 |                   46 |
+|       1 |                       3.34 |                  299 |
+|       2 |                       7.29 |                  274 |
+|       4 |                      15.19 |                  263 |
+|       6 |                      24.90 |                  241 |
+|       8 |                      49.22 |                  163 |
+|      10 |                      68.45 |                  146 |
+|      12 |                      86.55 |                  139 |
+|      14 |                     104.77 |                  134 |
+|      16 |                     136.07 |                  118 |
+|      18 |                     169.05 |                  106 |
+|      20 |                     198.25 |                  101 |
+|      22 |                     217.05 |                  101 |
+|      24 |                     234.75 |                  102 |
+|      26 |                     254.53 |                  102 |
+|      28 |                     276.06 |                  101 |
+|      30 |                     296.12 |                  101 |
+|      32 |                     318.81 |                  100 |
 
 ### Compiled Per Iteration, Cloned Inputs
 | Threads | Total Evaluation Time (ms) | Throughput (Kelem/s) |
 |--------:|---------------------------:|---------------------:|
-|       1 |                      22.68 |                   44 |
-|       2 |                      47.99 |                   42 |
-|       4 |                     108.09 |                   37 |
-|       6 |                     167.62 |                   36 |
-|       8 |                     283.17 |                   28 |
-|      10 |                     418.25 |                   24 |
-|      12 |                     546.24 |                   22 |
-|      14 |                     688.79 |                   20 |
-|      16 |                     951.72 |                   17 |
-|      18 |                    1060.20 |                   17 |
-|      20 |                    1223.60 |                   16 |
-|      22 |                    1342.50 |                   16 |
-|      24 |                    1445.70 |                   17 |
-|      26 |                    1676.50 |                   15 |
-|      28 |                    1765.20 |                   16 |
-|      30 |                    1939.00 |                   15 |
-|      32 |                    2197.30 |                   15 |
+|       1 |                      18.11 |                   55 |
+|       2 |                      36.89 |                   54 |
+|       4 |                      75.46 |                   53 |
+|       6 |                     114.66 |                   52 |
+|       8 |                     152.80 |                   52 |
+|      10 |                     192.17 |                   52 |
+|      12 |                     232.32 |                   52 |
+|      14 |                     301.47 |                   46 |
+|      16 |                     380.36 |                   42 |
+|      18 |                     424.64 |                   42 |
+|      20 |                     484.76 |                   41 |
+|      22 |                     531.62 |                   41 |
+|      24 |                     582.88 |                   41 |
+|      26 |                     631.39 |                   41 |
+|      28 |                     671.99 |                   42 |
+|      30 |                     717.65 |                   42 |
+|      32 |                     766.05 |                   42 |
 
 ### Compiled Per Iteration, Fresh Inputs
 | Threads | Total Evaluation Time (ms) | Throughput (Kelem/s) |
 |--------:|---------------------------:|---------------------:|
-|       1 |                      23.95 |                   42 |
-|       2 |                      49.53 |                   40 |
-|       4 |                     116.42 |                   34 |
-|       6 |                     197.35 |                   30 |
-|       8 |                     293.04 |                   27 |
-|      10 |                     385.90 |                   26 |
-|      12 |                     508.82 |                   24 |
-|      14 |                     679.23 |                   21 |
-|      16 |                     913.02 |                   18 |
-|      18 |                    1075.90 |                   17 |
-|      20 |                    1209.80 |                   17 |
-|      22 |                    1358.90 |                   16 |
-|      24 |                    1523.90 |                   16 |
-|      26 |                    1700.20 |                   15 |
-|      28 |                    1966.90 |                   14 |
-|      30 |                    2179.30 |                   14 |
-|      32 |                    2327.70 |                   14 |
+|       1 |                      19.07 |                   52 |
+|       2 |                      38.89 |                   51 |
+|       4 |                      79.52 |                   50 |
+|       6 |                     120.89 |                   50 |
+|       8 |                     161.08 |                   50 |
+|      10 |                     202.37 |                   49 |
+|      12 |                     244.04 |                   49 |
+|      14 |                     316.66 |                   44 |
+|      16 |                     398.02 |                   40 |
+|      18 |                     449.54 |                   40 |
+|      20 |                     500.57 |                   40 |
+|      22 |                     557.97 |                   39 |
+|      24 |                     605.71 |                   40 |
+|      26 |                     656.88 |                   40 |
+|      28 |                     710.03 |                   39 |
+|      30 |                     741.09 |                   40 |
+|      32 |                     801.26 |                   40 |
 
 ## Analysis
 
-The compiled policy benchmark demonstrates the following performance characteristics:
+The compiled policy benchmark demonstrates the following performance characteristics with mimalloc as the default allocator:
 
 1. **Best Performance**: Compiled shared policies with cloned inputs provide the highest throughput
 2. **Compilation Impact**: 
    - Pre-compiled policies: Significantly faster than per-iteration compilation
-   - Per-iteration compilation: Major overhead (~7x slower than pre-compiled)
-3. **Scaling Patterns**:
+   - Per-iteration compilation: Major overhead (~7-8x slower than pre-compiled)
+3. **Scaling Patterns with mimalloc**:
    - Best throughput achieved at 1 thread for shared policy configurations
-   - Higher thread counts show performance degradation due to contention
+   - mimalloc provides better thread scaling characteristics compared to the default allocator
+   - Higher thread counts show performance degradation due to contention, but less severe with mimalloc
    - Per-iteration compilation shows poor scaling across all thread counts
-4. **Input Processing**: Fresh inputs add ~25-30% overhead across all configurations
-5. **Thread Performance**: 
+4. **Input Processing**: Fresh inputs add ~30% overhead across all configurations
+5. **Thread Performance with mimalloc**: 
    - Peak performance at 1 thread for most configurations
    - Reasonable performance maintained up to 12-16 threads for shared policies
    - Compiled policies show better thread scaling than per-iteration compilation
+   - mimalloc helps reduce allocation-related contention in multi-threaded scenarios
 
 ## Comparison with Engine Evaluation
 
-| Configuration        | Compiled Policy (1 thread)      | Engine Evaluation (1 thread)    | Performance Ratio |
-|:---------------------|:--------------------------------|:--------------------------------|------------------:|
-| Shared/Cloned        | Best performance                | Higher throughput               |       0.67x-0.92x |
-| Shared/Fresh         | ~27% reduction from optimal     | ~30% reduction from optimal     |       0.62x-0.97x |
-| Per-iteration/Cloned | ~85% reduction from optimal     | ~86% reduction from optimal     |       0.80x-0.98x |
-| Per-iteration/Fresh  | ~86% reduction from optimal     | ~87% reduction from optimal     |       0.78x-1.00x |
+### Multi-Thread Performance Comparison
+
+| Configuration        | 1 Thread (Kelem/s) | 4 Threads (Kelem/s) | 8 Threads (Kelem/s) |
+|:---------------------|:-------------------|:--------------------|:--------------------|
+|                      | CP / EE            | CP / EE             | CP / EE             |
+| Shared/Cloned        | 426 / 423          | 342 / 406           | 185 / 341           |
+| Shared/Fresh         | 299 / 309          | 263 / 297           | 163 / 266           |
+| Per-iteration/Cloned | 55 / 56            | 53 / 54             | 52 / 53             |
+| Per-iteration/Fresh  | 52 / 53            | 50 / 51             | 50 / 51             |
+
+### Threading Efficiency Analysis
+
+| Configuration        | Low Contention (1-4t) | Medium Contention (6-12t) | High Contention (16+t) |
+|:---------------------|:----------------------|:--------------------------|:-----------------------|
+|                      | Avg CP / EE           | Avg CP / EE               | Avg CP / EE            |
+| Shared/Cloned        | 384 / 414             | 203 / 329                 | 123 / 250              |
+| Shared/Fresh         | 284 / 302             | 176 / 235                 | 108 / 201              |
+| Per-iteration/Cloned | 54 / 55               | 50 / 52                   | 42 / 42                |
+| Per-iteration/Fresh  | 51 / 52               | 47 / 50                   | 40 / 40                |
+
+The compiled policy evaluation shows performance characteristics that are generally comparable to engine evaluation, though with some notable differences. While single-threaded performance is very close between the systems, there are observable impacts from the compilation approach that become more apparent under different threading scenarios.
+
+**Key Observations:**
+- **Single-threaded performance**: Very close parity between systems, though results may vary between runs
+- **Threading behavior**: Engine evaluation demonstrates better scaling characteristics under higher thread contention (4+ threads)
+- **Multi-threaded impact**: Compiled policies show more pronounced performance degradation under thread contention in shared policy configurations
+- **Contention resistance**: Per-iteration compilation shows more consistent (though lower absolute) performance across thread counts
+- **Optimal usage**: Both systems achieve best results with minimal threading (1-4 threads), though engine evaluation maintains better performance at higher thread counts for shared configurations
 

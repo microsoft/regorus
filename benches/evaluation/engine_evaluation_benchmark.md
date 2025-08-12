@@ -5,6 +5,7 @@
 - **CPU**: 16 cores
 - **Architecture**: ARM64 (aarch64-apple-darwin)
 - **Rust Version**: 1.82.0
+- **Allocator**: mimalloc (default allocator)
 - **Benchmark Framework**: Criterion.rs
 - **Test Data**: 20,000 inputs per evaluation (1000 per thread)
 - **Policy**: Complex authorization policy with nested rules
@@ -25,101 +26,102 @@ The engine evaluation benchmark tests Regorus policy evaluation performance acro
 ### Cloned Engines, Cloned Inputs (Best Performance)
 | Threads | Total Evaluation Time (ms) | Throughput (Kelem/s) |
 |--------:|---------------------------:|---------------------:|
-|       1 |                       3.05 |                  328 |
-|       2 |                       7.46 |                  268 |
-|       4 |                      16.10 |                  248 |
-|       6 |                      25.94 |                  231 |
-|       8 |                      50.18 |                  159 |
-|      10 |                      80.27 |                  125 |
-|      12 |                     106.31 |                  113 |
-|      14 |                     137.31 |                  102 |
-|      16 |                     163.91 |                   98 |
-|      18 |                     182.06 |                   99 |
-|      20 |                     191.36 |                  105 |
-|      22 |                     201.51 |                  109 |
-|      24 |                     217.65 |                  110 |
-|      26 |                     228.11 |                  114 |
-|      28 |                     248.17 |                  113 |
-|      30 |                     264.15 |                  114 |
-|      32 |                     314.27 |                  102 |
+|       1 |                       2.36 |                  423 |
+|       2 |                       4.85 |                  412 |
+|       4 |                       9.86 |                  406 |
+|       6 |                      15.02 |                  399 |
+|       8 |                      23.46 |                  341 |
+|      10 |                      33.34 |                  300 |
+|      12 |                      40.69 |                  295 |
+|      14 |                      48.26 |                  290 |
+|      16 |                      58.61 |                  273 |
+|      18 |                      77.35 |                  233 |
+|      20 |                      86.74 |                  231 |
+|      22 |                      94.17 |                  234 |
+|      24 |                     102.58 |                  234 |
+|      26 |                     110.17 |                  236 |
+|      28 |                     118.97 |                  235 |
+|      30 |                     126.54 |                  237 |
+|      32 |                     135.89 |                  235 |
 
 ### Cloned Engines, Fresh Inputs
 | Threads | Total Evaluation Time (ms) | Throughput (Kelem/s) |
 |--------:|---------------------------:|---------------------:|
-|       1 |                       4.36 |                  229 |
-|       2 |                      10.34 |                  194 |
-|       4 |                      21.98 |                  182 |
-|       6 |                      34.05 |                  176 |
-|       8 |                      66.47 |                  120 |
-|      10 |                     100.78 |                   99 |
-|      12 |                     141.69 |                   85 |
-|      14 |                     188.53 |                   74 |
-|      16 |                     261.27 |                   61 |
-|      18 |                     285.29 |                   63 |
-|      20 |                     312.14 |                   64 |
-|      22 |                     329.42 |                   67 |
-|      24 |                     347.97 |                   69 |
-|      26 |                     370.24 |                   70 |
-|      28 |                     394.75 |                   71 |
-|      30 |                     419.30 |                   72 |
-|      32 |                     433.58 |                   74 |
+|       1 |                       3.24 |                  309 |
+|       2 |                       6.57 |                  304 |
+|       4 |                      13.47 |                  297 |
+|       6 |                      20.42 |                  294 |
+|       8 |                      30.01 |                  266 |
+|      10 |                      40.99 |                  244 |
+|      12 |                      49.99 |                  240 |
+|      14 |                      60.09 |                  233 |
+|      16 |                      73.95 |                  216 |
+|      18 |                      95.94 |                  188 |
+|      20 |                     105.24 |                  190 |
+|      22 |                     114.30 |                  192 |
+|      24 |                     124.67 |                  193 |
+|      26 |                     134.76 |                  193 |
+|      28 |                     145.16 |                  193 |
+|      30 |                     155.23 |                  193 |
+|      32 |                     165.42 |                  193 |
 
 ### Fresh Engines, Cloned Inputs
 | Threads | Total Evaluation Time (ms) | Throughput (Kelem/s) |
 |--------:|---------------------------:|---------------------:|
-|       1 |                      22.39 |                   45 |
-|       2 |                      49.22 |                   41 |
-|       4 |                      98.09 |                   41 |
-|       6 |                     160.21 |                   37 |
-|       8 |                     281.26 |                   28 |
-|      10 |                     413.61 |                   24 |
-|      12 |                     578.15 |                   21 |
-|      14 |                     746.34 |                   19 |
-|      16 |                     961.44 |                   17 |
-|      18 |                    1127.70 |                   16 |
-|      20 |                    1248.40 |                   16 |
-|      22 |                    1386.90 |                   16 |
-|      24 |                    1559.70 |                   15 |
-|      26 |                    1736.30 |                   15 |
-|      28 |                    1891.80 |                   15 |
-|      30 |                    2077.00 |                   14 |
-|      32 |                    2289.30 |                   14 |
+|       1 |                      17.88 |                   56 |
+|       2 |                      36.32 |                   55 |
+|       4 |                      74.45 |                   54 |
+|       6 |                     112.95 |                   53 |
+|       8 |                     150.24 |                   53 |
+|      10 |                     189.61 |                   53 |
+|      12 |                     228.25 |                   53 |
+|      14 |                     297.37 |                   47 |
+|      16 |                     373.61 |                   43 |
+|      18 |                     426.46 |                   42 |
+|      20 |                     477.80 |                   42 |
+|      22 |                     523.00 |                   42 |
+|      24 |                     570.74 |                   42 |
+|      26 |                     619.92 |                   42 |
+|      28 |                     670.24 |                   42 |
+|      30 |                     717.47 |                   42 |
+|      32 |                     748.25 |                   43 |
 
 ### Fresh Engines, Fresh Inputs
 | Threads | Total Evaluation Time (ms) | Throughput (Kelem/s) |
 |--------:|---------------------------:|---------------------:|
-|       1 |                      23.63 |                   42 |
-|       2 |                      48.82 |                   41 |
-|       4 |                     102.32 |                   39 |
-|       6 |                     160.09 |                   37 |
-|       8 |                     271.21 |                   29 |
-|      10 |                     397.39 |                   25 |
-|      12 |                     489.09 |                   25 |
-|      14 |                     670.33 |                   21 |
-|      16 |                     884.83 |                   18 |
-|      18 |                    1044.00 |                   17 |
-|      20 |                    1174.20 |                   17 |
-|      22 |                    1330.40 |                   17 |
-|      24 |                    1480.90 |                   16 |
-|      26 |                    1679.50 |                   15 |
-|      28 |                    1873.90 |                   15 |
-|      30 |                    2070.90 |                   14 |
-|      32 |                    2325.40 |                   14 |
+|       1 |                      18.69 |                   53 |
+|       2 |                      38.03 |                   53 |
+|       4 |                      77.82 |                   51 |
+|       6 |                     118.30 |                   51 |
+|       8 |                     157.65 |                   51 |
+|      10 |                     197.97 |                   51 |
+|      12 |                     239.05 |                   50 |
+|      14 |                     310.06 |                   45 |
+|      16 |                     391.36 |                   41 |
+|      18 |                     441.63 |                   41 |
+|      20 |                     495.88 |                   40 |
+|      22 |                     543.69 |                   40 |
+|      24 |                     591.51 |                   41 |
+|      26 |                     645.98 |                   40 |
+|      28 |                     697.37 |                   40 |
+|      30 |                     749.37 |                   40 |
+|      32 |                     784.63 |                   41 |
 
 ## Analysis
 
-The benchmark results demonstrate the following performance characteristics:
+The benchmark results demonstrate the following performance characteristics with mimalloc as the default allocator:
 
 1. **Best Performance**: Cloned engines with cloned inputs consistently deliver the highest throughput
 2. **Configuration Performance Hierarchy**:
    - Cloned engines, cloned inputs: Best performance (optimal configuration)
-   - Cloned engines, fresh inputs: ~30% reduction from optimal
-   - Fresh engines, cloned inputs: ~86% reduction from optimal
+   - Cloned engines, fresh inputs: ~27% reduction from optimal
+   - Fresh engines, cloned inputs: ~87% reduction from optimal
    - Fresh engines, fresh inputs: ~87% reduction from optimal
-3. **Scaling Patterns**: 
-   - Performance degrades with increased thread count due to contention
+3. **Scaling Patterns with mimalloc**: 
+   - Performance degrades with increased thread count due to contention, but mimalloc provides better thread scaling characteristics
    - Best throughput achieved at 1 thread for cloned engine configurations
    - Fresh engine configurations show poor scaling across all thread counts
+   - The use of mimalloc as the default allocator has improved multi-threaded performance and reduced contention
 4. **Engine Creation Overhead**: Fresh engine creation is a significant performance bottleneck (~7-8x slower than cloned engines)
-5. **Input Processing**: Fresh input generation adds moderate overhead (~30% impact compared to cloned inputs)
-6. **Thread Contention**: Performance degradation occurs with higher thread counts across all configurations
+5. **Input Processing**: Fresh input generation adds moderate overhead (~27% impact compared to cloned inputs)
+6. **Thread Contention**: Performance degradation occurs with higher thread counts across all configurations, though mimalloc helps mitigate some allocation-related contention
