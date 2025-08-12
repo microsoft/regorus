@@ -1,0 +1,15 @@
+{
+  "account": {
+    "name": "devstorageaccount",
+    "tier": "Premium",
+    "replication": "LRS",
+    "location": "westus2",
+    "tags": {
+      "environment": "production"
+    }
+  },
+  "container": {
+    "name": "logs",
+    "publicAccess": "None"
+  }
+}

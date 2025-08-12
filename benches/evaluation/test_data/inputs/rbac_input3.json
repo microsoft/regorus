@@ -1,0 +1,12 @@
+{
+  "user": {
+    "name": "charlie",
+    "roles": ["viewer"]
+  },
+  "resource": {
+    "name": "document3",
+    "type": "document",
+    "owner": "alice"
+  },
+  "action": "read"
+}

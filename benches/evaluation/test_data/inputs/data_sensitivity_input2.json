@@ -1,0 +1,13 @@
+{
+  "data": {
+    "type": "financial_report",
+    "classification": "confidential",
+    "contains_pii": false,
+    "region": "US"
+  },
+  "user": {
+    "clearance": "secret",
+    "location": "US"
+  },
+  "operation": "read"
+}

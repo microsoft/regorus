@@ -1,0 +1,16 @@
+{
+  "vault": {
+    "name": "devkeyvault",
+    "location": "westus2",
+    "enableSoftDelete": true,
+    "softDeleteRetentionInDays": 30,
+    "enablePurgeProtection": false,
+    "networkAcls": {
+      "defaultAction": "Allow",
+      "bypass": "AzureServices"
+    },
+    "tags": {
+      "environment": "development"
+    }
+  }
+}

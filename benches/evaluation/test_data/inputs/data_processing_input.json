@@ -1,0 +1,16 @@
+{
+  "operation": "collect",
+  "data": {
+    "type": "email",
+    "source": "user_input"
+  },
+  "consent": {
+    "given": true,
+    "purpose": "marketing",
+    "date": "2023-01-15"
+  },
+  "user": {
+    "age": 25,
+    "location": "US"
+  }
+}

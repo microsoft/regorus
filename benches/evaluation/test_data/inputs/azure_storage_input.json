@@ -1,0 +1,15 @@
+{
+  "account": {
+    "name": "mystorageaccount",
+    "tier": "Standard",
+    "replication": "LRS",
+    "location": "eastus",
+    "tags": {
+      "environment": "production"
+    }
+  },
+  "container": {
+    "name": "data",
+    "publicAccess": "None"
+  }
+}

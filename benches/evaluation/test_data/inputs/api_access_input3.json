@@ -1,0 +1,15 @@
+{
+  "request": {
+    "method": "DELETE",
+    "path": "/api/v1/users/789"
+  },
+  "user": {
+    "id": "admin123",
+    "scope": ["admin:users"],
+    "department": "security"
+  },
+  "resource": {
+    "owner": "user789",
+    "type": "user"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "operation": "process",
+  "data": {
+    "type": "survey_response",
+    "source": "user_input"
+  },
+  "consent": {
+    "given": true,
+    "purpose": "analytics",
+    "date": "2023-06-15"
+  },
+  "user": {
+    "age": 30,
+    "location": "US"
+  }
+}

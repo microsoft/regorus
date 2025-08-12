@@ -1,0 +1,16 @@
+{
+  "operation": "delete",
+  "data": {
+    "type": "user_profile",
+    "source": "database"
+  },
+  "consent": {
+    "given": false,
+    "purpose": "none",
+    "date": "2022-01-01"
+  },
+  "user": {
+    "age": 16,
+    "location": "EU"
+  }
+}

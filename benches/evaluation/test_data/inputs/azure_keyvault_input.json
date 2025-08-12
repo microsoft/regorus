@@ -1,0 +1,16 @@
+{
+  "vault": {
+    "name": "mykeyvault",
+    "location": "eastus",
+    "enableSoftDelete": true,
+    "softDeleteRetentionInDays": 90,
+    "enablePurgeProtection": true,
+    "networkAcls": {
+      "defaultAction": "Deny",
+      "bypass": "AzureServices"
+    },
+    "tags": {
+      "environment": "production"
+    }
+  }
+}

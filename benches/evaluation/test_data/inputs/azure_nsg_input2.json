@@ -1,0 +1,13 @@
+{
+  "operation": "Microsoft.Network/networkSecurityGroups/securityRules/write",
+  "rule": {
+    "direction": "Inbound",
+    "access": "Allow",
+    "protocol": "TCP",
+    "sourceAddressPrefix": "172.16.0.0/16",
+    "sourcePortRange": "*",
+    "destinationAddressPrefix": "*",
+    "destinationPortRange": "22",
+    "priority": 1200
+  }
+}
