@@ -1,0 +1,609 @@
+Running benchmark with max_threads: 32
+cloned_engines , cloned_inputs /eval/ 1 threads
+                        time:   [9.6968 ms 9.7276 ms 9.7592 ms]
+                        thrpt:  [102.47 Kelem/s 102.80 Kelem/s 103.13 Kelem/s]
+                 change:
+                        time:   [−2.0037% −1.6573% −1.3199%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.3376% +1.6852% +2.0447%]
+                        Performance has improved.
+cloned_engines , cloned_inputs /eval/ 2 threads
+                        time:   [19.516 ms 19.734 ms 19.971 ms]
+                        thrpt:  [100.15 Kelem/s 101.35 Kelem/s 102.48 Kelem/s]
+                 change:
+                        time:   [−8.2316% −6.4221% −4.5210%] (p = 0.00 < 0.05)
+                        thrpt:  [+4.7350% +6.8629% +8.9699%]
+                        Performance has improved.
+Found 17 outliers among 100 measurements (17.00%)
+  7 (7.00%) high mild
+  10 (10.00%) high severe
+cloned_engines , cloned_inputs /eval/ 4 threads
+                        time:   [42.497 ms 43.076 ms 43.693 ms]
+                        thrpt:  [91.547 Kelem/s 92.860 Kelem/s 94.125 Kelem/s]
+                 change:
+                        time:   [−10.461% −8.7299% −6.9056%] (p = 0.00 < 0.05)
+                        thrpt:  [+7.4179% +9.5649% +11.684%]
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+cloned_engines , cloned_inputs /eval/ 6 threads
+                        time:   [67.496 ms 68.144 ms 68.830 ms]
+                        thrpt:  [87.171 Kelem/s 88.048 Kelem/s 88.894 Kelem/s]
+                 change:
+                        time:   [−5.2630% −3.9637% −2.7235%] (p = 0.00 < 0.05)
+                        thrpt:  [+2.7997% +4.1273% +5.5554%]
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high severe
+cloned_engines , cloned_inputs /eval/ 8 threads
+                        time:   [123.19 ms 124.55 ms 125.88 ms]
+                        thrpt:  [63.550 Kelem/s 64.231 Kelem/s 64.940 Kelem/s]
+                 change:
+                        time:   [+2.7464% +4.3487% +6.0197%] (p = 0.00 < 0.05)
+                        thrpt:  [−5.6779% −4.1675% −2.6730%]
+                        Performance has regressed.
+cloned_engines , cloned_inputs /eval/ 10 threads
+                        time:   [182.73 ms 185.77 ms 188.84 ms]
+                        thrpt:  [52.956 Kelem/s 53.831 Kelem/s 54.725 Kelem/s]
+                 change:
+                        time:   [−2.1893% −0.0051% +2.1963%] (p = 0.99 > 0.05)
+                        thrpt:  [−2.1491% +0.0051% +2.2383%]
+                        No change in performance detected.
+cloned_engines , cloned_inputs /eval/ 12 threads
+                        time:   [252.08 ms 255.16 ms 258.28 ms]
+                        thrpt:  [46.461 Kelem/s 47.029 Kelem/s 47.603 Kelem/s]
+                 change:
+                        time:   [+6.2613% +8.3500% +10.455%] (p = 0.00 < 0.05)
+                        thrpt:  [−9.4654% −7.7065% −5.8924%]
+                        Performance has regressed.
+cloned_engines , cloned_inputs /eval/ 14 threads
+                        time:   [317.11 ms 327.64 ms 338.25 ms]
+                        thrpt:  [41.390 Kelem/s 42.729 Kelem/s 44.148 Kelem/s]
+                 change:
+                        time:   [−3.0481% +1.6619% +6.4779%] (p = 0.49 > 0.05)
+                        thrpt:  [−6.0838% −1.6347% +3.1440%]
+                        No change in performance detected.
+cloned_engines , cloned_inputs /eval/ 16 threads
+                        time:   [428.56 ms 440.33 ms 452.15 ms]
+                        thrpt:  [35.386 Kelem/s 36.336 Kelem/s 37.334 Kelem/s]
+                 change:
+                        time:   [+5.0123% +9.8616% +14.717%] (p = 0.00 < 0.05)
+                        thrpt:  [−12.829% −8.9764% −4.7731%]
+                        Performance has regressed.
+cloned_engines , cloned_inputs /eval/ 18 threads
+                        time:   [485.02 ms 494.99 ms 504.92 ms]
+                        thrpt:  [35.649 Kelem/s 36.364 Kelem/s 37.112 Kelem/s]
+                 change:
+                        time:   [+7.5704% +11.534% +15.541%] (p = 0.00 < 0.05)
+                        thrpt:  [−13.451% −10.341% −7.0376%]
+                        Performance has regressed.
+cloned_engines , cloned_inputs /eval/ 20 threads
+                        time:   [523.89 ms 535.21 ms 546.78 ms]
+                        thrpt:  [36.577 Kelem/s 37.369 Kelem/s 38.176 Kelem/s]
+                 change:
+                        time:   [+6.0259% +9.6850% +13.681%] (p = 0.00 < 0.05)
+                        thrpt:  [−12.034% −8.8299% −5.6834%]
+                        Performance has regressed.
+cloned_engines , cloned_inputs /eval/ 22 threads
+                        time:   [572.84 ms 588.68 ms 604.91 ms]
+                        thrpt:  [36.369 Kelem/s 37.372 Kelem/s 38.405 Kelem/s]
+                 change:
+                        time:   [+6.2188% +10.723% +15.226%] (p = 0.00 < 0.05)
+                        thrpt:  [−13.214% −9.6845% −5.8547%]
+                        Performance has regressed.
+cloned_engines , cloned_inputs /eval/ 24 threads
+                        time:   [642.08 ms 663.26 ms 684.87 ms]
+                        thrpt:  [35.043 Kelem/s 36.185 Kelem/s 37.379 Kelem/s]
+                 change:
+                        time:   [+3.9282% +9.4255% +15.079%] (p = 0.00 < 0.05)
+                        thrpt:  [−13.103% −8.6136% −3.7797%]
+                        Performance has regressed.
+cloned_engines , cloned_inputs /eval/ 26 threads
+                        time:   [692.93 ms 710.18 ms 727.45 ms]
+                        thrpt:  [35.741 Kelem/s 36.611 Kelem/s 37.522 Kelem/s]
+                 change:
+                        time:   [+2.7510% +7.0533% +11.706%] (p = 0.00 < 0.05)
+                        thrpt:  [−10.479% −6.5886% −2.6773%]
+                        Performance has regressed.
+Benchmarking cloned_engines , cloned_inputs /eval/ 28 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.4s, or reduce sample count to 90.
+cloned_engines , cloned_inputs /eval/ 28 threads
+                        time:   [739.30 ms 760.26 ms 781.46 ms]
+                        thrpt:  [35.830 Kelem/s 36.829 Kelem/s 37.874 Kelem/s]
+                 change:
+                        time:   [+3.4820% +7.9446% +12.468%] (p = 0.00 < 0.05)
+                        thrpt:  [−11.086% −7.3599% −3.3648%]
+                        Performance has regressed.
+Benchmarking cloned_engines , cloned_inputs /eval/ 30 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.6s, or reduce sample count to 80.
+cloned_engines , cloned_inputs /eval/ 30 threads
+                        time:   [771.74 ms 789.01 ms 806.48 ms]
+                        thrpt:  [37.199 Kelem/s 38.022 Kelem/s 38.873 Kelem/s]
+                 change:
+                        time:   [−1.6586% +2.5202% +7.0441%] (p = 0.25 > 0.05)
+                        thrpt:  [−6.5805% −2.4582% +1.6866%]
+                        No change in performance detected.
+Benchmarking cloned_engines , cloned_inputs /eval/ 32 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.0s, or reduce sample count to 80.
+cloned_engines , cloned_inputs /eval/ 32 threads
+                        time:   [847.08 ms 871.02 ms 894.84 ms]
+                        thrpt:  [35.761 Kelem/s 36.739 Kelem/s 37.777 Kelem/s]
+                 change:
+                        time:   [+4.9398% +9.2702% +13.291%] (p = 0.00 < 0.05)
+                        thrpt:  [−11.732% −8.4837% −4.7072%]
+                        Performance has regressed.
+
+cloned_engines , fresh_inputs  /eval/ 1 threads
+                        time:   [10.753 ms 10.764 ms 10.778 ms]
+                        thrpt:  [92.783 Kelem/s 92.903 Kelem/s 92.995 Kelem/s]
+                 change:
+                        time:   [−0.3763% −0.1778% +0.0001%] (p = 0.06 > 0.05)
+                        thrpt:  [−0.0001% +0.1782% +0.3777%]
+                        No change in performance detected.
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) high mild
+  4 (4.00%) high severe
+cloned_engines , fresh_inputs  /eval/ 2 threads
+                        time:   [21.118 ms 21.204 ms 21.298 ms]
+                        thrpt:  [93.904 Kelem/s 94.321 Kelem/s 94.707 Kelem/s]
+                 change:
+                        time:   [−1.2264% −0.3371% +0.4570%] (p = 0.44 > 0.05)
+                        thrpt:  [−0.4549% +0.3383% +1.2417%]
+                        No change in performance detected.
+Found 18 outliers among 100 measurements (18.00%)
+  3 (3.00%) high mild
+  15 (15.00%) high severe
+cloned_engines , fresh_inputs  /eval/ 4 threads
+                        time:   [46.236 ms 46.713 ms 47.196 ms]
+                        thrpt:  [84.753 Kelem/s 85.628 Kelem/s 86.513 Kelem/s]
+                 change:
+                        time:   [+0.4003% +1.5818% +2.8337%] (p = 0.01 < 0.05)
+                        thrpt:  [−2.7556% −1.5572% −0.3987%]
+                        Change within noise threshold.
+cloned_engines , fresh_inputs  /eval/ 6 threads
+                        time:   [76.294 ms 76.862 ms 77.428 ms]
+                        thrpt:  [77.492 Kelem/s 78.062 Kelem/s 78.643 Kelem/s]
+                 change:
+                        time:   [+8.4181% +9.2882% +10.073%] (p = 0.00 < 0.05)
+                        thrpt:  [−9.1509% −8.4989% −7.7644%]
+                        Performance has regressed.
+cloned_engines , fresh_inputs  /eval/ 8 threads
+                        time:   [131.69 ms 132.60 ms 133.51 ms]
+                        thrpt:  [59.919 Kelem/s 60.333 Kelem/s 60.747 Kelem/s]
+                 change:
+                        time:   [+6.0291% +7.0203% +8.0334%] (p = 0.00 < 0.05)
+                        thrpt:  [−7.4360% −6.5598% −5.6863%]
+                        Performance has regressed.
+cloned_engines , fresh_inputs  /eval/ 10 threads
+                        time:   [208.88 ms 211.63 ms 214.33 ms]
+                        thrpt:  [46.657 Kelem/s 47.251 Kelem/s 47.875 Kelem/s]
+                 change:
+                        time:   [+12.442% +13.959% +15.591%] (p = 0.00 < 0.05)
+                        thrpt:  [−13.488% −12.249% −11.065%]
+                        Performance has regressed.
+cloned_engines , fresh_inputs  /eval/ 12 threads
+                        time:   [287.51 ms 288.69 ms 289.88 ms]
+                        thrpt:  [41.396 Kelem/s 41.567 Kelem/s 41.738 Kelem/s]
+                 change:
+                        time:   [+13.879% +14.459% +15.015%] (p = 0.00 < 0.05)
+                        thrpt:  [−13.055% −12.633% −12.188%]
+                        Performance has regressed.
+cloned_engines , fresh_inputs  /eval/ 14 threads
+                        time:   [412.86 ms 416.23 ms 419.57 ms]
+                        thrpt:  [33.367 Kelem/s 33.635 Kelem/s 33.910 Kelem/s]
+                 change:
+                        time:   [+10.154% +11.494% +12.854%] (p = 0.00 < 0.05)
+                        thrpt:  [−11.390% −10.309% −9.2179%]
+                        Performance has regressed.
+cloned_engines , fresh_inputs  /eval/ 16 threads
+                        time:   [553.81 ms 559.14 ms 564.22 ms]
+                        thrpt:  [28.358 Kelem/s 28.615 Kelem/s 28.891 Kelem/s]
+                 change:
+                        time:   [+18.103% +19.680% +21.289%] (p = 0.00 < 0.05)
+                        thrpt:  [−17.552% −16.444% −15.328%]
+                        Performance has regressed.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) low mild
+cloned_engines , fresh_inputs  /eval/ 18 threads
+                        time:   [619.75 ms 626.08 ms 632.31 ms]
+                        thrpt:  [28.467 Kelem/s 28.750 Kelem/s 29.044 Kelem/s]
+                 change:
+                        time:   [+3.8686% +5.7629% +7.6647%] (p = 0.00 < 0.05)
+                        thrpt:  [−7.1191% −5.4489% −3.7246%]
+                        Performance has regressed.
+cloned_engines , fresh_inputs  /eval/ 20 threads
+                        time:   [672.67 ms 679.73 ms 686.78 ms]
+                        thrpt:  [29.122 Kelem/s 29.424 Kelem/s 29.732 Kelem/s]
+                 change:
+                        time:   [−0.4185% +1.4139% +3.2812%] (p = 0.13 > 0.05)
+                        thrpt:  [−3.1770% −1.3942% +0.4202%]
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) low mild
+Benchmarking cloned_engines , fresh_inputs  /eval/ 22 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.2s, or reduce sample count to 90.
+cloned_engines , fresh_inputs  /eval/ 22 threads
+                        time:   [723.12 ms 731.63 ms 740.05 ms]
+                        thrpt:  [29.728 Kelem/s 30.070 Kelem/s 30.424 Kelem/s]
+                 change:
+                        time:   [−0.4105% +1.4494% +3.3842%] (p = 0.14 > 0.05)
+                        thrpt:  [−3.2734% −1.4287% +0.4122%]
+                        No change in performance detected.
+Benchmarking cloned_engines , fresh_inputs  /eval/ 24 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.5s, or reduce sample count to 90.
+cloned_engines , fresh_inputs  /eval/ 24 threads
+                        time:   [773.91 ms 785.25 ms 796.74 ms]
+                        thrpt:  [30.123 Kelem/s 30.563 Kelem/s 31.011 Kelem/s]
+                 change:
+                        time:   [−2.5046% −0.3132% +1.8764%] (p = 0.77 > 0.05)
+                        thrpt:  [−1.8418% +0.3141% +2.5690%]
+                        No change in performance detected.
+Benchmarking cloned_engines , fresh_inputs  /eval/ 26 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.0s, or reduce sample count to 80.
+cloned_engines , fresh_inputs  /eval/ 26 threads
+                        time:   [881.85 ms 893.03 ms 904.34 ms]
+                        thrpt:  [28.750 Kelem/s 29.114 Kelem/s 29.484 Kelem/s]
+                 change:
+                        time:   [+2.0119% +4.2910% +6.6262%] (p = 0.00 < 0.05)
+                        thrpt:  [−6.2144% −4.1144% −1.9722%]
+                        Performance has regressed.
+Found 8 outliers among 100 measurements (8.00%)
+  3 (3.00%) low mild
+  5 (5.00%) high mild
+Benchmarking cloned_engines , fresh_inputs  /eval/ 28 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.6s, or reduce sample count to 70.
+cloned_engines , fresh_inputs  /eval/ 28 threads
+                        time:   [952.04 ms 965.75 ms 979.68 ms]
+                        thrpt:  [28.581 Kelem/s 28.993 Kelem/s 29.410 Kelem/s]
+                 change:
+                        time:   [−0.5542% +1.7115% +3.9701%] (p = 0.15 > 0.05)
+                        thrpt:  [−3.8185% −1.6827% +0.5573%]
+                        No change in performance detected.
+Benchmarking cloned_engines , fresh_inputs  /eval/ 30 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.7s, or reduce sample count to 70.
+cloned_engines , fresh_inputs  /eval/ 30 threads
+                        time:   [1.0109 s 1.0268 s 1.0429 s]
+                        thrpt:  [28.767 Kelem/s 29.216 Kelem/s 29.677 Kelem/s]
+                 change:
+                        time:   [−2.5051% −0.0766% +2.4734%] (p = 0.95 > 0.05)
+                        thrpt:  [−2.4137% +0.0767% +2.5695%]
+                        No change in performance detected.
+Benchmarking cloned_engines , fresh_inputs  /eval/ 32 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 7.0s, or reduce sample count to 70.
+cloned_engines , fresh_inputs  /eval/ 32 threads
+                        time:   [1.1051 s 1.1262 s 1.1477 s]
+                        thrpt:  [27.882 Kelem/s 28.415 Kelem/s 28.957 Kelem/s]
+                 change:
+                        time:   [−48.585% −47.403% −46.291%] (p = 0.00 < 0.05)
+                        thrpt:  [+86.190% +90.125% +94.497%]
+                        Performance has improved.
+
+fresh_engines  , cloned_inputs /eval/ 1 threads
+                        time:   [23.927 ms 23.947 ms 23.969 ms]
+                        thrpt:  [41.720 Kelem/s 41.760 Kelem/s 41.795 Kelem/s]
+                 change:
+                        time:   [+5.2427% +5.3851% +5.5163%] (p = 0.00 < 0.05)
+                        thrpt:  [−5.2279% −5.1100% −4.9815%]
+                        Performance has regressed.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high severe
+fresh_engines  , cloned_inputs /eval/ 2 threads
+                        time:   [47.852 ms 47.910 ms 47.998 ms]
+                        thrpt:  [41.668 Kelem/s 41.745 Kelem/s 41.795 Kelem/s]
+                 change:
+                        time:   [+0.8739% +1.8009% +2.6339%] (p = 0.00 < 0.05)
+                        thrpt:  [−2.5663% −1.7691% −0.8663%]
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+fresh_engines  , cloned_inputs /eval/ 4 threads
+                        time:   [103.36 ms 103.60 ms 103.85 ms]
+                        thrpt:  [38.517 Kelem/s 38.609 Kelem/s 38.698 Kelem/s]
+                 change:
+                        time:   [−1.5696% −1.1495% −0.7560%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.7617% +1.1628% +1.5946%]
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+fresh_engines  , cloned_inputs /eval/ 6 threads
+                        time:   [161.16 ms 162.29 ms 163.45 ms]
+                        thrpt:  [36.710 Kelem/s 36.971 Kelem/s 37.231 Kelem/s]
+                 change:
+                        time:   [−2.3550% −1.5146% −0.6633%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.6677% +1.5378% +2.4118%]
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+fresh_engines  , cloned_inputs /eval/ 8 threads
+                        time:   [268.51 ms 270.82 ms 273.13 ms]
+                        thrpt:  [29.290 Kelem/s 29.540 Kelem/s 29.794 Kelem/s]
+                 change:
+                        time:   [−5.8590% −4.7730% −3.6481%] (p = 0.00 < 0.05)
+                        thrpt:  [+3.7862% +5.0122% +6.2237%]
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) low mild
+Benchmarking fresh_engines  , cloned_inputs /eval/ 10 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.1s, or reduce sample count to 90.
+fresh_engines  , cloned_inputs /eval/ 10 threads
+                        time:   [410.83 ms 415.02 ms 419.32 ms]
+                        thrpt:  [23.848 Kelem/s 24.095 Kelem/s 24.341 Kelem/s]
+                 change:
+                        time:   [−5.9768% −4.6116% −3.2171%] (p = 0.00 < 0.05)
+                        thrpt:  [+3.3240% +4.8346% +6.3567%]
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking fresh_engines  , cloned_inputs /eval/ 12 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.8s, or reduce sample count to 80.
+fresh_engines  , cloned_inputs /eval/ 12 threads
+                        time:   [574.94 ms 580.89 ms 586.92 ms]
+                        thrpt:  [20.446 Kelem/s 20.658 Kelem/s 20.872 Kelem/s]
+                 change:
+                        time:   [−5.4260% −4.1622% −2.8466%] (p = 0.00 < 0.05)
+                        thrpt:  [+2.9300% +4.3429% +5.7373%]
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking fresh_engines  , cloned_inputs /eval/ 14 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.6s, or reduce sample count to 70.
+fresh_engines  , cloned_inputs /eval/ 14 threads
+                        time:   [770.11 ms 778.16 ms 786.36 ms]
+                        thrpt:  [17.804 Kelem/s 17.991 Kelem/s 18.179 Kelem/s]
+                 change:
+                        time:   [−4.0942% −2.7066% −1.1939%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.2083% +2.7819% +4.2689%]
+                        Performance has improved.
+Benchmarking fresh_engines  , cloned_inputs /eval/ 16 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.8s, or reduce sample count to 70.
+fresh_engines  , cloned_inputs /eval/ 16 threads
+                        time:   [949.30 ms 958.01 ms 966.76 ms]
+                        thrpt:  [16.550 Kelem/s 16.701 Kelem/s 16.854 Kelem/s]
+                 change:
+                        time:   [+2.0514% +3.4747% +5.0317%] (p = 0.00 < 0.05)
+                        thrpt:  [−4.7907% −3.3580% −2.0101%]
+                        Performance has regressed.
+Benchmarking fresh_engines  , cloned_inputs /eval/ 18 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 8.6s, or reduce sample count to 50.
+fresh_engines  , cloned_inputs /eval/ 18 threads
+                        time:   [1.1203 s 1.1307 s 1.1411 s]
+                        thrpt:  [15.774 Kelem/s 15.919 Kelem/s 16.067 Kelem/s]
+                 change:
+                        time:   [−6.8327% −5.4764% −4.0929%] (p = 0.00 < 0.05)
+                        thrpt:  [+4.2675% +5.7937% +7.3338%]
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking fresh_engines  , cloned_inputs /eval/ 20 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 9.0s, or reduce sample count to 50.
+fresh_engines  , cloned_inputs /eval/ 20 threads
+                        time:   [1.2626 s 1.2757 s 1.2888 s]
+                        thrpt:  [15.519 Kelem/s 15.678 Kelem/s 15.840 Kelem/s]
+                 change:
+                        time:   [−17.889% −16.707% −15.526%] (p = 0.00 < 0.05)
+                        thrpt:  [+18.379% +20.059% +21.787%]
+                        Performance has improved.
+Benchmarking fresh_engines  , cloned_inputs /eval/ 22 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 9.1s, or reduce sample count to 50.
+fresh_engines  , cloned_inputs /eval/ 22 threads
+                        time:   [1.4130 s 1.4292 s 1.4454 s]
+                        thrpt:  [15.220 Kelem/s 15.393 Kelem/s 15.569 Kelem/s]
+                 change:
+                        time:   [−19.703% −18.450% −17.239%] (p = 0.00 < 0.05)
+                        thrpt:  [+20.830% +22.624% +24.538%]
+                        Performance has improved.
+Benchmarking fresh_engines  , cloned_inputs /eval/ 24 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 10.9s, or reduce sample count to 40.
+fresh_engines  , cloned_inputs /eval/ 24 threads
+                        time:   [1.5795 s 1.5998 s 1.6206 s]
+                        thrpt:  [14.809 Kelem/s 15.002 Kelem/s 15.195 Kelem/s]
+                 change:
+                        time:   [−21.052% −19.558% −18.076%] (p = 0.00 < 0.05)
+                        thrpt:  [+22.064% +24.313% +26.665%]
+                        Performance has improved.
+Benchmarking fresh_engines  , cloned_inputs /eval/ 26 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 11.1s, or reduce sample count to 40.
+fresh_engines  , cloned_inputs /eval/ 26 threads
+                        time:   [1.7684 s 1.7879 s 1.8076 s]
+                        thrpt:  [14.383 Kelem/s 14.543 Kelem/s 14.702 Kelem/s]
+                 change:
+                        time:   [−24.486% −23.187% −21.900%] (p = 0.00 < 0.05)
+                        thrpt:  [+28.041% +30.186% +32.426%]
+                        Performance has improved.
+Benchmarking fresh_engines  , cloned_inputs /eval/ 28 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 11.9s, or reduce sample count to 40.
+fresh_engines  , cloned_inputs /eval/ 28 threads
+                        time:   [1.9797 s 2.0090 s 2.0384 s]
+                        thrpt:  [13.736 Kelem/s 13.937 Kelem/s 14.144 Kelem/s]
+                 change:
+                        time:   [−26.959% −25.470% −24.063%] (p = 0.00 < 0.05)
+                        thrpt:  [+31.688% +34.174% +36.909%]
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking fresh_engines  , cloned_inputs /eval/ 30 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 12.6s, or reduce sample count to 30.
+fresh_engines  , cloned_inputs /eval/ 30 threads
+                        time:   [2.1725 s 2.2083 s 2.2447 s]
+                        thrpt:  [13.365 Kelem/s 13.585 Kelem/s 13.809 Kelem/s]
+                 change:
+                        time:   [−28.260% −26.787% −25.189%] (p = 0.00 < 0.05)
+                        thrpt:  [+33.670% +36.588% +39.392%]
+                        Performance has improved.
+Benchmarking fresh_engines  , cloned_inputs /eval/ 32 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 14.0s, or reduce sample count to 30.
+fresh_engines  , cloned_inputs /eval/ 32 threads
+                        time:   [2.3615 s 2.4051 s 2.4506 s]
+                        thrpt:  [13.058 Kelem/s 13.305 Kelem/s 13.551 Kelem/s]
+                 change:
+                        time:   [−30.137% −28.726% −27.236%] (p = 0.00 < 0.05)
+                        thrpt:  [+37.430% +40.304% +43.136%]
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+fresh_engines  , fresh_inputs  /eval/ 1 threads
+                        time:   [24.786 ms 24.802 ms 24.819 ms]
+                        thrpt:  [40.292 Kelem/s 40.319 Kelem/s 40.345 Kelem/s]
+                 change:
+                        time:   [+5.1991% +5.3525% +5.4866%] (p = 0.00 < 0.05)
+                        thrpt:  [−5.2013% −5.0805% −4.9422%]
+                        Performance has regressed.
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+fresh_engines  , fresh_inputs  /eval/ 2 threads
+                        time:   [53.902 ms 54.471 ms 55.017 ms]
+                        thrpt:  [36.352 Kelem/s 36.717 Kelem/s 37.104 Kelem/s]
+                 change:
+                        time:   [+4.8842% +6.5984% +8.2747%] (p = 0.00 < 0.05)
+                        thrpt:  [−7.6424% −6.1900% −4.6568%]
+                        Performance has regressed.
+fresh_engines  , fresh_inputs  /eval/ 4 threads
+                        time:   [113.68 ms 114.47 ms 115.28 ms]
+                        thrpt:  [34.698 Kelem/s 34.943 Kelem/s 35.187 Kelem/s]
+                 change:
+                        time:   [+6.2486% +7.0964% +7.9428%] (p = 0.00 < 0.05)
+                        thrpt:  [−7.3583% −6.6262% −5.8811%]
+                        Performance has regressed.
+fresh_engines  , fresh_inputs  /eval/ 6 threads
+                        time:   [173.21 ms 174.73 ms 176.24 ms]
+                        thrpt:  [34.045 Kelem/s 34.339 Kelem/s 34.640 Kelem/s]
+                 change:
+                        time:   [−2.1760% −1.1847% −0.2066%] (p = 0.02 < 0.05)
+                        thrpt:  [+0.2070% +1.1989% +2.2244%]
+                        Change within noise threshold.
+fresh_engines  , fresh_inputs  /eval/ 8 threads
+                        time:   [269.55 ms 272.26 ms 274.97 ms]
+                        thrpt:  [29.094 Kelem/s 29.384 Kelem/s 29.679 Kelem/s]
+                 change:
+                        time:   [−4.2375% −3.1049% −2.0082%] (p = 0.00 < 0.05)
+                        thrpt:  [+2.0494% +3.2044% +4.4250%]
+                        Performance has improved.
+fresh_engines  , fresh_inputs  /eval/ 10 threads
+                        time:   [376.99 ms 381.14 ms 385.26 ms]
+                        thrpt:  [25.957 Kelem/s 26.237 Kelem/s 26.526 Kelem/s]
+                 change:
+                        time:   [−3.9322% −2.7043% −1.4234%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.4439% +2.7794% +4.0931%]
+                        Performance has improved.
+Benchmarking fresh_engines  , fresh_inputs  /eval/ 12 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.3s, or reduce sample count to 90.
+fresh_engines  , fresh_inputs  /eval/ 12 threads
+                        time:   [508.95 ms 509.88 ms 510.80 ms]
+                        thrpt:  [23.493 Kelem/s 23.535 Kelem/s 23.578 Kelem/s]
+                 change:
+                        time:   [−2.9069% −2.6954% −2.5006%] (p = 0.00 < 0.05)
+                        thrpt:  [+2.5647% +2.7701% +2.9939%]
+                        Performance has improved.
+Benchmarking fresh_engines  , fresh_inputs  /eval/ 14 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.2s, or reduce sample count to 80.
+fresh_engines  , fresh_inputs  /eval/ 14 threads
+                        time:   [702.37 ms 703.75 ms 705.11 ms]
+                        thrpt:  [19.855 Kelem/s 19.893 Kelem/s 19.933 Kelem/s]
+                 change:
+                        time:   [−0.7653% −0.4823% −0.2140%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.2145% +0.4846% +0.7712%]
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) low mild
+  1 (1.00%) high mild
+Benchmarking fresh_engines  , fresh_inputs  /eval/ 16 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.9s, or reduce sample count to 70.
+fresh_engines  , fresh_inputs  /eval/ 16 threads
+                        time:   [904.62 ms 906.47 ms 908.39 ms]
+                        thrpt:  [17.614 Kelem/s 17.651 Kelem/s 17.687 Kelem/s]
+                 change:
+                        time:   [+1.3336% +1.5713% +1.8179%] (p = 0.00 < 0.05)
+                        thrpt:  [−1.7854% −1.5469% −1.3160%]
+                        Performance has regressed.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking fresh_engines  , fresh_inputs  /eval/ 18 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 7.8s, or reduce sample count to 60.
+fresh_engines  , fresh_inputs  /eval/ 18 threads
+                        time:   [1.0784 s 1.0813 s 1.0839 s]
+                        thrpt:  [16.607 Kelem/s 16.647 Kelem/s 16.691 Kelem/s]
+                 change:
+                        time:   [−4.3934% −4.0143% −3.6546%] (p = 0.00 < 0.05)
+                        thrpt:  [+3.7932% +4.1822% +4.5953%]
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) low severe
+  1 (1.00%) low mild
+Benchmarking fresh_engines  , fresh_inputs  /eval/ 20 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 8.6s, or reduce sample count to 50.
+fresh_engines  , fresh_inputs  /eval/ 20 threads
+                        time:   [1.2475 s 1.2507 s 1.2539 s]
+                        thrpt:  [15.951 Kelem/s 15.991 Kelem/s 16.032 Kelem/s]
+                 change:
+                        time:   [−9.2169% −8.8422% −8.4592%] (p = 0.00 < 0.05)
+                        thrpt:  [+9.2409% +9.6999% +10.153%]
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+Benchmarking fresh_engines  , fresh_inputs  /eval/ 22 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 10.0s, or reduce sample count to 40.
+fresh_engines  , fresh_inputs  /eval/ 22 threads
+                        time:   [1.4947 s 1.5024 s 1.5100 s]
+                        thrpt:  [14.569 Kelem/s 14.643 Kelem/s 14.718 Kelem/s]
+                 change:
+                        time:   [−10.312% −9.7306% −9.1509%] (p = 0.00 < 0.05)
+                        thrpt:  [+10.073% +10.779% +11.497%]
+                        Performance has improved.
+Benchmarking fresh_engines  , fresh_inputs  /eval/ 24 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 11.2s, or reduce sample count to 40.
+fresh_engines  , fresh_inputs  /eval/ 24 threads
+                        time:   [1.6394 s 1.6498 s 1.6607 s]
+                        thrpt:  [14.452 Kelem/s 14.547 Kelem/s 14.640 Kelem/s]
+                 change:
+                        time:   [−12.429% −11.654% −10.861%] (p = 0.00 < 0.05)
+                        thrpt:  [+12.185% +13.192% +14.193%]
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+Benchmarking fresh_engines  , fresh_inputs  /eval/ 26 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 11.6s, or reduce sample count to 40.
+fresh_engines  , fresh_inputs  /eval/ 26 threads
+                        time:   [1.8935 s 1.9078 s 1.9219 s]
+                        thrpt:  [13.528 Kelem/s 13.628 Kelem/s 13.731 Kelem/s]
+                 change:
+                        time:   [−12.276% −11.352% −10.440%] (p = 0.00 < 0.05)
+                        thrpt:  [+11.657% +12.805% +13.994%]
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) low mild
+Benchmarking fresh_engines  , fresh_inputs  /eval/ 28 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 13.3s, or reduce sample count to 30.
+fresh_engines  , fresh_inputs  /eval/ 28 threads
+                        time:   [2.2595 s 2.2818 s 2.3039 s]
+                        thrpt:  [12.153 Kelem/s 12.271 Kelem/s 12.392 Kelem/s]
+                 change:
+                        time:   [−9.7582% −8.7462% −7.5910%] (p = 0.00 < 0.05)
+                        thrpt:  [+8.2145% +9.5845% +10.813%]
+                        Performance has improved.
+Benchmarking fresh_engines  , fresh_inputs  /eval/ 30 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 14.6s, or reduce sample count to 30.
+fresh_engines  , fresh_inputs  /eval/ 30 threads
+                        time:   [2.6026 s 2.6241 s 2.6451 s]
+                        thrpt:  [11.342 Kelem/s 11.432 Kelem/s 11.527 Kelem/s]
+                 change:
+                        time:   [−11.158% −10.271% −9.3670%] (p = 0.00 < 0.05)
+                        thrpt:  [+10.335% +11.447% +12.560%]
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) low mild
+Benchmarking fresh_engines  , fresh_inputs  /eval/ 32 threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 15.5s, or reduce sample count to 30.
+fresh_engines  , fresh_inputs  /eval/ 32 threads
+                        time:   [2.8390 s 2.8641 s 2.8890 s]
+                        thrpt:  [11.076 Kelem/s 11.173 Kelem/s 11.272 Kelem/s]
+                 change:
+                        time:   [−14.645% −13.702% −12.728%] (p = 0.00 < 0.05)
+                        thrpt:  [+14.585% +15.878% +17.158%]
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
