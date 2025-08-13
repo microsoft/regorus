@@ -201,7 +201,6 @@ type String = Rc<str>;
 
 pub mod error;
 mod meta;
-pub mod registry;
 pub mod validate;
 
 /// A schema represents a type definition that can be used for validation.
@@ -1033,4 +1032,11 @@ impl<'de> Deserialize<'de> for DiscriminatedSubobject {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    mod azure;
+    mod suite;
+    mod validate {
+        mod effect;
+        mod resource;
+    }
+}

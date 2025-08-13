@@ -27,6 +27,8 @@ mod interpreter;
 mod lexer;
 mod number;
 mod parser;
+#[cfg(feature = "azure_policy")]
+mod registry;
 mod scheduler;
 #[cfg(feature = "azure_policy")]
 mod schema;

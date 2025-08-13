@@ -6,17 +6,18 @@ use crate::{schema::Schema, *};
 use serde_json::json;
 
 type String = Rc<str>;
+type SchemaRegistryError = RegistryError;
 
 #[test]
 fn test_schema_registry_new() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("test");
     assert!(registry.is_empty());
     assert_eq!(registry.len(), 0);
 }
 
 #[test]
 fn test_schema_registry_register_success() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("test");
     let schema = create_test_schema();
 
     let result = registry.register("test_schema", schema.clone());
@@ -27,7 +28,7 @@ fn test_schema_registry_register_success() {
 
 #[test]
 fn test_schema_registry_register_duplicate() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("test");
     let schema = create_test_schema();
 
     // Register first time - should succeed
@@ -38,9 +39,8 @@ fn test_schema_registry_register_duplicate() {
     let result2 = registry.register("test_schema", schema);
     assert!(result2.is_err());
 
-    if let Err(SchemaRegistryError::AlreadyExists(name)) = result2 {
+    if let Err(SchemaRegistryError::AlreadyExists { name, .. }) = result2 {
         assert_eq!(name, "test_schema".into());
-        assert!(name.contains("test_schema"));
     } else {
         panic!("Expected AlreadyExists error");
     }
@@ -48,7 +48,7 @@ fn test_schema_registry_register_duplicate() {
 
 #[test]
 fn test_schema_registry_get() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("test");
     let schema = create_test_schema();
 
     // Get non-existent schema
@@ -66,7 +66,7 @@ fn test_schema_registry_get() {
 
 #[test]
 fn test_schema_registry_remove() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("test");
     let schema = create_test_schema();
 
     // Remove non-existent schema
@@ -88,7 +88,7 @@ fn test_schema_registry_remove() {
 
 #[test]
 fn test_schema_registry_list_names() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("TestSchemaRegistry");
 
     // Empty registry
     assert!(registry.list_names().is_empty());
@@ -108,7 +108,7 @@ fn test_schema_registry_list_names() {
 
 #[test]
 fn test_schema_registry_clear() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("TestSchemaRegistry");
     let schema = create_test_schema();
 
     // Add some schemas
@@ -125,16 +125,22 @@ fn test_schema_registry_clear() {
 
 #[test]
 fn test_error_display() {
-    let error = SchemaRegistryError::AlreadyExists("test_schema".into());
+    let error = SchemaRegistryError::AlreadyExists {
+        name: "test_schema".into(),
+        registry: "test".into(),
+    };
     let error_message = format!("{error}");
     assert_eq!(
         error_message,
-        "Schema registration failed: A schema with the name 'test_schema' is already registered."
+        "test registration failed: An item with the name 'test_schema' is already registered."
     );
 
-    let invalid_error = SchemaRegistryError::InvalidName(" ".into());
+    let invalid_error = SchemaRegistryError::InvalidName {
+        name: " ".into(),
+        registry: "test".into(),
+    };
     let invalid_error_message = format!("{invalid_error}");
-    assert_eq!(invalid_error_message, "Schema registration failed: The name ' ' is invalid (empty or whitespace-only names are not allowed).");
+    assert_eq!(invalid_error_message, "test registration failed: The name ' ' is invalid (empty or whitespace-only names are not allowed).");
 }
 
 #[test]
@@ -144,7 +150,7 @@ fn test_concurrent_access() {
     use std::thread;
 
     // Create a fresh registry for this test to avoid interference
-    let test_registry = Rc::new(SchemaRegistry::new());
+    let test_registry = Rc::new(SchemaRegistry::new("TestSchemaRegistry"));
 
     let barrier = Rc::new(Barrier::new(4));
     let mut handles = vec![];
@@ -183,7 +189,7 @@ fn test_concurrent_duplicate_registration() {
     use std::thread;
 
     // Create a fresh registry for this test to avoid interference
-    let test_registry = Rc::new(SchemaRegistry::new());
+    let test_registry = Rc::new(SchemaRegistry::new("TestSchemaRegistry"));
 
     let barrier = Rc::new(Barrier::new(3));
     let mut handles = vec![];
@@ -228,7 +234,7 @@ fn create_test_schema() -> Rc<Schema> {
 // Corner case tests
 #[test]
 fn test_empty_schema_name() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("TestSchemaRegistry");
     let schema = create_test_schema();
 
     // Empty string as schema name should fail
@@ -236,7 +242,7 @@ fn test_empty_schema_name() {
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
-        SchemaRegistryError::InvalidName(_)
+        SchemaRegistryError::InvalidName { .. }
     ));
     assert!(!registry.contains(""));
     assert_eq!(registry.len(), 0);
@@ -245,7 +251,7 @@ fn test_empty_schema_name() {
 
 #[test]
 fn test_unicode_schema_names() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("TestSchemaRegistry");
     let schema = create_test_schema();
 
     // Test various Unicode characters
@@ -279,7 +285,7 @@ fn test_unicode_schema_names() {
 
 #[test]
 fn test_very_long_schema_name() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("TestSchemaRegistry");
     let schema = create_test_schema();
 
     // Create a very long name (1000 characters)
@@ -295,7 +301,7 @@ fn test_very_long_schema_name() {
 
 #[test]
 fn test_special_character_schema_names() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("TestSchemaRegistry");
     let schema = create_test_schema();
 
     let special_names = vec![
@@ -332,7 +338,7 @@ fn test_special_character_schema_names() {
 
 #[test]
 fn test_whitespace_only_names() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("TestSchemaRegistry");
     let schema = create_test_schema();
 
     let whitespace_names = vec![
@@ -353,7 +359,7 @@ fn test_whitespace_only_names() {
         );
         assert!(matches!(
             result.unwrap_err(),
-            SchemaRegistryError::InvalidName(_)
+            SchemaRegistryError::InvalidName { .. }
         ));
         assert!(!registry.contains(name));
     }
@@ -363,7 +369,7 @@ fn test_whitespace_only_names() {
 
 #[test]
 fn test_valid_names_with_whitespace() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("TestSchemaRegistry");
     let schema = create_test_schema();
 
     let valid_names = vec![
@@ -385,7 +391,7 @@ fn test_valid_names_with_whitespace() {
 
 #[test]
 fn test_same_schema_different_names() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("TestSchemaRegistry");
     let schema = create_test_schema();
 
     // Register the same schema instance with different names
@@ -407,7 +413,7 @@ fn test_same_schema_different_names() {
 
 #[test]
 fn test_register_after_remove_and_clear() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("TestSchemaRegistry");
     let schema = create_test_schema();
 
     // Register, remove, then register again with same name
@@ -433,7 +439,7 @@ fn test_register_after_remove_and_clear() {
 
 #[test]
 fn test_case_sensitive_names() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("TestSchemaRegistry");
     let schema = create_test_schema();
 
     // Register schemas with different cases of the same name
@@ -459,7 +465,7 @@ fn test_case_sensitive_names() {
 
 #[test]
 fn test_error_after_schema_removal() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("TestSchemaRegistry");
     let schema = create_test_schema();
 
     // Register schema
@@ -475,7 +481,7 @@ fn test_error_after_schema_removal() {
 
 #[test]
 fn test_mixed_operations_sequence() {
-    let registry = SchemaRegistry::new();
+    let registry = SchemaRegistry::new("TestSchemaRegistry");
     let schema1 = create_test_schema();
     let schema2 = create_test_schema();
 
