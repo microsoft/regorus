@@ -3,7 +3,7 @@
 
 use super::super::registry::*;
 use crate::{
-    schema::{validate::SchemaValidator, validate::ValidationError, Schema, Type},
+    schema::{error::ValidationError, validate::SchemaValidator, Schema, Type},
     *,
 };
 use serde_json::json;
