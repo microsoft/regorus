@@ -199,6 +199,7 @@ use crate::{format, Box, Rc, Value, Vec};
 
 type String = Rc<str>;
 
+pub mod error;
 mod meta;
 pub mod registry;
 pub mod validate;

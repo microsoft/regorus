@@ -2,10 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::{
-    schema::{
-        validate::{SchemaValidator, ValidationError},
-        Schema,
-    },
+    schema::{error::ValidationError, validate::SchemaValidator, Schema},
     *,
 };
 use alloc::collections::BTreeMap;
