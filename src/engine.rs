@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::ast::*;
+use crate::compiled_policy::CompiledPolicy;
 use crate::interpreter::*;
 use crate::lexer::*;
 use crate::parser::*;
@@ -346,7 +347,7 @@ impl Engine {
     /// Get the data document.
     ///
     /// The returned value is the data document that has been constructed using
-    /// one or more calls to [`Engine::add_data`]. The values of policy rules are
+    /// one or more calls to [`Engine::pre`]. The values of policy rules are
     /// not included in the returned document.
     ///
     ///
@@ -397,6 +398,259 @@ impl Engine {
         &self.modules
     }
 
+    /// Compiles a target-aware policy from the current engine state.
+    ///
+    /// This method creates a compiled policy that can work with Azure Policy targets,
+    /// enabling resource type inference and target-specific evaluation. The compiled
+    /// policy will automatically detect and handle `__target__` declarations in the
+    /// loaded modules.
+    ///
+    /// The engine must have been prepared with:
+    /// - Policy modules added via [`Engine::add_policy`]
+    /// - Data added via [`Engine::add_data`] (optional)
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`CompiledPolicy`] that can be used for efficient policy evaluation
+    /// with target support, including resource type inference capabilities.
+    ///
+    /// # Examples
+    ///
+    /// ## Basic Target-Aware Compilation
+    ///
+    /// ```no_run
+    /// use regorus::*;
+    ///
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    /// engine.add_data(Value::from_json_str(r#"{"allowed_sizes": ["small", "medium"]}"#)?)?;
+    /// engine.add_policy("policy.rego".to_string(), r#"
+    ///     package policy.test
+    ///     import rego.v1
+    ///     __target__ := "target.tests.sample_test_target"
+    ///     
+    ///     default allow := false
+    ///     allow if {
+    ///         input.type == "vm"
+    ///         input.size in data.allowed_sizes
+    ///     }
+    /// "#.to_string())?;
+    ///
+    /// let compiled = engine.compile_for_target()?;
+    /// let result = compiled.eval_with_input(Value::from_json_str(r#"{"type": "vm", "size": "small"}"#)?)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Target Registration and Usage
+    ///
+    /// ```no_run
+    /// use regorus::*;
+    /// use regorus::registry::targets;
+    /// use regorus::target::Target;
+    /// use std::sync::Arc;
+    ///
+    /// # fn main() -> anyhow::Result<()> {
+    /// // Register a target first
+    /// let target_json = r#"
+    /// {
+    ///   "name": "target.example.vm_policy",
+    ///   "description": "Simple VM validation target",
+    ///   "version": "1.0.0",
+    ///   "resource_schema_selector": "type",
+    ///   "resource_schemas": [
+    ///     {
+    ///       "type": "object",
+    ///       "properties": {
+    ///         "name": { "type": "string" },
+    ///         "type": { "const": "vm" },
+    ///         "size": { "enum": ["small", "medium", "large"] }
+    ///       },
+    ///       "required": ["name", "type", "size"]
+    ///     }
+    ///   ],
+    ///   "effects": {
+    ///     "allow": { "type": "boolean" },
+    ///     "deny": { "type": "boolean" }
+    ///   }
+    /// }
+    /// "#;
+    ///
+    /// let target = Target::from_json_str(target_json)?;
+    /// targets::register(Arc::new(target))?;
+    ///
+    /// // Use the target in a policy
+    /// let mut engine = Engine::new();
+    /// engine.add_data(Value::from_json_str(r#"{"allowed_locations": ["us-east"]}"#)?)?;
+    /// engine.add_policy("vm_policy.rego".to_string(), r#"
+    ///     package vm.validation
+    ///     import rego.v1
+    ///     __target__ := "target.example.vm_policy"
+    ///     
+    ///     default allow := false
+    ///     allow if {
+    ///         input.type == "vm"
+    ///         input.size in ["small", "medium"]
+    ///     }
+    /// "#.to_string())?;
+    ///
+    /// let compiled = engine.compile_for_target()?;
+    /// let result = compiled.eval_with_input(Value::from_json_str(r#"
+    /// {
+    ///   "name": "test-vm",
+    ///   "type": "vm",
+    ///   "size": "small"
+    /// }"#)?)?;
+    /// assert_eq!(result, Value::from(true));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Notes
+    ///
+    /// - This method is only available when the `azure_policy` feature is enabled
+    /// - Automatically enables print gathering for debugging purposes
+    /// - Requires that at least one module contains a `__target__` declaration
+    /// - The target referenced must be registered in the target registry
+    ///
+    /// # See Also
+    ///
+    /// - [`Engine::compile_with_entrypoint`] for explicit rule-based compilation
+    /// - [`crate::compile_policy_for_target`] for a higher-level convenience function
+    #[cfg(feature = "azure_policy")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
+    pub fn compile_for_target(&mut self) -> Result<CompiledPolicy> {
+        self.prepare_for_eval(false, true)?;
+        self.interpreter.clean_internal_evaluation_state();
+        self.interpreter.compile(None).map(CompiledPolicy::new)
+    }
+
+    /// Compiles a policy with a specific entry point rule.
+    ///
+    /// This method creates a compiled policy that evaluates a specific rule as the entry point.
+    /// Unlike [`Engine::compile_for_target`], this method requires you to explicitly specify which
+    /// rule should be evaluated and does not automatically handle target-specific features.
+    ///
+    /// The engine must have been prepared with:
+    /// - Policy modules added via [`Engine::add_policy`]
+    /// - Data added via [`Engine::add_data`] (optional)
+    ///
+    /// # Arguments
+    ///
+    /// * `rule` - The specific rule path to evaluate (e.g., "data.policy.allow")
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`CompiledPolicy`] that can be used for efficient policy evaluation
+    /// focused on the specified entry point rule.
+    ///
+    /// # Examples
+    ///
+    /// ## Basic Usage
+    ///
+    /// ```no_run
+    /// use regorus::*;
+    /// use std::rc::Rc;
+    ///
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    /// engine.add_data(Value::from_json_str(r#"{"allowed_users": ["alice", "bob"]}"#)?)?;
+    /// engine.add_policy("authz.rego".to_string(), r#"
+    ///     package authz
+    ///     import rego.v1
+    ///     
+    ///     default allow := false
+    ///     allow if {
+    ///         input.user in data.allowed_users
+    ///         input.action == "read"
+    ///     }
+    ///     
+    ///     deny if {
+    ///         input.user == "guest"
+    ///     }
+    /// "#.to_string())?;
+    ///
+    /// let compiled = engine.compile_with_entrypoint(&"data.authz.allow".into())?;
+    /// let result = compiled.eval_with_input(Value::from_json_str(r#"{"user": "alice", "action": "read"}"#)?)?;
+    /// assert_eq!(result, Value::from(true));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Multi-Module Policy
+    ///
+    /// ```no_run
+    /// use regorus::*;
+    /// use std::rc::Rc;
+    ///
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    /// engine.add_data(Value::from_json_str(r#"{"departments": {"engineering": ["alice"], "hr": ["bob"]}}"#)?)?;
+    ///
+    /// engine.add_policy("users.rego".to_string(), r#"
+    ///     package users
+    ///     import rego.v1
+    ///     
+    ///     user_department(user) := dept if {
+    ///         dept := [d | data.departments[d][_] == user][0]
+    ///     }
+    /// "#.to_string())?;
+    ///
+    /// engine.add_policy("permissions.rego".to_string(), r#"
+    ///     package permissions
+    ///     import rego.v1
+    ///     import data.users
+    ///     
+    ///     default allow := false
+    ///     allow if {
+    ///         users.user_department(input.user) == "engineering"
+    ///         input.resource.type == "code"
+    ///     }
+    ///     
+    ///     allow if {
+    ///         users.user_department(input.user) == "hr"
+    ///         input.resource.type == "personnel_data"
+    ///     }
+    /// "#.to_string())?;
+    ///
+    /// let compiled = engine.compile_with_entrypoint(&"data.permissions.allow".into())?;
+    ///
+    /// // Test engineering access to code
+    /// let result = compiled.eval_with_input(Value::from_json_str(r#"
+    /// {
+    ///   "user": "alice",
+    ///   "resource": {"type": "code", "name": "main.rs"}
+    /// }"#)?)?;
+    /// assert_eq!(result, Value::from(true));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Entry Point Rule Format
+    ///
+    /// The `rule` parameter should follow the Rego rule path format:
+    /// - `"data.package.rule"` - For rules in a specific package
+    /// - `"data.package.subpackage.rule"` - For nested packages
+    /// - `"allow"` - For rules in the default package (though this is not recommended)
+    ///
+    /// # Notes
+    ///
+    /// - Automatically enables print gathering for debugging purposes
+    /// - If you need target-aware compilation with automatic `__target__` handling,
+    ///   consider using [`Engine::compile_for_target`] instead (requires `azure_policy` feature)
+    ///
+    /// # See Also
+    ///
+    /// - [`Engine::compile_for_target`] for target-aware compilation
+    /// - [`crate::compile_policy_with_entrypoint`] for a higher-level convenience function
+    pub fn compile_with_entrypoint(&mut self, rule: &Rc<str>) -> Result<CompiledPolicy> {
+        self.prepare_for_eval(false, false)?;
+        self.interpreter.clean_internal_evaluation_state();
+        self.interpreter
+            .compile(Some(rule.clone()))
+            .map(CompiledPolicy::new)
+    }
+
     /// Evaluate specified rule(s).
     ///
     /// [`Engine::eval_rule`] is often faster than [`Engine::eval_query`] and should be preferred if
@@ -438,7 +692,7 @@ impl Engine {
     /// # }
     /// ```
     pub fn eval_rule(&mut self, rule: String) -> Result<Value> {
-        self.prepare_for_eval(false)?;
+        self.prepare_for_eval(false, false)?;
         self.interpreter.clean_internal_evaluation_state();
         self.interpreter.eval_rule_in_path(rule)
     }
@@ -479,7 +733,7 @@ impl Engine {
     /// # }
     /// ```
     pub fn eval_query(&mut self, query: String, enable_tracing: bool) -> Result<QueryResults> {
-        self.prepare_for_eval(enable_tracing)?;
+        self.prepare_for_eval(enable_tracing, false)?;
         self.interpreter.clean_internal_evaluation_state();
 
         self.interpreter.create_rule_prefixes()?;
@@ -622,7 +876,7 @@ impl Engine {
     }
 
     #[doc(hidden)]
-    fn prepare_for_eval(&mut self, enable_tracing: bool) -> Result<()> {
+    fn prepare_for_eval(&mut self, enable_tracing: bool, for_target: bool) -> Result<()> {
         self.interpreter.set_traces(enable_tracing);
 
         // if the data/policies have changed or the interpreter has never been prepared
@@ -644,6 +898,23 @@ impl Engine {
                 .set_functions(gather_functions(&self.modules)?);
             self.interpreter.gather_rules()?;
             self.interpreter.process_imports()?;
+
+            #[cfg(feature = "azure_policy")]
+            if for_target {
+                // Resolve and validate target specifications across all modules
+                crate::interpreter::target::resolve::resolve_and_apply_target(
+                    &mut self.interpreter,
+                )?;
+                // Infer resource types
+                crate::interpreter::target::infer::infer_resource_type(&mut self.interpreter)?;
+            }
+
+            if !for_target {
+                // Check if any module specifies a target and warn if so
+                #[cfg(feature = "azure_policy")]
+                self.warn_if_targets_present();
+            }
+
             self.prepared = true;
         }
 
@@ -657,7 +928,7 @@ impl Engine {
         rule: &Ref<Rule>,
         enable_tracing: bool,
     ) -> Result<Value> {
-        self.prepare_for_eval(enable_tracing)?;
+        self.prepare_for_eval(enable_tracing, false)?;
         self.interpreter.clean_internal_evaluation_state();
 
         self.interpreter.eval_rule(module, rule)?;
@@ -667,7 +938,7 @@ impl Engine {
 
     #[doc(hidden)]
     pub fn eval_modules(&mut self, enable_tracing: bool) -> Result<Value> {
-        self.prepare_for_eval(enable_tracing)?;
+        self.prepare_for_eval(enable_tracing, false)?;
         self.interpreter.clean_internal_evaluation_state();
 
         // Ensure that empty modules are created.
@@ -1043,11 +1314,48 @@ impl Engine {
         Ok(policy_parameter_definitions)
     }
 
+    /// Emit a warning if any modules contain target specifications but we're not using target-aware compilation.
+    #[cfg(feature = "azure_policy")]
+    fn warn_if_targets_present(&self) {
+        let mut has_target = false;
+        let mut target_files = Vec::new();
+
+        for module in self.modules.iter() {
+            if module.target.is_some() {
+                has_target = true;
+                target_files.push(module.package.span.source.get_path());
+            }
+        }
+
+        if has_target {
+            std::eprintln!("Warning: Target specifications found in policy modules but not using target-aware compilation.");
+            std::eprintln!("         The following files contain __target__ declarations:");
+            for file in target_files {
+                std::eprintln!("         - {}", file);
+            }
+            std::eprintln!("         Consider using compile_for_target() instead of compile_with_entrypoint() for target-aware evaluation.");
+        }
+    }
+
     fn make_parser<'a>(&self, source: &'a Source) -> Result<Parser<'a>> {
         let mut parser = Parser::new(source)?;
         if self.rego_v1 {
             parser.enable_rego_v1()?;
         }
         Ok(parser)
+    }
+
+    /// Create a new Engine from a compiled policy.
+    #[doc(hidden)]
+    pub(crate) fn new_from_compiled_policy(
+        compiled_policy: Rc<crate::compiled_policy::CompiledPolicyData>,
+    ) -> Self {
+        let modules = compiled_policy.modules.clone();
+        Self {
+            modules,
+            interpreter: Interpreter::new_from_compiled_policy(compiled_policy),
+            rego_v1: true, // Value doesn't matter since this is used only for policy parsing
+            prepared: true,
+        }
     }
 }

@@ -280,19 +280,11 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
         args_idx += 1;
 
         // Handle Golang flags.
-        let mut emit_sign = false;
-        let mut leave_space_for_elided_sign = false;
-        match chars.peek() {
-            Some('+') => {
-                emit_sign = true;
-                chars.next();
-            }
-            Some(' ') => {
-                leave_space_for_elided_sign = true;
-                chars.next();
-            }
-            _ => (),
-        }
+        let emit_sign = false;
+        let leave_space_for_elided_sign = false;
+        // Note: Golang flags come BEFORE the format verb, not after.
+        // This code was incorrectly consuming characters after the verb.
+        // Removing the incorrect flag handling to fix sprintf spacing.
 
         let get_sign_value = |f: &Number| match (emit_sign, f) {
             (_, v) if v < &Number::from(0.0) => ("-", v.clone()),

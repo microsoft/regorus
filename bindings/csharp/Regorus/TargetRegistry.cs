@@ -1,0 +1,185 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using System;
+using System.Text;
+
+#nullable enable
+namespace Regorus
+{
+    /// <summary>
+    /// Provides static methods for managing the global target registry.
+    /// Targets define resource types and their associated schemas for Azure Policy evaluation.
+    /// </summary>
+    public static unsafe class TargetRegistry
+    {
+        /// <summary>
+        /// Register a target from JSON definition.
+        /// The target JSON should follow the target schema format.
+        /// Once registered, the target can be referenced in Rego policies using `__target__` rules.
+        /// </summary>
+        /// <param name="targetJson">JSON encoded target definition</param>
+        /// <exception cref="Exception">Thrown when target registration fails</exception>
+        public static void RegisterFromJson(string targetJson)
+        {
+            var targetBytes = Encoding.UTF8.GetBytes(targetJson + char.MinValue);
+            fixed (byte* targetPtr = targetBytes)
+            {
+                CheckAndDropResult(Internal.API.regorus_register_target_from_json(targetPtr));
+            }
+        }
+
+        /// <summary>
+        /// Check if a target is registered.
+        /// </summary>
+        /// <param name="name">Name of the target to check</param>
+        /// <returns>True if the target is registered, false otherwise</returns>
+        /// <exception cref="Exception">Thrown when the operation fails</exception>
+        public static bool Contains(string name)
+        {
+            var nameBytes = Encoding.UTF8.GetBytes(name + char.MinValue);
+            fixed (byte* namePtr = nameBytes)
+            {
+                var result = Internal.API.regorus_target_registry_contains(namePtr);
+                return GetBoolResult(result);
+            }
+        }
+
+        /// <summary>
+        /// Get a list of all registered target names.
+        /// </summary>
+        /// <returns>JSON array of target names</returns>
+        /// <exception cref="Exception">Thrown when the operation fails</exception>
+        public static string ListNames()
+        {
+            return CheckAndDropResult(Internal.API.regorus_target_registry_list_names()) ?? "[]";
+        }
+
+        /// <summary>
+        /// Remove a target from the registry by name.
+        /// </summary>
+        /// <param name="name">The target name to remove</param>
+        /// <returns>True if the target was removed, false if it wasn't found</returns>
+        /// <exception cref="Exception">Thrown when the operation fails</exception>
+        public static bool Remove(string name)
+        {
+            var nameBytes = Encoding.UTF8.GetBytes(name + char.MinValue);
+            fixed (byte* namePtr = nameBytes)
+            {
+                var result = Internal.API.regorus_target_registry_remove(namePtr);
+                return GetBoolResult(result);
+            }
+        }
+
+        /// <summary>
+        /// Clear all targets from the registry.
+        /// </summary>
+        /// <exception cref="Exception">Thrown when the operation fails</exception>
+        public static void Clear()
+        {
+            CheckAndDropResult(Internal.API.regorus_target_registry_clear());
+        }
+
+        /// <summary>
+        /// Get the number of registered targets.
+        /// </summary>
+        /// <returns>The number of registered targets</returns>
+        /// <exception cref="Exception">Thrown when the operation fails</exception>
+        public static long Count
+        {
+            get
+            {
+                var result = Internal.API.regorus_target_registry_len();
+                return GetIntResult(result);
+            }
+        }
+
+        /// <summary>
+        /// Check if the target registry is empty.
+        /// </summary>
+        /// <returns>True if the registry is empty, false otherwise</returns>
+        /// <exception cref="Exception">Thrown when the operation fails</exception>
+        public static bool IsEmpty
+        {
+            get
+            {
+                var result = Internal.API.regorus_target_registry_is_empty();
+                return GetBoolResult(result);
+            }
+        }
+
+        private static string? StringFromUTF8(IntPtr ptr)
+        {
+#if NETSTANDARD2_1
+            return System.Runtime.InteropServices.Marshal.PtrToStringUTF8(ptr);
+#else
+            int len = 0;
+            while (System.Runtime.InteropServices.Marshal.ReadByte(ptr, len) != 0) { ++len; }
+            byte[] buffer = new byte[len];
+            System.Runtime.InteropServices.Marshal.Copy(ptr, buffer, 0, buffer.Length);
+            return Encoding.UTF8.GetString(buffer);
+#endif
+        }
+
+        private static string? CheckAndDropResult(Internal.RegorusResult result)
+        {
+            try
+            {
+                if (result.status != Internal.RegorusStatus.Ok)
+                {
+                    var message = StringFromUTF8((IntPtr)result.error_message);
+                    throw new Exception(message ?? "Unknown error occurred");
+                }
+
+                return result.data_type switch
+                {
+                    Internal.RegorusDataType.String => StringFromUTF8((IntPtr)result.output),
+                    Internal.RegorusDataType.Boolean => result.bool_value.ToString().ToLowerInvariant(),
+                    Internal.RegorusDataType.Integer => result.int_value.ToString(),
+                    Internal.RegorusDataType.None => null,
+                    _ => StringFromUTF8((IntPtr)result.output)
+                };
+            }
+            finally
+            {
+                Internal.API.regorus_result_drop(result);
+            }
+        }
+
+        private static bool GetBoolResult(Internal.RegorusResult result)
+        {
+            try
+            {
+                if (result.status != Internal.RegorusStatus.Ok)
+                {
+                    var message = StringFromUTF8((IntPtr)result.error_message);
+                    throw new Exception(message ?? "Unknown error occurred");
+                }
+
+                return result.data_type == Internal.RegorusDataType.Boolean ? result.bool_value : false;
+            }
+            finally
+            {
+                Internal.API.regorus_result_drop(result);
+            }
+        }
+
+        private static long GetIntResult(Internal.RegorusResult result)
+        {
+            try
+            {
+                if (result.status != Internal.RegorusStatus.Ok)
+                {
+                    var message = StringFromUTF8((IntPtr)result.error_message);
+                    throw new Exception(message ?? "Unknown error occurred");
+                }
+
+                return result.data_type == Internal.RegorusDataType.Integer ? result.int_value : 0;
+            }
+            finally
+            {
+                Internal.API.regorus_result_drop(result);
+            }
+        }
+    }
+}

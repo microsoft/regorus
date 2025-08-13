@@ -1,0 +1,682 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: "target/valid_target"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.allow
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        allow if {
+          input.name == "valid"
+        }
+    query: data.test.allow.allow
+    want_result: true
+
+  - note: "target/missing_assignment_operator"
+    data: {}
+    modules:
+      - |
+        package test.missing_assignment
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "valid"
+        }
+    query: data.test.missing_assignment.allow
+    want_result: "#undefined"
+
+  - note: "target/effect_validation_undefined_result"
+    data: {}
+    input: {"name": "invalid"}
+    modules:
+      - |
+        package test.undefined
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        # No default, rule doesn't match, so allow is undefined
+        allow if {
+          input.name == "valid"
+        }
+    query: data.test.undefined.allow
+    want_result: "#undefined"
+
+  - note: "target/target_resolution_timing"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test
+        import rego.v1
+        
+        __target__ "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "valid"
+        }
+    query: data.test.allow
+    error: "expected ':=' after __target__"
+
+  - note: "target/missing_string_literal"
+    data: {}
+    modules:
+      - |
+        package test
+        
+        import rego.v1
+        
+        __target__ := 123
+        
+        allow if {
+          input.name == "valid"
+        }
+    query: data.test.allow
+    error: "expected string literal"
+
+  - note: "target/invalid_string_format"
+    data: {}
+    modules:
+      - |
+        package test
+        
+        import rego.v1
+        
+        __target__ := "unterminated string
+        
+        allow if {
+          input.name == "valid"
+        }
+    query: data.test.allow
+    error: "unterminated string"
+
+  - note: "target/nonexistent_target"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test
+        
+        import rego.v1
+        
+        __target__ := "nonexistent.target.name"
+        
+        allow if {
+          input.name == "valid"
+        }
+    query: data.test.allow
+    error: "Target 'nonexistent.target.name' not found in registry"
+
+  - note: "target/target_before_imports"
+    data: {}
+    modules:
+      - |
+        package test
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        import rego.v1
+        
+        allow if {
+          input.name == "valid"
+        }
+    query: data.test.allow
+    error: "unexpected keyword `import`"
+
+  - note: "target/target_after_rule"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test
+        
+        import rego.v1
+        
+        allow if {
+          input.name == "valid"
+        }
+        
+        __target__ := "target.tests.sample_test_target"
+    query: data.test.allow
+    error: "__target__ must be defined before any rules"
+
+  - note: "target/multiple_modules_same_target"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.module1
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "valid"
+        }
+      - |
+        package test.module2
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        deny if {
+          input.name == "invalid"
+        }
+    query: data.test.module1.allow
+    error: "Modules with target 'target.tests.sample_test_target' have different packages: 'test.module1' and 'test.module2'"
+
+  - note: "target/multiple_modules_same_target_same_package"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.shared
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "valid"
+        }
+      - |
+        package test.shared
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "invalid"
+        }
+    query: data.test.shared.allow
+    want_result: true
+
+  - note: "target/multiple_modules_different_targets"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.module1
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "valid"
+        }
+      - |
+        package test.module2
+        
+        import rego.v1
+        
+        __target__ := "target.tests.azure_compute"
+        
+        deny if {
+          input.name == "invalid"
+        }
+    query: data.test.module1.allow
+    error: "Multiple different targets specified: 'target.tests.sample_test_target' and 'target.tests.azure_compute'"
+
+  - note: "target/multiple_different_effects_same_package"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.multieffect
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "valid"
+        }
+        
+        deny if {
+          input.name == "invalid"
+        }
+    query: data.test.multieffect.allow
+    error: "Multiple effects have rules defined for target 'target.tests.sample_test_target': allow, deny. Only one effect should have rules defined in package 'test.multieffect'"
+
+  - note: "target/no_effect_rules_defined"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.noeffects
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        helper_function(x) if {
+          x == "valid"
+        }
+    query: data.test.noeffects.helper_function("valid")
+    error: "Target 'target.tests.sample_test_target' requires a rule with name allow, deny or test_effect in package 'test.noeffects'"
+
+  - note: "target/valid_deny_effect"
+    data: {}
+    input: {"name": "invalid"}
+    modules:
+      - |
+        package test.deny
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default deny := false
+        
+        deny if {
+          input.name == "invalid"
+        }
+    query: data.test.deny.deny
+    want_result: true
+
+  - note: "target/valid_test_effect"
+    data: {}
+    input: {"level": "warning", "message": "test message"}
+    modules:
+      - |
+        package test.custom
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        test_effect := {
+          "level": input.level,
+          "message": input.message
+        } if {
+          input.level
+          input.message
+        }
+    query: data.test.custom.test_effect
+    want_result: {"level": "warning", "message": "test message"}
+
+  - note: "target/multiple_rules_same_effect_same_module"
+    data: {}
+    input: {"name": "valid", "role": "admin"}
+    modules:
+      - |
+        package test.multirules
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        # Multiple rules for the same effect in the same module
+        allow if {
+          input.name == "valid"
+        }
+        
+        allow if {
+          input.role == "admin"
+        }
+    query: data.test.multirules.allow
+    want_result: true
+
+  - note: "target/multiple_rules_same_effect_different_modules"
+    data: {}
+    input: {"name": "valid", "role": "admin"}
+    modules:
+      - |
+        package test.distributed
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "valid"
+        }
+      - |
+        package test.distributed
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.role == "admin"
+        }
+    query: data.test.distributed.allow
+    want_result: true
+
+  - note: "target/effect_with_non_effect_rules_same_module"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.mixed
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "valid"
+        }
+        
+        # Non-effect helper rule
+        is_admin if {
+          input.role == "admin"
+        }
+        
+        # Another non-effect rule
+        helper_data := {"status": "active"}
+    query: data.test.mixed.allow
+    want_result: true
+
+  - note: "target/effect_with_non_effect_rules_different_modules"
+    data: {}
+    input: {"name": "valid", "role": "admin"}
+    modules:
+      - |
+        package test.separate
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "valid"
+        }
+      - |
+        package test.separate
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        # Non-effect helper rules in different module
+        is_admin if {
+          input.role == "admin"
+        }
+        
+        user_data := {"type": "user", "active": true}
+    query: data.test.separate.allow
+    want_result: true
+
+  - note: "target/effect_subpath_should_fail"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.subpath
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        # This creates a rule at data.test.subpath.allow.nested.rule
+        # which is a subpath of the expected effect path data.test.subpath.allow
+        allow.nested.rule if {
+          input.name == "valid"
+        }
+    query: data.test.subpath.allow.nested.rule
+    error: "Target 'target.tests.sample_test_target' requires a rule with name allow, deny or test_effect in package 'test.subpath'"
+
+  - note: "target/multiple_subpath_rules_should_fail"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.multisubpath
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        # Multiple subpath rules under allow
+        allow.users.admin if {
+          input.name == "valid"
+        }
+        
+        allow.users.guest if {
+          input.name == "guest"
+        }
+    query: data.test.multisubpath.allow.users.admin
+    error: "Target 'target.tests.sample_test_target' requires a rule with name allow, deny or test_effect in package 'test.multisubpath'"
+
+  - note: "target/effect_schema_validation_valid"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.schema_valid
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "valid"
+        }
+    query: data.test.schema_valid.allow
+    want_result: true
+
+  - note: "target/effect_schema_validation_invalid_type"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.schema_invalid
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        # test_effect schema expects object with string properties, but we return a string
+        test_effect := "invalid_string_instead_of_object" if {
+          input.name == "valid"
+        }
+    query: data.test.schema_invalid.test_effect
+    error: "Type mismatch"
+
+  - note: "target/effect_schema_validation_missing_required_field"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.schema_missing_field
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        # test_effect expects an object, but with invalid property types
+        test_effect := {
+          "level": 123,  # should be string, not number
+          "message": "test message"
+        } if {
+          input.name == "valid"
+        }
+    query: data.test.schema_missing_field.test_effect
+    error: "Type mismatch"
+
+  - note: "target/effect_schema_validation_complex_object"
+    data: {}
+    input: {"name": "valid", "details": {"severity": "high", "category": "security"}}
+    modules:
+      - |
+        package test.schema_complex
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        test_effect := {
+          "level": "error",
+          "message": "Security violation detected",
+          "details": input.details
+        } if {
+          input.name == "valid"
+          input.details.severity == "high"
+        }
+    query: data.test.schema_complex.test_effect
+    want_result: {"level": "error", "message": "Security violation detected", "details": {"severity": "high", "category": "security"}}
+
+  - note: "target/effect_schema_validation_enum_constraint"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.schema_enum
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        # test_effect requires an object, but we return an array instead
+        test_effect := ["invalid", "array", "instead", "of", "object"] if {
+          input.name == "valid"
+        }
+    query: data.test.schema_enum.test_effect
+    error: "Type mismatch"
+
+  - note: "target/multiple_targets_different_schemas"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.multi_target_a
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "valid"
+        }
+      - |
+        package test.multi_target_b
+        
+        import rego.v1
+        
+        __target__ := "target.tests.azure_compute"
+        
+        deny if {
+          input.name == "invalid"
+        }
+    query: data.test.multi_target_a.allow
+    error: "Multiple different targets specified"
+
+  - note: "target/effect_validation_with_default_value"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.with_default
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        allow if {
+          input.name == "valid"
+        }
+    query: data.test.with_default.allow
+    want_result: true
+
+  - note: "target/effect_validation_undefined_result"
+    data: {}
+    input: {"name": "invalid"}
+    modules:
+      - |
+        package test.undefined
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        # No default, rule doesn't match, so allow is undefined
+        allow if {
+          input.name == "valid"
+        }
+    query: data.test.undefined.allow
+    want_result: "#undefined"
+
+  - note: "target/target_resolution_timing"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.timing
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        # Rule defined after target - should work due to proper timing
+        allow if {
+          input.name == "valid"
+        }
+        
+        # Helper rule that's not an effect
+        helper := "test" if true
+    query: data.test.timing.allow
+    want_result: true
+
+  - note: "target/nested_package_structure"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.nested.deep.structures
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "valid"
+        }
+    query: data.test.nested.deep.structures.allow
+    want_result: true
+
+  - note: "target/package_validation_error_consistency"
+    data: {}
+    input: {"name": "valid"}
+    modules:
+      - |
+        package test.package_a
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.name == "valid"
+        }
+      - |
+        package test.package_b
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        deny if {
+          input.name == "invalid"
+        }
+    query: data.test.package_a.allow
+    error: "Modules with target 'target.tests.sample_test_target' have different packages: 'test.package_a' and 'test.package_b'"

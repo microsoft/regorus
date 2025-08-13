@@ -1,0 +1,83 @@
+cases:
+  - note: "Microsoft Graph User Access Control - Allow Active User"
+    data: {}
+    input:
+      "@odata.type": "#microsoft.graph.user"
+      id: "12345678-1234-1234-1234-123456789012"
+      userPrincipalName: "john.doe@company.com"
+      displayName: "John Doe"
+      givenName: "John"
+      surname: "Doe"
+      mail: "john.doe@company.com"
+      jobTitle: "Software Engineer"
+      department: "Engineering"
+      accountEnabled: true
+      userType: "Member"
+    modules:
+      - |
+        package msgraph.user.allow
+        
+        import rego.v1
+        
+        __target__ := "target.tests.msgraph"
+        
+        default allow := false
+        
+        allow if {
+          input["@odata.type"] == "#microsoft.graph.user"
+          input.accountEnabled == true
+          input.userType == "Member"
+        }
+    query: data.msgraph.user.allow.allow
+    want_result: true
+
+  - note: "Microsoft Graph User Access Control - Block Disabled User"
+    data: {}
+    input:
+      "@odata.type": "#microsoft.graph.user"
+      id: "87654321-4321-4321-4321-210987654321"
+      userPrincipalName: "disabled.user@company.com"
+      displayName: "Disabled User"
+      accountEnabled: false
+      userType: "Member"
+    modules:
+      - |
+        package msgraph.user.block
+        
+        import rego.v1
+        
+        __target__ := "target.tests.msgraph"
+        
+        block := {
+          "reason": "User account is disabled",
+          "blockType": "signin"
+        } if {
+          input["@odata.type"] == "#microsoft.graph.user"
+          input.accountEnabled == false
+        }
+    query: data.msgraph.user.block.block
+    want_result:
+      reason: "User account is disabled"
+      blockType: "signin"
+
+  - note: "Microsoft Graph Invalid Resource Type"
+    data: {}
+    input:
+      "@odata.type": "#microsoft.graph.unknownResource"
+      id: "test"
+    modules:
+      - |
+        package msgraph.invalid
+        
+        import rego.v1
+        
+        __target__ := "target.tests.msgraph"
+        
+        default allow := false
+        
+        allow if {
+          input["@odata.type"] == "#microsoft.graph.user"
+          input.accountEnabled == true
+        }
+    query: data.msgraph.invalid.allow
+    want_result: false

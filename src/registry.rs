@@ -13,6 +13,7 @@ mod tests {
     mod core;
     mod effect;
     mod resource;
+    mod target;
 }
 
 /// Errors that can occur when interacting with a Registry.
@@ -166,6 +167,9 @@ impl<T> Registry<T> {
 /// Type alias for Schema registry
 pub type SchemaRegistry = Registry<crate::Schema>;
 
+/// Type alias for Target registry
+pub type TargetRegistry = Registry<crate::target::Target>;
+
 /// Global registry instances
 pub mod instances {
     use super::*;
@@ -178,6 +182,11 @@ pub mod instances {
     lazy_static::lazy_static! {
         /// Global singleton instance of effect schemas registry.
         pub static ref EFFECT_SCHEMA_REGISTRY: Registry<crate::Schema> = Registry::new("EFFECT_SCHEMA_REGISTRY");
+    }
+
+    lazy_static::lazy_static! {
+        /// Global singleton instance of targets registry.
+        pub static ref TARGET_REGISTRY: Registry<crate::target::Target> = Registry::new("TARGET_REGISTRY");
     }
 }
 
@@ -286,4 +295,51 @@ pub mod schemas {
         "effect schema",
         "effect schemas"
     );
+}
+
+/// Helper functions for target registry operations.
+pub mod targets {
+    use super::*;
+    use instances::*;
+
+    /// Register a target using its name property.
+    pub fn register(item: Rc<crate::target::Target>) -> Result<(), RegistryError> {
+        let name = item.name.as_ref().to_string();
+        TARGET_REGISTRY.register(name, item)
+    }
+
+    /// Retrieve a target by name.
+    pub fn get(name: &str) -> Option<Rc<crate::target::Target>> {
+        TARGET_REGISTRY.get(name)
+    }
+
+    /// Remove a target by name.
+    pub fn remove(name: &str) -> Option<Rc<crate::target::Target>> {
+        TARGET_REGISTRY.remove(name)
+    }
+
+    /// List all registered target names.
+    pub fn list_names() -> Vec<String> {
+        TARGET_REGISTRY.list_names()
+    }
+
+    /// Check if a target with the given name exists.
+    pub fn contains(name: &str) -> bool {
+        TARGET_REGISTRY.contains(name)
+    }
+
+    /// Get the number of registered targets.
+    pub fn len() -> usize {
+        TARGET_REGISTRY.len()
+    }
+
+    /// Check if the target registry is empty.
+    pub fn is_empty() -> bool {
+        TARGET_REGISTRY.is_empty()
+    }
+
+    /// Clear all targets from the registry.
+    pub fn clear() {
+        TARGET_REGISTRY.clear();
+    }
 }

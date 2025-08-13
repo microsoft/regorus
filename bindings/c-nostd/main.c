@@ -43,27 +43,27 @@ int main() {
 
     // Turn on rego v0 since policy uses v0.
     r = regorus_engine_set_rego_v0(engine, true);
-    if (r.status != RegorusStatusOk)
+    if (r.status != Ok)
 	goto error;
 
     // Load policies.
     r = regorus_engine_add_policy(engine, "framework.rego", (buffer = file_to_string("../../../tests/aci/framework.rego")));
     free(buffer);
-    if (r.status != RegorusStatusOk)
+    if (r.status != Ok)
 	goto error;
     printf("Loaded package %s\n", r.output);
     regorus_result_drop(r);
 
     r = regorus_engine_add_policy(engine, "api.rego", (buffer = file_to_string("../../../tests/aci/api.rego")));
     free(buffer);
-    if (r.status != RegorusStatusOk)
+    if (r.status != Ok)
 	goto error;
     printf("Loaded package %s\n", r.output);
     regorus_result_drop(r);
 
     r = regorus_engine_add_policy(engine, "policy.rego", (buffer = file_to_string("../../../tests/aci/policy.rego")));
     free(buffer);
-    if (r.status != RegorusStatusOk)
+    if (r.status != Ok)
 	goto error;
     printf("Loaded package %s\n", r.output);
     regorus_result_drop(r);
@@ -71,20 +71,20 @@ int main() {
     // Add data
     r = regorus_engine_add_data_json(engine, (buffer = file_to_string("../../../tests/aci/data.json")));
     free(buffer);
-    if (r.status != RegorusStatusOk)
+    if (r.status != Ok)
 	goto error;
     regorus_result_drop(r);
 
     // Set input
     r = regorus_engine_set_input_json(engine, (buffer = file_to_string("../../../tests/aci/input.json")));
     free(buffer);
-    if (r.status != RegorusStatusOk)
+    if (r.status != Ok)
 	goto error;
     regorus_result_drop(r);
 
     // Eval rule.
     r = regorus_engine_eval_rule(engine, "data.framework.mount_overlay");
-    if (r.status != RegorusStatusOk)
+    if (r.status != Ok)
 	goto error;
 
     // Print output

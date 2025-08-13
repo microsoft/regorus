@@ -243,7 +243,7 @@ namespace Regorus
 
         string? CheckAndDropResult(Regorus.Internal.RegorusResult result)
         {
-            if (result.status != Regorus.Internal.RegorusStatus.RegorusStatusOk)
+            if (result.status != Regorus.Internal.RegorusStatus.Ok)
             {
                 var message = StringFromUTF8((IntPtr)result.error_message);
                 var ex = new Exception(message);

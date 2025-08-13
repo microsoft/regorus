@@ -9,6 +9,119 @@ use anyhow::{bail, Result};
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use test_generator::test_resources;
 
+#[cfg(feature = "azure_policy")]
+mod load_target_definitions {
+    use super::*;
+    use std::{eprintln, sync::Once};
+    static INIT: Once = Once::new();
+
+    /// Load and register all target definitions from tests/interpreter/target/definitions
+    /// This function is called once and loads all JSON target definition files.
+    pub fn load() -> Result<()> {
+        INIT.call_once(|| {
+            if let Err(e) = load_target_definitions_impl() {
+                eprintln!("Failed to load target definitions: {}", e);
+            }
+        });
+        Ok(())
+    }
+
+    fn load_target_definitions_impl() -> Result<()> {
+        use crate::registry::targets;
+        use crate::target::Target;
+        use std::fs;
+        use std::path::Path;
+
+        let definitions_path = Path::new("tests/interpreter/cases/target/definitions");
+
+        if !definitions_path.exists() {
+            eprintln!("Target definitions directory does not exist");
+            return Ok(());
+        }
+
+        let entries = fs::read_dir(definitions_path)?;
+        let mut found = false;
+
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+
+            // Only process JSON files
+            if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                let contents = fs::read_to_string(&path)?;
+
+                match Target::from_json_str(&contents) {
+                    Ok(target) => {
+                        let target_name = target.name.clone();
+                        let target_rc = Rc::new(target);
+                        found = true;
+                        if let Err(e) = targets::register(target_rc.clone()) {
+                            eprintln!("Failed to register target '{}': {}", target_name, e);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Failed to parse target definition from {}: {}",
+                            path.display(),
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        if !found {
+            eprintln!("No target definitions were found");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_target_definitions() -> Result<()> {
+        use crate::registry::targets;
+
+        // Load target definitions
+        let _ = load()?;
+
+        // Check that the sample targets were loaded
+        assert!(
+            targets::contains("target.tests.sample_test_target"),
+            "Sample target should be loaded"
+        );
+        assert!(
+            targets::contains("target.tests.azure_compute"),
+            "Azure compute target should be loaded"
+        );
+
+        // Verify we can retrieve the targets
+        let sample_target = targets::get("target.tests.sample_test_target");
+        assert!(
+            sample_target.is_some(),
+            "Should be able to retrieve sample target"
+        );
+
+        let azure_target = targets::get("target.tests.azure_compute");
+        assert!(
+            azure_target.is_some(),
+            "Should be able to retrieve azure target"
+        );
+
+        // Verify target properties
+        if let Some(target) = sample_target {
+            assert_eq!(target.name.as_ref(), "target.tests.sample_test_target");
+            assert_eq!(target.version.as_ref(), "1.0.0");
+        }
+
+        if let Some(target) = azure_target {
+            assert_eq!(target.name.as_ref(), "target.tests.azure_compute");
+            assert_eq!(target.version.as_ref(), "1.0.0");
+        }
+
+        Ok(())
+    }
+}
+
 // Process test value specified in json/yaml to interpret special encodings.
 pub fn process_value(v: &Value) -> Result<Value> {
     match v {
@@ -211,6 +324,64 @@ pub fn eval_file(
     Ok((results, engine.take_prints()?))
 }
 
+#[cfg(feature = "azure_policy")]
+pub fn eval_file_with_rule_evaluation(
+    regos: &[String],
+    data_opt: Option<Value>,
+    input_opt: Option<ValueOrVec>,
+    query: &str,
+    _enable_tracing: bool,
+    strict: bool,
+) -> Result<(Vec<Value>, Vec<String>)> {
+    let mut engine: Engine = Engine::new();
+    engine.set_rego_v0(true);
+    engine.set_strict_builtin_errors(strict);
+    engine.set_gather_prints(true);
+
+    #[cfg(feature = "coverage")]
+    engine.set_enable_coverage(true);
+
+    let mut results = vec![];
+    let mut files = vec![];
+
+    for (idx, _) in regos.iter().enumerate() {
+        files.push(format!("rego_{idx}"));
+    }
+
+    for (idx, file) in files.iter().enumerate() {
+        let contents = regos[idx].as_str();
+        engine.add_policy(file.to_string(), contents.to_string())?;
+    }
+
+    if let Some(data) = data_opt {
+        engine.add_data(data)?;
+    }
+
+    // Also test using the newer CompilerPolicy API.
+    let compiled_policy = engine.clone().compile_for_target()?;
+
+    let mut inputs = vec![];
+    match input_opt {
+        Some(ValueOrVec::Single(single_input)) => inputs.push(single_input),
+        Some(ValueOrVec::Many(mut many_input)) => inputs.append(&mut many_input),
+        _ => {
+            // For target tests without input, use an empty object as default
+            inputs.push(Value::new_object());
+        }
+    }
+
+    for input in inputs {
+        engine.set_input(input.clone());
+        // Use eval_rule instead of eval_query for target tests
+        let r_engine = engine.eval_rule(query.to_string())?;
+        let r_compiled_policy = compiled_policy.eval_with_input(input)?;
+        assert_eq!(r_engine, r_compiled_policy);
+        results.push(r_engine);
+    }
+
+    Ok((results, engine.take_prints()?))
+}
+
 #[derive(PartialEq, Debug)]
 pub enum ValueOrVec {
     Single(Value),
@@ -280,6 +451,9 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     let yaml_str = std::fs::read_to_string(file)?;
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
+    #[cfg(feature = "azure_policy")]
+    load_target_definitions::load().expect("Failed to load target definitions");
+
     #[cfg(not(feature = "std"))]
     {
         // Skip tests that depend on bultins that need std feature.
@@ -329,14 +503,36 @@ fn yaml_test_impl(file: &str) -> Result<()> {
 
         let enable_tracing = case.traces.is_some() && case.traces.unwrap();
 
-        match eval_file(
-            &case.modules,
-            case.data,
-            case.input,
-            case.query.as_str(),
-            enable_tracing,
-            case.strict,
-        ) {
+        let is_target_test = file.contains("target");
+
+        let result = if is_target_test {
+            #[cfg(feature = "azure_policy")]
+            {
+                eval_file_with_rule_evaluation(
+                    &case.modules,
+                    case.data,
+                    case.input,
+                    case.query.as_str(),
+                    enable_tracing,
+                    case.strict,
+                )
+            }
+            #[cfg(not(feature = "azure_policy"))]
+            {
+                panic!("Target tests require azure_policy feature")
+            }
+        } else {
+            eval_file(
+                &case.modules,
+                case.data,
+                case.input,
+                case.query.as_str(),
+                enable_tracing,
+                case.strict,
+            )
+        };
+
+        match result {
             Ok((results, prints)) => match case.want_result {
                 Some(want_result) => {
                     let mut expected_results = vec![];
@@ -389,6 +585,12 @@ fn yaml_test_impl(file: &str) -> Result<()> {
 fn yaml_test(file: &str) -> Result<()> {
     #[cfg(not(feature = "rego-extensions"))]
     if file.contains("rego-extensions") {
+        return Ok(());
+    }
+
+    // Targets are supported only with azure_policy feature.
+    #[cfg(not(feature = "azure_policy"))]
+    if file.contains("target") {
         return Ok(());
     }
 

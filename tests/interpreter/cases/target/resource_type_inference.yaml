@@ -1,0 +1,455 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for resource type inference functionality
+# The infer_resource_type function looks for patterns like input.<selector> == "resource_type" 
+# in effect rules and builds a mapping of queries to their inferred resource types and schemas.
+
+cases:
+  - note: "target/infer_resource_type_basic_equality"
+    data: {}
+    input: {"type": "test_resource", "name": "example"}
+    modules:
+      - |
+        package policy.basic_inference
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # This should infer resource type "test_resource" from the equality check
+        allow if {
+          input.type == "test_resource"
+          input.name != ""
+        }
+    query: data.policy.basic_inference.allow
+    want_result: true
+    want_inferred_resource_types: ["test_resource"]
+
+  - note: "target/infer_resource_type_multiple_equality_checks"
+    data: {}
+    input: {"type": "test_resource", "name": "example", "status": "active"}
+    modules:
+      - |
+        package policy.multiple_checks
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # Multiple conditions with resource type check
+        allow if {
+          input.type == "test_resource"
+          input.status == "active"
+          input.name != ""
+        }
+    query: data.policy.multiple_checks.allow
+    want_result: true
+    want_inferred_resource_types: ["test_resource"]
+
+  - note: "target/infer_resource_type_complex_target_compute"
+    data: {}
+    input: {"resourceType": "compute", "name": "vm1", "spec": {"cpu": 4, "memory": "8Gi"}}
+    modules:
+      - |
+        package policy.complex_compute
+        
+        import rego.v1
+        
+        __target__ := "target.tests.complex_target"
+        
+        default allow := false
+        
+        # Should infer "compute" resource type from complex target
+        allow if {
+          input.resourceType == "compute"
+          input.spec.cpu >= 2
+          input.spec.memory
+        }
+    query: data.policy.complex_compute.allow
+    want_result: true
+    want_inferred_resource_types: ["compute"]
+
+  - note: "target/infer_resource_type_complex_target_storage"
+    data: {}
+    input: {"resourceType": "storage", "name": "disk1", "spec": {"size": "100Gi", "type": "ssd"}}
+    modules:
+      - |
+        package policy.complex_storage
+        
+        import rego.v1
+        
+        __target__ := "target.tests.complex_target"
+        
+        default deny := false
+        
+        # Should infer "storage" resource type from complex target
+        deny if {
+          input.resourceType == "storage"
+          input.spec.type == "hdd"  # Deny HDDs
+        }
+    query: data.policy.complex_storage.deny
+    want_result: false
+    want_inferred_resource_types: ["storage"]
+
+  - note: "target/infer_resource_type_default_schema_usage"
+    data: {}
+    input: {"resourceType": "unknown_type", "name": "mystery_resource"}
+    modules:
+      - |
+        package policy.default_schema
+        
+        import rego.v1
+        
+        __target__ := "target.tests.complex_target"
+        
+        default allow := false
+        
+        # Should use default schema for unknown resource types
+        allow if {
+          input.resourceType == "unknown_type"
+          input.name != ""
+        }
+    query: data.policy.default_schema.allow
+    want_result: true
+    want_inferred_resource_types: ["unknown_type"]
+
+  - note: "target/infer_resource_type_multiple_rules_same_effect"
+    data: {}
+    input: {"type": "test_resource", "name": "example"}
+    modules:
+      - |
+        package policy.multiple_rules
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # First rule with resource type check
+        allow if {
+          input.type == "test_resource"
+          input.name == "example"
+        }
+        
+        # Second rule with different resource type check (should also be inferred)
+        allow if {
+          input.type == "other_resource"
+          input.status == "approved"
+        }
+    query: data.policy.multiple_rules.allow
+    want_result: true
+    want_inferred_resource_types: ["test_resource", "other_resource"]  # Should infer both types from different rules
+
+  - note: "target/infer_resource_type_no_equality_check"
+    data: {}
+    input: {"name": "example", "status": "active"}
+    modules:
+      - |
+        package policy.no_type_check
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # No resource type equality check - should resolve to default schema
+        allow if {
+          input.name == "example"
+          input.status == "active"
+        }
+    query: data.policy.no_type_check.allow
+    want_result: true
+    want_inferred_resource_types: ["default"]  # Should resolve to default schema
+
+  - note: "target/infer_resource_type_wrong_equality_direction"
+    data: {}
+    input: {"type": "test_resource", "name": "example"}
+    modules:
+      - |
+        package policy.wrong_direction
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # Equality check in wrong direction (should still be detected)
+        allow if {
+          "test_resource" == input.type
+          input.name != ""
+        }
+    query: data.policy.wrong_direction.allow
+    want_result: true
+    want_inferred_resource_types: ["test_resource"]
+
+  - note: "target/infer_resource_type_array_access_selector"
+    data: {}
+    input: {"metadata": {"type": "test_resource"}, "name": "example"}
+    modules:
+      - |
+        package policy.array_access
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # Using array-style access for the selector field
+        allow if {
+          input["type"] == "test_resource"
+          input.name != ""
+        }
+    query: data.policy.array_access.allow
+    want_result: false  # This input doesn't have input.type, only input.metadata.type
+    want_inferred_resource_types: ["test_resource"]
+
+  - note: "target/infer_resource_type_variable_in_equality"
+    data: {}
+    input: {"type": "test_resource", "name": "example"}
+    modules:
+      - |
+        package policy.variable_equality
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # Using a variable in the equality (resolves to default schema since not a literal string)
+        resource_type := "test_resource"
+        
+        allow if {
+          input.type == resource_type
+          input.name != ""
+        }
+    query: data.policy.variable_equality.allow
+    want_result: true
+    want_inferred_resource_types: ["default"]  # Should resolve to default schema since not a literal string
+
+  - note: "target/infer_resource_type_non_string_literal"
+    data: {}
+    input: {"priority": 5, "name": "example"}
+    modules:
+      - |
+        package policy.non_string
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # Non-string literal equality (resolves to default schema)
+        allow if {
+          input.priority == 5
+          input.name != ""
+        }
+    query: data.policy.non_string.allow
+    want_result: true
+    want_inferred_resource_types: ["default"]  # Should resolve to default schema
+
+  - note: "target/infer_resource_type_not_first_statement"
+    data: {}
+    input: {"type": "test_resource", "name": "example", "status": "active"}
+    modules:
+      - |
+        package policy.not_first_statement
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # Resource type check is not the first statement (should still be inferred)
+        allow if {
+          input.name != ""
+          input.status == "active"
+          input.type == "test_resource"
+        }
+    query: data.policy.not_first_statement.allow
+    want_result: true
+    want_inferred_resource_types: ["test_resource"]
+
+  - note: "target/infer_resource_type_nested_condition_not_inferred"
+    data: {}
+    input: {"type": "test_resource", "name": "example", "nested": {"resourceType": "compute"}}
+    modules:
+      - |
+        package policy.nested_condition
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # Nested condition with resource type check (should not be inferred at nested level)
+        allow if {
+          input.name == "example"
+          some condition
+          condition := input.nested.resourceType == "compute"
+          condition
+        }
+    query: data.policy.nested_condition.allow
+    want_result: true
+    want_inferred_resource_types: ["default"]  # Should resolve to default schema (nested not inferred)
+
+  - note: "target/infer_resource_type_nested_rule_not_inferred"
+    data: {}
+    input: {"type": "test_resource", "name": "example"}
+    modules:
+      - |
+        package policy.nested_rule
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # Helper rule with nested type check (should not be inferred from helper rules)
+        is_valid_resource(resource_type) if {
+          resource_type == "test_resource"
+        }
+        
+        # Main rule that uses helper (should resolve to default schema)
+        allow if {
+          input.name == "example"
+          is_valid_resource(input.type)
+        }
+    query: data.policy.nested_rule.allow
+    want_result: true
+    want_inferred_resource_types: ["default"]  # Should resolve to default schema (helper rule not inferred)
+
+  - note: "target/infer_resource_type_comprehension_not_inferred"
+    data: {}
+    input: {"type": "test_resource", "name": "example", "resources": [{"type": "compute"}, {"type": "storage"}]}
+    modules:
+      - |
+        package policy.comprehension
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # Type check inside comprehension (should not be inferred)
+        allow if {
+          input.name == "example"
+          valid_resources := [r | r := input.resources[_]; r.type == "compute"]
+          count(valid_resources) > 0
+        }
+    query: data.policy.comprehension.allow
+    want_result: true
+    want_inferred_resource_types: ["default"]  # Should resolve to default schema (comprehension not inferred)
+
+  - note: "target/infer_resource_type_multiple_types_same_rule"
+    data: {}
+    input: {"type": "test_resource", "name": "example"}
+    modules:
+      - |
+        package policy.multiple_types_same_rule
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # Single rule with multiple resource type checks (should infer both)
+        allow if {
+          input.name == "example"
+          input.type == "test_resource"
+          input.type == "other_resource"  # This will never match, but should still be inferred
+        }
+    query: data.policy.multiple_types_same_rule.allow
+    want_result: false  # Will never match since input.type can't be both values
+    want_inferred_resource_types: ["test_resource", "other_resource"]
+
+  - note: "target/infer_resource_type_multiple_types_different_rules"
+    data: {}
+    input: {"resourceType": "compute", "name": "vm1", "spec": {"cpu": 4}}
+    modules:
+      - |
+        package policy.multiple_types_different_rules
+        
+        import rego.v1
+        
+        __target__ := "target.tests.complex_target"
+        
+        default allow := false
+        
+        # First rule checks for compute
+        allow if {
+          input.resourceType == "compute"
+          input.spec.cpu >= 2
+        }
+        
+        # Second rule checks for storage  
+        allow if {
+          input.resourceType == "storage"
+          input.spec.size
+        }
+        
+        # Third rule checks for network
+        allow if {
+          input.resourceType == "network"
+          input.spec.subnet
+        }
+    query: data.policy.multiple_types_different_rules.allow
+    want_result: true
+    want_inferred_resource_types: ["compute", "storage", "network"]
+
+  - note: "target/infer_resource_type_invalid_schema_error"
+    data: {}
+    input: {"type": "invalid_resource", "name": "example"}
+    modules:
+      - |
+        package policy.invalid_schema
+        
+        import rego.v1
+        
+        __target__ := "target.tests.nonexistent_target"
+        
+        default allow := false
+        
+        # Reference to a target that doesn't exist in the registry
+        allow if {
+          input.type == "test_resource"
+          input.name != ""
+        }
+    query: data.policy.invalid_schema.allow
+    error: "Target 'target.tests.nonexistent_target' not found in registry"
+
+  - note: "target/infer_resource_type_missing_default_schema_error"
+    data: {}
+    input: {"name": "example", "status": "active"}
+    modules:
+      - |
+        package policy.missing_default_schema
+        
+        import rego.v1
+        
+        __target__ := "target.tests.no_default_schema_target"
+        
+        default allow := false
+        
+        # No type check, should trigger missing default schema error
+        allow if {
+          input.name == "example"
+          input.status == "active"
+        }
+    query: data.policy.missing_default_schema.allow
+    error: "Missing default resource schema: Target 'target.tests.no_default_schema_target' has no default resource schema"

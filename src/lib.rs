@@ -21,31 +21,44 @@ extern crate std;
 
 mod ast;
 mod builtins;
+mod compile;
+mod compiled_policy;
 mod engine;
 mod indexchecker;
 mod interpreter;
 mod lexer;
 mod number;
 mod parser;
+mod policy_info;
 #[cfg(feature = "azure_policy")]
-mod registry;
+pub mod registry;
 mod scheduler;
 #[cfg(feature = "azure_policy")]
 mod schema;
+#[cfg(feature = "azure_policy")]
+pub mod target;
 mod utils;
 mod value;
 
+#[cfg(feature = "azure_policy")]
+pub use {
+    compile::compile_policy_for_target,
+    schema::{error::ValidationError, validate::SchemaValidator, Schema},
+    target::Target,
+};
+
+pub use compile::{compile_policy_with_entrypoint, PolicyModule};
+pub use compiled_policy::CompiledPolicy;
 pub use engine::Engine;
 pub use lexer::Source;
-#[cfg(feature = "azure_policy")]
-pub use schema::{error::ValidationError, validate::SchemaValidator, Schema};
+pub use policy_info::PolicyInfo;
 pub use value::Value;
 
 #[cfg(feature = "arc")]
-use alloc::sync::Arc as Rc;
+pub use alloc::sync::Arc as Rc;
 
 #[cfg(not(feature = "arc"))]
-use alloc::rc::Rc;
+pub use alloc::rc::Rc;
 
 #[cfg(feature = "std")]
 use std::collections::{hash_map::Entry as MapEntry, HashMap as Map, HashSet as Set};
