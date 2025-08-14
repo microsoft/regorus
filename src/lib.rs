@@ -27,6 +27,8 @@ mod interpreter;
 mod lexer;
 mod number;
 mod parser;
+#[cfg(feature = "azure_policy")]
+mod registry;
 mod scheduler;
 #[cfg(feature = "azure_policy")]
 mod schema;
@@ -35,6 +37,8 @@ mod value;
 
 pub use engine::Engine;
 pub use lexer::Source;
+#[cfg(feature = "azure_policy")]
+pub use schema::{error::ValidationError, validate::SchemaValidator, Schema};
 pub use value::Value;
 
 #[cfg(feature = "arc")]

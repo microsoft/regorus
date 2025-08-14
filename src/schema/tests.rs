@@ -3,3 +3,4 @@
 
 mod azure;
 mod suite;
+mod validate;
