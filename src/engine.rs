@@ -644,6 +644,13 @@ impl Engine {
                 .set_functions(gather_functions(&self.modules)?);
             self.interpreter.gather_rules()?;
             self.interpreter.process_imports()?;
+
+            #[cfg(feature = "azure_policy")]
+            {
+                // Resolve and validate target specifications across all modules
+                crate::interpreter::target::resolve_and_apply_target(&mut self.interpreter)?;
+            }
+
             self.prepared = true;
         }
 

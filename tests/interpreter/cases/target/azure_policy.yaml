@@ -1,0 +1,79 @@
+cases:
+  - note: "Azure Policy Basic Allow Test"
+    data: {}
+    input:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "mystorageaccount"
+      location: "East US"
+      kind: "StorageV2"
+      properties:
+        supportsHttpsTrafficOnly: true
+        minimumTlsVersion: "TLS1_2"
+      tags:
+        environment: "production"
+    modules:
+      - |
+        package azure.policy.allow
+        
+        import rego.v1
+        
+        __target__ := "target.tests.azure_policy"
+        
+        default allow := false
+        
+        allow if {
+          input.type == "Microsoft.Storage/storageAccounts"
+          input.properties.supportsHttpsTrafficOnly == true
+        }
+    query: data.azure.policy.allow.allow
+    want_result: true
+
+  - note: "Azure Policy Deny Test - HTTP Traffic"
+    data: {}
+    input:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "insecurestorage"
+      location: "West US"
+      kind: "Storage"
+      properties:
+        supportsHttpsTrafficOnly: false
+        minimumTlsVersion: "TLS1_0"
+    modules:
+      - |
+        package azure.policy.deny
+        
+        import rego.v1
+        
+        __target__ := "target.tests.azure_policy"
+        
+        deny := {
+          "message": "HTTPS traffic must be enabled"
+        } if {
+          input.type == "Microsoft.Storage/storageAccounts"
+          input.properties.supportsHttpsTrafficOnly == false
+        }
+    query: data.azure.policy.deny.deny
+    want_result:
+      message: "HTTPS traffic must be enabled"
+
+  - note: "Azure Policy Invalid Resource Type"
+    data: {}
+    input:
+      type: "Microsoft.UnknownService/unknownResource"
+      name: "test"
+    modules:
+      - |
+        package azure.policy.invalid
+        
+        import rego.v1
+        
+        __target__ := "target.tests.azure_policy"
+        
+        default allow := false
+        
+        allow if {
+          input.type == "Microsoft.Storage/storageAccounts"
+          input.properties.supportsHttpsTrafficOnly == true
+        }
+    query: data.azure.policy.invalid.allow
+    want_result: false

@@ -32,6 +32,8 @@ mod registry;
 mod scheduler;
 #[cfg(feature = "azure_policy")]
 mod schema;
+#[cfg(feature = "azure_policy")]
+mod target;
 mod utils;
 mod value;
 
