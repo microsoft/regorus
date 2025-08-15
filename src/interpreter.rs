@@ -6,6 +6,8 @@ use crate::builtins::{self, BuiltinFcn};
 use crate::lexer::*;
 use crate::parser::Parser;
 use crate::scheduler::*;
+#[cfg(feature = "azure_policy")]
+use crate::target::Target;
 use crate::utils::*;
 use crate::value::*;
 use crate::*;
@@ -17,6 +19,11 @@ use anyhow::{anyhow, bail, Result};
 use core::ops::Bound::*;
 
 type Scope = BTreeMap<SourceStr, Value>;
+
+#[cfg(feature = "azure_policy")]
+pub mod error;
+#[cfg(feature = "azure_policy")]
+pub mod target;
 
 type DefaultRuleInfo = (Ref<Rule>, Option<String>);
 type ContextExprs = (Option<Ref<Expr>>, Option<Ref<Expr>>);
@@ -36,6 +43,14 @@ enum FunctionModifier {
     Value(Value),
 }
 
+#[cfg(feature = "azure_policy")]
+#[derive(Debug, Clone)]
+struct TargetInfo {
+    target: Rc<Target>,
+    package: Rc<str>,
+    effect_schema: Rc<Schema>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CompiledPolicy {
     modules: Rc<Vec<Ref<Module>>>,
@@ -45,6 +60,8 @@ pub struct CompiledPolicy {
     imports: BTreeMap<String, Ref<Expr>>,
     functions: FunctionTable,
     rule_paths: Set<String>,
+    #[cfg(feature = "azure_policy")]
+    target_info: Option<TargetInfo>,
 }
 
 type RuleValues = BTreeMap<Vec<Value>, (Value, Ref<Expr>)>;
@@ -3957,6 +3974,16 @@ impl Interpreter {
         self.ensure_rule_evaluated(path.clone())?;
         let parts: Vec<&str> = path.split('.').collect();
 
-        Ok(Self::get_value_chained(self.data.clone(), &parts[1..]))
+        let value = Self::get_value_chained(self.data.clone(), &parts[1..]);
+        #[cfg(feature = "azure_policy")]
+        {
+            if let Some(target_info) = &self.compiled_policy.target_info {
+                // Allow undefined values to pass through without schema validation
+                if value != Value::Undefined {
+                    target_info.effect_schema.validate(&value)?;
+                }
+            }
+        }
+        Ok(value)
     }
 }

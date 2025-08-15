@@ -1,0 +1,125 @@
+{
+  "name": "target.tests.azure_policy",
+  "description": "Azure Policy target for comprehensive policy evaluation testing",
+  "version": "1.0.0",
+  "resource_schema_selector": "type",
+  "resource_schemas": [
+    {
+      "type": "object",
+      "properties": {
+        "type": { "const": "Microsoft.Resources/subscriptions" },
+        "subscriptionId": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "displayName": { "type": "string" }
+      },
+      "required": ["type", "subscriptionId"]
+    },
+    {
+      "type": "object", 
+      "properties": {
+        "type": { "const": "Microsoft.Storage/storageAccounts" },
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "kind": { "enum": ["Storage", "StorageV2", "BlobStorage", "FileStorage", "BlockBlobStorage"] },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "supportsHttpsTrafficOnly": { "type": "boolean" },
+            "minimumTlsVersion": { "enum": ["TLS1_0", "TLS1_1", "TLS1_2"] },
+            "allowBlobPublicAccess": { "type": "boolean" },
+            "encryption": {
+              "type": "object",
+              "properties": {
+                "services": {
+                  "type": "object",
+                  "properties": {
+                    "blob": { "type": "object", "properties": { "enabled": { "type": "boolean" } } },
+                    "file": { "type": "object", "properties": { "enabled": { "type": "boolean" } } }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": { "type": "object" }
+      },
+      "required": ["type", "name", "location"]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": { "const": "Microsoft.Network/networkSecurityGroups" },
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "securityRules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "properties": {
+                    "type": "object",
+                    "properties": {
+                      "direction": { "enum": ["Inbound", "Outbound"] },
+                      "access": { "enum": ["Allow", "Deny"] },
+                      "protocol": { "enum": ["Tcp", "Udp", "*"] },
+                      "sourcePortRange": { "type": "string" },
+                      "destinationPortRange": { "type": "string" },
+                      "sourceAddressPrefix": { "type": "string" },
+                      "destinationAddressPrefix": { "type": "string" },
+                      "priority": { "type": "integer", "minimum": 100, "maximum": 4096 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "required": ["type", "name", "location"]
+    }
+  ],
+  "effects": {
+    "allow": { "type": "boolean" },
+    "deny": {
+      "type": "object",
+      "properties": {
+        "message": { "type": "string" }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "properties": {
+        "level": { "enum": ["info", "warning", "error"] },
+        "message": { "type": "string" },
+        "complianceState": { "enum": ["Compliant", "NonCompliant", "Unknown"] }
+      }
+    },
+    "modify": {
+      "type": "object",
+      "properties": {
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "operation": { "enum": ["add", "replace", "remove"] },
+              "field": { "type": "string" },
+              "value": { "type": "any" }
+            }
+          }
+        }
+      }
+    },
+    "deployIfNotExists": {
+      "type": "object",
+      "properties": {
+        "template": { "type": "object" },
+        "parameters": { "type": "object" }
+      }
+    }
+  }
+}

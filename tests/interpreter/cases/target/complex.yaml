@@ -1,0 +1,561 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: "target/complex_nested_object_validation"
+    data: {}
+    input: {"user": {"name": "alice", "roles": ["admin", "user"], "metadata": {"department": "engineering", "level": 5}}}
+    modules:
+      - |
+        package policy.complex
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        test_effect := {
+          "level": "info",
+          "message": sprintf("User %s from %s has access", [input.user.name, input.user.metadata.department]),
+          "details": {
+            "user_roles": input.user.roles,
+            "access_level": input.user.metadata.level,
+            "timestamp": "2025-08-14T10:00:00Z"
+          }
+        } if {
+          "admin" in input.user.roles
+          input.user.metadata.level >= 3
+        }
+    query: data.policy.complex.test_effect
+    want_result: {
+      "details": {
+        "access_level": 5,
+        "timestamp": "2025-08-14T10:00:00Z",
+        "user_roles": ["admin", "user"]
+      },
+      "level": "info",
+      "message": "User alice from engineering has access"
+    }
+
+  - note: "target/complex_conditional_logic_with_multiple_rules"
+    data: {}
+    input: {"resource": {"type": "document", "classification": "confidential", "owner": "alice"}, "requester": {"id": "bob", "clearance": "secret"}}
+    modules:
+      - |
+        package policy.access_control
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # Multiple complex rules for the same effect
+        allow if {
+          input.resource.classification == "public"
+        }
+        
+        allow if {
+          input.resource.owner == input.requester.id
+        }
+        
+        allow if {
+          input.resource.classification == "confidential"
+          input.requester.clearance in ["secret", "top_secret"]
+          count([role | role := input.requester.roles[_]; role == "analyst"]) > 0
+        }
+        
+        allow if {
+          input.resource.type == "document"
+          input.requester.clearance == "top_secret"
+        }
+    query: data.policy.access_control.allow
+    want_result: false
+
+  - note: "target/complex_data_manipulation_with_comprehensions"
+    data: {
+      "users": [
+        {"id": "u1", "name": "alice", "department": "eng", "salary": 100000},
+        {"id": "u2", "name": "bob", "department": "sales", "salary": 80000},
+        {"id": "u3", "name": "charlie", "department": "eng", "salary": 120000}
+      ]
+    }
+    input: {"department_filter": "eng", "min_salary": 90000}
+    modules:
+      - |
+        package policy.hr_analysis
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        test_effect := {
+          "level": "info",
+          "message": sprintf("Found %d qualified users", [count(qualified_users)]),
+          "details": {
+            "qualified_users": qualified_users,
+            "avg_salary": avg_salary,
+            "total_budget": total_budget
+          }
+        } if {
+          count(qualified_users) > 0
+        }
+        
+        qualified_users := [user |
+          user := data.users[_]
+          user.department == input.department_filter
+          user.salary >= input.min_salary
+        ]
+        
+        # Extract total_budget calculation to avoid scheduling error
+        total_budget := v if {
+          count(qualified_users) > 0
+          v := sum([salary |
+              true
+              user := qualified_users[_]
+              salary := user.salary
+          ])
+        }
+        
+        # Extract avg_salary calculation to avoid scheduling error
+        avg_salary := v if {
+          count(qualified_users) > 0
+          v := sum([salary |
+              true
+              user := qualified_users[_]
+              salary := user.salary
+          ]) / count(qualified_users)
+        }
+    query: data.policy.hr_analysis.test_effect
+    want_result: {
+      "level": "info",
+      "message": "Found 2 qualified users",
+      "details": {
+        "qualified_users": [
+          {"id": "u1", "name": "alice", "department": "eng", "salary": 100000},
+          {"id": "u3", "name": "charlie", "department": "eng", "salary": 120000}
+        ],
+        "avg_salary": 110000,
+        "total_budget": 220000
+      }
+    }
+
+  - note: "target/corner_case_empty_collections"
+    data: {"empty_array": [], "empty_object": {}}
+    input: {"filters": []}
+    modules:
+      - |
+        package policy.empty_collections
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          count(data.empty_array) == 0
+          count(object.keys(data.empty_object)) == 0
+          count(input.filters) == 0
+        }
+    query: data.policy.empty_collections.allow
+    want_result: true
+
+  - note: "target/corner_case_null_and_undefined_handling"
+    data: {"nullable_field": null}
+    input: {"optional_field": null}
+    modules:
+      - |
+        package policy.null_handling
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default test_effect := {}
+        
+        test_effect := {
+          "level": "warning",
+          "message": "Handling null values correctly"
+        } if {
+          data.nullable_field == null
+          input.optional_field == null
+          # Check that missing_field is undefined by ensuring it's not present
+          not "missing_field" in object.keys(data)
+        }
+    query: data.policy.null_handling.test_effect
+    want_result: {
+      "level": "warning",
+      "message": "Handling null values correctly"
+    }
+
+  - note: "target/corner_case_deeply_nested_structures"
+    data: {}
+    input: {
+      "request": {
+        "metadata": {
+          "auth": {
+            "user": {
+              "profile": {
+                "permissions": {
+                  "read": ["doc1", "doc2"],
+                  "write": ["doc1"]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    modules:
+      - |
+        package policy.deep_nesting
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          permissions := input.request.metadata.auth.user.profile.permissions
+          "doc1" in permissions.read
+          "doc1" in permissions.write
+        }
+    query: data.policy.deep_nesting.allow
+    want_result: true
+
+  - note: "target/corner_case_unicode_and_special_characters"
+    data: {}
+    input: {
+      "user": "測試用戶",
+      "message": "Hello, 世界! 🌍",
+      "special_chars": "!@#$%^&*()_+-=[]{}|;':\",./<>?"
+    }
+    modules:
+      - |
+        package policy.unicode_handling
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        test_effect := {
+          "level": "info",
+          "message": sprintf("Processing for user: %s", [input.user])
+        } if {
+          contains(input.message, "世界")
+          startswith(input.special_chars, "!")
+        }
+    query: data.policy.unicode_handling.test_effect
+    want_result: {
+      "level": "info",
+      "message": "Processing for user: 測試用戶"
+    }
+
+  - note: "target/corner_case_large_numbers_and_precision"
+    data: {}
+    input: {
+      "large_int": 9223372036854775807,
+      "small_float": 0.000000000001,
+      "large_float": 1.7976931348623157e+308
+    }
+    modules:
+      - |
+        package policy.numeric_precision
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        allow if {
+          input.large_int > 9000000000000000000
+          input.small_float < 0.001
+          input.large_float > 1e100
+        }
+    query: data.policy.numeric_precision.allow
+    want_result: true
+
+  - note: "target/corner_case_circular_references_in_data"
+    data: {
+      "users": {
+        "alice": {"id": "alice", "manager": "bob"},
+        "bob": {"id": "bob", "manager": "charlie"},
+        "charlie": {"id": "charlie", "manager": "alice"}
+      }
+    }
+    input: {"check_user": "alice"}
+    modules:
+      - |
+        package policy.circular_refs
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        # Detect circular management chain
+        deny if {
+          has_circular_management(input.check_user, set())
+        }
+        
+        has_circular_management(user_id, visited) if {
+          user_id in visited
+        }
+        
+        has_circular_management(user_id, visited) if {
+          not user_id in visited
+          manager := data.users[user_id].manager
+          manager != null
+          has_circular_management(manager, visited | {user_id})
+        }
+    query: data.policy.circular_refs.deny
+    want_result: true
+
+  - note: "target/complex_schema_validation_failure_detailed"
+    data: {}
+    input: {"name": "test"}
+    modules:
+      - |
+        package policy.schema_failure
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        # This should fail schema validation - wrong structure entirely
+        test_effect := {
+          "invalid_field": "should_not_exist",
+          "level": 123,  # should be string
+          "message": ["array", "instead", "of", "string"],  # should be string
+          "extra_nested": {
+            "deep": {
+              "structure": "not_allowed"
+            }
+          }
+        } if {
+          input.name == "test"
+        }
+    query: data.policy.schema_failure.test_effect
+    error: "Type mismatch"
+
+  - note: "target/complex_multiple_modules_with_helper_functions"
+    data: {}
+    input: {"operation": "delete", "resource_id": "sensitive_doc", "user_role": "admin"}
+    modules:
+      - |
+        package policy.authorization
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        default allow := false
+        
+        # Reference helper functions from the same package
+        allow if {
+          is_admin(input.user_role)
+          is_allowed_operation(input.operation)
+          not is_sensitive_resource(input.resource_id)
+        }
+      - |
+        package policy.authorization
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        is_admin(role) if {
+          role == "admin"
+        }
+        
+        is_allowed_operation(op) if {
+          op in ["read", "write", "delete"]
+        }
+        
+        is_sensitive_resource(resource_id) if {
+          startswith(resource_id, "sensitive_")
+        }
+    query: data.policy.authorization.allow
+    want_result: false
+
+  - note: "target/corner_case_very_long_strings"
+    data: {}
+    input: {
+      "long_string": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo."
+    }
+    modules:
+      - |
+        package policy.long_strings
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        test_effect := {
+          "level": "info",
+          "message": sprintf("String length: %d characters", [count(input.long_string)])
+        } if {
+          count(input.long_string) > 500
+          contains(input.long_string, "Lorem ipsum")
+        }
+    query: data.policy.long_strings.test_effect
+    want_result: {
+      "level": "info",
+      "message": "String length: 661 characters"
+    }
+
+  - note: "target/complex_regex_pattern_matching"
+    data: {}
+    input: {
+      "emails": [
+        "valid@example.com",
+        "also.valid+tag@domain.co.uk",
+        "invalid.email",
+        "another@valid-domain.org"
+      ]
+    }
+    modules:
+      - |
+        package policy.email_validation
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        test_effect := {
+          "level": "info",
+          "message": sprintf("Validated %d emails, %d valid", [count(input.emails), count(valid_emails)])
+        } if {
+          count(valid_emails) > 0
+        }
+        
+        valid_emails := [email |
+          email := input.emails[_]
+          regex.match(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`, email)
+        ]
+    query: data.policy.email_validation.test_effect
+    want_result: {
+      "level": "info",
+      "message": "Validated 4 emails, 3 valid"
+    }
+
+  - note: "target/corner_case_recursive_data_structures"
+    data: {
+      "filesystem": {
+        "root": {
+          "type": "directory",
+          "children": {
+            "home": {
+              "type": "directory", 
+              "children": {
+                "user": {
+                  "type": "directory",
+                  "children": {
+                    "document.txt": {"type": "file", "size": 1024}
+                  }
+                }
+              }
+            },
+            "etc": {
+              "type": "directory",
+              "children": {
+                "config.ini": {"type": "file", "size": 512}
+              }
+            }
+          }
+        }
+      }
+    }
+    input: {"search_type": "file"}
+    modules:
+      - |
+        package policy.filesystem
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        test_effect := {
+          "level": "info",
+          "message": sprintf("Found %d files", [count(all_files)])
+        } if {
+          count(all_files) > 0
+        }
+        
+        all_files[path] := file if {
+          walk(data.filesystem, [path, file])
+          file.type == input.search_type
+        }
+    query: data.policy.filesystem.test_effect
+    want_result: {
+      "level": "info",
+      "message": "Found 2 files"
+    }
+
+  - note: "target/complex_error_propagation_and_recovery"
+    data: {}
+    input: {"values": [1, 2, 0, 4, 5]}
+    modules:
+      - |
+        package policy.error_handling
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        test_effect := {
+          "level": "warning",
+          "message": sprintf("Division results: %v", [safe_divisions])
+        } if {
+          count(safe_divisions) > 0
+        }
+        
+        safe_divisions := [result |
+          value := input.values[i]
+          value != 0  # Skip zero values to avoid division by zero
+          result := 100 / value
+        ]
+    query: data.policy.error_handling.test_effect
+    want_result: {
+      "level": "warning",
+      "message": "Division results: [100, 50, 25, 20]"
+    }
+
+  - note: "target/corner_case_edge_conditions_with_sets"
+    data: {}
+    input: {
+      "set1": ["a", "b", "c"],
+      "set2": ["b", "c", "d"],
+      "set3": ["c", "d", "e"]
+    }
+    modules:
+      - |
+        package policy.set_operations
+        
+        import rego.v1
+        
+        __target__ := "target.tests.sample_test_target"
+        
+        test_effect := {
+          "level": "info",
+          "message": "Set operations completed",
+          "details": {
+            "intersection_all": intersection_all,
+            "union_all": union_all,
+            "symmetric_diff": symmetric_diff
+          }
+        } if {
+          count(intersection_all) > 0
+        }
+        
+        s1 := {x | x := input.set1[_]}
+        s2 := {x | x := input.set2[_]}
+        s3 := {x | x := input.set3[_]}
+        
+        intersection_all := s1 & s2 & s3
+        union_all := s1 | s2 | s3
+        symmetric_diff := (s1 | s2) - (s1 & s2)
+    query: data.policy.set_operations.test_effect
+    want_result: {
+      "level": "info",
+      "message": "Set operations completed",
+      "details": {
+        "intersection_all": { "set!": ["c"] },
+        "union_all": { "set!": ["a", "b", "c", "d", "e"] },
+        "symmetric_diff": { "set!": ["a", "d"] }
+      }
+    }

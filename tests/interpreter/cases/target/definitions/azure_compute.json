@@ -1,0 +1,47 @@
+{
+  "name": "target.tests.azure_compute",
+  "description": "Azure compute resources target for testing",
+  "version": "1.0.0",
+  "resource_schema_selector": "type",
+  "resource_schemas": [
+    {
+      "type": "object",
+      "properties": {
+        "type": { "const": "Microsoft.Compute/virtualMachines" },
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "vmSize": { "type": "string" },
+            "storageProfile": {
+              "type": "object",
+              "properties": {
+                "imageReference": {
+                  "type": "object",
+                  "properties": {
+                    "publisher": { "type": "string" },
+                    "offer": { "type": "string" },
+                    "sku": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "required": ["type", "name", "location"]
+    }
+  ],
+  "effects": {
+    "allow": { "type": "boolean" },
+    "deny": { "type": "boolean" },
+    "audit": {
+      "type": "object",
+      "properties": {
+        "level": { "enum": ["info", "warning", "error"] },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}
