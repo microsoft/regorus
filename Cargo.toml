@@ -89,7 +89,7 @@ opa-testutil = []
 rand = ["dep:rand"]
 
 [dependencies]
-anyhow = { version = "1.0.45", default-features = false }
+anyhow = { version = "1.0.99", default-features = false }
 serde = {version = "1.0.150", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0.89", default-features = false, features = ["alloc"] }
 lazy_static =  { version = "1.4.0", default-features = false }
@@ -115,7 +115,7 @@ msvc_spectre_libs = { version = "0.1", features = ["error"], optional = true }
 dashmap = { version = "6.1", default-features = false, optional = true }
 
 [dev-dependencies]
-anyhow = "1.0.45"
+anyhow = "1.0.99"
 cfg-if = "1.0.0"
 clap = { version = "4.5.45", features = ["derive"] }
 prettydiff = { version = "0.8.0", default-features = false }
