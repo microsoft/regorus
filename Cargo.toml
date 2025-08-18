@@ -112,7 +112,7 @@ rand = { version = "0.9.0", default-features = false, features = ["thread_rng"],
 
 # Causes the project to link with the Spectre-mitigated CRT and libs.
 msvc_spectre_libs = { version = "0.1", features = ["error"], optional = true }
-dashmap = { version = "5.5", default-features = false, optional = true }
+dashmap = { version = "6.1", default-features = false, optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.45"
