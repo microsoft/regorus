@@ -1,5 +1,4 @@
 extern crate cbindgen;
-extern crate csbindgen;
 
 use std::env;
 
@@ -21,12 +20,4 @@ fn main() {
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file("regorus.ffi.hpp");
-
-    csbindgen::Builder::default()
-        .input_extern_file("src/lib.rs")
-        .csharp_dll_name("regorus_ffi")
-        .csharp_class_name("API")
-        .csharp_namespace("Regorus.Internal")
-        .generate_csharp_file("./RegorusFFI.g.cs")
-        .unwrap();
 }

@@ -1881,18 +1881,75 @@ impl<'source> Parser<'source> {
         Ok(imports)
     }
 
+    fn parse_string_literal(&mut self) -> Result<String> {
+        if self.tok.0 != TokenKind::String {
+            bail!(self.tok.1.error("expected string literal"));
+        }
+
+        let string_span = self.tok.1.clone();
+        let target_value =
+            match serde_json::from_str::<Value>(format!("\"{}\"", string_span.text()).as_str()) {
+                Ok(v) => v,
+                Err(e) => {
+                    bail!(string_span.error(&format!("invalid string literal: {}", e)));
+                }
+            };
+
+        self.next_token()?;
+
+        match target_value.as_string() {
+            Ok(s) => Ok(s.as_ref().to_string()),
+            Err(_) => {
+                bail!(string_span.error("invalid string value"));
+            }
+        }
+    }
+
+    fn parse_target_rule(&mut self) -> Result<Option<String>> {
+        // Check if the current token starts a target rule: __target__
+        if self.tok.0 == TokenKind::Ident && self.token_text() == "__target__" {
+            // Parse __target__
+            self.next_token()?;
+
+            // Expect := operator
+            if self.token_text() != ":=" {
+                bail!(self.tok.1.error("expected ':=' after __target__"));
+            }
+            self.next_token()?;
+
+            // Parse the target name string using the helper function
+            let target_string = self.parse_string_literal()?;
+
+            Ok(Some(target_string))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn parse(&mut self) -> Result<Module> {
         let package = self.parse_package()?;
         let imports = self.parse_imports()?;
 
+        let target = self.parse_target_rule()?;
+        if target.is_some() {
+            self.rego_v1 = true;
+        }
+
         let mut policy = vec![];
         while self.tok.0 != TokenKind::Eof {
             policy.push(Ref::new(self.parse_rule()?));
+            if self.token_text() == "__target__" {
+                bail!(self
+                    .tok
+                    .1
+                    .error("__target__ must be defined before any rules"));
+            }
         }
 
         let m = Module {
             package,
             imports,
+            target,
             policy,
             rego_v1: self.rego_v1,
             num_expressions: self.eidx,

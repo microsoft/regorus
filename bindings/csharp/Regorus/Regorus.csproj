@@ -13,6 +13,10 @@
         <PackageReadmeFile>README.md</PackageReadmeFile>
     </PropertyGroup>
 
+    <ItemGroup>
+        <PackageReference Include="System.Text.Json" Version="8.0.0" />
+    </ItemGroup>
+
     <!--
         $(RegorusFFIArtifactsDir) is the location where regorus shared libraries have been
         built for various platforms and copied to. RegorusFFIArtifactsDir is passed in
@@ -20,8 +24,10 @@
 
         For each target triple, `Pack` expects the regorus ffi shared library
         to be found in $(RegorusFFIArtifactsDir)/<target-triple>/release.
+
+        If $(IgnoreMissingArtifacts) is not set, ensure that the binaries for officially supported platforms exists.
     -->
-    <Target Name="ChecksRegorusFFIArtifactsDir" BeforeTargets="Pack">
+    <Target Name="ChecksRegorusFFIArtifactsDir" BeforeTargets="Pack" Condition="'$(IgnoreMissingArtifacts)' == ''">
         <Error Text="RegorusFFIArtifactsDir must be supplied." Condition="$(RegorusFFIArtifactsDir) == ''" />
 
         <!-- Ensure that the binaries for officially supported platforms exists. -->

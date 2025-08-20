@@ -1,0 +1,38 @@
+{
+  "name": "target.tests.sample_test_target",
+  "description": "A sample target for testing target loading functionality",
+  "version": "1.0.0",
+  "resource_schema_selector": "type",
+  "resource_schemas": [
+    {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "const": "test_resource" },
+        "value": { "type": "string" }
+      },
+      "required": ["name", "type"]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "value": { "type": "string" }
+      },
+      "required": ["name"],
+      "additionalProperties": true
+    }
+  ],
+  "effects": {
+    "allow": { "type": "boolean" },
+    "deny": { "type": "boolean" },
+    "test_effect": {
+      "type": "object",
+      "properties": {
+        "level": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}

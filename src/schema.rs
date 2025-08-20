@@ -301,7 +301,7 @@ impl Schema {
     }
 
     /// Returns a reference to the underlying type definition.
-    fn as_type(&self) -> &Type {
+    pub fn as_type(&self) -> &Type {
         &self.t
     }
 
@@ -311,12 +311,13 @@ impl Schema {
         schema: serde_json::Value,
     ) -> Result<Self, Box<dyn core::error::Error + Send + Sync>> {
         let meta_schema_validation_result = meta::validate_schema_detailed(&schema);
-        let result = serde_json::from_value::<Schema>(schema)
+        let schema = serde_json::from_value::<Schema>(schema)
             .map_err(|e| format!("Failed to parse schema: {e}"))?;
         if let Err(errors) = meta_schema_validation_result {
             return Err(format!("Schema validation failed: {}", errors.join("\n")).into());
         }
-        Ok(result)
+
+        Ok(schema)
     }
 
     /// Parse a JSON Schema document from a string into a `Schema` instance.
@@ -325,6 +326,31 @@ impl Schema {
         let value: serde_json::Value =
             serde_json::from_str(s).map_err(|e| format!("Failed to parse schema: {e}"))?;
         Self::from_serde_json_value(value)
+    }
+
+    /// Validates a `Value` against this schema.
+    ///
+    /// Returns `Ok(())` if the value conforms to the schema, or a `ValidationError`
+    /// with detailed error information if validation fails.
+    ///
+    /// # Example
+    /// ```rust
+    /// use regorus::schema::Schema;
+    /// use regorus::Value;
+    /// use serde_json::json;
+    ///
+    /// let schema_json = json!({
+    ///     "type": "string",
+    ///     "minLength": 1,
+    ///     "maxLength": 10
+    /// });
+    /// let schema = Schema::from_serde_json_value(schema_json).unwrap();
+    /// let value = Value::from("hello");
+    ///
+    /// assert!(schema.validate(&value).is_ok());
+    /// ```
+    pub fn validate(&self, value: &Value) -> Result<(), error::ValidationError> {
+        validate::SchemaValidator::validate(value, self)
     }
 }
 

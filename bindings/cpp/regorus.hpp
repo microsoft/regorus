@@ -11,8 +11,8 @@ namespace regorus {
     class Result {
     public:
 
-	operator bool() const { return result.status == RegorusStatus::RegorusStatusOk; }
-	bool operator !() const { return result.status != RegorusStatus::RegorusStatusOk; }
+	operator bool() const { return result.status == RegorusStatus::Ok; }
+	bool operator !() const { return result.status != RegorusStatus::Ok; }
 
 	const char* output() const {
 	    if (*this && result.output) {

@@ -3,6 +3,9 @@
 
 use crate::ast::*;
 use crate::builtins::{self, BuiltinFcn};
+use crate::compiled_policy::CompiledPolicyData;
+#[cfg(feature = "azure_policy")]
+use crate::compiled_policy::TargetInfo;
 use crate::lexer::*;
 use crate::parser::Parser;
 use crate::scheduler::*;
@@ -18,7 +21,14 @@ use core::ops::Bound::*;
 
 type Scope = BTreeMap<SourceStr, Value>;
 
-type DefaultRuleInfo = (Ref<Rule>, Option<String>);
+#[cfg(feature = "azure_policy")]
+pub mod error;
+#[cfg(feature = "azure_policy")]
+pub mod target {
+    pub mod infer;
+    pub mod resolve;
+}
+
 type ContextExprs = (Option<Ref<Expr>>, Option<Ref<Expr>>);
 type State = (
     Value,
@@ -36,22 +46,11 @@ enum FunctionModifier {
     Value(Value),
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct CompiledPolicy {
-    modules: Rc<Vec<Ref<Module>>>,
-    schedule: Option<Schedule>,
-    rules: Map<String, Vec<Ref<Rule>>>,
-    default_rules: Map<String, Vec<DefaultRuleInfo>>,
-    imports: BTreeMap<String, Ref<Expr>>,
-    functions: FunctionTable,
-    rule_paths: Set<String>,
-}
-
 type RuleValues = BTreeMap<Vec<Value>, (Value, Ref<Expr>)>;
 
 #[derive(Debug)]
 pub struct Interpreter {
-    compiled_policy: Rc<CompiledPolicy>,
+    compiled_policy: Rc<CompiledPolicyData>,
 
     data: Value,
 
@@ -61,7 +60,6 @@ pub struct Interpreter {
     enable_coverage: bool,
 
     traces: Option<Vec<Rc<str>>>,
-    strict_builtin_errors: bool,
 
     gather_prints: bool,
     prints: Vec<String>,
@@ -107,7 +105,6 @@ impl Clone for Interpreter {
 
             gather_prints: self.gather_prints,
             prints: self.prints.clone(),
-            strict_builtin_errors: self.strict_builtin_errors,
             traces: self.traces.clone(),
 
             extensions: self.extensions.clone(),
@@ -216,8 +213,12 @@ impl LoopExpr {
 
 impl Interpreter {
     pub fn new() -> Interpreter {
+        let compiled_policy = compiled_policy::CompiledPolicyData {
+            strict_builtin_errors: true, // Preserve current behavior
+            ..Default::default()
+        };
         Interpreter {
-            compiled_policy: Rc::new(CompiledPolicy::default()),
+            compiled_policy: Rc::new(compiled_policy),
 
             data: Value::new_object(),
             module: None,
@@ -239,7 +240,6 @@ impl Interpreter {
             builtins_cache: BTreeMap::new(),
             no_rules_lookup: false,
             traces: None,
-            strict_builtin_errors: true,
             extensions: Map::new(),
 
             #[cfg(feature = "coverage")]
@@ -252,7 +252,21 @@ impl Interpreter {
         }
     }
 
-    fn compiled_policy_mut(&mut self) -> &mut CompiledPolicy {
+    /// Create a new Interpreter from a compiled policy.
+    pub fn new_from_compiled_policy(compiled_policy: Rc<CompiledPolicyData>) -> Self {
+        let mut interpreter = Self::new();
+        interpreter.extensions = compiled_policy.extensions.clone();
+        interpreter.compiled_policy = compiled_policy;
+
+        // Set initial data if available
+        if let Some(data) = &interpreter.compiled_policy.data {
+            interpreter.init_data = data.clone();
+        }
+
+        interpreter
+    }
+
+    fn compiled_policy_mut(&mut self) -> &mut CompiledPolicyData {
         Rc::make_mut(&mut self.compiled_policy)
     }
 
@@ -284,6 +298,12 @@ impl Interpreter {
         &mut self.init_data
     }
 
+    // Used by tests.
+    #[allow(dead_code)]
+    pub fn get_compiled_policy(&self) -> &Rc<CompiledPolicyData> {
+        &self.compiled_policy
+    }
+
     pub fn set_traces(&mut self, enable_tracing: bool) {
         self.traces = match enable_tracing {
             true => Some(vec![]),
@@ -292,7 +312,7 @@ impl Interpreter {
     }
 
     pub fn set_strict_builtin_errors(&mut self, b: bool) {
-        self.strict_builtin_errors = b;
+        self.compiled_policy_mut().strict_builtin_errors = b;
     }
 
     pub fn set_input(&mut self, input: Value) {
@@ -649,7 +669,7 @@ impl Interpreter {
                 rhs,
                 lhs_value,
                 rhs_value,
-                self.strict_builtin_errors,
+                self.compiled_policy.strict_builtin_errors,
             ),
         }
     }
@@ -2233,10 +2253,15 @@ impl Interpreter {
             }
         }
 
-        let v = match builtin.0(span, params, &args[..], self.strict_builtin_errors) {
+        let v = match builtin.0(
+            span,
+            params,
+            &args[..],
+            self.compiled_policy.strict_builtin_errors,
+        ) {
             Ok(v) => v,
             // Ignore errors if we are not evaluating in strict mode.
-            Err(_) if !self.strict_builtin_errors => return Ok(Value::Undefined),
+            Err(_) if !self.compiled_policy.strict_builtin_errors => return Ok(Value::Undefined),
             Err(e) => Err(e)?,
         };
 
@@ -2550,7 +2575,7 @@ impl Interpreter {
             }
         }
 
-        if self.strict_builtin_errors && !errors.is_empty() {
+        if self.compiled_policy.strict_builtin_errors && !errors.is_empty() {
             return Err(anyhow!(errors[0].to_string()));
         }
 
@@ -2947,7 +2972,7 @@ impl Interpreter {
                         uexpr,
                         Value::from(0),
                         self.eval_expr(uexpr)?,
-                        self.strict_builtin_errors,
+                        self.compiled_policy.strict_builtin_errors,
                     )
                 }
                 _ => bail!(expr
@@ -3658,9 +3683,7 @@ impl Interpreter {
         for c in 0..comps.len() {
             let path = self.current_module_path.clone() + "." + &comps[0..c + 1].join(".");
             if c + 1 == comps.len() {
-                Rc::make_mut(&mut self.compiled_policy)
-                    .rule_paths
-                    .insert(path.clone());
+                self.compiled_policy_mut().rule_paths.insert(path.clone());
             }
 
             match self.compiled_policy_mut().rules.entry(path) {
@@ -3687,9 +3710,7 @@ impl Interpreter {
         for (idx, c) in (0..comps.len()).enumerate() {
             let path = self.current_module_path.clone() + "." + &comps[0..c + 1].join(".");
             if c + 1 == comps.len() {
-                Rc::make_mut(&mut self.compiled_policy)
-                    .rule_paths
-                    .insert(path.clone());
+                self.compiled_policy_mut().rule_paths.insert(path.clone());
             }
 
             match self.compiled_policy_mut().default_rules.entry(path) {
@@ -3957,6 +3978,35 @@ impl Interpreter {
         self.ensure_rule_evaluated(path.clone())?;
         let parts: Vec<&str> = path.split('.').collect();
 
-        Ok(Self::get_value_chained(self.data.clone(), &parts[1..]))
+        let value = Self::get_value_chained(self.data.clone(), &parts[1..]);
+        #[cfg(feature = "azure_policy")]
+        {
+            if let Some(target_info) = &self.compiled_policy.target_info {
+                // Allow undefined values to pass through without schema validation
+                if value != Value::Undefined {
+                    target_info.effect_schema.validate(&value)?;
+                }
+            }
+        }
+        Ok(value)
+    }
+
+    pub fn compile(&mut self, rule: Option<Rc<str>>) -> Result<Rc<CompiledPolicyData>> {
+        let data = Some(self.init_data.clone());
+        let extensions = self.extensions.clone();
+        let compiled_policy = self.compiled_policy_mut();
+
+        compiled_policy.data = data;
+        compiled_policy.extensions = extensions;
+        if let Some(rule) = rule {
+            if !compiled_policy.rule_paths.contains(rule.as_ref()) {
+                bail!("not a valid rule path");
+            }
+            compiled_policy.rule_to_evaluate = rule;
+        } else {
+            compiled_policy.rule_to_evaluate = "".into();
+        }
+
+        Ok(self.compiled_policy.clone())
     }
 }

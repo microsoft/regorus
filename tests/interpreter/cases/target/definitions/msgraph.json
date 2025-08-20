@@ -1,0 +1,189 @@
+{
+  "name": "target.tests.msgraph",
+  "description": "Microsoft Graph API target for identity and access management testing",
+  "version": "1.0.0",
+  "resource_schema_selector": "@odata.type",
+  "resource_schemas": [
+    {
+      "type": "object",
+      "properties": {
+        "@odata.type": { "const": "#microsoft.graph.user" },
+        "id": { "type": "string" },
+        "userPrincipalName": { "type": "string" },
+        "displayName": { "type": "string" },
+        "givenName": { "type": "string" },
+        "surname": { "type": "string" },
+        "mail": { "type": "string" },
+        "jobTitle": { "type": "string" },
+        "department": { "type": "string" },
+        "accountEnabled": { "type": "boolean" },
+        "userType": { "enum": ["Member", "Guest"] },
+        "assignedLicenses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "skuId": { "type": "string" },
+              "disabledPlans": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "signInActivity": {
+          "type": "object",
+          "properties": {
+            "lastSignInDateTime": { "type": "string" },
+            "lastNonInteractiveSignInDateTime": { "type": "string" }
+          }
+        }
+      },
+      "required": ["@odata.type", "id", "userPrincipalName"]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "@odata.type": { "const": "#microsoft.graph.group" },
+        "id": { "type": "string" },
+        "displayName": { "type": "string" },
+        "description": { "type": "string" },
+        "groupTypes": { "type": "array", "items": { "type": "string" } },
+        "securityEnabled": { "type": "boolean" },
+        "mailEnabled": { "type": "boolean" },
+        "mail": { "type": "string" },
+        "visibility": { "enum": ["Public", "Private", "HiddenMembership"] },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "@odata.type": { "type": "string" }
+            }
+          }
+        }
+      },
+      "required": ["@odata.type", "id", "displayName"]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "@odata.type": { "const": "#microsoft.graph.application" },
+        "id": { "type": "string" },
+        "appId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "publisherDomain": { "type": "string" },
+        "signInAudience": { "enum": ["AzureADMyOrg", "AzureADMultipleOrgs", "AzureADandPersonalMicrosoftAccount", "PersonalMicrosoftAccount"] },
+        "requiredResourceAccess": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "resourceAppId": { "type": "string" },
+              "resourceAccess": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "type": { "enum": ["Scope", "Role"] }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "web": {
+          "type": "object",
+          "properties": {
+            "redirectUris": { "type": "array", "items": { "type": "string" } },
+            "implicitGrantSettings": {
+              "type": "object",
+              "properties": {
+                "enableAccessTokenIssuance": { "type": "boolean" },
+                "enableIdTokenIssuance": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      },
+      "required": ["@odata.type", "id", "appId", "displayName"]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "@odata.type": { "const": "#microsoft.graph.conditionalAccessPolicy" },
+        "id": { "type": "string" },
+        "displayName": { "type": "string" },
+        "state": { "enum": ["enabled", "disabled", "enabledForReportingButNotEnforced"] },
+        "conditions": {
+          "type": "object",
+          "properties": {
+            "users": {
+              "type": "object",
+              "properties": {
+                "includeUsers": { "type": "array", "items": { "type": "string" } },
+                "excludeUsers": { "type": "array", "items": { "type": "string" } },
+                "includeGroups": { "type": "array", "items": { "type": "string" } },
+                "excludeGroups": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "applications": {
+              "type": "object",
+              "properties": {
+                "includeApplications": { "type": "array", "items": { "type": "string" } },
+                "excludeApplications": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "locations": {
+              "type": "object",
+              "properties": {
+                "includeLocations": { "type": "array", "items": { "type": "string" } },
+                "excludeLocations": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "riskLevels": { "type": "array", "items": { "enum": ["low", "medium", "high", "none"] } }
+          }
+        },
+        "grantControls": {
+          "type": "object",
+          "properties": {
+            "operator": { "enum": ["AND", "OR"] },
+            "builtInControls": { "type": "array", "items": { "enum": ["block", "mfa", "compliantDevice", "domainJoinedDevice", "approvedApplication", "compliantApplication"] } }
+          }
+        }
+      },
+      "required": ["@odata.type", "id", "displayName", "state"]
+    }
+  ],
+  "effects": {
+    "allow": { "type": "boolean" },
+    "block": {
+      "type": "object",
+      "properties": {
+        "reason": { "type": "string" },
+        "blockType": { "enum": ["signin", "access", "registration"] }
+      }
+    },
+    "requireMfa": {
+      "type": "object",
+      "properties": {
+        "methods": { "type": "array", "items": { "enum": ["sms", "voice", "app", "oath"] } }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "properties": {
+        "level": { "enum": ["info", "warning", "error"] },
+        "message": { "type": "string" },
+        "category": { "enum": ["signin", "audit", "risk", "provisioning"] }
+      }
+    },
+    "remediate": {
+      "type": "object",
+      "properties": {
+        "action": { "enum": ["disable", "enable", "reset", "notify"] },
+        "target": { "type": "string" },
+        "parameters": { "type": "object" }
+      }
+    }
+  }
+}

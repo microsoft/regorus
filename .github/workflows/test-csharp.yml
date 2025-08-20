@@ -140,12 +140,38 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: regorus-nuget
-          path: ./bindings/csharp/Regorus.Tests/regorus-nuget/
+          path: ./bindings/csharp/regorus-nuget/
 
       - name: Restore Regorus.Tests
-        run: dotnet restore /p:RestoreAdditionalProjectSources=./regorus-nuget
+        run: dotnet restore /p:RestoreAdditionalProjectSources=../regorus-nuget
         working-directory: ./bindings/csharp/Regorus.Tests
 
       - name: Run Regorus.Tests
         run: dotnet test --no-restore
         working-directory: ./bindings/csharp/Regorus.Tests
+
+      - name: Restore TestApp
+        run: dotnet restore /p:RestoreAdditionalProjectSources=../regorus-nuget
+        working-directory: ./bindings/csharp/TestApp
+
+      - name: Build TestApp
+        run: dotnet build --no-restore
+        working-directory: ./bindings/csharp/TestApp
+
+      - name: Run TestApp
+        run: dotnet run --no-build --framework net8.0
+        working-directory: ./bindings/csharp/TestApp
+
+      - name: Restore TargetExampleApp
+        run: dotnet restore /p:RestoreAdditionalProjectSources=../regorus-nuget
+        working-directory: ./bindings/csharp/TargetExampleApp
+
+      - name: Build TargetExampleApp
+        run: dotnet build --no-restore
+        working-directory: ./bindings/csharp/TargetExampleApp
+
+      - name: Run TargetExampleApp
+        run: dotnet run --no-build --framework net8.0
+        working-directory: ./bindings/csharp/TargetExampleApp
+
+      

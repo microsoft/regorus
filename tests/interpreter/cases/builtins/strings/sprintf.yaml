@@ -1,0 +1,80 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: basic string formatting with spaces
+    data: {}
+    modules:
+      - |
+        package test
+
+        test1 := sprintf("User %s from %s has access", ["alice", "engineering"])
+        test2 := sprintf("A %s B %s C", ["X", "Y"])
+        test3 := sprintf("No spaces%s%s", ["A", "B"])
+        test4 := sprintf("Single %s", ["word"])
+        test5 := sprintf("Start %s end", ["middle"])
+    query: data.test
+    want_result:
+      test1: "User alice from engineering has access"
+      test2: "A X B Y C"
+      test3: "No spacesAB"
+      test4: "Single word"
+      test5: "Start middle end"
+
+  - note: numeric formatting
+    data: {}
+    modules:
+      - |
+        package test
+
+        decimal := sprintf("Number: %d", [42])
+        float := sprintf("Float: %f", [3.14])
+        hex := sprintf("Hex: %x", [255])
+        octal := sprintf("Octal: %o", [64])
+        binary := sprintf("Binary: %b", [15])
+    query: data.test
+    want_result:
+      decimal: "Number: 42"
+      float: "Float: 3.14"
+      hex: "Hex: ff"
+      octal: "Octal: 0O100"
+      binary: "Binary: 1111"
+
+  - note: mixed types and escaping
+    data: {}
+    modules:
+      - |
+        package test
+
+        mixed := sprintf("String: %s, Number: %d, Percent: %%", ["hello", 123])
+        verbose := sprintf("Value: %v", [{"key": "value"}])
+    query: data.test
+    want_result:
+      mixed: "String: hello, Number: 123, Percent: %"
+      verbose: "Value: {\"key\": \"value\"}"
+
+  - note: width formatting
+    data: {}
+    modules:
+      - |
+        package test
+
+        padded := sprintf("Padded: %5d", [42])
+        zero_padded := sprintf("Zero padded: %05d", [42])
+        decimal_places := sprintf("Decimal: %.2f", [3.14159])
+    query: data.test
+    want_result:
+      padded: "Padded:    42"
+      zero_padded: "Zero padded: 00042"
+      decimal_places: "Decimal: 3.14"
+
+  - note: error cases
+    data: {}
+    modules:
+      - |
+        package test
+
+        # This should cause an error - missing argument
+        error_case := sprintf("Value: %s %d", ["only_one"])
+    query: data.test
+    error: "no argument specified for format verb 1"

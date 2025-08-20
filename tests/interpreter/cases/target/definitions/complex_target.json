@@ -1,0 +1,195 @@
+{
+  "name": "target.tests.complex_target",
+  "description": "A complex target for testing advanced features including discriminated unions",
+  "version": "2.0.0",
+  "resource_schema_selector": "resourceType",
+  "resource_schemas": [
+    {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "resourceType": { "const": "compute" },
+        "spec": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "integer", "minimum": 1, "maximum": 64 },
+            "memory": { "type": "string", "pattern": "^[0-9]+[GM]i$" }
+          },
+          "required": ["cpu", "memory"]
+        }
+      },
+      "required": ["name", "resourceType", "spec"]
+    },
+    {
+      "type": "object", 
+      "properties": {
+        "name": { "type": "string" },
+        "resourceType": { "const": "storage" },
+        "spec": {
+          "type": "object",
+          "properties": {
+            "size": { "type": "string", "pattern": "^[0-9]+[GTM]i$" },
+            "type": { "enum": ["ssd", "hdd", "nvme"] }
+          },
+          "required": ["size", "type"]
+        }
+      },
+      "required": ["name", "resourceType", "spec"]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "resourceType": { "type": "string" },
+        "spec": { "type": "object" }
+      },
+      "required": ["name"],
+      "additionalProperties": true
+    }
+  ],
+  "effects": {
+    "allow": { "type": "boolean" },
+    "deny": { "type": "boolean" },
+    "audit": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string" },
+        "severity": { "enum": ["low", "medium", "high", "critical"] },
+        "details": {
+          "type": "object",
+          "properties": {
+            "eventType": { "type": "string" }
+          },
+          "required": ["eventType"],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "eventType": { "const": "access" }
+                }
+              },
+              "then": {
+                "properties": {
+                  "user": { "type": "string" },
+                  "resource": { "type": "string" },
+                  "timestamp": { "type": "string" }
+                },
+                "required": ["user", "resource", "timestamp"]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "eventType": { "const": "modification" }
+                }
+              },
+              "then": {
+                "properties": {
+                  "user": { "type": "string" },
+                  "resource": { "type": "string" },
+                  "changes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "field": { "type": "string" },
+                        "oldValue": { "type": "any" },
+                        "newValue": { "type": "any" }
+                      },
+                      "required": ["field", "oldValue", "newValue"]
+                    }
+                  }
+                },
+                "required": ["user", "resource", "changes"]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "eventType": { "const": "security" }
+                }
+              },
+              "then": {
+                "properties": {
+                  "threatLevel": { "enum": ["low", "medium", "high"] },
+                  "source": { "type": "string" },
+                  "indicators": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                },
+                "required": ["threatLevel", "source", "indicators"]
+              }
+            }
+          ]
+        }
+      },
+      "required": ["action", "severity", "details"]
+    },
+    "remediate": {
+      "type": "object",
+      "properties": {
+        "actionType": { "type": "string" },
+        "config": {
+          "type": "object",
+          "properties": {
+            "operation": { "type": "string" }
+          },
+          "required": ["operation"],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "operation": { "const": "quarantine" }
+                }
+              },
+              "then": {
+                "properties": {
+                  "duration": { "type": "string", "pattern": "^[0-9]+[hmd]$" },
+                  "reason": { "type": "string" }
+                },
+                "required": ["duration", "reason"]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "operation": { "const": "scale" }
+                }
+              },
+              "then": {
+                "properties": {
+                  "targetSize": { "type": "integer", "minimum": 0, "maximum": 100 },
+                  "metric": { "enum": ["cpu", "memory", "requests"] }
+                },
+                "required": ["targetSize", "metric"]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "operation": { "const": "replace" }
+                }
+              },
+              "then": {
+                "properties": {
+                  "newResource": {
+                    "type": "object",
+                    "properties": {
+                      "type": { "type": "string" },
+                      "spec": { "type": "object" }
+                    },
+                    "required": ["type", "spec"]
+                  },
+                  "preserveData": { "type": "boolean" }
+                },
+                "required": ["newResource", "preserveData"]
+              }
+            }
+          ]
+        }
+      },
+      "required": ["actionType", "config"]
+    }
+  }
+}

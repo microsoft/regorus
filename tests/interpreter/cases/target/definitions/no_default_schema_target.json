@@ -1,0 +1,21 @@
+{
+  "name": "target.tests.no_default_schema_target",
+  "description": "A target without a default schema for testing missing default schema error",
+  "version": "1.0.0",
+  "resource_schema_selector": "type",
+  "resource_schemas": [
+    {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "const": "specific_resource_type" },
+        "value": { "type": "string" }
+      },
+      "required": ["name", "type"]
+    }
+  ],
+  "effects": {
+    "allow": { "type": "boolean" },
+    "deny": { "type": "boolean" }
+  }
+}

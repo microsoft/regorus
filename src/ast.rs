@@ -465,6 +465,9 @@ pub struct Module {
     #[cfg_attr(feature = "ast", serde(rename(serialize = "rules")))]
     pub policy: Vec<Ref<Rule>>,
     pub rego_v1: bool,
+    // Target name if specified via __target__ rule
+    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Option::is_none"))]
+    pub target: Option<String>,
     // Number of expressions in the module.
     pub num_expressions: u32,
     // Number of statements in the module.
