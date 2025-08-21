@@ -68,6 +68,8 @@ pub struct Interpreter {
 
     module: Option<Ref<Module>>,
     current_module_path: String,
+    current_module_index: u32,
+    query_schedule: Option<Schedule>,
     input: Value,
 
     init_data: Value,
@@ -126,6 +128,8 @@ impl Clone for Interpreter {
             active_rules: Vec::default(),
             contexts: Vec::default(),
             current_module_path: String::default(),
+            current_module_index: 0,
+            query_schedule: None,
             module: None,
             no_rules_lookup: false,
         }
@@ -224,6 +228,8 @@ impl Interpreter {
             module: None,
 
             current_module_path: String::default(),
+            current_module_index: 0,
+            query_schedule: None,
             input: Value::Undefined,
 
             init_data: Value::new_object(),
@@ -2079,18 +2085,50 @@ impl Interpreter {
     fn eval_query(&mut self, query: &Ref<Query>) -> Result<bool> {
         // Execute the query in a new scope
         self.scopes.push(Scope::new());
-        let ordered_stmts: Vec<&LiteralStmt> =
-            if let Some(schedule) = &self.compiled_policy.schedule {
-                match schedule.order.get(query) {
-                    Some(ord) => ord.iter().map(|i| &query.stmts[*i as usize]).collect(),
-                    // TODO
-                    _ => bail!(query
-                        .span
-                        .error("statements not scheduled in query {query:?}")),
+        let order_indices = {
+            let query_module_index = self.compiled_policy.modules.len() as u32;
+            if self.current_module_index == query_module_index {
+                // Use query schedule for the current module
+                match self
+                    .query_schedule
+                    .as_ref()
+                    .and_then(|s| s.queries.get(query_module_index, query.qidx))
+                {
+                    Some(schedule) => Some(&schedule.order),
+                    None => {
+                        if self.query_schedule.is_some() {
+                            bail!(query
+                                .span
+                                .error("statements not scheduled in query {query:?}"));
+                        }
+                        None
+                    }
                 }
             } else {
-                query.stmts.iter().collect()
-            };
+                // Use compiled policy schedule for other modules
+                match self
+                    .compiled_policy
+                    .schedule
+                    .as_ref()
+                    .and_then(|s| s.queries.get(self.current_module_index, query.qidx))
+                {
+                    Some(schedule) => Some(&schedule.order),
+                    None => {
+                        if self.compiled_policy.schedule.is_some() {
+                            bail!(query
+                                .span
+                                .error("statements not scheduled in query {query:?}"));
+                        }
+                        None
+                    }
+                }
+            }
+        };
+
+        let ordered_stmts: Vec<&LiteralStmt> = match order_indices {
+            Some(order) => order.iter().map(|i| &query.stmts[*i as usize]).collect(),
+            None => query.stmts.iter().collect(),
+        };
 
         let r = self.eval_stmts(&ordered_stmts);
         self.scopes.pop();
@@ -3217,9 +3255,19 @@ impl Interpreter {
         let m = self.module.clone();
         if let Some(m) = &module {
             self.current_module_path = Self::get_path_string(&m.package.refr, Some("data"))?;
+            self.current_module_index = self.find_module_index(m);
         }
         self.module = module;
         Ok(m.clone())
+    }
+
+    fn find_module_index(&self, module: &Ref<Module>) -> u32 {
+        self.compiled_policy
+            .modules
+            .iter()
+            .position(|m| std::ptr::eq(m.as_ref(), module.as_ref()))
+            .map(|i| i as u32)
+            .unwrap_or(0)
     }
 
     fn get_rule_refr(rule: &Rule) -> &ExprRef {
@@ -3505,6 +3553,9 @@ impl Interpreter {
     }
 
     pub fn eval_rule(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
+        // Set current module index
+        self.current_module_index = self.find_module_index(module);
+
         // Skip reprocessing rule
         if self.processed.contains(rule) {
             return Ok(());
@@ -3556,7 +3607,7 @@ impl Interpreter {
         &mut self,
         module: &Ref<Module>,
         query: &Ref<Query>,
-        schedule: &Schedule,
+        query_schedule: Schedule,
         enable_tracing: bool,
     ) -> Result<QueryResults> {
         self.traces = match enable_tracing {
@@ -3564,12 +3615,8 @@ impl Interpreter {
             false => None,
         };
 
-        // Add schedules for queries.
-        if let Some(ref mut self_schedule) = &mut self.compiled_policy_mut().schedule {
-            for (k, v) in schedule.order.iter() {
-                self_schedule.order.insert(k.clone(), v.clone());
-            }
-        }
+        // Store the query schedule for lookup during evaluation
+        self.query_schedule = Some(query_schedule);
 
         // Push new context.
         self.contexts.push(Context {
@@ -3581,6 +3628,12 @@ impl Interpreter {
 
         let prev_module = self.set_current_module(Some(module.clone()))?;
 
+        // For user queries, set the module index to match the schedule
+        // Query snippets are scheduled as if they're in a module at the end
+        let prev_module_index = self.current_module_index;
+        let compiled_modules_len = self.compiled_policy.modules.len() as u32;
+        self.current_module_index = compiled_modules_len;
+
         // Eval the query.
         let query_r = self.eval_query(query);
 
@@ -3589,36 +3642,40 @@ impl Interpreter {
             _ => bail!("internal error: no context"),
         };
 
-        // Restore schedules.
-        if let Some(ref mut self_schedule) = &mut self.compiled_policy_mut().schedule {
-            for (k, ord) in schedule.order.iter() {
-                if k == query {
-                    for idx in 0..results.result.len() {
-                        let e = Expression {
-                            value: Value::Undefined,
-                            text: "".into(),
-                            location: Location { row: 0, col: 0 },
-                        };
-                        let mut ordered_expressions =
-                            vec![e; results.result[idx].expressions.len()];
-                        for (expr_idx, value) in results.result[idx].expressions.iter().enumerate()
-                        {
-                            let orig_idx = ord[expr_idx] as usize;
-                            ordered_expressions[orig_idx] = value.clone();
-                        }
-                        if !ordered_expressions
-                            .iter()
-                            .any(|v| v.value == Value::Undefined)
-                        {
-                            results.result[idx].expressions = ordered_expressions;
-                        }
+        // Apply expression ordering from the schedule if needed
+        let current_module_idx = compiled_modules_len;
+        let current_query_idx = query.qidx;
+        if let Some(ref self_schedule) = &self.query_schedule {
+            if let Some(query_schedule) = self_schedule
+                .queries
+                .get(current_module_idx, current_query_idx)
+            {
+                for idx in 0..results.result.len() {
+                    let e = Expression {
+                        value: Value::Undefined,
+                        text: "".into(),
+                        location: Location { row: 0, col: 0 },
+                    };
+                    let mut ordered_expressions = vec![e; results.result[idx].expressions.len()];
+                    for (expr_idx, value) in results.result[idx].expressions.iter().enumerate() {
+                        let orig_idx = query_schedule.order[expr_idx] as usize;
+                        ordered_expressions[orig_idx] = value.clone();
+                    }
+                    if !ordered_expressions
+                        .iter()
+                        .any(|v| v.value == Value::Undefined)
+                    {
+                        results.result[idx].expressions = ordered_expressions;
                     }
                 }
-                self_schedule.order.remove(k);
             }
         }
 
+        // Clear the query schedule
+        self.query_schedule = None;
+
         self.set_current_module(prev_module)?;
+        self.current_module_index = prev_module_index;
 
         if let Some(r) = results.result.last() {
             if matches!(&r.bindings, Value::Object(obj) if obj.is_empty())

@@ -753,12 +753,9 @@ impl Engine {
             self.eval_modules(enable_tracing)?;
         }
         let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
-        self.interpreter.eval_user_query(
-            &query_module,
-            &query_node,
-            &query_schedule,
-            enable_tracing,
-        )
+
+        self.interpreter
+            .eval_user_query(&query_module, &query_node, query_schedule, enable_tracing)
     }
 
     /// Evaluate a Rego query that produces a boolean value.
@@ -867,12 +864,8 @@ impl Engine {
         let mut parser = self.make_parser(&query_source)?;
         let query_node = parser.parse_user_query()?;
         let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
-        self.interpreter.eval_user_query(
-            &query_module,
-            &query_node,
-            &query_schedule,
-            enable_tracing,
-        )
+        self.interpreter
+            .eval_user_query(&query_module, &query_node, query_schedule, enable_tracing)
     }
 
     #[doc(hidden)]
