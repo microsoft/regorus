@@ -7,6 +7,7 @@ use crate::compiled_policy::CompiledPolicyData;
 #[cfg(feature = "azure_policy")]
 use crate::compiled_policy::TargetInfo;
 use crate::lexer::*;
+use crate::lookup::Lookup;
 use crate::parser::Parser;
 use crate::scheduler::*;
 use crate::utils::*;
@@ -20,6 +21,11 @@ use anyhow::{anyhow, bail, Result};
 use core::ops::Bound::*;
 
 type Scope = BTreeMap<SourceStr, Value>;
+type ExprLookup = Lookup<Value>;
+
+mod loops;
+
+use loops::LoopExpr;
 
 #[cfg(feature = "azure_policy")]
 pub mod error;
@@ -68,6 +74,9 @@ pub struct Interpreter {
 
     module: Option<Ref<Module>>,
     current_module_path: String,
+    current_module_index: u32,
+    query_schedule: Option<Schedule>,
+    query_module: Option<NodeRef<Module>>,
     input: Value,
 
     init_data: Value,
@@ -75,7 +84,7 @@ pub struct Interpreter {
     with_functions: BTreeMap<String, FunctionModifier>,
     scopes: Vec<Scope>,
     // TODO: handle recursive calls where same expr could have different values.
-    loop_var_values: BTreeMap<ExprRef, Value>,
+    loop_var_values: ExprLookup,
     contexts: Vec<Context>,
 
     processed: BTreeSet<Ref<Rule>>,
@@ -118,7 +127,7 @@ impl Clone for Interpreter {
             // Hence, they need not be copied.
             processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
-            loop_var_values: BTreeMap::default(),
+            loop_var_values: ExprLookup::new(),
             scopes: Vec::default(),
             rule_values: BTreeMap::default(),
 
@@ -126,6 +135,9 @@ impl Clone for Interpreter {
             active_rules: Vec::default(),
             contexts: Vec::default(),
             current_module_path: String::default(),
+            current_module_index: 0,
+            query_schedule: None,
+            query_module: None,
             module: None,
             no_rules_lookup: false,
         }
@@ -167,50 +179,6 @@ impl Default for Context {
     }
 }
 
-#[derive(Debug)]
-enum LoopExpr {
-    Loop {
-        span: Span,
-        expr: Ref<Expr>,
-        value: Ref<Expr>,
-        index: Ref<Expr>,
-    },
-    Walk {
-        span: Span,
-        expr: Ref<Expr>,
-    },
-}
-
-impl LoopExpr {
-    fn span(&self) -> Span {
-        match self {
-            Self::Loop { span, .. } => span.clone(),
-            Self::Walk { span, .. } => span.clone(),
-        }
-    }
-
-    fn value(&self) -> Ref<Expr> {
-        match self {
-            Self::Loop { value, .. } => value.clone(),
-            Self::Walk { expr, .. } => expr.clone(),
-        }
-    }
-
-    fn expr(&self) -> Ref<Expr> {
-        match self {
-            Self::Loop { expr, .. } => expr.clone(),
-            Self::Walk { expr, .. } => expr.clone(),
-        }
-    }
-
-    fn index(&self) -> Option<Ref<Expr>> {
-        match self {
-            Self::Loop { index, .. } => Some(index.clone()),
-            Self::Walk { .. } => None,
-        }
-    }
-}
-
 impl Interpreter {
     pub fn new() -> Interpreter {
         let compiled_policy = compiled_policy::CompiledPolicyData {
@@ -224,6 +192,9 @@ impl Interpreter {
             module: None,
 
             current_module_path: String::default(),
+            current_module_index: 0,
+            query_schedule: None,
+            query_module: None,
             input: Value::Undefined,
 
             init_data: Value::new_object(),
@@ -231,7 +202,7 @@ impl Interpreter {
             with_functions: BTreeMap::default(),
             scopes: Vec::default(),
             contexts: Vec::default(),
-            loop_var_values: BTreeMap::default(),
+            loop_var_values: Lookup::default(),
 
             processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
@@ -259,13 +230,16 @@ impl Interpreter {
             module: None,
 
             current_module_path: String::default(),
+            current_module_index: 0,
+            query_module: None,
+            query_schedule: None,
             input: Value::Undefined,
 
             with_document: Value::new_object(),
             with_functions: BTreeMap::default(),
             scopes: Vec::default(),
             contexts: Vec::default(),
-            loop_var_values: BTreeMap::default(),
+            loop_var_values: Lookup::default(),
 
             processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
@@ -360,11 +334,47 @@ impl Interpreter {
         self.data = self.init_data.clone();
         self.processed.clear();
         self.processed_paths = Value::new_object();
-        self.loop_var_values.clear();
+        self.ensure_loop_var_values_capacity();
         self.scopes = vec![Scope::new()];
         self.contexts = vec![];
         self.rule_values.clear();
         self.builtins_cache.clear();
+    }
+
+    // Helper methods for working with ExprLookup
+    fn set_loop_var_value(&mut self, expr: &ExprRef, value: Value) {
+        let module_idx = self.current_module_index;
+        let expr_idx = expr.eidx();
+        self.loop_var_values.set(module_idx, expr_idx, value);
+    }
+
+    fn get_loop_var_value(&self, expr: &ExprRef) -> Option<&Value> {
+        let module_idx = self.current_module_index;
+        let expr_idx = expr.eidx();
+        self.loop_var_values.get(module_idx, expr_idx)
+    }
+
+    fn remove_loop_var_value(&mut self, expr: &ExprRef) {
+        let module_idx = self.current_module_index;
+        let expr_idx = expr.eidx();
+        self.loop_var_values.clear(module_idx, expr_idx);
+    }
+
+    fn has_loop_var_value(&self, expr: &ExprRef) -> bool {
+        self.get_loop_var_value(expr).is_some()
+    }
+
+    fn ensure_loop_var_values_capacity(&mut self) {
+        for (module_idx, module) in self.compiled_policy.modules.iter().enumerate() {
+            self.loop_var_values
+                .ensure_capacity(module_idx as u32, module.num_expressions);
+        }
+        if let Some(query_module) = &self.query_module {
+            let query_module_idx = self.compiled_policy.modules.len();
+            let eidx = query_module.num_expressions;
+            self.loop_var_values
+                .ensure_capacity(query_module_idx as u32, eidx);
+        }
     }
 
     fn current_module(&self) -> Result<Ref<Module>> {
@@ -422,7 +432,7 @@ impl Interpreter {
         // Collect a chaing of '.field' or '["field"]'
         let mut path = vec![];
         loop {
-            if let Some(v) = self.loop_var_values.get(expr) {
+            if let Some(v) = self.get_loop_var_value(expr) {
                 path.reverse();
                 return Ok(Self::get_value_chained(v.clone(), &path[..]));
             }
@@ -488,157 +498,6 @@ impl Interpreter {
                 }
             }
         }
-    }
-
-    fn is_loop_index_var(&self, ident: &SourceStr) -> bool {
-        // TODO: check for vars that are declared using some-vars
-        match ident.text() {
-            "_" => true,
-            _ => match self.lookup_local_var(ident) {
-                // Vars declared using `some v` can be loop vars.
-                // They are initialized to undefined.
-                Some(Value::Undefined) => true,
-                // If ident is a local var (in current or parent scopes),
-                // then it is not a loop var.
-                Some(_) => false,
-                None => {
-                    // Check if ident is a rule.
-                    let path = self.current_module_path.clone() + "." + ident.text();
-                    !self.compiled_policy.rules.contains_key(&path)
-                }
-            },
-        }
-    }
-
-    fn hoist_loops_impl(&self, expr: &ExprRef, loops: &mut Vec<LoopExpr>) {
-        use Expr::*;
-        match expr.as_ref() {
-            RefBrack {
-                refr, index, span, ..
-            } => {
-                // First hoist any loops in refr
-                self.hoist_loops_impl(refr, loops);
-
-                // hoist any loops in index expression.
-                self.hoist_loops_impl(index, loops);
-
-                // Then hoist the current bracket operation.
-                let mut indices = Vec::with_capacity(1);
-                let _ = traverse(index, &mut |e| match e.as_ref() {
-                    Var { span: ident, .. } if self.is_loop_index_var(&ident.source_str()) => {
-                        indices.push(ident.source_str());
-                        Ok(false)
-                    }
-                    Array { .. } | Object { .. } => Ok(true),
-                    _ => Ok(false),
-                });
-                if !indices.is_empty() {
-                    loops.push(LoopExpr::Loop {
-                        span: span.clone(),
-                        expr: expr.clone(),
-                        value: refr.clone(),
-                        index: index.clone(),
-                    })
-                }
-            }
-
-            // Primitives
-            String { .. }
-            | RawString { .. }
-            | Number { .. }
-            | Bool { .. }
-            | Null { .. }
-            | Var { .. } => (),
-
-            // Recurse into expressions in other variants.
-            Array { items, .. } | Set { items, .. } | Call { params: items, .. } => {
-                for item in items {
-                    self.hoist_loops_impl(item, loops);
-                }
-
-                // Handle walk builtin which acts as a generator.
-                // TODO: Handle with modifier on the walk builtin.
-                if let Expr::Call { fcn, .. } = expr.as_ref() {
-                    if let Ok(fcn_path) = get_path_string(fcn, None) {
-                        if fcn_path == "walk" {
-                            // TODO: Use an enum for LoopExpr to handle walk
-                            loops.push(LoopExpr::Walk {
-                                span: expr.span().clone(),
-                                expr: expr.clone(),
-                            })
-                        }
-                    }
-                }
-            }
-
-            Object { fields, .. } => {
-                for (_, key, value) in fields {
-                    self.hoist_loops_impl(key, loops);
-                    self.hoist_loops_impl(value, loops);
-                }
-            }
-
-            RefDot { refr: expr, .. } | UnaryExpr { expr, .. } => {
-                self.hoist_loops_impl(expr, loops)
-            }
-
-            BinExpr { lhs, rhs, .. }
-            | BoolExpr { lhs, rhs, .. }
-            | ArithExpr { lhs, rhs, .. }
-            | AssignExpr { lhs, rhs, .. } => {
-                self.hoist_loops_impl(lhs, loops);
-                self.hoist_loops_impl(rhs, loops);
-            }
-
-            #[cfg(feature = "rego-extensions")]
-            OrExpr { lhs, rhs, .. } => {
-                self.hoist_loops_impl(lhs, loops);
-                self.hoist_loops_impl(rhs, loops);
-            }
-
-            Membership {
-                key,
-                value,
-                collection,
-                ..
-            } => {
-                if let Some(key) = key.as_ref() {
-                    self.hoist_loops_impl(key, loops);
-                }
-                self.hoist_loops_impl(value, loops);
-                self.hoist_loops_impl(collection, loops);
-            }
-
-            // The output expressions of comprehensions must be subject to hoisting
-            // only after evaluating the body of the comprehensions since the output
-            // expressions may depend on variables defined within the body.
-            ArrayCompr { .. } | SetCompr { .. } | ObjectCompr { .. } => (),
-        }
-    }
-
-    fn hoist_loops(&self, literal: &Literal) -> Vec<LoopExpr> {
-        let mut loops = vec![];
-        use Literal::*;
-        match literal {
-            SomeVars { .. } => (),
-            SomeIn {
-                key,
-                value,
-                collection,
-                ..
-            } => {
-                if let Some(key) = key {
-                    self.hoist_loops_impl(key, &mut loops);
-                }
-                self.hoist_loops_impl(value, &mut loops);
-                self.hoist_loops_impl(collection, &mut loops);
-            }
-            Every {
-                domain: collection, ..
-            } => self.hoist_loops_impl(collection, &mut loops),
-            Expr { expr, .. } | NotExpr { expr, .. } => self.hoist_loops_impl(expr, &mut loops),
-        }
-        loops
     }
 
     fn eval_bool_expr(
@@ -832,7 +691,7 @@ impl Interpreter {
                 // Allow variable overwritten inside a loop
                 let lhs_val = self.lookup_local_var(&name);
                 if !matches!(lhs_val, None | Some(Value::Undefined))
-                    && !self.loop_var_values.contains_key(rhs)
+                    && !self.has_loop_var_value(rhs)
                 {
                     bail!(rhs
                         .span()
@@ -1550,7 +1409,7 @@ impl Interpreter {
             match loop_expr_value {
                 Value::Array(items) => {
                     for (idx, v) in items.iter().enumerate() {
-                        self.loop_var_values.insert(loop_expr.expr(), v.clone());
+                        self.set_loop_var_value(&loop_expr.expr(), v.clone());
 
                         let exec = if let Some(index) = loop_expr.index() {
                             let mut type_match = BTreeSet::new();
@@ -1579,11 +1438,11 @@ impl Interpreter {
                         }
                     }
 
-                    self.loop_var_values.remove(&loop_expr.expr());
+                    self.remove_loop_var_value(&loop_expr.expr());
                 }
                 Value::Set(items) => {
                     for v in items.iter() {
-                        self.loop_var_values.insert(loop_expr.expr(), v.clone());
+                        self.set_loop_var_value(&loop_expr.expr(), v.clone());
 
                         // For sets, index is also the value.
                         let exec = if let Some(index) = loop_expr.index() {
@@ -1605,11 +1464,11 @@ impl Interpreter {
                             }
                         }
                     }
-                    self.loop_var_values.remove(&loop_expr.expr());
+                    self.remove_loop_var_value(&loop_expr.expr());
                 }
                 Value::Object(obj) => {
                     for (k, v) in obj.iter() {
-                        self.loop_var_values.insert(loop_expr.expr(), v.clone());
+                        self.set_loop_var_value(&loop_expr.expr(), v.clone());
                         // For objects, index is key.
                         let exec = if let Some(index) = loop_expr.index() {
                             let mut type_match = BTreeSet::new();
@@ -1630,7 +1489,7 @@ impl Interpreter {
                             }
                         }
                     }
-                    self.loop_var_values.remove(&loop_expr.expr());
+                    self.remove_loop_var_value(&loop_expr.expr());
                 }
                 Value::Undefined => {
                     result = false;
@@ -1960,19 +1819,19 @@ impl Interpreter {
         match self.eval_expr(&loop_expr.value())? {
             Value::Array(items) => {
                 for v in items.iter() {
-                    self.loop_var_values.insert(loop_expr.expr(), v.clone());
+                    self.set_loop_var_value(&loop_expr.expr(), v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Set(items) => {
                 for v in items.iter() {
-                    self.loop_var_values.insert(loop_expr.expr(), v.clone());
+                    self.set_loop_var_value(&loop_expr.expr(), v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Object(obj) => {
                 for (_, v) in obj.iter() {
-                    self.loop_var_values.insert(loop_expr.expr(), v.clone());
+                    self.set_loop_var_value(&loop_expr.expr(), v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
@@ -1984,7 +1843,7 @@ impl Interpreter {
                 ));
             }
         }
-        self.loop_var_values.remove(&loop_expr.expr());
+        self.remove_loop_var_value(&loop_expr.expr());
         Ok(result)
     }
 
@@ -2079,18 +1938,50 @@ impl Interpreter {
     fn eval_query(&mut self, query: &Ref<Query>) -> Result<bool> {
         // Execute the query in a new scope
         self.scopes.push(Scope::new());
-        let ordered_stmts: Vec<&LiteralStmt> =
-            if let Some(schedule) = &self.compiled_policy.schedule {
-                match schedule.order.get(query) {
-                    Some(ord) => ord.iter().map(|i| &query.stmts[*i as usize]).collect(),
-                    // TODO
-                    _ => bail!(query
-                        .span
-                        .error("statements not scheduled in query {query:?}")),
+        let order_indices = {
+            let query_module_index = self.compiled_policy.modules.len() as u32;
+            if self.current_module_index == query_module_index {
+                // Use query schedule for the current module
+                match self
+                    .query_schedule
+                    .as_ref()
+                    .and_then(|s| s.queries.get(query_module_index, query.qidx))
+                {
+                    Some(schedule) => Some(&schedule.order),
+                    None => {
+                        if self.query_schedule.is_some() {
+                            bail!(query
+                                .span
+                                .error("statements not scheduled in query {query:?}"));
+                        }
+                        None
+                    }
                 }
             } else {
-                query.stmts.iter().collect()
-            };
+                // Use compiled policy schedule for other modules
+                match self
+                    .compiled_policy
+                    .schedule
+                    .as_ref()
+                    .and_then(|s| s.queries.get(self.current_module_index, query.qidx))
+                {
+                    Some(schedule) => Some(&schedule.order),
+                    None => {
+                        if self.compiled_policy.schedule.is_some() {
+                            bail!(query
+                                .span
+                                .error("statements not scheduled in query {query:?}"));
+                        }
+                        None
+                    }
+                }
+            }
+        };
+
+        let ordered_stmts: Vec<&LiteralStmt> = match order_indices {
+            Some(order) => order.iter().map(|i| &query.stmts[*i as usize]).collect(),
+            None => query.stmts.iter().collect(),
+        };
 
         let r = self.eval_stmts(&ordered_stmts);
         self.scopes.pop();
@@ -2406,7 +2297,7 @@ impl Interpreter {
         params: &[ExprRef],
     ) -> Result<Value> {
         // Return generated values of walk builtin.
-        if let Some(v) = self.loop_var_values.get(expr) {
+        if let Some(v) = self.get_loop_var_value(expr) {
             return Ok(v.clone());
         }
 
@@ -3217,9 +3108,19 @@ impl Interpreter {
         let m = self.module.clone();
         if let Some(m) = &module {
             self.current_module_path = Self::get_path_string(&m.package.refr, Some("data"))?;
+            self.current_module_index = self.find_module_index(m);
         }
         self.module = module;
         Ok(m.clone())
+    }
+
+    fn find_module_index(&self, module: &Ref<Module>) -> u32 {
+        self.compiled_policy
+            .modules
+            .iter()
+            .position(|m| core::ptr::eq(m.as_ref(), module.as_ref()))
+            .map(|i| i as u32)
+            .unwrap_or(0)
     }
 
     fn get_rule_refr(rule: &Rule) -> &ExprRef {
@@ -3505,6 +3406,9 @@ impl Interpreter {
     }
 
     pub fn eval_rule(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
+        // Set current module index
+        self.current_module_index = self.find_module_index(module);
+
         // Skip reprocessing rule
         if self.processed.contains(rule) {
             return Ok(());
@@ -3556,7 +3460,7 @@ impl Interpreter {
         &mut self,
         module: &Ref<Module>,
         query: &Ref<Query>,
-        schedule: &Schedule,
+        query_schedule: Schedule,
         enable_tracing: bool,
     ) -> Result<QueryResults> {
         self.traces = match enable_tracing {
@@ -3564,12 +3468,8 @@ impl Interpreter {
             false => None,
         };
 
-        // Add schedules for queries.
-        if let Some(ref mut self_schedule) = &mut self.compiled_policy_mut().schedule {
-            for (k, v) in schedule.order.iter() {
-                self_schedule.order.insert(k.clone(), v.clone());
-            }
-        }
+        // Store the query schedule for lookup during evaluation
+        self.query_schedule = Some(query_schedule);
 
         // Push new context.
         self.contexts.push(Context {
@@ -3579,46 +3479,59 @@ impl Interpreter {
             ..Context::default()
         });
 
+        self.query_module = Some(module.clone());
         let prev_module = self.set_current_module(Some(module.clone()))?;
 
+        // For user queries, set the module index to match the schedule
+        // Query snippets are scheduled as if they're in a module at the end
+        let prev_module_index = self.current_module_index;
+        let compiled_modules_len = self.compiled_policy.modules.len() as u32;
+        self.current_module_index = compiled_modules_len;
+
+        self.ensure_loop_var_values_capacity();
         // Eval the query.
         let query_r = self.eval_query(query);
+        self.query_module = None;
 
         let mut results = match self.contexts.pop() {
             Some(ctx) => ctx.results,
             _ => bail!("internal error: no context"),
         };
 
-        // Restore schedules.
-        if let Some(ref mut self_schedule) = &mut self.compiled_policy_mut().schedule {
-            for (k, ord) in schedule.order.iter() {
-                if k == query {
-                    for idx in 0..results.result.len() {
-                        let e = Expression {
-                            value: Value::Undefined,
-                            text: "".into(),
-                            location: Location { row: 0, col: 0 },
-                        };
-                        let mut ordered_expressions =
-                            vec![e; results.result[idx].expressions.len()];
-                        for (expr_idx, value) in results.result[idx].expressions.iter().enumerate()
-                        {
-                            let orig_idx = ord[expr_idx] as usize;
-                            ordered_expressions[orig_idx] = value.clone();
-                        }
-                        if !ordered_expressions
-                            .iter()
-                            .any(|v| v.value == Value::Undefined)
-                        {
-                            results.result[idx].expressions = ordered_expressions;
-                        }
+        // Apply expression ordering from the schedule if needed
+        let current_module_idx = compiled_modules_len;
+        let current_query_idx = query.qidx;
+        if let Some(ref self_schedule) = &self.query_schedule {
+            if let Some(query_schedule) = self_schedule
+                .queries
+                .get(current_module_idx, current_query_idx)
+            {
+                for idx in 0..results.result.len() {
+                    let e = Expression {
+                        value: Value::Undefined,
+                        text: "".into(),
+                        location: Location { row: 0, col: 0 },
+                    };
+                    let mut ordered_expressions = vec![e; results.result[idx].expressions.len()];
+                    for (expr_idx, value) in results.result[idx].expressions.iter().enumerate() {
+                        let orig_idx = query_schedule.order[expr_idx] as usize;
+                        ordered_expressions[orig_idx] = value.clone();
+                    }
+                    if !ordered_expressions
+                        .iter()
+                        .any(|v| v.value == Value::Undefined)
+                    {
+                        results.result[idx].expressions = ordered_expressions;
                     }
                 }
-                self_schedule.order.remove(k);
             }
         }
 
+        // Clear the query schedule
+        self.query_schedule = None;
+
         self.set_current_module(prev_module)?;
+        self.current_module_index = prev_module_index;
 
         if let Some(r) = results.result.last() {
             if matches!(&r.bindings, Value::Object(obj) if obj.is_empty())
