@@ -7,6 +7,7 @@ use crate::compiled_policy::CompiledPolicyData;
 #[cfg(feature = "azure_policy")]
 use crate::compiled_policy::TargetInfo;
 use crate::lexer::*;
+use crate::lookup::Lookup;
 use crate::parser::Parser;
 use crate::scheduler::*;
 use crate::utils::*;
@@ -20,6 +21,7 @@ use anyhow::{anyhow, bail, Result};
 use core::ops::Bound::*;
 
 type Scope = BTreeMap<SourceStr, Value>;
+type ExprLookup = Lookup<Value>;
 
 mod loops;
 
@@ -74,6 +76,7 @@ pub struct Interpreter {
     current_module_path: String,
     current_module_index: u32,
     query_schedule: Option<Schedule>,
+    query_module: Option<NodeRef<Module>>,
     input: Value,
 
     init_data: Value,
@@ -81,7 +84,7 @@ pub struct Interpreter {
     with_functions: BTreeMap<String, FunctionModifier>,
     scopes: Vec<Scope>,
     // TODO: handle recursive calls where same expr could have different values.
-    loop_var_values: BTreeMap<ExprRef, Value>,
+    loop_var_values: ExprLookup,
     contexts: Vec<Context>,
 
     processed: BTreeSet<Ref<Rule>>,
@@ -124,7 +127,7 @@ impl Clone for Interpreter {
             // Hence, they need not be copied.
             processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
-            loop_var_values: BTreeMap::default(),
+            loop_var_values: ExprLookup::new(),
             scopes: Vec::default(),
             rule_values: BTreeMap::default(),
 
@@ -134,6 +137,7 @@ impl Clone for Interpreter {
             current_module_path: String::default(),
             current_module_index: 0,
             query_schedule: None,
+            query_module: None,
             module: None,
             no_rules_lookup: false,
         }
@@ -190,6 +194,7 @@ impl Interpreter {
             current_module_path: String::default(),
             current_module_index: 0,
             query_schedule: None,
+            query_module: None,
             input: Value::Undefined,
 
             init_data: Value::new_object(),
@@ -197,7 +202,7 @@ impl Interpreter {
             with_functions: BTreeMap::default(),
             scopes: Vec::default(),
             contexts: Vec::default(),
-            loop_var_values: BTreeMap::default(),
+            loop_var_values: Lookup::default(),
 
             processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
@@ -225,13 +230,16 @@ impl Interpreter {
             module: None,
 
             current_module_path: String::default(),
+            current_module_index: 0,
+            query_module: None,
+            query_schedule: None,
             input: Value::Undefined,
 
             with_document: Value::new_object(),
             with_functions: BTreeMap::default(),
             scopes: Vec::default(),
             contexts: Vec::default(),
-            loop_var_values: BTreeMap::default(),
+            loop_var_values: Lookup::default(),
 
             processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
@@ -326,11 +334,47 @@ impl Interpreter {
         self.data = self.init_data.clone();
         self.processed.clear();
         self.processed_paths = Value::new_object();
-        self.loop_var_values.clear();
+        self.ensure_loop_var_values_capacity();
         self.scopes = vec![Scope::new()];
         self.contexts = vec![];
         self.rule_values.clear();
         self.builtins_cache.clear();
+    }
+
+    // Helper methods for working with ExprLookup
+    fn set_loop_var_value(&mut self, expr: &ExprRef, value: Value) {
+        let module_idx = self.current_module_index;
+        let expr_idx = expr.eidx();
+        self.loop_var_values.set(module_idx, expr_idx, value);
+    }
+
+    fn get_loop_var_value(&self, expr: &ExprRef) -> Option<&Value> {
+        let module_idx = self.current_module_index;
+        let expr_idx = expr.eidx();
+        self.loop_var_values.get(module_idx, expr_idx)
+    }
+
+    fn remove_loop_var_value(&mut self, expr: &ExprRef) {
+        let module_idx = self.current_module_index;
+        let expr_idx = expr.eidx();
+        self.loop_var_values.clear(module_idx, expr_idx);
+    }
+
+    fn has_loop_var_value(&self, expr: &ExprRef) -> bool {
+        self.get_loop_var_value(expr).is_some()
+    }
+
+    fn ensure_loop_var_values_capacity(&mut self) {
+        for (module_idx, module) in self.compiled_policy.modules.iter().enumerate() {
+            self.loop_var_values
+                .ensure_capacity(module_idx as u32, module.num_expressions);
+        }
+        if let Some(query_module) = &self.query_module {
+            let query_module_idx = self.compiled_policy.modules.len();
+            let eidx = query_module.num_expressions;
+            self.loop_var_values
+                .ensure_capacity(query_module_idx as u32, eidx);
+        }
     }
 
     fn current_module(&self) -> Result<Ref<Module>> {
@@ -388,7 +432,7 @@ impl Interpreter {
         // Collect a chaing of '.field' or '["field"]'
         let mut path = vec![];
         loop {
-            if let Some(v) = self.loop_var_values.get(expr) {
+            if let Some(v) = self.get_loop_var_value(expr) {
                 path.reverse();
                 return Ok(Self::get_value_chained(v.clone(), &path[..]));
             }
@@ -647,7 +691,7 @@ impl Interpreter {
                 // Allow variable overwritten inside a loop
                 let lhs_val = self.lookup_local_var(&name);
                 if !matches!(lhs_val, None | Some(Value::Undefined))
-                    && !self.loop_var_values.contains_key(rhs)
+                    && !self.has_loop_var_value(rhs)
                 {
                     bail!(rhs
                         .span()
@@ -1365,7 +1409,7 @@ impl Interpreter {
             match loop_expr_value {
                 Value::Array(items) => {
                     for (idx, v) in items.iter().enumerate() {
-                        self.loop_var_values.insert(loop_expr.expr(), v.clone());
+                        self.set_loop_var_value(&loop_expr.expr(), v.clone());
 
                         let exec = if let Some(index) = loop_expr.index() {
                             let mut type_match = BTreeSet::new();
@@ -1394,11 +1438,11 @@ impl Interpreter {
                         }
                     }
 
-                    self.loop_var_values.remove(&loop_expr.expr());
+                    self.remove_loop_var_value(&loop_expr.expr());
                 }
                 Value::Set(items) => {
                     for v in items.iter() {
-                        self.loop_var_values.insert(loop_expr.expr(), v.clone());
+                        self.set_loop_var_value(&loop_expr.expr(), v.clone());
 
                         // For sets, index is also the value.
                         let exec = if let Some(index) = loop_expr.index() {
@@ -1420,11 +1464,11 @@ impl Interpreter {
                             }
                         }
                     }
-                    self.loop_var_values.remove(&loop_expr.expr());
+                    self.remove_loop_var_value(&loop_expr.expr());
                 }
                 Value::Object(obj) => {
                     for (k, v) in obj.iter() {
-                        self.loop_var_values.insert(loop_expr.expr(), v.clone());
+                        self.set_loop_var_value(&loop_expr.expr(), v.clone());
                         // For objects, index is key.
                         let exec = if let Some(index) = loop_expr.index() {
                             let mut type_match = BTreeSet::new();
@@ -1445,7 +1489,7 @@ impl Interpreter {
                             }
                         }
                     }
-                    self.loop_var_values.remove(&loop_expr.expr());
+                    self.remove_loop_var_value(&loop_expr.expr());
                 }
                 Value::Undefined => {
                     result = false;
@@ -1775,19 +1819,19 @@ impl Interpreter {
         match self.eval_expr(&loop_expr.value())? {
             Value::Array(items) => {
                 for v in items.iter() {
-                    self.loop_var_values.insert(loop_expr.expr(), v.clone());
+                    self.set_loop_var_value(&loop_expr.expr(), v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Set(items) => {
                 for v in items.iter() {
-                    self.loop_var_values.insert(loop_expr.expr(), v.clone());
+                    self.set_loop_var_value(&loop_expr.expr(), v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Object(obj) => {
                 for (_, v) in obj.iter() {
-                    self.loop_var_values.insert(loop_expr.expr(), v.clone());
+                    self.set_loop_var_value(&loop_expr.expr(), v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
@@ -1799,7 +1843,7 @@ impl Interpreter {
                 ));
             }
         }
-        self.loop_var_values.remove(&loop_expr.expr());
+        self.remove_loop_var_value(&loop_expr.expr());
         Ok(result)
     }
 
@@ -2253,7 +2297,7 @@ impl Interpreter {
         params: &[ExprRef],
     ) -> Result<Value> {
         // Return generated values of walk builtin.
-        if let Some(v) = self.loop_var_values.get(expr) {
+        if let Some(v) = self.get_loop_var_value(expr) {
             return Ok(v.clone());
         }
 
@@ -3074,7 +3118,7 @@ impl Interpreter {
         self.compiled_policy
             .modules
             .iter()
-            .position(|m| std::ptr::eq(m.as_ref(), module.as_ref()))
+            .position(|m| core::ptr::eq(m.as_ref(), module.as_ref()))
             .map(|i| i as u32)
             .unwrap_or(0)
     }
@@ -3435,6 +3479,7 @@ impl Interpreter {
             ..Context::default()
         });
 
+        self.query_module = Some(module.clone());
         let prev_module = self.set_current_module(Some(module.clone()))?;
 
         // For user queries, set the module index to match the schedule
@@ -3443,8 +3488,10 @@ impl Interpreter {
         let compiled_modules_len = self.compiled_policy.modules.len() as u32;
         self.current_module_index = compiled_modules_len;
 
+        self.ensure_loop_var_values_capacity();
         // Eval the query.
         let query_r = self.eval_query(query);
+        self.query_module = None;
 
         let mut results = match self.contexts.pop() {
             Some(ctx) => ctx.results,

@@ -57,13 +57,10 @@ fn analyze_file(regos: &[String], expected_scopes: &[Scope]) -> Result<()> {
     let mut all_queries = Vec::new();
     for (module_idx, module) in modules.iter().enumerate() {
         for rule in &module.policy {
-            match rule.as_ref() {
-                Rule::Spec { bodies, .. } => {
-                    for body in bodies {
-                        all_queries.push((module_idx as u32, body.query.qidx, body.query.clone()));
-                    }
+            if let Rule::Spec { bodies, .. } = rule.as_ref() {
+                for body in bodies {
+                    all_queries.push((module_idx as u32, body.query.qidx, body.query.clone()));
                 }
-                _ => {}
             }
         }
     }

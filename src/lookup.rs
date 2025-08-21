@@ -57,4 +57,13 @@ impl<T: Clone> Lookup<T> {
     pub fn get_mut(&mut self, module_idx: u32, node_idx: u32) -> &mut Option<T> {
         &mut self.slots[module_idx as usize][node_idx as usize]
     }
+
+    /// Clear data at the given indices by setting it to None.
+    pub fn clear(&mut self, module_idx: u32, node_idx: u32) {
+        if (module_idx as usize) < self.slots.len()
+            && (node_idx as usize) < self.slots[module_idx as usize].len()
+        {
+            self.slots[module_idx as usize][node_idx as usize] = None;
+        }
+    }
 }

@@ -1972,4 +1972,14 @@ impl<'source> Parser<'source> {
         }
         Ok(query)
     }
+
+    pub fn num_expressions(&self) -> u32 {
+        self.eidx
+    }
+    pub fn num_statements(&self) -> u32 {
+        self.sidx
+    }
+    pub fn num_queries(&self) -> u32 {
+        self.qidx
+    }
 }

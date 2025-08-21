@@ -216,19 +216,10 @@ pub struct Scope {
     pub uses_input: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Default, Debug)]
 pub struct QuerySchedule {
     pub scope: Scope,
     pub order: Vec<u16>,
-}
-
-impl Default for QuerySchedule {
-    fn default() -> Self {
-        Self {
-            scope: Scope::default(),
-            order: Vec::new(),
-        }
-    }
 }
 
 pub fn traverse(expr: &Ref<Expr>, f: &mut dyn FnMut(&Ref<Expr>) -> Result<bool>) -> Result<()> {
