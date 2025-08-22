@@ -1,0 +1,15 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/users/123"
+  },
+  "user": {
+    "id": "user123",
+    "scope": ["read:users", "write:users"],
+    "department": "engineering"
+  },
+  "resource": {
+    "owner": "user123",
+    "type": "user"
+  }
+}

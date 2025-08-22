@@ -1,0 +1,14 @@
+{
+  "vm": {
+    "size": "Standard_B1s",
+    "os": "Windows",
+    "location": "westus2",
+    "tags": {
+      "environment": "dev",
+      "department": "marketing"
+    }
+  },
+  "user": {
+    "department": "marketing"
+  }
+}

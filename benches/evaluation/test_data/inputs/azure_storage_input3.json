@@ -1,0 +1,15 @@
+{
+  "account": {
+    "name": "prodstorageaccount",
+    "tier": "Standard",
+    "replication": "GRS",
+    "location": "eastus",
+    "tags": {
+      "environment": "production"
+    }
+  },
+  "container": {
+    "name": "backups",
+    "publicAccess": "None"
+  }
+}

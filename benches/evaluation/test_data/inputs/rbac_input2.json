@@ -1,0 +1,12 @@
+{
+  "user": {
+    "name": "bob",
+    "roles": ["admin"]
+  },
+  "resource": {
+    "name": "document2",
+    "type": "document",
+    "owner": "bob"
+  },
+  "action": "write"
+}

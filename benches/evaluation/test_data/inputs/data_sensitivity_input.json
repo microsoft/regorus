@@ -1,0 +1,13 @@
+{
+  "data": {
+    "type": "user_profile",
+    "classification": "personal",
+    "contains_pii": true,
+    "region": "EU"
+  },
+  "user": {
+    "clearance": "confidential",
+    "location": "EU"
+  },
+  "operation": "read"
+}

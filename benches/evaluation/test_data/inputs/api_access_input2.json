@@ -1,0 +1,15 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/users"
+  },
+  "user": {
+    "id": "user456",
+    "scope": ["write:users", "admin:users"],
+    "department": "engineering"
+  },
+  "resource": {
+    "owner": "user456",
+    "type": "user"
+  }
+}

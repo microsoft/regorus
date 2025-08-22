@@ -1,0 +1,12 @@
+{
+  "user": {
+    "name": "alice",
+    "roles": ["viewer", "editor"]
+  },
+  "resource": {
+    "name": "document1",
+    "type": "document",
+    "owner": "alice"
+  },
+  "action": "read"
+}

@@ -125,6 +125,8 @@ test-generator = "0.3.1"
 walkdir = "2.3.2"
 criterion = { version = "0.7" }
 
+num_cpus = "1.16"
+
 [build-dependencies]
 anyhow = "1.0"
 
@@ -157,6 +159,16 @@ harness = false
 name = "schema_validation_benchmark"
 harness = false
 required-features = ["azure_policy"]
+
+[[bench]]
+name = "engine_evaluation_benchmark"
+path = "benches/evaluation/engine_evaluation_benchmark.rs"
+harness = false
+
+[[bench]]
+name = "compiled_policy_evaluation_benchmark"
+path = "benches/evaluation/compiled_policy_evaluation_benchmark.rs"
+harness = false
 
 [[example]]
 name="regorus"

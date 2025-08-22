@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>Enable</Nullable>
+  </PropertyGroup>
+  
+  <PropertyGroup>
+    <!-- If the environment variable is set (such as in a Github Action run), append the suffix to the version number -->
+    <RegorusPackageVersionSuffix Condition="'$(VersionSuffix)' != ''">-$(VersionSuffix)</RegorusPackageVersionSuffix>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- If the environment variable is set (such as in a Github Action run), append the suffix to the version number -->
+    <RegorusPackageVersionSuffix Condition="'$(VersionSuffix)' != ''">-$(VersionSuffix)</RegorusPackageVersionSuffix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Regorus" Version="0.6.0$(RegorusPackageVersionSuffix)"/>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../ffi/target/release/libregorus_ffi.dylib" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

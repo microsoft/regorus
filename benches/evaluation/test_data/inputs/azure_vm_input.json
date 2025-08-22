@@ -1,0 +1,14 @@
+{
+  "vm": {
+    "size": "Standard_D2s_v3",
+    "os": "Linux",
+    "location": "eastus",
+    "tags": {
+      "environment": "production",
+      "department": "engineering"
+    }
+  },
+  "user": {
+    "department": "engineering"
+  }
+}

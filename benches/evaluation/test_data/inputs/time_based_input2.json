@@ -1,0 +1,11 @@
+{
+  "time": "14:30:00",
+  "day": "wednesday",
+  "user": {
+    "role": "employee",
+    "shift": "day"
+  },
+  "request": {
+    "urgent": false
+  }
+}

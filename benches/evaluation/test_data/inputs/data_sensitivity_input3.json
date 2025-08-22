@@ -1,0 +1,13 @@
+{
+  "data": {
+    "type": "public_announcement",
+    "classification": "public",
+    "contains_pii": false,
+    "region": "GLOBAL"
+  },
+  "user": {
+    "clearance": "public",
+    "location": "EU"
+  },
+  "operation": "read"
+}

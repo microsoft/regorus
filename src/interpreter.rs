@@ -228,22 +228,22 @@ impl Interpreter {
 
             init_data: Value::new_object(),
             with_document: Value::new_object(),
-            with_functions: BTreeMap::new(),
-            scopes: vec![Scope::new()],
-            contexts: vec![],
-            loop_var_values: BTreeMap::new(),
+            with_functions: BTreeMap::default(),
+            scopes: Vec::default(),
+            contexts: Vec::default(),
+            loop_var_values: BTreeMap::default(),
 
             processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
             rule_values: BTreeMap::default(),
-            active_rules: vec![],
-            builtins_cache: BTreeMap::new(),
+            active_rules: Vec::default(),
+            builtins_cache: BTreeMap::default(),
             no_rules_lookup: false,
             traces: None,
-            extensions: Map::new(),
+            extensions: Map::default(),
 
             #[cfg(feature = "coverage")]
-            coverage: Map::new(),
+            coverage: Map::default(),
             #[cfg(feature = "coverage")]
             enable_coverage: false,
 
@@ -254,16 +254,42 @@ impl Interpreter {
 
     /// Create a new Interpreter from a compiled policy.
     pub fn new_from_compiled_policy(compiled_policy: Rc<CompiledPolicyData>) -> Self {
-        let mut interpreter = Self::new();
-        interpreter.extensions = compiled_policy.extensions.clone();
-        interpreter.compiled_policy = compiled_policy;
+        Self {
+            data: Value::new_object(),
+            module: None,
 
-        // Set initial data if available
-        if let Some(data) = &interpreter.compiled_policy.data {
-            interpreter.init_data = data.clone();
+            current_module_path: String::default(),
+            input: Value::Undefined,
+
+            with_document: Value::new_object(),
+            with_functions: BTreeMap::default(),
+            scopes: Vec::default(),
+            contexts: Vec::default(),
+            loop_var_values: BTreeMap::default(),
+
+            processed: BTreeSet::default(),
+            processed_paths: Value::new_object(),
+            rule_values: BTreeMap::default(),
+            active_rules: Vec::default(),
+            builtins_cache: BTreeMap::default(),
+            no_rules_lookup: false,
+            traces: None,
+
+            #[cfg(feature = "coverage")]
+            coverage: Map::default(),
+            #[cfg(feature = "coverage")]
+            enable_coverage: false,
+
+            gather_prints: false,
+            prints: Vec::default(),
+
+            extensions: compiled_policy.extensions.clone(),
+            compiled_policy: compiled_policy.clone(),
+            init_data: compiled_policy
+                .data
+                .clone()
+                .unwrap_or_else(Value::new_object),
         }
-
-        interpreter
     }
 
     fn compiled_policy_mut(&mut self) -> &mut CompiledPolicyData {
@@ -338,6 +364,7 @@ impl Interpreter {
         self.scopes = vec![Scope::new()];
         self.contexts = vec![];
         self.rule_values.clear();
+        self.builtins_cache.clear();
     }
 
     fn current_module(&self) -> Result<Ref<Module>> {
