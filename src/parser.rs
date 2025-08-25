@@ -28,10 +28,16 @@ pub struct Parser<'source> {
     sidx: u32,
     // The index of the last query that was parsed.
     qidx: u32,
+    // The index of the last rule that was parsed.
+    ridx: u32,
     // Expression spans indexed by expression index
     expression_spans: Vec<Span>,
     // Statement spans indexed by statement index
     statement_spans: Vec<Span>,
+    // Query spans indexed by query index
+    query_spans: Vec<Span>,
+    // Rule spans indexed by rule index
+    rule_spans: Vec<Span>,
 }
 
 const FUTURE_KEYWORDS: [&str; 4] = ["contains", "every", "if", "in"];
@@ -51,8 +57,11 @@ impl<'source> Parser<'source> {
             eidx: 0,
             sidx: 0,
             qidx: 0,
+            ridx: 0,
             expression_spans: Vec::new(),
             statement_spans: Vec::new(),
+            query_spans: Vec::new(),
+            rule_spans: Vec::new(),
         })
     }
 
@@ -88,16 +97,44 @@ impl<'source> Parser<'source> {
         self.statement_spans[sidx as usize] = span;
     }
 
-    fn next_sidx(&mut self) -> u32 {
-        let sidx = self.sidx;
-        self.sidx += 1;
-        sidx
-    }
-
     fn next_qidx(&mut self) -> u32 {
         let qidx = self.qidx;
         self.qidx += 1;
         qidx
+    }
+
+    fn next_qidx_with_span(&mut self, span: Span) -> u32 {
+        let qidx = self.next_qidx();
+        self.track_query_span(qidx, span);
+        qidx
+    }
+
+    fn track_query_span(&mut self, qidx: u32, span: Span) {
+        // Ensure the query_spans vector is large enough
+        while self.query_spans.len() <= qidx as usize {
+            self.query_spans.push(span.clone());
+        }
+        self.query_spans[qidx as usize] = span;
+    }
+
+    fn next_ridx(&mut self) -> u32 {
+        let ridx = self.ridx;
+        self.ridx += 1;
+        ridx
+    }
+
+    fn next_ridx_with_span(&mut self, span: Span) -> u32 {
+        let ridx = self.next_ridx();
+        self.track_rule_span(ridx, span);
+        ridx
+    }
+
+    fn track_rule_span(&mut self, ridx: u32, span: Span) {
+        // Ensure the rule_spans vector is large enough
+        while self.rule_spans.len() <= ridx as usize {
+            self.rule_spans.push(span.clone());
+        }
+        self.rule_spans[ridx as usize] = span;
     }
 
     pub fn enable_rego_v1(&mut self) -> Result<()> {
@@ -1247,10 +1284,11 @@ impl<'source> Parser<'source> {
             self.expect(end_delim, "while parsing query")?;
         }
         span.end = self.end;
+        let qidx = self.next_qidx_with_span(span.clone());
         Ok(Query {
             span,
             stmts: literals,
-            qidx: self.next_qidx(),
+            qidx,
         })
     }
 
@@ -1562,11 +1600,8 @@ impl<'source> Parser<'source> {
         *self = state;
         let stmts = vec![self.parse_literal_stmt()?];
         span.end = self.end;
-        Ok(Query {
-            span,
-            stmts,
-            qidx: self.next_qidx(),
-        })
+        let qidx = self.next_qidx_with_span(span.clone());
+        Ok(Query { span, stmts, qidx })
     }
 
     pub fn parse_rule_bodies(&mut self) -> Result<Vec<RuleBody>> {
@@ -1686,10 +1721,11 @@ impl<'source> Parser<'source> {
                 _ => {
                     let mut query_span = span.clone();
                     query_span.end = query_span.start;
+                    let qidx = self.next_qidx_with_span(query_span.clone());
                     let query = Ref::new(Query {
                         span: query_span,
                         stmts: vec![],
-                        qidx: self.next_qidx(),
+                        qidx,
                     });
                     span.end = self.end;
                     bodies.push(RuleBody {
@@ -1744,6 +1780,7 @@ impl<'source> Parser<'source> {
         let value = Ref::new(self.parse_term()?);
         span.end = self.end;
         Ok(Rule::Default {
+            ridx: self.next_ridx_with_span(span.clone()),
             span,
             refr: rule_ref,
             args: args
@@ -1799,7 +1836,12 @@ impl<'source> Parser<'source> {
             }
         }
 
-        Ok(Rule::Spec { span, head, bodies })
+        Ok(Rule::Spec {
+            ridx: self.next_ridx_with_span(span.clone()),
+            span,
+            head,
+            bodies,
+        })
     }
 
     pub fn parse_package(&mut self) -> Result<Package> {
@@ -1992,8 +2034,11 @@ impl<'source> Parser<'source> {
             num_expressions: self.eidx,
             num_statements: self.sidx,
             num_queries: self.qidx,
+            num_rules: self.ridx,
             expression_spans: self.expression_spans.clone(),
             statement_spans: self.statement_spans.clone(),
+            query_spans: self.query_spans.clone(),
+            rule_spans: self.rule_spans.clone(),
         };
 
         #[cfg(debug_assertions)]

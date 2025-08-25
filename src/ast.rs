@@ -420,11 +420,13 @@ pub enum RuleHead {
 #[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub enum Rule {
     Spec {
+        ridx: u32,
         span: Span,
         head: RuleHead,
         bodies: Vec<RuleBody>,
     },
     Default {
+        ridx: u32,
         span: Span,
         refr: Ref<Expr>,
         args: Vec<Ref<Expr>>,
@@ -437,6 +439,12 @@ impl Rule {
     pub fn span(&self) -> &Span {
         match self {
             Self::Spec { span, .. } | Self::Default { span, .. } => span,
+        }
+    }
+
+    pub fn ridx(&self) -> u32 {
+        match self {
+            Self::Spec { ridx, .. } | Self::Default { ridx, .. } => *ridx,
         }
     }
 }
@@ -474,12 +482,21 @@ pub struct Module {
     // Statement spans indexed by statement index (sidx)
     #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Vec::is_empty"))]
     pub statement_spans: Vec<Span>,
+    // Query spans indexed by query index (qidx)
+    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Vec::is_empty"))]
+    pub query_spans: Vec<Span>,
+    // Rule spans indexed by rule index (ridx)
+    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Vec::is_empty"))]
+    pub rule_spans: Vec<Span>,
     // Number of expressions in the module.
     pub num_expressions: u32,
     // Number of statements in the module.
     pub num_statements: u32,
     // Number of queries in the module.
     pub num_queries: u32,
+    // Number of rules in the module.
+    pub num_rules: u32,
 }
 
 pub type ExprRef = Ref<Expr>;
+pub type RuleRef = Ref<Rule>;

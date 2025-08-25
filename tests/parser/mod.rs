@@ -637,7 +637,9 @@ fn match_rule_bodies(span: &Span, bodies: &[RuleBody], v: &Value) -> Result<()> 
 
 fn match_rule(r: &Rule, v: &Value) -> Result<()> {
     match r {
-        Rule::Spec { span, head, bodies } => {
+        Rule::Spec {
+            span, head, bodies, ..
+        } => {
             let obj = &v["spec"];
             match_span_opt(span, &obj["span"])?;
             match_rule_head(head, &obj["head"])?;
@@ -649,6 +651,7 @@ fn match_rule(r: &Rule, v: &Value) -> Result<()> {
             args,
             op,
             value,
+            ..
         } => {
             let obj = &v["default"];
             match_span_opt(span, &obj["span"])?;
@@ -980,6 +983,63 @@ fn verify_statement_spans(module: &Module) -> Result<()> {
     Ok(())
 }
 
+fn verify_query_spans(module: &Module) -> Result<()> {
+    // Recursively verify that queries have the correct spans
+    fn check_query_span(query: &Query, query_spans: &[Span]) -> Result<()> {
+        let qidx = query.qidx as usize;
+        if qidx >= query_spans.len() {
+            bail!(
+                "Query qidx {} out of bounds for query_spans length {}",
+                qidx,
+                query_spans.len()
+            );
+        }
+
+        let expected_span = &query.span;
+        let actual_span = &query_spans[qidx];
+
+        // Check that the spans have the same text content
+        if expected_span.text() != actual_span.text() {
+            bail!(
+                "Query span mismatch at qidx {}: expected '{}', got '{}'",
+                qidx,
+                expected_span.text(),
+                actual_span.text()
+            );
+        }
+
+        // Check that the spans have the same source positions
+        if expected_span.start != actual_span.start || expected_span.end != actual_span.end {
+            bail!(
+                "Query span position mismatch at qidx {}: expected {}..{}, got {}..{}",
+                qidx,
+                expected_span.start,
+                expected_span.end,
+                actual_span.start,
+                actual_span.end
+            );
+        }
+
+        Ok(())
+    }
+
+    // Check queries in policy rules
+    for rule in &module.policy {
+        match rule.as_ref() {
+            Rule::Spec { bodies, .. } => {
+                for body in bodies {
+                    check_query_span(body.query.as_ref(), &module.query_spans)?;
+                }
+            }
+            Rule::Default { .. } => {
+                // Default rules don't have query bodies
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn yaml_test_impl(file: &str) -> Result<()> {
     println!("\nrunning {file}");
 
@@ -1056,11 +1116,19 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                     bail!("statement_spans count should match num_statements");
                 }
 
+                // Also verify that query spans count matches num_queries
+                if module.query_spans.len() != module.num_queries as usize {
+                    bail!("query_spans count should match num_queries");
+                }
+
                 // Test expression spans for specific expressions in the AST
                 verify_expression_spans(&module)?;
 
                 // Test statement spans for specific statements in the AST
                 verify_statement_spans(&module)?;
+
+                // Test query spans for specific queries in the AST
+                verify_query_spans(&module)?;
             }
             Err(actual) => match &case.error {
                 Some(expected) => {

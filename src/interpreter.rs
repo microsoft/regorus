@@ -3423,6 +3423,7 @@ impl Interpreter {
     fn eval_rule_impl(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
         match rule.as_ref() {
             Rule::Spec {
+                ridx: _,
                 span,
                 head: rule_head,
                 bodies: rule_body,
