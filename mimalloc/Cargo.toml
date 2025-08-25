@@ -1,0 +1,8 @@
+[package]
+name = "mimalloc"
+edition = "2021"
+version = "2.1.2"
+
+[target.'cfg(not(any(target_family = "wasm")))'.dependencies]
+mimalloc-sys = { path = "./mimalloc-sys" }  
+
