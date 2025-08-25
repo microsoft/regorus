@@ -18,9 +18,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-    - name: Add musl target
-      run: rustup target add x86_64-unknown-linux-musl
+    - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+    - uses: ./.github/actions/toolchains/rust
+      with:
+        targets: x86_64-unknown-linux-musl
     - name: Install musl-gcc
       run: sudo apt update && sudo apt install -y musl-tools
     - name: Fetch

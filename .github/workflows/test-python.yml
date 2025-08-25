@@ -24,11 +24,12 @@ jobs:
     runs-on: ${{ matrix.host.name }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/toolchains/rust
 
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           architecture: x64
@@ -48,7 +49,7 @@ jobs:
           sccache: 'true'
 
       - name: Upload Wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: regorus-wheel-${{ matrix.host.name }}
           path: dist/regorus-*.whl
@@ -69,18 +70,18 @@ jobs:
     runs-on: ${{ matrix.host.name }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
         with:
           fetch-depth: 0
 
       - name: Download Regorus wheel
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           path: wheels
           pattern: regorus-wheel-*
           merge-multiple: true
 
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
           architecture: x64
