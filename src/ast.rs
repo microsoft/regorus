@@ -471,6 +471,9 @@ pub struct Module {
     // Expression spans indexed by expression index (eidx)
     #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Vec::is_empty"))]
     pub expression_spans: Vec<Span>,
+    // Statement spans indexed by statement index (sidx)
+    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Vec::is_empty"))]
+    pub statement_spans: Vec<Span>,
     // Number of expressions in the module.
     pub num_expressions: u32,
     // Number of statements in the module.

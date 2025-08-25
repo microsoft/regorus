@@ -30,6 +30,8 @@ pub struct Parser<'source> {
     qidx: u32,
     // Expression spans indexed by expression index
     expression_spans: Vec<Span>,
+    // Statement spans indexed by statement index
+    statement_spans: Vec<Span>,
 }
 
 const FUTURE_KEYWORDS: [&str; 4] = ["contains", "every", "if", "in"];
@@ -50,6 +52,7 @@ impl<'source> Parser<'source> {
             sidx: 0,
             qidx: 0,
             expression_spans: Vec::new(),
+            statement_spans: Vec::new(),
         })
     }
 
@@ -67,6 +70,22 @@ impl<'source> Parser<'source> {
             self.expression_spans.push(span.clone());
         }
         self.expression_spans[eidx as usize] = span;
+    }
+
+    fn next_sidx_with_span(&mut self, span: Span) -> u32 {
+        let sidx = self.sidx;
+        self.sidx += 1;
+        // Store the span for this statement index
+        self.track_stmt_span(sidx, span);
+        sidx
+    }
+
+    fn track_stmt_span(&mut self, sidx: u32, span: Span) {
+        // Ensure the vector is large enough
+        while self.statement_spans.len() <= sidx as usize {
+            self.statement_spans.push(span.clone());
+        }
+        self.statement_spans[sidx as usize] = span;
     }
 
     fn next_sidx(&mut self) -> u32 {
@@ -1150,10 +1169,10 @@ impl<'source> Parser<'source> {
         span.end = self.end;
 
         Ok(LiteralStmt {
-            span,
+            span: span.clone(),
             literal,
             with_mods,
-            sidx: self.next_sidx(),
+            sidx: self.next_sidx_with_span(span),
         })
     }
 
@@ -1489,6 +1508,8 @@ impl<'source> Parser<'source> {
                         {
                             // Adjust the expression counter since we are discarding the RefBrack expression.
                             self.eidx -= 1;
+                            // Also remove the corresponding span from expression_spans
+                            self.expression_spans.truncate((self.eidx) as usize);
                             return Ok(RuleHead::Set {
                                 span,
                                 refr: refr.clone(),
@@ -1972,6 +1993,7 @@ impl<'source> Parser<'source> {
             num_statements: self.sidx,
             num_queries: self.qidx,
             expression_spans: self.expression_spans.clone(),
+            statement_spans: self.statement_spans.clone(),
         };
 
         #[cfg(debug_assertions)]

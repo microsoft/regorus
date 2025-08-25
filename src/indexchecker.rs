@@ -33,6 +33,7 @@ impl<'a> IndexChecker<'a> {
                     .span
                     .error(format!("statement with sidx {} already exists", stmt.sidx).as_str()));
             }
+            self.check_sidx(stmt)?;
             match &stmt.literal {
                 Literal::Every { domain, query, .. } => {
                     self.check_eidx(domain)?;
@@ -185,6 +186,35 @@ impl<'a> IndexChecker<'a> {
             OrExpr { lhs, rhs, .. } => {
                 self.check_eidx(lhs.as_ref())?;
                 self.check_eidx(rhs.as_ref())?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_sidx(&mut self, stmt: &LiteralStmt) -> Result<()> {
+        let sidx = stmt.sidx;
+
+        // Check that the span in statement_spans matches the statement's span
+        if let Some(module) = self.module {
+            if let Some(stored_span) = module.statement_spans.get(sidx as usize) {
+                let stmt_span = &stmt.span;
+                if stored_span.start != stmt_span.start || stored_span.end != stmt_span.end {
+                    bail!(stmt
+                        .span
+                        .error(format!(
+                            "statement span position mismatch at sidx {}: stored span positions ({}..{}) != statement span positions ({}..{})",
+                            sidx,
+                            stored_span.start,
+                            stored_span.end,
+                            stmt_span.start,
+                            stmt_span.end
+                        ).as_str()));
+                }
+            } else {
+                bail!(stmt
+                    .span
+                    .error(format!("missing span in statement_spans for sidx {}", sidx).as_str()));
             }
         }
 

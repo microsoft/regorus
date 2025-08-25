@@ -916,6 +916,70 @@ fn verify_expression_spans(module: &Module) -> Result<()> {
     Ok(())
 }
 
+fn verify_statement_spans(module: &Module) -> Result<()> {
+    // Recursively verify that statements have the correct spans
+    fn check_stmt_span(stmt: &LiteralStmt, statement_spans: &[Span]) -> Result<()> {
+        let sidx = stmt.sidx as usize;
+        if sidx >= statement_spans.len() {
+            bail!(
+                "Statement sidx {} out of bounds for statement_spans length {}",
+                sidx,
+                statement_spans.len()
+            );
+        }
+
+        let expected_span = &stmt.span;
+        let actual_span = &statement_spans[sidx];
+
+        // Check that the spans have the same text content
+        if expected_span.text() != actual_span.text() {
+            bail!(
+                "Statement span mismatch at sidx {}: expected '{}', got '{}'",
+                sidx,
+                expected_span.text(),
+                actual_span.text()
+            );
+        }
+
+        // Check that the spans have the same source positions
+        if expected_span.start != actual_span.start || expected_span.end != actual_span.end {
+            bail!(
+                "Statement span position mismatch at sidx {}: expected {}..{}, got {}..{}",
+                sidx,
+                expected_span.start,
+                expected_span.end,
+                actual_span.start,
+                actual_span.end
+            );
+        }
+
+        Ok(())
+    }
+
+    fn check_query_stmt_spans(query: &Query, statement_spans: &[Span]) -> Result<()> {
+        for stmt in &query.stmts {
+            check_stmt_span(stmt, statement_spans)?;
+        }
+        Ok(())
+    }
+
+    // Check statements in policy rules
+    for rule in &module.policy {
+        match rule.as_ref() {
+            Rule::Spec { bodies, .. } => {
+                for body in bodies {
+                    check_query_stmt_spans(&body.query, &module.statement_spans)?;
+                }
+            }
+            Rule::Default { .. } => {
+                // Default rules don't have statement bodies
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn yaml_test_impl(file: &str) -> Result<()> {
     println!("\nrunning {file}");
 
@@ -987,8 +1051,16 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                     }
                 }
 
+                // Also verify that statement spans count matches num_statements
+                if module.statement_spans.len() != module.num_statements as usize {
+                    bail!("statement_spans count should match num_statements");
+                }
+
                 // Test expression spans for specific expressions in the AST
                 verify_expression_spans(&module)?;
+
+                // Test statement spans for specific statements in the AST
+                verify_statement_spans(&module)?;
             }
             Err(actual) => match &case.error {
                 Some(expected) => {
