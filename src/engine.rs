@@ -737,28 +737,13 @@ impl Engine {
         self.interpreter.clean_internal_evaluation_state();
 
         self.interpreter.create_rule_prefixes()?;
-        let query_module = {
-            let source = Source::from_contents(
-                "<query_module.rego>".to_owned(),
-                "package __internal_query_module".to_owned(),
-            )?;
-            Ref::new(Parser::new(&source)?.parse()?)
-        };
-
-        // Parse the query.
-        let query_source = Source::from_contents("<query.rego>".to_string(), query)?;
-        let mut parser = self.make_parser(&query_source)?;
-        let query_node = parser.parse_user_query()?;
+        let (query_module, query_node, query_schedule) = self.make_query(query)?;
         if query_node.span.text() == "data" {
             self.eval_modules(enable_tracing)?;
         }
-        let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
-        self.interpreter.eval_user_query(
-            &query_module,
-            &query_node,
-            &query_schedule,
-            enable_tracing,
-        )
+
+        self.interpreter
+            .eval_user_query(&query_module, &query_node, query_schedule, enable_tracing)
     }
 
     /// Evaluate a Rego query that produces a boolean value.
@@ -843,6 +828,27 @@ impl Engine {
         !matches!(self.eval_bool_query(query, enable_tracing), Ok(false))
     }
 
+    fn make_query(&mut self, query: String) -> Result<(NodeRef<Module>, NodeRef<Query>, Schedule)> {
+        let mut query_module = {
+            let source = Source::from_contents(
+                "<query_module.rego>".to_owned(),
+                "package __internal_query_module".to_owned(),
+            )?;
+            Parser::new(&source)?.parse()?
+        };
+
+        // Parse the query.
+        let query_source = Source::from_contents("<query.rego>".to_string(), query)?;
+        let mut parser = self.make_parser(&query_source)?;
+        let query_node = parser.parse_user_query()?;
+        query_module.num_expressions = parser.num_expressions();
+        query_module.num_queries = parser.num_queries();
+        query_module.num_statements = parser.num_statements();
+        let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
+
+        Ok((Ref::new(query_module), query_node, query_schedule))
+    }
+
     #[doc(hidden)]
     /// Evaluate the given query and all the rules in the supplied policies.
     ///
@@ -854,25 +860,9 @@ impl Engine {
     ) -> Result<QueryResults> {
         self.eval_modules(enable_tracing)?;
 
-        let query_module = {
-            let source = Source::from_contents(
-                "<query_module.rego>".to_owned(),
-                "package __internal_query_module".to_owned(),
-            )?;
-            Ref::new(Parser::new(&source)?.parse()?)
-        };
-
-        // Parse the query.
-        let query_source = Source::from_contents("<query.rego>".to_string(), query)?;
-        let mut parser = self.make_parser(&query_source)?;
-        let query_node = parser.parse_user_query()?;
-        let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
-        self.interpreter.eval_user_query(
-            &query_module,
-            &query_node,
-            &query_schedule,
-            enable_tracing,
-        )
+        let (query_module, query_node, query_schedule) = self.make_query(query)?;
+        self.interpreter
+            .eval_user_query(&query_module, &query_node, query_schedule, enable_tracing)
     }
 
     #[doc(hidden)]
