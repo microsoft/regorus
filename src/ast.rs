@@ -107,159 +107,159 @@ pub type Ref<T> = NodeRef<T>;
 pub enum Expr {
     // Simple items that only have a span as content.
     String {
+        eidx: u32,
         span: Span,
         value: Value,
-        eidx: u32,
     },
 
     RawString {
+        eidx: u32,
         span: Span,
         value: Value,
-        eidx: u32,
     },
 
     Number {
+        eidx: u32,
         span: Span,
         value: Value,
-        eidx: u32,
     },
 
     Bool {
+        eidx: u32,
         span: Span,
         value: Value,
-        eidx: u32,
     },
 
     Null {
+        eidx: u32,
         span: Span,
         value: Value,
-        eidx: u32,
     },
 
     Var {
+        eidx: u32,
         span: Span,
         value: Value,
-        eidx: u32,
     },
 
     // array
     Array {
+        eidx: u32,
         span: Span,
         items: Vec<Ref<Expr>>,
-        eidx: u32,
     },
 
     // set
     Set {
+        eidx: u32,
         span: Span,
         items: Vec<Ref<Expr>>,
-        eidx: u32,
     },
 
     Object {
+        eidx: u32,
         span: Span,
         fields: Vec<(Span, Ref<Expr>, Ref<Expr>)>,
-        eidx: u32,
     },
 
     // Comprehensions
     ArrayCompr {
+        eidx: u32,
         span: Span,
         term: Ref<Expr>,
         query: Ref<Query>,
-        eidx: u32,
     },
 
     SetCompr {
+        eidx: u32,
         span: Span,
         term: Ref<Expr>,
         query: Ref<Query>,
-        eidx: u32,
     },
 
     ObjectCompr {
+        eidx: u32,
         span: Span,
         key: Ref<Expr>,
         value: Ref<Expr>,
         query: Ref<Query>,
-        eidx: u32,
     },
 
     Call {
+        eidx: u32,
         span: Span,
         fcn: Ref<Expr>,
         params: Vec<Ref<Expr>>,
-        eidx: u32,
     },
 
     UnaryExpr {
+        eidx: u32,
         span: Span,
         expr: Ref<Expr>,
-        eidx: u32,
     },
 
     // ref
     RefDot {
+        eidx: u32,
         span: Span,
         refr: Ref<Expr>,
         field: (Span, Value),
-        eidx: u32,
     },
 
     RefBrack {
+        eidx: u32,
         span: Span,
         refr: Ref<Expr>,
         index: Ref<Expr>,
-        eidx: u32,
     },
 
     // Infix expressions
     BinExpr {
+        eidx: u32,
         span: Span,
         op: BinOp,
         lhs: Ref<Expr>,
         rhs: Ref<Expr>,
-        eidx: u32,
     },
 
     BoolExpr {
+        eidx: u32,
         span: Span,
         op: BoolOp,
         lhs: Ref<Expr>,
         rhs: Ref<Expr>,
-        eidx: u32,
     },
 
     ArithExpr {
+        eidx: u32,
         span: Span,
         op: ArithOp,
         lhs: Ref<Expr>,
         rhs: Ref<Expr>,
-        eidx: u32,
     },
 
     AssignExpr {
+        eidx: u32,
         span: Span,
         op: AssignOp,
         lhs: Ref<Expr>,
         rhs: Ref<Expr>,
-        eidx: u32,
     },
 
     Membership {
+        eidx: u32,
         span: Span,
         key: Option<Ref<Expr>>,
         value: Ref<Expr>,
         collection: Ref<Expr>,
-        eidx: u32,
     },
 
     #[cfg(feature = "rego-extensions")]
     OrExpr {
+        eidx: u32,
         span: Span,
         lhs: Ref<Expr>,
         rhs: Ref<Expr>,
-        eidx: u32,
     },
 }
 
@@ -364,19 +364,19 @@ pub struct WithModifier {
 #[derive(Debug)]
 #[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct LiteralStmt {
+    pub sidx: u32,
     pub span: Span,
     pub literal: Literal,
     #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Vec::is_empty"))]
     pub with_mods: Vec<WithModifier>,
-    pub sidx: u32,
 }
 
 #[derive(Debug)]
 #[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct Query {
+    pub qidx: u32,
     pub span: Span,
     pub stmts: Vec<LiteralStmt>,
-    pub qidx: u32,
 }
 
 #[derive(Debug)]
@@ -468,6 +468,9 @@ pub struct Module {
     // Target name if specified via __target__ rule
     #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Option::is_none"))]
     pub target: Option<String>,
+    // Expression spans indexed by expression index (eidx)
+    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Vec::is_empty"))]
+    pub expression_spans: Vec<Span>,
     // Number of expressions in the module.
     pub num_expressions: u32,
     // Number of statements in the module.

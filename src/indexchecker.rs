@@ -10,14 +10,15 @@ use anyhow::{bail, Result};
 
 // Ensures that indexes are unique and continuous, starting from 0.
 #[derive(Default)]
-pub struct IndexChecker {
+pub struct IndexChecker<'a> {
     eidx: BTreeSet<u32>,
     sidx: BTreeSet<u32>,
     qidx: BTreeSet<u32>,
+    module: Option<&'a Module>,
 }
 
 #[cfg(debug_assertions)]
-impl IndexChecker {
+impl<'a> IndexChecker<'a> {
     fn check_query(&mut self, query: &Query) -> Result<()> {
         let qidx = query.qidx;
         if !self.qidx.insert(qidx) {
@@ -71,6 +72,29 @@ impl IndexChecker {
             bail!(expr
                 .span()
                 .error(format!("expression with eidx {eidx} already exists").as_str()));
+        }
+
+        // Check that the span in expression_spans matches the expression's span
+        if let Some(module) = self.module {
+            if let Some(stored_span) = module.expression_spans.get(eidx as usize) {
+                let expr_span = expr.span();
+                if stored_span.start != expr_span.start || stored_span.end != expr_span.end {
+                    bail!(expr
+                        .span()
+                        .error(format!(
+                            "expression span position mismatch at eidx {}: stored span positions ({}..{}) != expression span positions ({}..{})",
+                            eidx,
+                            stored_span.start,
+                            stored_span.end,
+                            expr_span.start,
+                            expr_span.end
+                        ).as_str()));
+                }
+            } else {
+                bail!(expr
+                    .span()
+                    .error(format!("missing span in expression_spans for eidx {}", eidx).as_str()));
+            }
         }
 
         match expr {
@@ -242,7 +266,9 @@ impl IndexChecker {
 
         Ok(())
     }
-    pub fn check_module(&mut self, module: &Module) -> Result<()> {
+    pub fn check_module(&mut self, module: &'a Module) -> Result<()> {
+        self.module = Some(module);
+
         self.check_eidx(module.package.refr.as_ref())?;
         for import in &module.imports {
             self.check_eidx(import.refr.as_ref())?;
