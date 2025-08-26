@@ -30,6 +30,7 @@ mod engine;
 mod indexchecker;
 mod interpreter;
 mod lexer;
+mod lookup;
 mod number;
 mod parser;
 mod policy_info;

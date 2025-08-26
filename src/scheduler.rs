@@ -4,6 +4,7 @@
 use crate::ast::Expr::{Set, *};
 use crate::ast::*;
 use crate::lexer::*;
+use crate::lookup::*;
 use crate::utils::*;
 use crate::*;
 
@@ -212,6 +213,13 @@ pub struct Scope {
     pub locals: BTreeMap<SourceStr, Span>,
     pub unscoped: BTreeSet<SourceStr>,
     pub inputs: BTreeSet<SourceStr>,
+    pub uses_input: bool,
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct QuerySchedule {
+    pub scope: Scope,
+    pub order: Vec<u16>,
 }
 
 pub fn traverse(expr: &Ref<Expr>, f: &mut dyn FnMut(&Ref<Expr>) -> Result<bool>) -> Result<()> {
@@ -313,7 +321,12 @@ fn gather_assigned_vars(
 ) -> Result<()> {
     traverse(expr, &mut |e| match e.as_ref() {
         // Ignore _, input, data.
-        Var { span: v, .. } if matches!(v.text(), "_" | "input" | "data") => Ok(false),
+        Var { span: v, .. } if matches!(v.text(), "_" | "input" | "data") => {
+            if v.text() == "input" {
+                scope.uses_input = true;
+            }
+            Ok(false)
+        }
 
         // Record local var that can shadow input var.
         Var { span: v, .. } if can_shadow => {
@@ -341,10 +354,13 @@ fn gather_assigned_vars(
 
 fn gather_input_vars(expr: &Ref<Expr>, parent_scopes: &[Scope], scope: &mut Scope) -> Result<()> {
     traverse(expr, &mut |e| match e.as_ref() {
-        Var { span: v, .. }
-            if !scope.unscoped.contains(&v.source_str()) && var_exists(v, parent_scopes) =>
-        {
-            scope.inputs.insert(v.source_str());
+        Var { span: v, .. } => {
+            let name = v.source_str();
+            if name.text() == "input" {
+                scope.uses_input = true;
+            } else if !scope.unscoped.contains(&name) && var_exists(v, parent_scopes) {
+                scope.inputs.insert(name);
+            }
             Ok(false)
         }
         _ => Ok(true),
@@ -353,6 +369,10 @@ fn gather_input_vars(expr: &Ref<Expr>, parent_scopes: &[Scope], scope: &mut Scop
 
 fn gather_loop_vars(expr: &Ref<Expr>, parent_scopes: &[Scope], scope: &mut Scope) -> Result<()> {
     traverse(expr, &mut |e| match e.as_ref() {
+        Var { span: v, .. } if v.text() == "input" => {
+            scope.uses_input = true;
+            Ok(false)
+        }
         RefBrack { index, .. } => {
             gather_assigned_vars(index, false, parent_scopes, scope)?;
             Ok(true)
@@ -389,19 +409,17 @@ fn gather_vars(
 
 pub struct Analyzer {
     packages: BTreeMap<String, Scope>,
-    scope_table: BTreeMap<Ref<Query>, Scope>,
     scopes: Vec<Scope>,
-    order: BTreeMap<Ref<Query>, Vec<u16>>,
+    schedule_table: Lookup<QuerySchedule>,
     functions: FunctionTable,
     current_module_path: String,
+    current_module_index: u32,
 }
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct Schedule {
-    #[allow(unused)]
-    pub scopes: BTreeMap<Ref<Query>, Scope>,
-    pub order: BTreeMap<Ref<Query>, Vec<u16>>,
+    pub queries: Lookup<QuerySchedule>,
 }
 
 impl Default for Analyzer {
@@ -414,11 +432,11 @@ impl Analyzer {
     pub fn new() -> Analyzer {
         Analyzer {
             packages: BTreeMap::new(),
-            scope_table: BTreeMap::new(),
+            schedule_table: Lookup::new(),
             scopes: vec![],
-            order: BTreeMap::new(),
             functions: FunctionTable::new(),
             current_module_path: String::default(),
+            current_module_index: 0,
         }
     }
 
@@ -426,13 +444,23 @@ impl Analyzer {
         self.add_rules_and_aliases(modules)?;
         self.functions = gather_functions(modules)?;
 
-        for m in modules {
+        // Pre-allocate capacity for all modules based on their num_queries
+        for (module_index, m) in modules.iter().enumerate() {
+            let module_idx = module_index as u32;
+            if m.num_queries > 0 {
+                // Reserve capacity for all queries in this module (0 to num_queries-1)
+                self.schedule_table
+                    .ensure_capacity(module_idx, m.num_queries - 1);
+            }
+        }
+
+        for (module_index, m) in modules.iter().enumerate() {
+            self.current_module_index = module_index as u32;
             self.analyze_module(m)?;
         }
 
         Ok(Schedule {
-            scopes: self.scope_table,
-            order: self.order,
+            queries: self.schedule_table,
         })
     }
 
@@ -442,11 +470,27 @@ impl Analyzer {
         query: &Ref<Query>,
     ) -> Result<Schedule> {
         self.add_rules_and_aliases(modules)?;
+
+        // Pre-allocate capacity for all modules based on their num_queries
+        for (module_index, m) in modules.iter().enumerate() {
+            let module_idx = module_index as u32;
+            if m.num_queries > 0 {
+                // Reserve capacity for all queries in this module (0 to num_queries-1)
+                self.schedule_table
+                    .ensure_capacity(module_idx, m.num_queries - 1);
+            }
+        }
+
+        // Query snippets are treated as if they're part of a module appended at the end
+        let snippet_module_index = modules.len() as u32;
+        self.schedule_table
+            .ensure_capacity(snippet_module_index, query.qidx);
+
+        self.current_module_index = snippet_module_index;
         self.analyze_query(None, None, query, Scope::default())?;
 
         Ok(Schedule {
-            scopes: self.scope_table,
-            order: self.order,
+            queries: self.schedule_table,
         })
     }
 
@@ -672,6 +716,11 @@ impl Analyzer {
                 Ok(false)
             }
 
+            Var { span: v, .. } if v.text() == "input" => {
+                scope.uses_input = true;
+                Ok(false)
+            }
+
             RefBrack { refr, index, .. } => {
                 traverse(index, &mut |e| match e.as_ref() {
                     Var { span: v, .. } => {
@@ -724,7 +773,9 @@ impl Analyzer {
             let compr_scope = match compr.as_ref() {
                 Expr::ArrayCompr { query, term, .. } | Expr::SetCompr { query, term, .. } => {
                     self.analyze_query(None, Some(term.clone()), query, Scope::default())?;
-                    self.scope_table.get(query)
+                    self.schedule_table
+                        .get(self.current_module_index, query.qidx)
+                        .map(|qs| &qs.scope)
                 }
                 Expr::ObjectCompr {
                     query, key, value, ..
@@ -735,13 +786,20 @@ impl Analyzer {
                         query,
                         Scope::default(),
                     )?;
-                    self.scope_table.get(query)
+                    self.schedule_table
+                        .get(self.current_module_index, query.qidx)
+                        .map(|qs| &qs.scope)
                 }
                 _ => break,
             };
 
             // Record vars used by the comprehension scope.
             if let Some(compr_scope) = compr_scope {
+                // Propagate input usage from nested scope to parent
+                if compr_scope.uses_input {
+                    scope.uses_input = true;
+                }
+
                 for iv in &compr_scope.inputs {
                     if scope.locals.contains_key(iv) || scope.unscoped.contains(iv) {
                         // Record possible first use of current scope's local var.
@@ -958,6 +1016,11 @@ impl Analyzer {
         non_vars: &mut Vec<Ref<Expr>>,
     ) -> Result<()> {
         traverse(expr, &mut |e| match e.as_ref() {
+            Var { span: v, .. } if v.text() == "input" => {
+                // Note: We can't modify scope here since it's not mutable,
+                // but input usage will be tracked elsewhere
+                Ok(false)
+            }
             Var { span: v, .. } if scope.locals.contains_key(&v.source_str()) => {
                 vars.push(v.source_str());
                 Ok(false)
@@ -1209,16 +1272,27 @@ impl Analyzer {
         }
 
         let res = schedule(&mut infos[..], &query.span.source_str().clone_empty());
-        match res {
-            Ok(SortResult::Order(ord)) => {
-                self.order.insert(query.clone(), ord);
-            }
+        let order = match res {
+            Ok(SortResult::Order(ord)) => ord,
             Err(err) => {
                 bail!(query.span.error(&err.to_string()))
             }
-            _ => (),
+            _ => Vec::new(),
+        };
+
+        let query_schedule = QuerySchedule {
+            scope: scope.clone(),
+            order,
+        };
+        self.schedule_table
+            .set(self.current_module_index, query.qidx, query_schedule);
+
+        // Propagate input usage to parent scopes
+        if scope.uses_input && !self.scopes.is_empty() {
+            if let Some(parent_scope) = self.scopes.last_mut() {
+                parent_scope.uses_input = true;
+            }
         }
-        self.scope_table.insert(query.clone(), scope);
 
         Ok(())
     }
