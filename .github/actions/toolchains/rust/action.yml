@@ -1,0 +1,29 @@
+name: rust-toolchain
+description: Setup Rust toolchain with specified version and components
+inputs:
+  toolchain:
+    description: 'Rust toolchain version'
+    required: false
+    default: '1.89.0'
+  components:
+    description: 'Additional components to install'
+    required: false
+    default: 'clippy rustfmt'
+  targets:
+    description: 'Target architectures to install'
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        rustup override set ${{ inputs.toolchain }}
+        if [ -n "${{ inputs.components }}" ]; then
+          rustup component add ${{ inputs.components }}
+        fi
+        if [ -n "${{ inputs.targets }}" ]; then
+          rustup target add ${{ inputs.targets }}
+        fi
+        cargo --version
+        rustc --version

@@ -18,10 +18,11 @@ jobs:
       matrix:
         target: [x86_64, x86, aarch64, armv7, s390x, ppc64le]
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.10'
+      - uses: ./.github/actions/toolchains/rust
 
       - name: Build Python extension
         run: |
@@ -38,9 +39,9 @@ jobs:
           sccache: 'true'
           manylinux: auto
       - name: Upload wheels
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: wheels
+          name: wheels-linux-${{ matrix.target }}
           path: dist
 
   windows:
@@ -49,11 +50,12 @@ jobs:
       matrix:
         target: [x64, x86]
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.10'
           architecture: ${{ matrix.target }}
+      - uses: ./.github/actions/toolchains/rust
 
       - name: Build Python extension
         run: |
@@ -69,9 +71,9 @@ jobs:
           args: --release --out dist --manifest-path bindings/python/Cargo.toml --frozen --strip
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: wheels
+          name: wheels-windows-${{ matrix.target }}
           path: dist
 
   macos:
@@ -80,10 +82,11 @@ jobs:
       matrix:
         target: [x86_64, aarch64, universal2-apple-darwin]
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.10'
+      - uses: ./.github/actions/toolchains/rust
 
       - name: Build Python extension
         run: |
@@ -99,9 +102,9 @@ jobs:
           args: --release --out dist --manifest-path bindings/python/Cargo.toml --offline --strip
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: wheels
+          name: wheels-macos-${{ matrix.host.target }}
           path: dist
 
   release:
@@ -111,9 +114,11 @@ jobs:
     # if: "startsWith(github.ref, 'refs/tags/')"
     needs: [linux, windows, macos]
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          name: wheels
+          pattern: wheels-*
+          merge-multiple: true
+          path: wheels
       - name: Publish to PyPI
         uses: PyO3/maturin-action@63b75c597b83e247fbf4fb7719801cc4220ae9f3 # v1.43.0
         env:

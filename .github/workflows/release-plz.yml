@@ -14,11 +14,11 @@ jobs:
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
         with:
           fetch-depth: 0
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/toolchains/rust
       - name: Run release-plz
         uses: MarcoIeni/release-plz-action@8724d33cd97b8295051102e2e19ca592962238f5 #v0.5.108
         env:

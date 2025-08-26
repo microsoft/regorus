@@ -18,9 +18,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-    - name: Add no_std target
-      run: rustup target add thumbv7m-none-eabi
+    - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+    - uses: ./.github/actions/toolchains/rust
+      with:
+        targets: thumbv7m-none-eabi
     - name: Fetch
       run: cargo fetch
     - name: Build
