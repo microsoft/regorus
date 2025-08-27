@@ -176,3 +176,73 @@ cases:
                         bool: true
                         eidx: 20
                     sidx: 5
+
+  - note: refbrack-to-set-span-truncation
+    rego: |
+      package test
+      import future.keywords
+
+      # Tests RefBrack to Set rule conversion with proper span truncation.
+      # When parsing "data["key"]", the parser creates a RefBrack expression,
+      # then converts it to a Set rule head and discards the RefBrack.
+      # This test ensures expression_spans are properly truncated when
+      # expressions are discarded during parsing.
+      data["key"]
+    num_expressions: 5
+    num_statements: 0
+    num_queries: 0
+    policy:
+      - spec:
+          span: data["key"]
+          head:
+            set:
+              span: data["key"]
+              refr:
+                span: data
+                var: data
+                eidx: 3
+              key:
+                span: "key"
+                string: key
+                eidx: 4
+          bodies: []
+
+  - note: refbrack-to-set-span-truncation-with-body
+    rego: |
+      package test
+      import future.keywords
+
+      # Tests RefBrack to Set rule conversion with body and proper span truncation.
+      # Similar to the above test but with a rule body { true }.
+      # Ensures span tracking works correctly for Set rules that have both
+      # a converted RefBrack head and query body statements.
+      data["key"] { true }
+    num_expressions: 6
+    num_statements: 1
+    num_queries: 1
+    policy:
+      - spec:
+          span: data["key"] { true }
+          head:
+            set:
+              span: data["key"]
+              refr:
+                span: data
+                var: data
+                eidx: 3
+              key:
+                span: "key"
+                string: key
+                eidx: 4
+          bodies:
+            - query:
+                span: "{ true }"
+                qidx: 0
+                stmts:
+                  - span: "true"
+                    literal:
+                      expr:
+                        span: "true"
+                        bool: true
+                        eidx: 5
+                    sidx: 0

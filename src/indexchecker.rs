@@ -10,14 +10,16 @@ use anyhow::{bail, Result};
 
 // Ensures that indexes are unique and continuous, starting from 0.
 #[derive(Default)]
-pub struct IndexChecker {
+pub struct IndexChecker<'a> {
     eidx: BTreeSet<u32>,
     sidx: BTreeSet<u32>,
     qidx: BTreeSet<u32>,
+    ridx: BTreeSet<u32>,
+    module: Option<&'a Module>,
 }
 
 #[cfg(debug_assertions)]
-impl IndexChecker {
+impl<'a> IndexChecker<'a> {
     fn check_query(&mut self, query: &Query) -> Result<()> {
         let qidx = query.qidx;
         if !self.qidx.insert(qidx) {
@@ -25,6 +27,7 @@ impl IndexChecker {
                 .span
                 .error(format!("query with qidx {qidx} already exists").as_str()));
         }
+        self.check_qidx(query)?;
 
         for stmt in &query.stmts {
             if !self.sidx.insert(stmt.sidx) {
@@ -32,6 +35,7 @@ impl IndexChecker {
                     .span
                     .error(format!("statement with sidx {} already exists", stmt.sidx).as_str()));
             }
+            self.check_sidx(stmt)?;
             match &stmt.literal {
                 Literal::Every { domain, query, .. } => {
                     self.check_eidx(domain)?;
@@ -71,6 +75,29 @@ impl IndexChecker {
             bail!(expr
                 .span()
                 .error(format!("expression with eidx {eidx} already exists").as_str()));
+        }
+
+        // Check that the span in expression_spans matches the expression's span
+        if let Some(module) = self.module {
+            if let Some(stored_span) = module.expression_spans.get(eidx as usize) {
+                let expr_span = expr.span();
+                if stored_span.start != expr_span.start || stored_span.end != expr_span.end {
+                    bail!(expr
+                        .span()
+                        .error(format!(
+                            "expression span position mismatch at eidx {}: stored span positions ({}..{}) != expression span positions ({}..{})",
+                            eidx,
+                            stored_span.start,
+                            stored_span.end,
+                            expr_span.start,
+                            expr_span.end
+                        ).as_str()));
+                }
+            } else {
+                bail!(expr
+                    .span()
+                    .error(format!("missing span in expression_spans for eidx {}", eidx).as_str()));
+            }
         }
 
         match expr {
@@ -167,6 +194,99 @@ impl IndexChecker {
         Ok(())
     }
 
+    fn check_sidx(&mut self, stmt: &LiteralStmt) -> Result<()> {
+        let sidx = stmt.sidx;
+
+        // Check that the span in statement_spans matches the statement's span
+        if let Some(module) = self.module {
+            if let Some(stored_span) = module.statement_spans.get(sidx as usize) {
+                let stmt_span = &stmt.span;
+                if stored_span.start != stmt_span.start || stored_span.end != stmt_span.end {
+                    bail!(stmt
+                        .span
+                        .error(format!(
+                            "statement span position mismatch at sidx {}: stored span positions ({}..{}) != statement span positions ({}..{})",
+                            sidx,
+                            stored_span.start,
+                            stored_span.end,
+                            stmt_span.start,
+                            stmt_span.end
+                        ).as_str()));
+                }
+            } else {
+                bail!(stmt
+                    .span
+                    .error(format!("missing span in statement_spans for sidx {}", sidx).as_str()));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_qidx(&mut self, query: &Query) -> Result<()> {
+        let qidx = query.qidx;
+
+        // Check that the span in query_spans matches the query's span
+        if let Some(module) = self.module {
+            if let Some(stored_span) = module.query_spans.get(qidx as usize) {
+                let query_span = &query.span;
+                if stored_span.start != query_span.start || stored_span.end != query_span.end {
+                    bail!(query
+                        .span
+                        .error(format!(
+                            "query span position mismatch at qidx {}: stored span positions ({}..{}) != query span positions ({}..{})",
+                            qidx,
+                            stored_span.start,
+                            stored_span.end,
+                            query_span.start,
+                            query_span.end
+                        ).as_str()));
+                }
+            } else {
+                bail!(query
+                    .span
+                    .error(format!("missing span in query_spans for qidx {}", qidx).as_str()));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_ridx(&mut self, rule: &Rule) -> Result<()> {
+        let ridx = rule.ridx();
+
+        // Check that the span in rule_spans matches the rule's span
+        if let Some(module) = self.module {
+            if let Some(stored_span) = module.rule_spans.get(ridx as usize) {
+                let rule_span = rule.span();
+                if stored_span.start != rule_span.start || stored_span.end != rule_span.end {
+                    bail!(rule
+                        .span()
+                        .error(format!(
+                            "rule span position mismatch at ridx {}: stored span positions ({}..{}) != rule span positions ({}..{})",
+                            ridx,
+                            stored_span.start,
+                            stored_span.end,
+                            rule_span.start,
+                            rule_span.end
+                        ).as_str()));
+                }
+            } else {
+                bail!(rule
+                    .span()
+                    .error(format!("missing span in rule_spans for ridx {}", ridx).as_str()));
+            }
+        }
+
+        if !self.ridx.insert(ridx) {
+            bail!(rule
+                .span()
+                .error(format!("ridx {} was seen before", ridx).as_str()));
+        }
+
+        Ok(())
+    }
+
     fn check_rule_assign(&mut self, assign: &RuleAssign) -> Result<()> {
         self.check_eidx(&assign.value)
     }
@@ -242,13 +362,16 @@ impl IndexChecker {
 
         Ok(())
     }
-    pub fn check_module(&mut self, module: &Module) -> Result<()> {
+    pub fn check_module(&mut self, module: &'a Module) -> Result<()> {
+        self.module = Some(module);
+
         self.check_eidx(module.package.refr.as_ref())?;
         for import in &module.imports {
             self.check_eidx(import.refr.as_ref())?;
         }
 
         for rule in &module.policy {
+            self.check_ridx(rule.as_ref())?;
             match rule.as_ref() {
                 Rule::Spec { head, bodies, .. } => {
                     self.check_rule_heade(head)?;
@@ -275,6 +398,7 @@ impl IndexChecker {
         self.check_gathered_indexes(module.num_expressions, &self.eidx, "expression")?;
         self.check_gathered_indexes(module.num_statements, &self.sidx, "statement")?;
         self.check_gathered_indexes(module.num_queries, &self.qidx, "query")?;
+        self.check_gathered_indexes(module.num_rules, &self.ridx, "rule")?;
 
         Ok(())
     }
