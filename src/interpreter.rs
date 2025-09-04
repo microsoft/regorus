@@ -316,7 +316,11 @@ impl Interpreter {
     }
 
     pub fn set_input(&mut self, input: Value) {
-        self.input = input;
+        self.input = input.clone();
+        // Update with_document["input"] too, in case if engine is being reused and was already prepared
+        if let Ok(with_input) = Self::make_or_get_value_mut(&mut self.with_document, &["input"]) {
+            *with_input = input;
+        }
     }
 
     pub fn init_with_document(&mut self) -> Result<()> {
