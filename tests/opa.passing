@@ -46,6 +46,7 @@ v0/jsonschema
 v0/negation
 v0/nestedreferences
 v0/netcidrisvalid
+v0/netcidrcontains
 v0/numbersrange
 v0/numbersrangestep
 v0/objectfilter
@@ -150,6 +151,7 @@ v1/jsonremoveidempotent
 v1/jsonschema
 v1/negation
 v1/nestedreferences
+v1/netcidrcontains
 v1/netcidrisvalid
 v1/numbersrange
 v1/numbersrangestep

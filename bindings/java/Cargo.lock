@@ -419,6 +419,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ipnet"
+version = "2.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "469fb0b9cefa57e3ef31275ee7cacb78f2fdca44e4765491884a2b119d4eb130"
+
+[[package]]
 name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -835,6 +841,7 @@ dependencies = [
  "chrono-tz",
  "data-encoding",
  "globset",
+ "ipnet",
  "jsonschema",
  "lazy_static",
  "mimalloc",
