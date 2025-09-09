@@ -122,7 +122,7 @@ mimalloc = { path = "mimalloc", optional = true }
 [dev-dependencies]
 anyhow = "1.0.45"
 cfg-if = "1.0.0"
-clap = { version = "4.5.45", features = ["derive"] }
+clap = { version = "4.5.47", features = ["derive"] }
 prettydiff = { version = "0.8.0", default-features = false }
 serde_yaml = "0.9.16"
 test-generator = "0.3.1"
