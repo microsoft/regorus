@@ -637,7 +637,9 @@ fn match_rule_bodies(span: &Span, bodies: &[RuleBody], v: &Value) -> Result<()> 
 
 fn match_rule(r: &Rule, v: &Value) -> Result<()> {
     match r {
-        Rule::Spec { span, head, bodies } => {
+        Rule::Spec {
+            span, head, bodies, ..
+        } => {
             let obj = &v["spec"];
             match_span_opt(span, &obj["span"])?;
             match_rule_head(head, &obj["head"])?;
@@ -649,6 +651,7 @@ fn match_rule(r: &Rule, v: &Value) -> Result<()> {
             args,
             op,
             value,
+            ..
         } => {
             let obj = &v["default"];
             match_span_opt(span, &obj["span"])?;
@@ -708,6 +711,335 @@ struct YamlTest {
     cases: Vec<TestCase>,
 }
 
+fn verify_expression_spans(module: &Module) -> Result<()> {
+    // Recursively verify that expressions have the correct spans
+    fn check_expr_span(expr: &Expr, expression_spans: &[Span]) -> Result<()> {
+        let eidx = expr.eidx() as usize;
+        if eidx >= expression_spans.len() {
+            bail!(
+                "Expression eidx {} out of bounds for expression_spans length {}",
+                eidx,
+                expression_spans.len()
+            );
+        }
+
+        let expected_span = expr.span();
+        let actual_span = &expression_spans[eidx];
+
+        // Check that the spans have the same text content
+        if expected_span.text() != actual_span.text() {
+            bail!(
+                "Expression span mismatch at eidx {}: expected '{}', got '{}'",
+                eidx,
+                expected_span.text(),
+                actual_span.text()
+            );
+        }
+
+        // Check that the spans have the same source positions
+        if expected_span.start != actual_span.start || expected_span.end != actual_span.end {
+            bail!(
+                "Expression span position mismatch at eidx {}: expected {}..{}, got {}..{}",
+                eidx,
+                expected_span.start,
+                expected_span.end,
+                actual_span.start,
+                actual_span.end
+            );
+        }
+
+        // Recursively check nested expressions
+        match expr {
+            Expr::Array { items, .. } | Expr::Set { items, .. } => {
+                for item in items {
+                    check_expr_span(item, expression_spans)?;
+                }
+            }
+            Expr::Object { fields, .. } => {
+                for (_, key, value) in fields {
+                    check_expr_span(key, expression_spans)?;
+                    check_expr_span(value, expression_spans)?;
+                }
+            }
+            Expr::ArrayCompr { term, query, .. } | Expr::SetCompr { term, query, .. } => {
+                check_expr_span(term, expression_spans)?;
+                check_query_expr_spans(query, expression_spans)?;
+            }
+            Expr::ObjectCompr {
+                key, value, query, ..
+            } => {
+                check_expr_span(key, expression_spans)?;
+                check_expr_span(value, expression_spans)?;
+                check_query_expr_spans(query, expression_spans)?;
+            }
+            Expr::Call { fcn, params, .. } => {
+                check_expr_span(fcn, expression_spans)?;
+                for param in params {
+                    check_expr_span(param, expression_spans)?;
+                }
+            }
+            Expr::RefDot { refr, .. } => {
+                check_expr_span(refr, expression_spans)?;
+            }
+            Expr::RefBrack { refr, index, .. } => {
+                check_expr_span(refr, expression_spans)?;
+                check_expr_span(index, expression_spans)?;
+            }
+            Expr::UnaryExpr { expr, .. } => {
+                check_expr_span(expr, expression_spans)?;
+            }
+            Expr::BinExpr { lhs, rhs, .. }
+            | Expr::ArithExpr { lhs, rhs, .. }
+            | Expr::BoolExpr { lhs, rhs, .. }
+            | Expr::AssignExpr { lhs, rhs, .. } => {
+                check_expr_span(lhs, expression_spans)?;
+                check_expr_span(rhs, expression_spans)?;
+            }
+            Expr::Membership {
+                key,
+                value,
+                collection,
+                ..
+            } => {
+                if let Some(key) = key {
+                    check_expr_span(key, expression_spans)?;
+                }
+                check_expr_span(value, expression_spans)?;
+                check_expr_span(collection, expression_spans)?;
+            }
+            #[cfg(feature = "rego-extensions")]
+            Expr::OrExpr { lhs, rhs, .. } => {
+                check_expr_span(lhs, expression_spans)?;
+                check_expr_span(rhs, expression_spans)?;
+            }
+            // Leaf expressions - no nested expressions to check
+            Expr::String { .. }
+            | Expr::RawString { .. }
+            | Expr::Number { .. }
+            | Expr::Bool { .. }
+            | Expr::Null { .. }
+            | Expr::Var { .. } => {}
+        }
+
+        Ok(())
+    }
+
+    fn check_query_expr_spans(query: &Query, expression_spans: &[Span]) -> Result<()> {
+        for stmt in &query.stmts {
+            check_literal_expr_spans(&stmt.literal, expression_spans)?;
+        }
+        Ok(())
+    }
+
+    fn check_literal_expr_spans(literal: &Literal, expression_spans: &[Span]) -> Result<()> {
+        match literal {
+            Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => {
+                check_expr_span(expr, expression_spans)?;
+            }
+            Literal::SomeIn {
+                value,
+                key,
+                collection,
+                ..
+            } => {
+                check_expr_span(value, expression_spans)?;
+                if let Some(key) = key {
+                    check_expr_span(key, expression_spans)?;
+                }
+                check_expr_span(collection, expression_spans)?;
+            }
+            Literal::Every { domain, query, .. } => {
+                check_expr_span(domain, expression_spans)?;
+                check_query_expr_spans(query, expression_spans)?;
+            }
+            Literal::SomeVars { .. } => {
+                // No expressions to check
+            }
+        }
+        Ok(())
+    }
+
+    // Check package expression
+    check_expr_span(&module.package.refr, &module.expression_spans)?;
+
+    // Check import expressions
+    for import in &module.imports {
+        check_expr_span(&import.refr, &module.expression_spans)?;
+    }
+
+    // Check policy expressions
+    for rule in &module.policy {
+        match rule.as_ref() {
+            Rule::Spec { head, bodies, .. } => {
+                match head {
+                    RuleHead::Compr { refr, assign, .. } => {
+                        check_expr_span(refr, &module.expression_spans)?;
+                        if let Some(assign) = assign {
+                            check_expr_span(&assign.value, &module.expression_spans)?;
+                        }
+                    }
+                    RuleHead::Set { refr, key, .. } => {
+                        check_expr_span(refr, &module.expression_spans)?;
+                        if let Some(key) = key {
+                            check_expr_span(key, &module.expression_spans)?;
+                        }
+                    }
+                    RuleHead::Func {
+                        refr, args, assign, ..
+                    } => {
+                        check_expr_span(refr, &module.expression_spans)?;
+                        for arg in args {
+                            check_expr_span(arg, &module.expression_spans)?;
+                        }
+                        if let Some(assign) = assign {
+                            check_expr_span(&assign.value, &module.expression_spans)?;
+                        }
+                    }
+                }
+
+                for body in bodies {
+                    if let Some(assign) = &body.assign {
+                        check_expr_span(&assign.value, &module.expression_spans)?;
+                    }
+                    check_query_expr_spans(&body.query, &module.expression_spans)?;
+                }
+            }
+            Rule::Default {
+                refr, args, value, ..
+            } => {
+                check_expr_span(refr, &module.expression_spans)?;
+                for arg in args {
+                    check_expr_span(arg, &module.expression_spans)?;
+                }
+                check_expr_span(value, &module.expression_spans)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn verify_statement_spans(module: &Module) -> Result<()> {
+    // Recursively verify that statements have the correct spans
+    fn check_stmt_span(stmt: &LiteralStmt, statement_spans: &[Span]) -> Result<()> {
+        let sidx = stmt.sidx as usize;
+        if sidx >= statement_spans.len() {
+            bail!(
+                "Statement sidx {} out of bounds for statement_spans length {}",
+                sidx,
+                statement_spans.len()
+            );
+        }
+
+        let expected_span = &stmt.span;
+        let actual_span = &statement_spans[sidx];
+
+        // Check that the spans have the same text content
+        if expected_span.text() != actual_span.text() {
+            bail!(
+                "Statement span mismatch at sidx {}: expected '{}', got '{}'",
+                sidx,
+                expected_span.text(),
+                actual_span.text()
+            );
+        }
+
+        // Check that the spans have the same source positions
+        if expected_span.start != actual_span.start || expected_span.end != actual_span.end {
+            bail!(
+                "Statement span position mismatch at sidx {}: expected {}..{}, got {}..{}",
+                sidx,
+                expected_span.start,
+                expected_span.end,
+                actual_span.start,
+                actual_span.end
+            );
+        }
+
+        Ok(())
+    }
+
+    fn check_query_stmt_spans(query: &Query, statement_spans: &[Span]) -> Result<()> {
+        for stmt in &query.stmts {
+            check_stmt_span(stmt, statement_spans)?;
+        }
+        Ok(())
+    }
+
+    // Check statements in policy rules
+    for rule in &module.policy {
+        match rule.as_ref() {
+            Rule::Spec { bodies, .. } => {
+                for body in bodies {
+                    check_query_stmt_spans(&body.query, &module.statement_spans)?;
+                }
+            }
+            Rule::Default { .. } => {
+                // Default rules don't have statement bodies
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn verify_query_spans(module: &Module) -> Result<()> {
+    // Recursively verify that queries have the correct spans
+    fn check_query_span(query: &Query, query_spans: &[Span]) -> Result<()> {
+        let qidx = query.qidx as usize;
+        if qidx >= query_spans.len() {
+            bail!(
+                "Query qidx {} out of bounds for query_spans length {}",
+                qidx,
+                query_spans.len()
+            );
+        }
+
+        let expected_span = &query.span;
+        let actual_span = &query_spans[qidx];
+
+        // Check that the spans have the same text content
+        if expected_span.text() != actual_span.text() {
+            bail!(
+                "Query span mismatch at qidx {}: expected '{}', got '{}'",
+                qidx,
+                expected_span.text(),
+                actual_span.text()
+            );
+        }
+
+        // Check that the spans have the same source positions
+        if expected_span.start != actual_span.start || expected_span.end != actual_span.end {
+            bail!(
+                "Query span position mismatch at qidx {}: expected {}..{}, got {}..{}",
+                qidx,
+                expected_span.start,
+                expected_span.end,
+                actual_span.start,
+                actual_span.end
+            );
+        }
+
+        Ok(())
+    }
+
+    // Check queries in policy rules
+    for rule in &module.policy {
+        match rule.as_ref() {
+            Rule::Spec { bodies, .. } => {
+                for body in bodies {
+                    check_query_span(body.query.as_ref(), &module.query_spans)?;
+                }
+            }
+            Rule::Default { .. } => {
+                // Default rules don't have query bodies
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn yaml_test_impl(file: &str) -> Result<()> {
     println!("\nrunning {file}");
 
@@ -728,6 +1060,13 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                     module.num_expressions,
                     case.num_expressions,
                     "mismatch in num_expressions"
+                );
+
+                // Verify that expression_spans count matches num_expressions
+                my_assert_eq!(
+                    module.expression_spans.len() as u32,
+                    module.num_expressions,
+                    "expression_spans count should match num_expressions"
                 );
 
                 my_assert_eq!(
@@ -771,6 +1110,25 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                         match_rule(&module.policy[idx], policy)?;
                     }
                 }
+
+                // Also verify that statement spans count matches num_statements
+                if module.statement_spans.len() != module.num_statements as usize {
+                    bail!("statement_spans count should match num_statements");
+                }
+
+                // Also verify that query spans count matches num_queries
+                if module.query_spans.len() != module.num_queries as usize {
+                    bail!("query_spans count should match num_queries");
+                }
+
+                // Test expression spans for specific expressions in the AST
+                verify_expression_spans(&module)?;
+
+                // Test statement spans for specific statements in the AST
+                verify_statement_spans(&module)?;
+
+                // Test query spans for specific queries in the AST
+                verify_query_spans(&module)?;
             }
             Err(actual) => match &case.error {
                 Some(expected) => {
