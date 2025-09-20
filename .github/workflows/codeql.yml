@@ -1,0 +1,212 @@
+name: "CodeQL Security Analysis"
+
+on:
+  schedule:
+    # Run weekly on Wednesdays at 3:17 AM UTC
+    - cron: '17 3 * * 3'
+  workflow_dispatch:
+    # Allow manual triggering
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      # required for all workflows
+      security-events: write
+      # required to fetch internal or private CodeQL packs
+      packages: read
+      # only required for workflows in private repositories
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Rust analysis for main crate and Rust-based bindings
+          - language: rust
+            build-mode: none
+            working-directory: .
+          # C/C++ analysis for FFI bindings
+          - language: c-cpp
+            build-mode: manual
+            working-directory: bindings/ffi
+          # Python analysis for Python bindings
+          - language: python
+            build-mode: none
+            working-directory: bindings/python
+          # Java analysis for Java bindings
+          - language: java-kotlin
+            build-mode: manual
+            working-directory: bindings/java
+          # Go analysis for Go bindings
+          - language: go
+            build-mode: manual
+            working-directory: bindings/go
+          # C# analysis for C# bindings
+          - language: csharp
+            build-mode: manual
+            working-directory: bindings/csharp
+          # JavaScript analysis for WASM bindings
+          - language: javascript-typescript
+            build-mode: none
+            working-directory: bindings/wasm
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # Setup language-specific dependencies BEFORE CodeQL init for proper tracing setup
+    - name: Setup Rust
+      if: matrix.language == 'rust' || matrix.language == 'c-cpp'
+      uses: ./.github/actions/toolchains/rust
+
+    - name: Setup Python
+      if: matrix.language == 'python'
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Setup Java
+      if: matrix.language == 'java-kotlin'
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'corretto'
+        java-version: '8'
+
+    - name: Setup Go
+      if: matrix.language == 'go'
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+
+    - name: Setup .NET
+      if: matrix.language == 'csharp'
+      uses: actions/setup-dotnet@v4
+      with:
+        global-json-file: ./bindings/csharp/global.json
+
+    - name: Setup Node.js
+      if: matrix.language == 'javascript-typescript'
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: ${{ matrix.language }}
+        build-mode: ${{ matrix.build-mode }}
+
+    # Install additional build dependencies
+    - name: Install system dependencies
+      if: matrix.language == 'rust' || matrix.language == 'c-cpp'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake
+
+    - name: Install Python build dependencies
+      if: matrix.language == 'python'
+      working-directory: ${{ matrix.working-directory }}
+      run: |
+        python -m pip install --upgrade pip
+        pip install maturin[patchelf] pytest
+
+    - name: Setup Ruby
+      if: matrix.language == 'rust' && contains(matrix.working-directory, 'ruby')
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.4.2'
+        bundler-cache: true
+        working-directory: bindings/ruby
+
+    - name: Install WASM build dependencies
+      if: matrix.language == 'javascript-typescript'
+      run: |
+        cargo install wasm-pack
+
+    # Manual build steps for different languages
+    - name: Build C/C++ FFI bindings
+      if: matrix.language == 'c-cpp'
+      working-directory: ${{ matrix.working-directory }}
+      run: |
+          # Build FFI library in no_std mode for embedded/constrained environments
+          cargo build --release --locked --features "ast,coverage,regorus/opa-no-std" --no-default-features
+
+          # Build the Rust FFI library that provides C-compatible interface
+          cargo build --release --locked
+        
+          # Build C bindings using CMake
+          cd ../c
+          mkdir -p build
+          cd build
+          cmake ..
+          make
+        
+          # Build C++ bindings using CMake
+          cd ../../cpp
+          mkdir -p build
+          cd build
+          cmake ..
+          make
+
+    - name: Build Java bindings
+      if: matrix.language == 'java-kotlin'
+      working-directory: ${{ matrix.working-directory }}
+      run: |
+        # Build the Rust JNI library that provides Java-compatible interface
+        cargo fetch
+        cargo build --release --locked
+        # Compile Java source and create JAR package with Maven
+        mvn package
+
+    - name: Build Go bindings
+      if: matrix.language == 'go'
+      working-directory: ${{ matrix.working-directory }}
+      run: |
+        # Build the FFI library that Go bindings depend on via CGO
+        cd ../ffi
+        cargo fetch
+        cargo build --release --locked
+        cd ../go
+        # Download Go dependencies
+        go mod tidy
+        # Set up environment for CGO linking to Rust FFI library
+        export CGO_ENABLED=1
+        export LD_LIBRARY_PATH="$(pwd)/../ffi/target/release:$LD_LIBRARY_PATH"
+        # Build Go packages with verbose output for CodeQL tracing
+        go build -v ./pkg/regorus
+        go build -v -o regorus_test .
+
+    - name: Build C# bindings
+      if: matrix.language == 'csharp'
+      working-directory: ${{ matrix.working-directory }}
+      run: |
+        # Build the FFI library that C# bindings access via P/Invoke
+        cd ../ffi
+        cargo fetch
+        cargo build --release --locked
+        cd ../csharp
+        # Restore NuGet packages and build .NET assemblies in release mode
+        # Build the main Regorus library project only (tests require packaged version)
+        dotnet restore Regorus/Regorus.csproj
+        dotnet build Regorus/Regorus.csproj --no-restore /p:Configuration=Release /p:IgnoreMissingArtifacts=true
+
+    - name: Build WASM bindings
+      if: matrix.language == 'javascript-typescript'
+      working-directory: ${{ matrix.working-directory }}
+      run: |
+        # Build WebAssembly module with wasm-pack for Node.js target
+        cargo fetch
+        wasm-pack build --target nodejs --release
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:${{matrix.language}}"
