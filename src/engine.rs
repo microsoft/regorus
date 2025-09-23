@@ -902,6 +902,7 @@ impl Engine {
             if !for_target {
                 // Check if any module specifies a target and warn if so
                 #[cfg(feature = "azure_policy")]
+                #[cfg(feature = "std")]
                 self.warn_if_targets_present();
             }
 
@@ -1306,6 +1307,7 @@ impl Engine {
 
     /// Emit a warning if any modules contain target specifications but we're not using target-aware compilation.
     #[cfg(feature = "azure_policy")]
+    #[cfg(feature = "std")]
     fn warn_if_targets_present(&self) {
         let mut has_target = false;
         let mut target_files = Vec::new();

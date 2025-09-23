@@ -146,7 +146,7 @@ impl CompiledPolicy {
                 inferred_types
                     .values()
                     .map(|(resource_type, _schema)| resource_type.clone())
-                    .collect::<std::collections::BTreeSet<_>>() // Remove duplicates
+                    .collect::<alloc::collections::BTreeSet<_>>() // Remove duplicates
                     .into_iter()
                     .collect()
             } else {

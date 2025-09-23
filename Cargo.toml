@@ -23,7 +23,7 @@ default = ["full-opa", "arc"]
 
 arc = ["scientific/arc"]
 ast = []
-azure_policy = ["dep:jsonschema", "arc", "dashmap"]
+azure_policy = ["dep:jsonschema", "arc", "dashmap", "regex"]
 base64 = ["dep:data-encoding"]
 base64url = ["dep:data-encoding"]
 coverage = []
