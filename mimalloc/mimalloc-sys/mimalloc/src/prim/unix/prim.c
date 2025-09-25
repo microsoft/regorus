@@ -449,7 +449,7 @@ int _mi_prim_alloc_huge_os_pages(void* hint_addr, size_t size, int numa_node, bo
     long err = mi_prim_mbind(*addr, size, MPOL_PREFERRED, &numa_mask, 8*MI_INTPTR_SIZE, 0);
     if (err != 0) {
       err = errno;
-      _mi_warning_message("failed to bind huge (1GiB) pages to numa node %d (error: %d (0x%x))\n", numa_node, err, err);
+      _mi_warning_message("failed to bind huge (1GiB) pages to numa node %d (error: %ld (0x%lx))\n", numa_node, err, err);
     }    
   }
   return (*addr != NULL ? 0 : errno);
@@ -491,7 +491,7 @@ size_t _mi_prim_numa_node_count(void) {
   unsigned node = 0;
   for(node = 0; node < 256; node++) {
     // enumerate node entries -- todo: it there a more efficient way to do this? (but ensure there is no allocation)
-    snprintf(buf, 127, "/sys/devices/system/node/node%u", node + 1);
+    snprintf(buf, sizeof(buf), "/sys/devices/system/node/node%u", node + 1);
     if (mi_prim_access(buf,R_OK) != 0) break;
   }
   return (node+1);
