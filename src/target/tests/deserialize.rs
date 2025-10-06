@@ -268,8 +268,7 @@ fn test_target_deserialization_with_registry_schemas() {
 
     // We expect this to fail with a "not found in registry" error since we haven't
     // populated the registries with test data
-    if result.is_err() {
-        let error = result.unwrap_err();
+    if let Err(error) = result {
         assert!(matches!(
             error,
             TargetError::JsonParseError(_) | TargetError::DeserializationError(_)

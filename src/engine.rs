@@ -846,6 +846,67 @@ impl Engine {
         query_module.num_statements = parser.num_statements();
         let query_schedule = Analyzer::new().analyze_query_snippet(&self.modules, &query_node)?;
 
+        // Populate loop hoisting for the query snippet
+        // Query snippets are treated as if they're in a module appended at the end (same as analyzer)
+        // The loop hoisting table already has capacity for this (ensured in prepare_for_eval)
+        let module_idx = self.modules.len() as u32;
+
+        use crate::compiler::hoist::LoopHoister;
+        let query_schedule_rc = Rc::new(query_schedule.clone());
+        let mut hoister = LoopHoister::new_with_schedule(query_schedule_rc);
+        hoister.populate_query_snippet(
+            module_idx,
+            &query_node,
+            query_module.num_statements,
+            query_module.num_expressions,
+        )?;
+        let query_loops = hoister.finalize();
+
+        #[cfg(debug_assertions)]
+        {
+            debug_assert_eq!(
+                query_loops.module_len(),
+                module_idx as usize + 1,
+                "query hoisting table missing expected module slot {}",
+                module_idx
+            );
+            for stmt in &query_node.stmts {
+                debug_assert!(
+                    query_loops
+                        .get_statement_loops(module_idx, stmt.sidx)
+                        .is_some(),
+                    "missing hoisted loop entry for query statement index {}",
+                    stmt.sidx
+                );
+            }
+        }
+
+        // Get the existing table, merge in the query loops, and set it back
+        let mut existing_table = self.interpreter.take_loop_hoisting_table();
+        existing_table.truncate_modules(self.modules.len());
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(
+                existing_table.module_len() <= self.modules.len(),
+                "loop hoisting table should not retain extra modules before merge"
+            );
+        }
+        existing_table.merge_query_loops(query_loops, self.modules.len());
+        #[cfg(debug_assertions)]
+        {
+            for stmt in &query_node.stmts {
+                debug_assert!(
+                    existing_table
+                        .get_statement_loops(module_idx, stmt.sidx)
+                        .is_some(),
+                    "missing hoisted loop entry after merge for module {} stmt {}",
+                    module_idx,
+                    stmt.sidx
+                );
+            }
+        }
+        self.interpreter.set_loop_hoisting_table(existing_table);
+
         Ok((Ref::new(query_module), query_node, query_schedule))
     }
 
@@ -873,9 +934,8 @@ impl Engine {
         if !self.prepared {
             // Analyze the modules and determine how statements must be scheduled.
             let analyzer = Analyzer::new();
-            let schedule = analyzer.analyze(&self.modules)?;
+            let schedule = Rc::new(analyzer.analyze(&self.modules)?);
 
-            self.interpreter.set_schedule(Some(schedule));
             self.interpreter.set_modules(self.modules.clone());
 
             self.interpreter.clear_builtins_cache();
@@ -888,6 +948,16 @@ impl Engine {
                 .set_functions(gather_functions(&self.modules)?);
             self.interpreter.gather_rules()?;
             self.interpreter.process_imports()?;
+
+            // Populate loop hoisting table for efficient evaluation
+            // Reserve capacity for 1 extra module (for query modules)
+            use crate::compiler::hoist::LoopHoister;
+            let hoister = LoopHoister::new_with_schedule(schedule.clone());
+            let loop_lookup = hoister.populate_with_extra_capacity(&self.modules, 0)?;
+            self.interpreter.set_loop_hoisting_table(loop_lookup);
+
+            // Set schedule after hoisting completes
+            self.interpreter.set_schedule(Some(schedule));
 
             #[cfg(feature = "azure_policy")]
             if for_target {

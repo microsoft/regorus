@@ -53,6 +53,15 @@ impl<T: Clone> Lookup<T> {
         self.slots[module_idx as usize][node_idx as usize].as_ref()
     }
 
+    /// Get data using direct indices with bounds checking.
+    /// Returns None if the module or node index is out of range or unset.
+    pub fn get_checked(&self, module_idx: u32, node_idx: u32) -> Option<&T> {
+        self.slots
+            .get(module_idx as usize)
+            .and_then(|module| module.get(node_idx as usize))
+            .and_then(|slot| slot.as_ref())
+    }
+
     /// Get mutable reference to data using direct indices (bounds assumed to be ensured).
     pub fn get_mut(&mut self, module_idx: u32, node_idx: u32) -> &mut Option<T> {
         &mut self.slots[module_idx as usize][node_idx as usize]
@@ -64,6 +73,26 @@ impl<T: Clone> Lookup<T> {
             && (node_idx as usize) < self.slots[module_idx as usize].len()
         {
             self.slots[module_idx as usize][node_idx as usize] = None;
+        }
+    }
+
+    pub fn truncate_modules(&mut self, module_count: usize) {
+        self.slots.truncate(module_count);
+    }
+
+    pub fn module_len(&self) -> usize {
+        self.slots.len()
+    }
+
+    pub fn push_module(&mut self, module: Vec<Option<T>>) {
+        self.slots.push(module);
+    }
+
+    pub fn remove_module(&mut self, module_idx: usize) -> Option<Vec<Option<T>>> {
+        if module_idx < self.slots.len() {
+            Some(self.slots.remove(module_idx))
+        } else {
+            None
         }
     }
 }

@@ -26,6 +26,7 @@ mod ast;
 mod builtins;
 mod compile;
 mod compiled_policy;
+mod compiler;
 mod engine;
 mod indexchecker;
 mod interpreter;

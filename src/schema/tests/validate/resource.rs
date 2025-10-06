@@ -857,7 +857,7 @@ fn test_complex_nested_azure_template_validation() {
 
     let value = Value::from(valid_template);
     let result = SchemaValidator::validate(&value, &schema);
-    std::dbg!(&result);
+
     assert!(
         result.is_ok(),
         "Complex valid template should pass validation"

@@ -82,7 +82,7 @@ mod load_target_definitions {
         use crate::registry::targets;
 
         // Load target definitions
-        let _ = load()?;
+        load()?;
 
         // Check that the sample targets were loaded
         assert!(
@@ -184,12 +184,13 @@ pub fn process_value(v: &Value) -> Result<Value> {
 
 fn match_values(computed: &Value, expected: &Value) -> Result<()> {
     if computed != expected {
+        let expected_yaml = serde_yaml::to_string(&expected)?;
+        let computed_yaml = serde_yaml::to_string(&computed)?;
         panic!(
-            "{}",
-            prettydiff::diff_chars(
-                &serde_yaml::to_string(&expected)?,
-                &serde_yaml::to_string(&computed)?
-            )
+            "expected:\n{}computed:\n{}diff:\n{}",
+            expected_yaml,
+            computed_yaml,
+            prettydiff::diff_chars(&expected_yaml, &computed_yaml)
         );
     }
     Ok(())

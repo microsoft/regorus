@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::ast::*;
+use crate::compiler::hoist::HoistedLoopsLookup;
 use crate::engine::Engine;
 use crate::scheduler::*;
 use crate::utils::*;
@@ -190,7 +191,7 @@ pub(crate) struct TargetInfo {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CompiledPolicyData {
     pub(crate) modules: Rc<Vec<Ref<Module>>>,
-    pub(crate) schedule: Option<Schedule>,
+    pub(crate) schedule: Option<Rc<Schedule>>,
     pub(crate) rules: Map<String, Vec<Ref<Rule>>>,
     pub(crate) default_rules: Map<String, Vec<DefaultRuleInfo>>,
     pub(crate) imports: BTreeMap<String, Ref<Expr>>,
@@ -212,4 +213,7 @@ pub(crate) struct CompiledPolicyData {
 
     // The semantics of extensions ought to be changes to be more Clone friendly.
     pub(crate) extensions: Map<String, (u8, Rc<Box<dyn Extension>>)>,
+
+    // Pre-computed loop hoisting information
+    pub(crate) loop_hoisting_table: HoistedLoopsLookup,
 }
