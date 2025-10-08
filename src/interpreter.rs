@@ -6,6 +6,7 @@ use crate::builtins::{self, BuiltinFcn};
 use crate::compiled_policy::CompiledPolicyData;
 #[cfg(feature = "azure_policy")]
 use crate::compiled_policy::TargetInfo;
+use crate::compiler::hoist::HoistedLoop;
 use crate::lexer::*;
 use crate::lookup::Lookup;
 use crate::parser::Parser;
@@ -22,10 +23,6 @@ use core::ops::Bound::*;
 
 type Scope = BTreeMap<SourceStr, Value>;
 type ExprLookup = Lookup<Value>;
-
-mod loops;
-
-use loops::LoopExpr;
 
 #[cfg(feature = "azure_policy")]
 pub mod error;
@@ -270,7 +267,7 @@ impl Interpreter {
         Rc::make_mut(&mut self.compiled_policy)
     }
 
-    pub fn set_schedule(&mut self, schedule: Option<Schedule>) {
+    pub fn set_schedule(&mut self, schedule: Option<Rc<Schedule>>) {
         self.compiled_policy_mut().schedule = schedule;
     }
 
@@ -280,6 +277,17 @@ impl Interpreter {
 
     pub fn set_modules(&mut self, modules: Rc<Vec<Ref<Module>>>) {
         self.compiled_policy_mut().modules = modules;
+    }
+
+    pub fn set_loop_hoisting_table(&mut self, table: crate::compiler::hoist::HoistedLoopsLookup) {
+        self.compiled_policy_mut().loop_hoisting_table = table;
+    }
+
+    pub fn take_loop_hoisting_table(&mut self) -> crate::compiler::hoist::HoistedLoopsLookup {
+        core::mem::replace(
+            &mut self.compiled_policy_mut().loop_hoisting_table,
+            crate::compiler::hoist::HoistedLoopsLookup::new(),
+        )
     }
 
     pub fn get_data_mut(&mut self) -> &mut Value {
@@ -366,6 +374,26 @@ impl Interpreter {
 
     fn has_loop_var_value(&self, expr: &ExprRef) -> bool {
         self.get_loop_var_value(expr).is_some()
+    }
+
+    #[inline]
+    fn loop_assignment_expr(loop_info: &HoistedLoop) -> &ExprRef {
+        loop_info.loop_expr.as_ref().unwrap_or(&loop_info.value)
+    }
+
+    #[inline]
+    fn loop_index_expr(loop_info: &HoistedLoop) -> Option<&ExprRef> {
+        loop_info.key.as_ref().or(None)
+    }
+
+    #[inline]
+    fn loop_collection_expr(loop_info: &HoistedLoop) -> &ExprRef {
+        &loop_info.collection
+    }
+
+    #[inline]
+    fn loop_span(loop_info: &HoistedLoop) -> Span {
+        loop_info.value.span().clone()
     }
 
     fn ensure_loop_var_values_capacity(&mut self) {
@@ -1132,6 +1160,7 @@ impl Interpreter {
                             .push(Self::make_expression_result(span, &Value::Bool(true)))
                     }
                 }
+
                 // https://github.com/open-policy-agent/opa/issues/1622#issuecomment-520547385
                 matches!(value, Value::Bool(false) | Value::Undefined)
             }
@@ -1338,7 +1367,11 @@ impl Interpreter {
         }
     }
 
-    fn eval_stmts_in_loop(&mut self, stmts: &[&LiteralStmt], loops: &[LoopExpr]) -> Result<bool> {
+    fn eval_stmts_in_loop(
+        &mut self,
+        stmts: &[&LiteralStmt],
+        loops: &[HoistedLoop],
+    ) -> Result<bool> {
         if loops.is_empty() {
             if !stmts.is_empty() {
                 // Evaluate the current statement whose loop expressions have been hoisted.
@@ -1355,20 +1388,20 @@ impl Interpreter {
                 self.eval_stmts(stmts)
             }
         } else {
-            let loop_expr = &loops[0];
+            let loop_info = &loops[0];
             let mut result = false;
 
             // Apply with modifiers before evaluating the loop expression.
             let (saved_state, _) = self.apply_with_modifiers(stmts[0])?;
 
-            let loop_expr_value = loop_expr.value();
-            let loop_expr_value = if let Expr::Call {
+            let collection_expr = Self::loop_collection_expr(loop_info).clone();
+            let loop_value = if let Expr::Call {
                 span, fcn, params, ..
-            } = loop_expr_value.as_ref()
+            } = collection_expr.as_ref()
             {
                 // Handle walk(obj, output_param)
                 let extra_arg = get_extra_arg(
-                    &loop_expr_value,
+                    &collection_expr,
                     Some(self.current_module_path.as_str()),
                     &self.compiled_policy.functions,
                 );
@@ -1378,9 +1411,9 @@ impl Interpreter {
                 } else {
                     &params[..]
                 };
-                self.eval_call_impl(span, &loop_expr_value, fcn, params)?
+                self.eval_call_impl(span, &collection_expr, fcn, params)?
             } else {
-                self.eval_expr(&loop_expr_value)?
+                self.eval_expr(&collection_expr)?
             };
 
             // Restore with modifiers.
@@ -1390,13 +1423,13 @@ impl Interpreter {
             // If the loop's index variable h<as already been assigned a value
             // (this can happen if the same index is used for two different collections),
             // then evaluate statements only if the index applies to this collection.
-            let loop_expr_index = loop_expr.index();
+            let index_expr = Self::loop_index_expr(loop_info);
             if let Some(Expr::Var {
                 span: index_var, ..
-            }) = loop_expr_index.as_ref().map(|r| r.as_ref())
+            }) = index_expr.map(|r| r.as_ref())
             {
                 if let Some(idx) = self.lookup_local_var(&index_var.source_str()) {
-                    if loop_expr_value[&idx] != Value::Undefined {
+                    if loop_value[&idx] != Value::Undefined {
                         result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         return Ok(result);
                     } else if idx != Value::Undefined {
@@ -1410,19 +1443,20 @@ impl Interpreter {
             self.scopes.push(Scope::default());
 
             let query_result = self.get_current_context()?.result.clone();
-            match loop_expr_value {
+            let loop_target_expr = Self::loop_assignment_expr(loop_info);
+            match loop_value {
                 Value::Array(items) => {
                     for (idx, v) in items.iter().enumerate() {
-                        self.set_loop_var_value(&loop_expr.expr(), v.clone());
+                        self.set_loop_var_value(loop_target_expr, v.clone());
 
-                        let exec = if let Some(index) = loop_expr.index() {
+                        let exec = if let Some(index) = index_expr {
                             let mut type_match = BTreeSet::new();
                             let mut cache = BTreeMap::new();
                             self.make_bindings(
                                 false,
                                 &mut type_match,
                                 &mut cache,
-                                &index,
+                                index,
                                 &Value::from(idx),
                                 true,
                             )?
@@ -1442,17 +1476,17 @@ impl Interpreter {
                         }
                     }
 
-                    self.remove_loop_var_value(&loop_expr.expr());
+                    self.remove_loop_var_value(loop_target_expr);
                 }
                 Value::Set(items) => {
                     for v in items.iter() {
-                        self.set_loop_var_value(&loop_expr.expr(), v.clone());
+                        self.set_loop_var_value(loop_target_expr, v.clone());
 
                         // For sets, index is also the value.
-                        let exec = if let Some(index) = loop_expr.index() {
+                        let exec = if let Some(index) = index_expr {
                             let mut type_match = BTreeSet::new();
                             let mut cache = BTreeMap::new();
-                            self.make_bindings(false, &mut type_match, &mut cache, &index, v, true)?
+                            self.make_bindings(false, &mut type_match, &mut cache, index, v, true)?
                         } else {
                             true
                         };
@@ -1468,16 +1502,16 @@ impl Interpreter {
                             }
                         }
                     }
-                    self.remove_loop_var_value(&loop_expr.expr());
+                    self.remove_loop_var_value(loop_target_expr);
                 }
                 Value::Object(obj) => {
                     for (k, v) in obj.iter() {
-                        self.set_loop_var_value(&loop_expr.expr(), v.clone());
+                        self.set_loop_var_value(loop_target_expr, v.clone());
                         // For objects, index is key.
-                        let exec = if let Some(index) = loop_expr.index() {
+                        let exec = if let Some(index) = index_expr {
                             let mut type_match = BTreeSet::new();
                             let mut cache = BTreeMap::new();
-                            self.make_bindings(false, &mut type_match, &mut cache, &index, k, true)?
+                            self.make_bindings(false, &mut type_match, &mut cache, index, k, true)?
                         } else {
                             true
                         };
@@ -1493,7 +1527,7 @@ impl Interpreter {
                             }
                         }
                     }
-                    self.remove_loop_var_value(&loop_expr.expr());
+                    self.remove_loop_var_value(loop_target_expr);
                 }
                 Value::Undefined => {
                     result = false;
@@ -1646,7 +1680,7 @@ impl Interpreter {
         Ok(is_const && self.is_simple_literal(output_expr)?)
     }
 
-    fn eval_output_expr_in_loop(&mut self, loops: &[LoopExpr]) -> Result<bool> {
+    fn eval_output_expr_in_loop(&mut self, loops: &[HoistedLoop]) -> Result<bool> {
         if loops.is_empty() {
             let (key_expr, output_expr) = self.get_exprs_from_context()?;
 
@@ -1818,36 +1852,36 @@ impl Interpreter {
         }
 
         // Try out values in current loop expr.
-        let loop_expr = &loops[0];
+        let loop_info = &loops[0];
         let mut result = false;
-        match self.eval_expr(&loop_expr.value())? {
+        let loop_target_expr = Self::loop_assignment_expr(loop_info);
+        match self.eval_expr(Self::loop_collection_expr(loop_info))? {
             Value::Array(items) => {
                 for v in items.iter() {
-                    self.set_loop_var_value(&loop_expr.expr(), v.clone());
+                    self.set_loop_var_value(loop_target_expr, v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Set(items) => {
                 for v in items.iter() {
-                    self.set_loop_var_value(&loop_expr.expr(), v.clone());
+                    self.set_loop_var_value(loop_target_expr, v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Object(obj) => {
                 for (_, v) in obj.iter() {
-                    self.set_loop_var_value(&loop_expr.expr(), v.clone());
+                    self.set_loop_var_value(loop_target_expr, v.clone());
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             _ => {
-                return Err(loop_expr.span().source.error(
-                    loop_expr.span().line,
-                    loop_expr.span().col,
-                    "item cannot be indexed",
-                ));
+                let span = Self::loop_span(loop_info);
+                return Err(span
+                    .source
+                    .error(span.line, span.col, "item cannot be indexed"));
             }
         }
-        self.remove_loop_var_value(&loop_expr.expr());
+        self.remove_loop_var_value(loop_target_expr);
         Ok(result)
     }
 
@@ -1867,13 +1901,38 @@ impl Interpreter {
         // Evaluate output expression after all the statements have been executed.
 
         let (key_expr, output_expr) = self.get_exprs_from_context()?;
-        let mut loops = vec![];
+        let mut loops: Vec<HoistedLoop> = Vec::new();
 
+        // Get pre-computed loops for key expression
         if let Some(ke) = &key_expr {
-            self.hoist_loops_impl(ke, &mut loops);
+            match self
+                .compiled_policy
+                .loop_hoisting_table
+                .get_expr_loops(self.current_module_index, ke.as_ref().eidx())
+            {
+                Some(hoisted_loops) => {
+                    loops.extend(hoisted_loops.iter().cloned());
+                }
+                None => {
+                    bail!(ke.span().error("Loop hoisting information not found for key expression. This is likely a bug in the compilation phase."));
+                }
+            }
         }
+
+        // Get pre-computed loops for output expression
         if let Some(oe) = &output_expr {
-            self.hoist_loops_impl(oe, &mut loops);
+            match self
+                .compiled_policy
+                .loop_hoisting_table
+                .get_expr_loops(self.current_module_index, oe.as_ref().eidx())
+            {
+                Some(hoisted_loops) => {
+                    loops.extend(hoisted_loops.iter().cloned());
+                }
+                None => {
+                    bail!(oe.span().error("Loop hoisting information not found for output expression. This is likely a bug in the compilation phase."));
+                }
+            }
         }
 
         let r = self.eval_output_expr_in_loop(&loops[..])?;
@@ -1895,7 +1954,23 @@ impl Interpreter {
                 break;
             }
 
-            let loop_exprs = self.hoist_loops(&stmt.literal);
+            // Get pre-computed hoisted loops from compilation phase
+            let loop_exprs = match self
+                .compiled_policy
+                .loop_hoisting_table
+                .get_statement_loops(self.current_module_index, stmt.sidx)
+            {
+                Some(hoisted_loops) => {
+                    // Use pre-computed loops from compilation phase
+                    hoisted_loops.clone()
+                }
+                None => {
+                    // Loop hoisting should have been done during compilation
+                    // If we reach here, it means the hoisting pass didn't process this statement
+                    bail!(stmt.span.error("Loop hoisting information not found for statement. This is likely a bug in the compilation phase."));
+                }
+            };
+
             if !loop_exprs.is_empty() {
                 // If there are hoisted loop expressions, execute subsequent statements
                 // within loops.
@@ -1903,6 +1978,7 @@ impl Interpreter {
             }
 
             result = self.eval_stmt(stmt, &stmts[idx + 1..])?;
+
             if matches!(&stmt.literal, Literal::SomeIn { .. }) {
                 return Ok(result);
             }
@@ -2774,7 +2850,12 @@ impl Interpreter {
                 && !self.compiled_policy.default_rules.contains_key(&rule_path)
                 && !self.compiled_policy.imports.contains_key(&rule_path)
             {
-                bail!(span.error("var is unsafe"));
+                bail!(span.error(&format!(
+                    "var {} is unsafe (path {:?}, scopes {:?})",
+                    name.text(),
+                    path,
+                    self.scopes
+                )));
             }
 
             // Find the rule to which the var being looked up corresponds to. This is the prefix for
@@ -3119,12 +3200,22 @@ impl Interpreter {
     }
 
     fn find_module_index(&self, module: &Ref<Module>) -> u32 {
-        self.compiled_policy
+        if let Some(idx) = self
+            .compiled_policy
             .modules
             .iter()
             .position(|m| core::ptr::eq(m.as_ref(), module.as_ref()))
-            .map(|i| i as u32)
-            .unwrap_or(0)
+        {
+            idx as u32
+        } else if let Some(query_module) = &self.query_module {
+            if core::ptr::eq(query_module.as_ref(), module.as_ref()) {
+                self.compiled_policy.modules.len() as u32
+            } else {
+                0
+            }
+        } else {
+            0
+        }
     }
 
     fn get_rule_refr(rule: &Rule) -> &ExprRef {
@@ -3950,6 +4041,12 @@ impl Interpreter {
         } else {
             compiled_policy.rule_to_evaluate = "".into();
         }
+
+        // Populate loop hoisting lookup table
+        use crate::compiler::hoist::LoopHoister;
+        let hoister = LoopHoister::new();
+        let loop_lookup = hoister.populate(compiled_policy.modules.as_ref())?;
+        compiled_policy.loop_hoisting_table = loop_lookup;
 
         Ok(self.compiled_policy.clone())
     }

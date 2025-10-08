@@ -417,7 +417,6 @@ pub struct Analyzer {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Schedule {
     pub queries: Lookup<QuerySchedule>,
 }
