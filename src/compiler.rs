@@ -7,4 +7,5 @@
 //! the compilation phase to prepare policies for efficient execution.
 
 pub mod context;
+pub mod destructuring_planner;
 pub mod hoist;

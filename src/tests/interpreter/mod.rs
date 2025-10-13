@@ -253,9 +253,10 @@ pub fn eval_file(
     query: &str,
     enable_tracing: bool,
     strict: bool,
+    v0: bool,
 ) -> Result<(Vec<Value>, Vec<String>)> {
     let mut engine: Engine = Engine::new();
-    engine.set_rego_v0(true);
+    engine.set_rego_v0(v0);
     engine.set_strict_builtin_errors(strict);
     engine.set_gather_prints(true);
 
@@ -333,9 +334,10 @@ pub fn eval_file_with_rule_evaluation(
     query: &str,
     _enable_tracing: bool,
     strict: bool,
+    v0: bool,
 ) -> Result<(Vec<Value>, Vec<String>)> {
     let mut engine: Engine = Engine::new();
-    engine.set_rego_v0(true);
+    engine.set_rego_v0(v0);
     engine.set_strict_builtin_errors(strict);
     engine.set_gather_prints(true);
 
@@ -484,8 +486,18 @@ fn yaml_test_impl(file: &str) -> Result<()> {
             }
         }
     }
+    #[cfg(not(feature = "graph"))]
+    {
+        // Skip tests that depend on graph builtin that need graph feature.
+        if file.contains("walk.yaml") {
+            std::println!("skipped {file} without graph feature.");
+            return Ok(());
+        }
+    }
 
     std::println!("running {file}");
+
+    let v0 = !file.contains("bindings.yaml");
 
     for case in test.cases {
         std::print!("case {} ", case.note);
@@ -516,6 +528,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                     case.query.as_str(),
                     enable_tracing,
                     case.strict,
+                    v0,
                 )
             }
             #[cfg(not(feature = "azure_policy"))]
@@ -530,6 +543,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                 case.query.as_str(),
                 enable_tracing,
                 case.strict,
+                v0,
             )
         };
 

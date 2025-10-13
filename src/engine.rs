@@ -852,27 +852,24 @@ impl Engine {
         let module_idx = self.modules.len() as u32;
 
         use crate::compiler::hoist::LoopHoister;
+
         let query_schedule_rc = Rc::new(query_schedule.clone());
-        let mut hoister = LoopHoister::new_with_schedule(query_schedule_rc);
+
+        // Run loop hoisting for query snippet
+        let mut hoister = LoopHoister::new_with_schedule(query_schedule_rc.clone());
         hoister.populate_query_snippet(
             module_idx,
             &query_node,
             query_module.num_statements,
             query_module.num_expressions,
         )?;
-        let query_loops = hoister.finalize();
+        let query_lookup = hoister.finalize();
 
         #[cfg(debug_assertions)]
         {
-            debug_assert_eq!(
-                query_loops.module_len(),
-                module_idx as usize + 1,
-                "query hoisting table missing expected module slot {}",
-                module_idx
-            );
             for stmt in &query_node.stmts {
                 debug_assert!(
-                    query_loops
+                    query_lookup
                         .get_statement_loops(module_idx, stmt.sidx)
                         .is_some(),
                     "missing hoisted loop entry for query statement index {}",
@@ -891,7 +888,7 @@ impl Engine {
                 "loop hoisting table should not retain extra modules before merge"
             );
         }
-        existing_table.merge_query_loops(query_loops, self.modules.len());
+        existing_table.merge_query_loops(query_lookup, self.modules.len());
         #[cfg(debug_assertions)]
         {
             for stmt in &query_node.stmts {
@@ -952,8 +949,11 @@ impl Engine {
             // Populate loop hoisting table for efficient evaluation
             // Reserve capacity for 1 extra module (for query modules)
             use crate::compiler::hoist::LoopHoister;
+
+            // Run loop hoisting pass first
             let hoister = LoopHoister::new_with_schedule(schedule.clone());
             let loop_lookup = hoister.populate_with_extra_capacity(&self.modules, 0)?;
+
             self.interpreter.set_loop_hoisting_table(loop_lookup);
 
             // Set schedule after hoisting completes

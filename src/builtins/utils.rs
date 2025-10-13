@@ -45,6 +45,50 @@ pub fn ensure_numeric(fcn: &str, arg: &Expr, v: &Value) -> Result<Number> {
     })
 }
 
+pub fn validate_integer_arg(
+    fcn: &str,
+    param: &Ref<Expr>,
+    original_value: &Value,
+    numeric_value: &Number,
+    strict: bool,
+    allow_negative: bool,
+) -> Result<bool> {
+    if !numeric_value.is_integer() {
+        if strict {
+            bail!(param.span().error(
+                format!("`{fcn}` expects integer arguments. Got `{original_value}`").as_str()
+            ));
+        }
+        return Ok(false);
+    }
+
+    if !allow_negative {
+        if let Some(int_value) = numeric_value.as_i128() {
+            if int_value < 0 {
+                if strict {
+                    bail!(param.span().error(
+                        format!("`{fcn}` expects non-negative integer arguments. Got `{original_value}`")
+                            .as_str(),
+                    ));
+                }
+                return Ok(false);
+            }
+        } else if !numeric_value.is_positive() {
+            if strict {
+                bail!(param.span().error(
+                    format!(
+                        "`{fcn}` expects non-negative integer arguments. Got `{original_value}`"
+                    )
+                    .as_str(),
+                ));
+            }
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
 pub fn ensure_string(fcn: &str, arg: &Expr, v: &Value) -> Result<Rc<str>> {
     Ok(match &v {
         Value::String(s) => s.clone(),

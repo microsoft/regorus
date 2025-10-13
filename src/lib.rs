@@ -35,6 +35,7 @@ mod lookup;
 mod number;
 mod parser;
 mod policy_info;
+mod query;
 #[cfg(feature = "azure_policy")]
 pub mod registry;
 mod scheduler;

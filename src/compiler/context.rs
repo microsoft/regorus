@@ -32,19 +32,34 @@ pub enum ContextType {
 #[derive(Debug, Clone)]
 pub struct ScopeContext {
     /// Type of context (Rule, Comprehension, Every, Query)
+    #[allow(dead_code)]
     pub context_type: ContextType,
 
     /// Variables that are bound in the current scope
     pub bound_vars: BTreeSet<String>,
 
+    /// Variables that are introduced in this scope (used for conflict detection)
+    pub current_scope_bound_vars: BTreeSet<String>,
+
     /// Variables that are explicitly marked as unbound (from `some` declarations)
     pub unbound_vars: BTreeSet<String>,
 
+    /// Variables that are local to this scope and will become bound once assigned
+    pub local_vars: BTreeSet<String>,
+
+    /// Flag indicating whether scheduler scope information was available
+    pub has_scheduler_scope: bool,
+
     /// Key expression from rule head or object comprehension (for output expression hoisting)
+    #[allow(dead_code)]
     pub key_expr: Option<ExprRef>,
 
     /// Value expression from rule assignment or comprehension term (for output expression hoisting)
+    #[allow(dead_code)]
     pub value_expr: Option<ExprRef>,
+
+    /// Shared set of module-level globals available in this scope
+    pub module_globals: Option<crate::Rc<BTreeSet<String>>>,
 }
 
 impl ScopeContext {
@@ -53,9 +68,13 @@ impl ScopeContext {
         Self {
             context_type: ContextType::Query,
             bound_vars: BTreeSet::new(),
+            current_scope_bound_vars: BTreeSet::new(),
             unbound_vars: BTreeSet::new(),
+            local_vars: BTreeSet::new(),
+            has_scheduler_scope: false,
             key_expr: None,
             value_expr: None,
+            module_globals: None,
         }
     }
 
@@ -65,9 +84,13 @@ impl ScopeContext {
         Self {
             context_type,
             bound_vars: BTreeSet::new(),
+            current_scope_bound_vars: BTreeSet::new(),
             unbound_vars: BTreeSet::new(),
+            local_vars: BTreeSet::new(),
+            has_scheduler_scope: false,
             key_expr: None,
             value_expr: None,
+            module_globals: None,
         }
     }
 
@@ -81,9 +104,13 @@ impl ScopeContext {
         Self {
             context_type,
             bound_vars: BTreeSet::new(),
+            current_scope_bound_vars: BTreeSet::new(),
             unbound_vars: BTreeSet::new(),
+            local_vars: BTreeSet::new(),
+            has_scheduler_scope: false,
             key_expr,
             value_expr,
+            module_globals: None,
         }
     }
 
@@ -97,9 +124,13 @@ impl ScopeContext {
         Self {
             context_type,
             bound_vars: self.bound_vars.clone(),
+            current_scope_bound_vars: BTreeSet::new(),
             unbound_vars: self.unbound_vars.clone(),
+            local_vars: self.local_vars.clone(),
+            has_scheduler_scope: self.has_scheduler_scope,
             key_expr,
             value_expr,
+            module_globals: self.module_globals.clone(),
         }
     }
 
@@ -107,13 +138,18 @@ impl ScopeContext {
     pub fn bind_variable(&mut self, var_name: &str) {
         if var_name != "_" {
             self.bound_vars.insert(var_name.to_string());
+            self.current_scope_bound_vars.insert(var_name.to_string());
             self.unbound_vars.remove(var_name);
+            self.local_vars.remove(var_name);
         }
     }
 
     /// Mark a variable as unbound
     pub fn add_unbound_variable(&mut self, var_name: &str) {
-        if var_name != "_" && !self.bound_vars.contains(var_name) {
+        if var_name != "_" {
+            self.bound_vars.remove(var_name);
+            self.current_scope_bound_vars.remove(var_name);
+            self.local_vars.remove(var_name);
             self.unbound_vars.insert(var_name.to_string());
         }
     }
@@ -126,23 +162,27 @@ impl ScopeContext {
     /// Check if we can determine that a variable should be treated as a loop iterator
     /// (either it's unbound or explicitly marked as such)
     pub fn should_hoist_as_loop(&self, var_name: &str) -> bool {
-        if var_name == "_" || self.is_unbound(var_name) {
-            true
-        } else {
-            // Treat variables that haven't been bound in this scope as potential loop iterators
-            !self.bound_vars.contains(var_name)
+        if var_name == "_" {
+            return true;
         }
-    }
 
-    /// Create a child context inheriting parent bindings, output expressions, and context type
-    pub fn child(&self) -> Self {
-        Self {
-            context_type: self.context_type.clone(),
-            bound_vars: self.bound_vars.clone(),
-            unbound_vars: self.unbound_vars.clone(),
-            key_expr: self.key_expr.clone(),
-            value_expr: self.value_expr.clone(),
+        if self
+            .module_globals
+            .as_ref()
+            .is_some_and(|globals| globals.contains(var_name))
+        {
+            return false;
         }
+
+        if self.is_unbound(var_name) {
+            return true;
+        }
+
+        if self.has_scheduler_scope {
+            return self.local_vars.contains(var_name);
+        }
+
+        !self.bound_vars.contains(var_name)
     }
 }
 

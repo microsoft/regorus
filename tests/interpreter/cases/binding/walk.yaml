@@ -1,0 +1,20 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: walk-loop-index-destructuring
+    data:
+      doc:
+        team:
+          ops:
+            members: ["alice"]
+          dev:
+            members: ["bob"]
+    modules:
+      - |
+        package test
+
+        result := [[section, role, members] |
+          walk(data.doc, [[section, role], {"members": members}])
+        ]
+    query: data.test.result
+    want_result: [["team", "dev", ["bob"]], ["team", "ops", ["alice"]]]
