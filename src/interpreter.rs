@@ -6,7 +6,10 @@ use crate::builtins::{self, BuiltinFcn};
 use crate::compiled_policy::CompiledPolicyData;
 #[cfg(feature = "azure_policy")]
 use crate::compiled_policy::TargetInfo;
-use crate::compiler::hoist::HoistedLoop;
+use crate::compiler::destructuring_planner::{
+    AssignmentPlan, BindingPlan, DestructuringPlan, WildcardSide,
+};
+use crate::compiler::hoist::{HoistedLoop, LoopType};
 use crate::lexer::*;
 use crate::lookup::Lookup;
 use crate::parser::Parser;
@@ -15,6 +18,9 @@ use crate::utils::*;
 use crate::value::*;
 use crate::*;
 use crate::{Expression, Extension, Location, QueryResult, QueryResults};
+
+#[cfg(feature = "coverage")]
+use crate::query::traversal::traverse;
 
 use alloc::collections::btree_map::Entry as BTreeMapEntry;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -40,7 +46,7 @@ type State = (
     BTreeSet<Ref<Rule>>,
     Value,
     BTreeMap<String, FunctionModifier>,
-    BTreeMap<Vec<Value>, (Value, Ref<Expr>)>,
+    RuleValues,
 );
 
 #[derive(Debug, Clone)]
@@ -68,7 +74,6 @@ pub struct Interpreter {
     prints: Vec<String>,
 
     extensions: Map<String, (u8, Rc<Box<dyn Extension>>)>,
-
     module: Option<Ref<Module>>,
     current_module_path: String,
     current_module_index: u32,
@@ -372,10 +377,6 @@ impl Interpreter {
         self.loop_var_values.clear(module_idx, expr_idx);
     }
 
-    fn has_loop_var_value(&self, expr: &ExprRef) -> bool {
-        self.get_loop_var_value(expr).is_some()
-    }
-
     #[inline]
     fn loop_assignment_expr(loop_info: &HoistedLoop) -> &ExprRef {
         loop_info.loop_expr.as_ref().unwrap_or(&loop_info.value)
@@ -394,6 +395,36 @@ impl Interpreter {
     #[inline]
     fn loop_span(loop_info: &HoistedLoop) -> Span {
         loop_info.value.span().clone()
+    }
+
+    fn get_walk_binding_plan(&self, loop_info: &HoistedLoop) -> Result<Option<DestructuringPlan>> {
+        if loop_info.loop_type != LoopType::Walk {
+            return Ok(None);
+        }
+
+        if let Expr::Call { params, .. } = Self::loop_assignment_expr(loop_info).as_ref() {
+            if let Some(last_param) = params.last() {
+                let module_idx = self.current_module_index;
+                let expr_idx = last_param.as_ref().eidx();
+                return match self
+                    .compiled_policy
+                    .loop_hoisting_table
+                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .cloned()
+                {
+                    Some(BindingPlan::Parameter {
+                        destructuring_plan, ..
+                    }) => Ok(Some(destructuring_plan)),
+                    Some(other_plan) => bail!(
+                        "internal error: expected Parameter for walk output parameter, got {:?}",
+                        other_plan
+                    ),
+                    None => bail!("internal error: missing binding plan for walk output parameter"),
+                };
+            }
+        }
+
+        bail!("internal error: walk loop missing output parameter expression")
     }
 
     fn ensure_loop_var_values_capacity(&mut self) {
@@ -446,18 +477,6 @@ impl Interpreter {
 
         self.add_variable(name, Value::Undefined)?;
         Ok(Value::Undefined)
-    }
-
-    // TODO: optimize this
-    fn variables_assignment(&mut self, name: &SourceStr, value: &Value) -> Result<()> {
-        if let Some(variable) = self.current_scope_mut()?.get_mut(name) {
-            *variable = value.clone();
-            Ok(())
-        } else if name.text() == "_" {
-            Ok(())
-        } else {
-            bail!("variable {} is undefined", name)
-        }
     }
 
     fn eval_chained_ref_dot_or_brack(&mut self, mut expr: &ExprRef) -> Result<Value> {
@@ -592,161 +611,6 @@ impl Interpreter {
         }
     }
 
-    fn eval_assign_expr(&mut self, op: &AssignOp, lhs: &ExprRef, rhs: &ExprRef) -> Result<Value> {
-        let (name, value) = match op {
-            AssignOp::Eq => {
-                match (lhs.as_ref(), rhs.as_ref()) {
-                    (_, Expr::Var { span: var, .. })
-                        if var.source_str().text() != "input"
-                            && self.lookup_var(var, &[], true)? == Value::Undefined =>
-                    {
-                        (var.source_str(), self.eval_expr(lhs)?)
-                    }
-                    (Expr::Var { span: var, .. }, _)
-                        if var.source_str().text() != "input"
-                            && self.lookup_var(var, &[], true)? == Value::Undefined =>
-                    {
-                        (var.source_str(), self.eval_expr(rhs)?)
-                    }
-                    (
-                        Expr::Array {
-                            items: lhs_items, ..
-                        },
-                        Expr::Array {
-                            items: rhs_items,
-                            span: rhs_span,
-                            ..
-                        },
-                    ) => {
-                        if lhs_items.len() != rhs_items.len() {
-                            bail!(rhs_span
-                                .error("mismatch in number of array elements in lhs and rhs"));
-                        }
-                        for (lhs, rhs) in core::iter::zip(lhs_items.iter(), rhs_items.iter()) {
-                            if self.eval_assign_expr(&AssignOp::Eq, lhs, rhs)? != Value::Bool(true)
-                            {
-                                return Ok(Value::Bool(false));
-                            }
-                        }
-                        return Ok(Value::Bool(true));
-                    }
-                    (
-                        Expr::Object {
-                            fields: lhs_fields, ..
-                        },
-                        Expr::Object {
-                            fields: rhs_fields,
-                            span: rhs_span,
-                            ..
-                        },
-                    ) => {
-                        if lhs_fields.len() != rhs_fields.len() {
-                            bail!(rhs_span.error("mismatch in number of object keysin lhs and rhs"));
-                        }
-
-                        for ((_, lhs_key, lhs_value), (_, rhs_key, rhs_value)) in
-                            core::iter::zip(lhs_fields.iter(), rhs_fields.iter())
-                        {
-                            if self.eval_bool_expr(&BoolOp::Eq, lhs_key, rhs_key)?
-                                != Value::Bool(true)
-                            {
-                                return Ok(Value::Bool(false));
-                            }
-
-                            if self.eval_assign_expr(&AssignOp::Eq, lhs_value, rhs_value)?
-                                != Value::Bool(true)
-                            {
-                                return Ok(Value::Bool(false));
-                            }
-                        }
-                        return Ok(Value::Bool(true));
-                    }
-                    (Expr::Array { .. }, _) => {
-                        let value = self.eval_expr(rhs)?;
-                        let mut cache = BTreeMap::new();
-                        let mut type_match = BTreeSet::new();
-                        return self
-                            .make_bindings(false, &mut type_match, &mut cache, lhs, &value, false)
-                            .map(Value::Bool);
-                    }
-                    (_, Expr::Array { .. }) => {
-                        let value = self.eval_expr(lhs)?;
-                        let mut cache = BTreeMap::new();
-                        let mut type_match = BTreeSet::new();
-                        return self
-                            .make_bindings(false, &mut type_match, &mut cache, rhs, &value, false)
-                            .map(Value::Bool);
-                    }
-                    (Expr::Object { .. }, _) => {
-                        let value = self.eval_expr(rhs)?;
-                        let mut cache = BTreeMap::new();
-                        let mut type_match = BTreeSet::new();
-                        return self
-                            .make_bindings(false, &mut type_match, &mut cache, lhs, &value, false)
-                            .map(Value::Bool);
-                    }
-                    (_, Expr::Object { .. }) => {
-                        let value = self.eval_expr(lhs)?;
-                        let mut cache = BTreeMap::new();
-                        let mut type_match = BTreeSet::new();
-                        return self
-                            .make_bindings(false, &mut type_match, &mut cache, rhs, &value, false)
-                            .map(Value::Bool);
-                    }
-                    // Treat the assignment as comparison if neither lhs nor rhs is a variable
-                    _ => {
-                        let r = self.eval_bool_expr(&BoolOp::Eq, lhs, rhs)?;
-                        if r == Value::Bool(false) {
-                            return Ok(Value::Undefined);
-                        }
-                        return Ok(r);
-                    }
-                }
-            }
-            AssignOp::ColEq => {
-                let rhs_value = self.eval_expr(rhs)?;
-                if rhs_value == Value::Undefined {
-                    return Ok(rhs_value);
-                }
-
-                let name = if let Expr::Var { span: s, .. } = lhs.as_ref() {
-                    s.source_str()
-                } else {
-                    let mut cache = BTreeMap::new();
-                    let mut type_match = BTreeSet::new();
-                    return self
-                        .make_bindings(false, &mut type_match, &mut cache, lhs, &rhs_value, false)
-                        .map(Value::Bool);
-                };
-
-                // TODO: Check this
-                // Allow variable overwritten inside a loop
-                let lhs_val = self.lookup_local_var(&name);
-                if !matches!(lhs_val, None | Some(Value::Undefined))
-                    && !self.has_loop_var_value(rhs)
-                {
-                    bail!(rhs
-                        .span()
-                        .error(&format!("redefinition for variable {name}")));
-                }
-
-                (name, rhs_value)
-            }
-        };
-
-        // Omit recording undefined values.
-        if value == Value::Undefined {
-            return Ok(value); //Ok(Value::Bool(false));
-        }
-
-        self.add_variable_or(&name)?;
-
-        // TODO: optimize this
-        self.variables_assignment(&name, &value)?;
-
-        Ok(Value::Bool(true))
-    }
-
     fn eval_every(
         &mut self,
         _span: &Span,
@@ -809,268 +673,338 @@ impl Interpreter {
         Ok(r)
     }
 
-    fn lookup_or_eval_expr(
+    /// Execute a destructuring plan against a value, binding variables as needed
+    pub fn execute_destructuring_plan(
         &mut self,
-        cache: &mut BTreeMap<ExprRef, Value>,
-        expr: &ExprRef,
+        plan: &DestructuringPlan,
+        value: &Value,
     ) -> Result<Value> {
-        match cache.get(expr) {
-            Some(v) => Ok(v.clone()),
-            _ => {
-                let v = self.eval_expr(expr)?;
-                cache.insert(expr.clone(), v.clone());
-                Ok(v)
-            }
-        }
-    }
-
-    fn make_bindings_impl(
-        &mut self,
-        is_last: bool,
-        type_match: &mut BTreeSet<ExprRef>,
-        cache: &mut BTreeMap<ExprRef, Value>,
-        expr: &ExprRef,
-        value: &Value,
-        check_existing_value: bool,
-    ) -> Result<bool> {
-        // Propagate undefined.
         if value == &Value::Undefined {
-            return Ok(false);
+            return Ok(Value::Undefined);
         }
-        let span = expr.span();
-        let raise_error = is_last && type_match.get(expr).is_none();
 
-        match (expr.as_ref(), value) {
-            (Expr::Var { span: ident, .. }, _) if ident.text() == "_" => Ok(true),
-            (Expr::Var { span: ident, .. }, _)
-                if check_existing_value
-                    && self.lookup_local_var(&ident.source_str()) == Some(value.clone()) =>
-            {
-                Ok(false)
+        fn compare(v1: &Value, v2: &Value) -> Result<Value> {
+            if v1 != v2 || v1 == &Value::Undefined {
+                Ok(Value::Undefined)
+            } else {
+                Ok(Value::from(true))
+            }
+        }
+
+        match plan {
+            DestructuringPlan::Var(var_name) => {
+                // Bind the variable to the value
+                self.add_variable(&var_name.source_str(), value.clone())?;
+                Ok(Value::Bool(true))
             }
 
-            (Expr::Var { span: ident, .. }, _) => {
-                self.add_variable(&ident.source_str(), value.clone())?;
-                Ok(true)
+            DestructuringPlan::Ignore => Ok(Value::Bool(true)),
+
+            DestructuringPlan::EqualityExpr(expected_expr) => {
+                let expected = self.eval_expr(expected_expr)?;
+                compare(value, &expected)
             }
 
-            // Destructure arrays
-            (Expr::Array { items, .. }, Value::Array(a)) => {
-                if items.len() != a.len() {
-                    if raise_error {
-                        return Err(span.error(
-                            format!(
-                                "array length mismatch. Expected {} got {}.",
-                                items.len(),
-                                a.len()
-                            )
-                            .as_str(),
-                        ));
+            DestructuringPlan::EqualityValue(expected) => Ok(Value::from(value == expected)),
+
+            DestructuringPlan::Array { element_plans } => {
+                // Value must be an array with matching length
+                if let Value::Array(arr) = value {
+                    if arr.len() != element_plans.len() {
+                        return Ok(Value::Undefined);
                     }
-                    return Ok(false);
-                }
-                type_match.insert(expr.clone());
 
-                let mut r = true;
-                for (idx, item) in items.iter().enumerate() {
-                    r = self.make_bindings(
-                        is_last,
-                        type_match,
-                        cache,
-                        item,
-                        &a[idx],
-                        check_existing_value,
-                    )? && r;
-                }
-
-                Ok(r)
-            }
-            // Destructure objects
-            (Expr::Object { fields, .. }, Value::Object(_)) => {
-                let mut r = true;
-                for (_, key_expr, value_expr) in fields.iter() {
-                    // Rego does not support bindings in keys.
-                    // Therefore, just eval key_expr.
-                    let key = self.lookup_or_eval_expr(cache, key_expr)?;
-                    let field_value = &value[&key];
-
-                    if field_value == &Value::Undefined {
-                        if raise_error {
-                            return Err(span.error("Expected value, got undefined."));
+                    // Recursively execute each element plan
+                    for (i, element_plan) in element_plans.iter().enumerate() {
+                        if self.execute_destructuring_plan(element_plan, &arr[i])?
+                            != Value::from(true)
+                        {
+                            return Ok(Value::Undefined);
                         }
-                        return Ok(false);
                     }
-
-                    // Match patterns in value_expr
-                    r = r
-                        && self.make_bindings(
-                            is_last,
-                            type_match,
-                            cache,
-                            value_expr,
-                            field_value,
-                            check_existing_value,
-                        )?;
+                    Ok(Value::from(true))
+                } else {
+                    Ok(Value::Undefined) // Not an array
                 }
-                type_match.insert(expr.clone());
-
-                Ok(r)
             }
-            // TODO: This suppresses errors in case of type mismatches.
-            // OPA raises the error sometimes in static scenarios, but doesn't
-            // raise in scenarios due to data/input
-            (Expr::Array { .. }, _) | (Expr::Object { .. }, _) => Ok(false),
 
-            _ => {
-                let expr_value = self.lookup_or_eval_expr(cache, expr)?;
-                if expr_value == Value::Undefined {
-                    return Ok(false);
-                }
-
-                if raise_error {
-                    let expr_t = builtins::types::get_type(&expr_value);
-                    let value_t = builtins::types::get_type(value);
-
-                    if expr_t != value_t {
-                        return Err(span.error(
-			format!("Cannot bind pattern of type `{expr_t}` with value of type `{value_t}`. Value is {value}.").as_str()));
+            DestructuringPlan::Object {
+                field_plans,
+                dynamic_fields,
+            } => {
+                // Value must be an object with matching fields
+                if let Value::Object(obj) = value {
+                    // Check that all required fields are present and match
+                    for (key, field_plan) in field_plans {
+                        if let Some(field_value) = obj.get(key) {
+                            if self.execute_destructuring_plan(field_plan, field_value)?
+                                != Value::from(true)
+                            {
+                                return Ok(Value::Undefined);
+                            }
+                        } else {
+                            return Ok(Value::Undefined); // Required field missing
+                        }
                     }
-                }
-                type_match.insert(expr.clone());
 
-                Ok(&expr_value == value)
+                    if !dynamic_fields.is_empty() {
+                        for (key_expr, field_plan) in dynamic_fields {
+                            let key_value = self.eval_expr(key_expr)?;
+                            if key_value == Value::Undefined {
+                                return Ok(Value::Undefined);
+                            }
+
+                            if let Some(field_value) = obj.get(&key_value) {
+                                if self.execute_destructuring_plan(field_plan, field_value)?
+                                    != Value::from(true)
+                                {
+                                    return Ok(Value::Undefined);
+                                }
+                            } else {
+                                return Ok(Value::Undefined);
+                            }
+                        }
+                    }
+                    Ok(Value::from(true))
+                } else {
+                    Ok(Value::Undefined) // Not an object
+                }
             }
         }
     }
 
-    fn make_bindings(
-        &mut self,
-        is_last: bool,
-        type_match: &mut BTreeSet<ExprRef>,
-        cache: &mut BTreeMap<ExprRef, Value>,
-        expr: &ExprRef,
-        value: &Value,
-        check_existing_value: bool,
-    ) -> Result<bool> {
-        let prev = self.no_rules_lookup;
-        self.no_rules_lookup = true;
-        let r = self.make_bindings_impl(
-            is_last,
-            type_match,
-            cache,
-            expr,
-            value,
-            check_existing_value,
-        );
-        self.no_rules_lookup = prev;
-        r
-    }
+    fn execute_assignment_plan(&mut self, plan: &AssignmentPlan) -> Result<Value> {
+        match plan {
+            AssignmentPlan::ColonEquals {
+                lhs_expr: _,
+                rhs_expr,
+                lhs_plan,
+            } => {
+                // For :=, evaluate RHS and bind to LHS pattern
+                let rhs_value = self.eval_expr(rhs_expr)?;
+                self.execute_destructuring_plan(lhs_plan, &rhs_value)
+            }
 
-    fn make_key_value_bindings(
-        &mut self,
-        is_last: bool,
-        type_match: &mut BTreeSet<ExprRef>,
-        cache: &mut BTreeMap<ExprRef, Value>,
-        exprs: (&Option<ExprRef>, &ExprRef),
-        values: (&Value, &Value),
-    ) -> Result<bool> {
-        let (key_expr, value_expr) = exprs;
-        let (key, value) = values;
-        if let Some(key_expr) = key_expr {
-            if !self.make_bindings(is_last, type_match, cache, key_expr, key, false)? {
-                return Ok(false);
+            AssignmentPlan::EqualsBindLeft {
+                lhs_expr: _,
+                rhs_expr,
+                lhs_plan,
+            } => {
+                // For = with LHS binding, evaluate RHS and bind to LHS pattern
+                let rhs_value = self.eval_expr(rhs_expr)?;
+                self.execute_destructuring_plan(lhs_plan, &rhs_value)
+            }
+
+            AssignmentPlan::EqualsBindRight {
+                lhs_expr,
+                rhs_expr: _,
+                rhs_plan,
+            } => {
+                // For = with RHS binding, evaluate LHS and bind to RHS pattern
+                let lhs_value = self.eval_expr(lhs_expr)?;
+                self.execute_destructuring_plan(rhs_plan, &lhs_value)
+            }
+
+            AssignmentPlan::EqualsBothSides {
+                lhs_expr: _,
+                rhs_expr: _,
+                element_pairs,
+            } => {
+                // For = with both sides having patterns, execute each flattened pair
+                for (value_expr, pattern_plan) in element_pairs {
+                    let value = self.eval_expr(value_expr)?;
+                    if self.execute_destructuring_plan(pattern_plan, &value)? != Value::from(true) {
+                        return Ok(Value::Undefined);
+                    }
+                }
+                Ok(Value::from(true))
+            }
+
+            AssignmentPlan::WildcardMatch {
+                lhs_expr,
+                rhs_expr,
+                wildcard_side,
+            } => match wildcard_side {
+                WildcardSide::Both => Ok(Value::Bool(true)),
+                WildcardSide::Lhs => {
+                    let rhs_value = self.eval_expr(rhs_expr)?;
+                    if rhs_value == Value::Undefined {
+                        Ok(Value::Undefined)
+                    } else {
+                        Ok(Value::Bool(true))
+                    }
+                }
+                WildcardSide::Rhs => {
+                    let lhs_value = self.eval_expr(lhs_expr)?;
+                    if lhs_value == Value::Undefined {
+                        Ok(Value::Undefined)
+                    } else {
+                        Ok(Value::Bool(true))
+                    }
+                }
+            },
+
+            AssignmentPlan::EqualityCheck { lhs_expr, rhs_expr } => {
+                let lhs_value = self.eval_expr(lhs_expr)?;
+                let rhs_value = self.eval_expr(rhs_expr)?;
+
+                if lhs_value == Value::Undefined || rhs_value == Value::Undefined {
+                    return Ok(Value::Undefined);
+                }
+
+                if lhs_value == rhs_value {
+                    Ok(Value::Bool(true))
+                } else {
+                    Ok(Value::Undefined)
+                }
             }
         }
-        self.make_bindings(is_last, type_match, cache, value_expr, value, false)
     }
 
     fn eval_some_in(
         &mut self,
         _span: &Span,
-        key_expr: &Option<ExprRef>,
-        value_expr: &ExprRef,
+        _key_expr: &Option<ExprRef>,
+        _value_expr: &ExprRef,
         collection: &ExprRef,
         stmts: &[&LiteralStmt],
     ) -> Result<bool> {
         let scope_saved = self.current_scope()?.clone();
-        let mut type_match = BTreeSet::new();
-        let mut cache = BTreeMap::new();
         let mut count = 0;
+
+        // Fetch the binding plan for this some..in expression
+        let module_idx = self.current_module_index;
+        let expr_idx = collection.as_ref().eidx();
+
+        let Some(BindingPlan::SomeIn {
+            key_plan,
+            value_plan,
+            ..
+        }) = self
+            .compiled_policy
+            .loop_hoisting_table
+            .get_expr_binding_plan(module_idx, expr_idx)
+            .cloned()
+        else {
+            bail!("internal error: missing binding plan for some..in expression");
+        };
+
         match self.eval_expr(collection)? {
             Value::Array(a) => {
                 for (idx, value) in a.iter().enumerate() {
-                    if !self.make_key_value_bindings(
-                        idx == a.len() - 1,
-                        &mut type_match,
-                        &mut cache,
-                        (key_expr, value_expr),
-                        (&Value::from(idx), value),
-                    )? {
+                    *self.current_scope_mut()? = scope_saved.clone();
+
+                    let mut success = true;
+                    // Execute key binding if present
+                    if let Some(key_plan) = &key_plan {
+                        success = self.execute_destructuring_plan(key_plan, &Value::from(idx))?
+                            == Value::from(true);
+                    }
+
+                    // Execute value binding
+                    success = success
+                        && self.execute_destructuring_plan(&value_plan, value)?
+                            == Value::from(true);
+
+                    if !success {
+                        *self.current_scope_mut()? = scope_saved.clone();
                         continue;
                     }
 
+                    let mut should_break = false;
                     if self.eval_stmts(stmts)? {
                         count += 1;
                         if let Some(ctx) = self.contexts.last() {
                             if ctx.early_return {
-                                break;
+                                should_break = true;
                             }
                         }
                     }
                     *self.current_scope_mut()? = scope_saved.clone();
+
+                    if should_break {
+                        break;
+                    }
                 }
             }
             Value::Set(s) => {
-                for (idx, value) in s.iter().enumerate() {
-                    if !self.make_key_value_bindings(
-                        idx == s.len() - 1,
-                        &mut type_match,
-                        &mut cache,
-                        (key_expr, value_expr),
-                        (value, value),
-                    )? {
+                for value in s.iter() {
+                    *self.current_scope_mut()? = scope_saved.clone();
+
+                    let mut success = true;
+                    // Execute key binding if present
+                    if let Some(key_plan) = &key_plan {
+                        success =
+                            self.execute_destructuring_plan(key_plan, value)? == Value::from(true);
+                    }
+
+                    // Execute value binding
+                    success = success
+                        && self.execute_destructuring_plan(&value_plan, value)?
+                            == Value::from(true);
+
+                    if !success {
+                        *self.current_scope_mut()? = scope_saved.clone();
                         continue;
                     }
 
+                    let mut should_break = false;
                     if self.eval_stmts(stmts)? {
                         count += 1;
                         if let Some(ctx) = self.contexts.last() {
                             if ctx.early_return {
-                                break;
+                                should_break = true;
                             }
                         }
                     }
                     *self.current_scope_mut()? = scope_saved.clone();
+
+                    if should_break {
+                        break;
+                    }
                 }
             }
 
             Value::Object(o) => {
-                for (idx, (key, value)) in o.iter().enumerate() {
-                    if !self.make_key_value_bindings(
-                        idx == o.len() - 1,
-                        &mut type_match,
-                        &mut cache,
-                        (key_expr, value_expr),
-                        (key, value),
-                    )? {
+                for (key, value) in o.iter() {
+                    *self.current_scope_mut()? = scope_saved.clone();
+
+                    let mut success = true;
+                    // Execute key binding if present
+                    if let Some(key_plan) = &key_plan {
+                        success =
+                            self.execute_destructuring_plan(key_plan, key)? == Value::from(true);
+                    }
+
+                    // Execute value binding
+                    success = success
+                        && self.execute_destructuring_plan(&value_plan, value)?
+                            == Value::from(true);
+
+                    if !success {
+                        *self.current_scope_mut()? = scope_saved.clone();
                         continue;
                     }
 
+                    let mut should_break = false;
                     if self.eval_stmts(stmts)? {
                         count += 1;
                         if let Some(ctx) = self.contexts.last() {
                             if ctx.early_return {
-                                break;
+                                should_break = true;
                             }
                         }
                     }
                     *self.current_scope_mut()? = scope_saved.clone();
+
+                    if should_break {
+                        break;
+                    }
                 }
             }
             Value::Undefined => (),
             v => {
-                let span = collection.span();
-                bail!(span.error(
+                bail!(collection.span().error(
                     format!("`some .. in collection` expects array/set/object. Got `{v}`").as_str()
                 ))
             }
@@ -1423,6 +1357,47 @@ impl Interpreter {
             // If the loop's index variable h<as already been assigned a value
             // (this can happen if the same index is used for two different collections),
             // then evaluate statements only if the index applies to this collection.
+            if let Some(walk_plan) = self.get_walk_binding_plan(loop_info)? {
+                let loop_target_expr = Self::loop_assignment_expr(loop_info);
+                self.scopes.push(Scope::default());
+
+                let query_result = self.get_current_context()?.result.clone();
+
+                let mut walk_result = false;
+                match loop_value {
+                    Value::Array(items) => {
+                        for item in items.iter() {
+                            self.set_loop_var_value(loop_target_expr, item.clone());
+
+                            if self.execute_destructuring_plan(&walk_plan, item)?
+                                == Value::from(true)
+                            {
+                                walk_result =
+                                    self.eval_stmts_in_loop(stmts, &loops[1..])? || walk_result;
+                            }
+
+                            Self::clear_scope(self.current_scope_mut()?);
+                            if let Some(ctx) = self.contexts.last_mut() {
+                                ctx.result.clone_from(&query_result);
+                                if ctx.early_return {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Value::Undefined => (),
+                    other => {
+                        let span = Self::loop_span(loop_info);
+                        bail!(span
+                            .error(format!("walk expected array result, got `{other}`").as_str()));
+                    }
+                }
+
+                self.scopes.pop();
+                self.remove_loop_var_value(loop_target_expr);
+                return Ok(walk_result);
+            }
+
             let index_expr = Self::loop_index_expr(loop_info);
             if let Some(Expr::Var {
                 span: index_var, ..
@@ -1439,6 +1414,29 @@ impl Interpreter {
                 }
             }
 
+            let index_plan = if let Some(index) = index_expr {
+                let module_idx = self.current_module_index;
+                let expr_idx = index.as_ref().eidx();
+                match self
+                    .compiled_policy
+                    .loop_hoisting_table
+                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .cloned()
+                {
+                    Some(BindingPlan::LoopIndex {
+                        destructuring_plan, ..
+                    }) => destructuring_plan,
+                    Some(other_plan) => {
+                        bail!("internal error: expected LoopIndex for loop index expression, got {:?}", other_plan);
+                    }
+                    None => {
+                        bail!("internal error: no binding plan found for loop index expression");
+                    }
+                }
+            } else {
+                bail!("internal error: no binding plan found for loop index expression");
+            };
+
             // Create a new scope.
             self.scopes.push(Scope::default());
 
@@ -1449,21 +1447,9 @@ impl Interpreter {
                     for (idx, v) in items.iter().enumerate() {
                         self.set_loop_var_value(loop_target_expr, v.clone());
 
-                        let exec = if let Some(index) = index_expr {
-                            let mut type_match = BTreeSet::new();
-                            let mut cache = BTreeMap::new();
-                            self.make_bindings(
-                                false,
-                                &mut type_match,
-                                &mut cache,
-                                index,
-                                &Value::from(idx),
-                                true,
-                            )?
-                        } else {
-                            true
-                        };
-                        if exec {
+                        if self.execute_destructuring_plan(&index_plan, &Value::from(idx))?
+                            == Value::from(true)
+                        {
                             result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         }
 
@@ -1483,14 +1469,7 @@ impl Interpreter {
                         self.set_loop_var_value(loop_target_expr, v.clone());
 
                         // For sets, index is also the value.
-                        let exec = if let Some(index) = index_expr {
-                            let mut type_match = BTreeSet::new();
-                            let mut cache = BTreeMap::new();
-                            self.make_bindings(false, &mut type_match, &mut cache, index, v, true)?
-                        } else {
-                            true
-                        };
-                        if exec {
+                        if self.execute_destructuring_plan(&index_plan, v)? == Value::from(true) {
                             result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         }
 
@@ -1508,14 +1487,7 @@ impl Interpreter {
                     for (k, v) in obj.iter() {
                         self.set_loop_var_value(loop_target_expr, v.clone());
                         // For objects, index is key.
-                        let exec = if let Some(index) = index_expr {
-                            let mut type_match = BTreeSet::new();
-                            let mut cache = BTreeMap::new();
-                            self.make_bindings(false, &mut type_match, &mut cache, index, k, true)?
-                        } else {
-                            true
-                        };
-                        if exec {
+                        if self.execute_destructuring_plan(&index_plan, k)? == Value::from(true) {
                             result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
                         }
 
@@ -2507,20 +2479,38 @@ impl Interpreter {
             let args_scope = Scope::new();
             self.scopes.push(args_scope);
 
-            let mut cache = BTreeMap::new();
-            let mut type_match = BTreeSet::new();
+            // Determine the module index for the callee so we can fetch binding plans
+            let callee_module_idx = fcn_module
+                .as_ref()
+                .map(|module| self.find_module_index(module))
+                .unwrap_or(self.current_module_index);
 
             for (idx, a) in args.iter().enumerate() {
-                let b = self.make_bindings(
-                    false,
-                    &mut type_match,
-                    &mut cache,
-                    a,
-                    &param_values[idx],
-                    false,
-                );
+                // Fetch the binding plan for this function parameter
+                let module_idx = callee_module_idx;
+                let expr_idx = a.as_ref().eidx();
 
-                if b.ok() != Some(true) {
+                let binding_success = if let Some(BindingPlan::Parameter {
+                    destructuring_plan,
+                    ..
+                }) = self
+                    .compiled_policy
+                    .loop_hoisting_table
+                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .cloned()
+                {
+                    // Execute the destructuring plan with the parameter value
+                    self.execute_destructuring_plan(&destructuring_plan, &param_values[idx])?
+                        == Value::from(true)
+                } else {
+                    // Raise error if binding plan is not found
+                    return Err(span.error(&format!(
+                        "binding plan not found for parameter {}",
+                        a.span().text()
+                    )));
+                };
+
+                if !binding_success {
                     self.scopes = scopes;
                     continue 'outer;
                 }
@@ -2640,32 +2630,33 @@ impl Interpreter {
         allow_return_arg: bool,
     ) -> Result<Value> {
         // TODO: global var check; interop with `some var`
-        if let Some(ea) = extra_arg {
-            match ea.as_ref() {
-                Expr::Var { span: var, .. }
-                    if allow_return_arg && self.lookup_local_var(&var.source_str()).is_none() =>
+        if extra_arg.is_some() {
+            let value = self.eval_call_impl(span, expr, fcn, &params[..params.len() - 1])?;
+            if allow_return_arg {
+                let last_param = &params[params.len() - 1];
+                let module_idx = self.current_module_index;
+                let expr_idx = last_param.as_ref().eidx();
+                if let Some(BindingPlan::Parameter {
+                    destructuring_plan, ..
+                }) = self
+                    .compiled_policy
+                    .loop_hoisting_table
+                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .cloned()
                 {
-                    let value =
-                        self.eval_call_impl(span, expr, fcn, &params[..params.len() - 1])?;
-                    if var.text() != "_" {
-                        self.add_variable(&var.source_str(), value)?;
-                    }
-                    Ok(Value::Bool(true))
+                    // Execute the destructuring plan with the return value
+                    let result = self.execute_destructuring_plan(&destructuring_plan, &value)?;
+                    Ok(result)
+                } else {
+                    // Raise error if binding plan is not found
+                    Err(span.error(&format!(
+                        "binding plan not found for parameter {}",
+                        last_param.span().text()
+                    )))
                 }
-                _ if allow_return_arg => {
-                    let ret_value =
-                        self.eval_call_impl(span, expr, fcn, &params[..params.len() - 1])?;
-                    let mut cache = BTreeMap::new();
-                    let mut type_match = BTreeSet::new();
-                    self.make_bindings(false, &mut type_match, &mut cache, &ea, &ret_value, false)
-                        .map(Value::Bool)
-                }
-                _ => {
-                    let expected = self.eval_expr(&params[params.len() - 1])?;
-                    let ret_value =
-                        self.eval_call_impl(span, expr, fcn, &params[..params.len() - 1])?;
-                    Ok(Value::Bool(ret_value == expected))
-                }
+            } else {
+                let expected = self.eval_expr(&params[params.len() - 1])?;
+                Ok(Value::Bool(value == expected))
             }
         } else {
             self.eval_call_impl(span, expr, fcn, params)
@@ -2934,7 +2925,28 @@ impl Interpreter {
 
             // Expressions with operators
             Expr::ArithExpr { op, lhs, rhs, .. } => self.eval_arith_expr(expr.span(), op, lhs, rhs),
-            Expr::AssignExpr { op, lhs, rhs, .. } => self.eval_assign_expr(op, lhs, rhs),
+            Expr::AssignExpr { .. } => {
+                let module_idx = self.current_module_index;
+                let expr_idx = expr.as_ref().eidx();
+                let expr_text = expr.span().text().to_string();
+                let binding_plan = self
+                    .compiled_policy
+                    .loop_hoisting_table
+                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .cloned()
+                    .ok_or_else(|| {
+                        expr.span().error(
+                            format!(
+                                "binding plan missing for assignment expression (module_idx={module_idx}, expr_idx={expr_idx}, expr='{expr_text}')"
+                            )
+                            .as_str(),
+                        )
+                    })?;
+                let BindingPlan::Assignment { plan } = binding_plan else {
+                    bail!(expr.span().error("internal error: not an assignment plan"));
+                };
+                self.execute_assignment_plan(&plan)
+            }
             Expr::BinExpr { op, lhs, rhs, .. } => self.eval_bin_expr(op, lhs, rhs),
             Expr::BoolExpr { op, lhs, rhs, .. } => self.eval_bool_expr(op, lhs, rhs),
             Expr::Membership {
@@ -2990,7 +3002,6 @@ impl Interpreter {
 
     fn make_rule_context(&self, head: &RuleHead) -> Result<(Context, Vec<Span>)> {
         let mut path = Parser::get_path_ref_components(&self.module.clone().unwrap().package.refr)?;
-
         match head {
             RuleHead::Compr { refr, assign, .. } => {
                 let output_expr = assign.as_ref().map(|assign| assign.value.clone());

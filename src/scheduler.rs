@@ -1,10 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::ast::Expr::{Set, *};
+use crate::ast::Expr::*;
 use crate::ast::*;
 use crate::lexer::*;
 use crate::lookup::*;
+pub use crate::query::traversal::Scope;
+use crate::query::traversal::{
+    gather_assigned_vars, gather_input_vars, gather_loop_vars, gather_vars, traverse,
+};
 use crate::utils::*;
 use crate::*;
 
@@ -209,202 +213,9 @@ pub fn schedule<Str: Clone + cmp::Ord + fmt::Debug>(
 }
 
 #[derive(Clone, Default, Debug)]
-pub struct Scope {
-    pub locals: BTreeMap<SourceStr, Span>,
-    pub unscoped: BTreeSet<SourceStr>,
-    pub inputs: BTreeSet<SourceStr>,
-    pub uses_input: bool,
-}
-
-#[derive(Clone, Default, Debug)]
 pub struct QuerySchedule {
     pub scope: Scope,
     pub order: Vec<u16>,
-}
-
-pub fn traverse(expr: &Ref<Expr>, f: &mut dyn FnMut(&Ref<Expr>) -> Result<bool>) -> Result<()> {
-    if !f(expr)? {
-        return Ok(());
-    }
-    match expr.as_ref() {
-        Expr::String { .. }
-        | RawString { .. }
-        | Number { .. }
-        | Bool { .. }
-        | Null { .. }
-        | Var { .. } => (),
-
-        Array { items, .. } | Set { items, .. } => {
-            for i in items {
-                traverse(i, f)?;
-            }
-        }
-        Object { fields, .. } => {
-            for (_, k, v) in fields {
-                traverse(k, f)?;
-                traverse(v, f)?;
-            }
-        }
-
-        ArrayCompr { .. } | SetCompr { .. } | ObjectCompr { .. } => (),
-
-        Call { params, .. } => {
-            for p in params {
-                traverse(p, f)?;
-            }
-        }
-
-        UnaryExpr { expr, .. } => traverse(expr, f)?,
-
-        RefDot { refr, .. } => traverse(refr, f)?,
-
-        RefBrack { refr, index, .. } => {
-            traverse(refr, f)?;
-            traverse(index, f)?;
-        }
-
-        BinExpr { lhs, rhs, .. }
-        | BoolExpr { lhs, rhs, .. }
-        | ArithExpr { lhs, rhs, .. }
-        | AssignExpr { lhs, rhs, .. } => {
-            traverse(lhs, f)?;
-            traverse(rhs, f)?;
-        }
-
-        #[cfg(feature = "rego-extensions")]
-        OrExpr { lhs, rhs, .. } => {
-            traverse(lhs, f)?;
-            traverse(rhs, f)?;
-        }
-
-        Membership {
-            key,
-            value,
-            collection,
-            ..
-        } => {
-            if let Some(key) = key.as_ref() {
-                traverse(key, f)?;
-            }
-            traverse(value, f)?;
-            traverse(collection, f)?;
-        }
-    }
-    Ok(())
-}
-
-fn var_exists(var: &Span, parent_scopes: &[Scope]) -> bool {
-    let name = var.source_str();
-
-    for pscope in parent_scopes.iter().rev() {
-        if pscope.unscoped.contains(&name) {
-            return true;
-        }
-        // Check parent scope vars defined using :=.
-        if let Some(s) = pscope.locals.get(&name) {
-            // Note: Since a rule cannot span multiple files, it is safe to check only
-            // the line numbers.
-            if s.line <= var.line {
-                // The variable was defined in parent scope prior to current comprehension.
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn gather_assigned_vars(
-    expr: &Ref<Expr>,
-    can_shadow: bool,
-    parent_scopes: &[Scope],
-    scope: &mut Scope,
-) -> Result<()> {
-    traverse(expr, &mut |e| match e.as_ref() {
-        // Ignore _, input, data.
-        Var { span: v, .. } if matches!(v.text(), "_" | "input" | "data") => {
-            if v.text() == "input" {
-                scope.uses_input = true;
-            }
-            Ok(false)
-        }
-
-        // Record local var that can shadow input var.
-        Var { span: v, .. } if can_shadow => {
-            scope.locals.insert(v.source_str(), v.clone());
-            Ok(false)
-        }
-
-        // Record input vars.
-        Var { span: v, .. } if var_exists(v, parent_scopes) => {
-            scope.inputs.insert(v.source_str());
-            Ok(false)
-        }
-
-        // Record local var.
-        Var { span: v, .. } => {
-            scope.unscoped.insert(v.source_str());
-            Ok(false)
-        }
-
-        // TODO: key vs value for object binding
-        Array { .. } | Object { .. } => Ok(true),
-        _ => Ok(false),
-    })
-}
-
-fn gather_input_vars(expr: &Ref<Expr>, parent_scopes: &[Scope], scope: &mut Scope) -> Result<()> {
-    traverse(expr, &mut |e| match e.as_ref() {
-        Var { span: v, .. } => {
-            let name = v.source_str();
-            if name.text() == "input" {
-                scope.uses_input = true;
-            } else if !scope.unscoped.contains(&name) && var_exists(v, parent_scopes) {
-                scope.inputs.insert(name);
-            }
-            Ok(false)
-        }
-        _ => Ok(true),
-    })
-}
-
-fn gather_loop_vars(expr: &Ref<Expr>, parent_scopes: &[Scope], scope: &mut Scope) -> Result<()> {
-    traverse(expr, &mut |e| match e.as_ref() {
-        Var { span: v, .. } if v.text() == "input" => {
-            scope.uses_input = true;
-            Ok(false)
-        }
-        RefBrack { index, .. } => {
-            gather_assigned_vars(index, false, parent_scopes, scope)?;
-            Ok(true)
-        }
-        _ => Ok(true),
-    })
-}
-
-// TODO: start opa discussion
-//    k = "k"
-//   t = {"k": 5}
-// {k:y} = t
-// Try inlining value of t
-fn gather_vars(
-    expr: &Ref<Expr>,
-    can_shadow: bool,
-    parent_scopes: &[Scope],
-    scope: &mut Scope,
-) -> Result<()> {
-    // Process assignment expressions to gather vars that are defined/assigned
-    // in current scope.
-    if let AssignExpr { op, lhs, rhs, .. } = expr.as_ref() {
-        gather_assigned_vars(lhs, *op == AssignOp::ColEq, parent_scopes, scope)?;
-        gather_assigned_vars(rhs, false, parent_scopes, scope)?;
-    } else {
-        gather_assigned_vars(expr, can_shadow, parent_scopes, scope)?;
-    }
-
-    // Process all expressions to gather loop index vars and inputs.
-    // TODO: := assignment and use in same statement.
-    gather_input_vars(expr, parent_scopes, scope)?;
-    gather_loop_vars(expr, parent_scopes, scope)
 }
 
 pub struct Analyzer {
@@ -1011,7 +822,7 @@ impl Analyzer {
         expr: &Ref<Expr>,
         scope: &Scope,
         _first_use: &BTreeMap<SourceStr, Span>,
-        vars: &mut Vec<SourceStr>,
+        vars: &mut Vec<(SourceStr, Span)>,
         non_vars: &mut Vec<Ref<Expr>>,
     ) -> Result<()> {
         traverse(expr, &mut |e| match e.as_ref() {
@@ -1021,7 +832,7 @@ impl Analyzer {
                 Ok(false)
             }
             Var { span: v, .. } if scope.locals.contains_key(&v.source_str()) => {
-                vars.push(v.source_str());
+                vars.push((v.source_str(), v.clone()));
                 Ok(false)
             }
             // TODO: Object key/value
@@ -1114,11 +925,15 @@ impl Analyzer {
                     )?;
 
                     // Add dependency between some-vars and vars used in collection.
-                    for var in &some_vars {
+                    for (var, _) in &some_vars {
                         definitions.push(Definition {
                             var: var.clone(),
                             used_vars: col_used_vars.clone(),
                         })
+                    }
+
+                    for (var, span) in &some_vars {
+                        first_use.entry(var.clone()).or_insert(span.clone());
                     }
 
                     let mut used_vars = vec![];
@@ -1295,4 +1110,72 @@ impl Analyzer {
 
         Ok(())
     }
+}
+
+/// Compute module globals for each module.
+///
+/// For each module, the globals are:
+/// 1) The set of rule names defined in the package that the module defines
+/// 2) Additionally, the set of aliases imported by the module
+pub fn compute_module_globals(
+    modules: &[Ref<Module>],
+) -> Result<Lookup<crate::Rc<BTreeSet<String>>>> {
+    let mut result = Lookup::new();
+    let mut packages: BTreeMap<String, crate::Rc<BTreeSet<String>>> = BTreeMap::new();
+
+    // First pass: collect all rule names by package
+    for m in modules {
+        let path = get_path_string(&m.package.refr, Some("data"))?;
+        let package_globals: &mut crate::Rc<BTreeSet<String>> = packages.entry(path).or_default();
+
+        for r in &m.policy {
+            let var = match r.as_ref() {
+                Rule::Default { refr, .. }
+                | Rule::Spec {
+                    head:
+                        RuleHead::Compr { refr, .. }
+                        | RuleHead::Set { refr, .. }
+                        | RuleHead::Func { refr, .. },
+                    ..
+                } => get_root_var(refr)?,
+            };
+            crate::Rc::make_mut(package_globals).insert(var.text().to_string());
+        }
+    }
+
+    // Second pass: for each module, combine package globals with module-specific imports
+    for (module_idx, m) in modules.iter().enumerate() {
+        let path = get_path_string(&m.package.refr, Some("data"))?;
+        let mut module_globals = packages.get(&path).cloned().unwrap_or_default();
+
+        // Add import aliases specific to this module
+        for import in &m.imports {
+            if let Some(var) = &import.r#as {
+                crate::Rc::make_mut(&mut module_globals).insert(var.text().to_string());
+            }
+        }
+
+        // Ensure reserved root documents are always treated as globals.
+        for &reserved in ["input", "data"].iter() {
+            crate::Rc::make_mut(&mut module_globals).insert(reserved.to_string());
+        }
+
+        // Reserved documents are always available in every module.
+        let reserved_docs = ["input", "data"];
+        for doc in reserved_docs {
+            crate::Rc::make_mut(&mut module_globals).insert(doc.to_string());
+        }
+
+        // Seed with reserved document roots that are always globally accessible.
+        {
+            let globals = crate::Rc::make_mut(&mut module_globals);
+            globals.insert("input".to_string());
+            globals.insert("data".to_string());
+        }
+
+        result.ensure_capacity(module_idx as u32, 0);
+        result.set(module_idx as u32, 0, module_globals);
+    }
+
+    Ok(result)
 }

@@ -489,4 +489,15 @@ mod test {
         let n = Number::from(123456f64);
         assert_eq!(format!("{}", n.format_decimal()), "123456");
     }
+
+    #[test]
+    fn division_matches_high_precision_decimal() {
+        let one = Number::from(1u64);
+        let three = Number::from(3u64);
+        let div = one.divide(&three).unwrap();
+        let from_str: Number = "0.3333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333"
+            .parse()
+            .unwrap();
+        assert_eq!(div, from_str);
+    }
 }
