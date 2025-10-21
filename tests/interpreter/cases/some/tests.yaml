@@ -76,7 +76,7 @@ cases:
         import future.keywords
         x { some [1] in [[1, 2]] }
     query: data.test
-    error: "array length mismatch. Expected 1 got 2."
+    error: "mismatch in number of array elements"
 
   - note: array-length-mismatch-skipped
     data: {}

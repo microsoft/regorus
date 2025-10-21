@@ -1,0 +1,432 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: assignment-colonequals-nested-pattern
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := {"outer": outer, "inner": inner, "tag": tag} if {
+          [outer, {"meta": {"inner": inner, "tag": tag}}] := ["alpha", {"meta": {"inner": "omega", "tag": "v1"}}]
+        }
+    query: data.test.result
+    want_result:
+      outer: "alpha"
+      inner: "omega"
+      tag: "v1"
+
+  - note: assignment-colonequals-cannot-rebind
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := true if {
+          value := "initial"
+          value := "shadowed"
+        }
+    query: data.test.result
+    error: "ar `value` used before definition below"
+
+  - note: assignment-colonequals-requires-bindable-left
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := true if {
+          1 := value
+          value = 1
+        }
+    query: data.test.result
+    error: "assignment operator := requires left-hand side to have bindable variables"
+
+  - note: equals-binds-left-nested-literal
+    data: {}
+    modules:
+      - |
+        package test
+        import future.keywords
+
+        result := {"first": first, "second": second, "deep": deep} if {
+          [first, {"details": [second, deep]}] = ["foo", {"details": ["bar", "baz"]}]
+        }
+    query: data.test.result
+    want_result:
+      first: "foo"
+      second: "bar"
+      deep: "baz"
+
+  - note: equals-binds-right-nested-literal
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := {"first": first, "second": second, "deep": deep} if {
+          payload := ["foo", {"details": ["bar", "baz"]}]
+          payload = [first, {"details": [second, deep]}]
+        }
+    query: data.test.result
+    want_result:
+      first: "foo"
+      second: "bar"
+      deep: "baz"
+
+  - note: equals-both-sides-nested-dependent-order
+    data:
+      transitions:
+        - [{"id": 1, "next": {"target": 2}}, {"id": 2, "payload": {"value": "beta"}}]
+        - [{"id": 2, "next": {"target": 3}}, {"id": 3, "payload": {"value": "gamma"}}]
+    modules:
+      - |
+        package test
+
+        result := [[left_id, right_id, value] |
+          some left, right, left_id, right_id, value
+          data.transitions[_] = [left, right]
+          [{"id": left_id, "next": {"target": right_id}}, {"id": right_id, "payload": {"value": value}}] = [left, right]
+        ]
+    query: data.test.result
+    want_result: [[1, 2, "beta"], [2, 3, "gamma"]]
+
+  - note: equals-non-shadowing-success
+    data: {}
+    modules:
+      - |
+        package test
+
+        default result = false
+
+        result = true if {
+          user_id := "user-1"
+          [user_id, role] = ["user-1", "admin"]
+          role = "admin"
+        }
+    query: data.test.result
+    want_result: true
+
+  - note: equals-non-shadowing-mismatch
+    data: {}
+    modules:
+      - |
+        package test
+
+        default result = false
+
+        result = true if {
+          user_id := "user-1"
+          [user_id, role] = ["user-2", "admin"]
+        }
+    query: data.test.result
+    want_result: false
+
+  - note: colon-equals-shadowing-allowed
+    data: {}
+    modules:
+      - |
+        package test
+
+        x := 10
+
+        y if {
+          x := 5
+        }
+    query: data.test.y
+    want_result: true
+
+  - note: equals-wildcard-both-sides
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := true if {
+          [_, _] = [1, 2]
+        }
+    query: data.test.result
+    want_result: true
+
+  - note: equals-incompatible-patterns-error
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := true if {
+          [x] = {"key": 1}
+        }
+    query: data.test.result
+    error: "incompatible destructuring patterns: both sides must be arrays or objects with matching structure"
+
+  - note: equals-array-size-mismatch-error
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := true if {
+          some a, b, c
+          [x, y] = [a, b, c]
+        }
+    query: data.test.result
+    error: "mismatch in number of array elements"
+
+  - note: equals-array-literal-length-mismatch-error
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := true if {
+          [x, y] = [1, 2, 3]
+        }
+    query: data.test.result
+    error: "mismatch in number of array elements"
+
+  - note: equals-object-literal-keys-mismatch-error
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := true if{
+          {"a": first, "b": second} = {"a": 1, "c": 2}
+        }
+    query: data.test.result
+    error: "object literal keys mismatch. Expected keys [\"a\", \"b\"] got [\"a\", \"c\"]."
+
+  - note: equals-object-key-not-found-error
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := true if {
+          some value
+          {"a": first, "b": second} = {"a": 1, "c": value}
+        }
+    query: data.test.result
+    error: "key \"c\" not found in left-hand side object during destructuring"
+
+  - note: equals-object-field-count-mismatch-error
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := true if {
+          some a, b
+          {"a": first} = {"a": a, "b": b}
+        }
+    query: data.test.result
+    error: "object field count mismatch in assignment: left has 1 fields, right has 2 fields"
+
+  - note: dynamic-object-field-binding
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := {"target": target, "captured": captured} if {
+          source := {"target": {"value": {"inner": 1}}, "alt": {"value": {"inner": 2}}}
+          {"target": {"value": {"inner": target}}, chosen: {"value": {"inner": captured}}} = source
+          chosen = "alt"
+        }
+    query: data.test.result
+    want_result:
+      target: 1
+      captured: 2
+
+  - note: some-in-nested-binding
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := {
+          [letter, code] |
+            some letter, detail in {"a": {"info": {"code": 1}}, "b": {"info": {"code": 2}}}
+            detail.info.code = code
+        }
+    query: data.test.result
+    want_result:
+      set!:
+        - ["a", 1]
+        - ["b", 2]
+
+  - note: some-in-array-length-mismatch-error
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := true if {
+          some [x, y] in [[1, 2, 3]]
+        }
+    query: data.test.result
+    error: "mismatch in number of array elements"
+
+  - note: some-in-shadowing
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := {"before": before, "after": value} if {
+          value := 0
+          before := value
+          some value in [1, 2]
+          value == 2
+        }
+    query: data.test.result
+    error: "var `value` used before definition below"
+
+  - note: some-in-shadowing-equals
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := true if {
+          value = 0
+          some value in [1, 2]
+        }
+    query: data.test.result
+    error: "var `value` used before definition below"
+
+  - note: some-in-after-shadows
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := true if {
+          some value in [1, 2]
+          value := 1
+        }
+    query: data.test.result
+    error: "var `value` used before definition below"
+
+  - note: comprehension-nested-binding
+    data:
+      records:
+        - {"type": "user", "profile": {"name": "alice", "roles": ["admin", "user"]}}
+        - {"type": "user", "profile": {"name": "bob", "roles": ["user"]}}
+        - {"type": "service", "profile": {"name": "svc"}}
+    modules:
+      - |
+        package test
+
+        result := [[name, role] |
+          some record, role
+          data.records[_] = record
+          record = {"type": "user", "profile": {"name": name, "roles": roles}}
+          roles[_] = role
+          role = "admin"
+        ]
+    query: data.test.result
+    want_result: [["alice", "admin"]]
+
+  - note: comprehension-scalar-filter
+    data:
+      scores:
+        - {"value": 10}
+        - {"value": 20}
+        - {"value": 30}
+    modules:
+      - |
+        package test
+
+        result := [score |
+          some entry, score
+          data.scores[_] = entry
+          entry = {"value": score}
+          score >= 20
+        ]
+    query: data.test.result
+    want_result: [20, 30]
+
+
+  - note: parameter-nested-destructuring
+    data: {}
+    modules:
+      - |
+        package test
+
+        pair([[name, {"primary": role}], {"meta": {"active": active}}]) := [
+          [name, {"primary": role}],
+          {"meta": {"active": active}},
+        ] if {
+          name = "alice"
+          role = "admin"
+          active = true
+        }
+
+        result := {"name": name, "role": role, "active": active} if {
+          [[name, {"primary": role}], {"meta": {"active": active}}] := pair([
+            ["alice", {"primary": "admin"}],
+            {"meta": {"active": true}},
+          ])
+        }
+    query: data.test.result
+    want_result:
+      name: "alice"
+      role: "admin"
+      active: true
+
+  - note: parameter-nested-destructuring-colonequals-error
+    data: {}
+    modules:
+      - |
+        package test
+
+        pair([[name, {"primary": role}], {"meta": {"active": active}}]) if {
+          name := "alice"
+          role := "admin"
+          active := true
+        }
+    query: data.test.pair
+    error: "var `name` used before definition below"
+
+  - note: colon-equals-parameter-rebinding-error
+    data: {}
+    modules:
+      - |
+        package test
+
+        pair([[name, {"primary": role}], {"meta": {"active": active}}]) if {
+          name := "alice"
+          role := "admin"
+          active := true
+        }
+
+        result := true if {
+          pair([
+            ["alice", {"primary": "admin"}],
+            {"meta": {"active": true}},
+          ])
+        }
+    query: data.test.result
+    error: "var `name` used before definition below"
+
+  - note: parameter-shadowing
+    data: {}
+    modules:
+      - |
+        package test
+
+        global_name := "global"
+
+        capture([name, {"role": role}]) if {
+          name := "local"
+          role := "admin"
+        }
+
+        result := {"global": global_name, "param": name, "role": role} if {
+          capture([name, {"role": role}])
+        }
+    query: data.test.result
+    error: "var `name` used before definition below"
