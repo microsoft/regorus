@@ -129,12 +129,12 @@ namespace Benchmarks
             Console.WriteLine($"Warming up with {threads} threads for {warmupSeconds} seconds...");
             
             // Warmup phase
-            var (_, _, _) = RunBenchmarkPhase(threads, warmupSeconds, policiesWithInputs, compiledPolicies, useSharedPolicies, isWarmup: true);
+            var (_, _, _, _) = RunBenchmarkPhase(threads, warmupSeconds, policiesWithInputs, compiledPolicies, useSharedPolicies, isWarmup: true);
             
             Console.WriteLine($"Running benchmark with {threads} threads for {durationSeconds} seconds...");
             
             // Actual benchmark phase
-            var (totalEvaluations, evaluationTime, policyCounters) = RunBenchmarkPhase(threads, durationSeconds, policiesWithInputs, compiledPolicies, useSharedPolicies, isWarmup: false);
+            var (totalEvaluations, evaluationTime, policyCounters, allocatedBytes) = RunBenchmarkPhase(threads, durationSeconds, policiesWithInputs, compiledPolicies, useSharedPolicies, isWarmup: false);
 
             // Calculate throughput based on pure evaluation time (consistent with Rust benchmark)
             var evalsPerSecond = totalEvaluations / evaluationTime.TotalSeconds;
@@ -143,6 +143,12 @@ namespace Benchmarks
             Console.WriteLine($"{groupName}/eval/{threads} threads");
             Console.WriteLine($"                        time:   [{evaluationTime.TotalMilliseconds:F2} ms]");
             Console.WriteLine($"                        thrpt:  [{kelemsPerSecond:F2} Kelem/s]");
+
+            if (totalEvaluations > 0)
+            {
+                var bytesPerEval = allocatedBytes / (double)totalEvaluations;
+                Console.WriteLine($"                        alloc:  [{bytesPerEval:F2} B/op] (total {allocatedBytes} B)");
+            }
 
             // Clean up compiled policies if we created them
             if (compiledPolicies != null)
@@ -166,7 +172,7 @@ namespace Benchmarks
             }
         }
 
-        private static (int totalEvaluations, TimeSpan evaluationTime, Dictionary<string, int> policyCounters) RunBenchmarkPhase(
+        private static (int totalEvaluations, TimeSpan evaluationTime, Dictionary<string, int> policyCounters, long allocatedBytes) RunBenchmarkPhase(
             int threads, 
             int durationSeconds, 
             List<(string Policy, string[] Inputs)> policiesWithInputs,
@@ -180,6 +186,7 @@ namespace Benchmarks
             var evaluationTimes = new Dictionary<int, TimeSpan>();
             var lockObject = new object();
             var stopExecution = false;
+            long allocatedBytes = 0;
 
             // Initialize counters
             foreach (var policyName in PolicyNames)
@@ -194,6 +201,12 @@ namespace Benchmarks
                 int tid = threadId;
                 tasks[threadId] = Task.Run(() =>
                 {
+                    long allocationStart = 0;
+                    if (!isWarmup)
+                    {
+                        allocationStart = GC.GetAllocatedBytesForCurrentThread();
+                    }
+
                     barrier.SignalAndWait();
                     
                     int evaluationCount = 0;
@@ -256,6 +269,9 @@ namespace Benchmarks
                                 evaluationTimes[tid] = TimeSpan.Zero;
                             evaluationTimes[tid] = localEvaluationTime;
                         }
+
+                        var allocationEnd = GC.GetAllocatedBytesForCurrentThread();
+                        System.Threading.Interlocked.Add(ref allocatedBytes, allocationEnd - allocationStart);
                     }
                 });
             }
@@ -272,7 +288,7 @@ namespace Benchmarks
             // Use pure evaluation time (consistent with Rust benchmark)
             var evaluationTime = totalEvaluationTime == TimeSpan.Zero ? stopwatch.Elapsed : totalEvaluationTime;
             
-            return (totalEvaluations, evaluationTime, policyCounters);
+            return (totalEvaluations, evaluationTime, policyCounters, allocatedBytes);
         }
     }
 }

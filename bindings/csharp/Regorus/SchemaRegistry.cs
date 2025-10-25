@@ -3,6 +3,7 @@
 
 using System;
 using System.Text;
+using Regorus.Internal;
 
 #nullable enable
 namespace Regorus
@@ -21,14 +22,16 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when schema registration fails</exception>
         public static void RegisterResource(string name, string schemaJson)
         {
-            var nameBytes = Encoding.UTF8.GetBytes(name + char.MinValue);
-            var schemaBytes = Encoding.UTF8.GetBytes(schemaJson + char.MinValue);
-            
-            fixed (byte* namePtr = nameBytes)
-            fixed (byte* schemaPtr = schemaBytes)
+            Utf8Marshaller.WithUtf8(name, namePtr =>
             {
-                CheckAndDropResult(Internal.API.regorus_resource_schema_register(namePtr, schemaPtr));
-            }
+                Utf8Marshaller.WithUtf8(schemaJson, schemaPtr =>
+                {
+                    unsafe
+                    {
+                        CheckAndDropResult(Internal.API.regorus_resource_schema_register((byte*)namePtr, (byte*)schemaPtr));
+                    }
+                });
+            });
         }
 
         /// <summary>
@@ -39,12 +42,14 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when the operation fails</exception>
         public static bool ContainsResource(string name)
         {
-            var nameBytes = Encoding.UTF8.GetBytes(name + char.MinValue);
-            fixed (byte* namePtr = nameBytes)
+            return Utf8Marshaller.WithUtf8(name, namePtr =>
             {
-                var result = Internal.API.regorus_resource_schema_contains(namePtr);
-                return GetBoolResult(result);
-            }
+                unsafe
+                {
+                    var result = Internal.API.regorus_resource_schema_contains((byte*)namePtr);
+                    return GetBoolResult(result);
+                }
+            });
         }
 
         /// <summary>
@@ -93,12 +98,14 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when the operation fails</exception>
         public static bool RemoveResource(string name)
         {
-            var nameBytes = Encoding.UTF8.GetBytes(name + char.MinValue);
-            fixed (byte* namePtr = nameBytes)
+            return Utf8Marshaller.WithUtf8(name, namePtr =>
             {
-                var result = Internal.API.regorus_resource_schema_remove(namePtr);
-                return GetBoolResult(result);
-            }
+                unsafe
+                {
+                    var result = Internal.API.regorus_resource_schema_remove((byte*)namePtr);
+                    return GetBoolResult(result);
+                }
+            });
         }
 
         /// <summary>
@@ -118,14 +125,16 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when schema registration fails</exception>
         public static void RegisterEffect(string name, string schemaJson)
         {
-            var nameBytes = Encoding.UTF8.GetBytes(name + char.MinValue);
-            var schemaBytes = Encoding.UTF8.GetBytes(schemaJson + char.MinValue);
-            
-            fixed (byte* namePtr = nameBytes)
-            fixed (byte* schemaPtr = schemaBytes)
+            Utf8Marshaller.WithUtf8(name, namePtr =>
             {
-                CheckAndDropResult(Internal.API.regorus_effect_schema_register(namePtr, schemaPtr));
-            }
+                Utf8Marshaller.WithUtf8(schemaJson, schemaPtr =>
+                {
+                    unsafe
+                    {
+                        CheckAndDropResult(Internal.API.regorus_effect_schema_register((byte*)namePtr, (byte*)schemaPtr));
+                    }
+                });
+            });
         }
 
         /// <summary>
@@ -136,12 +145,14 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when the operation fails</exception>
         public static bool ContainsEffect(string name)
         {
-            var nameBytes = Encoding.UTF8.GetBytes(name + char.MinValue);
-            fixed (byte* namePtr = nameBytes)
+            return Utf8Marshaller.WithUtf8(name, namePtr =>
             {
-                var result = Internal.API.regorus_effect_schema_contains(namePtr);
-                return GetBoolResult(result);
-            }
+                unsafe
+                {
+                    var result = Internal.API.regorus_effect_schema_contains((byte*)namePtr);
+                    return GetBoolResult(result);
+                }
+            });
         }
 
         /// <summary>
@@ -190,12 +201,14 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when the operation fails</exception>
         public static bool RemoveEffect(string name)
         {
-            var nameBytes = Encoding.UTF8.GetBytes(name + char.MinValue);
-            fixed (byte* namePtr = nameBytes)
+            return Utf8Marshaller.WithUtf8(name, namePtr =>
             {
-                var result = Internal.API.regorus_effect_schema_remove(namePtr);
-                return GetBoolResult(result);
-            }
+                unsafe
+                {
+                    var result = Internal.API.regorus_effect_schema_remove((byte*)namePtr);
+                    return GetBoolResult(result);
+                }
+            });
         }
 
         /// <summary>
