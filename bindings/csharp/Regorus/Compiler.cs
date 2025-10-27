@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using Regorus.Internal;
 
 #nullable enable
 namespace Regorus
@@ -54,49 +55,48 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when compilation fails</exception>
         public static CompiledPolicy CompilePolicyWithEntrypoint(string dataJson, IEnumerable<PolicyModule> modules, string entryPointRule)
         {
-            var dataBytes = Encoding.UTF8.GetBytes(dataJson + char.MinValue);
-            var entryPointBytes = Encoding.UTF8.GetBytes(entryPointRule + char.MinValue);
             var modulesArray = modules.ToArray();
 
-            // Convert C# modules to native structs
             var nativeModules = new Internal.RegorusPolicyModule[modulesArray.Length];
-            var pinnedHandles = new List<GCHandle>();
+            var pinnedStrings = new List<Utf8Marshaller.PinnedUtf8>(modulesArray.Length * 2);
 
             try
             {
                 for (int i = 0; i < modulesArray.Length; i++)
                 {
-                    var idBytes = Encoding.UTF8.GetBytes(modulesArray[i].Id + char.MinValue);
-                    var contentBytes = Encoding.UTF8.GetBytes(modulesArray[i].Content + char.MinValue);
-
-                    var idHandle = GCHandle.Alloc(idBytes, GCHandleType.Pinned);
-                    var contentHandle = GCHandle.Alloc(contentBytes, GCHandleType.Pinned);
-                    pinnedHandles.Add(idHandle);
-                    pinnedHandles.Add(contentHandle);
+                    var idPinned = Utf8Marshaller.Pin(modulesArray[i].Id);
+                    var contentPinned = Utf8Marshaller.Pin(modulesArray[i].Content);
+                    pinnedStrings.Add(idPinned);
+                    pinnedStrings.Add(contentPinned);
 
                     nativeModules[i] = new Internal.RegorusPolicyModule
                     {
-                        id = (byte*)idHandle.AddrOfPinnedObject(),
-                        content = (byte*)contentHandle.AddrOfPinnedObject()
+                        id = idPinned.Pointer,
+                        content = contentPinned.Pointer
                     };
                 }
 
-                fixed (byte* dataPtr = dataBytes)
-                fixed (byte* entryPointPtr = entryPointBytes)
-                fixed (Internal.RegorusPolicyModule* modulesPtr = nativeModules)
-                {
-                    var result = Internal.API.regorus_compile_policy_with_entrypoint(
-                        dataPtr, modulesPtr, (UIntPtr)modulesArray.Length, entryPointPtr);
+                return Utf8Marshaller.WithUtf8(dataJson, dataPtr =>
+                    Utf8Marshaller.WithUtf8(entryPointRule, entryPointPtr =>
+                    {
+                        unsafe
+                        {
+                            fixed (Internal.RegorusPolicyModule* modulesPtr = nativeModules)
+                            {
+                                var result = Internal.API.regorus_compile_policy_with_entrypoint(
+                                    (byte*)dataPtr, modulesPtr, (UIntPtr)modulesArray.Length, (byte*)entryPointPtr);
 
-                    var policy = GetCompiledPolicyResult(result);
-                    return policy;
-                }
+                                var policy = GetCompiledPolicyResult(result);
+                                return policy;
+                            }
+                        }
+                    }));
             }
             finally
             {
-                foreach (var handle in pinnedHandles)
+                foreach (var pinned in pinnedStrings)
                 {
-                    handle.Free();
+                    pinned.Dispose();
                 }
             }
         }
@@ -112,47 +112,47 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when compilation fails</exception>
         public static CompiledPolicy CompilePolicyForTarget(string dataJson, IEnumerable<PolicyModule> modules)
         {
-            var dataBytes = Encoding.UTF8.GetBytes(dataJson + char.MinValue);
             var modulesArray = modules.ToArray();
 
-            // Convert C# modules to native structs
             var nativeModules = new Internal.RegorusPolicyModule[modulesArray.Length];
-            var pinnedHandles = new List<GCHandle>();
+            var pinnedStrings = new List<Utf8Marshaller.PinnedUtf8>(modulesArray.Length * 2);
 
             try
             {
                 for (int i = 0; i < modulesArray.Length; i++)
                 {
-                    var idBytes = Encoding.UTF8.GetBytes(modulesArray[i].Id + char.MinValue);
-                    var contentBytes = Encoding.UTF8.GetBytes(modulesArray[i].Content + char.MinValue);
-
-                    var idHandle = GCHandle.Alloc(idBytes, GCHandleType.Pinned);
-                    var contentHandle = GCHandle.Alloc(contentBytes, GCHandleType.Pinned);
-                    pinnedHandles.Add(idHandle);
-                    pinnedHandles.Add(contentHandle);
+                    var idPinned = Utf8Marshaller.Pin(modulesArray[i].Id);
+                    var contentPinned = Utf8Marshaller.Pin(modulesArray[i].Content);
+                    pinnedStrings.Add(idPinned);
+                    pinnedStrings.Add(contentPinned);
 
                     nativeModules[i] = new Internal.RegorusPolicyModule
                     {
-                        id = (byte*)idHandle.AddrOfPinnedObject(),
-                        content = (byte*)contentHandle.AddrOfPinnedObject()
+                        id = idPinned.Pointer,
+                        content = contentPinned.Pointer
                     };
                 }
 
-                fixed (byte* dataPtr = dataBytes)
-                fixed (Internal.RegorusPolicyModule* modulesPtr = nativeModules)
+                return Utf8Marshaller.WithUtf8(dataJson, dataPtr =>
                 {
-                    var result = Internal.API.regorus_compile_policy_for_target(
-                        dataPtr, modulesPtr, (UIntPtr)modulesArray.Length);
+                    unsafe
+                    {
+                        fixed (Internal.RegorusPolicyModule* modulesPtr = nativeModules)
+                        {
+                            var result = Internal.API.regorus_compile_policy_for_target(
+                                (byte*)dataPtr, modulesPtr, (UIntPtr)modulesArray.Length);
 
-                    var policy = GetCompiledPolicyResult(result);
-                    return policy;
-                }
+                            var policy = GetCompiledPolicyResult(result);
+                            return policy;
+                        }
+                    }
+                });
             }
             finally
             {
-                foreach (var handle in pinnedHandles)
+                foreach (var pinned in pinnedStrings)
                 {
-                    handle.Free();
+                    pinned.Dispose();
                 }
             }
         }
@@ -185,7 +185,8 @@ namespace Regorus
                     throw new Exception("Expected compiled policy pointer but got different data type");
                 }
 
-                return new CompiledPolicy((Internal.RegorusCompiledPolicy*)result.pointer_value);
+                var handle = RegorusCompiledPolicyHandle.FromPointer((IntPtr)result.pointer_value);
+                return new CompiledPolicy(handle);
             }
             finally
             {

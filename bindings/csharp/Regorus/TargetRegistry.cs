@@ -3,6 +3,7 @@
 
 using System;
 using System.Text;
+using Regorus.Internal;
 
 #nullable enable
 namespace Regorus
@@ -22,11 +23,13 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when target registration fails</exception>
         public static void RegisterFromJson(string targetJson)
         {
-            var targetBytes = Encoding.UTF8.GetBytes(targetJson + char.MinValue);
-            fixed (byte* targetPtr = targetBytes)
+            Utf8Marshaller.WithUtf8(targetJson, targetPtr =>
             {
-                CheckAndDropResult(Internal.API.regorus_register_target_from_json(targetPtr));
-            }
+                unsafe
+                {
+                    CheckAndDropResult(Internal.API.regorus_register_target_from_json((byte*)targetPtr));
+                }
+            });
         }
 
         /// <summary>
@@ -37,12 +40,14 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when the operation fails</exception>
         public static bool Contains(string name)
         {
-            var nameBytes = Encoding.UTF8.GetBytes(name + char.MinValue);
-            fixed (byte* namePtr = nameBytes)
+            return Utf8Marshaller.WithUtf8(name, namePtr =>
             {
-                var result = Internal.API.regorus_target_registry_contains(namePtr);
-                return GetBoolResult(result);
-            }
+                unsafe
+                {
+                    var result = Internal.API.regorus_target_registry_contains((byte*)namePtr);
+                    return GetBoolResult(result);
+                }
+            });
         }
 
         /// <summary>
@@ -63,12 +68,14 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when the operation fails</exception>
         public static bool Remove(string name)
         {
-            var nameBytes = Encoding.UTF8.GetBytes(name + char.MinValue);
-            fixed (byte* namePtr = nameBytes)
+            return Utf8Marshaller.WithUtf8(name, namePtr =>
             {
-                var result = Internal.API.regorus_target_registry_remove(namePtr);
-                return GetBoolResult(result);
-            }
+                unsafe
+                {
+                    var result = Internal.API.regorus_target_registry_remove((byte*)namePtr);
+                    return GetBoolResult(result);
+                }
+            });
         }
 
         /// <summary>

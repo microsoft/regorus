@@ -1,10 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-namespace Regorus.Tests;
-
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System;
 using System.Text.Json.Nodes;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Regorus;
+
+namespace Regorus.Tests;
 
 [TestClass]
 public class RegorusTests
@@ -212,4 +214,43 @@ public class RegorusTests
         Assert.AreEqual("a", parameters![0]["parameters"][0]["name"].ToString());
         Assert.AreEqual("b", parameters![0]["modifiers"][0]["name"].ToString());
     }
+
+  [TestMethod]
+  public void SetInputJson_has_negligible_allocations_after_warmup()
+  {
+    using var engine = new Engine();
+    const string payload = "{}";
+
+    // Warm up the engine and JIT to ensure subsequent measurements are representative.
+    for (int i = 0; i < 16; i++)
+    {
+      engine.SetInputJson(payload);
+    }
+
+    GC.Collect();
+    GC.WaitForPendingFinalizers();
+    GC.Collect();
+
+    const int iterations = 256;
+    var before = GC.GetAllocatedBytesForCurrentThread();
+
+    for (int i = 0; i < iterations; i++)
+    {
+      engine.SetInputJson(payload);
+    }
+
+    var after = GC.GetAllocatedBytesForCurrentThread();
+  var allocated = Math.Max(0, after - before);
+  var bytesPerOp = allocated / (double)iterations;
+
+  // Runtime bookkeeping (delegate caches, GC write barriers) differs across platforms, so
+  // we measure bytes per call rather than absolute totals and allow a small budget.
+  // CI will flag regressions where marshalling starts allocating per invocation.
+
+    // Allow a small budget for delegates and runtime bookkeeping while still flagging regressions.
+    Assert.IsTrue(
+      bytesPerOp <= 512,
+      $"Expected ≤512 B/op after warmup, but observed {bytesPerOp:F2} B/op (total {allocated} bytes)."
+    );
+  }
 }
