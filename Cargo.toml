@@ -2,6 +2,7 @@
 
 members = [
     "tests/ensure_no_std",
+  "xtask",
 ]
 
 [package]
