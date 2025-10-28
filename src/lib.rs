@@ -39,17 +39,18 @@ mod query;
 #[cfg(feature = "azure_policy")]
 pub mod registry;
 mod scheduler;
-#[cfg(feature = "azure_policy")]
-mod schema;
+pub mod schema;
 #[cfg(feature = "azure_policy")]
 pub mod target;
+pub mod type_analysis;
+mod type_checker;
 mod utils;
 mod value;
 
 #[cfg(feature = "azure_policy")]
 pub use {
     compile::compile_policy_for_target,
-    schema::{error::ValidationError, validate::SchemaValidator, Schema},
+    schema::{error::ValidationError, validate::SchemaValidator},
     target::Target,
 };
 
@@ -57,8 +58,19 @@ pub use compile::{compile_policy_with_entrypoint, PolicyModule};
 pub use compiled_policy::CompiledPolicy;
 pub use engine::Engine;
 pub use lexer::Source;
+pub use lexer::Span;
 pub use policy_info::PolicyInfo;
+pub use schema::Schema;
+pub use type_checker::TypeChecker;
 pub use value::Value;
+
+pub use ast::{
+    Expr, ExprRef, Import, Literal, LiteralStmt, Module, Package, Query, Rule, RuleAssign,
+    RuleBody, RuleHead, WithModifier,
+};
+
+pub use utils::get_path_string;
+pub use utils::path::normalize_rule_path;
 
 #[cfg(feature = "arc")]
 pub use alloc::sync::Arc as Rc;
@@ -465,6 +477,7 @@ pub mod unstable {
     pub use crate::ast::*;
     pub use crate::lexer::*;
     pub use crate::parser::*;
+    pub use crate::utils::get_path_string;
 }
 
 #[cfg(test)]

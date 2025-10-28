@@ -2,11 +2,12 @@
 // Licensed under the MIT License.
 
 use crate::ast::*;
-use crate::compiled_policy::CompiledPolicy;
+use crate::compiled_policy::{CompiledPolicy, CompiledPolicyData};
 use crate::interpreter::*;
 use crate::lexer::*;
 use crate::parser::*;
 use crate::scheduler::*;
+use crate::type_checker::TypeChecker;
 use crate::utils::gather_functions;
 use crate::value::*;
 use crate::*;
@@ -22,6 +23,8 @@ pub struct Engine {
     interpreter: Interpreter,
     prepared: bool,
     rego_v1: bool,
+    type_checker: Option<TypeChecker>,
+    tolerant_parse: bool,
 }
 
 #[cfg(feature = "azure_policy")]
@@ -68,6 +71,23 @@ impl Engine {
             interpreter: Interpreter::new(),
             prepared: false,
             rego_v1: true,
+            type_checker: None,
+            tolerant_parse: false,
+        }
+    }
+
+    /// Create an engine seeded with an existing module set.
+    ///
+    /// This is used internally by components that already hold parsed modules
+    /// and want to reuse the engine's preparation pipeline without reparsing.
+    pub(crate) fn new_with_modules(modules: Rc<Vec<Ref<Module>>>) -> Self {
+        Self {
+            modules,
+            interpreter: Interpreter::new(),
+            prepared: false,
+            rego_v1: true,
+            type_checker: None,
+            tolerant_parse: false,
         }
     }
 
@@ -98,6 +118,11 @@ impl Engine {
     ///
     pub fn set_rego_v0(&mut self, rego_v0: bool) {
         self.rego_v1 = !rego_v0;
+    }
+
+    /// Enable or disable tolerant parsing. Intended for IDE scenarios.
+    pub fn set_tolerant_parsing(&mut self, enable: bool) {
+        self.tolerant_parse = enable;
     }
 
     /// Add a policy.
@@ -133,6 +158,9 @@ impl Engine {
         Rc::make_mut(&mut self.modules).push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
+        if let Some(type_checker) = self.type_checker.as_mut() {
+            type_checker.set_modules(self.modules.clone());
+        }
         Interpreter::get_path_string(&module.package.refr, Some("data"))
     }
 
@@ -166,6 +194,9 @@ impl Engine {
         Rc::make_mut(&mut self.modules).push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
+        if let Some(type_checker) = self.type_checker.as_mut() {
+            type_checker.set_modules(self.modules.clone());
+        }
         Interpreter::get_path_string(&module.package.refr, Some("data"))
     }
 
@@ -379,6 +410,151 @@ impl Engine {
 
     pub fn add_data_json(&mut self, data_json: &str) -> Result<()> {
         self.add_data(Value::from_json_str(data_json)?)
+    }
+
+    /// Enable type checking for the policies.
+    ///
+    /// When enabled, the engine will create a TypeChecker and run type analysis
+    /// during policy preparation. This can help catch type errors early.
+    ///
+    /// # Example
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    /// engine.enable_type_checking();
+    ///
+    /// engine.add_policy(
+    ///    "test.rego".to_string(),
+    ///    r#"
+    ///    package test
+    ///    allow = input.value > 10
+    ///    "#.to_string())?;
+    ///
+    /// // Type analysis will run during prepare_for_eval
+    /// engine.eval_query("data.test.allow".to_string(), false)?;
+    ///
+    /// // Access type analysis results
+    /// if let Some(checker) = engine.get_type_checker() {
+    ///     println!("Type analysis found {} diagnostics",
+    ///              checker.diagnostic_count().unwrap_or(0));
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn enable_type_checking(&mut self) {
+        if self.type_checker.is_none() {
+            self.type_checker = Some(TypeChecker::new(self.modules.clone()));
+        }
+    }
+
+    /// Disable type checking.
+    ///
+    /// This will remove the TypeChecker and prevent type analysis from running.
+    pub fn disable_type_checking(&mut self) {
+        self.type_checker = None;
+    }
+
+    /// Check if type checking is enabled.
+    pub fn is_type_checking_enabled(&self) -> bool {
+        self.type_checker.is_some()
+    }
+
+    /// Get a reference to the TypeChecker if type checking is enabled.
+    ///
+    /// Returns `None` if type checking hasn't been enabled via [`enable_type_checking()`](Self::enable_type_checking).
+    ///
+    /// # Example
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    /// engine.enable_type_checking();
+    ///
+    /// engine.add_policy(
+    ///    "test.rego".to_string(),
+    ///    "package test\nallow = true".to_string())?;
+    ///
+    /// // Prepare the engine (this will run type analysis)
+    /// engine.eval_query("data.test.allow".to_string(), false)?;
+    ///
+    /// if let Some(checker) = engine.get_type_checker() {
+    ///     if let Some(result) = checker.get_result() {
+    ///         println!("Diagnostics: {:?}", result.diagnostics);
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_type_checker(&self) -> Option<&TypeChecker> {
+        self.type_checker.as_ref()
+    }
+
+    /// Get a mutable reference to the TypeChecker if type checking is enabled.
+    ///
+    /// This allows setting input/data schemas on the type checker.
+    ///
+    /// # Example
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    /// engine.enable_type_checking();
+    ///
+    /// // Set input schema
+    /// if let Some(checker) = engine.get_type_checker_mut() {
+    ///     let schema = Schema::from_json_str(
+    ///         r#"{"type": "object", "properties": {"value": {"type": "integer"}}}"#
+    ///     )?;
+    ///     checker.set_input_schema(schema);
+    /// }
+    ///
+    /// engine.add_policy(
+    ///    "test.rego".to_string(),
+    ///    "package test\nallow = input.value > 10".to_string())?;
+    ///
+    /// // Type analysis will use the schema
+    /// engine.eval_query("data.test.allow".to_string(), false)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_type_checker_mut(&mut self) -> Option<&mut TypeChecker> {
+        self.type_checker.as_mut()
+    }
+
+    /// Run type checking on the loaded policies.
+    ///
+    /// This is a convenience method that enables type checking if not already enabled,
+    /// runs the type analysis, and returns any diagnostics found.
+    ///
+    /// # Example
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    ///
+    /// engine.add_policy(
+    ///    "test.rego".to_string(),
+    ///    "package test\nallow = true".to_string())?;
+    ///
+    /// // Run type checking
+    /// let diagnostics = engine.type_check()?;
+    /// println!("Found {} type issues", diagnostics.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn type_check(&mut self) -> Result<Vec<crate::type_analysis::TypeDiagnostic>> {
+        self.enable_type_checking();
+
+        if let Some(checker) = self.type_checker.as_mut() {
+            checker.check()?;
+            Ok(checker
+                .get_result()
+                .map(|r| r.diagnostics.clone())
+                .unwrap_or_default())
+        } else {
+            Ok(vec![])
+        }
     }
 
     /// Set whether builtins should raise errors strictly or not.
@@ -954,7 +1130,17 @@ impl Engine {
             let hoister = LoopHoister::new_with_schedule(schedule.clone());
             let loop_lookup = hoister.populate_with_extra_capacity(&self.modules, 0)?;
 
-            self.interpreter.set_loop_hoisting_table(loop_lookup);
+            self.interpreter
+                .set_loop_hoisting_table(loop_lookup.clone());
+
+            // Run type checking if enabled
+            if let Some(checker) = self.type_checker.as_mut() {
+                // Update modules in case they've changed
+                checker.set_modules(self.modules.clone());
+
+                // Run type analysis (hoister will be run internally if needed)
+                checker.check()?;
+            }
 
             // Set schedule after hoisting completes
             self.interpreter.set_schedule(Some(schedule));
@@ -1402,6 +1588,9 @@ impl Engine {
         if self.rego_v1 {
             parser.enable_rego_v1()?;
         }
+        if self.tolerant_parse {
+            parser.enable_tolerant_parsing();
+        }
         Ok(parser)
     }
 
@@ -1416,6 +1605,50 @@ impl Engine {
             interpreter: Interpreter::new_from_compiled_policy(compiled_policy),
             rego_v1: true, // Value doesn't matter since this is used only for policy parsing
             prepared: true,
+            type_checker: None,
+            tolerant_parse: false,
         }
+    }
+
+    /// Get the context needed for type analysis.
+    /// Returns (modules, schedule, loop_lookup, compiled_policy) for use by TypeAnalyzer.
+    /// The engine will prepare itself if needed. Returns None if preparation fails.
+    pub(crate) fn get_type_analysis_context(
+        &mut self,
+    ) -> Option<(
+        Rc<Vec<Ref<Module>>>,
+        Option<Rc<crate::scheduler::Schedule>>,
+        Option<Rc<crate::compiler::hoist::HoistedLoopsLookup>>,
+        Rc<CompiledPolicyData>,
+    )> {
+        if self.prepare_for_eval(false, false).is_err() {
+            return None;
+        }
+
+        let compiled_policy = self.interpreter.get_compiled_policy().clone();
+        let schedule = compiled_policy.schedule.clone();
+        let loop_lookup = Some(Rc::new(compiled_policy.loop_hoisting_table.clone()));
+
+        Some((self.modules.clone(), schedule, loop_lookup, compiled_policy))
+    }
+
+    /// Try to evaluate a rule as a constant value.
+    ///
+    /// This is used by the type analyzer to determine if a rule can be constant-folded.
+    /// Returns Some(Value) if the rule evaluates to a constant, None if it requires runtime inputs.
+    pub(crate) fn try_eval_rule_constant(
+        &mut self,
+        rule_path: &str,
+    ) -> Option<crate::value::Value> {
+        // Prepare the engine if not already prepared
+        if let Err(_) = self.prepare_for_eval(false, false) {
+            return None;
+        }
+
+        // Clean state before evaluation
+        self.interpreter.clean_internal_evaluation_state();
+
+        // Delegate to interpreter
+        self.interpreter.try_eval_rule_constant(rule_path)
     }
 }
