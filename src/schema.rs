@@ -323,8 +323,10 @@ impl Schema {
     /// Parse a JSON Schema document from a string into a `Schema` instance.
     /// Provides better error messages than `serde_json::from_str`.
     pub fn from_json_str(s: &str) -> Result<Self, Box<dyn core::error::Error + Send + Sync>> {
+        // Strip leading UTF-8 BOM if present to avoid confusing serde_json.
+        let schema_str = s.strip_prefix('\u{feff}').unwrap_or(s);
         let value: serde_json::Value =
-            serde_json::from_str(s).map_err(|e| format!("Failed to parse schema: {e}"))?;
+            serde_json::from_str(schema_str).map_err(|e| format!("Failed to parse schema: {e}"))?;
         Self::from_serde_json_value(value)
     }
 
