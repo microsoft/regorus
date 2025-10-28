@@ -289,6 +289,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "jsonschema")]
     #[test]
     fn test_type_checker_with_schema() -> Result<()> {
         let mut engine = Engine::new();
@@ -317,6 +318,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "jsonschema")]
     #[test]
     fn test_type_checker_invalidation() -> Result<()> {
         let mut engine = Engine::new();

@@ -69,5 +69,5 @@ pub fn validate_schema_str(schema_str: &str) -> bool {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "jsonschema"))]
 mod tests;

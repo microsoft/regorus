@@ -3,4 +3,5 @@
 
 mod interpreter;
 mod scheduler;
+#[cfg(feature = "jsonschema")]
 mod type_analysis;

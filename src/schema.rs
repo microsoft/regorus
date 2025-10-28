@@ -1059,7 +1059,7 @@ impl<'de> Deserialize<'de> for DiscriminatedSubobject {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "jsonschema"))]
 mod tests {
     mod azure;
     mod suite;
