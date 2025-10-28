@@ -510,10 +510,11 @@ impl Engine {
     /// engine.enable_type_checking();
     ///
     /// // Set input schema
+    /// # #[cfg(feature = "jsonschema")]
     /// if let Some(checker) = engine.get_type_checker_mut() {
     ///     let schema = Schema::from_json_str(
     ///         r#"{"type": "object", "properties": {"value": {"type": "integer"}}}"#
-    ///     )?;
+    ///     ).map_err(|e| anyhow::anyhow!("{e}"))?;
     ///     checker.set_input_schema(schema);
     /// }
     ///

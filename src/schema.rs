@@ -214,6 +214,7 @@ pub mod validate;
 /// Schemas are typically created by deserializing from JSON Schema format:
 ///
 /// ```rust
+/// use regorus::schema::Schema;
 /// use serde_json::json;
 ///
 /// // Create a schema from JSON
@@ -253,12 +254,16 @@ pub mod validate;
 ///
 /// ## Simple String Schema
 /// ```rust
+/// # use regorus::schema::Schema;
+/// # use serde_json::json;
 /// let schema = json!({ "type": "string", "minLength": 1 });
 /// let parsed: Schema = serde_json::from_value(schema).unwrap();
 /// ```
 ///
 /// ## Complex Object Schema
 /// ```rust
+/// # use regorus::schema::Schema;
+/// # use serde_json::json;
 /// let schema = json!({
 ///     "type": "object",
 ///     "properties": {
@@ -280,6 +285,8 @@ pub mod validate;
 ///
 /// ## Union Types with anyOf
 /// ```rust
+/// # use regorus::schema::Schema;
+/// # use serde_json::json;
 /// let schema = json!({
 ///     "anyOf": [
 ///         { "type": "string" },

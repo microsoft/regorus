@@ -39,11 +39,17 @@ use anyhow::Result;
 /// )?;
 ///
 /// let modules = engine.get_modules();
+/// let modules = Rc::new(modules.clone());
 /// let mut type_checker = TypeChecker::new(modules);
 ///
 /// // Optionally set input schema
-/// let input_schema = Schema::from_json_str(r#"{"type": "object", "properties": {"user": {"type": "string"}}}"#)?;
-/// type_checker.set_input_schema(input_schema);
+/// #[cfg(feature = "jsonschema")]
+/// {
+///     let input_schema = Schema::from_json_str(
+///         r#"{"type": "object", "properties": {"user": {"type": "string"}}}"#
+///     ).map_err(|e| anyhow::anyhow!("{e}"))?;
+///     type_checker.set_input_schema(input_schema);
+/// }
 ///
 /// // Run type analysis
 /// type_checker.check()?;
