@@ -29,12 +29,19 @@ jobs:
           cargo clippy --all-targets --no-deps -- -Dwarnings
           cargo build --release --manifest-path bindings/java/Cargo.toml --locked
 
+      - name: Capture binding version
+        run: |
+          version=$(cargo metadata --manifest-path bindings/java/Cargo.toml --format-version 1 \
+            | jq -r '.packages[] | select(.name == "regorus-java") | .version')
+          echo "REGORUS_JAVA_VERSION=$version" >> "$GITHUB_ENV"
+
       - name: Build jar
         run: mvn package
         working-directory: ./bindings/java
 
       - name: Test jar
         run: |
-          javac -cp target/regorus-java-0.2.2.jar Test.java
-          java -Djava.library.path=target/release -cp target/regorus-java-0.2.2.jar:. Test
+          jar="regorus-java-${REGORUS_JAVA_VERSION}.jar"
+          javac -cp "target/${jar}" Test.java
+          java -Djava.library.path=target/release -cp "target/${jar}:." Test
         working-directory: ./bindings/java

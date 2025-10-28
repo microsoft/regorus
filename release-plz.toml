@@ -21,3 +21,4 @@ git_tag_enable = true
 git_release_enable = true
 changelog_update = true
 publish = true
+command = "cargo xtask bindings --base-ref origin/main"

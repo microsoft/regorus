@@ -14,6 +14,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         "cargo:rerun-if-changed={}",
         build_dir.join("mimalloc").display()
     );
+
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        // Required for privilege-related APIs used by the Windows static build of mimalloc.
+        println!("cargo:rustc-link-lib=advapi32");
+    }
+
     Ok(())
 }
 

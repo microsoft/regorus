@@ -11,6 +11,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="regorus" Version="0.5.0"/>
+    <PackageReference Include="regorus" Version="0.8.0"/>
   </ItemGroup>
 </Project>

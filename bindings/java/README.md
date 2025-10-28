@@ -1,5 +1,5 @@
 # Regorus Java
-
+<!-- Trivial change to trigger version bump test -->
 **Regorus** is
 
   - *Rego*-*Rus(t)*  - A fast, light-weight [Rego](https://www.openpolicyagent.org/docs/latest/policy-language/)

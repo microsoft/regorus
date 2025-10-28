@@ -2,7 +2,7 @@
 
 [package]
 name = "regorus-java"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 repository = "https://github.com/microsoft/regorus/bindings/java"
 description = "Java bindings for Regorus - a fast, lightweight Rego interpreter written in Rust"

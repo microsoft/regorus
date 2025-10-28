@@ -14,6 +14,9 @@ if [ -f Cargo.toml ]; then
     # Ensure that clippy warnings are addressed.
     cargo clippy --all-targets --no-deps -- -Dwarnings
 
+    # Ensure binding versions reflect the staged changes.
+    cargo xtask bindings --check
+
     # Ensure that all modifications are included.
     # TODO refine status checking.
     if git status -s | grep -e "MM " -e "??" -e "AM " -e " M "  > /dev/null; then
