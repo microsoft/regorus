@@ -8,6 +8,7 @@ use crate::{
     *,
 };
 use alloc::collections::BTreeMap;
+#[cfg(feature = "regex")]
 use regex::Regex;
 
 type String = Rc<str>;
@@ -250,17 +251,29 @@ impl SchemaValidator {
 
                 // Check pattern constraint
                 if let Some(pattern_str) = pattern {
-                    let regex =
-                        Regex::new(pattern_str).map_err(|e| ValidationError::InvalidPattern {
-                            pattern: pattern_str.as_ref().into(),
-                            error: e.to_string().into(),
+                    #[cfg(feature = "regex")]
+                    {
+                        let regex = Regex::new(pattern_str).map_err(|e| {
+                            ValidationError::InvalidPattern {
+                                pattern: pattern_str.as_ref().into(),
+                                error: e.to_string().into(),
+                            }
                         })?;
 
-                    if !regex.is_match(string_value) {
-                        return Err(ValidationError::PatternMismatch {
-                            value: string_value.to_string().into(),
+                        if !regex.is_match(string_value) {
+                            return Err(ValidationError::PatternMismatch {
+                                value: string_value.to_string().into(),
+                                pattern: pattern_str.clone(),
+                                path: path.into(),
+                            });
+                        }
+                    }
+
+                    #[cfg(not(feature = "regex"))]
+                    {
+                        return Err(ValidationError::InvalidPattern {
                             pattern: pattern_str.clone(),
-                            path: path.into(),
+                            error: "regex feature disabled".into(),
                         });
                     }
                 }

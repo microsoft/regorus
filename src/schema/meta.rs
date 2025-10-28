@@ -3,10 +3,13 @@
 
 #![allow(dead_code)]
 use crate::*;
+
+#[cfg(feature = "jsonschema")]
 use lazy_static::lazy_static;
 
 const META_SCHEMA: &str = include_str!("meta.schema.json");
 
+#[cfg(feature = "jsonschema")]
 lazy_static! {
     /// Lazy static JSON Schema validator for the Regorus meta-schema.
     /// This validator is initialized once and can be used to validate
@@ -26,12 +29,14 @@ pub fn get_meta_schema() -> &'static str {
 
 /// Validates a schema definition against the Regorus meta-schema.
 /// Returns true if the schema is valid, false otherwise.
+#[cfg(feature = "jsonschema")]
 pub fn validate_schema(schema: &serde_json::Value) -> bool {
     META_SCHEMA_VALIDATOR.is_valid(schema)
 }
 
 /// Validates a schema definition against the Regorus meta-schema.
 /// Returns Ok(()) if valid, or Err with validation errors if invalid.
+#[cfg(feature = "jsonschema")]
 pub fn validate_schema_detailed(schema: &serde_json::Value) -> Result<(), Vec<String>> {
     if let jsonschema::BasicOutput::Invalid(errors) = META_SCHEMA_VALIDATOR.apply(schema).basic() {
         let msgs: alloc::collections::BTreeSet<String> = errors
@@ -43,6 +48,16 @@ pub fn validate_schema_detailed(schema: &serde_json::Value) -> Result<(), Vec<St
     }
 
     Ok(())
+}
+
+#[cfg(not(feature = "jsonschema"))]
+pub fn validate_schema(_schema: &serde_json::Value) -> bool {
+    false
+}
+
+#[cfg(not(feature = "jsonschema"))]
+pub fn validate_schema_detailed(_schema: &serde_json::Value) -> Result<(), Vec<String>> {
+    Err(vec!["jsonschema feature disabled".into()])
 }
 
 /// Validates a schema definition from a JSON string.
