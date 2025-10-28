@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+pub mod path;
+
 use crate::ast::*;
 use crate::builtins::*;
 use crate::lexer::*;
@@ -15,7 +17,10 @@ pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
     while expr.is_some() {
         match expr {
             Some(Expr::RefDot { refr, field, .. }) => {
-                comps.push(field.0.text());
+                let (field_span, _) = field
+                    .as_ref()
+                    .ok_or_else(|| refr.span().error("incomplete reference"))?;
+                comps.push(field_span.text());
                 expr = Some(refr);
             }
             Some(Expr::RefBrack { refr, index, .. }) => {
