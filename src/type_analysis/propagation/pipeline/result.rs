@@ -78,7 +78,7 @@ impl AnalysisState {
         let signature = record.signature.clone();
         self.function_rule_specializations
             .entry(key)
-            .or_insert_with(BTreeMap::new)
+            .or_default()
             .insert(signature, record);
     }
 

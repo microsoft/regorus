@@ -377,7 +377,7 @@ pub fn rego_type_analysis(
                             let head_display = spec
                                 .head_fact
                                 .as_ref()
-                                .map(|fact| format_fact_summary(fact))
+                                .map(format_fact_summary)
                                 .unwrap_or_else(|| "Unknown".to_owned());
                             println!("       - {} → {}", signature_display, head_display);
 
@@ -482,7 +482,7 @@ pub fn rego_type_analysis(
                                             let head_display = spec
                                                 .head_fact
                                                 .as_ref()
-                                                .map(|fact| format_fact_summary(fact))
+                                                .map(format_fact_summary)
                                                 .unwrap_or_else(|| "Unknown".to_owned());
                                             println!(
                                                 "           • {} → {}",
@@ -544,7 +544,7 @@ fn format_specialization_signature(rule_path: &str, spec: &RuleSpecializationRec
     let args: Vec<String> = spec
         .parameter_facts
         .iter()
-        .map(|fact| format_fact_summary(fact))
+        .map(format_fact_summary)
         .collect();
 
     let joined = if args.is_empty() {
@@ -674,10 +674,7 @@ fn describe_structural_type_impl(st: &StructuralType) -> String {
             }
         }
         StructuralType::Union(types) => {
-            let rendered: Vec<String> = types
-                .iter()
-                .map(|ty| describe_structural_type_impl(ty))
-                .collect();
+            let rendered: Vec<String> = types.iter().map(describe_structural_type_impl).collect();
             format!("Union[{}]", rendered.join(", "))
         }
         StructuralType::Enum(values) => {

@@ -94,31 +94,21 @@ pub struct RuleBodySummary {
 }
 
 /// Distinguishes the main body from `else` bodies within a definition.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum RuleBodyKind {
+    #[default]
     Primary,
     Else,
 }
 
-impl Default for RuleBodyKind {
-    fn default() -> Self {
-        RuleBodyKind::Primary
-    }
-}
-
 /// Classification for rule heads.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum RuleKind {
+    #[default]
     Complete,
     PartialSet,
     PartialObject,
     Function,
-}
-
-impl Default for RuleKind {
-    fn default() -> Self {
-        RuleKind::Complete
-    }
 }
 
 /// Specialization record captured for function rules.

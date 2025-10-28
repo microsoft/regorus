@@ -73,9 +73,7 @@ pub(crate) fn apply_rule_call_effects(
         );
 
         if !scratch_result.diagnostics.is_empty() {
-            result
-                .diagnostics
-                .extend(scratch_result.diagnostics.drain(..));
+            result.diagnostics.append(&mut scratch_result.diagnostics);
         }
 
         let head_fact = scratch_result

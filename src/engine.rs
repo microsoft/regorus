@@ -63,6 +63,14 @@ impl Default for Engine {
     }
 }
 
+/// Bundled artifacts used by the type analyzer when operating on an engine.
+pub(crate) type TypeAnalysisContext = (
+    Rc<Vec<Ref<Module>>>,
+    Option<Rc<crate::scheduler::Schedule>>,
+    Option<Rc<crate::compiler::hoist::HoistedLoopsLookup>>,
+    Rc<CompiledPolicyData>,
+);
+
 impl Engine {
     /// Create an instance of [Engine].
     pub fn new() -> Self {
@@ -1613,14 +1621,7 @@ impl Engine {
     /// Get the context needed for type analysis.
     /// Returns (modules, schedule, loop_lookup, compiled_policy) for use by TypeAnalyzer.
     /// The engine will prepare itself if needed. Returns None if preparation fails.
-    pub(crate) fn get_type_analysis_context(
-        &mut self,
-    ) -> Option<(
-        Rc<Vec<Ref<Module>>>,
-        Option<Rc<crate::scheduler::Schedule>>,
-        Option<Rc<crate::compiler::hoist::HoistedLoopsLookup>>,
-        Rc<CompiledPolicyData>,
-    )> {
+    pub(crate) fn get_type_analysis_context(&mut self) -> Option<TypeAnalysisContext> {
         if self.prepare_for_eval(false, false).is_err() {
             return None;
         }
@@ -1641,7 +1642,7 @@ impl Engine {
         rule_path: &str,
     ) -> Option<crate::value::Value> {
         // Prepare the engine if not already prepared
-        if let Err(_) = self.prepare_for_eval(false, false) {
+        if self.prepare_for_eval(false, false).is_err() {
             return None;
         }
 

@@ -14,6 +14,7 @@ use super::super::super::result::AnalysisState;
 use super::super::TypeAnalyzer;
 
 impl TypeAnalyzer {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn analyze_rule_body(
         &self,
         module_idx: u32,

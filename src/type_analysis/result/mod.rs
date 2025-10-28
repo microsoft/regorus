@@ -41,12 +41,12 @@ pub struct TypeAnalysisResult {
 }
 
 fn rule_returns_boolean_by_default(head: &RuleHead) -> bool {
-    match head {
-        RuleHead::Func { assign: None, .. } => true,
-        RuleHead::Compr { assign: None, .. } => true,
-        RuleHead::Set { .. } => true,
-        _ => false,
-    }
+    matches!(
+        head,
+        RuleHead::Func { assign: None, .. }
+            | RuleHead::Compr { assign: None, .. }
+            | RuleHead::Set { .. }
+    )
 }
 
 fn default_true_body_fact() -> TypeFact {
@@ -193,17 +193,14 @@ impl TypeAnalysisResult {
                                 col: span.col,
                             };
 
-                            let value_expr_idx = body
-                                .assign
-                                .as_ref()
-                                .map(|assign| assign.value.eidx())
-                                .or_else(|| {
+                            let value_expr_idx =
+                                body.assign.as_ref().map(|assign| assign.value.eidx()).or(
                                     if body_idx == 0 {
                                         head_value_expr_idx
                                     } else {
                                         None
-                                    }
-                                });
+                                    },
+                                );
 
                             let mut value_fact = value_expr_idx
                                 .and_then(|idx| state.lookup.get_expr(module_idx_u32, idx))

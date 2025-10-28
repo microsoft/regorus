@@ -175,9 +175,7 @@ impl TypeAnalyzer {
             }
             Self::merge_rule_head_origins(&mut existing.origins, origins);
             if !specialization_hits.is_empty() {
-                existing
-                    .specialization_hits
-                    .extend(specialization_hits.into_iter());
+                existing.specialization_hits.extend(specialization_hits);
             }
         } else {
             let mut stored = TypeFact::new(descriptor, provenance);
