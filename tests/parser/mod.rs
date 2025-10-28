@@ -150,7 +150,23 @@ fn match_expr_impl(e: &Expr, v: &Value) -> Result<()> {
         } => {
             match_span_opt(span, &v["refdot"]["span"])?;
             match_expr(refr, &v["refdot"]["refr"])?;
-            match_span(&field.0, &v["refdot"]["field"])
+            match field {
+                Some((field_span, _)) => match_span(field_span, &v["refdot"]["field"]),
+                None => {
+                    my_assert_eq!(
+                        Value::Undefined,
+                        v["refdot"]["field"].clone(),
+                        "{}",
+                        span.source.message(
+                            span.line,
+                            span.col,
+                            "match-error",
+                            "expected undefined field entry for dynamic access",
+                        ),
+                    );
+                    Ok(())
+                }
+            }
         }
         Expr::RefBrack {
             span, refr, index, ..

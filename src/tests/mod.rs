@@ -3,3 +3,4 @@
 
 mod interpreter;
 mod scheduler;
+mod type_analysis;

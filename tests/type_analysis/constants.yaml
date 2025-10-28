@@ -1,0 +1,425 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: literal propagation through assignments
+    modules:
+      - |
+        package type_analysis.constants
+
+        value := "fox"
+        alias := value
+        combined := value
+
+        default other := value
+    rules:
+      - rule: data.type_analysis.constants.value
+        type: String
+        constant: fox
+        provenance: Literal
+      - rule: data.type_analysis.constants.alias
+        type: String
+        constant: fox
+        provenance: Literal
+      - rule: data.type_analysis.constants.combined
+        type: String
+        constant: fox
+        provenance: Literal
+      - rule: data.type_analysis.constants.other
+        type: String
+        constant: fox
+        provenance: Literal
+    exprs:
+      - expr: "fox"
+        line: 3
+        type: String
+        constant: fox
+        provenance: Literal
+      - expr: value
+        line: 3
+        col: 1
+        type: String
+        constant: fox
+        provenance: Literal
+      - expr: alias
+        line: 4
+        col: 1
+        type: String
+        constant: fox
+        provenance: Literal
+      - expr: combined
+        line: 5
+        col: 1
+        type: String
+        constant: fox
+        provenance: Literal
+      - expr: other
+        line: 7
+        col: 9
+        type: String
+        constant: fox
+        provenance: Literal
+
+  - note: arithmetic constant folding
+    modules:
+      - |
+        package test.arithmetic
+
+        sum := 10 + 5
+        diff := 20 - 8
+        product := 6 * 7
+        quotient := 100 / 4
+        remainder := 17 % 5
+        negative := -42
+        chain := 2 + 3 * 4
+    rules:
+      - rule: data.test.arithmetic.sum
+        type: Integer
+        constant: 15
+      - rule: data.test.arithmetic.diff
+        type: Integer
+        constant: 12
+      - rule: data.test.arithmetic.product
+        type: Integer
+        constant: 42
+      - rule: data.test.arithmetic.quotient
+        type: Integer
+        constant: 25
+      - rule: data.test.arithmetic.remainder
+        type: Integer
+        constant: 2
+      - rule: data.test.arithmetic.negative
+        type: Integer
+        constant: -42
+      - rule: data.test.arithmetic.chain
+        type: Integer
+        constant: 14
+
+  - note: boolean constant folding
+    modules:
+      - |
+        package test.boolean
+
+        and(a, b) if {
+          a
+          b
+        } else := false
+
+        or(a, b) if {
+          a
+        } else := true if {
+          b
+        } else := false
+
+        not_(a) := true if {
+          not a
+        } else := false
+
+        and_true := and(true, true)
+        and_false := and(true, false)
+        or_true := or(true, false)
+        or_false := or(false, false)
+        not_true := not_(false)
+        not_false := not_(true)
+        complex := or(and(true, false), and(true, true))
+    rules:
+      - rule: data.test.boolean.and_true
+        type: Boolean
+        constant: true
+      - rule: data.test.boolean.and_false
+        type: Boolean
+        constant: false
+      - rule: data.test.boolean.or_true
+        type: Boolean
+        constant: true
+      - rule: data.test.boolean.or_false
+        type: Boolean
+        constant: false
+      - rule: data.test.boolean.not_true
+        type: Boolean
+        constant: true
+      - rule: data.test.boolean.not_false
+        type: Boolean
+        constant: false
+      - rule: data.test.boolean.complex
+        type: Boolean
+        constant: true
+
+  - note: comparison constant folding
+    modules:
+      - |
+        package test.comparison
+
+        eq_true := 5 == 5
+        eq_false := 5 == 6
+        neq_true := 5 != 6
+        neq_false := 5 != 5
+        lt := 3 < 5
+        lte := 5 <= 5
+        gt := 10 > 5
+        gte := 5 >= 5
+        str_eq := "hello" == "hello"
+        str_neq := "hello" != "world"
+    rules:
+      - rule: data.test.comparison.eq_true
+        type: Boolean
+        constant: true
+      - rule: data.test.comparison.eq_false
+        type: Boolean
+        constant: false
+      - rule: data.test.comparison.neq_true
+        type: Boolean
+        constant: true
+      - rule: data.test.comparison.neq_false
+        type: Boolean
+        constant: false
+      - rule: data.test.comparison.lt
+        type: Boolean
+        constant: true
+      - rule: data.test.comparison.lte
+        type: Boolean
+        constant: true
+      - rule: data.test.comparison.gt
+        type: Boolean
+        constant: true
+      - rule: data.test.comparison.gte
+        type: Boolean
+        constant: true
+      - rule: data.test.comparison.str_eq
+        type: Boolean
+        constant: true
+      - rule: data.test.comparison.str_neq
+        type: Boolean
+        constant: true
+
+  - note: array and object constant folding
+    modules:
+      - |
+        package test.collections
+
+        arr := [1, 2, 3]
+        obj := {"a": 10, "b": 20}
+        nested := {"x": [1, 2], "y": {"z": 3}}
+        arr_index := [10, 20, 30][1]
+        obj_field := {"name": "alice"}["name"]
+    rules:
+      - rule: data.test.collections.arr
+        type:
+          kind: Array
+          element:
+            kind: Integer
+        constant: [1, 2, 3]
+      - rule: data.test.collections.obj
+        type: Object
+        constant: {"a": 10, "b": 20}
+      - rule: data.test.collections.nested
+        type: Object
+      - rule: data.test.collections.arr_index
+        type: Integer
+        constant: 20
+      - rule: data.test.collections.obj_field
+        type: String
+        constant: alice
+
+  - note: set constant folding
+    modules:
+      - |
+        package test.sets
+
+        simple_set := {1, 2, 3}
+        union_set := {1, 2} | {2, 3}
+        intersect_set := {1, 2, 3} & {2, 3, 4}
+        diff_set := {1, 2, 3} - {2}
+        membership := 2 in {1, 2, 3}
+        not_in := 5 in {1, 2, 3}
+    rules:
+      - rule: data.test.sets.simple_set
+        type:
+          kind: Set
+          element:
+            kind: Integer
+        constant:
+          set!:
+            - 1
+            - 2
+            - 3
+      - rule: data.test.sets.union_set
+        type:
+          kind: Set
+          element:
+            kind: Integer
+        constant:
+          set!:
+            - 1
+            - 2
+            - 3
+      - rule: data.test.sets.intersect_set
+        type:
+          kind: Set
+          element:
+            kind: Integer
+        constant:
+          set!:
+            - 2
+            - 3
+      - rule: data.test.sets.diff_set
+        type:
+          kind: Set
+          element:
+            kind: Integer
+        constant:
+          set!:
+            - 1
+            - 3
+      - rule: data.test.sets.membership
+        type: Boolean
+        constant: true
+      - rule: data.test.sets.not_in
+        type: Boolean
+        constant: false
+
+  - note: builtin function constant folding
+    modules:
+      - |
+        package test.builtins
+
+        concat_result := concat("/", ["a", "b", "c"])
+        upper_result := upper("hello")
+        lower_result := lower("WORLD")
+        trim_result := trim("  space  ", " ")
+        split_result := split("a,b,c", ",")
+        contains_result := contains("hello world", "world")
+        startswith_result := startswith("hello", "hel")
+        endswith_result := endswith("world", "ld")
+    rules:
+      - rule: data.test.builtins.concat_result
+        type: String
+        constant: "a/b/c"
+      - rule: data.test.builtins.upper_result
+        type: String
+        constant: HELLO
+      - rule: data.test.builtins.lower_result
+        type: String
+        constant: world
+      - rule: data.test.builtins.trim_result
+        type: String
+        constant: space
+      - rule: data.test.builtins.split_result
+        type:
+          kind: Array
+          element:
+            kind: String
+        constant: ["a", "b", "c"]
+      - rule: data.test.builtins.contains_result
+        type: Boolean
+        constant: true
+      - rule: data.test.builtins.startswith_result
+        type: Boolean
+        constant: true
+      - rule: data.test.builtins.endswith_result
+        type: Boolean
+        constant: true
+
+  - note: undefined propagation
+    modules:
+      - |
+        package test.undefined
+
+        obj := {"a": 10}
+        missing := obj.b
+        chained := obj.b.c
+        array := [1, 2, 3]
+        out_of_bounds := array[10]
+        math_with_undef := missing + 5
+    rules:
+      - rule: data.test.undefined.obj
+        type: Object
+        constant: {"a": 10}
+      - rule: data.test.undefined.missing
+        type: Unknown
+      - rule: data.test.undefined.chained
+        type: Unknown
+      - rule: data.test.undefined.array
+        type:
+          kind: Array
+          element:
+            kind: Integer
+        constant: [1, 2, 3]
+      - rule: data.test.undefined.out_of_bounds
+        type: Unknown
+      - rule: data.test.undefined.math_with_undef
+        type: Unknown
+    diagnostics:
+      - kind: SchemaViolation
+        message: "Property 'b' is not defined on this object"
+        line: 4
+        col: 16
+      - kind: SchemaViolation
+        message: "Property 'b' is not defined on this object"
+        line: 5
+        col: 16
+
+  - note: schema constant extraction
+    modules:
+      - |
+        package test.schema
+
+        value := input.fixed_value
+        enum_val := input.status
+    input_schema:
+      type: object
+      properties:
+        fixed_value:
+          const: 42
+        status:
+          enum: ["active"]
+        choice:
+          anyOf:
+            - const: "option1"
+            - const: "option1"
+    rules:
+      - rule: data.test.schema.value
+        type: Integer
+        constant: 42
+        provenance: SchemaInput
+      - rule: data.test.schema.enum_val
+        type: String
+        constant: active
+        provenance: SchemaInput
+
+  - note: constant folding with control flow
+    modules:
+      - |
+        package test.controlflow
+
+        result := 10 if true else := 20
+        result2 := 30 if false else := 40
+        ternary_chain := 1 if false else := 2 if true else := 3
+    rules:
+      - rule: data.test.controlflow.result
+        type: Integer
+        constant: 10
+      - rule: data.test.controlflow.result2
+        type: Integer
+        constant: 40
+      - rule: data.test.controlflow.ternary_chain
+        type: Integer
+        constant: 2
+
+  - note: mixed constant and variable operations
+    modules:
+      - |
+        package test.mixed
+
+        const_part := 10 + 5
+        needs_input := input.value + 5
+        combined := const_part + 100
+    rules:
+      - rule: data.test.mixed.const_part
+        type: Integer
+        constant: 15
+      - rule: data.test.mixed.needs_input
+        type: Number
+      - rule: data.test.mixed.combined
+        type: Integer
+        constant: 115
+

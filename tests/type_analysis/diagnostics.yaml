@@ -1,0 +1,49 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: structural missing property diagnostic
+    modules:
+      - |
+        package type_analysis.diagnostics.structural
+        import rego.v1
+
+        base := {"inner": {"value": 1}}
+        missing := base.inner.missing
+    rules:
+      - rule: data.type_analysis.diagnostics.structural.missing
+        type: Unknown
+        provenance: Propagated
+    diagnostics:
+      - kind: SchemaViolation
+        message: "Property 'missing' is not defined on this object; known fields: value"
+
+  - note: property access on non-object diagnostic
+    modules:
+      - |
+        package type_analysis.diagnostics.non_object
+        import rego.v1
+
+        text := "hello"
+        result := text.foo
+    rules:
+      - rule: data.type_analysis.diagnostics.non_object.result
+        type: Unknown
+        provenance: Propagated
+    diagnostics:
+      - kind: SchemaViolation
+        message: "Cannot access property 'foo' on string value"
+
+  - note: constant false statement short-circuits analysis
+    modules:
+      - |
+        package type_analysis.diagnostics.constant_false
+        import rego.v1
+
+        allow if {
+          false
+          input.done == true
+        }
+    diagnostics:
+      - kind: UnreachableStatement
+        message: "Statement always evaluates to false; later statements were skipped"

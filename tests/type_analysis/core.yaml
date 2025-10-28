@@ -1,0 +1,464 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: bool literal
+    modules:
+      - |
+        package test
+        import rego.v1
+        allow := true
+    rules:
+      - rule: data.test.allow
+        type: Boolean
+        constant: true
+        provenance: Literal
+
+  - note: integer literal
+    modules:
+      - |
+        package test
+        import rego.v1
+        count := 42
+    rules:
+      - rule: data.test.count
+        type: Integer
+        constant: 42
+        provenance: Literal
+
+  - note: float literal
+    modules:
+      - |
+        package test
+        import rego.v1
+        ratio := 3.14
+    rules:
+      - rule: data.test.ratio
+        type: Number
+        constant: 3.14
+        provenance: Literal
+
+  - note: null literal
+    modules:
+      - |
+        package test
+        import rego.v1
+        nothing := null
+    rules:
+      - rule: data.test.nothing
+        type: "Null"
+        constant: null
+        provenance: Literal
+
+  - note: string literal
+    modules:
+      - |
+        package test
+        import rego.v1
+        message := "hello"
+    rules:
+      - rule: data.test.message
+        type: String
+        constant: "hello"
+        provenance: Literal
+
+  - note: empty array
+    modules:
+      - |
+        package test
+        import rego.v1
+        items := []
+    rules:
+      - rule: data.test.items
+        type:
+          kind: Array
+          element:
+            kind: Any
+        provenance: Literal
+
+  - note: empty object
+    modules:
+      - |
+        package test
+        import rego.v1
+        config := {}
+    rules:
+      - rule: data.test.config
+        type:
+          kind: Object
+          fields: {}
+        provenance: Literal
+
+  - note: homogeneous array
+    modules:
+      - |
+        package test
+        import rego.v1
+        numbers := [1, 2, 3]
+    rules:
+      - rule: data.test.numbers
+        type:
+          kind: Array
+          element:
+            kind: Integer
+        provenance: Literal
+
+  - note: heterogeneous array
+    modules:
+      - |
+        package test
+        import rego.v1
+        mixed := [1, "two", true]
+    rules:
+      - rule: data.test.mixed
+        type:
+          kind: Array
+          element:
+            kind: Union
+            variants:
+              - kind: Integer
+              - kind: String
+              - kind: Boolean
+        provenance: Literal
+
+  - note: object with fields
+    modules:
+      - |
+        package test
+        import rego.v1
+        person := {"name": "Alice", "age": 30}
+    rules:
+      - rule: data.test.person
+        type:
+          kind: Object
+          fields:
+            name:
+              kind: String
+            age:
+              kind: Integer
+        provenance: Literal
+
+  - note: set literal
+    modules:
+      - |
+        package test
+        import rego.v1
+        flags := {true, false}
+    rules:
+      - rule: data.test.flags
+        type:
+          kind: Set
+          element:
+            kind: Boolean
+        provenance: Literal
+
+  - note: unary negation constant
+    modules:
+      - |
+        package test
+        import rego.v1
+        neg := -42
+    rules:
+      - rule: data.test.neg
+        type: Integer
+        constant: -42
+        provenance: Literal
+
+  - note: unary negation propagated
+    modules:
+      - |
+        package test
+        import rego.v1
+        value := input.amount
+        neg_value := -value
+    input_schema:
+      type: object
+      properties:
+        amount:
+          type: number
+      required:
+        - amount
+    rules:
+      - rule: data.test.value
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+      - rule: data.test.neg_value
+        type: Number
+        provenance: Propagated
+
+  - note: input property propagation
+    modules:
+      - |
+        package test
+        import rego.v1
+        allow := input.flag
+    input_schema:
+      type: object
+      properties:
+        flag:
+          type: boolean
+      required:
+        - flag
+    rules:
+      - rule: data.test.allow
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+
+  - note: data property propagation
+    modules:
+      - |
+        package test
+        import rego.v1
+        mode := data.config.mode
+    data_schema:
+      type: object
+      properties:
+        config:
+          type: object
+          properties:
+            mode:
+              type: string
+          required:
+            - mode
+      required:
+        - config
+    rules:
+      - rule: data.test.mode
+        type: Schema
+        schema_backed: true
+        provenance: SchemaData
+
+  - note: array indexing
+    modules:
+      - |
+        package test
+        import rego.v1
+        first := input.items[0]
+    input_schema:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: boolean
+      required:
+        - items
+    rules:
+      - rule: data.test.first
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+
+  - note: builtin function
+    modules:
+      - |
+        package test
+        import rego.v1
+        result := abs(-5)
+    rules:
+      - rule: data.test.result
+        type: Number
+        provenance: Builtin
+
+  - note: equality constant folding
+    modules:
+      - |
+        package test
+        import rego.v1
+        check := 2 == 2
+    rules:
+      - rule: data.test.check
+        type: Boolean
+        constant: true
+        provenance: Propagated
+
+  - note: membership test
+    modules:
+      - |
+        package test
+        import rego.v1
+        present := 1 in [1, 2, 3]
+    rules:
+      - rule: data.test.present
+        type: Boolean
+        provenance: Propagated
+
+  - note: literal propagation chain
+    modules:
+      - |
+        package type_analysis.chain.literal
+        import rego.v1
+
+        value := "snow"
+        stage1 := value
+        stage2 := stage1
+    rules:
+      - rule: data.type_analysis.chain.literal.value
+        type: String
+        constant: snow
+        provenance: Literal
+      - rule: data.type_analysis.chain.literal.stage1
+        type: String
+        constant: snow
+        provenance: Literal
+      - rule: data.type_analysis.chain.literal.stage2
+        type: String
+        constant: snow
+        provenance: Literal
+    exprs:
+      - expr: value
+        line: 4
+        col: 1
+        type: String
+        constant: snow
+        provenance: Literal
+      - expr: stage1
+        line: 5
+        col: 1
+        type: String
+        constant: snow
+        provenance: Literal
+      - expr: stage2
+        line: 6
+        col: 1
+        type: String
+        constant: snow
+        provenance: Literal
+
+  - note: schema propagation chain
+    modules:
+      - |
+        package type_analysis.chain.schema
+        import rego.v1
+
+        value := input.profile.name
+        stage1 := value
+        final := stage1
+    input_schema:
+      type: object
+      properties:
+        profile:
+          type: object
+          properties:
+            name:
+              type: string
+          required:
+            - name
+      required:
+        - profile
+    rules:
+      - rule: data.type_analysis.chain.schema.value
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+      - rule: data.type_analysis.chain.schema.stage1
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+      - rule: data.type_analysis.chain.schema.final
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+    exprs:
+      - expr: input.profile
+        line: 4
+        col: 10
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+      - expr: input.profile.name
+        line: 4
+        col: 10
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+      - expr: value
+        line: 4
+        col: 1
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+      - expr: stage1
+        line: 5
+        col: 1
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+      - expr: final
+        line: 6
+        col: 1
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+
+  - note: missing schema property
+    modules:
+      - |
+        package test
+        import rego.v1
+        maybe := input.unknown
+    input_schema:
+      type: object
+      properties:
+        known:
+          type: string
+      required:
+        - known
+    rules:
+      - rule: data.test.maybe
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+    diagnostics:
+      - kind: SchemaViolation
+        message: Property 'unknown'
+
+  - note: missing schema property with additional schema
+    modules:
+      - |
+        package test.additional
+        import rego.v1
+
+        dynamic := input.extra
+    input_schema:
+      type: object
+      properties:
+        required_field:
+          type: string
+      additionalProperties:
+        type: integer
+      required:
+        - required_field
+    rules:
+      - rule: data.test.additional.dynamic
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+    diagnostics:
+      - kind: SchemaViolation
+        message: "Property 'extra' is not defined by the schema; known properties: required_field"
+
+  - note: schema violation diagnostic
+    modules:
+      - |
+        package test
+        import rego.v1
+        check := input.mode == "invalid"
+    input_schema:
+      type: object
+      properties:
+        mode:
+          enum:
+            - allow
+            - deny
+      required:
+        - mode
+    rules:
+      - rule: data.test.check
+        type: Boolean
+        provenance: Propagated
+    diagnostics:
+      - kind: SchemaViolation
+        message: not allowed by schema enumeration
