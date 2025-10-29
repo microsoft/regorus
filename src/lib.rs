@@ -41,6 +41,7 @@ pub mod registry;
 mod scheduler;
 #[cfg(feature = "azure_policy")]
 mod schema;
+mod string;
 #[cfg(feature = "azure_policy")]
 pub mod target;
 mod utils;

@@ -2,6 +2,11 @@
 // Licensed under the MIT License.
 
 use crate::number::Number;
+use crate::string::KeyArena;
+
+use core::cell::RefCell;
+
+type MaybeArena<'arena> = Option<&'arena RefCell<KeyArena>>;
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use core::fmt;
@@ -11,7 +16,7 @@ use core::convert::AsRef;
 use core::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
-use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
 
@@ -95,9 +100,41 @@ impl Serialize for Value {
     }
 }
 
-struct ValueVisitor;
+struct ValueVisitor<'arena> {
+    key_mode: bool,
+    arena: MaybeArena<'arena>,
+}
 
-impl<'de> Visitor<'de> for ValueVisitor {
+impl<'arena> ValueVisitor<'arena> {
+    fn new(key_mode: bool, arena: MaybeArena<'arena>) -> Self {
+        Self { key_mode, arena }
+    }
+
+    fn intern_borrowed_key(&self, key: &str) -> Rc<str> {
+        if let Some(arena) = self.arena {
+            let mut guard = arena.borrow_mut();
+            return guard.intern(key);
+        }
+        Rc::from(key)
+    }
+
+    fn intern_owned_key(&self, key: Rc<str>) -> Rc<str> {
+        if let Some(arena) = self.arena {
+            let mut guard = arena.borrow_mut();
+            return guard.intern_owned(key);
+        }
+        key
+    }
+
+    fn intern_object_key(&self, key: Value) -> Value {
+        match key {
+            Value::String(rc) => Value::String(self.intern_owned_key(rc)),
+            other => other,
+        }
+    }
+}
+
+impl<'arena, 'de> Visitor<'de> for ValueVisitor<'arena> {
     type Value = Value;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -157,14 +194,23 @@ impl<'de> Visitor<'de> for ValueVisitor {
     where
         E: de::Error,
     {
-        Ok(Value::String(s.to_string().into()))
+        if self.key_mode {
+            let interned = self.intern_borrowed_key(s);
+            return Ok(Value::String(interned));
+        }
+        Ok(Value::String(Rc::from(s)))
     }
 
     fn visit_string<E>(self, s: String) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Value::String(s.into()))
+        if self.key_mode {
+            let rc: Rc<str> = Rc::from(s);
+            let interned = self.intern_owned_key(rc);
+            return Ok(Value::String(interned));
+        }
+        Ok(Value::String(Rc::from(s)))
     }
 
     fn visit_seq<V>(self, mut visitor: V) -> Result<Self::Value, V::Error>
@@ -172,7 +218,8 @@ impl<'de> Visitor<'de> for ValueVisitor {
         V: SeqAccess<'de>,
     {
         let mut arr = vec![];
-        while let Some(v) = visitor.next_element()? {
+        let arena = self.arena;
+        while let Some(v) = visitor.next_element_seed(ValueSeed::for_values(arena))? {
             arr.push(v);
         }
         Ok(Value::from(arr))
@@ -182,24 +229,66 @@ impl<'de> Visitor<'de> for ValueVisitor {
     where
         V: MapAccess<'de>,
     {
-        if let Some((key, value)) = visitor.next_entry()? {
-            if let (Value::String(k), Value::String(v)) = (&key, &value) {
-                if k.as_ref() == "$serde_json::private::Number" {
-                    match Number::from_str(v) {
-                        Ok(n) => return Ok(Value::from(n)),
-                        _ => return Err(de::Error::custom("failed to read big number")),
+        let mut map = BTreeMap::new();
+        let mut first_entry = true;
+
+        let arena = self.arena;
+        while let Some(raw_key) = visitor.next_key_seed(ValueSeed::for_keys(arena))? {
+            let value = visitor.next_value_seed(ValueSeed::for_values(arena))?;
+
+            if first_entry {
+                if let (Value::String(k), Value::String(v)) = (&raw_key, &value) {
+                    if k.as_ref() == "$serde_json::private::Number" {
+                        match Number::from_str(v) {
+                            Ok(n) => return Ok(Value::from(n)),
+                            _ => return Err(de::Error::custom("failed to read big number")),
+                        }
                     }
                 }
+                first_entry = false;
             }
-            let mut map = BTreeMap::new();
+
+            let key = self.intern_object_key(raw_key);
             map.insert(key, value);
-            while let Some((key, value)) = visitor.next_entry()? {
-                map.insert(key, value);
-            }
-            Ok(Value::from(map))
-        } else {
-            Ok(Value::new_object())
         }
+
+        if map.is_empty() {
+            Ok(Value::new_object())
+        } else {
+            Ok(Value::from(map))
+        }
+    }
+}
+
+struct ValueSeed<'arena> {
+    key_mode: bool,
+    arena: MaybeArena<'arena>,
+}
+
+impl<'arena> ValueSeed<'arena> {
+    fn for_keys(arena: MaybeArena<'arena>) -> Self {
+        Self {
+            key_mode: true,
+            arena,
+        }
+    }
+
+    fn for_values(arena: MaybeArena<'arena>) -> Self {
+        Self {
+            key_mode: false,
+            arena,
+        }
+    }
+}
+
+impl<'arena, 'de> DeserializeSeed<'de> for ValueSeed<'arena> {
+    type Value = Value;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(ValueVisitor::new(self.key_mode, self.arena))
     }
 }
 
@@ -209,7 +298,8 @@ impl<'de> Deserialize<'de> for Value {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_any(ValueVisitor)
+        let arena = RefCell::new(KeyArena::new());
+        ValueSeed::for_values(Some(&arena)).deserialize(deserializer)
     }
 }
 
