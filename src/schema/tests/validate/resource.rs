@@ -1245,6 +1245,7 @@ fn test_edge_cases_and_boundary_conditions() {
     );
 }
 
+#[cfg(all(feature = "arc", feature = "regex", feature = "jsonschema"))]
 #[test]
 fn test_concurrent_schema_validation_stress() {
     use std::sync::Arc;

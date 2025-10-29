@@ -1,0 +1,77 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: array comprehension
+    modules:
+      - |
+        package type_analysis.aggregates
+
+        arr := [x | x := input.values[_]]
+    input_schema:
+      type: object
+      properties:
+        values:
+          type: array
+          items:
+            type: integer
+      required:
+        - values
+    rules:
+      - rule: data.type_analysis.aggregates.arr
+        type:
+          kind: Array
+          element:
+            kind: Integer
+        provenance: SchemaInput
+    exprs:
+      - expr: arr
+        line: 3
+        col: 1
+        type:
+          kind: Array
+          element:
+            kind: Integer
+        provenance: SchemaInput
+      - expr: "[x | x := input.values[_]]"
+        line: 3
+        col: 8
+        type:
+          kind: Array
+          element:
+            kind: Integer
+        provenance: SchemaInput
+      - expr: x
+        line: 3
+        col: 9
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+      - expr: "x := input.values[_]"
+        line: 3
+        col: 15
+        type: Boolean
+        provenance: Assignment
+      - expr: "input.values[_]"
+        line: 3
+        col: 30
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+      - expr: input.values
+        line: 3
+        col: 23
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+      - expr: input
+        line: 3
+        col: 18
+        type: Schema
+        schema_backed: true
+        provenance: SchemaInput
+      - expr: _
+        line: 3
+        col: 31
+        type: Any
+        provenance: Unknown

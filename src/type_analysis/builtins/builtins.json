@@ -1,0 +1,260 @@
+{
+	"version": 1,
+	"groups": [
+		{
+			"name": "core",
+			"builtins": [
+				{ "name": "abs", "return": { "kind": "number" }, "params": [ { "kind": "number" } ] },
+				{ "name": "ceil", "return": { "kind": "number" }, "params": [ { "kind": "number" } ] },
+				{ "name": "floor", "return": { "kind": "number" }, "params": [ { "kind": "number" } ] },
+				{ "name": "numbers.range", "return": { "kind": "array_any" }, "params": [ { "kind": "integer" }, { "kind": "integer" } ] },
+				{ "name": "numbers.range_step", "return": { "kind": "array_any" }, "params": [ { "kind": "integer" }, { "kind": "integer" }, { "kind": "integer" } ] },
+				{ "name": "round", "return": { "kind": "number" }, "params": [ { "kind": "number" } ] },
+				{ "name": "bits.and", "return": { "kind": "integer" }, "params": [ { "kind": "integer" }, { "kind": "integer" } ] },
+				{ "name": "bits.lsh", "return": { "kind": "integer" }, "params": [ { "kind": "integer" }, { "kind": "integer" } ] },
+				{ "name": "bits.negate", "return": { "kind": "integer" }, "params": [ { "kind": "integer" } ] },
+				{ "name": "bits.or", "return": { "kind": "integer" }, "params": [ { "kind": "integer" }, { "kind": "integer" } ] },
+				{ "name": "bits.rsh", "return": { "kind": "integer" }, "params": [ { "kind": "integer" }, { "kind": "integer" } ] },
+				{ "name": "bits.xor", "return": { "kind": "integer" }, "params": [ { "kind": "integer" }, { "kind": "integer" } ] },
+
+				{ "name": "array.concat", "return": { "kind": "array_any" }, "params": [ { "kind": "array_any" }, { "kind": "array_any" } ] },
+				{ "name": "array.reverse", "return": { "kind": "array_any" }, "params": [ { "kind": "array_any" } ] },
+				{ "name": "array.slice", "return": { "kind": "array_any" }, "params": [ { "kind": "array_any" }, { "kind": "number" }, { "kind": "number" } ] },
+
+				{ "name": "count", "return": { "kind": "integer" }, "params": [ { "kind": "any" } ] },
+				{ "name": "max", "return": { "kind": "collection_element", "index": 0 }, "params": [ { "kind": "any" } ] },
+				{ "name": "min", "return": { "kind": "collection_element", "index": 0 }, "params": [ { "kind": "any" } ] },
+				{ "name": "product", "return": { "kind": "number" }, "params": [ { "kind": "any" } ] },
+				{ "name": "sort", "return": { "kind": "array_any" }, "params": [ { "kind": "any" } ] },
+				{ "name": "sum", "return": { "kind": "number" }, "params": [ { "kind": "any" } ] },
+
+				{ "name": "intersection", "return": { "kind": "set_any" }, "params": [ { "kind": "set_any" } ] },
+				{ "name": "union", "return": { "kind": "set_any" }, "params": [ { "kind": "set_any" } ] },
+
+				{ "name": "concat", "return": { "kind": "string" }, "params": [ { "kind": "string" }, { "kind": "any" } ] },
+				{ "name": "contains", "return": { "kind": "boolean" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "endswith", "return": { "kind": "boolean" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "format_int", "return": { "kind": "string" }, "params": [ { "kind": "number" }, { "kind": "number" } ] },
+				{ "name": "indexof", "return": { "kind": "integer" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "indexof_n", "return": { "kind": "array_any" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "lower", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] },
+				{ "name": "replace", "return": { "kind": "string" }, "params": [ { "kind": "string" }, { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "split", "return": { "kind": "array_any" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "sprintf", "return": { "kind": "string" }, "params": [ { "kind": "string" }, { "kind": "array_any" } ] },
+				{ "name": "startswith", "return": { "kind": "boolean" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "strings.any_prefix_match", "return": { "kind": "boolean" }, "params": [ { "kind": "any" }, { "kind": "any" } ] },
+				{ "name": "strings.any_suffix_match", "return": { "kind": "boolean" }, "params": [ { "kind": "any" }, { "kind": "any" } ] },
+				{ "name": "strings.count", "return": { "kind": "integer" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "strings.replace_n", "return": { "kind": "string" }, "params": [ { "kind": "object_any" }, { "kind": "string" } ] },
+				{ "name": "strings.reverse", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] },
+				{ "name": "substring", "return": { "kind": "string" }, "params": [ { "kind": "string" }, { "kind": "number" }, { "kind": "number" } ] },
+				{ "name": "trim", "return": { "kind": "string" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "trim_left", "return": { "kind": "string" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "trim_prefix", "return": { "kind": "string" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "trim_right", "return": { "kind": "string" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "trim_space", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] },
+				{ "name": "trim_suffix", "return": { "kind": "string" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "upper", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] },
+
+				{ "name": "json.filter", "return": { "kind": "same_as_argument", "index": 0 }, "params": [ { "kind": "any" }, { "kind": "any" } ] },
+				{ "name": "json.is_valid", "return": { "kind": "boolean" }, "params": [ { "kind": "string" } ] },
+				{ "name": "json.remove", "return": { "kind": "same_as_argument", "index": 0 }, "params": [ { "kind": "any" }, { "kind": "any" } ] },
+				{ "name": "json.marshal", "return": { "kind": "string" }, "params": [ { "kind": "any" } ] },
+				{ "name": "json.marshal_with_options", "return": { "kind": "string" }, "params": [ { "kind": "any" }, { "kind": "object_any" } ] },
+				{ "name": "json.unmarshal", "return": { "kind": "any" }, "params": [ { "kind": "string" } ] },
+				{ "name": "object.filter", "return": { "kind": "object_any" }, "params": [ { "kind": "object_any" }, { "kind": "any" } ] },
+				{ "name": "object.get", "return": { "kind": "any" }, "params": [ { "kind": "object_any" }, { "kind": "any" }, { "kind": "any" } ] },
+				{ "name": "object.keys", "return": { "kind": "array_any" }, "params": [ { "kind": "object_any" } ] },
+				{ "name": "object.remove", "return": { "kind": "object_any" }, "params": [ { "kind": "object_any" }, { "kind": "any" } ] },
+				{ "name": "object.subset", "return": { "kind": "boolean" }, "params": [ { "kind": "any" }, { "kind": "any" } ] },
+				{ "name": "object.union", "return": { "kind": "object_any" }, "params": [ { "kind": "object_any" }, { "kind": "object_any" } ] },
+				{ "name": "object.union_n", "return": { "kind": "object_any" }, "params": [ { "kind": "array_any" } ] },
+
+				{ "name": "to_number", "return": { "kind": "number" }, "params": [ { "kind": "any" } ] },
+				{ "name": "trace", "purity": "impure", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] },
+				{ "name": "units.parse", "return": { "kind": "number" }, "params": [ { "kind": "string" } ] },
+				{ "name": "units.parse_bytes", "return": { "kind": "number" }, "params": [ { "kind": "string" } ] },
+
+				{ "name": "is_array", "return": { "kind": "boolean" }, "params": [ { "kind": "any" } ] },
+				{ "name": "is_boolean", "return": { "kind": "boolean" }, "params": [ { "kind": "any" } ] },
+				{ "name": "is_null", "return": { "kind": "boolean" }, "params": [ { "kind": "any" } ] },
+				{ "name": "is_number", "return": { "kind": "boolean" }, "params": [ { "kind": "any" } ] },
+				{ "name": "is_object", "return": { "kind": "boolean" }, "params": [ { "kind": "any" } ] },
+				{ "name": "is_set", "return": { "kind": "boolean" }, "params": [ { "kind": "any" } ] },
+				{ "name": "is_string", "return": { "kind": "boolean" }, "params": [ { "kind": "any" } ] },
+				{ "name": "type_name", "return": { "kind": "string" }, "params": [ { "kind": "any" } ] }
+			]
+		},
+		{
+			"name": "std",
+			"requires": ["std"],
+			"builtins": [
+				{
+					"name": "rand.intn",
+					"purity": "impure",
+					"cache": true,
+					"return": { "kind": "integer" },
+					"params": [ { "kind": "string" }, { "kind": "number" } ]
+				}
+			]
+		},
+		{
+			"name": "base64",
+			"requires": ["base64"],
+			"builtins": [
+				{ "name": "base64.decode", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] },
+				{ "name": "base64.encode", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] },
+				{ "name": "base64.is_valid", "return": { "kind": "boolean" }, "params": [ { "kind": "string" } ] }
+			]
+		},
+		{
+			"name": "base64url",
+			"requires": ["base64url"],
+			"builtins": [
+				{ "name": "base64url.decode", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] },
+				{ "name": "base64url.encode", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] },
+				{ "name": "base64url.encode_no_pad", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] }
+			]
+		},
+		{
+			"name": "glob",
+			"requires": ["glob"],
+			"builtins": [
+				{ "name": "glob.match", "return": { "kind": "boolean" }, "params": [ { "kind": "string" }, { "kind": "any" }, { "kind": "string" } ] },
+				{ "name": "glob.quote_meta", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] }
+			]
+		},
+		{
+			"name": "graph",
+			"requires": ["graph"],
+			"builtins": [
+				{ "name": "graph.reachable", "return": { "kind": "set_any" }, "params": [ { "kind": "object_any" }, { "kind": "any" } ] },
+				{ "name": "graph.reachable_paths", "return": { "kind": "set_any" }, "params": [ { "kind": "object_any" }, { "kind": "any" } ] },
+				{ "name": "walk", "return": { "kind": "array_any" }, "params": [ { "kind": "any" } ] }
+			]
+		},
+		{
+			"name": "hex",
+			"requires": ["hex"],
+			"builtins": [
+				{ "name": "hex.decode", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] },
+				{ "name": "hex.encode", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] }
+			]
+		},
+		{
+			"name": "http",
+			"requires": ["http"],
+			"builtins": [
+				{ "name": "http.send", "purity": "impure", "return": { "kind": "any" }, "params": [ { "kind": "any" } ] }
+			]
+		},
+		{
+			"name": "net",
+			"requires": ["net"],
+			"builtins": [
+				{ "name": "net.cidr_is_valid", "return": { "kind": "boolean" }, "params": [ { "kind": "string" } ] },
+				{ "name": "net.cidr_contains", "return": { "kind": "boolean" }, "params": [ { "kind": "string" }, { "kind": "string" } ] }
+			]
+		},
+		{
+			"name": "opa-runtime",
+			"requires": ["opa-runtime"],
+			"builtins": [
+				{
+					"name": "opa.runtime",
+					"purity": "impure",
+					"cache": true,
+					"return": { "kind": "object_any" },
+					"params": []
+				}
+			]
+		},
+		{
+			"name": "regex",
+			"requires": ["regex"],
+			"builtins": [
+				{ "name": "regex.find_all_string_submatch_n", "return": { "kind": "array_any" }, "params": [ { "kind": "string" }, { "kind": "string" }, { "kind": "number" } ] },
+				{ "name": "regex.find_n", "return": { "kind": "array_any" }, "params": [ { "kind": "string" }, { "kind": "string" }, { "kind": "number" } ] },
+				{ "name": "regex.is_valid", "return": { "kind": "boolean" }, "params": [ { "kind": "string" } ] },
+				{ "name": "regex.match", "return": { "kind": "boolean" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "regex.replace", "return": { "kind": "string" }, "params": [ { "kind": "string" }, { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "regex.split", "return": { "kind": "array_any" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "regex.template_match", "return": { "kind": "boolean" }, "params": [ { "kind": "string" }, { "kind": "string" }, { "kind": "string" }, { "kind": "string" } ] }
+			]
+		},
+		{
+			"name": "semver",
+			"requires": ["semver"],
+			"builtins": [
+				{ "name": "semver.compare", "return": { "kind": "integer" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "semver.is_valid", "return": { "kind": "boolean" }, "params": [ { "kind": "string" } ] }
+			]
+		},
+		{
+			"name": "time",
+			"requires": ["time"],
+			"builtins": [
+				{ "name": "time.add_date", "return": { "kind": "number" }, "params": [ { "kind": "any" }, { "kind": "number" }, { "kind": "number" }, { "kind": "number" } ] },
+				{ "name": "time.clock", "return": { "kind": "array_any" }, "params": [ { "kind": "any" } ] },
+				{ "name": "time.date", "return": { "kind": "array_any" }, "params": [ { "kind": "any" } ] },
+				{ "name": "time.diff", "return": { "kind": "array_any" }, "params": [ { "kind": "any" }, { "kind": "any" } ] },
+				{ "name": "time.format", "return": { "kind": "string" }, "params": [ { "kind": "any" } ] },
+				{ "name": "time.now_ns", "purity": "impure", "cache": true, "return": { "kind": "number" }, "params": [] },
+				{ "name": "time.parse_duration_ns", "return": { "kind": "number" }, "params": [ { "kind": "string" } ] },
+				{ "name": "time.parse_ns", "return": { "kind": "number" }, "params": [ { "kind": "string" }, { "kind": "string" } ] },
+				{ "name": "time.parse_rfc3339_ns", "return": { "kind": "number" }, "params": [ { "kind": "string" } ] },
+				{ "name": "time.weekday", "return": { "kind": "string" }, "params": [ { "kind": "any" } ] }
+			]
+		},
+		{
+			"name": "urlquery",
+			"requires": ["urlquery"],
+			"builtins": [
+				{ "name": "urlquery.decode", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] },
+				{ "name": "urlquery.decode_object", "return": { "kind": "object_any" }, "params": [ { "kind": "string" } ] },
+				{ "name": "urlquery.encode", "return": { "kind": "string" }, "params": [ { "kind": "string" } ] },
+				{ "name": "urlquery.encode_object", "return": { "kind": "string" }, "params": [ { "kind": "object_any" } ] }
+			]
+		},
+		{
+			"name": "uuid",
+			"requires": ["uuid"],
+			"builtins": [
+				{ "name": "uuid.parse", "return": { "kind": "object_any" }, "params": [ { "kind": "string" } ] },
+				{ "name": "uuid.rfc4122", "purity": "impure", "cache": true, "return": { "kind": "string" }, "params": [ { "kind": "string" } ] }
+			]
+		},
+		{
+			"name": "yaml",
+			"requires": ["yaml"],
+			"builtins": [
+				{ "name": "yaml.is_valid", "return": { "kind": "boolean" }, "params": [ { "kind": "string" } ] },
+				{ "name": "yaml.marshal", "return": { "kind": "string" }, "params": [ { "kind": "any" } ] },
+				{ "name": "yaml.unmarshal", "return": { "kind": "any" }, "params": [ { "kind": "string" } ] }
+			]
+		},
+		{
+			"name": "opa-testutil",
+			"requires": ["opa-testutil"],
+			"builtins": [
+				{ "name": "test.sleep", "purity": "impure", "return": { "kind": "null" }, "params": [ { "kind": "string" } ] }
+			]
+		},
+		{
+			"name": "jsonschema",
+			"requires": ["jsonschema"],
+			"builtins": [
+				{
+					"name": "json.match_schema",
+					"return": { "kind": "array_any" },
+					"params": [ { "kind": "any" }, { "kind": "any" } ]
+				},
+				{
+					"name": "json.verify_schema",
+					"return": { "kind": "array_any" },
+					"params": [ { "kind": "any" } ]
+				}
+			]
+		}
+	]
+}

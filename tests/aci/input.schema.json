@@ -1,0 +1,85 @@
+{
+  "type": "object",
+  "properties": {
+    "deviceHash": { "type": "string" },
+    "target": { "type": "string" },
+    "containerID": { "type": "string" },
+    "layerPaths": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "encrypted": { "type": "boolean" },
+    "argList": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "ambient": { "type": "array", "items": { "type": "string" } },
+        "bounding": { "type": "array", "items": { "type": "string" } },
+        "effective": { "type": "array", "items": { "type": "string" } },
+        "inheritable": { "type": "array", "items": { "type": "string" } },
+        "permitted": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "envList": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" }
+        },
+        "required": ["id", "name"],
+        "additionalProperties": false
+      }
+    },
+  "hugePagesDir": { "type": "string" },
+  "isInitProcess": { "type": "boolean" },
+  "signal": { "type": "integer" },
+  "rootPrefix": { "type": "string" },
+  "mountPathPrefix": { "type": "string" },
+  "rule": { "type": "string" },
+  "name": { "type": "string" },
+    "mounts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "destination": { "type": "string" },
+          "options": { "type": "array", "items": { "type": "string" } },
+          "source": { "type": "string" },
+          "type": { "type": "string" }
+        },
+        "required": ["destination", "options", "source", "type"],
+        "additionalProperties": false
+      }
+    },
+    "noNewPrivileges": { "type": "boolean" },
+    "privileged": { "type": "boolean" },
+    "seccompProfileSHA256": { "type": "string" },
+    "sandboxDir": { "type": "string" },
+    "umask": { "type": "string" },
+    "user": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "integer" },
+        "name": { "type": "string" }
+      },
+      "required": ["id", "name"],
+      "additionalProperties": false
+    },
+    "workingDir": { "type": "string" },
+    "unmountTarget": { "type": "string" },
+    "feed": { "type": "string" },
+    "issuer": { "type": "string" },
+    "namespace": { "type": "string" }
+  },
+  "additionalProperties": false
+}

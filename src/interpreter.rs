@@ -95,6 +95,9 @@ pub struct Interpreter {
     active_rules: Vec<Ref<Rule>>,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
+    pub(crate) constant_folding: bool,
+    constant_fold_input_accessed: bool,
+    constant_fold_external_data_accessed: bool,
 }
 
 impl Default for Interpreter {
@@ -142,6 +145,9 @@ impl Clone for Interpreter {
             query_module: None,
             module: None,
             no_rules_lookup: false,
+            constant_folding: false,
+            constant_fold_input_accessed: false,
+            constant_fold_external_data_accessed: false,
         }
     }
 }
@@ -212,6 +218,9 @@ impl Interpreter {
             active_rules: Vec::default(),
             builtins_cache: BTreeMap::default(),
             no_rules_lookup: false,
+            constant_folding: false,
+            constant_fold_input_accessed: false,
+            constant_fold_external_data_accessed: false,
             traces: None,
             extensions: Map::default(),
 
@@ -223,6 +232,27 @@ impl Interpreter {
             gather_prints: false,
             prints: Vec::default(),
         }
+    }
+
+    #[inline]
+    fn reset_constant_fold_usage_flags(&mut self) {
+        self.constant_fold_input_accessed = false;
+        self.constant_fold_external_data_accessed = false;
+    }
+
+    #[inline]
+    fn mark_constant_fold_input_access(&mut self) {
+        self.constant_fold_input_accessed = true;
+    }
+
+    #[inline]
+    fn mark_constant_fold_external_data_access(&mut self) {
+        self.constant_fold_external_data_accessed = true;
+    }
+
+    #[inline]
+    fn constant_fold_used_runtime_inputs(&self) -> bool {
+        self.constant_fold_input_accessed || self.constant_fold_external_data_accessed
     }
 
     /// Create a new Interpreter from a compiled policy.
@@ -249,6 +279,9 @@ impl Interpreter {
             active_rules: Vec::default(),
             builtins_cache: BTreeMap::default(),
             no_rules_lookup: false,
+            constant_folding: false,
+            constant_fold_input_accessed: false,
+            constant_fold_external_data_accessed: false,
             traces: None,
 
             #[cfg(feature = "coverage")]
@@ -322,6 +355,44 @@ impl Interpreter {
             true => Some(vec![]),
             false => None,
         };
+    }
+
+    /// Attempts to evaluate a rule in constant-folding mode.
+    /// This is used by the type analyzer to determine if a rule can be constant-folded.
+    /// Returns Some(Value) if successful, None if the rule needs runtime values.
+    pub(crate) fn try_eval_rule_constant(&mut self, rule_path: &str) -> Option<Value> {
+        // Enable constant folding mode
+        let prev_constant_folding = self.constant_folding;
+        self.constant_folding = true;
+        self.reset_constant_fold_usage_flags();
+
+        // Try to evaluate the rule
+        let result = match self.ensure_rule_evaluated(rule_path.to_owned()) {
+            Ok(()) => {
+                // Extract the value from data
+                let path_parts: Vec<&str> = rule_path.split('.').skip(1).collect();
+                let value = Self::get_value_chained(self.data.clone(), &path_parts);
+
+                // Return None if undefined (couldn't be constant folded)
+                if value == Value::Undefined {
+                    None
+                } else {
+                    Some(value)
+                }
+            }
+            Err(_) => {
+                // Evaluation failed (needs input/data or has other issues)
+                None
+            }
+        };
+
+        // Restore constant folding mode
+        self.constant_folding = prev_constant_folding;
+        if self.constant_fold_used_runtime_inputs() {
+            None
+        } else {
+            result
+        }
     }
 
     pub fn set_strict_builtin_errors(&mut self, b: bool) {
@@ -495,8 +566,11 @@ impl Interpreter {
                 }
                 // Accumulate chained . field accesses.
                 Expr::RefDot { refr, field, .. } => {
+                    let (field_span, _) = field
+                        .as_ref()
+                        .ok_or_else(|| refr.span().error("incomplete reference"))?;
                     expr = refr;
-                    path.push(field.0.text());
+                    path.push(field_span.text());
                 }
                 Expr::RefBrack { refr, index, .. } => match index.as_ref() {
                     // refr["field"] is the same as refr.field
@@ -1531,7 +1605,10 @@ impl Interpreter {
                     expr = refr;
                 }
                 Expr::RefDot { refr, field, .. } => {
-                    comps.push(Value::String(field.0.text().into()));
+                    let (field_span, _) = field
+                        .as_ref()
+                        .ok_or_else(|| refr.span().error("incomplete reference"))?;
+                    comps.push(Value::from(field_span.text()));
                     expr = refr;
                 }
                 _ => {
@@ -2781,6 +2858,10 @@ impl Interpreter {
 
         // Handle input.
         if name.text() == "input" {
+            if self.constant_folding {
+                self.mark_constant_fold_input_access();
+                bail!(span.error("input not available in constant folding mode"));
+            }
             return Ok(Self::get_value_chained(self.input.clone(), fields));
         }
 
@@ -2794,6 +2875,28 @@ impl Interpreter {
 
         // Ensure that rules are evaluated
         if name.text() == "data" {
+            // In constant folding mode, check if this is a rule path
+            if self.constant_folding {
+                let mut is_rule_path = false;
+
+                // Check if any prefix of the path corresponds to a rule
+                for i in (1..fields.len() + 1).rev() {
+                    let check_path = "data.".to_owned() + &fields[0..i].join(".");
+                    if self.compiled_policy.rules.contains_key(&check_path)
+                        || self.compiled_policy.default_rules.contains_key(&check_path)
+                    {
+                        is_rule_path = true;
+                        break;
+                    }
+                }
+
+                // If not a rule path, it's external data - bail out
+                if !is_rule_path {
+                    self.mark_constant_fold_external_data_access();
+                    bail!(span.error("external data not available in constant folding mode"));
+                }
+            }
+
             if self.is_processed(fields)? {
                 return Ok(Self::get_value_chained(self.data.clone(), fields));
             }
@@ -3172,7 +3275,10 @@ impl Interpreter {
         while let Some(e) = expr {
             match e {
                 Expr::RefDot { refr, field, .. } => {
-                    comps.push(field.0.text());
+                    let (field_span, _) = field
+                        .as_ref()
+                        .ok_or_else(|| refr.span().error("incomplete reference"))?;
+                    comps.push(field_span.text());
                     expr = Some(refr);
                 }
                 Expr::RefBrack { refr, index, .. }
@@ -3671,7 +3777,10 @@ impl Interpreter {
                     refr
                 }
                 Expr::RefDot { refr, field, .. } => {
-                    components.push(field.0.text().into());
+                    let (field_span, _) = field
+                        .as_ref()
+                        .ok_or_else(|| refr.span().error("incomplete reference"))?;
+                    components.push(field_span.text().into());
                     refr
                 }
                 _ => break,
@@ -3790,7 +3899,9 @@ impl Interpreter {
                 let target = match &import.r#as {
                     Some(s) => s.text(),
                     _ => match import.refr.as_ref() {
-                        Expr::RefDot { field, .. } => field.0.text(),
+                        Expr::RefDot { field, .. } => {
+                            field.as_ref().map(|(span, _)| span.text()).unwrap_or("")
+                        }
                         Expr::RefBrack { index, .. } => match index.as_ref() {
                             Expr::String { span: s, .. } => s.text(),
                             _ => "",

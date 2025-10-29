@@ -196,6 +196,29 @@ impl Source {
         }
     }
 
+    pub fn offset_to_line_col(&self, offset: u32) -> (u32, u32) {
+        for (idx, (start, end)) in self.src.lines.iter().enumerate() {
+            let start_u32 = *start;
+            let end_u32 = *end;
+            let is_last_line = idx == self.src.lines.len().saturating_sub(1);
+            if offset < end_u32 || (is_last_line && offset <= end_u32) {
+                let line_idx = idx as u32 + 1;
+                let slice_start = start_u32 as usize;
+                let slice_end = core::cmp::min(offset, end_u32) as usize;
+                let slice = &self.src.contents[slice_start..slice_end];
+                let col = slice.chars().count() as u32 + 1;
+                return (line_idx, col);
+            }
+        }
+
+        if self.src.lines.is_empty() {
+            return (1, 1);
+        }
+
+        let line_idx = self.src.lines.len() as u32;
+        (line_idx, 1)
+    }
+
     pub fn message(&self, line: u32, col: u32, kind: &str, msg: &str) -> String {
         if line as usize > self.src.lines.len() {
             return format!("{}: invalid line {} specified", self.src.file, line);

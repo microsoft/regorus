@@ -215,6 +215,29 @@ See [Engine::get_coverage_report](https://docs.rs/regorus/latest/regorus/struct.
 Policy coverage information is useful for debugging your policy as well as to write tests for your policy so that all
 lines of the policy are exercised by the tests.
 
+## Type analysis
+
+Regorus contains an experimental structural type analysis engine that can be used to reason about rule outputs,
+expression constants, schema-backed types, and diagnostics before executing a policy. Applications can opt in by
+calling `Engine::enable_type_checking`, optionally providing input and data schemas or limiting the analysis to
+specific entrypoints via the `TypeChecker` API.
+
+The `regorus` example binary exposes this functionality through the new `analyze` subcommand:
+
+```bash
+$ regorus analyze -d examples/server/allowed_server.rego \
+  --input-schema examples/server/input.schema.json \
+  -e data.example
+```
+
+This produces a structured report that lists inferred rule facts, expression-level facts, provenance, and any
+diagnostics that were discovered. Pass `--verbose` to include dependency graphs and specialization summaries, or use
+`-b`/`--bundles` to analyze entire policy directories.
+
+End-to-end regression tests for the analyzer live under `src/tests/type_analysis` with YAML fixtures located in
+`tests/type_analysis`. Each case describes modules, optional schemas, and the expected facts or diagnostics; running
+`cargo test type_analysis::run` executes the full suite.
+
 ## ACI Policies
 
 Regorus successfully passes the ACI policy test-suite. It is fast and can run each of the tests in a few milliseconds.

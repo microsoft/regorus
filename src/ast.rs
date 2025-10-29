@@ -202,7 +202,8 @@ pub enum Expr {
     RefDot {
         span: Span,
         refr: Ref<Expr>,
-        field: (Span, Value),
+        #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Option::is_none"))]
+        field: Option<(Span, Value)>,
         eidx: u32,
     },
 
@@ -474,6 +475,41 @@ pub struct Module {
     pub num_statements: u32,
     // Number of queries in the module.
     pub num_queries: u32,
+    // Position lookup table: maps (byte_offset) -> expr_idx for quick hover/completion
+    #[cfg_attr(feature = "ast", serde(skip))]
+    pub expr_positions: alloc::vec::Vec<(u32, u32, u32)>, // (line, col, eidx) - 1-based
 }
 
 pub type ExprRef = Ref<Expr>;
+
+impl Module {
+    /// Find the expression at a given position using the position lookup table.
+    /// Returns the expr_idx of the expression at or just before the position.
+    /// Line and column are 1-based (matching Span convention).
+    /// Uses binary search for O(log n) performance.
+    ///
+    /// Note: VS Code/LSP provides Position with 0-based line/character.
+    /// Callers must convert: `find_expr_at_position(vscode_line + 1, vscode_char + 1)`
+    ///
+    /// Strategy: Return the rightmost (most recently parsed) expression at or before
+    /// the cursor position. When multiple expressions start at the same position (e.g.,
+    /// nested expressions), the later ones in the table are the outer/parent expressions,
+    /// so we return the last match which gives us the innermost context for hover.
+    pub fn find_expr_at_position(&self, line: usize, col: usize) -> Option<u32> {
+        let line = line as u32;
+        let col = col as u32;
+
+        // Binary search for the rightmost expression at or before (line, col).
+        // The table is sorted by (line, col), with eidx as tiebreaker for stability.
+        let idx = self
+            .expr_positions
+            .partition_point(|(eline, ecol, _)| *eline < line || (*eline == line && *ecol <= col));
+
+        // partition_point returns the index where we'd insert, so we need idx - 1
+        if idx > 0 {
+            self.expr_positions.get(idx - 1).map(|(_, _, eidx)| *eidx)
+        } else {
+            None
+        }
+    }
+}
