@@ -104,7 +104,7 @@ cases:
           b
         } else := false
 
-        or(a, b) if {
+        or_(a, b) if {
           a
         } else := true if {
           b
@@ -116,11 +116,11 @@ cases:
 
         and_true := and(true, true)
         and_false := and(true, false)
-        or_true := or(true, false)
-        or_false := or(false, false)
+        or_true := or_(true, false)
+        or_false := or_(false, false)
         not_true := not_(false)
         not_false := not_(true)
-        complex := or(and(true, false), and(true, true))
+        complex := or_(and(true, false), and(true, true))
     rules:
       - rule: data.test.boolean.and_true
         type: Boolean
