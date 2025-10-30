@@ -1,0 +1,223 @@
+# Advanced Loop and Comprehension Interaction Suite
+# Exercises nested quantifiers inside comprehensions and object key/value emission.
+
+cases:
+  - note: array_comprehension_filters_with_inner_any
+    description: Array comprehension keeps only members whose nested array passes an Any loop
+    example_rego: |
+      [arr |
+        arr := [[1, 0], [1, 2]][_];
+        some v in arr; v == 0
+      ]
+    literals:
+      - 1
+      - 0
+      - 2
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 7
+          result_reg: 7
+          key_reg: 10
+          value_reg: 11
+          body_start: 14
+          comprehension_end: 23
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 10
+          value_reg: 11
+          result_reg: 12
+          body_start: 15
+          loop_end: 23
+        - mode: "Any"
+          collection: 11
+          key_reg: 13
+          value_reg: 14
+          result_reg: 15
+          body_start: 16
+          loop_end: 21
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "ArrayNew { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "ArrayPush { arr: 1, value: 2 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "ArrayPush { arr: 1, value: 3 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "ArrayNew { dest: 4 }"
+      - "Load { dest: 5, literal_idx: 0 }"
+      - "ArrayPush { arr: 4, value: 5 }"
+      - "Load { dest: 6, literal_idx: 2 }"
+      - "ArrayPush { arr: 4, value: 6 }"
+      - "ArrayPush { arr: 0, value: 4 }"
+      - "ComprehensionBegin { params_index: 0 }"
+      - "LoopStart { params_index: 0 }"
+      - "LoopStart { params_index: 1 }"
+      - "Load { dest: 16, literal_idx: 1 }"
+      - "Eq { dest: 17, left: 14, right: 16 }"
+      - "AssertCondition { condition: 17 }"
+      - "ComprehensionYield { value_reg: 11 }"
+      - "LoopNext { body_start: 16, loop_end: 21 }"
+      - "LoopNext { body_start: 15, loop_end: 23 }"
+      - "ComprehensionEnd"
+      - "Return { value: 7 }"
+    want_result:
+      - [1, 0]
+
+  - note: array_comprehension_requires_inner_every
+    description: Array comprehension keeps only members whose nested array passes an Every loop
+    example_rego: |
+      [arr |
+        arr := [[1, 1], [-1, 2], [2, 3]][_];
+        every v in arr; v > 0
+      ]
+    literals:
+      - 1
+      - -1
+      - 2
+      - 3
+      - 0
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 9
+          result_reg: 9
+          key_reg: 10
+          value_reg: 11
+          body_start: 20
+          comprehension_end: 29
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 10
+          value_reg: 11
+          result_reg: 12
+          body_start: 20
+          loop_end: 29
+        - mode: "ForEach"
+          collection: 11
+          key_reg: 13
+          value_reg: 14
+          result_reg: 18
+          body_start: 22
+          loop_end: 26
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "ArrayNew { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "ArrayPush { arr: 1, value: 2 }"
+      - "ArrayPush { arr: 1, value: 2 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "ArrayNew { dest: 3 }"
+      - "Load { dest: 4, literal_idx: 1 }"
+      - "ArrayPush { arr: 3, value: 4 }"
+      - "Load { dest: 5, literal_idx: 2 }"
+      - "ArrayPush { arr: 3, value: 5 }"
+      - "ArrayPush { arr: 0, value: 3 }"
+      - "ArrayNew { dest: 6 }"
+      - "Load { dest: 7, literal_idx: 2 }"
+      - "ArrayPush { arr: 6, value: 7 }"
+      - "Load { dest: 8, literal_idx: 3 }"
+      - "ArrayPush { arr: 6, value: 8 }"
+      - "ArrayPush { arr: 0, value: 6 }"
+      - "ComprehensionBegin { params_index: 0 }"
+      - "LoopStart { params_index: 0 }"
+      - "LoadTrue { dest: 15 }"
+      - "LoopStart { params_index: 1 }"
+      - "Load { dest: 16, literal_idx: 4 }"
+      - "Gt { dest: 17, left: 14, right: 16 }"
+      - "And { dest: 15, left: 15, right: 17 }"
+      - "LoopNext { body_start: 22, loop_end: 26 }"
+      - "AssertCondition { condition: 15 }"
+      - "ComprehensionYield { value_reg: 11 }"
+      - "LoopNext { body_start: 20, loop_end: 29 }"
+      - "ComprehensionEnd"
+      - "Return { value: 9 }"
+    want_result:
+      - [1, 1]
+      - [2, 3]
+
+  - note: object_comprehension_with_nested_any
+    description: Object comprehension emits keys only when nested Any loop succeeds
+    example_rego: |
+      { entry[0]: true |
+        entry := [["a", [1, 2]], ["b", [1]]][_];
+        some v in entry[1]; v % 2 == 0
+      }
+    literals:
+      - {}
+      - "a"
+      - 1
+      - 2
+      - "b"
+      - 0
+    instruction_params:
+      object_create_params:
+        - dest: 12
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      comprehension_begin_params:
+        - mode: "Object"
+          collection_reg: 12
+          result_reg: 12
+          key_reg: 17
+          value_reg: 22
+          body_start: 21
+          comprehension_end: 36
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 13
+          value_reg: 14
+          result_reg: 15
+          body_start: 22
+          loop_end: 36
+        - mode: "Any"
+          collection: 19
+          key_reg: 20
+          value_reg: 21
+          result_reg: 22
+          body_start: 27
+          loop_end: 33
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "ArrayNew { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ArrayPush { arr: 1, value: 2 }"
+      - "ArrayNew { dest: 3 }"
+      - "Load { dest: 4, literal_idx: 2 }"
+      - "ArrayPush { arr: 3, value: 4 }"
+      - "Load { dest: 5, literal_idx: 3 }"
+      - "ArrayPush { arr: 3, value: 5 }"
+      - "ArrayPush { arr: 1, value: 3 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "ArrayNew { dest: 6 }"
+      - "Load { dest: 7, literal_idx: 4 }"
+      - "ArrayPush { arr: 6, value: 7 }"
+      - "ArrayNew { dest: 8 }"
+      - "Load { dest: 9, literal_idx: 2 }"
+      - "ArrayPush { arr: 8, value: 9 }"
+      - "ArrayPush { arr: 6, value: 8 }"
+      - "ArrayPush { arr: 0, value: 6 }"
+      - "ObjectCreate { params_index: 0 }"
+      - "ComprehensionBegin { params_index: 0 }"
+      - "LoopStart { params_index: 0 }"
+      - "Load { dest: 16, literal_idx: 5 }"
+      - "Index { dest: 17, container: 14, key: 16 }"
+      - "Load { dest: 18, literal_idx: 2 }"
+      - "Index { dest: 19, container: 14, key: 18 }"
+      - "LoopStart { params_index: 1 }"
+      - "Load { dest: 23, literal_idx: 3 }"
+      - "Mod { dest: 24, left: 21, right: 23 }"
+      - "Load { dest: 25, literal_idx: 5 }"
+      - "Eq { dest: 26, left: 24, right: 25 }"
+      - "AssertCondition { condition: 26 }"
+      - "LoopNext { body_start: 27, loop_end: 33 }"
+      - "AssertCondition { condition: 22 }"
+      - "ComprehensionYield { value_reg: 22, key_reg: 17 }"
+      - "LoopNext { body_start: 22, loop_end: 36 }"
+      - "ComprehensionEnd"
+      - "Return { value: 12 }"
+    want_result: {"a": true}

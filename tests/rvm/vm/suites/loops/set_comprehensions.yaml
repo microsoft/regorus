@@ -1,0 +1,139 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Set Comprehension Test Suite
+# Tests set comprehensions - collect unique transformed values based on conditions
+# Corresponds to Rego's "{transform | condition}" patterns
+
+cases:
+  - note: set_simple_transform
+    description: Simple set comprehension with transformation
+    example_rego: |
+      # Transform array values into set - duplicates removed
+      {x * 2 | x := [1, 2, 2, 3][_]}  # {2, 4, 6} (duplicates removed)
+    literals:
+      - 1
+      - 2
+      - 3
+      - 2  # multiplier
+    instruction_params:
+      comprehension_start_params:
+        - mode: "Set"
+          collection_reg: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 7
+          body_start: 10
+          comprehension_end: 14
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create input array [1, 2, 2, 3] in register 0
+      - "Load { dest: 1, literal_idx: 0 }"  # Load 1 into register 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 1 to array
+      - "Load { dest: 2, literal_idx: 1 }"  # Load 2 into register 2
+      - "ArrayPush { arr: 0, value: 2 }"    # Push 2 to array
+      - "ArrayPush { arr: 0, value: 2 }"    # Push 2 again to array (duplicate)
+      - "Load { dest: 3, literal_idx: 2 }"  # Load 3 into register 3
+      - "ArrayPush { arr: 0, value: 3 }"    # Push 3 to array
+      - "SetNew { dest: 7 }"                # Initialize result set in register 7
+      - "ComprehensionStart { params_index: 0 }"     # Start set comprehension
+      - "Load { dest: 6, literal_idx: 3 }"  # Load multiplier 2 into register 6
+      - "Mul { dest: 10, left: 5, right: 6 }" # Multiply current value by 2, store result in register 10
+      - "ComprehensionAdd { value_reg: 10 }"       # Add transformed value to result set (auto-deduplicates)
+      - "Halt"                               # End comprehension
+      - "Return { value: 7 }"               # Return result set
+    want_result:
+      set!: [2, 4, 6]
+
+  - note: set_empty_input
+    description: Set comprehension with empty input
+    example_rego: |
+      # Transform empty array into set
+      {x + 5 | x := [][_]}  # {} (empty set)
+    literals:
+      - 5  # addend
+    instruction_params:
+      comprehension_start_params:
+        - mode: "Set"
+          collection_reg: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 7
+          body_start: 3
+          comprehension_end: 7
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create empty input array in register 0
+      - "SetNew { dest: 7 }"                # Initialize result set in register 7
+      - "ComprehensionStart { params_index: 0 }"     # Start set comprehension
+      - "Load { dest: 6, literal_idx: 0 }"  # Load addend 5 into register 6
+      - "Add { dest: 10, left: 5, right: 6 }" # Add 5 to current value, store result in register 10
+      - "ComprehensionAdd { value_reg: 10 }"       # Add transformed value to result set
+      - "Halt"                               # End comprehension
+      - "Return { value: 7 }"               # Return result set
+    want_result:
+      set!: []
+
+  - note: set_single_element
+    description: Set comprehension with single element
+    example_rego: |
+      # Transform single element into set
+      {x - 1 | x := [10][_]}  # {9}
+    literals:
+      - 10
+      - 1  # subtrahend
+    instruction_params:
+      comprehension_start_params:
+        - mode: "Set"
+          collection_reg: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 7
+          body_start: 5
+          comprehension_end: 9
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create input array [10] in register 0
+      - "Load { dest: 1, literal_idx: 0 }"  # Load 10 into register 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 10 to array
+      - "SetNew { dest: 7 }"                # Initialize result set in register 7
+      - "ComprehensionStart { params_index: 0 }"     # Start set comprehension
+      - "Load { dest: 6, literal_idx: 1 }"  # Load subtrahend 1 into register 6
+      - "Sub { dest: 10, left: 5, right: 6 }" # Subtract 1 from current value, store result in register 10
+      - "ComprehensionAdd { value_reg: 10 }"       # Add transformed value to result set
+      - "Halt"                               # End comprehension
+      - "Return { value: 7 }"               # Return result set
+    want_result:
+      set!: [9]
+
+  - note: set_with_null_deduplication
+    description: Set comprehension with null values and deduplication
+    example_rego: |
+      # Collect unique values including nulls
+      {x | x := [1, null, 1, null, 2][_]}  # {1, null, 2}
+    literals:
+      - 1
+      - 2
+    instruction_params:
+      comprehension_start_params:
+        - mode: "Set"
+          collection_reg: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 7
+          body_start: 11
+          comprehension_end: 13
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create input array in register 0
+      - "Load { dest: 1, literal_idx: 0 }"  # Load 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 1 to array
+      - "LoadNull { dest: 2 }"              # Load null value
+      - "ArrayPush { arr: 0, value: 2 }"    # Push null to array
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 1 again (duplicate)
+      - "ArrayPush { arr: 0, value: 2 }"    # Push null again (duplicate)
+      - "Load { dest: 3, literal_idx: 1 }"  # Load 2
+      - "ArrayPush { arr: 0, value: 3 }"    # Push 2 to array
+      - "SetNew { dest: 7 }"                # Initialize result set in register 7
+      - "ComprehensionStart { params_index: 0 }"     # Start set comprehension
+      - "ComprehensionAdd { value_reg: 5 }"       # Add current value to result set (auto-deduplicates)
+      - "Halt"                               # End comprehension
+      - "Return { value: 7 }"               # Return result set
+    want_result:
+      set!: [1, null, 2]

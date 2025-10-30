@@ -1,0 +1,192 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Object Comprehension Test Suite
+# Tests object comprehensions - construct objects with key-value pairs based on conditions
+# Corresponds to Rego's "{key: value | condition}" patterns
+
+cases:
+  - note: object_simple_key_value
+    description: Simple object comprehension with computed values
+    example_rego: |
+      # Create object mapping each value to its double
+      {x: x * 2 | x := [1, 2, 3][_]}  # {1: 2, 2: 4, 3: 6}
+    literals:
+      - {}
+      - 1
+      - 2
+      - 3
+      - 2  # multiplier
+    instruction_params:
+      object_create_params:
+        - dest: 9
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      comprehension_begin_params:
+        - mode: "Object"
+          collection_reg: 9
+          result_reg: 9
+          key_reg: 4
+          value_reg: 5
+          body_start: 10
+          comprehension_end: 13
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 10
+          body_start: 10
+          loop_end: 14
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Index 0: Create input array [1, 2, 3]
+      - "Load { dest: 1, literal_idx: 1 }"  # Index 1: Load 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Index 2
+      - "Load { dest: 2, literal_idx: 2 }"  # Index 3: Load 2
+      - "ArrayPush { arr: 0, value: 2 }"    # Index 4
+      - "Load { dest: 3, literal_idx: 3 }"  # Index 5: Load 3
+      - "ArrayPush { arr: 0, value: 3 }"    # Index 6
+      - "ObjectCreate { params_index: 0 }"  # Index 7: Create empty result object in r9
+      - "ComprehensionBegin { params_index: 0 }"  # Index 8: Start object comprehension
+      - "LoopStart { params_index: 0 }"     # Index 9: Start loop
+      - "Load { dest: 11, literal_idx: 4 }" # Index 10: Load multiplier 2
+      - "Mul { dest: 12, left: 5, right: 11 }" # Index 11: Multiply value by 2
+      - "ComprehensionYield { value_reg: 12, key_reg: 5 }" # Index 12: Add key-value pair
+      - "LoopNext { body_start: 10, loop_end: 14 }"  # Index 13: Continue loop
+      - "Return { value: 9 }"               # Index 14: Return result object
+    want_result: {1: 2, 2: 4, 3: 6}
+
+  - note: object_empty_input
+    description: Object comprehension with empty input
+    example_rego: |
+      # Create object from empty array
+      {x: x + 5 | x := [][_]}  # {} (empty object)
+    literals:
+      - {}
+      - 5  # addend
+    instruction_params:
+      object_create_params:
+        - dest: 9
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      comprehension_begin_params:
+        - mode: "Object"
+          collection_reg: 9
+          result_reg: 9
+          key_reg: 4
+          value_reg: 5
+          body_start: 4
+          comprehension_end: 7
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 10
+          body_start: 4
+          loop_end: 8
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Index 0: Create empty input array
+      - "ObjectCreate { params_index: 0 }"  # Index 1: Create empty result object in r9
+      - "ComprehensionBegin { params_index: 0 }"  # Index 2: Start object comprehension
+      - "LoopStart { params_index: 0 }"     # Index 3: Start loop
+      - "Load { dest: 10, literal_idx: 1 }" # Index 4: Load addend 5
+      - "Add { dest: 11, left: 5, right: 10 }" # Index 5: Add 5 to value
+      - "ComprehensionYield { value_reg: 11, key_reg: 5 }" # Index 6: Add key-value pair
+      - "LoopNext { body_start: 4, loop_end: 8 }"  # Index 7: Continue loop
+      - "Return { value: 9 }"               # Index 8: Return result object
+    want_result: {}
+
+  - note: object_single_element
+    description: Object comprehension with single element
+    example_rego: |
+      # Create object with single key-value pair
+      {x: x - 1 | x := [5][_]}  # {5: 4}
+    literals:
+      - {}
+      - 5
+      - 1  # subtrahend
+    instruction_params:
+      object_create_params:
+        - dest: 9
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      comprehension_begin_params:
+        - mode: "Object"
+          collection_reg: 9
+          result_reg: 9
+          key_reg: 4
+          value_reg: 5
+          body_start: 6
+          comprehension_end: 9
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 10
+          body_start: 6
+          loop_end: 10
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Index 0: Create input array [5]
+      - "Load { dest: 1, literal_idx: 1 }"  # Index 1: Load 5
+      - "ArrayPush { arr: 0, value: 1 }"    # Index 2: Push 5 to array
+      - "ObjectCreate { params_index: 0 }"  # Index 3: Create empty result object in r9
+      - "ComprehensionBegin { params_index: 0 }"  # Index 4: Start object comprehension
+      - "LoopStart { params_index: 0 }"     # Index 5: Start loop
+      - "Load { dest: 10, literal_idx: 2 }" # Index 6: Load subtrahend 1
+      - "Sub { dest: 11, left: 5, right: 10 }" # Index 7: Subtract 1 from value
+      - "ComprehensionYield { value_reg: 11, key_reg: 5 }" # Index 8: Add key-value pair
+      - "LoopNext { body_start: 6, loop_end: 10 }"  # Index 9: Continue loop
+      - "Return { value: 9 }"               # Index 10: Return result object
+    want_result: {5: 4}
+
+  - note: object_with_null_keys
+    description: Object comprehension with null keys and values
+    example_rego: |
+      # Create object with null keys/values
+      {x: x | x := [1, null, 2][_]}  # {1: 1, null: null, 2: 2}
+    literals:
+      - {}
+      - 1
+      - 2
+    instruction_params:
+      object_create_params:
+        - dest: 9
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      comprehension_begin_params:
+        - mode: "Object"
+          collection_reg: 9
+          result_reg: 9
+          key_reg: 4
+          value_reg: 5
+          body_start: 10
+          comprehension_end: 11
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 10
+          body_start: 10
+          loop_end: 12
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Index 0: Create input array
+      - "Load { dest: 1, literal_idx: 1 }"  # Index 1: Load 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Index 2: Push 1 to array
+      - "LoadNull { dest: 2 }"              # Index 3: Load null value
+      - "ArrayPush { arr: 0, value: 2 }"    # Index 4: Push null to array
+      - "Load { dest: 3, literal_idx: 2 }"  # Index 5: Load 2
+      - "ArrayPush { arr: 0, value: 3 }"    # Index 6: Push 2 to array
+      - "ObjectCreate { params_index: 0 }"  # Index 7: Create empty result object in r9
+      - "ComprehensionBegin { params_index: 0 }"  # Index 8: Start object comprehension
+      - "LoopStart { params_index: 0 }"     # Index 9: Start loop
+      - "ComprehensionYield { value_reg: 5, key_reg: 5 }" # Index 10: Use value as both key and value
+      - "LoopNext { body_start: 10, loop_end: 12 }"  # Index 11: Continue loop
+      - "Return { value: 9 }"               # Index 12: Return result object
+    want_result: {1: 1, null: null, 2: 2}

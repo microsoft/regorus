@@ -1,0 +1,277 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Default Rules Infrastructure Test Suite
+# Tests the VM infrastructure support for default rule evaluation
+# These tests verify that the VM can properly handle complete rules with default fallbacks
+
+cases:
+  - note: vm_default_rule_boolean_false
+    description: Test VM default rule evaluation with boolean false value
+    example_rego: "default allow := false; allow := true if { false }"
+    literals:
+      - false
+      - true
+    rule_infos:
+      - rule_type: "Complete"
+        definitions: [[2]]  # Rule definition starts at instruction 2
+        default_literal_index: 0  # Points to literal index 0 (false)
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"  # Call the complete rule
+      - "Return { value: 0 }"                  # Return result
+      - "RuleInit { result_reg: 1, rule_index: 0 }"  # Initialize rule execution
+      - "Load { dest: 2, literal_idx: 0 }"     # Load false condition
+      - "AssertCondition { condition: 2 }"     # Assert condition (will fail)
+      - "Load { dest: 3, literal_idx: 1 }"     # Load true result
+      - "Move { dest: 1, src: 3 }"             # Move result to result register
+      - "RuleReturn"                           # Return from rule
+    want_result: false  # Should return default value when condition fails
+
+  - note: vm_default_rule_boolean_true
+    description: Test VM default rule evaluation with boolean true value  
+    example_rego: "default enabled := true; enabled := false if { false }"
+    literals:
+      - true
+      - false
+    rule_infos:
+      - rule_type: "Complete"
+        definitions: [[2]]  # Rule definition starts at instruction 2
+        default_literal_index: 0  # Points to literal index 0 (true)
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"  # Call the complete rule
+      - "Return { value: 0 }"                  # Return result
+      - "RuleInit { result_reg: 1, rule_index: 0 }"  # Initialize rule execution
+      - "Load { dest: 2, literal_idx: 1 }"     # Load false condition
+      - "AssertCondition { condition: 2 }"     # Assert condition (will fail)
+      - "Load { dest: 3, literal_idx: 1 }"     # Load false result
+      - "Move { dest: 1, src: 3 }"             # Move result to result register
+      - "RuleReturn"                           # Return from rule
+    want_result: true  # Should return default value when condition fails
+
+  - note: vm_default_rule_string_value
+    description: Test VM default rule evaluation with string value
+    example_rego: "default message := \"default\"; message := \"success\" if { false }"
+    literals:
+      - "default"
+      - "success"
+      - false
+    rule_infos:
+      - rule_type: "Complete"
+        definitions: [[2]]  # Rule definition starts at instruction 2
+        default_literal_index: 0  # Points to literal index 0 ("default")
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"  # Call the complete rule
+      - "Return { value: 0 }"                  # Return result
+      - "RuleInit { result_reg: 1, rule_index: 0 }"  # Initialize rule execution
+      - "Load { dest: 2, literal_idx: 2 }"     # Load false condition
+      - "AssertCondition { condition: 2 }"     # Assert condition (will fail)
+      - "Load { dest: 3, literal_idx: 1 }"     # Load success result
+      - "Move { dest: 1, src: 3 }"             # Move result to result register
+      - "RuleReturn"                           # Return from rule
+    want_result: "default"  # Should return default value when condition fails
+
+  - note: vm_default_rule_number_value
+    description: Test VM default rule evaluation with numeric value
+    example_rego: "default count := 0; count := 10 if { false }"
+    literals:
+      - 0
+      - 10
+      - false
+    rule_infos:
+      - rule_type: "Complete"
+        definitions: [[2]]  # Rule definition starts at instruction 2
+        default_literal_index: 0  # Points to literal index 0 (0)
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"  # Call the complete rule
+      - "Return { value: 0 }"                  # Return result
+      - "RuleInit { result_reg: 1, rule_index: 0 }"  # Initialize rule execution
+      - "Load { dest: 2, literal_idx: 2 }"     # Load false condition
+      - "AssertCondition { condition: 2 }"     # Assert condition (will fail)
+      - "Load { dest: 3, literal_idx: 1 }"     # Load 10 result
+      - "Move { dest: 1, src: 3 }"             # Move result to result register
+      - "RuleReturn"                           # Return from rule
+    want_result: 0  # Should return default value when condition fails
+
+  - note: vm_default_rule_array_value
+    description: Test VM default rule evaluation with array value
+    example_rego: "default items := [\"default\"]; items := [\"success\"] if { false }"
+    literals:
+      - ["default"]
+      - ["success"]
+      - false
+    rule_infos:
+      - rule_type: "Complete"
+        definitions: [[2]]  # Rule definition starts at instruction 2
+        default_literal_index: 0  # Points to literal index 0 (["default"])
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"  # Call the complete rule
+      - "Return { value: 0 }"                  # Return result
+      - "RuleInit { result_reg: 1, rule_index: 0 }"  # Initialize rule execution
+      - "Load { dest: 2, literal_idx: 2 }"     # Load false condition
+      - "AssertCondition { condition: 2 }"     # Assert condition (will fail)
+      - "Load { dest: 3, literal_idx: 1 }"     # Load success array
+      - "Move { dest: 1, src: 3 }"             # Move result to result register
+      - "RuleReturn"                           # Return from rule
+    want_result: ["default"]  # Should return default value when condition fails
+
+  - note: vm_default_rule_object_value
+    description: Test VM default rule evaluation with object value
+    example_rego: "default config := {\"mode\": \"safe\"}; config := {\"mode\": \"fast\"} if { false }"
+    literals:
+      - {"mode": "safe"}
+      - {"mode": "fast"}
+      - false
+    rule_infos:
+      - rule_type: "Complete"
+        definitions: [[2]]  # Rule definition starts at instruction 2
+        default_literal_index: 0  # Points to literal index 0 ({"mode": "safe"})
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"  # Call the complete rule
+      - "Return { value: 0 }"                  # Return result
+      - "RuleInit { result_reg: 1, rule_index: 0 }"  # Initialize rule execution
+      - "Load { dest: 2, literal_idx: 2 }"     # Load false condition
+      - "AssertCondition { condition: 2 }"     # Assert condition (will fail)
+      - "Load { dest: 3, literal_idx: 1 }"     # Load fast config
+      - "Move { dest: 1, src: 3 }"             # Move result to result register
+      - "RuleReturn"                           # Return from rule
+    want_result:
+      mode: "safe"  # Should return default value when condition fails
+
+  - note: vm_default_rule_null_value
+    description: Test VM default rule evaluation with null value
+    example_rego: "default optional := null; optional := \"value\" if { false }"
+    literals:
+      - null
+      - "value"
+      - false
+    rule_infos:
+      - rule_type: "Complete"
+        definitions: [[2]]  # Rule definition starts at instruction 2
+        default_literal_index: 0  # Points to literal index 0 (null)
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"  # Call the complete rule
+      - "Return { value: 0 }"                  # Return result
+      - "RuleInit { result_reg: 1, rule_index: 0 }"  # Initialize rule execution
+      - "Load { dest: 2, literal_idx: 2 }"     # Load false condition
+      - "AssertCondition { condition: 2 }"     # Assert condition (will fail)
+      - "Load { dest: 3, literal_idx: 1 }"     # Load string value
+      - "Move { dest: 1, src: 3 }"             # Move result to result register
+      - "RuleReturn"                           # Return from rule
+    want_result: null  # Should return default value when condition fails
+
+  - note: vm_default_rule_multiple_definitions_fail
+    description: Test VM default rule when multiple definitions all fail
+    example_rego: "default result := \"fallback\"; result := \"first\" if { false }; result := \"second\" if { false }"
+    literals:
+      - "fallback"
+      - "first"
+      - "second"
+      - false
+    rule_infos:
+      - rule_type: "Complete"
+        definitions: [[2], [7]]  # Two rule definitions
+        default_literal_index: 0  # Points to literal index 0 ("fallback")
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"  # Call the complete rule
+      - "Return { value: 0 }"                  # Return result
+      # First definition
+      - "RuleInit { result_reg: 1, rule_index: 0 }"  # Initialize rule execution
+      - "Load { dest: 2, literal_idx: 3 }"     # Load false condition
+      - "AssertCondition { condition: 2 }"     # Assert condition (will fail)
+      - "Load { dest: 3, literal_idx: 1 }"     # Load first result
+      - "Move { dest: 1, src: 3 }"             # Move result to result register
+      - "RuleReturn"                           # Return from rule
+      # Second definition
+      - "RuleInit { result_reg: 1, rule_index: 0 }"  # Initialize rule execution
+      - "Load { dest: 4, literal_idx: 3 }"     # Load false condition
+      - "AssertCondition { condition: 4 }"     # Assert condition (will fail)
+      - "Load { dest: 5, literal_idx: 2 }"     # Load second result
+      - "Move { dest: 1, src: 5 }"             # Move result to result register
+      - "RuleReturn"                           # Return from rule
+    want_result: "fallback"  # Should return default value when all definitions fail
+
+  - note: vm_default_rule_successful_condition
+    description: Test VM rule evaluation when condition succeeds (should not use default)
+    example_rego: "default allow := false; allow := true if { true }"
+    literals:
+      - false
+      - true
+    rule_infos:
+      - rule_type: "Complete"
+        definitions: [[2]]  # Rule definition starts at instruction 2
+        default_literal_index: 0  # Points to literal index 0 (false) - should not be used
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"  # Call the complete rule
+      - "Return { value: 0 }"                  # Return result
+      - "RuleInit { result_reg: 1, rule_index: 0 }"  # Initialize rule execution
+      - "Load { dest: 2, literal_idx: 1 }"     # Load true condition
+      - "AssertCondition { condition: 2 }"     # Assert condition (will succeed)
+      - "Load { dest: 3, literal_idx: 1 }"     # Load true result
+      - "Move { dest: 1, src: 3 }"             # Move result to result register
+      - "RuleReturn"                           # Return from rule
+    want_result: true  # Should return successful rule result, not default
+
+  - note: vm_default_rule_complex_object
+    description: Test VM default rule with complex nested object
+    example_rego: "default settings := complex_default; settings := complex_success if { false }"
+    literals:
+      - {
+          "timeout": 30,
+          "retries": 3,
+          "features": {
+            "logging": true,
+            "monitoring": false
+          },
+          "endpoints": ["api1", "api2"]
+        }
+      - {
+          "timeout": 60,
+          "retries": 5,
+          "features": {
+            "logging": false,
+            "monitoring": true
+          },
+          "endpoints": ["api3", "api4"]
+        }
+      - false
+    rule_infos:
+      - rule_type: "Complete"
+        definitions: [[2]]  # Rule definition starts at instruction 2
+        default_literal_index: 0  # Points to literal index 0 (complex default object)
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"  # Call the complete rule
+      - "Return { value: 0 }"                  # Return result
+      - "RuleInit { result_reg: 1, rule_index: 0 }"  # Initialize rule execution
+      - "Load { dest: 2, literal_idx: 2 }"     # Load false condition
+      - "AssertCondition { condition: 2 }"     # Assert condition (will fail)
+      - "Load { dest: 3, literal_idx: 1 }"     # Load success object
+      - "Move { dest: 1, src: 3 }"             # Move result to result register
+      - "RuleReturn"                           # Return from rule
+    want_result:
+      timeout: 30
+      retries: 3
+      features:
+        logging: true
+        monitoring: false
+      endpoints: ["api1", "api2"]  # Should return default complex object
+
+  - note: vm_no_default_rule_undefined
+    description: Test VM rule without default returns undefined when definition fails
+    example_rego: "allow := true if { false }  # No default rule"
+    literals:
+      - true
+      - false
+    rule_infos:
+      - rule_type: "Complete"
+        definitions: [[2]]  # Rule definition starts at instruction 2
+        # No default_literal_index - should return undefined
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"  # Call the complete rule
+      - "Return { value: 0 }"                  # Return result
+      - "RuleInit { result_reg: 1, rule_index: 0 }"  # Initialize rule execution
+      - "Load { dest: 2, literal_idx: 1 }"     # Load false condition
+      - "AssertCondition { condition: 2 }"     # Assert condition (will fail)
+      - "Load { dest: 3, literal_idx: 0 }"     # Load true result
+      - "Move { dest: 1, src: 3 }"             # Move result to result register
+      - "RuleReturn"                           # Return from rule
+    want_result: "#undefined"  # Should return undefined when no default and definition fails

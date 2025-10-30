@@ -20,7 +20,7 @@ keywords = ["interpreter", "no_std", "opa", "policy-as-code", "rego"]
 doctest = false
 
 [features]
-default = ["full-opa", "arc"]
+default = ["full-opa", "arc", "rvm"]
 
 arc = ["scientific/arc"]
 ast = []
@@ -38,6 +38,7 @@ net = ["dep:ipnet"]
 no_std = ["lazy_static/spin_no_std"]
 opa-runtime = []
 regex = ["dep:regex"]
+rvm = ["dep:bincode", "dep:indexmap"]
 semver = ["dep:semver"]
 std = ["rand/std", "rand/std_rng", "serde_json/std", "msvc_spectre_libs" ]
 time = ["dep:chrono", "dep:chrono-tz"]
@@ -99,7 +100,7 @@ lazy_static =  { version = "1.4.0", default-features = false }
 thiserror = { version = "2.0", default-features = false }
 
 data-encoding = { version = "2.8.0", optional = true, default-features=false, features = ["alloc"] }
-scientific = { version = "0.5.3" }
+scientific = { version = "0.5.3", default-features = false }
 
 globset = { version = "0.4.16", features = ["simd-accel"], default-features = false, optional = true }
 regex = {version = "1.11.1", optional = true, default-features = false }
@@ -119,6 +120,10 @@ rand = { version = "0.9.0", default-features = false, features = ["thread_rng"],
 msvc_spectre_libs = { version = "0.1", features = ["error"], optional = true }
 dashmap = { version = "6.1", default-features = false, optional = true }
 mimalloc = { path = "mimalloc", optional = true }
+
+# rvm related deps
+indexmap = { version = "2.12.0", default-features = false, features = ["serde"], optional = true }
+bincode = { version = "2.0.1", default-features = false, features = ["alloc", "serde"], optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.45"

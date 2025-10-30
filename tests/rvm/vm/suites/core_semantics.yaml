@@ -1,0 +1,232 @@
+# Comprehensive VM semantics regression suite
+# Covers arithmetic, comparisons, loop modes, assertions, and collection helpers.
+
+cases:
+  - note: arithmetic_ops
+    description: Verify primitive arithmetic instructions and array aggregation
+    literals:
+      - 8
+      - 2
+    instructions:
+      - "ArrayNew { dest: 5 }"
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "ArrayPush { arr: 5, value: 2 }"
+      - "Sub { dest: 3, left: 0, right: 1 }"
+      - "ArrayPush { arr: 5, value: 3 }"
+      - "Mul { dest: 4, left: 3, right: 1 }"
+      - "ArrayPush { arr: 5, value: 4 }"
+      - "Div { dest: 6, left: 0, right: 1 }"
+      - "ArrayPush { arr: 5, value: 6 }"
+      - "Mod { dest: 7, left: 0, right: 1 }"
+      - "ArrayPush { arr: 5, value: 7 }"
+      - "Return { value: 5 }"
+    want_result: [10, 6, 12, 4, 0]
+
+  - note: comparison_and_logic
+    description: Validate comparison, boolean, and negation instructions
+    literals:
+      - 5
+      - 5
+      - 3
+    instructions:
+      - "ArrayNew { dest: 11 }"
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 2 }"
+      - "Eq { dest: 3, left: 0, right: 1 }"
+      - "ArrayPush { arr: 11, value: 3 }"
+      - "Ne { dest: 4, left: 0, right: 1 }"
+      - "ArrayPush { arr: 11, value: 4 }"
+      - "Lt { dest: 5, left: 2, right: 0 }"
+      - "ArrayPush { arr: 11, value: 5 }"
+      - "Ge { dest: 6, left: 0, right: 2 }"
+      - "ArrayPush { arr: 11, value: 6 }"
+      - "And { dest: 7, left: 3, right: 5 }"
+      - "ArrayPush { arr: 11, value: 7 }"
+      - "Not { dest: 8, operand: 4 }"
+      - "ArrayPush { arr: 11, value: 8 }"
+      - "Or { dest: 9, left: 4, right: 5 }"
+      - "ArrayPush { arr: 11, value: 9 }"
+      - "Return { value: 11 }"
+    want_result: [true, false, true, true, true, true, true]
+
+  - note: loop_any_short_circuit_success
+    description: LoopMode::Any should exit on first successful iteration
+    literals:
+      - 1
+      - 2
+      - 3
+    instruction_params:
+      loop_params:
+        - mode: "Any"
+          collection: 0
+          key_reg: 6
+          value_reg: 7
+          result_reg: 8
+          body_start: 9
+          loop_end: 12
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ArrayPush { arr: 0, value: 2 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "ArrayPush { arr: 0, value: 3 }"
+      - "Load { dest: 4, literal_idx: 1 }"
+      - "LoopStart { params_index: 0 }"
+      - "Eq { dest: 5, left: 7, right: 4 }"
+      - "AssertCondition { condition: 5 }"
+      - "LoopNext { body_start: 9, loop_end: 11 }"
+      - "Return { value: 8 }"
+    want_result: true
+
+  - note: loop_any_all_fail
+    description: LoopMode::Any should remain false when no iteration succeeds
+    literals:
+      - 1
+      - 2
+      - 3
+      - 99
+    instruction_params:
+      loop_params:
+        - mode: "Any"
+          collection: 0
+          key_reg: 6
+          value_reg: 7
+          result_reg: 8
+          body_start: 9
+          loop_end: 12
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ArrayPush { arr: 0, value: 2 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "ArrayPush { arr: 0, value: 3 }"
+      - "Load { dest: 4, literal_idx: 3 }"
+      - "LoopStart { params_index: 0 }"
+      - "Eq { dest: 5, left: 7, right: 4 }"
+      - "AssertCondition { condition: 5 }"
+      - "LoopNext { body_start: 9, loop_end: 11 }"
+      - "Return { value: 8 }"
+    want_result: false
+
+  - note: loop_every_exits_on_failure
+    description: LoopMode::Every stops at the first failed iteration and returns false
+    literals:
+      - 1
+      - 0
+      - 1
+    instruction_params:
+      loop_params:
+        - mode: "Every"
+          collection: 0
+          key_reg: 6
+          value_reg: 7
+          result_reg: 8
+          body_start: 10
+          loop_end: 14
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "ArrayNew { dest: 9 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ArrayPush { arr: 0, value: 2 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "ArrayPush { arr: 0, value: 3 }"
+      - "Load { dest: 4, literal_idx: 0 }"
+      - "LoopStart { params_index: 0 }"
+      - "ArrayPush { arr: 9, value: 7 }"
+      - "Eq { dest: 5, left: 7, right: 4 }"
+      - "AssertCondition { condition: 5 }"
+      - "LoopNext { body_start: 10, loop_end: 13 }"
+      - "ArrayNew { dest: 10 }"
+      - "ArrayPush { arr: 10, value: 8 }"
+      - "ArrayPush { arr: 10, value: 9 }"
+      - "Return { value: 10 }"
+    want_result:
+      - false
+      - [1, 0]
+
+  - note: loop_foreach_collects_successes
+    description: LoopMode::ForEach tracks successful iterations while visiting all elements
+    literals:
+      - 0
+      - 5
+    instruction_params:
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 6
+          value_reg: 7
+          result_reg: 8
+          body_start: 9
+          loop_end: 13
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "ArrayNew { dest: 9 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 2 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "ArrayPush { arr: 0, value: 3 }"
+      - "LoopStart { params_index: 0 }"
+      - "Eq { dest: 4, left: 7, right: 3 }"
+      - "ArrayPush { arr: 9, value: 4 }"
+      - "AssertCondition { condition: 4 }"
+      - "LoopNext { body_start: 9, loop_end: 12 }"
+      - "ArrayNew { dest: 10 }"
+      - "ArrayPush { arr: 10, value: 8 }"
+      - "ArrayPush { arr: 10, value: 9 }"
+      - "Return { value: 10 }"
+    want_result:
+      - true
+      - [false, false, true]
+
+  - note: assert_condition_without_loop_errors
+    description: AssertCondition outside of a loop reports an assertion failure
+    literals:
+      - false
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "AssertCondition { condition: 0 }"
+      - "Return { value: 0 }"
+    want_error: "Assertion failed"
+
+  - note: contains_and_count_helpers
+    description: Contains and Count semantics across arrays, sets, and non-collections
+    literals:
+      - 1
+      - 2
+      - 9
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ArrayPush { arr: 0, value: 2 }"
+      - "SetNew { dest: 3 }"
+      - "SetAdd { set: 3, value: 1 }"
+      - "SetAdd { set: 3, value: 2 }"
+      - "Contains { dest: 4, collection: 0, value: 1 }"
+      - "Contains { dest: 5, collection: 3, value: 2 }"
+      - "Load { dest: 6, literal_idx: 2 }"
+      - "Contains { dest: 7, collection: 3, value: 6 }"
+      - "Count { dest: 8, collection: 0 }"
+      - "Count { dest: 9, collection: 3 }"
+      - "Count { dest: 10, collection: 1 }"
+      - "ArrayNew { dest: 11 }"
+      - "ArrayPush { arr: 11, value: 4 }"
+      - "ArrayPush { arr: 11, value: 5 }"
+      - "ArrayPush { arr: 11, value: 7 }"
+      - "ArrayPush { arr: 11, value: 8 }"
+      - "ArrayPush { arr: 11, value: 9 }"
+      - "ArrayPush { arr: 11, value: 10 }"
+      - "Return { value: 11 }"
+    want_result: [true, true, false, 2, 2, "#undefined"]

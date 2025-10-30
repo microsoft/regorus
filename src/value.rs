@@ -4,6 +4,7 @@
 use crate::number::Number;
 
 use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::vec::Vec;
 use core::fmt;
 use core::ops;
 
@@ -67,7 +68,7 @@ impl Serialize for Value {
     {
         use serde::ser::Error;
         match self {
-            Value::Null => serializer.serialize_none(),
+            Value::Null => serializer.serialize_unit(),
             Value::Bool(b) => serializer.serialize_bool(*b),
             Value::String(s) => serializer.serialize_str(s.as_ref()),
             Value::Number(n) => n.serialize(serializer),
@@ -116,6 +117,20 @@ impl<'de> Visitor<'de> for ValueVisitor {
         E: de::Error,
     {
         Ok(Value::Bool(v))
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::Null)
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Value::deserialize(deserializer)
     }
 
     fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>

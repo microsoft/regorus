@@ -1,0 +1,80 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Constructed Collections Test Suite
+# Validates ArrayCreate and SetCreate behavior including undefined handling.
+
+cases:
+  - note: array_create_basic
+    description: ArrayCreate assembles elements from registers
+    literals:
+      - 1
+      - 2
+    instruction_params:
+      array_create_params:
+        - dest: 3
+          elements: [0, 1, 2]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "ArrayCreate { params_index: 0 }"
+      - "Return { value: 3 }"
+    want_result:
+      - 1
+      - 2
+      - 3
+
+  - note: array_create_with_undefined
+    description: ArrayCreate returns undefined if any source is undefined
+    literals:
+      - 1
+      - {}
+      - "missing"
+    instruction_params:
+      array_create_params:
+        - dest: 2
+          elements: [0, 1]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "Load { dest: 4, literal_idx: 2 }"
+      - "Index { dest: 1, container: 3, key: 4 }"
+      - "ArrayCreate { params_index: 0 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: set_create_basic
+    description: SetCreate deduplicates values and collects registers
+    literals:
+      - 1
+      - 2
+    instruction_params:
+      set_create_params:
+        - dest: 3
+          elements: [0, 1, 2]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "SetCreate { params_index: 0 }"
+      - "Return { value: 3 }"
+    want_result:
+      set!: [1, 2]
+
+  - note: set_create_with_undefined
+    description: SetCreate returns undefined if any source register is undefined
+    literals:
+      - {}
+      - "missing"
+    instruction_params:
+      set_create_params:
+        - dest: 3
+          elements: [0]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Index { dest: 0, container: 1, key: 2 }"
+      - "SetCreate { params_index: 0 }"
+      - "Return { value: 3 }"
+    want_result: "#undefined"

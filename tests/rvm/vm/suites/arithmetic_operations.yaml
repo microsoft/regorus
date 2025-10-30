@@ -1,0 +1,168 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Arithmetic Operations Test Suite
+# Tests mathematical operations: Add, Sub, Mul, Div
+# These instructions perform basic arithmetic on numeric values
+
+cases:
+  - note: arithmetic_add
+    description: Test Add instruction
+    example_rego: "10 + 5"  # Addition expression
+    literals:
+      - 10
+      - 5
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 10 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load literal 5 into register 1
+      - "Add { dest: 2, left: 0, right: 1 }"  # Add register 0 + register 1, store in register 2
+      - "Return { value: 2 }"               # Return result from register 2
+    want_result: 15
+
+  - note: arithmetic_sub
+    description: Test Sub instruction
+    example_rego: "10 - 3"  # Subtraction expression
+    literals:
+      - 10
+      - 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 10 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load literal 3 into register 1
+      - "Sub { dest: 2, left: 0, right: 1 }"  # Subtract register 1 from register 0, store in register 2
+      - "Return { value: 2 }"               # Return result from register 2
+    want_result: 7
+
+  - note: arithmetic_mul
+    description: Test Mul instruction
+    example_rego: "4 * 6"  # Multiplication expression
+    literals:
+      - 4
+      - 6
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 4 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load literal 6 into register 1
+      - "Mul { dest: 2, left: 0, right: 1 }"  # Multiply register 0 * register 1, store in register 2
+      - "Return { value: 2 }"               # Return result from register 2
+    want_result: 24
+
+  - note: arithmetic_div
+    description: Test Div instruction
+    example_rego: "15 / 3"  # Division expression
+    literals:
+      - 15
+      - 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 15 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load literal 3 into register 1
+      - "Div { dest: 2, left: 0, right: 1 }"  # Divide register 0 / register 1, store in register 2
+      - "Return { value: 2 }"               # Return result from register 2
+    want_result: 5
+
+  - note: arithmetic_div_by_zero
+    description: Test Div by zero - undefined normally, error in strict mode
+    example_rego: "10 / 0"
+    literals:
+      - 10
+      - 0
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Div { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+    want_error_strict: "Cannot divide"
+
+  - note: arithmetic_mod
+    description: Test Mod instruction
+    example_rego: "10 % 3"
+    literals:
+      - 10
+      - 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Mod { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: 1
+
+  - note: arithmetic_mod_by_zero
+    description: Test Mod by zero - undefined normally, error in strict mode
+    example_rego: "10 % 0"
+    literals:
+      - 10
+      - 0
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Mod { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+    want_error_strict: "Cannot modulo"
+
+  - note: arithmetic_mod_negative_operands
+    description: Test Mod with negative operands
+    example_rego: "-10 % 3"
+    literals:
+      - -10
+      - 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Mod { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: -1
+
+  - note: arithmetic_mod_on_float_error
+    description: Test Mod on float - should error
+    example_rego: "10.5 % 3"
+    literals:
+      - 10.5
+      - 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Mod { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "modulo on floating-point number"
+
+  - note: arithmetic_chained_operations
+    description: Test chained arithmetic operations (a + b) * c
+    example_rego: "(5 + 3) * 2"
+    literals:
+      - 5
+      - 3
+      - 2
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load 5
+      - "Load { dest: 1, literal_idx: 1 }"  # Load 3
+      - "Add { dest: 2, left: 0, right: 1 }"  # 5 + 3 = 8
+      - "Load { dest: 3, literal_idx: 2 }"  # Load 2
+      - "Mul { dest: 4, left: 2, right: 3 }"  # 8 * 2 = 16
+      - "Return { value: 4 }"
+    want_result: 16
+
+  - note: arithmetic_float_precision
+    description: Test float arithmetic precision
+    example_rego: "0.1 + 0.2"
+    literals:
+      - 0.1
+      - 0.2
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: 0.3
+
+  - note: arithmetic_large_numbers
+    description: Test arithmetic with large numbers
+    example_rego: "1000000 * 1000000"
+    literals:
+      - 1000000
+      - 1000000
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Mul { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: 1000000000000

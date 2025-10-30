@@ -1,0 +1,432 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Integration Scenarios Test Suite
+# Tests real-world Rego policy patterns
+# Covers RBAC, filtering, transforms, and complex policy workflows
+
+cases:
+  - note: rbac_admin_check
+    description: Role-based access control - check admin role
+    example_rego: "allow { user.roles[_] == \"admin\" }"
+    literals:
+      - {"roles": ["user", "admin", "developer"]}
+      - "roles"
+      - "admin"
+    instruction_params:
+      loop_params:
+        - mode: "Any"
+          collection: 2
+          key_reg: 3
+          value_reg: 4
+          result_reg: 6
+          body_start: 5
+          loop_end: 8
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Load { dest: 5, literal_idx: 2 }"
+      - "LoopStart { params_index: 0 }"
+      - "Eq { dest: 7, left: 4, right: 5 }"
+      - "AssertCondition { condition: 7 }"
+      - "LoopNext { body_start: 5, loop_end: 8 }"
+      - "Return { value: 6 }"
+    want_result: true
+
+  - note: rbac_no_matching_role
+    description: RBAC check fails when role not present
+    example_rego: "allow { user.roles[_] == \"superadmin\" }"
+    literals:
+      - {"roles": ["user", "developer"]}
+      - "roles"
+      - "superadmin"
+    instruction_params:
+      loop_params:
+        - mode: "Any"
+          collection: 2
+          key_reg: 3
+          value_reg: 4
+          result_reg: 6
+          body_start: 5
+          loop_end: 8
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Load { dest: 5, literal_idx: 2 }"
+      - "LoopStart { params_index: 0 }"
+      - "Eq { dest: 7, left: 4, right: 5 }"
+      - "AssertCondition { condition: 7 }"
+      - "LoopNext { body_start: 5, loop_end: 8 }"
+      - "Return { value: 6 }"
+    want_result: false
+
+  - note: filtering_by_owner
+    description: Filter resources by owner ID
+    example_rego: "[x | x = resources[_]; x.owner == user.id]"
+    literals:
+      - [{"name": "res1", "owner": "user123"}, {"name": "res2", "owner": "user456"}, {"name": "res3", "owner": "user123"}]
+      - {"id": "user123"}
+      - "owner"
+      - "id"
+    instruction_params:
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 1
+          value_reg: 2
+          result_reg: 11
+          body_start: 4
+          loop_end: 12
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "ArrayNew { dest: 8 }"
+      - "Load { dest: 9, literal_idx: 1 }"
+      - "LoopStart { params_index: 0 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "Index { dest: 4, container: 2, key: 3 }"
+      - "Load { dest: 5, literal_idx: 3 }"
+      - "Index { dest: 6, container: 9, key: 5 }"
+      - "Eq { dest: 7, left: 4, right: 6 }"
+      - "AssertCondition { condition: 7 }"
+      - "ArrayPush { arr: 8, value: 2 }"
+      - "LoopNext { body_start: 4, loop_end: 12 }"
+      - "Return { value: 8 }"
+    want_result: [{"name": "res1", "owner": "user123"}, {"name": "res3", "owner": "user123"}]
+
+  - note: filtering_empty_result
+    description: Filter returns empty array when no matches
+    example_rego: "[x | x = resources[_]; x.owner == \"nonexistent\"]"
+    literals:
+      - [{"name": "res1", "owner": "user123"}, {"name": "res2", "owner": "user456"}]
+      - "owner"
+      - "nonexistent"
+    instruction_params:
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 1
+          value_reg: 2
+          result_reg: 8
+          body_start: 4
+          loop_end: 10
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "ArrayNew { dest: 7 }"
+      - "Load { dest: 5, literal_idx: 2 }"
+      - "LoopStart { params_index: 0 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "Index { dest: 4, container: 2, key: 3 }"
+      - "Eq { dest: 6, left: 4, right: 5 }"
+      - "AssertCondition { condition: 6 }"
+      - "ArrayPush { arr: 7, value: 2 }"
+      - "LoopNext { body_start: 4, loop_end: 10 }"
+      - "Return { value: 7 }"
+    want_result: []
+
+  - note: transform_multiply_values
+    description: Transform values by multiplying above threshold
+    example_rego: "{k: v * 2 | v = data.metrics[k]; v > threshold}"
+    literals:
+      - {"cpu": 50, "memory": 80, "disk": 30}
+      - 40
+      - 2
+      - {}
+    instruction_params:
+      object_create_params:
+        - dest: 4
+          template_literal_idx: 3
+          literal_key_fields: []
+          fields: []
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 1
+          value_reg: 2
+          result_reg: 9
+          body_start: 4
+          loop_end: 10
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "ObjectCreate { params_index: 0 }"
+      - "LoopStart { params_index: 0 }"
+      - "Gt { dest: 5, left: 2, right: 3 }"
+      - "AssertCondition { condition: 5 }"
+      - "Load { dest: 7, literal_idx: 2 }"
+      - "Mul { dest: 8, left: 2, right: 7 }"
+      - "ObjectSet { obj: 4, key: 1, value: 8 }"
+      - "LoopNext { body_start: 4, loop_end: 10 }"
+      - "Return { value: 4 }"
+    want_result: {"cpu": 100, "memory": 160}
+
+  - note: transform_all_values
+    description: Transform all values in map
+    example_rego: "{k: v + 10 | v = data[k]}"
+    literals:
+      - {"a": 1, "b": 2, "c": 3}
+      - 10
+      - {}
+    instruction_params:
+      object_create_params:
+        - dest: 4
+          template_literal_idx: 2
+          literal_key_fields: []
+          fields: []
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 1
+          value_reg: 2
+          result_reg: 6
+          body_start: 4
+          loop_end: 7
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "ObjectCreate { params_index: 0 }"
+      - "LoopStart { params_index: 0 }"
+      - "Add { dest: 5, left: 2, right: 3 }"
+      - "ObjectSet { obj: 4, key: 1, value: 5 }"
+      - "LoopNext { body_start: 4, loop_end: 7 }"
+      - "Return { value: 4 }"
+    want_result: {"a": 11, "b": 12, "c": 13}
+
+  - note: nested_filtering_and_transform
+    description: Filter then transform (chained operations)
+    example_rego: "[x * 2 | x = numbers[_]; x > 5]"
+    literals:
+      - [3, 7, 4, 9, 2, 8]
+      - 5
+      - 2
+    instruction_params:
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 1
+          value_reg: 2
+          result_reg: 6
+          body_start: 5
+          loop_end: 10
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "ArrayNew { dest: 5 }"
+      - "Load { dest: 9, literal_idx: 1 }"
+      - "Load { dest: 10, literal_idx: 2 }"
+      - "LoopStart { params_index: 0 }"
+      - "Gt { dest: 3, left: 2, right: 9 }"
+      - "AssertCondition { condition: 3 }"
+      - "Mul { dest: 4, left: 2, right: 10 }"
+      - "ArrayPush { arr: 5, value: 4 }"
+      - "LoopNext { body_start: 5, loop_end: 10 }"
+      - "Return { value: 5 }"
+    want_result: [14, 18, 16]
+
+  - note: multi_field_validation
+    description: Validate multiple fields meet criteria
+    example_rego: "valid { user.age >= 18; user.verified == true; user.status == \"active\" }"
+    literals:
+      - {"age": 25, "verified": true, "status": "active"}
+      - "age"
+      - 18
+      - "verified"
+      - "status"
+      - "active"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      # Check age >= 18
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "Ge { dest: 4, left: 2, right: 3 }"
+      - "Load { dest: 5, literal_idx: 3 }"
+      - "Index { dest: 6, container: 0, key: 5 }"
+      - "LoadTrue { dest: 7 }"
+      - "Eq { dest: 8, left: 6, right: 7 }"
+      - "And { dest: 9, left: 4, right: 8 }"
+      - "Load { dest: 10, literal_idx: 4 }"
+      - "Index { dest: 11, container: 0, key: 10 }"
+      - "Load { dest: 12, literal_idx: 5 }"
+      - "Eq { dest: 13, left: 11, right: 12 }"
+      - "And { dest: 14, left: 9, right: 13 }"
+      - "Return { value: 14 }"
+    want_result: true
+
+  - note: multi_field_validation_failure
+    description: Multi-field validation fails when one criterion not met
+    example_rego: "valid { user.age >= 18; user.verified == true; user.status == \"active\" }"
+    literals:
+      - {"age": 25, "verified": false, "status": "active"}
+      - "age"
+      - 18
+      - "verified"
+      - "status"
+      - "active"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      # Check age >= 18
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "Ge { dest: 4, left: 2, right: 3 }"
+      - "Load { dest: 5, literal_idx: 3 }"
+      - "Index { dest: 6, container: 0, key: 5 }"
+      - "LoadTrue { dest: 7 }"
+      - "Eq { dest: 8, left: 6, right: 7 }"
+      - "And { dest: 9, left: 4, right: 8 }"
+      - "Load { dest: 10, literal_idx: 4 }"
+      - "Index { dest: 11, container: 0, key: 10 }"
+      - "Load { dest: 12, literal_idx: 5 }"
+      - "Eq { dest: 13, left: 11, right: 12 }"
+      - "And { dest: 14, left: 9, right: 13 }"
+      - "Return { value: 14 }"
+    want_result: false
+
+  - note: set_membership_check
+    description: Check if value is in allowed set
+    example_rego: "allowed { input.action in {\"read\", \"write\", \"delete\"} }"
+    literals:
+      - {"action": "read"}
+      - "action"
+      - "read"
+      - "write"
+      - "delete"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      # Create allowed set
+      - "SetNew { dest: 3 }"
+      - "Load { dest: 4, literal_idx: 2 }"
+      - "SetAdd { set: 3, value: 4 }"
+      - "Load { dest: 5, literal_idx: 3 }"
+      - "SetAdd { set: 3, value: 5 }"
+      - "Load { dest: 6, literal_idx: 4 }"
+      - "SetAdd { set: 3, value: 6 }"
+      # Check membership
+      - "Contains { dest: 7, collection: 3, value: 2 }"
+      - "Return { value: 7 }"
+    want_result: true
+
+  - note: set_membership_denied
+    description: Check fails when value not in allowed set
+    example_rego: "allowed { input.action in {\"read\", \"write\", \"delete\"} }"
+    literals:
+      - {"action": "execute"}
+      - "action"
+      - "read"
+      - "write"
+      - "delete"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      # Create allowed set
+      - "SetNew { dest: 3 }"
+      - "Load { dest: 4, literal_idx: 2 }"
+      - "SetAdd { set: 3, value: 4 }"
+      - "Load { dest: 5, literal_idx: 3 }"
+      - "SetAdd { set: 3, value: 5 }"
+      - "Load { dest: 6, literal_idx: 4 }"
+      - "SetAdd { set: 3, value: 6 }"
+      # Check membership
+      - "Contains { dest: 7, collection: 3, value: 2 }"
+      - "Return { value: 7 }"
+    want_result: false
+
+  - note: aggregation_count
+    description: Count items matching condition
+    example_rego: "count([x | x = items[_]; x.status == \"active\"])"
+    literals:
+      - [{"id": 1, "status": "active"}, {"id": 2, "status": "inactive"}, {"id": 3, "status": "active"}]
+      - "status"
+      - "active"
+    instruction_params:
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 1
+          value_reg: 2
+          result_reg: 8
+          body_start: 4
+          loop_end: 10
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "ArrayNew { dest: 6 }"
+      - "Load { dest: 9, literal_idx: 2 }"
+      - "LoopStart { params_index: 0 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "Index { dest: 4, container: 2, key: 3 }"
+      - "Eq { dest: 5, left: 4, right: 9 }"
+      - "AssertCondition { condition: 5 }"
+      - "ArrayPush { arr: 6, value: 2 }"
+      - "LoopNext { body_start: 4, loop_end: 10 }"
+      - "Return { value: 6 }"
+    want_result: [{"id": 1, "status": "active"}, {"id": 3, "status": "active"}]
+
+  - note: hierarchical_permission_check
+    description: Check nested permission structure
+    example_rego: "allow { data.permissions[input.user][input.resource] == \"allow\" }"
+    literals:
+      - {"permissions": {"alice": {"doc1": "allow", "doc2": "deny"}, "bob": {"doc1": "deny"}}}
+      - {"user": "alice", "resource": "doc1"}
+      - "permissions"
+      - "user"
+      - "resource"
+      - "allow"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      # Load permissions
+      - "Load { dest: 2, literal_idx: 2 }"
+      - "Index { dest: 3, container: 0, key: 2 }"
+      # Load user
+      - "Load { dest: 4, literal_idx: 3 }"
+      - "Index { dest: 5, container: 1, key: 4 }"
+      # Index permissions by user
+      - "Index { dest: 6, container: 3, key: 5 }"
+      # Load resource
+      - "Load { dest: 7, literal_idx: 4 }"
+      - "Index { dest: 8, container: 1, key: 7 }"
+      # Index user permissions by resource
+      - "Index { dest: 9, container: 6, key: 8 }"
+      # Check if "allow"
+      - "Load { dest: 10, literal_idx: 5 }"
+      - "Eq { dest: 11, left: 9, right: 10 }"
+      - "Return { value: 11 }"
+    want_result: true
+
+  - note: default_value_pattern
+    description: Provide default value when path undefined
+    example_rego: "timeout := data.config.timeout; timeout == 30 if not data.config.timeout"
+    literals:
+      - {}
+      - "config"
+      - "timeout"
+      - 30
+    instruction_params:
+      loop_params:
+        - mode: "Any"
+          collection: 7
+          key_reg: 8
+          value_reg: 9
+          result_reg: 10
+          body_start: 10
+          loop_end: 13
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "Index { dest: 4, container: 2, key: 3 }"
+      - "Load { dest: 5, literal_idx: 3 }"
+      - "Contains { dest: 6, collection: 2, value: 3 }"
+      - "ArrayNew { dest: 7 }"
+      - "ArrayPush { arr: 7, value: 6 }"
+      - "LoopStart { params_index: 0 }"
+      - "AssertCondition { condition: 9 }"
+      - "Move { dest: 5, src: 4 }"
+      - "LoopNext { body_start: 10, loop_end: 13 }"
+      - "Return { value: 5 }"
+    want_result: 30

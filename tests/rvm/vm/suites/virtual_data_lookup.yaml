@@ -1,0 +1,274 @@
+# Virtual Data Lookup Test Suite
+# Exercises VirtualDataDocumentLookup across data/rule blending and errors.
+
+cases:
+  - note: virtual_lookup_base_data_only
+    description: Lookup resolves to base data when no rules override
+    data:
+      services:
+        api:
+          enabled: true
+    literals:
+      - "services"
+      - "api"
+      - "enabled"
+    instruction_params:
+      virtual_data_document_lookup_params:
+        - dest: 3
+          path_components:
+            - literal_idx: 0
+            - literal_idx: 1
+            - literal_idx: 2
+    instructions:
+      - "VirtualDataDocumentLookup { params_index: 0 }"
+      - "Return { value: 3 }"
+    want_result: true
+
+  - note: virtual_lookup_rule_override
+    description: Lookup combines rule result overriding base data
+    data:
+      services:
+        api:
+          enabled: false
+    literals:
+      - "services"
+      - "api"
+      - "enabled"
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [2]
+    rule_tree:
+      data:
+        services:
+          api:
+            enabled: 0
+    instruction_params:
+      virtual_data_document_lookup_params:
+        - dest: 3
+          path_components:
+            - literal_idx: 0
+            - literal_idx: 1
+            - literal_idx: 2
+    instructions:
+      - "VirtualDataDocumentLookup { params_index: 0 }"
+      - "Return { value: 3 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "LoadTrue { dest: 1 }"
+      - "RuleReturn {}"
+    want_result: true
+
+  - note: virtual_lookup_rule_subobject
+    description: Lookup merges nested rule tree subobjects
+    data:
+      tenants:
+        alpha:
+          feature: "beta"
+    literals:
+      - "tenants"
+      - "alpha"
+      - "feature"
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [2]
+    rule_tree:
+      data:
+        tenants:
+          alpha:
+            extra: 0
+    instruction_params:
+      virtual_data_document_lookup_params:
+        - dest: 4
+          path_components:
+            - literal_idx: 0
+            - literal_idx: 1
+    instructions:
+      - "VirtualDataDocumentLookup { params_index: 0 }"
+      - "Return { value: 4 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 2 }"
+      - "RuleReturn {}"
+    want_result:
+      feature: "beta"
+      extra: "feature"
+
+  - note: virtual_lookup_invalid_rule_index
+    description: Invalid rule index produces corresponding error
+    literals:
+      - "services"
+    instruction_params:
+      virtual_data_document_lookup_params:
+        - dest: 1
+          path_components:
+            - literal_idx: 0
+    rule_tree:
+      data:
+        services: 99
+    instructions:
+      - "VirtualDataDocumentLookup { params_index: 0 }"
+    want_error: "Rule index 99 out of bounds"
+
+  - note: virtual_lookup_rule_data_conflict
+    description: Rule completely replaces data at the same path
+    data:
+      config:
+        mode: "data_value"
+    literals:
+      - "config"
+      - "mode"
+      - "rule_value"
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [3]
+    rule_tree:
+      data:
+        config:
+          mode: 0
+    instruction_params:
+      virtual_data_document_lookup_params:
+        - dest: 3
+          path_components:
+            - literal_idx: 0
+            - literal_idx: 1
+    instructions:
+      - "VirtualDataDocumentLookup { params_index: 0 }"
+      - "Return { value: 3 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 2 }"
+      - "RuleReturn {}"
+    want_result: "rule_value"
+
+  - note: virtual_lookup_deep_path_5_levels
+    description: Lookup with 5-level deep path
+    data:
+      level1:
+        level2:
+          level3:
+            level4:
+              level5: "deep_value"
+    literals:
+      - "level1"
+      - "level2"
+      - "level3"
+      - "level4"
+      - "level5"
+    instruction_params:
+      virtual_data_document_lookup_params:
+        - dest: 5
+          path_components:
+            - literal_idx: 0
+            - literal_idx: 1
+            - literal_idx: 2
+            - literal_idx: 3
+            - literal_idx: 4
+    instructions:
+      - "VirtualDataDocumentLookup { params_index: 0 }"
+      - "Return { value: 5 }"
+    want_result: "deep_value"
+
+  - note: virtual_lookup_deep_path_with_array_indices
+    description: Lookup path with array index components
+    data:
+      containers:
+        - name: "first"
+        - name: "second"
+        - name: "third"
+    literals:
+      - "containers"
+      - 1
+      - "name"
+    instruction_params:
+      virtual_data_document_lookup_params:
+        - dest: 3
+          path_components:
+            - literal_idx: 0
+            - literal_idx: 1
+            - literal_idx: 2
+    instructions:
+      - "VirtualDataDocumentLookup { params_index: 0 }"
+      - "Return { value: 3 }"
+    want_result: "second"
+
+  - note: virtual_lookup_mixed_data_rules_deep
+    description: Deep lookup with rules at multiple levels
+    data:
+      org:
+        dept:
+          team:
+            lead: "data_lead"
+    literals:
+      - "org"
+      - "dept"
+      - "team"
+      - "lead"
+      - "rule_lead"
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [3]
+    rule_tree:
+      data:
+        org:
+          dept:
+            team:
+              lead: 0
+    instruction_params:
+      virtual_data_document_lookup_params:
+        - dest: 5
+          path_components:
+            - literal_idx: 0
+            - literal_idx: 1
+            - literal_idx: 2
+            - literal_idx: 3
+    instructions:
+      - "VirtualDataDocumentLookup { params_index: 0 }"
+      - "Return { value: 5 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 4 }"
+      - "RuleReturn {}"
+    want_result: "rule_lead"
+
+  - note: virtual_lookup_nonexistent_deep_path
+    description: Lookup of non-existent deep path returns undefined
+    data:
+      root:
+        child: "value"
+    literals:
+      - "root"
+      - "nonexistent"
+      - "path"
+    instruction_params:
+      virtual_data_document_lookup_params:
+        - dest: 3
+          path_components:
+            - literal_idx: 0
+            - literal_idx: 1
+            - literal_idx: 2
+    instructions:
+      - "VirtualDataDocumentLookup { params_index: 0 }"
+      - "Return { value: 3 }"
+    want_result: "#undefined"
+
+  - note: virtual_lookup_partial_match_deep_path
+    description: Partial path match returns undefined (not intermediate object)
+    data:
+      a:
+        b:
+          c: "value"
+    literals:
+      - "a"
+      - "b"
+      - "d"
+    instruction_params:
+      virtual_data_document_lookup_params:
+        - dest: 3
+          path_components:
+            - literal_idx: 0
+            - literal_idx: 1
+            - literal_idx: 2
+    instructions:
+      - "VirtualDataDocumentLookup { params_index: 0 }"
+      - "Return { value: 3 }"
+    want_result: "#undefined"

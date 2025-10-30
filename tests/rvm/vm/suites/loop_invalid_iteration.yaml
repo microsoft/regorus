@@ -1,0 +1,43 @@
+# Loop Invalid Iteration Test Suite
+# Asserts loop error paths and instruction limit behavior.
+
+cases:
+  - note: loop_start_on_scalar
+    description: LoopStart over scalar treats collection as empty and leaves result false
+    literals:
+      - 1
+    instruction_params:
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 1
+          value_reg: 2
+          result_reg: 3
+          body_start: 2
+          loop_end: 2
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "LoopStart { params_index: 0 }"
+      - "Return { value: 3 }"
+    want_result: false
+
+  - note: instruction_limit_exceeded
+    description: VM stops once max instruction limit reached
+    literals:
+      - [1, 2]
+    instruction_params:
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 1
+          value_reg: 2
+          result_reg: 3
+          body_start: 2
+          loop_end: 4
+    max_instructions: 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "LoopStart { params_index: 0 }"
+      - "LoopNext { body_start: 2, loop_end: 4 }"
+      - "Return { value: 3 }"
+    want_error: "exceeded maximum instruction limit"

@@ -1,0 +1,137 @@
+# HostAwait integration test suite
+# Verifies host suspension across execution modes and optional run-to-completion fallbacks.
+
+cases:
+  - note: host_await_single_response
+    description: Single HostAwait resumes with provided response in every execution mode
+    literals:
+      - "ping"
+      - "await-0"
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "HostAwait { dest: 2, arg: 1, id: 3 }"
+      - "ArrayPush { arr: 0, value: 2 }"
+      - "Return { value: 0 }"
+    host_await_responses:
+      - id: "await-0"
+        value: "pong"
+    want_result:
+      - "pong"
+
+  - note: host_await_multiple_responses
+    description: Multiple HostAwait instructions consume a queued sequence of responses
+    literals:
+      - 7
+      - "await-first"
+      - "await-second"
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 4, literal_idx: 1 }"
+      - "HostAwait { dest: 2, arg: 1, id: 4 }"
+      - "Load { dest: 5, literal_idx: 2 }"
+      - "HostAwait { dest: 3, arg: 2, id: 5 }"
+      - "ArrayPush { arr: 0, value: 2 }"
+      - "ArrayPush { arr: 0, value: 3 }"
+      - "Return { value: 0 }"
+    host_await_responses_run_to_completion:
+      - id: "await-first"
+        value: 42
+      - id: "await-second"
+        value: 43
+    host_await_responses_suspendable:
+      - id: "await-first"
+        value: 42
+      - id: "await-second"
+        value: 43
+    want_result:
+      - 42
+      - 43
+
+  - note: host_await_suspendable_only
+    description: Run-to-completion failure due to missing HostAwait response is ignored when flagged
+    literals:
+      - "payload"
+      - "await-single"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "HostAwait { dest: 1, arg: 0, id: 2 }"
+      - "Return { value: 1 }"
+    host_await_responses_suspendable:
+      - id: "await-single"
+        value: "resume-value"
+    ignore_run_to_completion_hostawait_failure: true
+    want_result: "resume-value"
+
+  - note: host_await_multiple_sequential
+    description: Three sequential HostAwait calls with different responses
+    literals:
+      - "first"
+      - "second"
+      - "third"
+      - "id-1"
+      - "id-2"
+      - "id-3"
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 10, literal_idx: 3 }"
+      - "HostAwait { dest: 2, arg: 1, id: 10 }"
+      - "ArrayPush { arr: 0, value: 2 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "Load { dest: 11, literal_idx: 4 }"
+      - "HostAwait { dest: 4, arg: 3, id: 11 }"
+      - "ArrayPush { arr: 0, value: 4 }"
+      - "Load { dest: 5, literal_idx: 2 }"
+      - "Load { dest: 12, literal_idx: 5 }"
+      - "HostAwait { dest: 6, arg: 5, id: 12 }"
+      - "ArrayPush { arr: 0, value: 6 }"
+      - "Return { value: 0 }"
+    host_await_responses:
+      - id: "id-1"
+        value: "response-1"
+      - id: "id-2"
+        value: "response-2"
+      - id: "id-3"
+        value: "response-3"
+    want_result: ["response-1", "response-2", "response-3"]
+
+  - note: host_await_in_loop_body
+    description: HostAwait inside loop body - suspend/resume per iteration
+    literals:
+      - 1
+      - 2
+      - "id-1"
+      - "id-2"
+    instruction_params:
+      loop_params:
+        - mode: "ForEach"
+          collection: 5
+          key_reg: 10
+          value_reg: 11
+          result_reg: 12
+          body_start: 7
+          loop_end: 11
+    instructions:
+      - "ArrayNew { dest: 5 }"  # Collection [1, 2]
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 5, value: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ArrayPush { arr: 5, value: 2 }"
+      - "ArrayNew { dest: 0 }"  # Result array
+      - "LoopStart { params_index: 0 }"
+      # HostAwait with dynamic ID based on loop value
+      - "Load { dest: 13, literal_idx: 2 }"  # Load base ID
+      - "HostAwait { dest: 14, arg: 11, id: 13 }"
+      - "ArrayPush { arr: 0, value: 14 }"
+      - "LoopNext { body_start: 7, loop_end: 11 }"
+      - "Return { value: 0 }"
+    host_await_responses:
+      - id: "id-1"
+        value: "loop-response-1"
+      - id: "id-1"
+        value: "loop-response-2"
+    want_result: ["loop-response-1", "loop-response-2"]

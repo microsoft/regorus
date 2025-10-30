@@ -1,0 +1,32 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Basic VM Instructions Test Suite
+# Tests fundamental instructions: Load, Move, Return
+# These form the foundation for all other VM operations
+
+cases:
+  - note: load_instruction
+    description: Test basic Load instruction
+    example_rego: "42"  # Simple literal expression
+    literals:
+      - 42
+      - "hello"
+      - true
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 42 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load literal "hello" into register 1
+      - "Load { dest: 2, literal_idx: 2 }"  # Load literal true into register 2
+      - "Return { value: 0 }"               # Return value from register 0
+    want_result: 42
+
+  - note: move_instruction
+    description: Test Move instruction
+    example_rego: "x := 123; x"  # Variable assignment and reference
+    literals:
+      - 123
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 123 into register 0 (x := 123)
+      - "Move { dest: 1, src: 0 }"         # Move value from register 0 to register 1 (reference x)
+      - "Return { value: 1 }"              # Return value from register 1
+    want_result: 123

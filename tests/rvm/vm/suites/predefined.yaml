@@ -1,0 +1,165 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Predefined Global Bindings Test Suite
+# Tests Rego's predefined data and input global bindings
+# These bindings are always available in Rego policies
+
+cases:
+  - note: load_data_basic
+    description: Test loading global data object
+    data:
+      users: ["alice", "bob"]
+      config:
+        debug: true
+        timeout: 30
+    input: null
+    literals: ["users"]
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"  # Load "users" literal
+      - "Index { dest: 2, container: 0, key: 1 }"  # data.users
+      - "Return { value: 2 }"
+    want_result: ["alice", "bob"]
+
+  - note: load_input_basic
+    description: Test loading global input object
+    data: null
+    input:
+      request:
+        method: "GET"
+        path: "/api/users"
+      user:
+        id: 123
+        role: "admin"
+    literals: ["request", "method"]
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"  # Load "request" literal
+      - "Index { dest: 2, container: 0, key: 1 }"  # input.request
+      - "Load { dest: 3, literal_idx: 1 }"  # Load "method" literal
+      - "Index { dest: 4, container: 2, key: 3 }"  # input.request.method
+      - "Return { value: 4 }"
+    want_result: "GET"
+
+  - note: data_and_input_combined
+    description: Test using both data and input in same expression
+    data:
+      permissions:
+        admin: ["read", "write", "delete"]
+        user: ["read"]
+    input:
+      user:
+        role: "admin"
+    literals: ["permissions", "user", "role"]
+    instructions:
+      - "LoadData { dest: 0 }"        # Load data
+      - "LoadInput { dest: 1 }"       # Load input
+      - "Load { dest: 2, literal_idx: 1 }"        # Load "user" literal
+      - "Index { dest: 3, container: 1, key: 2 }"  # input.user
+      - "Load { dest: 4, literal_idx: 2 }"        # Load "role" literal
+      - "Index { dest: 5, container: 3, key: 4 }"  # input.user.role
+      - "Load { dest: 6, literal_idx: 0 }"        # Load "permissions" literal
+      - "Index { dest: 7, container: 0, key: 6 }"  # data.permissions
+      - "Index { dest: 8, container: 7, key: 5 }"  # data.permissions[input.user.role]
+      - "Return { value: 8 }"
+    want_result: ["read", "write", "delete"]
+
+  - note: data_null_handling
+    description: Test behavior when data is null
+    data: null
+    input:
+      test: "value"
+    literals: []
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result: null
+
+  - note: input_null_handling
+    description: Test behavior when input is null
+    data:
+      test: "value"
+    input: null
+    literals: []
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result: null
+
+  - note: nested_data_access
+    description: Test deep nested data access
+    data:
+      api:
+        v1:
+          endpoints:
+            users: "/api/v1/users"
+            posts: "/api/v1/posts"
+    input: null
+    literals: ["api", "v1", "endpoints", "users"]
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"        # "api"
+      - "Index { dest: 2, container: 0, key: 1 }"  # data.api
+      - "Load { dest: 3, literal_idx: 1 }"        # "v1"
+      - "Index { dest: 4, container: 2, key: 3 }"  # data.api.v1
+      - "Load { dest: 5, literal_idx: 2 }"        # "endpoints"
+      - "Index { dest: 6, container: 4, key: 5 }"  # data.api.v1.endpoints
+      - "Load { dest: 7, literal_idx: 3 }"        # "users"
+      - "Index { dest: 8, container: 6, key: 7 }"  # data.api.v1.endpoints.users
+      - "Return { value: 8 }"
+    want_result: "/api/v1/users"
+
+  - note: array_access_with_input
+    description: Test array indexing with input values
+    data:
+      colors: ["red", "green", "blue"]
+    input:
+      selected_index: 1
+    literals: ["colors", "selected_index"]
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "LoadInput { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"        # "colors"
+      - "Index { dest: 3, container: 0, key: 2 }"  # data.colors
+      - "Load { dest: 4, literal_idx: 1 }"        # "selected_index"
+      - "Index { dest: 5, container: 1, key: 4 }"  # input.selected_index
+      - "Index { dest: 6, container: 3, key: 5 }"  # data.colors[input.selected_index]
+      - "Return { value: 6 }"
+    want_result: "green"
+
+  - note: data_only_access
+    description: Test accessing data when input is not needed
+    data:
+      settings:
+        theme: "dark"
+        notifications: true
+    input: null
+    literals: ["settings", "theme"]
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"        # "settings"
+      - "Index { dest: 2, container: 0, key: 1 }"  # data.settings
+      - "Load { dest: 3, literal_idx: 1 }"        # "theme"
+      - "Index { dest: 4, container: 2, key: 3 }"  # data.settings.theme
+      - "Return { value: 4 }"
+    want_result: "dark"
+
+  - note: input_only_access
+    description: Test accessing input when data is not needed
+    data: null
+    input:
+      request:
+        headers:
+          authorization: "Bearer token123"
+    literals: ["request", "headers", "authorization"]
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"        # "request"
+      - "Index { dest: 2, container: 0, key: 1 }"  # input.request
+      - "Load { dest: 3, literal_idx: 1 }"        # "headers"
+      - "Index { dest: 4, container: 2, key: 3 }"  # input.request.headers
+      - "Load { dest: 5, literal_idx: 2 }"        # "authorization"
+      - "Index { dest: 6, container: 4, key: 5 }"  # input.request.headers.authorization
+      - "Return { value: 6 }"
+    want_result: "Bearer token123"

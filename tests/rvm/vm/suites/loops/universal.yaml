@@ -1,0 +1,143 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Universal Loops Test Suite
+# Tests universal quantification - succeed if ALL elements satisfy the condition
+# Corresponds to Rego's "every x in collection; condition" patterns
+
+cases:
+  - note: universal_basic_every
+    description: Basic universal quantification - every element satisfies condition
+    example_rego: |
+      # Check if every element in array is greater than 0
+      every x in [1, 2, 3] {
+        x > 0  # true (all elements > 0)
+      }
+    literals:
+      - 1
+      - 2
+      - 3
+      - 0  # comparison value
+    instruction_params:
+      loop_params:
+        - mode: "Every"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 6
+          body_start: 8
+          loop_end: 12
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create input array [1, 2, 3] in register 0
+      - "Load { dest: 1, literal_idx: 0 }"  # Load 1 into register 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 1 to array
+      - "Load { dest: 2, literal_idx: 1 }"  # Load 2 into register 2
+      - "ArrayPush { arr: 0, value: 2 }"    # Push 2 to array
+      - "Load { dest: 3, literal_idx: 2 }"  # Load 3 into register 3
+      - "ArrayPush { arr: 0, value: 3 }"    # Push 3 to array
+      - "LoopStart { params_index: 0 }"     # Start universal loop using parameter table index 0
+      - "Load { dest: 7, literal_idx: 3 }"  # Load comparison value 0 into register 7
+      - "Gt { dest: 8, left: 5, right: 7 }" # Check if current value > 0
+      - "AssertCondition { condition: 8 }"  # Assert the condition result for universal logic
+      - "LoopNext { body_start: 8, loop_end: 12 }"  # Continue to next iteration or exit early if condition fails
+      - "Return { value: 6 }"               # Return result (true if all elements satisfied condition)
+    want_result: true
+
+  - note: universal_one_fails
+    description: Universal quantification where one element fails condition
+    example_rego: |
+      # Check if every element in array is greater than 1  
+      every x in [1, 2, 3] {
+        x > 1  # false (1 is not > 1)
+      }
+    literals:
+      - 1
+      - 2
+      - 3
+      - 1  # comparison value
+    instruction_params:
+      loop_params:
+        - mode: "Every"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 6
+          body_start: 8
+          loop_end: 12
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create input array [1, 2, 3] in register 0
+      - "Load { dest: 1, literal_idx: 0 }"  # Load 1 into register 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 1 to array
+      - "Load { dest: 2, literal_idx: 1 }"  # Load 2 into register 2
+      - "ArrayPush { arr: 0, value: 2 }"    # Push 2 to array
+      - "Load { dest: 3, literal_idx: 2 }"  # Load 3 into register 3
+      - "ArrayPush { arr: 0, value: 3 }"    # Push 3 to array
+      - "LoopStart { params_index: 0 }"     # Start universal loop using parameter table index 0
+      - "Load { dest: 7, literal_idx: 3 }"  # Load comparison value 1 into register 7
+      - "Gt { dest: 8, left: 5, right: 7 }" # Check if current value > 1
+      - "AssertCondition { condition: 8 }"  # Assert the condition result for universal logic
+      - "LoopNext { body_start: 8, loop_end: 12 }"  # Continue to next iteration or exit early on failure
+      - "Return { value: 6 }"               # Return result (false since first element failed condition)
+    want_result: false
+
+  - note: universal_empty_collection
+    description: Universal quantification on empty collection
+    example_rego: |
+      # Check if every element in empty array satisfies condition
+      every x in [] {
+        x > 0  # true (vacuously true - all 0 elements satisfy condition)
+      }
+    literals:
+      - 0  # comparison value
+    instruction_params:
+      loop_params:
+        - mode: "Every"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 6
+          body_start: 2
+          loop_end: 5
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create empty input array in register 0
+      - "LoopStart { params_index: 0 }"     # Start universal loop
+      - "Load { dest: 7, literal_idx: 0 }"  # Load comparison value 0 into register 7
+      - "Gt { dest: 8, left: 5, right: 7 }" # Check if current value > 0
+      - "LoopNext { body_start: 2, loop_end: 5 }"  # Continue to next iteration
+      - "Return { value: 6 }"               # Return result (true for empty collection - vacuous truth)
+    want_result: true
+
+  - note: universal_null_handling
+    description: Universal quantification with null values
+    example_rego: |
+      # Test behavior with null values - should handle gracefully
+      every x in [2, null, 4] {
+        x != null  # false (null fails the condition)
+      }
+    literals:
+      - 2
+      - 4
+    instruction_params:
+      loop_params:
+        - mode: "Every"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 6
+          body_start: 8
+          loop_end: 12
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create input array in register 0
+      - "Load { dest: 1, literal_idx: 0 }"  # Load 2
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 2 to array
+      - "LoadNull { dest: 2 }"              # Load null value
+      - "ArrayPush { arr: 0, value: 2 }"    # Push null to array
+      - "Load { dest: 3, literal_idx: 1 }"  # Load 4
+      - "ArrayPush { arr: 0, value: 3 }"    # Push 4 to array
+      - "LoopStart { params_index: 0 }"     # Start universal loop
+      - "LoadNull { dest: 7 }"              # Load null for comparison
+      - "Ne { dest: 8, left: 5, right: 7 }" # Check if current value != null
+      - "AssertCondition { condition: 8 }"  # Assert the condition result for universal logic
+      - "LoopNext { body_start: 8, loop_end: 12 }"  # Continue to next iteration
+      - "Return { value: 6 }"               # Return result
+    want_result: false

@@ -1,0 +1,183 @@
+name: "Nested Loops Test Suite"
+description: "Test various combinations and levels of nesting for different looping constructs"
+
+cases:
+  - note: "simple_nested_comprehension"
+    description: "Test simple nested array comprehension"
+    example_rego: |
+      [[x | x := [1, 2][_]] | _ := [1, 2][_]]
+    literals:
+      - 1
+      - 2
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 1
+          key_reg: 2
+          value_reg: 3
+          body_start: 6
+          comprehension_end: 23
+        - mode: "Array"
+          collection_reg: 11
+          key_reg: 12
+          value_reg: 13
+          body_start: 12
+          comprehension_end: 20
+      loop_params:
+        - mode: "ForEach"
+          collection: 6
+          key_reg: 7
+          value_reg: 8
+          result_reg: 9
+          body_start: 7
+          loop_end: 22
+        - mode: "ForEach"
+          collection: 16
+          key_reg: 17
+          value_reg: 18
+          result_reg: 19
+          body_start: 15
+          loop_end: 18
+    instructions:
+      - "ComprehensionBegin { params_index: 0 }"  # array comprehension in r1, body: 4-21 (P0)
+      - "Load { dest: 4, literal_idx: 0 }"       # Load literal: 1
+      - "Load { dest: 5, literal_idx: 1 }"       # Load literal: 2
+      - "ArrayNew { dest: 6 }"                   # Create empty array r6
+      - "ArrayPush { arr: 6, value: 4 }"         # Push r4 to r6
+      - "ArrayPush { arr: 6, value: 5 }"         # Push r5 to r6 -> [1, 2]
+      - "LoopStart { params_index: 0 }"          # foreach loop over r6, body: 8-20 (P0)
+      # Outer loop body starts here (index 7)
+      - "Move { dest: 10, src: 8 }"              # Copy value from r8 to r10
+      - "ComprehensionBegin { params_index: 1 }" # array comprehension in r11, body: 10-18 (P1)
+      - "Load { dest: 14, literal_idx: 0 }"      # Load literal: 1
+      - "Load { dest: 15, literal_idx: 1 }"      # Load literal: 2
+      - "ArrayNew { dest: 16 }"                  # Create empty array r16
+      - "ArrayPush { arr: 16, value: 14 }"       # Push r14 to r16
+      - "ArrayPush { arr: 16, value: 15 }"       # Push r15 to r16 -> [1, 2]
+      - "LoopStart { params_index: 1 }"          # foreach loop over r16, body: 14-17 (P1)
+      # Inner loop body starts here (index 16)
+      - "Move { dest: 20, src: 18 }"             # Copy value from r18 to r20
+      - "ComprehensionYield { value_reg: 20 }"   # Yield value to comprehension
+      - "LoopNext { body_start: 16, loop_end: 19 }" # continue → 16 or exit → 19
+      # Inner comprehension end (index 19)
+      - "ComprehensionEnd"                        # End comprehension block
+      - "ComprehensionYield { value_reg: 11 }"   # Yield value to comprehension
+      - "LoopNext { body_start: 7, loop_end: 22 }" # continue → 7 or exit → 22
+      # Outer comprehension end (index 22)
+      - "ComprehensionEnd"                        # End comprehension block
+      - "Move { dest: 0, src: 1 }"               # Copy value from r1 to r0
+      - "Return { value: 0 }"                     # Return value from r0
+    want_result: [[1, 2], [1, 2]]
+
+  - note: "some_nested_comprehension"
+    description: "Test some with nested array comprehension"
+    example_rego: |
+      [1, 2][_] == [x | x := [1, 2, 3][_]; x > 1][_]
+    literals:
+      - 1
+      - 2
+      - 3
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 12
+          result_reg: 12
+          key_reg: 10
+          value_reg: 11
+          body_start: 16
+          comprehension_end: 20
+      loop_params:
+        - mode: "Any"
+          collection: 0
+          key_reg: 7
+          value_reg: 8
+          result_reg: 9
+          body_start: 14
+          loop_end: 27
+        - mode: "ForEach"
+          collection: 3
+          key_reg: 10
+          value_reg: 11
+          result_reg: 21
+          body_start: 16
+          loop_end: 20
+        - mode: "Any"
+          collection: 12
+          key_reg: 13
+          value_reg: 14
+          result_reg: 15
+          body_start: 22
+          loop_end: 25
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Index 0: Build left array [1, 2]
+      - "Load { dest: 1, literal_idx: 0 }"  # Index 1: Load literal 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Index 2
+      - "Load { dest: 2, literal_idx: 1 }"  # Index 3: Load literal 2
+      - "ArrayPush { arr: 0, value: 2 }"    # Index 4
+      - "ArrayNew { dest: 3 }"              # Index 5: Build source array [1, 2, 3]
+      - "Load { dest: 4, literal_idx: 0 }"  # Index 6
+      - "ArrayPush { arr: 3, value: 4 }"    # Index 7
+      - "Load { dest: 5, literal_idx: 1 }"  # Index 8
+      - "ArrayPush { arr: 3, value: 5 }"    # Index 9
+      - "Load { dest: 6, literal_idx: 2 }"  # Index 10
+      - "ArrayPush { arr: 3, value: 6 }"    # Index 11
+      - "Load { dest: 16, literal_idx: 0 }" # Index 12: Load 1 for comparison (stays stable)
+      - "LoopStart { params_index: 0 }"     # Index 13: Start outer some loop over [1, 2]
+      - "ComprehensionBegin { params_index: 0 }"  # Index 14: Build filtered comprehension
+      - "LoopStart { params_index: 1 }"     # Index 15: Iterate source values for comprehension
+      - "Gt { dest: 17, left: 11, right: 16 }"  # Index 16: Check x > 1
+      - "AssertCondition { condition: 17 }"  # Index 17: Skip values <= 1
+      - "ComprehensionYield { value_reg: 11 }"   # Index 18: Include qualifying value
+      - "LoopNext { body_start: 16, loop_end: 20 }"  # Index 19: Continue comprehension loop
+      - "ComprehensionEnd"                    # Index 20: Finish comprehension block
+      - "LoopStart { params_index: 2 }"     # Index 21: Iterate comprehension results
+      - "Eq { dest: 18, left: 8, right: 14 }"   # Index 22: Compare outer value with result value
+      - "AssertCondition { condition: 18 }"  # Index 23: Success when values match
+      - "LoopNext { body_start: 22, loop_end: 25 }"  # Index 24: Continue inner any loop
+      - "AssertCondition { condition: 15 }"  # Index 25: Require some match from inner any loop
+      - "LoopNext { body_start: 14, loop_end: 27 }"  # Index 26: Continue outer some loop
+      - "Return { value: 9 }"                # Index 27
+    want_result: true
+
+  - note: "nested_with_condition"
+    description: "Test nested loops with conditional logic"
+    example_rego: |
+      [x | x := [1, 2, 3][_]; x > 1]
+    literals:
+      - 1
+      - 2
+      - 3
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 6
+          result_reg: 6
+          key_reg: 4
+          value_reg: 5
+          body_start: 9
+          comprehension_end: 14
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 7
+          body_start: 9
+          loop_end: 14
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Index 0: Create input array [1, 2, 3]
+      - "Load { dest: 1, literal_idx: 0 }"  # Index 1: Load 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Index 2: Push 1 to array
+      - "Load { dest: 2, literal_idx: 1 }"  # Index 3: Load 2
+      - "ArrayPush { arr: 0, value: 2 }"    # Index 4: Push 2 to array
+      - "Load { dest: 3, literal_idx: 2 }"  # Index 5: Load 3
+      - "ArrayPush { arr: 0, value: 3 }"    # Index 6: Push 3 to array
+      - "ComprehensionBegin { params_index: 0 }"  # Index 7: Start comprehension
+      - "LoopStart { params_index: 0 }"     # Index 8: Start loop
+      - "Load { dest: 7, literal_idx: 0 }"  # Index 9: Load 1 for comparison
+      - "Gt { dest: 8, left: 5, right: 7 }" # Index 10: x > 1
+      - "AssertCondition { condition: 8 }" # Index 11: Assert x > 1 (skip if false)
+      - "ComprehensionYield { value_reg: 5 }"    # Index 12: Push x to result if condition true
+      - "LoopNext { body_start: 9, loop_end: 13 }"  # Index 13: Continue loop
+      - "Return { value: 6 }"               # Index 14: Return comprehension result
+    want_result: [2, 3]

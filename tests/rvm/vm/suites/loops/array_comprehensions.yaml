@@ -1,0 +1,160 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Array Comprehension Test Suite
+# Tests array comprehensions - collect transformed values based on conditions
+# Corresponds to Rego's "[transform | condition]" patterns
+
+cases:
+  - note: array_simple_transform
+    description: Simple array comprehension with transformation
+    example_rego: |
+      # Transform array elements by doubling them
+      [x * 2 | x := [1, 2, 3][_]]  # [2, 4, 6]
+    literals:
+      - 1
+      - 2
+      - 3
+      - 2  # multiplier
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 7
+          key_reg: 4
+          value_reg: 5
+          body_start: 8
+          comprehension_end: 11
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 8
+          body_start: 9
+          loop_end: 12
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create input array [1, 2, 3] in register 0
+      - "Load { dest: 1, literal_idx: 0 }"  # Load 1 into register 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 1 to array
+      - "Load { dest: 2, literal_idx: 1 }"  # Load 2 into register 2
+      - "ArrayPush { arr: 0, value: 2 }"    # Push 2 to array
+      - "Load { dest: 3, literal_idx: 2 }"  # Load 3 into register 3
+      - "ArrayPush { arr: 0, value: 3 }"    # Push 3 to array
+      - "ComprehensionBegin { params_index: 0 }"  # Start array comprehension and initialize result in register 7
+      - "LoopStart { params_index: 0 }"  # Start loop over array elements
+      - "Load { dest: 6, literal_idx: 3 }"  # Load multiplier 2 into register 6
+      - "Mul { dest: 9, left: 5, right: 6 }" # Multiply current value by 2, store result in register 9
+      - "ComprehensionYield { value_reg: 9 }"  # Add transformed value to comprehension
+      - "LoopNext { body_start: 9, loop_end: 12 }"  # Continue to next iteration or exit
+      - "Return { value: 7 }"               # Return comprehension collection
+    want_result: [2, 4, 6]
+
+  - note: array_empty_input
+    description: Array comprehension with empty input
+    example_rego: |
+      # Transform empty array
+      [x + 5 | x := [][_]]  # [] (empty array)
+    literals:
+      - 5  # addend
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 7
+          key_reg: 4
+          value_reg: 5
+          body_start: 2
+          comprehension_end: 6
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 8
+          body_start: 3
+          loop_end: 6
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create empty input array in register 0
+      - "ComprehensionBegin { params_index: 0 }"     # Start array comprehension and initialize result in register 7
+      - "LoopStart { params_index: 0 }"  # Start loop over array elements
+      - "Load { dest: 6, literal_idx: 0 }"  # Load addend 5 into register 6
+      - "Add { dest: 8, left: 5, right: 6 }" # Add 5 to current value, store result in register 8
+      - "ComprehensionYield { value_reg: 8 }"    # Add transformed value to comprehension
+      - "LoopNext { body_start: 3, loop_end: 6 }"  # Continue to next iteration or exit
+      - "Return { value: 7 }"               # Return comprehension collection
+    want_result: []
+
+  - note: array_single_element
+    description: Array comprehension with single element
+    example_rego: |
+      # Transform single element array
+      [x - 1 | x := [10][_]]  # [9]
+    literals:
+      - 10
+      - 1  # subtrahend
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 7
+          key_reg: 4
+          value_reg: 5
+          body_start: 4
+          comprehension_end: 8
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 8
+          body_start: 5
+          loop_end: 8
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create input array [10] in register 0
+      - "Load { dest: 1, literal_idx: 0 }"  # Load 10 into register 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 10 to array
+      - "ComprehensionBegin { params_index: 0 }"     # Start array comprehension and initialize result in register 7
+      - "LoopStart { params_index: 0 }"  # Start loop over array elements
+      - "Load { dest: 6, literal_idx: 1 }"  # Load subtrahend 1 into register 6
+      - "Sub { dest: 9, left: 5, right: 6 }" # Subtract 1 from current value, store result in register 9
+      - "ComprehensionYield { value_reg: 9 }"    # Add transformed value to comprehension
+      - "LoopNext { body_start: 5, loop_end: 8 }"  # Continue to next iteration or exit
+      - "Return { value: 7 }"               # Return comprehension collection
+    want_result: [9]
+
+  - note: array_with_null_values
+    description: Array comprehension with null value handling
+    example_rego: |
+      # Process array with null values - nulls are preserved
+      [x | x := [1, null, 3][_]]  # [1, null, 3]
+    literals:
+      - 1
+      - 3
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 7
+          key_reg: 4
+          value_reg: 5
+          body_start: 8
+          comprehension_end: 11
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 8
+          body_start: 9
+          loop_end: 11
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create input array in register 0
+      - "Load { dest: 1, literal_idx: 0 }"  # Load 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 1 to array
+      - "LoadNull { dest: 2 }"              # Load null value
+      - "ArrayPush { arr: 0, value: 2 }"    # Push null to array
+      - "Load { dest: 3, literal_idx: 1 }"  # Load 3
+      - "ArrayPush { arr: 0, value: 3 }"    # Push 3 to array
+      - "ComprehensionBegin { params_index: 0 }"     # Start array comprehension and initialize result in register 7
+      - "LoopStart { params_index: 0 }"  # Start loop over array elements
+      - "ComprehensionYield { value_reg: 5 }"    # Add current value (including null) to comprehension
+      - "LoopNext { body_start: 9, loop_end: 11 }"  # Continue to next iteration or exit
+      - "Return { value: 7 }"               # Return comprehension collection
+    want_result: [1, null, 3]
