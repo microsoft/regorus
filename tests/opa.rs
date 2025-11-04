@@ -10,7 +10,6 @@ use std::process::Command;
 use anyhow::{bail, Result};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
-use walkdir::WalkDir;
 
 const OPA_REPO: &str = "https://github.com/open-policy-agent/opa";
 const OPA_BRANCH: &str = "v1.2.0";
@@ -143,41 +142,95 @@ fn json_schema_tests_check(actual: &Value, expected: &Value) -> bool {
     }
 }
 
-fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
+/// Recursively walk directory adding YAML files to result vec.
+fn find_yaml_files(dir: &Path, results: &mut Vec<String>) -> Result<()> {
+    if dir.is_dir() {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                find_yaml_files(&path, results)?;
+            } else if let Some(ext) = path.extension() {
+                if ext == "yaml" {
+                    results.push(path.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Constructs absolute paths to all .yaml test files from base_dir and relative test paths.
+/// Test paths may reference whether directories to walk or .yaml test files
+fn collect_tests(base_dir: &str, tests: &[String]) -> Result<Vec<String>> {
+    let mut results = Vec::new();
+    let base_path = Path::new(base_dir);
+
+    if !base_path.exists() {
+        return Err(anyhow::anyhow!(
+            "Base directory does not exist: {}",
+            base_dir
+        ));
+    }
+
+    if tests.is_empty() {
+        // Find all tests
+        find_yaml_files(&base_path, &mut results)?;
+        return Ok(results);
+    }
+
+    for test_path in tests {
+        let full_path = base_path.join(test_path);
+
+        if !full_path.exists() {
+            continue;
+        }
+
+        if full_path.is_dir() {
+            // Walk directory recursively to find all .yaml test files
+            find_yaml_files(&full_path, &mut results)?;
+        } else if let Some(ext) = full_path.extension() {
+            if ext == "yaml" {
+                // Add single .yaml test file
+                results.push(full_path.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+/// Trim base_dir and file name from full file path
+fn extract_relative_dir(path_str: &str, base_dir: &str) -> Result<String> {
+    let path = Path::new(path_str);
+    let base = Path::new(base_dir);
+
+    let stripped = path
+        .strip_prefix(base)
+        .map_err(|_| anyhow::anyhow!("Path is not under the base directory"))?;
+
+    let parent = stripped
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get parent path"))?;
+
+    let rel_path = parent.to_string_lossy().to_string();
+
+    Ok(rel_path)
+}
+
+fn run_opa_tests(opa_tests_dir: &String, folders: &[String]) -> Result<()> {
     println!("OPA TESTSUITE: {opa_tests_dir}");
-    let tests_path = Path::new(&opa_tests_dir);
     let mut status = BTreeMap::<String, (u32, u32, u32)>::new();
     let mut n = 0;
     let mut missing_functions = BTreeMap::new();
-    for entry in WalkDir::new(&opa_tests_dir)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path_str = entry.path().to_string_lossy().to_string();
-        if path_str == opa_tests_dir {
-            continue;
-        }
-        let path = Path::new(&path_str);
-        let path_dir = path.strip_prefix(tests_path)?.parent().unwrap();
-        let path_dir_str = path_dir.to_string_lossy().to_string();
+    let test_paths = collect_tests(opa_tests_dir, folders)?;
 
-        if path.is_dir() {
-            n = 0;
-            continue;
-        } else if !path.is_file() || !path_str.ends_with(".yaml") {
-            continue;
-        }
+    for path_str in test_paths.iter() {
+        let test_dir = extract_relative_dir(path_str, opa_tests_dir)?;
+        let is_rego_v0_test = test_dir.starts_with("v0");
+        let entry = status.entry(test_dir.to_string()).or_insert((0, 0, 0));
 
-        let run_test = folders.is_empty() || folders.iter().any(|f| &path_dir_str == f);
-        if !run_test {
-            continue;
-        }
-
-        let is_rego_v0_test = path_dir_str.starts_with("v0/") || path_dir.starts_with("v0\\");
-        let entry = status.entry(path_dir_str).or_insert((0, 0, 0));
-
-        let yaml_str = std::fs::read_to_string(&path_str)?;
+        let yaml_str = std::fs::read_to_string(path_str)?;
         let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
         for mut case in test.cases {
@@ -295,7 +348,8 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                                 .or_insert(1);
                         }
                     }
-                    let path = Path::new("target/opa/failures").join(path_dir);
+                    // TODO: Wrong path
+                    let path = Path::new("target/opa/failures").join(&test_dir);
                     std::fs::create_dir_all(path.clone())?;
 
                     let mut cmd = "cargo run --example regorus eval".to_string();
@@ -432,5 +486,5 @@ fn main() -> Result<()> {
         }
     };
 
-    run_opa_tests(opa_tests_dir, &cli.folders)
+    run_opa_tests(&opa_tests_dir, &cli.folders)
 }

@@ -43,6 +43,8 @@ time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
 yaml = ["serde_yaml"]
+jwt = []
+jwt_backend_openssl = ["openssl"]
 full-opa = [
     "base64",
     "base64url",
@@ -62,7 +64,8 @@ full-opa = [
     "uuid",
     "urlquery",
     "yaml",
-
+    "jwt",
+    "jwt_backend_openssl"
     #"rego-extensions"
 ]
 
@@ -118,6 +121,8 @@ rand = { version = "0.9.0", default-features = false, features = ["thread_rng"],
 msvc_spectre_libs = { version = "0.1", features = ["error"], optional = true }
 dashmap = { version = "6.1", default-features = false, optional = true }
 mimalloc = { path = "mimalloc", optional = true }
+
+openssl = { version = "0.10.73", optional = true}
 
 [dev-dependencies]
 anyhow = "1.0.45"
