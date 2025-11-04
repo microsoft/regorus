@@ -337,24 +337,26 @@ fn remove(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     Ok(Value::Object(obj))
 }
 
-fn is_subset(sup: &Value, sub: &Value) -> bool {
-    match (sup, sub) {
-        (Value::Object(sup), Value::Object(sub)) => {
-            sub.iter().all(|(k, vsub)| {
-                match sup.get(k) {
+fn is_subset(val1: &Value, val2: &Value) -> bool {
+    match (val1, val2) {
+        (Value::Object(obj1), Value::Object(obj2)) => {
+            obj2.iter().all(|(k, vsub)| {
+                match obj1.get(k) {
                     //		    Some(vsup @ Value::Object(_)) => is_subset(vsup, vsub),
                     Some(vsup) => is_subset(vsup, vsub),
                     _ => false,
                 }
             })
         }
-        (Value::Set(sup), Value::Set(sub)) => sub.is_subset(sup),
-        (Value::Array(sup), Value::Array(sub)) => sup.windows(sub.len()).any(|w| w == &sub[..]),
-        (Value::Array(sup), Value::Set(_)) => {
-            let sup = Value::from_set(sup.iter().cloned().collect());
-            is_subset(&sup, sub)
+        (Value::Set(set1), Value::Set(set2)) => set2.is_subset(set1),
+        (Value::Array(arr1), Value::Array(arr2)) => {
+            arr1.windows(arr2.len()).any(|w| w == &arr2[..])
         }
-        (sup, sub) => sup == sub,
+        (Value::Array(arr), Value::Set(_)) => {
+            let val = Value::from_set(arr.iter().cloned().collect());
+            is_subset(&val, val2)
+        }
+        (val1, val2) => val1 == val2,
     }
 }
 

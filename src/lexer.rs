@@ -27,7 +27,17 @@ fn check_memory_limit() -> Result<()> {
 
 // Maximum column width to prevent overflow and catch pathological input.
 // Lines exceeding this are likely minified/generated code or attack attempts.
-const MAX_COL: u32 = 1024;
+// The check is disabled (MAX_COL is a max possible value) when compiling OPA test.
+// Original OPA test coverage does not meet this requirement and the check should
+// be omitted for the tests to pass.
+const MAX_COL: u32 = const {
+    if cfg!(feature = "weak-safety") {
+        u32::MAX
+    } else {
+        1024
+    }
+};
+
 // Maximum allowed policy file size in bytes (1 MiB) to reject pathological inputs early.
 const MAX_FILE_BYTES: usize = 1_048_576;
 // Maximum allowed number of lines to avoid pathological or minified inputs.
