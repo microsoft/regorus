@@ -234,7 +234,7 @@ fn parse_epoch(
             return Ok((Utc.timestamp_nanos(ns).fixed_offset(), None));
         }
 
-        Value::Array(arr) => match arr.as_slice() {
+        Value::Array(array) => match array.as_slice() {
             [Value::Number(num)] => {
                 let ns = num.as_i64().ok_or_else(|| {
                     arg.span()
