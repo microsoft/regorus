@@ -86,6 +86,13 @@ impl<'source> Parser<'source> {
                 self.tok.1.text()
             }
             TokenKind::String | TokenKind::RawString => "",
+            // Azure RBAC-specific tokens - return their text representation
+            #[cfg(feature = "azure-rbac")]
+            TokenKind::AzureRbac(ref rbac_token) => match rbac_token {
+                crate::lexer::AzureRbacTokenKind::At => "@",
+                crate::lexer::AzureRbacTokenKind::LogicalAnd => "&&",
+                crate::lexer::AzureRbacTokenKind::LogicalOr => "||",
+            },
         }
     }
 

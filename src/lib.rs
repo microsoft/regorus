@@ -30,6 +30,12 @@ mod compiler;
 mod engine;
 mod indexchecker;
 mod interpreter;
+
+pub mod languages {
+    #[cfg(feature = "azure-rbac")]
+    pub mod azure_rbac;
+}
+
 mod lexer;
 mod lookup;
 mod number;
