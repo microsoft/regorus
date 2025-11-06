@@ -5,120 +5,199 @@
 #include <variant>
 
 #include "regorus.ffi.hpp"
+#include "regorus_value.hpp"
 
-namespace regorus {
+namespace regorus
+{
 
-    class Result {
-    public:
+	class Result
+	{
+	public:
+		operator bool() const { return result.status == RegorusStatus::Ok; }
+		bool operator!() const { return result.status != RegorusStatus::Ok; }
 
-	operator bool() const { return result.status == RegorusStatus::Ok; }
-	bool operator !() const { return result.status != RegorusStatus::Ok; }
+		const char *output() const
+		{
+			if (*this && result.output)
+			{
+				return result.output;
+			}
+			else
+			{
+				return "";
+			}
+		}
 
-	const char* output() const {
-	    if (*this && result.output) {
-		return result.output;
-	    } else {
-		return "";
-	    }
-	}
-	
-	const char* error() const {
-	    if (!*this && result.error_message) {
-		return result.error_message;
-	    } else {
-		return "";
-	    }
-	}
+		const char *error() const
+		{
+			if (!*this && result.error_message)
+			{
+				return result.error_message;
+			}
+			else
+			{
+				return "";
+			}
+		}
 
-	~Result() {
-	    regorus_result_drop(result);
-	}
-	
-    private:
-	friend class Engine;
-	RegorusResult result;
+		int64_t integer() const
+		{
+			if (*this)
+			{
+				return result.int_value;
+			}
+			else
+			{
+				return 0;
+			}
+		}
 
-	Result(RegorusResult r) : result(r) {}	
-    private:
-	Result(const Result&) = delete;
-	Result(Result&&) = delete;
-	Result& operator=(const Result&) = delete;
+		Value value() const
+		{
+			if (*this && result.pointer_value)
+			{
+				// Clone the value directly without JSON conversion
+				auto clone_result = regorus_value_clone(result.pointer_value);
+				if (clone_result.status == RegorusStatus::Ok)
+				{
+					void *ptr = clone_result.pointer_value;
+					clone_result.pointer_value = nullptr; // Transfer ownership
+					regorus_result_drop(clone_result);
+					return Value(ptr);
+				}
+				regorus_result_drop(clone_result);
+			}
+			return Value::Null();
+		}
+		~Result()
+		{
+			regorus_result_drop(result);
+		}
 
-    };
-    
-    class Engine {
-    public:
-	Engine() : Engine(regorus_engine_new()) {}
+	private:
+		friend class Engine;
+		RegorusResult result;
 
-	std::unique_ptr<Engine> clone() const {
-	    return std::unique_ptr<Engine>(new Engine(regorus_engine_clone(engine)));
-	}
+		Result(RegorusResult r) : result(r) {}
 
-	Result set_rego_v0(bool enable) {
-		return Result(regorus_engine_set_rego_v0(engine, enable));
-	}
+	private:
+		Result(const Result &) = delete;
+		Result(Result &&) = delete;
+		Result &operator=(const Result &) = delete;
+	};
 
-	Result add_policy(const char* path, const char* policy) {
-	    return Result(regorus_engine_add_policy(engine, path, policy));
-	}
-	
-	Result add_policy_from_file(const char* path) {
-	    return Result(regorus_engine_add_policy_from_file(engine, path));
-	}
-	
-	Result add_data_json(const char* data) {
-	    return Result(regorus_engine_add_data_json(engine, data));
-	}
-	
-	Result add_data_from_json_file(const char* path) {
-	    return Result(regorus_engine_add_data_from_json_file(engine, path));
-	}
-	
-	Result set_input_json(const char* input) {
-	    return Result(regorus_engine_set_input_json(engine, input));
-	}
-	
-	Result set_input_from_json_file(const char* path) {
-	    return Result(regorus_engine_set_input_from_json_file(engine, path));
-	}
+	class Engine
+	{
+	public:
+		Engine() : Engine(regorus_engine_new()) {}
 
-	Result eval_query(const char* query) {
-	    return Result(regorus_engine_eval_query(engine, query));
-	}
-	
-	Result eval_rule(const char* rule) {
-	    return Result(regorus_engine_eval_rule(engine, rule));
-	}
-	
-	Result set_enable_coverage(bool enable) {
-	    return Result(regorus_engine_set_enable_coverage(engine, enable));
-	}
-	
-	Result clear_coverage_data() {
-            return Result(regorus_engine_clear_coverage_data(engine));
-	}
-	
-	Result get_coverage_report() {
-            return Result(regorus_engine_get_coverage_report(engine));
-	}
-	
-	Result get_coverage_report_pretty() {
-            return Result(regorus_engine_get_coverage_report_pretty(engine));
-	}
-	
-	~Engine() {
-	    regorus_engine_drop(engine);
-	}
-	    
-	
-    private:
-	RegorusEngine* engine;
-    private:
-	Engine(RegorusEngine* e) : engine(e) {}
-	Engine(const Engine&) = delete;
-	Engine(Engine&&) = delete;
-	Engine& operator=(const Engine&) = delete;
-    };
+		std::unique_ptr<Engine> clone() const
+		{
+			return std::unique_ptr<Engine>(new Engine(regorus_engine_clone(engine)));
+		}
+
+		Result set_rego_v0(bool enable)
+		{
+			return Result(regorus_engine_set_rego_v0(engine, enable));
+		}
+
+		Result add_policy(const char *path, const char *policy)
+		{
+			return Result(regorus_engine_add_policy(engine, path, policy));
+		}
+
+		Result add_policy_from_file(const char *path)
+		{
+			return Result(regorus_engine_add_policy_from_file(engine, path));
+		}
+
+		Result add_data_json(const char *data)
+		{
+			return Result(regorus_engine_add_data_json(engine, data));
+		}
+
+		Result add_data_from_json_file(const char *path)
+		{
+			return Result(regorus_engine_add_data_from_json_file(engine, path));
+		}
+
+		Result set_input_json(const char *input)
+		{
+			return Result(regorus_engine_set_input_json(engine, input));
+		}
+
+		Result set_input_from_json_file(const char *path)
+		{
+			return Result(regorus_engine_set_input_from_json_file(engine, path));
+		}
+
+		Result eval_query(const char *query)
+		{
+			return Result(regorus_engine_eval_query(engine, query));
+		}
+
+		Result eval_rule(const char *rule)
+		{
+			return Result(regorus_engine_eval_rule(engine, rule));
+		}
+
+		// Value API methods - work with Value objects directly instead of JSON
+		Result set_input_value(const Value &value)
+		{
+			auto result = regorus_engine_set_input_value(engine, value.get_ptr());
+			return Result(result);
+		}
+
+		Result add_data_value(const Value &value)
+		{
+			auto result = regorus_engine_add_data_value(engine, value.get_ptr());
+			return Result(result);
+		}
+
+		Result eval_query_as_value(const char *query)
+		{
+			return Result(regorus_engine_eval_query_as_value(engine, query));
+		}
+
+		Result eval_rule_as_value(const char *rule)
+		{
+			return Result(regorus_engine_eval_rule_as_value(engine, rule));
+		}
+
+		Result set_enable_coverage(bool enable)
+		{
+			return Result(regorus_engine_set_enable_coverage(engine, enable));
+		}
+
+		Result clear_coverage_data()
+		{
+			return Result(regorus_engine_clear_coverage_data(engine));
+		}
+
+		Result get_coverage_report()
+		{
+			return Result(regorus_engine_get_coverage_report(engine));
+		}
+
+		Result get_coverage_report_pretty()
+		{
+			return Result(regorus_engine_get_coverage_report_pretty(engine));
+		}
+
+		~Engine()
+		{
+			regorus_engine_drop(engine);
+		}
+
+	private:
+		RegorusEngine *engine;
+
+	private:
+		Engine(RegorusEngine *e) : engine(e) {}
+		Engine(const Engine &) = delete;
+		Engine(Engine &&) = delete;
+		Engine &operator=(const Engine &) = delete;
+	};
 }
 
 #endif // REGORUS_WRAPPER_HPP

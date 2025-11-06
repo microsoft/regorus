@@ -24,10 +24,10 @@ namespace Regorus
     /// </summary>
     public unsafe sealed class CompiledPolicy : IDisposable
     {
-    private RegorusCompiledPolicyHandle? _handle;
-    private readonly ManualResetEventSlim _idleEvent = new(initialState: true);
-    private int _isDisposed;
-    private int _activeEvaluations;
+        private RegorusCompiledPolicyHandle? _handle;
+        private readonly ManualResetEventSlim _idleEvent = new(initialState: true);
+        private int _isDisposed;
+        private int _activeEvaluations;
 
         internal CompiledPolicy(RegorusCompiledPolicyHandle handle)
         {
@@ -94,7 +94,7 @@ namespace Regorus
                     return CheckAndDropResult(Internal.API.regorus_compiled_policy_get_policy_info((Internal.RegorusCompiledPolicy*)policyPtr));
                 }
             });
-            
+
             if (string.IsNullOrEmpty(jsonResult))
             {
                 throw new Exception("Failed to get policy info: empty response");
@@ -106,8 +106,8 @@ namespace Regorus
                 {
                     PropertyNameCaseInsensitive = true
                 };
-                
-                return JsonSerializer.Deserialize<PolicyInfo>(jsonResult!, options) 
+
+                return JsonSerializer.Deserialize<PolicyInfo>(jsonResult!, options)
                     ?? throw new Exception("Failed to deserialize policy info");
             }
             catch (JsonException ex)
@@ -130,7 +130,7 @@ namespace Regorus
                 if (handle != null)
                 {
                     _idleEvent.Wait();
-                    
+
                     handle.Dispose();
                     _handle = null;
                 }

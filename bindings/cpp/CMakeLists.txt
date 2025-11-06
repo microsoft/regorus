@@ -52,6 +52,7 @@ INTERFACE
 
 set(regorus_ffi_HEADER_FILES
   regorus.hpp
+  regorus_value.hpp
   ../ffi/regorus.ffi.hpp
 )
 
@@ -79,7 +80,15 @@ install(FILES
   DESTINATION ${regorus_ffi_CONFIGDIR}
 )
 
-# test binary
+# test binaries
 
 add_executable(regorus_test main.cpp)
 target_link_libraries(regorus_test regorus_ffi::regorus_ffi)
+
+add_executable(test_value_cpp test_value.cpp)
+target_include_directories(test_value_cpp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_value_cpp regorus_ffi::regorus_ffi)
+
+# Add tests to CTest
+enable_testing()
+add_test(NAME cpp_value_test COMMAND test_value_cpp)

@@ -172,26 +172,10 @@ namespace Regorus
 
         private static CompiledPolicy GetCompiledPolicyResult(Internal.RegorusResult result)
         {
-            try
-            {
-                if (result.status != Internal.RegorusStatus.Ok)
-                {
-                    var message = StringFromUTF8((IntPtr)result.error_message);
-                    throw new Exception(message ?? "Unknown compilation error occurred");
-                }
-
-                if (result.data_type != Internal.RegorusDataType.Pointer || result.pointer_value == null)
-                {
-                    throw new Exception("Expected compiled policy pointer but got different data type");
-                }
-
-                var handle = RegorusCompiledPolicyHandle.FromPointer((IntPtr)result.pointer_value);
-                return new CompiledPolicy(handle);
-            }
-            finally
-            {
-                Internal.API.regorus_result_drop(result);
-            }
+            // The helper takes ownership of the pointer and ensures the native result dropper does not free it.
+            var pointer = NativeResult.GetPointerAndDrop(result, RegorusPointerType.PointerCompiledPolicy);
+            var handle = RegorusCompiledPolicyHandle.FromPointer(pointer);
+            return new CompiledPolicy(handle);
         }
     }
 }
