@@ -62,7 +62,7 @@ pub extern "C" fn regorus_effect_schema_register(
 
     // Register the schema
     match schemas::effect::register(schema_name, schema.into()) {
-        Ok(()) => RegorusResult::ok_pointer(std::ptr::null_mut()),
+        Ok(()) => RegorusResult::ok_void(),
         Err(e) => RegorusResult::err_with_message(
             RegorusStatus::Error,
             format!("Failed to register effect schema: {e}"),
@@ -171,5 +171,5 @@ pub extern "C" fn regorus_effect_schema_remove(name: *const c_char) -> RegorusRe
 #[no_mangle]
 pub extern "C" fn regorus_effect_schema_clear() -> RegorusResult {
     schemas::effect::clear();
-    RegorusResult::ok_pointer(std::ptr::null_mut())
+    RegorusResult::ok_void()
 }

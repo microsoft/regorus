@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-use crate::common::{from_c_str, RegorusResult, RegorusStatus};
+use crate::common::{from_c_str, RegorusPointerType, RegorusResult, RegorusStatus};
 use crate::compiled_policy::RegorusCompiledPolicy;
 use regorus::{compile_policy_with_entrypoint, PolicyModule, Value};
 
@@ -83,7 +83,10 @@ pub extern "C" fn regorus_compile_policy_with_entrypoint(
         Ok(compiled_policy) => {
             let wrapped_policy = RegorusCompiledPolicy { compiled_policy };
             let boxed_policy = Box::new(wrapped_policy);
-            RegorusResult::ok_pointer(Box::into_raw(boxed_policy) as *mut std::os::raw::c_void)
+            RegorusResult::ok_pointer(
+                Box::into_raw(boxed_policy) as *mut std::os::raw::c_void,
+                RegorusPointerType::PointerCompiledPolicy,
+            )
         }
         Err(e) => RegorusResult::err_with_message(
             RegorusStatus::CompilationFailed,
@@ -152,7 +155,10 @@ pub extern "C" fn regorus_compile_policy_for_target(
         Ok(compiled_policy) => {
             let wrapped_policy = RegorusCompiledPolicy { compiled_policy };
             let boxed_policy = Box::new(wrapped_policy);
-            RegorusResult::ok_pointer(Box::into_raw(boxed_policy) as *mut std::os::raw::c_void)
+            RegorusResult::ok_pointer(
+                Box::into_raw(boxed_policy) as *mut std::os::raw::c_void,
+                RegorusPointerType::PointerCompiledPolicy,
+            )
         }
         Err(e) => RegorusResult::err_with_message(
             RegorusStatus::CompilationFailed,

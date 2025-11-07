@@ -87,4 +87,60 @@ namespace Regorus
             return true;
         }
     }
+
+    internal sealed class RegorusValueHandle : SafeHandleZeroOrMinusOneIsInvalid
+    {
+        private RegorusValueHandle() : base(ownsHandle: true)
+        {
+        }
+
+        internal static RegorusValueHandle FromPointer(IntPtr pointer)
+        {
+            if (pointer == IntPtr.Zero)
+            {
+                throw new ArgumentException("Pointer cannot be zero.", nameof(pointer));
+            }
+
+            var handle = new RegorusValueHandle();
+            handle.SetHandle(pointer);
+            return handle;
+        }
+
+        internal IntPtr Detach()
+        {
+            if (IsClosed || IsInvalid)
+            {
+                throw new ObjectDisposedException(nameof(RegorusValueHandle));
+            }
+
+            bool addedRef = false;
+            try
+            {
+                DangerousAddRef(ref addedRef);
+                var pointer = DangerousGetHandle();
+                SetHandle(IntPtr.Zero);
+                return pointer;
+            }
+            finally
+            {
+                if (addedRef)
+                {
+                    DangerousRelease();
+                }
+            }
+        }
+
+        protected override bool ReleaseHandle()
+        {
+            if (!IsInvalid && !IsClosed)
+            {
+                unsafe
+                {
+                    Internal.API.regorus_value_drop((void*)handle);
+                }
+                SetHandle(IntPtr.Zero);
+            }
+            return true;
+        }
+    }
 }

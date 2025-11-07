@@ -2,7 +2,8 @@
 // Licensed under the MIT License.
 
 use crate::common::{
-    from_c_str, to_ref, to_regorus_result, to_regorus_string_result, RegorusResult, RegorusStatus,
+    from_c_str, to_ref, to_regorus_result, to_regorus_string_result, RegorusPointerType,
+    RegorusResult, RegorusStatus,
 };
 use crate::compiled_policy::RegorusCompiledPolicy;
 use anyhow::Result;
@@ -11,7 +12,7 @@ use std::os::raw::c_char;
 /// Wrapper for `regorus::Engine`.
 #[derive(Clone)]
 pub struct RegorusEngine {
-    engine: ::regorus::Engine,
+    pub(crate) engine: ::regorus::Engine,
 }
 
 #[no_mangle]
@@ -409,7 +410,10 @@ pub extern "C" fn regorus_engine_compile_for_target(engine: *mut RegorusEngine) 
             Ok(compiled_policy) => {
                 let wrapped_policy = RegorusCompiledPolicy { compiled_policy };
                 let boxed_policy = Box::new(wrapped_policy);
-                RegorusResult::ok_pointer(Box::into_raw(boxed_policy) as *mut std::os::raw::c_void)
+                RegorusResult::ok_pointer(
+                    Box::into_raw(boxed_policy) as *mut std::os::raw::c_void,
+                    RegorusPointerType::PointerCompiledPolicy,
+                )
             }
             Err(e) => RegorusResult::err_with_message(
                 RegorusStatus::CompilationFailed,
@@ -444,7 +448,10 @@ pub extern "C" fn regorus_engine_compile_with_entrypoint(
     match result {
         Ok(wrapped_policy) => {
             let boxed_policy = Box::new(wrapped_policy);
-            RegorusResult::ok_pointer(Box::into_raw(boxed_policy) as *mut std::os::raw::c_void)
+            RegorusResult::ok_pointer(
+                Box::into_raw(boxed_policy) as *mut std::os::raw::c_void,
+                RegorusPointerType::PointerCompiledPolicy,
+            )
         }
         Err(e) => RegorusResult::err_with_message(
             RegorusStatus::CompilationFailed,

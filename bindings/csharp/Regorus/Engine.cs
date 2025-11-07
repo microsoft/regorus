@@ -158,6 +158,25 @@ namespace Regorus
 
         }
 
+        public void AddDataValue(Value value)
+        {
+            if (value is null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+
+            ThrowIfDisposed();
+            value.WithHandle(valuePtr =>
+            {
+                UseHandle(enginePtr =>
+                {
+                    var result = Regorus.Internal.API.regorus_engine_add_data_value((Regorus.Internal.RegorusEngine*)enginePtr, (void*)valuePtr);
+                    NativeResult.EnsureSuccess(result);
+                });
+            });
+        }
+
+
         public void AddDataFromJsonFile(string path)
         {
             ThrowIfDisposed();
@@ -213,6 +232,25 @@ namespace Regorus
             });
         }
 
+
+        public void SetInputValue(Value value)
+        {
+            if (value is null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+
+            ThrowIfDisposed();
+            value.WithHandle(valuePtr =>
+            {
+                UseHandle(enginePtr =>
+                {
+                    var result = Regorus.Internal.API.regorus_engine_set_input_value((Regorus.Internal.RegorusEngine*)enginePtr, (void*)valuePtr);
+                    NativeResult.EnsureSuccess(result);
+                });
+            });
+        }
+
         public string? EvalQuery(string query)
         {
             ThrowIfDisposed();
@@ -231,6 +269,20 @@ namespace Regorus
             });
         }
 
+        public Value EvalQueryAsValue(string query)
+        {
+            ThrowIfDisposed();
+            return Utf8Marshaller.WithUtf8(query, queryPtr =>
+            {
+                return UseHandle(enginePtr =>
+                {
+                    var result = Regorus.Internal.API.regorus_engine_eval_query_as_value((Regorus.Internal.RegorusEngine*)enginePtr, (byte*)queryPtr);
+                    var pointer = NativeResult.GetPointerAndDrop(result, RegorusPointerType.PointerValue);
+                    return Value.FromHandle(pointer);
+                });
+            });
+        }
+
         public string? EvalRule(string rule)
         {
             ThrowIfDisposed();
@@ -246,6 +298,20 @@ namespace Regorus
                         }
                     });
                 }
+            });
+        }
+
+        public Value EvalRuleAsValue(string rule)
+        {
+            ThrowIfDisposed();
+            return Utf8Marshaller.WithUtf8(rule, rulePtr =>
+            {
+                return UseHandle(enginePtr =>
+                {
+                    var result = Regorus.Internal.API.regorus_engine_eval_rule_as_value((Regorus.Internal.RegorusEngine*)enginePtr, (byte*)rulePtr);
+                    var pointer = NativeResult.GetPointerAndDrop(result, RegorusPointerType.PointerValue);
+                    return Value.FromHandle(pointer);
+                });
             });
         }
 

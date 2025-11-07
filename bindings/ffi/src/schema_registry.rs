@@ -65,7 +65,7 @@ pub extern "C" fn regorus_resource_schema_register(
 
     // Register the schema
     match schemas::resource::register(schema_name, schema.into()) {
-        Ok(()) => RegorusResult::ok_pointer(std::ptr::null_mut()),
+        Ok(()) => RegorusResult::ok_void(),
         Err(e) => RegorusResult::err_with_message(
             RegorusStatus::Error,
             format!("Failed to register schema: {e}"),
@@ -174,5 +174,5 @@ pub extern "C" fn regorus_resource_schema_remove(name: *const c_char) -> Regorus
 #[no_mangle]
 pub extern "C" fn regorus_resource_schema_clear() -> RegorusResult {
     schemas::resource::clear();
-    RegorusResult::ok_pointer(std::ptr::null_mut())
+    RegorusResult::ok_void()
 }

@@ -4,7 +4,8 @@
     <TargetFramework>net8.0</TargetFramework>
     <EnableMSTestRunner>true</EnableMSTestRunner>
     <!-- More info about dotnet test integration https://learn.microsoft.com/dotnet/core/testing/unit-testing-platform-integration-dotnet-test -->
-    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <!-- Setting TestingPlatformDotnetTestSupport to false so that it can be run on non x64 architectures -->
+    <TestingPlatformDotnetTestSupport>false</TestingPlatformDotnetTestSupport>
     <TestingPlatformShowTestsFailure>true</TestingPlatformShowTestsFailure>
   </PropertyGroup>
   
@@ -22,6 +23,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Regorus" Version="0.8.0$(RegorusPackageVersionSuffix)"/>
+    <PackageReference Include="Regorus" Version="0.8.1$(RegorusPackageVersionSuffix)"/>
   </ItemGroup>
 </Project>
