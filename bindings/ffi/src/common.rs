@@ -1,9 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use alloc::ffi::CString;
+use alloc::format;
+use alloc::string::{String, ToString};
 use anyhow::{anyhow, bail, Result};
-use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_longlong};
+use core::ffi::{c_char, c_longlong, c_void, CStr};
+use core::ptr;
 
 /// Status of a call on `RegorusEngine`.
 #[repr(C)]
@@ -74,7 +77,7 @@ pub struct RegorusResult {
 
     /// Pointer value.
     /// Valid when data_type is Pointer.
-    pub(crate) pointer_value: *mut std::os::raw::c_void,
+    pub(crate) pointer_value: *mut c_void,
 
     /// Errors produced by the call.
     /// Owned by Rust.
@@ -87,11 +90,11 @@ impl RegorusResult {
         Self {
             status: RegorusStatus::Ok,
             data_type: RegorusDataType::None,
-            output: std::ptr::null_mut(),
+            output: ptr::null_mut(),
             bool_value: false,
             int_value: 0,
-            pointer_value: std::ptr::null_mut(),
-            error_message: std::ptr::null_mut(),
+            pointer_value: ptr::null_mut(),
+            error_message: ptr::null_mut(),
         }
     }
 
@@ -103,8 +106,8 @@ impl RegorusResult {
             output: to_c_str(output),
             bool_value: false,
             int_value: 0,
-            pointer_value: std::ptr::null_mut(),
-            error_message: std::ptr::null_mut(),
+            pointer_value: ptr::null_mut(),
+            error_message: ptr::null_mut(),
         }
     }
 
@@ -114,11 +117,11 @@ impl RegorusResult {
         Self {
             status: RegorusStatus::Ok,
             data_type: RegorusDataType::Boolean,
-            output: std::ptr::null_mut(),
+            output: ptr::null_mut(),
             bool_value: value,
             int_value: 0,
-            pointer_value: std::ptr::null_mut(),
-            error_message: std::ptr::null_mut(),
+            pointer_value: ptr::null_mut(),
+            error_message: ptr::null_mut(),
         }
     }
 
@@ -128,24 +131,24 @@ impl RegorusResult {
         Self {
             status: RegorusStatus::Ok,
             data_type: RegorusDataType::Integer,
-            output: std::ptr::null_mut(),
+            output: ptr::null_mut(),
             bool_value: false,
             int_value: value as c_longlong,
-            pointer_value: std::ptr::null_mut(),
-            error_message: std::ptr::null_mut(),
+            pointer_value: ptr::null_mut(),
+            error_message: ptr::null_mut(),
         }
     }
 
     /// Create a successful result with pointer value.
-    pub(crate) fn ok_pointer(pointer: *mut std::os::raw::c_void) -> Self {
+    pub(crate) fn ok_pointer(pointer: *mut c_void) -> Self {
         Self {
             status: RegorusStatus::Ok,
             data_type: RegorusDataType::Pointer,
-            output: std::ptr::null_mut(),
+            output: ptr::null_mut(),
             bool_value: false,
             int_value: 0,
             pointer_value: pointer,
-            error_message: std::ptr::null_mut(),
+            error_message: ptr::null_mut(),
         }
     }
 
@@ -154,11 +157,11 @@ impl RegorusResult {
         Self {
             status,
             data_type: RegorusDataType::None,
-            output: std::ptr::null_mut(),
+            output: ptr::null_mut(),
             bool_value: false,
             int_value: 0,
-            pointer_value: std::ptr::null_mut(),
-            error_message: std::ptr::null_mut(),
+            pointer_value: ptr::null_mut(),
+            error_message: ptr::null_mut(),
         }
     }
 
@@ -167,10 +170,10 @@ impl RegorusResult {
         Self {
             status,
             data_type: RegorusDataType::None,
-            output: std::ptr::null_mut(),
+            output: ptr::null_mut(),
             bool_value: false,
             int_value: 0,
-            pointer_value: std::ptr::null_mut(),
+            pointer_value: ptr::null_mut(),
             error_message: to_c_str(message),
         }
     }
