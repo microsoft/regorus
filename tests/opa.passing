@@ -43,6 +43,11 @@ v0/jsonfilteridempotent
 v0/jsonremove
 v0/jsonremoveidempotent
 v0/jsonschema
+v0/jwtbuiltins
+v0/jwtverifyhs256
+v0/jwtverifyhs384
+v0/jwtverifyhs512
+v0/jwtverifyrsa
 v0/negation
 v0/nestedreferences
 v0/netcidrisvalid
@@ -149,6 +154,11 @@ v1/jsonfilteridempotent
 v1/jsonremove
 v1/jsonremoveidempotent
 v1/jsonschema
+v1/jwtbuiltins
+v1/jwtverifyhs256
+v1/jwtverifyhs384
+v1/jwtverifyhs512
+v1/jwtverifyrsa
 v1/negation
 v1/nestedreferences
 v1/netcidrcontains
