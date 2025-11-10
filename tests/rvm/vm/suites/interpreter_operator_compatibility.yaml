@@ -205,7 +205,7 @@ cases:
       - "Load { dest: 1, literal_idx: 1 }"
       - "Add { dest: 2, left: 0, right: 1 }"
       - "Return { value: 2 }"
-    want_result: 3.3
+    want_result: 3.3000000000000003
 
   - note: number_sub_precision
     description: Test Number type subtraction preserves precision

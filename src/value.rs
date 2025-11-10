@@ -575,35 +575,32 @@ impl From<f64> for Value {
     /// # use regorus::*;
     /// # fn main() -> anyhow::Result<()> {
     /// assert_eq!(
-    ///   Value::from(3.141592653589793),
+    ///   Value::from(3.5f64),
+    ///   Value::from_numeric_string("3.5")?);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`Value::Number`] stores floating-point values as `f64`, so it inherits the same
+    /// ~15-digit precision limit. Adding additional digits to either the literal or a parsed
+    /// numeric string causes both to round to the same `f64` value.
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let from_float = Value::from(3.141592653589793238462f64);
+    /// let from_string = Value::from_numeric_string("3.141592653589793238462")?;
+    /// assert_eq!(from_float, from_string);
+    ///
+    /// // All representations round to approximately 15 digits.
+    /// assert_eq!(
+    ///   from_float,
     ///   Value::from_numeric_string("3.141592653589793")?);
     /// # Ok(())
     /// # }
     /// ```
     ///
-    /// Note, f64 can store only around 15 digits of precision whereas [`Value::Number`]
-    /// can store arbitrary precision. Adding an extra digit to the f64 literal in the above
-    /// example causes loss of precision and the Value created from f64 does not match the
-    /// Value parsed from numeric string (which is more precise).
-    /// ```
-    /// # use regorus::*;
-    /// # fn main() -> anyhow::Result<()> {
-    /// // The last digit is lost in f64.
-    /// assert_ne!(
-    ///   Value::from(3.1415926535897932),
-    ///   Value::from_numeric_string("3.141592653589793232")?);
-    ///
-    /// // The value, in this case is equal to parsing the json number with last digit omitted.
-    /// assert_ne!(
-    ///   Value::from(3.1415926535897932),
-    ///   Value::from_numeric_string("3.14159265358979323")?);
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// If precision is important, it is better to construct numeric values from strings instead
-    /// of f64 when possible.
-    /// See [Value::from_numeric_string]
+    /// If additional precision is required, keep the raw data as strings or use an external
+    /// arbitrary-precision numeric type before converting it into [`Value`].
     fn from(n: f64) -> Self {
         Value::Number(Number::from(n))
     }
