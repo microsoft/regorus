@@ -1,0 +1,217 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Resource Limits Test Suite
+# Tests instruction count limits, recursion depth, and resource exhaustion scenarios
+# Verifies VM handles resource constraints gracefully
+
+cases:
+  - note: instruction_limit_in_simple_loop
+    description: Instruction limit exceeded in simple loop
+    example_rego: "some x in [1, 2, 3, 4, 5]; x > 0"
+    literals:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 0
+    max_instructions: 10  # Limit low enough that execution exceeds it before completion
+    instruction_params:
+      loop_params:
+        - mode: "Any"
+          collection: 0
+          key_reg: 10
+          value_reg: 11
+          result_reg: 12
+          body_start: 13
+          loop_end: 17
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ArrayPush { arr: 0, value: 2 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "ArrayPush { arr: 0, value: 3 }"
+      - "Load { dest: 4, literal_idx: 3 }"
+      - "ArrayPush { arr: 0, value: 4 }"
+      - "Load { dest: 5, literal_idx: 4 }"
+      - "ArrayPush { arr: 0, value: 5 }"
+      - "LoopStart { params_index: 0 }"
+      - "Load { dest: 13, literal_idx: 5 }"
+      - "Gt { dest: 14, left: 11, right: 13 }"
+      - "AssertCondition { condition: 14 }"
+      - "LoopNext { body_start: 13, loop_end: 17 }"
+      - "Return { value: 12 }"
+    want_error: "exceeded maximum instruction limit"
+
+  - note: instruction_limit_in_comprehension
+    description: Instruction limit exceeded during comprehension
+    example_rego: "[x | x := [1, 2, 3, 4, 5][_]]"
+    literals:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+    max_instructions: 25
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 0
+          result_reg: 0
+          key_reg: 10
+          value_reg: 11
+          body_start: 13
+          comprehension_end: 17
+      loop_params:
+        - mode: "ForEach"
+          collection: 6
+          key_reg: 10
+          value_reg: 11
+          result_reg: 12
+          body_start: 13
+          loop_end: 17
+    instructions:
+      - "ArrayNew { dest: 6 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 6, value: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ArrayPush { arr: 6, value: 2 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "ArrayPush { arr: 6, value: 3 }"
+      - "Load { dest: 4, literal_idx: 3 }"
+      - "ArrayPush { arr: 6, value: 4 }"
+      - "Load { dest: 5, literal_idx: 4 }"
+      - "ArrayPush { arr: 6, value: 5 }"
+      - "ComprehensionBegin { params_index: 0 }"
+      - "LoopStart { params_index: 0 }"
+      - "ComprehensionYield { value_reg: 11 }"
+      - "LoopNext { body_start: 13, loop_end: 17 }"
+      - "ComprehensionEnd"
+      - "Return { value: 0 }"
+    want_error: "exceeded maximum instruction limit"
+
+  - note: instruction_limit_in_nested_loops
+    description: Instruction limit exceeded in nested loops
+    example_rego: "some x in [1, 2]; some y in [3, 4]; x + y > 0"
+    literals:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 0
+    max_instructions: 30
+    instruction_params:
+      loop_params:
+        - mode: "Any"
+          collection: 0
+          key_reg: 10
+          value_reg: 11
+          result_reg: 12
+          body_start: 5
+          loop_end: 18
+        - mode: "Any"
+          collection: 2
+          key_reg: 20
+          value_reg: 21
+          result_reg: 22
+          body_start: 8
+          loop_end: 16
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "ArrayPush { arr: 0, value: 3 }"
+      - "LoopStart { params_index: 0 }"
+      - "ArrayNew { dest: 2 }"
+      - "Load { dest: 4, literal_idx: 2 }"
+      - "ArrayPush { arr: 2, value: 4 }"
+      - "Load { dest: 5, literal_idx: 3 }"
+      - "ArrayPush { arr: 2, value: 5 }"
+      - "LoopStart { params_index: 1 }"
+      - "Add { dest: 30, left: 11, right: 21 }"
+      - "Load { dest: 31, literal_idx: 4 }"
+      - "Gt { dest: 32, left: 30, right: 31 }"
+      - "AssertCondition { condition: 32 }"
+      - "LoopNext { body_start: 8, loop_end: 16 }"
+      - "AssertCondition { condition: 22 }"
+      - "LoopNext { body_start: 5, loop_end: 18 }"
+      - "Return { value: 12 }"
+    want_error: "exceeded maximum instruction limit"
+
+  - note: large_literal_table_access
+    description: Access literal near u16 bounds (valid case)
+    literals:
+      - 42
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Return { value: 0 }"
+    want_result: 42
+
+  - note: literal_index_out_of_bounds
+    description: Literal index beyond table bounds should error
+    literals:
+      - 42
+    instructions:
+      - "Load { dest: 0, literal_idx: 999 }"
+      - "Return { value: 0 }"
+    want_error: "Literal index 999 out of bounds"
+
+  - note: instruction_limit_with_early_return
+    description: Instruction limit allows early successful completion
+    example_rego: "some x in [1, 2]; x == 1"
+    literals:
+      - 1
+      - 2
+    max_instructions: 200 # Allow enough headroom for both execution modes
+    instruction_params:
+      loop_params:
+        - mode: "Any"
+          collection: 0
+          key_reg: 10
+          value_reg: 11
+          result_reg: 12
+          body_start: 6
+          loop_end: 9
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ArrayPush { arr: 0, value: 2 }"
+      - "LoopStart { params_index: 0 }"
+      - "Load { dest: 13, literal_idx: 0 }"
+      - "Eq { dest: 14, left: 11, right: 13 }"
+      - "AssertCondition { condition: 14 }"
+      - "LoopNext { body_start: 6, loop_end: 9 }"
+      - "Return { value: 12 }"
+    want_result: true
+
+  - note: many_registers_usage
+    description: Test using high register numbers near upper bound without error
+    example_rego: "Store values in registers near VM upper bound"
+    literals:
+      - 1
+      - 2
+      - 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 25, literal_idx: 1 }"
+      - "Load { dest: 49, literal_idx: 2 }"
+      - "Add { dest: 30, left: 0, right: 25 }"
+      - "Add { dest: 48, left: 30, right: 49 }"
+      - "Return { value: 48 }"
+    want_result: 6
+
+  - note: zero_instruction_limit
+    description: Zero instruction limit should error immediately
+    literals:
+      - 42
+    max_instructions: 0
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Return { value: 0 }"
+    want_error: "exceeded maximum instruction limit"

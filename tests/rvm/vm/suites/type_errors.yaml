@@ -1,0 +1,224 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Type Errors Test Suite
+# Tests graceful error handling for type mismatches across instruction families
+# Verifies that VM returns appropriate errors instead of panicking
+
+cases:
+  # Mixed-type arithmetic operations
+  - note: arithmetic_add_string_to_int
+    description: Adding string to int should error gracefully
+    example_rego: "1 + \"text\""
+    literals:
+      - 1
+      - "text"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "Cannot add"
+
+  - note: arithmetic_mul_bool_by_int
+    description: Multiplying boolean by int should error
+    example_rego: "true * 5"
+    literals:
+      - 5
+    instructions:
+      - "LoadTrue { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Mul { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "Cannot multiply"
+
+  - note: arithmetic_div_null_by_int
+    description: Dividing null by int should error
+    example_rego: "null / 2"
+    literals:
+      - 2
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Div { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "Cannot divide"
+
+  - note: arithmetic_sub_array_from_int
+    description: Subtracting array from int should error
+    example_rego: "10 - [1, 2]"
+    literals:
+      - 10
+      - [1, 2]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Sub { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "Cannot subtract"
+
+  - note: arithmetic_add_object_to_int
+    description: Adding object to int should error
+    example_rego: "5 + {\"a\": 1}"
+    literals:
+      - 5
+      - {"a": 1}
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "Cannot add"
+
+  # Logical operations on non-booleans
+  - note: logical_and_string_with_bool
+    description: AND with string operand should error
+    example_rego: "\"text\" && true"
+    literals:
+      - "text"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "LoadTrue { dest: 1 }"
+      - "And { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "#undefined"
+
+  - note: logical_or_int_with_bool
+    description: OR with int operand should error
+    example_rego: "42 || false"
+    literals:
+      - 42
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "LoadFalse { dest: 1 }"
+      - "Or { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "#undefined"
+
+  - note: logical_not_int
+    description: NOT with int operand should error
+    example_rego: "!42"
+    literals:
+      - 42
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Not { dest: 1, operand: 0 }"
+      - "Return { value: 1 }"
+    want_error: "#undefined"
+
+  # Invalid indexing operations
+  - note: index_int_with_string_key
+    description: Indexing int with string should return undefined
+    example_rego: "123[\"key\"]"
+    literals:
+      - 123
+      - "key"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: index_null_with_int
+    description: Indexing null should return undefined
+    example_rego: "null[0]"
+    literals:
+      - 0
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: index_bool_with_string
+    description: Indexing boolean should return undefined
+    example_rego: "true.field"
+    literals:
+      - "field"
+    instructions:
+      - "LoadTrue { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: index_string_with_object_key
+    description: Indexing string with object key should return undefined
+    example_rego: "\"text\"[{}]"
+    literals:
+      - "text"
+      - {}
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  # Contains with incompatible types
+  - note: contains_in_int
+    description: Contains check on int should return false
+    example_rego: "1 in 123"
+    literals:
+      - 123
+      - 1
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Contains { dest: 2, collection: 0, value: 1 }"
+      - "Return { value: 2 }"
+    want_result: false
+
+  - note: contains_in_bool
+    description: Contains check on boolean should return false
+    example_rego: "1 in true"
+    literals:
+      - 1
+    instructions:
+      - "LoadTrue { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Contains { dest: 2, collection: 0, value: 1 }"
+      - "Return { value: 2 }"
+    want_result: false
+
+  - note: contains_in_null
+    description: Contains check on null should return false
+    example_rego: "1 in null"
+    literals:
+      - 1
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Contains { dest: 2, collection: 0, value: 1 }"
+      - "Return { value: 2 }"
+    want_result: false
+
+  # Comparison operations with incompatible types
+  - note: compare_string_lt_int
+    description: Comparing string < int returns ordering result in non-strict; errors in strict
+    example_rego: "\"abc\" < 5"
+    literals:
+      - "abc"
+      - 5
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Lt { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: false
+    want_error_strict: "#undefined"
+
+  - note: compare_bool_gt_array
+    description: Comparing bool > array returns ordering result in non-strict; errors in strict
+    example_rego: "true > [1, 2]"
+    literals:
+      - [1, 2]
+    instructions:
+      - "LoadTrue { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Gt { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: false
+    want_error_strict: "#undefined"

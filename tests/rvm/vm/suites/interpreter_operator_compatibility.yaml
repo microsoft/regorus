@@ -1,0 +1,351 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Interpreter Operator Compatibility Test Suite
+# Tests that VM operators behave exactly like interpreter operators
+# Focuses on edge cases like undefined value handling, division by zero, etc.
+
+cases:
+  # Undefined Value Arithmetic Tests
+  - note: undefined_add
+    description: Test addition with undefined value
+    example_rego: "input.nonexistent + 5"
+    input: {}  # Empty input to create undefined access
+    literals:
+      - "nonexistent"
+      - 5
+    instructions:
+      - "LoadInput { dest: 0 }"              # Load input into register 0
+      - "Load { dest: 1, literal_idx: 0 }"   # Load string "nonexistent" for indexing
+      - "Load { dest: 2, literal_idx: 1 }"   # Load 5 into register 2
+      - "Index { dest: 3, container: 0, key: 1 }"  # Access input.nonexistent (undefined)
+      - "Add { dest: 4, left: 3, right: 2 }" # undefined + 5
+      - "Return { value: 4 }"
+    want_result: "#undefined"
+
+  - note: undefined_sub
+    description: Test subtraction with undefined value
+    example_rego: "input.nonexistent - 5"
+    input: {}
+    literals:
+      - "nonexistent"
+      - 5
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Index { dest: 3, container: 0, key: 1 }"
+      - "Sub { dest: 4, left: 3, right: 2 }"
+      - "Return { value: 4 }"
+    want_result: "#undefined"
+
+  - note: undefined_mul
+    description: Test multiplication with undefined value
+    example_rego: "input.nonexistent * 5"
+    input: {}
+    literals:
+      - "nonexistent"
+      - 5
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Index { dest: 3, container: 0, key: 1 }"
+      - "Mul { dest: 4, left: 3, right: 2 }"
+      - "Return { value: 4 }"
+    want_result: "#undefined"
+
+  # Division by Zero Tests
+  - note: division_by_zero
+    description: Test division by zero returns undefined (non-strict mode)
+    example_rego: "5 / 0"
+    literals:
+      - 5
+      - 0
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Div { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: modulo_by_zero
+    description: Test modulo by zero returns undefined (non-strict mode)
+    example_rego: "5 % 0"
+    literals:
+      - 5
+      - 0
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Mod { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  # Modulo Float Tests
+  - note: modulo_float
+    description: Test modulo with floating point numbers (should error)
+    example_rego: "5.5 % 2"
+    literals:
+      - 5.5
+      - 2
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Mod { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "modulo on floating-point number"
+
+  # Undefined Comparison Tests
+  - note: undefined_eq
+    description: Test equality comparison with undefined value
+    example_rego: "input.nonexistent == 5"
+    input: {}
+    literals:
+      - "nonexistent"
+      - 5
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Index { dest: 3, container: 0, key: 1 }"
+      - "Eq { dest: 4, left: 3, right: 2 }"
+      - "Return { value: 4 }"
+    want_result: "#undefined"
+
+  - note: undefined_ne
+    description: Test inequality comparison with undefined value
+    example_rego: "input.nonexistent != 5"
+    input: {}
+    literals:
+      - "nonexistent"
+      - 5
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Index { dest: 3, container: 0, key: 1 }"
+      - "Ne { dest: 4, left: 3, right: 2 }"
+      - "Return { value: 4 }"
+    want_result: "#undefined"
+
+  - note: undefined_lt
+    description: Test less than comparison with undefined value
+    example_rego: "input.nonexistent < 5"
+    input: {}
+    literals:
+      - "nonexistent"
+      - 5
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Index { dest: 3, container: 0, key: 1 }"
+      - "Lt { dest: 4, left: 3, right: 2 }"
+      - "Return { value: 4 }"
+    want_result: "#undefined"
+
+  - note: undefined_le
+    description: Test less than or equal comparison with undefined value
+    example_rego: "input.nonexistent <= 5"
+    input: {}
+    literals:
+      - "nonexistent"
+      - 5
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Index { dest: 3, container: 0, key: 1 }"
+      - "Le { dest: 4, left: 3, right: 2 }"
+      - "Return { value: 4 }"
+    want_result: "#undefined"
+
+  - note: undefined_gt
+    description: Test greater than comparison with undefined value
+    example_rego: "input.nonexistent > 5"
+    input: {}
+    literals:
+      - "nonexistent"
+      - 5
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Index { dest: 3, container: 0, key: 1 }"
+      - "Gt { dest: 4, left: 3, right: 2 }"
+      - "Return { value: 4 }"
+    want_result: "#undefined"
+
+  - note: undefined_ge
+    description: Test greater than or equal comparison with undefined value
+    example_rego: "input.nonexistent >= 5"
+    input: {}
+    literals:
+      - "nonexistent"
+      - 5
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Index { dest: 3, container: 0, key: 1 }"
+      - "Ge { dest: 4, left: 3, right: 2 }"
+      - "Return { value: 4 }"
+    want_result: "#undefined"
+
+  # Number Type Precision Tests
+  - note: number_add_precision
+    description: Test Number type addition preserves precision
+    example_rego: "1.1 + 2.2"
+    literals:
+      - 1.1
+      - 2.2
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: 3.3
+
+  - note: number_sub_precision
+    description: Test Number type subtraction preserves precision
+    example_rego: "5.5 - 2.2"
+    literals:
+      - 5.5
+      - 2.2
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Sub { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: 3.3
+
+  - note: number_mul_precision
+    description: Test Number type multiplication preserves precision
+    example_rego: "2.5 * 4.0"
+    literals:
+      - 2.5
+      - 4.0
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Mul { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: 10.0
+
+  - note: number_div_precision
+    description: Test Number type division preserves precision
+    example_rego: "7.5 / 2.5"
+    literals:
+      - 7.5
+      - 2.5
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Div { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: 3.0
+
+  # Integer Modulo Tests
+  - note: integer_modulo
+    description: Test integer modulo works correctly
+    example_rego: "7 % 3"
+    literals:
+      - 7
+      - 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Mod { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: 1
+
+  # Value Ordering Tests
+  - note: value_ordering_null_bool
+    description: Test null < bool ordering
+    example_rego: "null < true"
+    literals:
+      - null
+      - true
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Lt { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: true
+
+  - note: value_ordering_bool_number
+    description: Test bool < number ordering
+    example_rego: "true < 1"
+    literals:
+      - true
+      - 1
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Lt { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: true
+
+  - note: value_ordering_number_string
+    description: Test number < string ordering
+    example_rego: "1 < \"a\""
+    literals:
+      - 1
+      - "a"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Lt { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: true
+
+  # Edge Cases for Mixed Undefined Operations
+  - note: undefined_both_operands
+    description: Test operation with both operands undefined
+    example_rego: "input.nonexistent1 + input.nonexistent2"
+    input: {}
+    literals:
+      - "nonexistent1"
+      - "nonexistent2"
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Index { dest: 3, container: 0, key: 1 }"
+      - "Index { dest: 4, container: 0, key: 2 }"
+      - "Add { dest: 5, left: 3, right: 4 }"
+      - "Return { value: 5 }"
+    want_result: "#undefined"
+
+  - note: undefined_right_operand_arithmetic
+    description: Test arithmetic with right operand undefined
+    example_rego: "5 + input.nonexistent"
+    input: {}
+    literals:
+      - 5
+      - "nonexistent"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "LoadInput { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Index { dest: 3, container: 1, key: 2 }"
+      - "Add { dest: 4, left: 0, right: 3 }"
+      - "Return { value: 4 }"
+    want_result: "#undefined"
+
+  - note: undefined_right_operand_comparison
+    description: Test comparison with right operand undefined  
+    example_rego: "5 == input.nonexistent"
+    input: {}
+    literals:
+      - 5
+      - "nonexistent"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "LoadInput { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Index { dest: 3, container: 1, key: 2 }"
+      - "Eq { dest: 4, left: 0, right: 3 }"
+      - "Return { value: 4 }"
+    want_result: "#undefined"

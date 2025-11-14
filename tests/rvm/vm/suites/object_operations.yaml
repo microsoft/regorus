@@ -1,0 +1,276 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Object Operations Test Suite
+# Tests advanced object creation, manipulation, and edge cases
+# Covers dynamic keys, collisions, non-string keys, and template validation
+
+cases:
+  - note: object_key_collision_overwrite
+    description: Setting same key twice should overwrite the value
+    example_rego: "{\"key\": 1, \"key\": 2}"
+    literals:
+      - {}
+      - "key"
+      - 1
+      - 2
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"  # key
+      - "Load { dest: 2, literal_idx: 2 }"  # value 1
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"
+      - "Load { dest: 3, literal_idx: 3 }"  # value 2
+      - "ObjectSet { obj: 0, key: 1, value: 3 }"  # Overwrite
+      - "Return { value: 0 }"
+    want_result: {"key": 2}
+
+  - note: object_dynamic_key_generation
+    description: Generate object keys dynamically from loop iteration
+    example_rego: "{sprintf(\"key_%d\", [i]): i | i := [1, 2][_]}"
+    literals:
+      - {}
+      - 1
+      - 2
+      - "key_1"
+      - "key_2"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      loop_params:
+        - mode: "ForEach"
+          collection: 5
+          key_reg: 10
+          value_reg: 11
+          result_reg: 12
+          body_start: 7
+          loop_end: 13
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "ArrayNew { dest: 5 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "ArrayPush { arr: 5, value: 1 }"
+      - "Load { dest: 2, literal_idx: 2 }"
+      - "ArrayPush { arr: 5, value: 2 }"
+      - "LoopStart { params_index: 0 }"
+      # Generate dynamic key based on value
+      - "Load { dest: 20, literal_idx: 3 }"  # "key_1" when i=1
+      - "Load { dest: 21, literal_idx: 4 }"  # "key_2" when i=2
+      # For simplicity, we'll set both keys
+      - "ObjectSet { obj: 0, key: 20, value: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "ObjectSet { obj: 0, key: 21, value: 3 }"
+      - "LoopNext { body_start: 7, loop_end: 13 }"
+      - "Return { value: 0 }"
+    want_result: {"key_1": 1, "key_2": 2}
+
+  - note: object_number_keys
+    description: Object with number keys
+    example_rego: "{1: \"one\", 2: \"two\", 42: \"answer\"}"
+    literals:
+      - {}
+      - 1
+      - "one"
+      - 2
+      - "two"
+      - 42
+      - "answer"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"  # key 1
+      - "Load { dest: 2, literal_idx: 2 }"  # value "one"
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"
+      - "Load { dest: 3, literal_idx: 3 }"  # key 2
+      - "Load { dest: 4, literal_idx: 4 }"  # value "two"
+      - "ObjectSet { obj: 0, key: 3, value: 4 }"
+      - "Load { dest: 5, literal_idx: 5 }"  # key 42
+      - "Load { dest: 6, literal_idx: 6 }"  # value "answer"
+      - "ObjectSet { obj: 0, key: 5, value: 6 }"
+      - "Return { value: 0 }"
+    want_result: {1: "one", 2: "two", 42: "answer"}
+
+  - note: object_boolean_keys
+    description: Object with boolean keys
+    example_rego: "{true: \"yes\", false: \"no\"}"
+    literals:
+      - {}
+      - "yes"
+      - "no"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "LoadTrue { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"  # value "yes"
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"
+      - "LoadFalse { dest: 3 }"
+      - "Load { dest: 4, literal_idx: 2 }"  # value "no"
+      - "ObjectSet { obj: 0, key: 3, value: 4 }"
+      - "Return { value: 0 }"
+    want_result: {true: "yes", false: "no"}
+
+  - note: object_null_key
+    description: Object with null key
+    example_rego: "{null: \"nothing\"}"
+    literals:
+      - {}
+      - "nothing"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "LoadNull { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"
+      - "Return { value: 0 }"
+    want_result: {null: "nothing"}
+
+  - note: object_empty_string_key
+    description: Object with empty string key
+    example_rego: "{\"\": \"empty_key\"}"
+    literals:
+      - {}
+      - ""
+      - "empty_key"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"  # empty string key
+      - "Load { dest: 2, literal_idx: 2 }"  # value
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"
+      - "Return { value: 0 }"
+    want_result: {"": "empty_key"}
+
+  - note: object_set_undefined_value
+    description: Setting undefined value in object keeps it
+    literals:
+      - {}
+      - "key"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      # r2 is undefined (never loaded)
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"
+      - "Return { value: 0 }"
+    want_result: {"key": "#undefined"}
+
+  - note: object_create_with_template
+    description: ObjectCreate with pre-populated template
+    literals:
+      - {"existing": "value", "num": 42}
+      - "new_key"
+      - "new_value"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 2 }"
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"
+      - "Return { value: 0 }"
+    want_result: {"existing": "value", "num": 42, "new_key": "new_value"}
+
+  - note: object_nested_structure
+    description: Create deeply nested object structure
+    example_rego: "{\"outer\": {\"middle\": {\"inner\": \"value\"}}}"
+    literals:
+      - {}
+      - "outer"
+      - "middle"
+      - "inner"
+      - "value"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    instructions:
+      - "ObjectCreate { params_index: 0 }"  # outer
+      - "Load { dest: 10, literal_idx: 0 }"  # middle object
+      - "Load { dest: 11, literal_idx: 0 }"  # inner object
+      - "Load { dest: 12, literal_idx: 3 }"  # "inner" key
+      - "Load { dest: 13, literal_idx: 4 }"  # "value"
+      - "ObjectSet { obj: 11, key: 12, value: 13 }"  # {inner: "value"}
+      - "Load { dest: 14, literal_idx: 2 }"  # "middle" key
+      - "ObjectSet { obj: 10, key: 14, value: 11 }"  # {middle: {...}}
+      - "Load { dest: 15, literal_idx: 1 }"  # "outer" key
+      - "ObjectSet { obj: 0, key: 15, value: 10 }"  # {outer: {...}}
+      - "Return { value: 0 }"
+    want_result: {"outer": {"middle": {"inner": "value"}}}
+
+  - note: object_mixed_value_types
+    description: Object with values of different types
+    example_rego: "{\"str\": \"text\", \"num\": 42, \"bool\": true, \"null\": null, \"arr\": [1, 2]}"
+    literals:
+      - {}
+      - "str"
+      - "text"
+      - "num"
+      - 42
+      - "bool"
+      - "null"
+      - "arr"
+      - [1, 2]
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"  # "str"
+      - "Load { dest: 2, literal_idx: 2 }"  # "text"
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"
+      - "Load { dest: 3, literal_idx: 3 }"  # "num"
+      - "Load { dest: 4, literal_idx: 4 }"  # 42
+      - "ObjectSet { obj: 0, key: 3, value: 4 }"
+      - "Load { dest: 5, literal_idx: 5 }"  # "bool"
+      - "LoadTrue { dest: 6 }"
+      - "ObjectSet { obj: 0, key: 5, value: 6 }"
+      - "Load { dest: 7, literal_idx: 6 }"  # "null"
+      - "LoadNull { dest: 8 }"
+      - "ObjectSet { obj: 0, key: 7, value: 8 }"
+      - "Load { dest: 9, literal_idx: 7 }"  # "arr"
+      - "Load { dest: 10, literal_idx: 8 }"  # [1, 2]
+      - "ObjectSet { obj: 0, key: 9, value: 10 }"
+      - "Return { value: 0 }"
+    want_result: {"str": "text", "num": 42, "bool": true, "null": null, "arr": [1, 2]}

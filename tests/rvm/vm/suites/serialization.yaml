@@ -1,0 +1,423 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Serialization Test Suite
+# Tests round-trip serialization of compiled RVM programs
+# Covers all instruction types, large programs, and edge cases
+
+cases:
+  - note: serialization_basic_arithmetic
+    description: Serialize and deserialize simple arithmetic program
+    example_rego: "5 + 3"
+    literals:
+      - 5
+      - 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: 8
+
+  - note: serialization_comparisons
+    description: Serialize comparison instructions
+    example_rego: "10 > 5 && 3 < 7"
+    literals:
+      - 10
+      - 5
+      - 3
+      - 7
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Gt { dest: 2, left: 0, right: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "Load { dest: 4, literal_idx: 3 }"
+      - "Lt { dest: 5, left: 3, right: 4 }"
+      - "And { dest: 6, left: 2, right: 5 }"
+      - "Return { value: 6 }"
+    want_result: true
+
+  - note: serialization_array_create
+    description: Serialize ArrayCreate with instruction_params
+    example_rego: "[1, 2, 3]"
+    literals:
+      - 1
+      - 2
+      - 3
+    instruction_params:
+      array_create_params:
+        - dest: 0
+          elements: [1, 2, 3]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "ArrayCreate { params_index: 0 }"
+      - "Return { value: 0 }"
+    want_result: [1, 2, 3]
+
+  - note: serialization_object_create
+    description: Serialize ObjectCreate with complex params
+    example_rego: "{\"a\": 1, \"b\": 2}"
+    literals:
+      - "a"
+      - 1
+      - "b"
+      - 2
+      - {}
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 4
+          literal_key_fields: []
+          fields:
+            - [1, 2]
+            - [3, 4]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "Load { dest: 4, literal_idx: 3 }"
+      - "ObjectCreate { params_index: 0 }"
+      - "Return { value: 0 }"
+    want_result: {"a": 1, "b": 2}
+
+  - note: serialization_set_operations
+    description: Serialize set creation and operations
+    example_rego: "{1, 2, 3}"
+    literals:
+      - 1
+      - 2
+      - 3
+    instructions:
+      - "SetNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "SetAdd { set: 0, value: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "SetAdd { set: 0, value: 2 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "SetAdd { set: 0, value: 3 }"
+      - "Return { value: 0 }"
+    want_result:
+      set!:
+        - 1
+        - 2
+        - 3
+
+  - note: serialization_loop_foreach
+    description: Serialize ForEach loop with params
+    example_rego: "[x | x = [1, 2, 3][_]]"
+    literals:
+      - 1
+      - 2
+      - 3
+    instruction_params:
+      array_create_params:
+        - dest: 0
+          elements: [1, 2, 3]
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 9
+          body_start: 6
+          loop_end: 8
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "ArrayCreate { params_index: 0 }"
+      - "ArrayNew { dest: 6 }"
+      - "LoopStart { params_index: 0 }"
+      - "ArrayPush { arr: 6, value: 5 }"
+      - "LoopNext { body_start: 6, loop_end: 8 }"
+      - "Return { value: 6 }"
+    want_result: [1, 2, 3]
+
+  - note: serialization_loop_any
+    description: Serialize Any loop
+    example_rego: "some x in [1, 2, 3]; x > 2"
+    literals:
+      - 1
+      - 2
+      - 3
+    instruction_params:
+      array_create_params:
+        - dest: 0
+          elements: [1, 2, 3]
+      loop_params:
+        - mode: "Existential"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 6
+          body_start: 5
+          loop_end: 8
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "ArrayCreate { params_index: 0 }"
+      - "LoopStart { params_index: 0 }"
+      - "Gt { dest: 8, left: 5, right: 2 }"
+      - "AssertCondition { condition: 8 }"
+      - "LoopNext { body_start: 5, loop_end: 8 }"
+      - "Return { value: 6 }"
+    want_result: true
+
+  - note: serialization_comprehension_array
+    description: Serialize array comprehension
+    example_rego: "[x * 2 | x = [1, 2, 3][_]]"
+    literals:
+      - 1
+      - 2
+      - 3
+    instruction_params:
+      array_create_params:
+        - dest: 0
+          elements: [1, 2, 3]
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 9
+          body_start: 6
+          loop_end: 9
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "ArrayCreate { params_index: 0 }"
+      - "ArrayNew { dest: 7 }"
+      - "LoopStart { params_index: 0 }"
+      - "Mul { dest: 6, left: 5, right: 2 }"
+      - "ArrayPush { arr: 7, value: 6 }"
+      - "LoopNext { body_start: 6, loop_end: 9 }"
+      - "Return { value: 7 }"
+    want_result: [2, 4, 6]
+
+  - note: serialization_indexed_access
+    description: Serialize indexing instructions
+    example_rego: "data.users[0].name"
+    literals:
+      - {"users": [{"name": "Alice"}, {"name": "Bob"}]}
+      - "users"
+      - 0
+      - "name"
+    instruction_params:
+      chained_index_params:
+        - dest: 4
+          root: 0
+          path_components:
+            - literal_idx: 1
+            - literal_idx: 2
+            - literal_idx: 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 2 }"
+      - "Load { dest: 3, literal_idx: 3 }"
+      - "ChainedIndex { params_index: 0 }"
+      - "Return { value: 4 }"
+    want_result: "Alice"
+
+  - note: serialization_conditional_branching
+    description: Serialize conditional instructions
+    example_rego: "if true then 1 else 2"
+    literals:
+      - 1
+      - 2
+    instructions:
+      - "LoadTrue { dest: 0 }"
+      - "AssertCondition { condition: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Return { value: 1 }"
+    want_result: 1
+
+  - note: serialization_null_and_undefined
+    description: Serialize null and undefined handling
+    example_rego: "null"
+    literals: []
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result: null
+
+  - note: serialization_mixed_types
+    description: Serialize program with all value types
+    example_rego: "[1, \"text\", true, false, null, [2, 3], {\"k\": \"v\"}]"
+    literals:
+      - 1
+      - "text"
+      - 2
+      - 3
+      - "k"
+      - "v"
+      - {}
+    instruction_params:
+      array_create_params:
+        - dest: 6
+          elements: [3, 4]
+        - dest: 0
+          elements: [1, 2, 7, 8, 9, 6, 10]
+      object_create_params:
+        - dest: 10
+          template_literal_idx: 6
+          literal_key_fields: []
+          fields:
+            - [5, 11]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "Load { dest: 4, literal_idx: 3 }"
+      - "ArrayCreate { params_index: 0 }"
+      - "LoadTrue { dest: 7 }"
+      - "LoadFalse { dest: 8 }"
+      - "LoadNull { dest: 9 }"
+      - "Load { dest: 5, literal_idx: 4 }"
+      - "Load { dest: 11, literal_idx: 5 }"
+      - "ObjectCreate { params_index: 0 }"
+      - "ArrayCreate { params_index: 1 }"
+      - "Return { value: 0 }"
+    want_result: [1, "text", true, false, null, [2, 3], {"k": "v"}]
+
+  - note: serialization_large_program_50_instructions
+    description: Large program with many instructions (stress test)
+    example_rego: "Complex computation chain"
+    literals:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "Mul { dest: 4, left: 2, right: 3 }"
+      - "Load { dest: 5, literal_idx: 3 }"
+      - "Sub { dest: 6, left: 4, right: 5 }"
+      - "Load { dest: 7, literal_idx: 4 }"
+      - "Div { dest: 8, left: 6, right: 7 }"
+      - "Load { dest: 9, literal_idx: 0 }"
+      - "Add { dest: 10, left: 8, right: 9 }"
+      - "Load { dest: 11, literal_idx: 1 }"
+      - "Mul { dest: 12, left: 10, right: 11 }"
+      - "Load { dest: 13, literal_idx: 2 }"
+      - "Add { dest: 14, left: 12, right: 13 }"
+      - "Load { dest: 15, literal_idx: 3 }"
+      - "Sub { dest: 16, left: 14, right: 15 }"
+      - "Load { dest: 17, literal_idx: 4 }"
+      - "Mul { dest: 18, left: 16, right: 17 }"
+      - "Load { dest: 19, literal_idx: 0 }"
+      - "Div { dest: 20, left: 18, right: 19 }"
+      - "Load { dest: 21, literal_idx: 1 }"
+      - "Add { dest: 22, left: 20, right: 21 }"
+      - "Load { dest: 23, literal_idx: 2 }"
+      - "Mul { dest: 24, left: 22, right: 23 }"
+      - "Load { dest: 25, literal_idx: 3 }"
+      - "Sub { dest: 26, left: 24, right: 25 }"
+      - "Load { dest: 27, literal_idx: 4 }"
+      - "Add { dest: 28, left: 26, right: 27 }"
+      - "Load { dest: 29, literal_idx: 0 }"
+      - "Mul { dest: 30, left: 28, right: 29 }"
+      - "Load { dest: 31, literal_idx: 1 }"
+      - "Div { dest: 32, left: 30, right: 31 }"
+      - "Load { dest: 33, literal_idx: 2 }"
+      - "Add { dest: 34, left: 32, right: 33 }"
+      - "Load { dest: 35, literal_idx: 3 }"
+      - "Sub { dest: 36, left: 34, right: 35 }"
+      - "Load { dest: 37, literal_idx: 4 }"
+      - "Mul { dest: 38, left: 36, right: 37 }"
+      - "Load { dest: 39, literal_idx: 0 }"
+      - "Add { dest: 40, left: 38, right: 39 }"
+      - "Load { dest: 41, literal_idx: 1 }"
+      - "Sub { dest: 42, left: 40, right: 41 }"
+      - "Load { dest: 43, literal_idx: 2 }"
+      - "Mul { dest: 44, left: 42, right: 43 }"
+      - "Load { dest: 45, literal_idx: 3 }"
+      - "Div { dest: 46, left: 44, right: 45 }"
+      - "Load { dest: 47, literal_idx: 4 }"
+      - "Add { dest: 48, left: 46, right: 47 }"
+      - "Return { value: 48 }"
+    want_result: 98
+
+  - note: serialization_large_literal_table
+    description: Program with many literal values
+    literals:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - "a"
+      - "b"
+      - "c"
+      - "d"
+      - "e"
+      - [1, 2, 3]
+      - {"key": "value"}
+      - true
+      - false
+      - null
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 5 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "Load { dest: 3, literal_idx: 10 }"
+      - "Load { dest: 4, literal_idx: 15 }"
+      - "Return { value: 2 }"
+    want_result: 7
+
+  - note: serialization_nested_structures
+    description: Serialize deeply nested data structures
+    example_rego: "[{\"a\": [1, {\"b\": [2, 3]}]}]"
+    literals:
+      - 1
+      - 2
+      - 3
+      - "b"
+      - "a"
+      - {}
+    instruction_params:
+      array_create_params:
+        - dest: 3
+          elements: [2, 4]
+        - dest: 1
+          elements: [5, 6]
+        - dest: 0
+          elements: [7]
+      object_create_params:
+        - dest: 6
+          template_literal_idx: 5
+          literal_key_fields: []
+          fields:
+            - [8, 3]
+        - dest: 7
+          template_literal_idx: 5
+          literal_key_fields: []
+          fields:
+            - [9, 1]
+    instructions:
+      - "Load { dest: 5, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Load { dest: 4, literal_idx: 2 }"
+      - "ArrayCreate { params_index: 0 }"
+      - "Load { dest: 8, literal_idx: 3 }"
+      - "ObjectCreate { params_index: 0 }"
+      - "ArrayCreate { params_index: 1 }"
+      - "Load { dest: 9, literal_idx: 4 }"
+      - "ObjectCreate { params_index: 1 }"
+      - "ArrayCreate { params_index: 2 }"
+      - "Return { value: 0 }"
+    want_result: [{"a": [1, {"b": [2, 3]}]}]

@@ -1,0 +1,295 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Empty Collections Loop Test Suite
+# Tests behavior of various loop types over empty collections
+# 1. Comprehensions should evaluate to their empty versions
+# 2. some..in should evaluate to false  
+# 3. every should evaluate to true
+
+cases:
+  - note: existential_empty_array
+    description: Existential quantification (some) on empty array should return false
+    example_rego: |
+      # some x in []
+      # x > 0  # false - no elements to satisfy condition
+    literals:
+      - {}
+      - 0  # comparison value
+    instruction_params:
+      loop_params:
+        - mode: "Any"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          body_start: 2
+          loop_end: 6
+          result_reg: 6
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create empty array in register 0
+      - "LoopStart { params_index: 0 }"
+      - "Load { dest: 7, literal_idx: 1 }"  # Load comparison value 0
+      - "Gt { dest: 8, left: 5, right: 7 }" # Check if current value > 0
+      - "AssertCondition { condition: 8 }"  # Assert the condition
+      - "LoopNext { body_start: 2, loop_end: 6 }"
+      - "Return { value: 6 }"               # Return false for empty collection
+    want_result: false
+
+  - note: universal_empty_array
+    description: Universal quantification (every) on empty array should return true  
+    example_rego: |
+      # every x in []
+      # x > 0  # true - vacuously true (no elements to violate condition)
+    literals:
+      - {}
+      - 0  # comparison value
+    instruction_params:
+      loop_params:
+        - mode: "Every"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 6
+          body_start: 2
+          loop_end: 6
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create empty array in register 0
+      - "LoopStart { params_index: 0 }"
+      - "Load { dest: 7, literal_idx: 1 }"  # Load comparison value 0
+      - "Gt { dest: 8, left: 5, right: 7 }" # Check if current value > 0
+      - "AssertCondition { condition: 8 }"  # Assert the condition
+      - "LoopNext { body_start: 2, loop_end: 6 }"
+      - "Return { value: 6 }"               # Return true for empty collection (vacuously true)
+    want_result: true
+
+  - note: array_comprehension_empty
+    description: Array comprehension on empty collection should return empty array
+    example_rego: |
+      # [x + 1 | x = []; true]  # []
+      # Transform each element by adding 1
+    literals:
+      - {}
+      - 1  # value to add
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 1
+          key_reg: 4
+          value_reg: 5
+          body_start: 3
+          comprehension_end: 9
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 8
+          body_start: 4
+          loop_end: 9
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create empty input array in register 0
+      - "ComprehensionBegin { params_index: 0 }"  # Start array comprehension
+      - "LoopStart { params_index: 0 }"     # Start loop over array elements
+      - "Load { dest: 6, literal_idx: 1 }"  # Load 1 into register 6
+      - "Add { dest: 7, left: 5, right: 6 }" # Add 1 to current value
+      - "ComprehensionYield { value_reg: 7 }"  # Add result to comprehension
+      - "LoadBool { dest: 8, value: true }" # Load true (condition always passes)
+      - "AssertCondition { condition: 8 }"  # Assert true condition
+      - "LoopNext { body_start: 4, loop_end: 9 }"  # Continue to next iteration or exit
+      - "Return { value: 1 }"               # Return the result array (should be empty)
+    want_result: []
+
+  - note: set_comprehension_empty
+    description: Set comprehension on empty collection should return empty set
+    example_rego: |
+      # {x + 1 | x = []; true}  # set()
+      # Transform each element by adding 1 into a set
+    literals:
+      - {}
+      - 1  # value to add
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Set"
+          collection_reg: 1
+          key_reg: 4
+          value_reg: 5
+          body_start: 3
+          comprehension_end: 9
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 8
+          body_start: 4
+          loop_end: 9
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create empty input array in register 0
+      - "ComprehensionBegin { params_index: 0 }"  # Start set comprehension
+      - "LoopStart { params_index: 0 }"     # Start loop over array elements
+      - "Load { dest: 6, literal_idx: 1 }"  # Load 1 into register 6
+      - "Add { dest: 7, left: 5, right: 6 }" # Add 1 to current value
+      - "ComprehensionYield { value_reg: 7 }"  # Add result to comprehension
+      - "LoadBool { dest: 8, value: true }" # Load true (condition always passes)
+      - "AssertCondition { condition: 8 }"  # Assert true condition
+      - "LoopNext { body_start: 4, loop_end: 9 }"  # Continue to next iteration or exit
+      - "Return { value: 1 }"               # Return the result set (should be empty)
+    want_result: 
+      set!: []  # Set serializes as empty array
+
+  - note: object_comprehension_empty
+    description: Object comprehension on empty collection should return empty object
+    example_rego: |
+      # {k: v + 1 | some k, v in {}; true}  # {}
+      # Transform each key-value pair 
+    literals:
+      - {}
+      - 1  # value to add
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      comprehension_begin_params:
+        - mode: "Object"
+          collection_reg: 1
+          key_reg: 4
+          value_reg: 5
+          body_start: 3
+          comprehension_end: 9
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 8
+          body_start: 4
+          loop_end: 9
+    instructions:
+      - "ObjectCreate { params_index: 0 }"             
+      - "ComprehensionBegin { params_index: 0 }"  # Start object comprehension
+      - "LoopStart { params_index: 0 }"     # Start loop over object elements
+      - "Load { dest: 6, literal_idx: 1 }"  # Load 1 into register 6  
+      - "Add { dest: 7, left: 5, right: 6 }" # Add 1 to current value
+      - "ComprehensionYield { value_reg: 7 }"  # Add result to comprehension (object comprehension needs special handling)
+      - "LoadBool { dest: 8, value: true }" # Load true (condition always passes)
+      - "AssertCondition { condition: 8 }"  # Assert true condition
+      - "LoopNext { body_start: 4, loop_end: 9 }"  # Continue to next iteration or exit
+      - "Return { value: 1 }"               # Return the result object (should be empty)
+    want_result: {}
+
+  - note: existential_empty_set
+    description: Existential quantification on empty set should return false
+    example_rego: |
+      # some x in set()
+      # x > 0  # false - no elements in set
+    literals:
+      - {}
+      - 0  # comparison value
+    instruction_params:
+      loop_params:
+        - mode: "Any"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 6
+          body_start: 2
+          loop_end: 6
+    instructions:
+      - "SetNew { dest: 0 }"                # Create empty set in register 0
+      - "LoopStart { params_index: 0 }"
+      - "Load { dest: 7, literal_idx: 1 }"  # Load comparison value 0
+      - "Gt { dest: 8, left: 5, right: 7 }" # Check if current value > 0
+      - "AssertCondition { condition: 8 }"  # Assert the condition
+      - "LoopNext { body_start: 2, loop_end: 6 }"
+      - "Return { value: 6 }"               # Return false for empty set
+    want_result: false
+
+  - note: universal_empty_object
+    description: Universal quantification on empty object should return true
+    example_rego: |
+      # every k, v in {}
+      # v > 0  # true - vacuously true (no key-value pairs to violate condition)
+    literals:
+      - {}
+      - 0  # comparison value
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      loop_params:
+        - mode: "Every"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 6
+          body_start: 2
+          loop_end: 6
+    instructions:
+      - "ObjectCreate { params_index: 0 }"             
+      - "LoopStart { params_index: 0 }"
+      - "Load { dest: 7, literal_idx: 1 }"  # Load comparison value 0
+      - "Gt { dest: 8, left: 5, right: 7 }" # Check if current value > 0
+      - "AssertCondition { condition: 8 }"  # Assert the condition
+      - "LoopNext { body_start: 2, loop_end: 6 }"
+      - "Return { value: 6 }"               # Return true for empty object (vacuously true)
+    want_result: true
+
+  - note: nested_empty_comprehensions
+    description: Nested comprehensions with empty collections
+    example_rego: |
+      # [[y | y = []; true] | x = []; true]  # []
+      # Nested array comprehension where both inner and outer collections are empty
+    literals: []
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 0
+          key_reg: 2
+          value_reg: 3
+          body_start: 3
+          comprehension_end: 16
+        - mode: "Array"
+          collection_reg: 6
+          key_reg: 8
+          value_reg: 9
+          body_start: 7
+          comprehension_end: 12
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 2
+          value_reg: 3
+          result_reg: 10
+          body_start: 4
+          loop_end: 16
+        - mode: "ForEach"
+          collection: 6
+          key_reg: 8
+          value_reg: 9
+          result_reg: 11
+          body_start: 8
+          loop_end: 12
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create empty outer array in register 0
+      - "ArrayNew { dest: 1 }"              # Create empty result array in register 1
+      - "ComprehensionBegin { params_index: 0 }"
+      - "LoopStart { params_index: 0 }"     # Start outer loop
+      # Inner array comprehension (for each x in outer empty array)
+      - "ArrayNew { dest: 6 }"              # Create empty inner array in register 6
+      - "ArrayNew { dest: 7 }"              # Create result for inner comprehension in register 7
+      - "ComprehensionBegin { params_index: 1 }"
+      - "LoopStart { params_index: 1 }"     # Start inner loop
+      - "ComprehensionYield { value_reg: 9 }"    # Push inner value to inner result (never executes)
+      - "LoadBool { dest: 10, value: true }" # Load true
+      - "AssertCondition { condition: 10 }" # Assert true condition for inner loop
+      - "LoopNext { body_start: 8, loop_end: 12 }"  # Continue inner loop
+      - "ComprehensionYield { value_reg: 7 }"    # Push inner result to outer result
+      - "LoadBool { dest: 11, value: true }" # Load true
+      - "AssertCondition { condition: 11 }" # Assert true condition for outer loop  
+      - "LoopNext { body_start: 4, loop_end: 16 }"  # Continue outer loop
+      - "Return { value: 1 }"               # Return the nested result (should be empty)
+    want_result: []

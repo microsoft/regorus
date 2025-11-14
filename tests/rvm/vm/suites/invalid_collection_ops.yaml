@@ -1,0 +1,61 @@
+# Invalid Collection Operations Test Suite
+# Exercises error conditions for collection-specific instructions.
+
+cases:
+  - note: object_set_on_non_object
+    description: ObjectSet on non-object register triggers error
+    literals:
+      - 1
+      - "key"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "ObjectSet { obj: 0, key: 1, value: 1 }"
+    want_error: "Register 0 does not contain an object"
+
+  - note: array_push_on_non_array
+    description: ArrayPush on scalar register fails
+    literals:
+      - 1
+      - 2
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+    want_error: "Register 0 does not contain an array"
+
+  - note: set_add_on_non_set
+    description: SetAdd on scalar register fails
+    literals:
+      - 1
+      - 2
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "SetAdd { set: 0, value: 1 }"
+    want_error: "Register 0 does not contain a set"
+
+  - note: object_create_invalid_template
+    description: ObjectCreate fails when template literal is not object
+    literals:
+      - []
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+    want_error: "ObjectCreate: template is not an object"
+
+  - note: contains_on_scalar_returns_false
+    description: Contains on scalar should return false
+    literals:
+      - 1
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Contains { dest: 2, collection: 0, value: 1 }"
+      - "Return { value: 2 }"
+    want_result: false

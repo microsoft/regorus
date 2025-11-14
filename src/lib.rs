@@ -38,6 +38,8 @@ mod policy_info;
 mod query;
 #[cfg(feature = "azure_policy")]
 pub mod registry;
+#[cfg(feature = "rvm")]
+pub mod rvm;
 mod scheduler;
 #[cfg(feature = "azure_policy")]
 mod schema;

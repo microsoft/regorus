@@ -1,0 +1,41 @@
+# Destructuring Rules Test Suite
+# Covers DestructuringSuccess control flow for rule parameters.
+
+cases:
+  - note: destructuring_success_path
+    description: Destructuring block passes and body executes
+    literals:
+      - 1
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [4]
+        destructuring_blocks: [2]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "DestructuringSuccess {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "RuleReturn {}"
+    want_result: 1
+
+  - note: destructuring_failure_skips_body
+    description: Missing DestructuringSuccess causes undefined result
+    literals:
+      - 1
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [4]
+        destructuring_blocks: [2]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "LoadFalse { dest: 2 }"
+      - "AssertCondition { condition: 2 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "RuleReturn {}"
+    want_result: "#undefined"

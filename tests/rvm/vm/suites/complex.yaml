@@ -1,0 +1,230 @@
+# Complex VM Control Flow Suite
+# Exercises deep nesting of heterogeneous loops, comprehensions, and rule calls.
+
+cases:
+  - note: twenty_level_loop_maze
+    description: Twenty levels of mixed loop modes with embedded comprehension and rule call
+    literals:
+      - 0
+      - 1
+    instruction_params:
+      loop_params:
+        - mode: "ForEach"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 10
+          body_start: 5
+          loop_end: 55
+        - mode: "Any"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 11
+          body_start: 6
+          loop_end: 54
+        - mode: "Every"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 12
+          body_start: 7
+          loop_end: 53
+        - mode: "ForEach"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 13
+          body_start: 8
+          loop_end: 52
+        - mode: "Any"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 14
+          body_start: 9
+          loop_end: 51
+        - mode: "Every"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 15
+          body_start: 10
+          loop_end: 50
+        - mode: "ForEach"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 16
+          body_start: 11
+          loop_end: 49
+        - mode: "Any"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 17
+          body_start: 12
+          loop_end: 48
+        - mode: "Every"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 18
+          body_start: 13
+          loop_end: 47
+        - mode: "ForEach"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 19
+          body_start: 14
+          loop_end: 46
+        - mode: "Any"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 20
+          body_start: 15
+          loop_end: 45
+        - mode: "Every"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 21
+          body_start: 16
+          loop_end: 44
+        - mode: "ForEach"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 22
+          body_start: 17
+          loop_end: 43
+        - mode: "Any"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 23
+          body_start: 18
+          loop_end: 42
+        - mode: "Every"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 24
+          body_start: 19
+          loop_end: 41
+        - mode: "ForEach"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 25
+          body_start: 20
+          loop_end: 40
+        - mode: "Any"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 26
+          body_start: 21
+          loop_end: 39
+        - mode: "Every"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 27
+          body_start: 22
+          loop_end: 38
+        - mode: "ForEach"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 28
+          body_start: 23
+          loop_end: 37
+        - mode: "Any"
+          collection: 1
+          key_reg: 2
+          value_reg: 3
+          result_reg: 29
+          body_start: 24
+          loop_end: 36
+        - mode: "ForEach"
+          collection: 4
+          key_reg: 30
+          value_reg: 31
+          result_reg: 32
+          body_start: 28
+          loop_end: 31
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 4
+          key_reg: 30
+          value_reg: 31
+          body_start: 28
+          comprehension_end: 31
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [56]
+    instructions:
+      - "ArrayNew { dest: 1 }"
+      - "Load { dest: 8, literal_idx: 1 }"
+      - "ArrayPush { arr: 1, value: 8 }"
+      - "Load { dest: 7, literal_idx: 0 }"
+      - "LoopStart { params_index: 0 }"
+      - "LoopStart { params_index: 1 }"
+      - "LoopStart { params_index: 2 }"
+      - "LoopStart { params_index: 3 }"
+      - "LoopStart { params_index: 4 }"
+      - "LoopStart { params_index: 5 }"
+      - "LoopStart { params_index: 6 }"
+      - "LoopStart { params_index: 7 }"
+      - "LoopStart { params_index: 8 }"
+      - "LoopStart { params_index: 9 }"
+      - "LoopStart { params_index: 10 }"
+      - "LoopStart { params_index: 11 }"
+      - "LoopStart { params_index: 12 }"
+      - "LoopStart { params_index: 13 }"
+      - "LoopStart { params_index: 14 }"
+      - "LoopStart { params_index: 15 }"
+      - "LoopStart { params_index: 16 }"
+      - "LoopStart { params_index: 17 }"
+      - "LoopStart { params_index: 18 }"
+      - "LoopStart { params_index: 19 }"
+      - "ArrayNew { dest: 4 }"
+      - "ArrayPush { arr: 4, value: 8 }"
+      - "ComprehensionBegin { params_index: 0 }"
+      - "LoopStart { params_index: 20 }"
+      - "Move { dest: 31, src: 8 }"
+      - "ComprehensionYield { value_reg: 31 }"
+      - "LoopNext { body_start: 28, loop_end: 31 }"
+      - "ComprehensionEnd"
+      - "Add { dest: 7, left: 7, right: 8 }"
+      - "CallRule { dest: 9, rule_index: 0 }"
+      - "Add { dest: 7, left: 7, right: 9 }"
+      - "LoopNext { body_start: 24, loop_end: 36 }"
+      - "LoopNext { body_start: 23, loop_end: 37 }"
+      - "LoopNext { body_start: 22, loop_end: 38 }"
+      - "LoopNext { body_start: 21, loop_end: 39 }"
+      - "LoopNext { body_start: 20, loop_end: 40 }"
+      - "LoopNext { body_start: 19, loop_end: 41 }"
+      - "LoopNext { body_start: 18, loop_end: 42 }"
+      - "LoopNext { body_start: 17, loop_end: 43 }"
+      - "LoopNext { body_start: 16, loop_end: 44 }"
+      - "LoopNext { body_start: 15, loop_end: 45 }"
+      - "LoopNext { body_start: 14, loop_end: 46 }"
+      - "LoopNext { body_start: 13, loop_end: 47 }"
+      - "LoopNext { body_start: 12, loop_end: 48 }"
+      - "LoopNext { body_start: 11, loop_end: 49 }"
+      - "LoopNext { body_start: 10, loop_end: 50 }"
+      - "LoopNext { body_start: 9, loop_end: 51 }"
+      - "LoopNext { body_start: 8, loop_end: 52 }"
+      - "LoopNext { body_start: 7, loop_end: 53 }"
+      - "LoopNext { body_start: 6, loop_end: 54 }"
+      - "LoopNext { body_start: 5, loop_end: 55 }"
+      - "Return { value: 7 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "RuleReturn {}"
+    want_result: 2

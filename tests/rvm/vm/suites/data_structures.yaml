@@ -1,0 +1,76 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Data Structures Test Suite
+# Tests instructions for working with arrays, objects, and sets
+# These instructions create and manipulate complex data types
+
+cases:
+  - note: array_operations
+    description: Test array creation and access
+    example_rego: "arr := [1, 2, 3]; arr[0]"  # Array creation and indexing
+    literals:
+      - 1
+      - 2
+      - 3
+      - 0  # index
+    instructions:
+      - "ArrayNew { dest: 0 }"               # Create empty array in register 0
+      - "Load { dest: 1, literal_idx: 0 }"   # Load 1 into register 1
+      - "ArrayPush { arr: 0, value: 1 }"     # Push 1 to array
+      - "Load { dest: 2, literal_idx: 1 }"   # Load 2 into register 2
+      - "ArrayPush { arr: 0, value: 2 }"     # Push 2 to array
+      - "Load { dest: 3, literal_idx: 2 }"   # Load 3 into register 3
+      - "ArrayPush { arr: 0, value: 3 }"     # Push 3 to array
+      - "Load { dest: 4, literal_idx: 3 }"   # Load index 0 into register 4
+      - "Index { dest: 5, container: 0, key: 4 }"  # Access array[0], store in register 5
+      - "Return { value: 5 }"                # Return the indexed value
+    want_result: 1
+
+  - note: object_operations
+    description: Test object creation and access
+    example_rego: "obj := {\"key1\": \"value1\", \"key2\": 42}; obj.key1"  # Object creation and field access
+    literals:
+      - {}
+      - "key1"
+      - "value1"
+      - "key2"
+      - 42
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    instructions:
+      - "ObjectCreate { params_index: 0 }"   # Create empty object in register 0
+      - "Load { dest: 1, literal_idx: 1 }"   # Load "key1" into register 1
+      - "Load { dest: 2, literal_idx: 2 }"   # Load "value1" into register 2
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"  # Set obj["key1"] = "value1"
+      - "Load { dest: 3, literal_idx: 3 }"   # Load "key2" into register 3
+      - "Load { dest: 4, literal_idx: 4 }"   # Load 42 into register 4
+      - "ObjectSet { obj: 0, key: 3, value: 4 }"  # Set obj["key2"] = 42
+      - "Load { dest: 5, literal_idx: 1 }"   # Load "key1" again for lookup
+      - "Index { dest: 6, container: 0, key: 5 }"  # Access obj["key1"], store in register 6
+      - "Return { value: 6 }"                # Return the field value
+    want_result: "value1"
+
+  - note: set_operations
+    description: Test set creation and membership
+    example_rego: "s := {1, 2, 3}; 2 in s"  # Set creation and membership test
+    literals:
+      - 1
+      - 2
+      - 3
+    instructions:
+      - "SetNew { dest: 0 }"                 # Create empty set in register 0
+      - "Load { dest: 1, literal_idx: 0 }"   # Load 1 into register 1
+      - "SetAdd { set: 0, value: 1 }"        # Add 1 to set
+      - "Load { dest: 2, literal_idx: 1 }"   # Load 2 into register 2
+      - "SetAdd { set: 0, value: 2 }"        # Add 2 to set
+      - "Load { dest: 3, literal_idx: 2 }"   # Load 3 into register 3
+      - "SetAdd { set: 0, value: 3 }"        # Add 3 to set
+      - "Load { dest: 4, literal_idx: 1 }"   # Load 2 again for membership check
+      - "Contains { dest: 5, collection: 0, value: 4 }"  # Check if 2 is in set, store result in register 5
+      - "Return { value: 5 }"                # Return boolean membership result
+    want_result: true

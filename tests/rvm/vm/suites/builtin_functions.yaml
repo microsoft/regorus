@@ -1,0 +1,524 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Builtin Functions Test Suite
+# Tests the VM's builtin function call mechanism with various builtin functions
+# Covers argument handling, return values, and error cases
+
+cases:
+  # Basic Count Function Tests
+  - note: builtin_count_array
+    description: Test count builtin with array argument
+    example_rego: "count([1, 2, 3])"
+    literals:
+      - [1, 2, 3]
+    instruction_params:
+      builtin_infos:
+        - name: "count"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load [1, 2, 3] into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call count(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: 3
+
+  - note: builtin_count_string
+    description: Test count builtin with string argument
+    example_rego: "count(\"hello\")"
+    literals:
+      - "hello"
+    instruction_params:
+      builtin_infos:
+        - name: "count"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load "hello" into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call count(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: 5
+
+  - note: builtin_count_object
+    description: Test count builtin with object argument
+    example_rego: "count({\"a\": 1, \"b\": 2})"
+    literals:
+      - {"a": 1, "b": 2}
+    instruction_params:
+      builtin_infos:
+        - name: "count"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load object into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call count(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: 2
+
+  - note: builtin_count_empty_array
+    description: Test count builtin with empty array
+    example_rego: "count([])"
+    literals:
+      - []
+    instruction_params:
+      builtin_infos:
+        - name: "count"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load empty array into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call count(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: 0
+
+  # Max Function Tests
+  - note: builtin_max_array
+    description: Test max builtin with array argument
+    example_rego: "max([1, 5, 3])"
+    literals:
+      - [1, 5, 3]
+    instruction_params:
+      builtin_infos:
+        - name: "max"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load [1, 5, 3] into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call max(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: 5
+
+  - note: builtin_max_empty_array
+    description: Test max builtin with empty array returns undefined
+    example_rego: "max([])"
+    literals:
+      - []
+    instruction_params:
+      builtin_infos:
+        - name: "max"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load empty array into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call max(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: "#undefined"
+
+  # Min Function Tests
+  - note: builtin_min_array
+    description: Test min builtin with array argument
+    example_rego: "min([1, 5, 3])"
+    literals:
+      - [1, 5, 3]
+    instruction_params:
+      builtin_infos:
+        - name: "min"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load [1, 5, 3] into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call min(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: 1
+
+  # Sum Function Tests
+  - note: builtin_sum_array
+    description: Test sum builtin with numeric array
+    example_rego: "sum([1, 2, 3, 4])"
+    literals:
+      - [1, 2, 3, 4]
+    instruction_params:
+      builtin_infos:
+        - name: "sum"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load [1, 2, 3, 4] into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call sum(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: 10
+
+  - note: builtin_sum_empty_array
+    description: Test sum builtin with empty array
+    example_rego: "sum([])"
+    literals:
+      - []
+    instruction_params:
+      builtin_infos:
+        - name: "sum"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load empty array into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call sum(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: 0
+
+  # String Functions Tests
+  - note: builtin_upper_string
+    description: Test upper builtin function
+    example_rego: "upper(\"hello\")"
+    literals:
+      - "hello"
+    instruction_params:
+      builtin_infos:
+        - name: "upper"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load "hello" into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call upper(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: "HELLO"
+
+  - note: builtin_lower_string
+    description: Test lower builtin function
+    example_rego: "lower(\"WORLD\")"
+    literals:
+      - "WORLD"
+    instruction_params:
+      builtin_infos:
+        - name: "lower"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load "WORLD" into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call lower(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: "world"
+
+  # Multi-argument Builtin Tests
+  - note: builtin_contains_string
+    description: Test contains builtin with string arguments
+    example_rego: "contains(\"hello world\", \"world\")"
+    literals:
+      - "hello world"
+      - "world"
+    instruction_params:
+      builtin_infos:
+        - name: "contains"
+          num_args: 2
+      builtin_call_params:
+        - dest: 2
+          builtin_index: 0
+          args: [0, 1]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load "hello world" into register 0
+      - "Load { dest: 1, literal_idx: 1 }"      # Load "world" into register 1
+      - "BuiltinCall { params_index: 0 }"       # Call contains(register[0], register[1]), result in register 2
+      - "Return { value: 2 }"                   # Return result
+    want_result: true
+
+  - note: builtin_contains_string_false
+    description: Test contains builtin with non-matching strings
+    example_rego: "contains(\"hello\", \"world\")"
+    literals:
+      - "hello"
+      - "world"
+    instruction_params:
+      builtin_infos:
+        - name: "contains"
+          num_args: 2
+      builtin_call_params:
+        - dest: 2
+          builtin_index: 0
+          args: [0, 1]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load "hello" into register 0
+      - "Load { dest: 1, literal_idx: 1 }"      # Load "world" into register 1
+      - "BuiltinCall { params_index: 0 }"       # Call contains(register[0], register[1]), result in register 2
+      - "Return { value: 2 }"                   # Return result
+    want_result: false
+
+  # Array Function Tests
+  - note: builtin_sort_array
+    description: Test sort builtin with array
+    example_rego: "sort([3, 1, 4, 1, 5])"
+    literals:
+      - [3, 1, 4, 1, 5]
+    instruction_params:
+      builtin_infos:
+        - name: "sort"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load unsorted array into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call sort(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: [1, 1, 3, 4, 5]
+
+  # Type Function Tests
+  - note: builtin_type_string
+    description: Test type_name builtin with string
+    example_rego: "type_name(\"hello\")"
+    literals:
+      - "hello"
+    instruction_params:
+      builtin_infos:
+        - name: "type_name"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load "hello" into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call type_name(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: "string"
+
+  - note: builtin_type_number
+    description: Test type_name builtin with number
+    example_rego: "type_name(42)"
+    literals:
+      - 42
+    instruction_params:
+      builtin_infos:
+        - name: "type_name"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load 42 into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call type_name(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: "number"
+
+  - note: builtin_type_array
+    description: Test type_name builtin with array
+    example_rego: "type_name([1, 2, 3])"
+    literals:
+      - [1, 2, 3]
+    instruction_params:
+      builtin_infos:
+        - name: "type_name"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load array into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call type_name(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: "array"
+
+  # Complex Builtin Chain Tests
+  - note: builtin_chained_operations
+    description: Test chaining multiple builtin calls
+    example_rego: "upper(lower(\"HELLO\"))"
+    literals:
+      - "HELLO"
+    instruction_params:
+      builtin_infos:
+        - name: "lower"
+          num_args: 1
+        - name: "upper"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+        - dest: 2
+          builtin_index: 1
+          args: [1]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load "HELLO" into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call lower(register[0]), result in register 1
+      - "BuiltinCall { params_index: 1 }"       # Call upper(register[1]), result in register 2
+      - "Return { value: 2 }"                   # Return final result
+    want_result: "HELLO"
+
+  # Number Function Tests
+  - note: builtin_abs_positive
+    description: Test abs builtin with positive number
+    example_rego: "abs(42)"
+    literals:
+      - 42
+    instruction_params:
+      builtin_infos:
+        - name: "abs"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load 42 into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call abs(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: 42
+
+  - note: builtin_abs_negative
+    description: Test abs builtin with negative number
+    example_rego: "abs(-42)"
+    literals:
+      - -42
+    instruction_params:
+      builtin_infos:
+        - name: "abs"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load -42 into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call abs(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: 42
+
+  # Set Function Tests - Commented out due to set literal parsing issues
+  # TODO: Add proper set tests once set literal parsing is fixed
+  # - note: builtin_union_sets
+  #   description: Test union builtin with sets
+  #   ...
+
+  # Error Handling Tests
+  - note: builtin_missing_function
+    description: Test calling non-existent builtin function
+    example_rego: "nonexistent_function(42)"
+    literals:
+      - 42
+    instruction_params:
+      builtin_infos:
+        - name: "nonexistent_function"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load 42 into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call nonexistent_function(register[0]), should error
+      - "Return { value: 1 }"                   # Return result
+    want_error: "Missing builtin function: nonexistent_function"
+
+  # Test sets and union builtin
+  - note: "union([{1, 2}, {2, 3}]) should return {1, 2, 3}"
+    description: Test union builtin with set of sets
+    example_rego: "union([{1, 2}, {2, 3}])"
+    literals:
+      - 
+        set!:
+          - 
+            set!:
+              - 1
+              - 2
+          - 
+            set!:
+              - 2
+              - 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "BuiltinCall { params_index: 0 }"
+      - "Return { value: 1 }"
+    instruction_params:
+      builtin_infos:
+        - name: "union"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    want_result:
+      set!:
+        - 1
+        - 2
+        - 3
+
+  # Boolean Functions
+  - note: builtin_is_boolean_true
+    description: Test is_boolean builtin with true value
+    example_rego: "is_boolean(true)"
+    literals:
+      - true
+    instruction_params:
+      builtin_infos:
+        - name: "is_boolean"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load true into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call is_boolean(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: true
+
+  - note: builtin_is_boolean_false
+    description: Test is_boolean builtin with false value
+    example_rego: "is_boolean(false)"
+    literals:
+      - false
+    instruction_params:
+      builtin_infos:
+        - name: "is_boolean"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load false into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call is_boolean(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: true
+
+  - note: builtin_is_boolean_number
+    description: Test is_boolean builtin with number value (should return false)
+    example_rego: "is_boolean(42)"
+    literals:
+      - 42
+    instruction_params:
+      builtin_infos:
+        - name: "is_boolean"
+          num_args: 1
+      builtin_call_params:
+        - dest: 1
+          builtin_index: 0
+          args: [0]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"      # Load 42 into register 0
+      - "BuiltinCall { params_index: 0 }"       # Call is_boolean(register[0]), result in register 1
+      - "Return { value: 1 }"                   # Return result
+    want_result: false

@@ -1,0 +1,241 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Indexed Access Test Suite
+# Exercises literal indexing, chained indexing, and error paths.
+
+cases:
+  - note: index_literal_success
+    description: IndexLiteral retrieves value when literal key exists
+    literals:
+      - { key: true }
+      - "key"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "LoadTrue { dest: 2 }"
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"
+      - "IndexLiteral { dest: 3, container: 0, literal_idx: 1 }"
+      - "Return { value: 3 }"
+    want_result: true
+
+  - note: index_literal_bad_literal
+    description: IndexLiteral with invalid literal index triggers error
+    literals:
+      - {}
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "IndexLiteral { dest: 1, container: 0, literal_idx: 99 }"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    want_error: "Literal index 99 out of bounds"
+
+  - note: chained_index_mixed_path
+    description: ChainedIndex handles literal and register path components
+    literals:
+      - {}
+      - "outer"
+      - "inner"
+      - "value"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      chained_index_params:
+        - dest: 5
+          root: 0
+          path_components:
+            - literal_idx: 1
+            - register: 3
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "Load { dest: 3, literal_idx: 2 }"  # inner
+      - "Load { dest: 4, literal_idx: 3 }"  # value
+      - "Load { dest: 2, literal_idx: 0 }"  # nested object builder
+      - "ObjectSet { obj: 2, key: 3, value: 4 }"
+      - "Load { dest: 1, literal_idx: 1 }"  # outer
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"
+      - "ChainedIndex { params_index: 0 }"
+      - "Return { value: 5 }"
+    want_result: "value"
+
+  - note: chained_index_undefined_propagation
+    description: ChainedIndex yields undefined when intermediate missing
+    literals:
+      - {}
+      - "missing"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      chained_index_params:
+        - dest: 2
+          root: 0
+          path_components:
+            - literal_idx: 1
+            - literal_idx: 1
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "ChainedIndex { params_index: 0 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: chained_index_5_components
+    description: ChainedIndex with 5 path components
+    example_rego: "data.a.b.c.d.e"
+    literals:
+      - {}
+      - "a"
+      - "b"
+      - "c"
+      - "d"
+      - "e"
+      - "final_value"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      chained_index_params:
+        - dest: 10
+          root: 0
+          path_components:
+            - literal_idx: 1  # a
+            - literal_idx: 2  # b
+            - literal_idx: 3  # c
+            - literal_idx: 4  # d
+            - literal_idx: 5  # e
+    instructions:
+      - "ObjectCreate { params_index: 0 }"  # r0 = {}
+      # Build nested structure: {a: {b: {c: {d: {e: "final_value"}}}}}
+      - "Load { dest: 1, literal_idx: 0 }"  # innermost object
+      - "Load { dest: 2, literal_idx: 5 }"  # key "e"
+      - "Load { dest: 3, literal_idx: 6 }"  # value "final_value"
+      - "ObjectSet { obj: 1, key: 2, value: 3 }"  # {e: "final_value"}
+      - "Load { dest: 4, literal_idx: 0 }"  # d level object
+      - "Load { dest: 5, literal_idx: 4 }"  # key "d"
+      - "ObjectSet { obj: 4, key: 5, value: 1 }"  # {d: {e: ...}}
+      - "Load { dest: 6, literal_idx: 0 }"  # c level object
+      - "Load { dest: 7, literal_idx: 3 }"  # key "c"
+      - "ObjectSet { obj: 6, key: 7, value: 4 }"  # {c: {d: ...}}
+      - "Load { dest: 8, literal_idx: 0 }"  # b level object
+      - "Load { dest: 9, literal_idx: 2 }"  # key "b"
+      - "ObjectSet { obj: 8, key: 9, value: 6 }"  # {b: {c: ...}}
+      - "Load { dest: 11, literal_idx: 1 }"  # key "a"
+      - "ObjectSet { obj: 0, key: 11, value: 8 }"  # {a: {b: ...}}
+      - "ChainedIndex { params_index: 0 }"
+      - "Return { value: 10 }"
+    want_result: "final_value"
+
+  - note: chained_index_all_registers
+    description: ChainedIndex with all register components (no literals)
+    example_rego: "obj[key1][key2]"
+    literals:
+      - {}
+      - "level1"
+      - "level2"
+      - "result"
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      chained_index_params:
+        - dest: 10
+          root: 0
+          path_components:
+            - register: 5  # key1
+            - register: 6  # key2
+    instructions:
+      - "ObjectCreate { params_index: 0 }"  # r0 = {}
+      # Build structure: {level1: {level2: "result"}}
+      - "Load { dest: 1, literal_idx: 0 }"  # inner object
+      - "Load { dest: 2, literal_idx: 2 }"  # "level2"
+      - "Load { dest: 3, literal_idx: 3 }"  # "result"
+      - "ObjectSet { obj: 1, key: 2, value: 3 }"  # {level2: "result"}
+      - "Load { dest: 4, literal_idx: 1 }"  # "level1"
+      - "ObjectSet { obj: 0, key: 4, value: 1 }"  # {level1: {...}}
+      # Set up dynamic keys in registers
+      - "Load { dest: 5, literal_idx: 1 }"  # key1 = "level1"
+      - "Load { dest: 6, literal_idx: 2 }"  # key2 = "level2"
+      - "ChainedIndex { params_index: 0 }"
+      - "Return { value: 10 }"
+    want_result: "result"
+
+  - note: index_with_null_key
+    description: Index with null key returns undefined
+    example_rego: "obj[null]"
+    literals:
+      - {"key": "value"}
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "LoadNull { dest: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: index_with_undefined_key
+    description: Index with undefined key returns undefined
+    example_rego: "obj[undefined_var]"
+    literals:
+      - {"key": "value"}
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      # r1 is undefined (never loaded)
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: index_with_boolean_key
+    description: Index with boolean key
+    example_rego: "obj[true]"
+    literals:
+      - {true: "bool_value", "regular": "string_value"}
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "LoadTrue { dest: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "bool_value"
+
+  - note: index_with_empty_string_key
+    description: Index with empty string key
+    example_rego: "obj[\"\"]"
+    literals:
+      - {"": "empty_key_value", "other": "other_value"}
+      - ""
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "empty_key_value"
+
+  - note: index_with_number_key_on_object
+    description: Index object with number key
+    example_rego: "obj[42]"
+    literals:
+      - {42: "number_value", "str": "string_value"}
+      - 42
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "number_value"

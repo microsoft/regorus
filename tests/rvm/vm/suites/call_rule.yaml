@@ -1,0 +1,76 @@
+# CallRule Test Suite
+# Validates rule caching, partial structures, defaults, and inconsistencies.
+
+cases:
+  - note: call_rule_basic_cache
+    description: CallRule caches results after first evaluation
+    literals:
+      - {}
+      - 1
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [3]
+    rule_tree:
+      data:
+        test:
+          allow: 0
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "CallRule { dest: 2, rule_index: 0 }"
+      - "Return { value: 2 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "RuleReturn {}"
+    want_result: 1
+
+  - note: call_rule_partial_object_default
+    description: Partial object rule returns object even when no fields defined
+    literals:
+      - {}
+    rule_infos:
+      - rule_type: PartialObject
+        definitions:
+          - [2]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "RuleReturn {}"
+    want_result: {}
+
+  - note: call_rule_default_literal
+    description: Default literal used when complete rule returns undefined
+    literals:
+      - "default"
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [2]
+        default_literal_index: 0
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "RuleReturn {}"
+    want_result: "default"
+
+  - note: call_rule_inconsistency
+    description: Complete rule with inconsistent results returns undefined
+    literals:
+      - 1
+      - 2
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [2, 5]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "RuleReturn {}"
+    want_result: "#undefined"

@@ -1,0 +1,47 @@
+# Assertions Test Suite
+# Exercises AssertNotUndefined behavior in isolation and inside loops.
+
+cases:
+  - note: assert_not_undefined_passes
+    description: AssertNotUndefined succeeds when register has a value
+    literals:
+      - 42
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "AssertNotUndefined { register: 0 }"
+      - "Return { value: 0 }"
+    want_result: 42
+
+  - note: assert_not_undefined_fails
+    description: AssertNotUndefined triggers assertion error when register undefined
+    literals:
+      - "#undefined"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "AssertNotUndefined { register: 0 }"
+      - "Return { value: 0 }"
+    want_error: "Assertion failed"
+
+  - note: assert_not_undefined_inside_loop
+    description: AssertNotUndefined fails inside Every loop and exits with false result
+    literals:
+      - "#undefined"
+    instruction_params:
+      loop_params:
+        - mode: "Every"
+          collection: 0
+          key_reg: 1
+          value_reg: 2
+          result_reg: 3
+          body_start: 5
+          loop_end: 7
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "LoopStart { params_index: 0 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "AssertNotUndefined { register: 2 }"
+      - "LoopNext { body_start: 5, loop_end: 7 }"
+      - "Return { value: 3 }"
+    want_result: false

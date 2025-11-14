@@ -1,0 +1,111 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Comparison Operations Test Suite  
+# Tests comparison instructions: Eq, Ne, Lt, Le, Gt, Ge
+# These instructions compare values and produce boolean results
+
+cases:
+  - note: comparison_eq
+    description: Test Eq instruction
+    example_rego: "5 == 5"  # Equality comparison
+    literals:
+      - 5
+      - 5
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 5 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load literal 5 into register 1
+      - "Eq { dest: 2, left: 0, right: 1 }"  # Compare register 0 == register 1, store result in register 2
+      - "Return { value: 2 }"               # Return boolean result from register 2
+    want_result: true
+
+  - note: comparison_eq_false
+    description: Test Eq instruction with false result
+    example_rego: "5 == 3"  # Equality comparison (false case)
+    literals:
+      - 5
+      - 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 5 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load literal 3 into register 1
+      - "Eq { dest: 2, left: 0, right: 1 }"  # Compare register 0 == register 1, store result in register 2
+      - "Return { value: 2 }"               # Return boolean result from register 2
+    want_result: false
+
+  - note: comparison_ne
+    description: Test Ne instruction
+    example_rego: "5 != 3"  # Inequality comparison
+    literals:
+      - 5
+      - 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 5 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load literal 3 into register 1
+      - "Ne { dest: 2, left: 0, right: 1 }"  # Compare register 0 != register 1, store result in register 2
+      - "Return { value: 2 }"               # Return boolean result from register 2
+    want_result: true
+
+  - note: comparison_lt
+    description: Test Lt instruction
+    example_rego: "3 < 5"  # Less than comparison
+    literals:
+      - 3
+      - 5
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 3 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load literal 5 into register 1
+      - "Lt { dest: 2, left: 0, right: 1 }"  # Compare register 0 < register 1, store result in register 2
+      - "Return { value: 2 }"               # Return boolean result from register 2
+    want_result: true
+
+  - note: comparison_le
+    description: Test Le instruction (less than or equal)
+    example_rego: "5 <= 10"  # Less than or equal comparison
+    literals: 
+      - 5
+      - 10
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 5 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load literal 10 into register 1
+      - "Le { dest: 2, left: 0, right: 1 }"  # Compare register 0 <= register 1, store result in register 2
+      - "Return { value: 2 }"               # Return boolean result from register 2
+    want_result: true
+
+  - note: comparison_ge
+    description: Test Ge instruction (greater than or equal)
+    example_rego: "10 >= 5"  # Greater than or equal comparison
+    literals:
+      - 10
+      - 5
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 10 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load literal 5 into register 1
+      - "Ge { dest: 2, left: 0, right: 1 }"  # Compare register 0 >= register 1, store result in register 2
+      - "Return { value: 2 }"               # Return boolean result from register 2
+    want_result: true
+
+  - note: comparison_gt
+    description: Test Gt instruction
+    example_rego: "7 > 3"  # Greater than comparison
+    literals:
+      - 7
+      - 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 7 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load literal 3 into register 1
+      - "Gt { dest: 2, left: 0, right: 1 }"  # Compare register 0 > register 1, store result in register 2
+      - "Return { value: 2 }"               # Return boolean result from register 2
+    want_result: true
+
+  - note: comparison_ge_equal
+    description: Test Ge instruction with equal values
+    example_rego: "5 >= 5"  # Greater than or equal comparison (equal case)
+    literals:
+      - 5
+      - 5
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load literal 5 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load literal 5 into register 1
+      - "Ge { dest: 2, left: 0, right: 1 }"  # Compare register 0 >= register 1, store result in register 2
+      - "Return { value: 2 }"               # Return boolean result from register 2
+    want_result: true

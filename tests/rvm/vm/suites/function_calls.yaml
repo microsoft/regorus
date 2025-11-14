@@ -1,0 +1,371 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Function Call Instructions Test Suite  
+# Tests the VM's function call mechanism with user-defined function rules
+# Covers FunctionCall instruction, argument passing, and return values
+
+cases:
+  # Basic Function Call Tests
+  - note: simple_function_call
+    description: Test basic function call instruction with one argument
+    example_rego: "add_ten(5) where add_ten(x) := x + 10"
+    literals:
+      - {}
+      - 5  # Argument value
+      - 10 # Constant 10 for addition
+    instruction_params:
+      object_create_params:
+        - dest: 6
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      function_call_params:
+        - func: 0      # Rule index for add_ten function (rule 0)
+          dest: 2      # Destination register for result
+          args: [1]    # Argument registers
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [3]  # Entry point for add_ten function body (PC 3)
+    instructions:
+      - "Load { dest: 1, literal_idx: 1 }"      # Load argument 5 into register 1
+      - "FunctionCall { params_index: 0 }"      # Call function
+      - "Return { value: 2 }"                   # Return result
+      # Function body starts at PC 3 (entry point)
+      - "RuleInit { result_reg: 0, rule_index: 0 }"  # Initialize result register
+      - "Load { dest: 3, literal_idx: 2 }"      # Load constant 10 into register 3
+      - "Add { dest: 0, left: 1, right: 3 }"   # Add argument + 10 (result in register 0)
+      - "RuleReturn {}"                         # Return from function
+    want_result: 15
+
+  - note: function_call_multiple_args
+    description: Test function call with multiple arguments
+    example_rego: "add(7, 3) where add(x, y) := x + y"
+    literals:
+      - {}
+      - 0  # Rule index for add function
+      - 7  # First argument
+      - 3  # Second argument
+    instruction_params:
+      function_call_params:
+        - func: 0      # Register containing function rule index
+          dest: 3      # Destination register for result
+          args: [1, 2] # Argument registers
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [5]  # Entry point for add function body
+    instructions:
+      - "Load { dest: 0, literal_idx: 1 }"      # Load rule index
+      - "Load { dest: 1, literal_idx: 2 }"      # Load first argument
+      - "Load { dest: 2, literal_idx: 3 }"      # Load second argument
+      - "FunctionCall { params_index: 0 }"      # Call function
+      - "Return { value: 3 }"                   # Return result
+      # Function body
+      - "RuleInit { result_reg: 0, rule_index: 0 }"  # Initialize result register
+      - "Add { dest: 0, left: 1, right: 2 }"   # Add arguments (result in register 0)
+      - "RuleReturn {}"                         # Return from function
+    want_result: 10
+
+  - note: function_call_no_args
+    description: Test function call with no arguments
+    example_rego: "get_constant() where get_constant() := 42"
+    literals:
+      - {}
+      - 0  # Rule index for get_constant function
+      - 42 # Constant value
+    instruction_params:
+      function_call_params:
+        - func: 0      # Register containing function rule index
+          dest: 1      # Destination register for result
+          args: []     # No arguments
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [3]  # Entry point for get_constant function body
+    instructions:
+      - "Load { dest: 0, literal_idx: 1 }"      # Load rule index
+      - "FunctionCall { params_index: 0 }"      # Call function
+      - "Return { value: 1 }"                   # Return result
+      # Function body
+      - "RuleInit { result_reg: 0, rule_index: 0 }"  # Initialize result register
+      - "Load { dest: 0, literal_idx: 2 }"      # Load constant 42 (result in register 0)
+      - "RuleReturn {}"                         # Return from function
+    want_result: 42
+
+  - note: function_call_with_multiplication
+    description: Test function that performs multiplication
+    example_rego: "square(6) where square(x) := x * x"
+    literals:
+      - {}
+      - 0  # Rule index for square function
+      - 6  # Argument value
+    instruction_params:
+      function_call_params:
+        - func: 0      # Register containing function rule index
+          dest: 2      # Destination register for result
+          args: [1]    # Argument registers
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [4]  # Entry point for square function body
+    instructions:
+      - "Load { dest: 0, literal_idx: 1 }"      # Load rule index
+      - "Load { dest: 1, literal_idx: 2 }"      # Load argument 6
+      - "FunctionCall { params_index: 0 }"      # Call function
+      - "Return { value: 2 }"                   # Return result
+      # Function body
+      - "RuleInit { result_reg: 0, rule_index: 0 }"  # Initialize result register
+      - "Mul { dest: 0, left: 1, right: 1 }"   # Multiply x * x (result in register 0)
+      - "RuleReturn {}"                         # Return from function
+    want_result: 36
+
+  - note: nested_function_calls
+    description: Test nested function calls
+    example_rego: "double(add_one(5)) where double(x) := x * 2; add_one(x) := x + 1"
+    literals:
+      - {}
+      - 1  # Rule index for add_one function
+      - 0  # Rule index for double function  
+      - 5  # Initial argument
+      - 1  # Constant 1
+      - 2  # Constant 2
+    instruction_params:
+      function_call_params:
+        - func: 1      # First call: add_one (rule index 1)
+          dest: 4      # Temporary result
+          args: [2]    # Argument register
+        - func: 0      # Second call: double (rule index 0)
+          dest: 5      # Final result
+          args: [4]    # Use result from first call
+    rule_infos:
+      - rule_type: Complete  # double function
+        definitions:
+          - [10]   # Entry point for double function body (updated)
+      - rule_type: Complete  # add_one function
+        definitions:
+          - [6]   # Entry point for add_one function body
+    instructions:
+      - "Load { dest: 0, literal_idx: 1 }"      # Load add_one rule index
+      - "Load { dest: 1, literal_idx: 2 }"      # Load double rule index
+      - "Load { dest: 2, literal_idx: 3 }"      # Load argument 5
+      - "FunctionCall { params_index: 0 }"      # Call add_one(5)
+      - "FunctionCall { params_index: 1 }"      # Call double(result)
+      - "Return { value: 5 }"                   # Return final result
+      # add_one function body (starts at PC 6)
+      - "RuleInit { result_reg: 0, rule_index: 1 }"  # Initialize result register for add_one
+      - "Load { dest: 3, literal_idx: 4 }"      # Load constant 1
+      - "Add { dest: 0, left: 1, right: 3 }"   # x + 1 (result in register 0)
+      - "RuleReturn {}"                         # Return result
+      # double function body (starts at PC 10)
+      - "RuleInit { result_reg: 0, rule_index: 0 }"  # Initialize result register for double
+      - "Load { dest: 3, literal_idx: 5 }"      # Load constant 2  
+      - "Mul { dest: 0, left: 1, right: 3 }"   # x * 2 (result in register 0)
+      - "RuleReturn {}"                         # Return result
+    want_result: 12
+
+  - note: function_call_undefined_result
+    description: Test function call that returns undefined due to failed condition
+    example_rego: "safe_div(1, 0) where safe_div(x, y) := x / y if y != 0"
+    literals:
+      - {}
+      - 0  # Rule index for safe_div function
+      - 1  # Numerator
+      - 0  # Denominator (zero)
+    instruction_params:
+      function_call_params:
+        - func: 0      # Register containing function rule index
+          dest: 3      # Destination register for result
+          args: [1, 2] # Argument registers
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [5]  # Entry point for safe_div function body
+    instructions:
+      - "Load { dest: 0, literal_idx: 1 }"      # Load rule index
+      - "Load { dest: 1, literal_idx: 2 }"      # Load numerator
+      - "Load { dest: 2, literal_idx: 3 }"      # Load denominator
+      - "FunctionCall { params_index: 0 }"      # Call function
+      - "Return { value: 3 }"                   # Return result
+      # Function body with condition that fails
+      - "RuleInit { result_reg: 0, rule_index: 0 }"  # Initialize result register
+      - "LoadFalse { dest: 4 }"                 # Condition fails (simulated y == 0)
+      - "AssertCondition { condition: 4 }"      # Assert fails, body fails
+      - "Div { dest: 0, left: 1, right: 2 }"   # This won't execute
+      - "RuleReturn {}"                         # This won't execute
+    want_result: "#undefined"
+
+  - note: function_call_with_object_result
+    description: Test function call that returns an object
+    example_rego: "make_pair(1, 2) where make_pair(x, y) := {\"first\": x, \"second\": y}"
+    literals:
+      - {}
+      - 0         # Rule index for make_pair function
+      - 1         # First value
+      - 2         # Second value
+      - "first"   # Key for first element
+      - "second"  # Key for second element
+    instruction_params:
+      object_create_params:
+        - dest: 6
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+      function_call_params:
+        - func: 0      # Register containing function rule index
+          dest: 5      # Destination register for result
+          args: [1, 2] # Argument registers
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [5]  # Entry point for make_pair function body
+    instructions:
+      - "Load { dest: 0, literal_idx: 1 }"      # Load rule index
+      - "Load { dest: 1, literal_idx: 2 }"      # Load first value
+      - "Load { dest: 2, literal_idx: 3 }"      # Load second value
+      - "FunctionCall { params_index: 0 }"      # Call function
+      - "Return { value: 5 }"                   # Return result
+      # Function body
+      - "RuleInit { result_reg: 0, rule_index: 0 }"  # Initialize result register
+      - "ObjectCreate { params_index: 0 }"                 
+      - "Load { dest: 3, literal_idx: 4 }"      # Load "first" key
+      - "ObjectSet { obj: 6, key: 3, value: 1 }" # Set first: x
+      - "Load { dest: 4, literal_idx: 5 }"      # Load "second" key  
+      - "ObjectSet { obj: 6, key: 4, value: 2 }" # Set second: y
+      - "Move { dest: 0, src: 6 }"             # Move object to result register
+      - "RuleReturn {}"                         # Return object
+    want_result: {"first": 1, "second": 2}
+
+  - note: function_call_with_array_result
+    description: Test function call that returns an array
+    example_rego: "make_range(3, 5) where make_range(start, end) := [start, end]"
+    literals:
+      - {}
+      - 0  # Rule index for make_range function
+      - 3  # Start value
+      - 5  # End value
+    instruction_params:
+      function_call_params:
+        - func: 0      # Register containing function rule index
+          dest: 3      # Destination register for result
+          args: [1, 2] # Argument registers
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [5]  # Entry point for make_range function body
+    instructions:
+      - "Load { dest: 0, literal_idx: 1 }"      # Load rule index
+      - "Load { dest: 1, literal_idx: 2 }"      # Load start value
+      - "Load { dest: 2, literal_idx: 3 }"      # Load end value
+      - "FunctionCall { params_index: 0 }"      # Call function
+      - "Return { value: 3 }"                   # Return result
+      # Function body
+      - "RuleInit { result_reg: 0, rule_index: 0 }"  # Initialize result register
+      - "ArrayNew { dest: 4 }"                  # Create new array
+      - "ArrayPush { arr: 4, value: 1 }"       # Push start value
+      - "ArrayPush { arr: 4, value: 2 }"       # Push end value
+      - "Move { dest: 0, src: 4 }"             # Move array to result register
+      - "RuleReturn {}"                         # Return array
+    want_result: [3, 5]
+
+  - note: function_call_with_comparison
+    description: Test function that performs comparison
+    example_rego: "max(7, 3) where max(x, y) := x if x >= y"
+    literals:
+      - {}
+      - 0  # Rule index for max function
+      - 7  # First value
+      - 3  # Second value
+    instruction_params:
+      function_call_params:
+        - func: 0      # Register containing function rule index
+          dest: 3      # Destination register for result
+          args: [1, 2] # Argument registers
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [5]  # Entry point for max function body
+    instructions:
+      - "Load { dest: 0, literal_idx: 1 }"      # Load rule index
+      - "Load { dest: 1, literal_idx: 2 }"      # Load first value (7)
+      - "Load { dest: 2, literal_idx: 3 }"      # Load second value (3)
+      - "FunctionCall { params_index: 0 }"      # Call function
+      - "Return { value: 3 }"                   # Return result
+      # Function body: return x if x >= y
+      - "RuleInit { result_reg: 0, rule_index: 0 }"  # Initialize result register
+      - "Ge { dest: 4, left: 1, right: 2 }"    # x >= y
+      - "AssertCondition { condition: 4 }"      # Assert condition
+      - "Move { dest: 0, src: 1 }"             # Return x (move to result register)
+      - "RuleReturn {}"                         # Return result
+    want_result: 7
+
+  - note: function_call_three_args
+    description: Test function call with three arguments  
+    example_rego: "sum_three(2, 3, 4) where sum_three(a, b, c) := a + b + c"
+    literals:
+      - {}
+      - 0  # Rule index for sum_three function
+      - 2  # First argument
+      - 3  # Second argument
+      - 4  # Third argument
+    instruction_params:
+      function_call_params:
+        - func: 0         # Register containing function rule index
+          dest: 4         # Destination register for result
+          args: [1, 2, 3] # Argument registers
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [6]  # Entry point for sum_three function body
+    instructions:
+      - "Load { dest: 0, literal_idx: 1 }"      # Load rule index
+      - "Load { dest: 1, literal_idx: 2 }"      # Load first argument (2)
+      - "Load { dest: 2, literal_idx: 3 }"      # Load second argument (3)
+      - "Load { dest: 3, literal_idx: 4 }"      # Load third argument (4)
+      - "FunctionCall { params_index: 0 }"      # Call function
+      - "Return { value: 4 }"                   # Return result
+      # Function body: a + b + c
+      - "RuleInit { result_reg: 0, rule_index: 0 }"  # Initialize result register
+      - "Add { dest: 5, left: 1, right: 2 }"   # a + b
+      - "Add { dest: 0, left: 5, right: 3 }"   # (a + b) + c (result in register 0)
+      - "RuleReturn {}"                         # Return result
+    want_result: 9
+
+  - note: function_call_inconsistent_definitions
+    description: Test function with multiple definitions that produce different values (should fail)
+    example_rego: "f(5) where f(x) := x + 1; f(x) := x + 2"
+    literals:
+      - {}
+      - 0  # Rule index for f function  
+      - 5  # Argument value
+      - 1  # Constant 1
+      - 2  # Constant 2
+    instruction_params:
+      function_call_params:
+        - func: 0      # Register containing function rule index
+          dest: 2      # Destination register for result
+          args: [1]    # Argument registers
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [4]  # First definition: x + 1
+          - [8]  # Second definition: x + 2 (should produce different result)
+    entry_points:
+      "data.test.compute": [4, 8]  # Multiple definitions for the same function
+    instructions:
+      - "Load { dest: 0, literal_idx: 1 }"      # Load rule index
+      - "Load { dest: 1, literal_idx: 2 }"      # Load argument (5)
+      - "FunctionCall { params_index: 0 }"      # Call function
+      - "Return { value: 2 }"                   # Return result
+      # First definition: x + 1 (entry point 4)
+      - "RuleInit { result_reg: 0, rule_index: 0 }"  # Initialize result register
+      - "Load { dest: 3, literal_idx: 3 }"      # Load constant 1
+      - "Add { dest: 0, left: 1, right: 3 }"   # x + 1 = 6 (result in register 0)
+      - "RuleReturn {}"                         # Return result
+      # Second definition: x + 2 (entry point 8)  
+      - "RuleInit { result_reg: 0, rule_index: 0 }"  # Initialize result register
+      - "Load { dest: 4, literal_idx: 4 }"      # Load constant 2
+      - "Add { dest: 0, left: 1, right: 4 }"   # x + 2 = 7 (result in register 0)
+      - "RuleReturn {}"                         # Return result
+    want_result: "#undefined"

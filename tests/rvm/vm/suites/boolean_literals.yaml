@@ -1,0 +1,44 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Boolean Literal Instructions Test Suite
+# Validates that LoadBool behaves consistently with LoadTrue/LoadFalse
+# and integrates correctly with logical instructions.
+
+cases:
+  - note: load_bool_true
+    description: LoadBool true matches LoadTrue semantics
+    literals: []
+    instructions:
+      - "LoadBool { dest: 0, value: true }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: load_bool_false
+    description: LoadBool false matches LoadFalse semantics
+    literals: []
+    instructions:
+      - "LoadBool { dest: 0, value: false }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: load_bool_with_and
+    description: Combine LoadBool values using And instruction
+    literals: []
+    instructions:
+      - "LoadBool { dest: 0, value: true }"
+      - "LoadBool { dest: 1, value: false }"
+      - "And { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: false
+
+  - note: load_bool_with_or_not
+    description: Ensure LoadBool integrates with Or and Not
+    literals: []
+    instructions:
+      - "LoadBool { dest: 0, value: false }"
+      - "LoadBool { dest: 1, value: true }"
+      - "Or { dest: 2, left: 0, right: 1 }"
+      - "Not { dest: 3, operand: 2 }"
+      - "Return { value: 3 }"
+    want_result: false

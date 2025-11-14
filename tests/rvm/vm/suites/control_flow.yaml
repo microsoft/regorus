@@ -1,0 +1,115 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Control Flow Test Suite
+# Tests conditional execution and branching patterns
+# Focuses on AssertCondition and conditional logic without loops
+
+cases:
+  - note: assert_condition_true
+    description: Test AssertCondition with true condition
+    example_rego: "x > 5; x := 10"  # Simple condition that should succeed
+    literals:
+      - 10
+      - 5
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load 10 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load 5 into register 1
+      - "Gt { dest: 2, left: 0, right: 1 }" # Check if 10 > 5, store result in register 2
+      - "AssertCondition { condition: 2 }"  # Assert the condition (should succeed)
+      - "Return { value: 0 }"               # Return the original value
+    want_result: 10
+
+  - note: assert_condition_false
+    description: Test AssertCondition with false condition
+    example_rego: "x > 15; x := 10"  # Simple condition that should fail
+    literals:
+      - 10
+      - 15
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load 10 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load 15 into register 1
+      - "Gt { dest: 2, left: 0, right: 1 }" # Check if 10 > 15, store result in register 2
+      - "AssertCondition { condition: 2 }"  # Assert the condition (should fail)
+      - "Return { value: 0 }"               # Return the original value (never reached)
+    want_result: "#undefined"  # VM should return undefined for failed assertion
+
+  - note: complex_condition_and
+    description: Test complex AND condition
+    example_rego: "x > 5; x < 15; x := 10"  # Multiple conditions (both must be true)
+    literals:
+      - 10
+      - 5
+      - 15
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load 10 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load 5 into register 1
+      - "Load { dest: 2, literal_idx: 2 }"  # Load 15 into register 2
+      - "Gt { dest: 3, left: 0, right: 1 }" # Check if 10 > 5, store result in register 3
+      - "Lt { dest: 4, left: 0, right: 2 }" # Check if 10 < 15, store result in register 4
+      - "And { dest: 5, left: 3, right: 4 }" # AND both conditions, store result in register 5
+      - "AssertCondition { condition: 5 }"  # Assert the combined condition (should succeed)
+      - "Return { value: 0 }"               # Return the original value
+    want_result: 10
+
+  - note: complex_condition_or
+    description: Test complex OR condition
+    example_rego: "x < 5; x > 15; x := 10"  # Either condition can be true (both are false here)
+    literals:
+      - 10
+      - 5
+      - 15
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load 10 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load 5 into register 1
+      - "Load { dest: 2, literal_idx: 2 }"  # Load 15 into register 2
+      - "Lt { dest: 3, left: 0, right: 1 }" # Check if 10 < 5, store result in register 3
+      - "Gt { dest: 4, left: 0, right: 2 }" # Check if 10 > 15, store result in register 4
+      - "Or { dest: 5, left: 3, right: 4 }" # OR both conditions, store result in register 5
+      - "AssertCondition { condition: 5 }"  # Assert the combined condition (should fail)
+      - "Return { value: 0 }"               # Return the original value (never reached)
+    want_result: "#undefined"  # VM should return undefined for failed assertion
+
+  - note: conditional_value_selection
+    description: Test conditional value selection
+    example_rego: "result := x > 10 ? x * 2 : x * 3; x := 15"  # Conditional expression simulation
+    literals:
+      - 15
+      - 10
+      - 2
+      - 3
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load 15 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load 10 into register 1
+      - "Load { dest: 2, literal_idx: 2 }"  # Load 2 into register 2
+      - "Load { dest: 3, literal_idx: 3 }"  # Load 3 into register 3
+      - "Gt { dest: 4, left: 0, right: 1 }" # Check if 15 > 10, store result in register 4
+      - "Mul { dest: 5, left: 0, right: 2 }" # Compute 15 * 2, store in register 5
+      - "Mul { dest: 6, left: 0, right: 3 }" # Compute 15 * 3, store in register 6
+      # Simulate conditional selection (in real VM this would use conditional instructions)
+      - "AssertCondition { condition: 4 }"  # Since condition is true, we proceed with first value
+      - "Return { value: 5 }"               # Return x * 2 (30)
+    want_result: 30
+
+  - note: nested_conditions
+    description: Test nested conditional logic
+    example_rego: "x > 0; y > 0; z := x + y; z > 10; x := 8; y := 5"  # Nested conditions with intermediate calculation
+    literals:
+      - 8
+      - 5
+      - 0
+      - 10
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"  # Load x=8 into register 0
+      - "Load { dest: 1, literal_idx: 1 }"  # Load y=5 into register 1
+      - "Load { dest: 2, literal_idx: 2 }"  # Load 0 into register 2
+      - "Load { dest: 3, literal_idx: 3 }"  # Load 10 into register 3
+      - "Gt { dest: 4, left: 0, right: 2 }" # Check if x > 0, store result in register 4
+      - "AssertCondition { condition: 4 }"  # Assert x > 0 (should succeed)
+      - "Gt { dest: 5, left: 1, right: 2 }" # Check if y > 0, store result in register 5
+      - "AssertCondition { condition: 5 }"  # Assert y > 0 (should succeed)
+      - "Add { dest: 6, left: 0, right: 1 }" # Compute z = x + y, store in register 6
+      - "Gt { dest: 7, left: 6, right: 3 }" # Check if z > 10, store result in register 7
+      - "AssertCondition { condition: 7 }"  # Assert z > 10 (should succeed: 13 > 10)
+      - "Return { value: 6 }"               # Return z value (13)
+    want_result: 13

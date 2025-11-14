@@ -1,0 +1,278 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Deep Nesting Test Suite
+# Tests 3+ levels of nested loops with various loop modes and comprehensions
+# Verifies register allocation, stack pressure, and control flow correctness
+
+cases:
+  - note: three_level_nested_any_every_foreach
+    description: 3-level nesting - Any inside Every inside ForEach
+    example_rego: |
+      [outer |
+        outer := [1, 2][_];
+        every mid in [1, 2]; some inner in [1, 2]; inner == mid
+      ]
+    literals:
+      - 1
+      - 2
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 0
+          result_reg: 0
+          key_reg: 10
+          value_reg: 11
+          body_start: 7
+          comprehension_end: 27
+      loop_params:
+        - mode: "ForEach"  # Outer loop for comprehension
+          collection: 5
+          key_reg: 10
+          value_reg: 11
+          result_reg: 12
+          body_start: 7
+          loop_end: 27
+        - mode: "Every"  # Middle loop
+          collection: 8
+          key_reg: 20
+          value_reg: 21
+          result_reg: 22
+          body_start: 13
+          loop_end: 24
+        - mode: "Any"  # Inner loop
+          collection: 13
+          key_reg: 30
+          value_reg: 31
+          result_reg: 32
+          body_start: 19
+          loop_end: 22
+    instructions:
+      # Build outer collection [1, 2]
+      - "ArrayNew { dest: 5 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 5, value: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ArrayPush { arr: 5, value: 2 }"
+      - "ComprehensionBegin { params_index: 0 }"
+      - "LoopStart { params_index: 0 }"  # ForEach outer
+      # Build middle collection [1, 2]
+      - "ArrayNew { dest: 8 }"
+      - "Load { dest: 3, literal_idx: 0 }"
+      - "ArrayPush { arr: 8, value: 3 }"
+      - "Load { dest: 4, literal_idx: 1 }"
+      - "ArrayPush { arr: 8, value: 4 }"
+      - "LoopStart { params_index: 1 }"  # Every middle
+      # Build inner collection [1, 2]
+      - "ArrayNew { dest: 13 }"
+      - "Load { dest: 6, literal_idx: 0 }"
+      - "ArrayPush { arr: 13, value: 6 }"
+      - "Load { dest: 7, literal_idx: 1 }"
+      - "ArrayPush { arr: 13, value: 7 }"
+      - "LoopStart { params_index: 2 }"  # Any inner
+      # Check condition: inner == mid
+      - "Eq { dest: 40, left: 31, right: 21 }"
+      - "AssertCondition { condition: 40 }"
+      - "LoopNext { body_start: 19, loop_end: 22 }"
+      # End Any loop - check result
+      - "AssertCondition { condition: 32 }"
+      - "LoopNext { body_start: 13, loop_end: 24 }"
+      # End Every loop - check result
+      - "AssertCondition { condition: 22 }"
+      - "ComprehensionYield { value_reg: 11 }"
+      - "LoopNext { body_start: 7, loop_end: 27 }"
+      - "ComprehensionEnd"
+      - "Return { value: 0 }"
+    want_result: [1, 2]
+
+  - note: four_level_nested_loops
+    description: 4-level nested loops - stress test for stack depth
+    example_rego: |
+      some a in [1]; some b in [2]; some c in [3]; some d in [4]; a + b + c + d == 10
+    literals:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 10
+    instruction_params:
+      loop_params:
+        - mode: "Any"
+          collection: 0
+          key_reg: 10
+          value_reg: 11
+          result_reg: 12
+          body_start: 4
+          loop_end: 29
+        - mode: "Any"
+          collection: 2
+          key_reg: 20
+          value_reg: 21
+          result_reg: 22
+          body_start: 8
+          loop_end: 27
+        - mode: "Any"
+          collection: 4
+          key_reg: 30
+          value_reg: 31
+          result_reg: 32
+          body_start: 12
+          loop_end: 25
+        - mode: "Any"
+          collection: 6
+          key_reg: 40
+          value_reg: 41
+          result_reg: 42
+          body_start: 16
+          loop_end: 23
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "LoopStart { params_index: 0 }"  # Level 1
+      - "ArrayNew { dest: 2 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "ArrayPush { arr: 2, value: 3 }"
+      - "LoopStart { params_index: 1 }"  # Level 2
+      - "ArrayNew { dest: 4 }"
+      - "Load { dest: 5, literal_idx: 2 }"
+      - "ArrayPush { arr: 4, value: 5 }"
+      - "LoopStart { params_index: 2 }"  # Level 3
+      - "ArrayNew { dest: 6 }"
+      - "Load { dest: 7, literal_idx: 3 }"
+      - "ArrayPush { arr: 6, value: 7 }"
+      - "LoopStart { params_index: 3 }"  # Level 4
+      # Compute sum: a + b + c + d
+      - "Add { dest: 43, left: 11, right: 21 }"
+      - "Add { dest: 44, left: 43, right: 31 }"
+      - "Add { dest: 45, left: 44, right: 41 }"
+      - "Load { dest: 46, literal_idx: 4 }"
+      - "Eq { dest: 47, left: 45, right: 46 }"
+      - "AssertCondition { condition: 47 }"
+      - "LoopNext { body_start: 16, loop_end: 23 }"
+      - "AssertCondition { condition: 42 }"
+      - "LoopNext { body_start: 12, loop_end: 25 }"
+      - "AssertCondition { condition: 32 }"
+      - "LoopNext { body_start: 8, loop_end: 27 }"
+      - "AssertCondition { condition: 22 }"
+      - "LoopNext { body_start: 4, loop_end: 29 }"
+      - "Return { value: 12 }"
+    want_result: true
+
+  - note: comprehension_inside_nested_loop
+    description: Array comprehension inside 2-level nested loop
+    example_rego: |
+      [[y | y := inner[_]] |
+        outer := [[1, 2], [3, 4]][_];
+        inner := outer
+      ]
+    literals:
+      - 1
+      - 2
+      - 3
+      - 4
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"  # Outer comprehension
+          collection_reg: 0
+          key_reg: 10
+          value_reg: 11
+          body_start: 15
+          comprehension_end: 23
+        - mode: "Array"  # Inner comprehension
+          collection_reg: 14
+          key_reg: 20
+          value_reg: 21
+          body_start: 18
+          comprehension_end: 20
+      loop_params:
+        - mode: "ForEach"  # Outer loop
+          collection: 8
+          key_reg: 10
+          value_reg: 11
+          result_reg: 13
+          body_start: 15
+          loop_end: 23
+        - mode: "ForEach"  # Inner loop for comprehension
+          collection: 12
+          key_reg: 20
+          value_reg: 21
+          result_reg: 22
+          body_start: 18
+          loop_end: 20
+    instructions:
+      # Build outer array [[1, 2], [3, 4]]
+      - "ArrayNew { dest: 8 }"
+      - "ArrayNew { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "ArrayPush { arr: 1, value: 2 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "ArrayPush { arr: 1, value: 3 }"
+      - "ArrayPush { arr: 8, value: 1 }"
+      - "ArrayNew { dest: 4 }"
+      - "Load { dest: 5, literal_idx: 2 }"
+      - "ArrayPush { arr: 4, value: 5 }"
+      - "Load { dest: 6, literal_idx: 3 }"
+      - "ArrayPush { arr: 4, value: 6 }"
+      - "ArrayPush { arr: 8, value: 4 }"
+      - "ComprehensionBegin { params_index: 0 }"  # Start outer comprehension
+      - "LoopStart { params_index: 0 }"  # ForEach over outer array
+      - "Move { dest: 12, src: 11 }"  # inner := outer
+      - "ComprehensionBegin { params_index: 1 }"  # Start inner comprehension
+      - "LoopStart { params_index: 1 }"  # ForEach over inner array
+      - "ComprehensionYield { value_reg: 21 }"  # Yield y
+      - "LoopNext { body_start: 18, loop_end: 20 }"
+      - "ComprehensionEnd"  # End inner comprehension
+      - "ComprehensionYield { value_reg: 14 }"  # Yield inner comprehension result
+      - "LoopNext { body_start: 15, loop_end: 23 }"
+      - "ComprehensionEnd"  # End outer comprehension
+      - "Return { value: 0 }"
+    want_result: [[1, 2], [3, 4]]
+
+  - note: register_pressure_nested_loops
+    description: Nested loops with 15+ active registers to test allocation
+    example_rego: |
+      some a in [1]; some b in [2]; a + b > 0
+    literals:
+      - 1
+      - 2
+      - 0
+    instruction_params:
+      loop_params:
+        - mode: "Any"
+          collection: 0
+          key_reg: 10
+          value_reg: 11
+          result_reg: 12
+          body_start: 4
+          loop_end: 19
+        - mode: "Any"
+          collection: 2
+          key_reg: 20
+          value_reg: 21
+          result_reg: 22
+          body_start: 8
+          loop_end: 17
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 1 }"
+      - "LoopStart { params_index: 0 }"
+      - "ArrayNew { dest: 2 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "ArrayPush { arr: 2, value: 3 }"
+      - "LoopStart { params_index: 1 }"
+      # Use many registers to create pressure
+      - "Move { dest: 23, src: 11 }"
+      - "Move { dest: 24, src: 21 }"
+      - "Move { dest: 25, src: 23 }"
+      - "Move { dest: 26, src: 24 }"
+      - "Add { dest: 27, left: 25, right: 26 }"
+      - "Load { dest: 28, literal_idx: 2 }"
+      - "Gt { dest: 29, left: 27, right: 28 }"
+      - "AssertCondition { condition: 29 }"
+      - "LoopNext { body_start: 6, loop_end: 14 }"
+      - "AssertCondition { condition: 22 }"
+      - "LoopNext { body_start: 3, loop_end: 16 }"
+      - "Return { value: 12 }"
+    want_result: true

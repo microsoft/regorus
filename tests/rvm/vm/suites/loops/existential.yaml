@@ -1,0 +1,174 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Existential Loops Test Suite (some)
+# Tests existential quantification loops - succeed if ANY element satisfies the condition
+# Corresponds to Rego's "some x in collection; condition" patterns
+
+cases:
+  - note: existential_basic_some
+    description: Basic existential quantification - some element satisfies condition
+    example_rego: |
+      # Check if any element in array is greater than 2
+      some x in [1, 2, 3]
+      x > 2  # true (3 > 2)
+    literals:
+      - 1
+      - 2
+      - 3
+      - 2  # comparison value
+    instruction_params:
+      loop_params:
+        - mode: "Existential"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 6
+          body_start: 8
+          loop_end: 12
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create input array [1, 2, 3] in register 0
+      - "Load { dest: 1, literal_idx: 0 }"  # Load 1 into register 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 1 to array
+      - "Load { dest: 2, literal_idx: 1 }"  # Load 2 into register 2
+      - "ArrayPush { arr: 0, value: 2 }"    # Push 2 to array
+      - "Load { dest: 3, literal_idx: 2 }"  # Load 3 into register 3
+      - "ArrayPush { arr: 0, value: 3 }"    # Push 3 to array
+      - "LoopStart { params_index: 0 }"     # Start existential loop using parameter table index 0
+      - "Load { dest: 7, literal_idx: 3 }"  # Load comparison value 2 into register 7
+      - "Gt { dest: 8, left: 5, right: 7 }" # Check if current value > 2
+      - "AssertCondition { condition: 8 }"  # Assert the condition result for existential logic
+      - "LoopNext { body_start: 8, loop_end: 12 }"  # Continue to next iteration or exit early if condition met
+      - "Return { value: 6 }"               # Return result (true if any element satisfied condition)
+    want_result: true
+
+  - note: existential_none_satisfy
+    description: Existential quantification where no element satisfies condition  
+    example_rego: |
+      # Check if any element in array is greater than 5
+      some x in [1, 2]
+      x > 5  # false (no element > 5)
+    literals:
+      - 1
+      - 2
+      - 5  # comparison value
+    instruction_params:
+      loop_params:
+        - mode: "Existential"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 6
+          body_start: 6
+          loop_end: 10
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create input array [1, 2] in register 0
+      - "Load { dest: 1, literal_idx: 0 }"  # Load 1 into register 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 1 to array
+      - "Load { dest: 2, literal_idx: 1 }"  # Load 2 into register 2
+      - "ArrayPush { arr: 0, value: 2 }"    # Push 2 to array
+      - "LoopStart { params_index: 0 }"     # Start existential loop using parameter table index 0
+      - "Load { dest: 7, literal_idx: 2 }"  # Load comparison value 5 into register 7
+      - "Gt { dest: 8, left: 5, right: 7 }" # Check if current value > 5
+      - "AssertCondition { condition: 8 }"  # Assert the condition result for existential logic
+      - "LoopNext { body_start: 6, loop_end: 10 }"  # Continue to next iteration
+      - "Return { value: 6 }"               # Return result (false since no element satisfied condition)
+    want_result: false
+
+  - note: existential_empty_collection
+    description: Existential quantification on empty collection
+    example_rego: |
+      # Check if any element in empty array satisfies condition
+      some x in []
+      x > 0  # false (no elements to check)
+    literals:
+      - 0  # comparison value
+    instruction_params:
+      loop_params:
+        - mode: "Existential"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 6
+          body_start: 2
+          loop_end: 6
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create empty input array in register 0
+      - "LoopStart { params_index: 0 }"     # Start existential loop using parameter table index 0
+      - "Load { dest: 7, literal_idx: 0 }"  # Load comparison value 0 into register 7
+      - "Gt { dest: 8, left: 5, right: 7 }" # Check if current value > 0
+      - "AssertCondition { condition: 8 }"  # Assert the condition result for existential logic
+      - "LoopNext { body_start: 2, loop_end: 6 }"  # Continue to next iteration
+      - "Return { value: 6 }"               # Return result (false for empty collection)
+    want_result: false
+
+  - note: existential_simplified_arrays
+    description: Existential quantification with simple array test
+    example_rego: |
+      # Check if any element in array is greater than 5
+      # Simplified version: check if [3, 7, 4] contains element > 5
+      some x in [3, 7, 4]
+      x > 5  # true (7 > 5)
+    literals:
+      - 3
+      - 7
+      - 4
+      - 5  # comparison value
+    instruction_params:
+      loop_params:
+        - mode: "Existential"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 6
+          body_start: 8
+          loop_end: 12
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create array [3, 7, 4] in register 0
+      - "Load { dest: 1, literal_idx: 0 }"  # Load 3
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 3 to array
+      - "Load { dest: 2, literal_idx: 1 }"  # Load 7
+      - "ArrayPush { arr: 0, value: 2 }"    # Push 7 to array
+      - "Load { dest: 3, literal_idx: 2 }"  # Load 4
+      - "ArrayPush { arr: 0, value: 3 }"    # Push 4 to array
+      - "LoopStart { params_index: 0 }"     # Start existential loop using parameter table index 0
+      - "Load { dest: 7, literal_idx: 3 }" # Load comparison value 5
+      - "Gt { dest: 8, left: 5, right: 7 }" # Check if current value > 5
+      - "AssertCondition { condition: 8 }" # Assert the condition for existential logic
+      - "LoopNext { body_start: 8, loop_end: 12 }"  # Continue to next iteration
+      - "Return { value: 6 }"              # Return result
+    want_result: true
+
+  - note: some_basic_failure
+    description: Basic existential loop that fails
+    example_rego: "some x in [1, 2, 3]; x > 5"  # false because no element > 5
+    literals:
+      - 1
+      - 2
+      - 3
+      - 5  # comparison value
+    instruction_params:
+      loop_params:
+        - mode: "Existential"
+          collection: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 6
+          body_start: 8
+          loop_end: 12
+    instructions:
+      - "ArrayNew { dest: 0 }"              # Create array [1, 2, 3] in register 0
+      - "Load { dest: 1, literal_idx: 0 }"  # Load 1 into register 1
+      - "ArrayPush { arr: 0, value: 1 }"    # Push 1 to array
+      - "Load { dest: 2, literal_idx: 1 }"  # Load 2 into register 2
+      - "ArrayPush { arr: 0, value: 2 }"    # Push 2 to array
+      - "Load { dest: 3, literal_idx: 2 }"  # Load 3 into register 3
+      - "ArrayPush { arr: 0, value: 3 }"    # Push 3 to array
+      - "LoopStart { params_index: 0 }"     # Start existential loop using parameter table index 0
+      - "Load { dest: 7, literal_idx: 3 }"  # Load comparison value 5 into register 7
+      - "Gt { dest: 8, left: 5, right: 7 }" # Check if current value > 5, store result in register 8
+      - "AssertCondition { condition: 8 }"  # Assert the condition (fails for all elements)
+      - "LoopNext { body_start: 8, loop_end: 12 }"  # Continue to next iteration or exit
+      - "Return { value: 6 }"               # Return boolean result from loop
+    want_result: false
+

@@ -1,0 +1,28 @@
+# Host Await Failures Test Suite
+# Validates HostAwait error surfaces under different execution modes.
+
+cases:
+  - note: host_await_missing_response
+    description: Run-to-completion mode errors when responses absent
+    literals:
+      - "request"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "HostAwait { dest: 1, arg: 0, id: 0 }"
+      - "Return { value: 1 }"
+    want_error: "HostAwait executed but no response provided"
+
+  - note: host_await_ignore_flag
+    description: ignore_run_to_completion_hostawait_failure guards missing responses
+    literals:
+      - "request"
+      - "response"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "HostAwait { dest: 1, arg: 0, id: 0 }"
+      - "Return { value: 1 }"
+    host_await_responses_suspendable:
+      - id: "request"
+        value: "response"
+    ignore_run_to_completion_hostawait_failure: true
+    want_result: "response"

@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-mod interpreter;
+pub mod interpreter;
 mod scheduler;

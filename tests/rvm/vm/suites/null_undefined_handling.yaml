@@ -1,0 +1,376 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Null and Undefined Handling Test Suite
+# Tests null and undefined behavior across all instruction families
+# Covers arithmetic, comparisons, logical ops, indexing, loops, and comprehensions
+
+cases:
+  - note: load_null_basic
+    description: LoadNull loads null value
+    example_rego: "null"
+    literals: []
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result: null
+
+  - note: null_in_arithmetic_add
+    description: Adding null is a type error
+    example_rego: "null + 1"
+    literals:
+      - 1
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "Cannot add Null"
+
+  - note: null_in_arithmetic_sub
+    description: Subtracting null is a type error
+    example_rego: "5 - null"
+    literals:
+      - 5
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "LoadNull { dest: 1 }"
+      - "Sub { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "Cannot subtract Number(5)"
+
+  - note: null_in_arithmetic_mul
+    description: Multiplying null is a type error
+    example_rego: "null * 3"
+    literals:
+      - 3
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Mul { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "Cannot multiply Null"
+
+  - note: null_in_comparison_eq
+    description: null equals null
+    example_rego: "null == null"
+    literals: []
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "LoadNull { dest: 1 }"
+      - "Eq { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: true
+
+  - note: null_not_equal_to_number
+    description: null is not equal to numbers
+    example_rego: "null == 0"
+    literals:
+      - 0
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Eq { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: false
+
+  - note: null_not_equal_to_false
+    description: null is not equal to false
+    example_rego: "null == false"
+    literals: []
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "LoadFalse { dest: 1 }"
+      - "Eq { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: false
+
+  - note: null_in_comparison_lt
+    description: Ordering comparison treats null as less than numbers
+    example_rego: "null < 5"
+    literals:
+      - 5
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Lt { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: true
+
+  - note: null_in_logical_and
+    description: Logical AND treats null as truthy
+    example_rego: "null && true"
+    literals: []
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "LoadTrue { dest: 1 }"
+      - "And { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: true
+
+  - note: null_in_logical_or
+    description: Logical OR treats null as truthy
+    example_rego: "null || false"
+    literals: []
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "LoadFalse { dest: 1 }"
+      - "Or { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: true
+
+  - note: null_in_logical_not
+    description: Logical NOT treats null as truthy (returns false)
+    example_rego: "not null"
+    literals: []
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "Not { dest: 1, operand: 0 }"
+      - "Return { value: 1 }"
+    want_result: false
+
+  - note: null_as_array_index
+    description: Indexing array with null key
+    example_rego: "[1, 2, 3][null]"
+    literals:
+      - [1, 2, 3]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "LoadNull { dest: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"  # null is not a valid array index
+
+  - note: null_as_object_key
+    description: Indexing object with null key
+    example_rego: "{\"a\": 1, \"b\": 2}[null]"
+    literals:
+      - {"a": 1, "b": 2}
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "LoadNull { dest: 1 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"  # null key doesn't exist
+
+  - note: null_in_contains_check
+    description: Contains check with null
+    example_rego: "null in [1, 2, null, 3]"
+    literals:
+      - [1, 2, null, 3]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "LoadNull { dest: 1 }"
+      - "Contains { dest: 2, collection: 0, value: 1 }"
+      - "Return { value: 2 }"
+    want_result: true
+
+  - note: null_in_set
+    description: null can be a set member
+    example_rego: "{1, null, 3}"
+    literals:
+      - 1
+      - 3
+    instructions:
+      - "SetNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "SetAdd { set: 0, value: 1 }"
+      - "LoadNull { dest: 2 }"
+      - "SetAdd { set: 0, value: 2 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "SetAdd { set: 0, value: 3 }"
+      - "Return { value: 0 }"
+    want_result:
+      set!:
+        - 1
+        - null
+        - 3
+
+  - note: null_in_array
+    description: null can be an array element
+    example_rego: "[1, null, 3]"
+    literals:
+      - 1
+      - 3
+    instruction_params:
+      array_create_params:
+        - dest: 0
+          elements: [1, 2, 3]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "LoadNull { dest: 2 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "ArrayCreate { params_index: 0 }"
+      - "Return { value: 0 }"
+    want_result: [1, null, 3]
+
+  - note: null_in_object_value
+    description: null can be an object value
+    example_rego: "{\"a\": 1, \"b\": null}"
+    literals:
+      - "a"
+      - 1
+      - "b"
+      - {}
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 3
+          literal_key_fields: []
+          fields:
+            - [1, 2]
+            - [3, 4]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "LoadNull { dest: 4 }"
+      - "ObjectCreate { params_index: 0 }"
+      - "Return { value: 0 }"
+    want_result: {"a": 1, "b": null}
+
+  - note: undefined_in_arithmetic
+    description: Arithmetic with undefined register produces undefined
+    example_rego: "undefined_var + 1"
+    literals:
+      - 1
+    instructions:
+      # r0 is undefined (not loaded)
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: undefined_in_comparison
+    description: Comparison with undefined returns undefined
+    example_rego: "undefined_var == 5"
+    literals:
+      - 5
+    instructions:
+      # r0 is undefined
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Eq { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: undefined_in_logical_ops
+    description: Logical operations with undefined return undefined
+    example_rego: "undefined_var && true"
+    literals: []
+    instructions:
+      # r0 is undefined
+      - "LoadTrue { dest: 1 }"
+      - "And { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: undefined_indexing
+    description: Indexing undefined returns undefined
+    example_rego: "undefined_var[\"key\"]"
+    literals:
+      - "key"
+    instructions:
+      # r0 is undefined
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: undefined_in_array_create
+    description: ArrayCreate with undefined element returns undefined
+    literals:
+      - 1
+      - 2
+    instruction_params:
+      array_create_params:
+        - dest: 0
+          elements: [1, 2, 3]  # r3 is undefined
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      # r3 is undefined
+      - "ArrayCreate { params_index: 0 }"
+      - "Return { value: 0 }"
+    want_result: "#undefined"
+
+  - note: undefined_in_object_create_key
+    description: ObjectCreate with undefined key returns undefined
+    literals:
+      - 1
+      - 2
+      - {}
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 2
+          literal_key_fields: []
+          fields:
+            - [1, 2]
+            - [3, 4]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      # r3, r4 are undefined
+      - "ObjectCreate { params_index: 0 }"
+      - "Return { value: 0 }"
+    want_result: "#undefined"
+
+  - note: undefined_in_object_create_value
+    description: ObjectCreate with undefined value returns undefined
+    literals:
+      - "key1"
+      - "key2"
+      - 1
+      - {}
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 3
+          literal_key_fields: []
+          fields:
+            - [1, 3]
+            - [2, 4]  # r4 is undefined
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      # r4 is undefined
+      - "ObjectCreate { params_index: 0 }"
+      - "Return { value: 0 }"
+    want_result: "#undefined"
+
+  - note: undefined_in_loop_collection
+    description: Loop over undefined collection fails gracefully
+    literals: []
+    instruction_params:
+      loop_params:
+        - mode: "ForEach"
+          collection: 0  # r0 is undefined
+          key_reg: 1
+          value_reg: 2
+          result_reg: 4
+          body_start: 1
+          loop_end: 3
+    instructions:
+      # r0 is undefined
+      - "LoopStart { params_index: 0 }"
+      # Loop body (never executed because collection is undefined)
+      - "LoadTrue { dest: 3 }"
+      - "LoopNext { body_start: 1, loop_end: 3 }"
+      - "Return { value: 3 }"
+    want_result: "#undefined"  # Loop over undefined collection yields undefined
+
+  - note: undefined_propagation_through_chain
+    description: Undefined propagates through operation chain
+    example_rego: "(undefined_var + 1) * 2"
+    literals:
+      - 1
+      - 2
+    instructions:
+      # r0 is undefined
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Add { dest: 2, left: 0, right: 1 }"  # r2 becomes undefined
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "Mul { dest: 4, left: 2, right: 3 }"  # r4 becomes undefined
+      - "Return { value: 4 }"
+    want_result: "#undefined"

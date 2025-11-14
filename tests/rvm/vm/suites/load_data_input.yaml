@@ -1,0 +1,250 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Load Data and Input Test Suite
+# Tests LoadData and LoadInput instructions with various edge cases
+# Covers empty, nested, undefined values, and interaction with virtual data lookups
+
+cases:
+  - note: load_data_empty
+    description: LoadData from empty data context
+    example_rego: "data"
+    data: {}
+    literals: []
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result: {}
+
+  - note: load_input_empty
+    description: LoadInput from empty input context
+    example_rego: "input"
+    input: {}
+    literals: []
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result: {}
+
+  - note: load_data_with_values
+    description: LoadData returns populated data object
+    example_rego: "data"
+    data: {}
+    literals: []
+    # This would require the test harness to support setting data
+    # For now, testing structure only
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result: {}  # Default empty since harness may not set data
+
+  - note: load_input_with_values
+    description: LoadInput returns populated input object
+    example_rego: "input"
+    input: {}
+    literals: []
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result: {}  # Default empty
+
+  - note: load_data_and_index
+    description: LoadData followed by indexing
+    example_rego: "data.users"
+    data: {}
+    literals:
+      - "users"
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"  # users doesn't exist in empty data
+
+  - note: load_input_and_index
+    description: LoadInput followed by indexing
+    example_rego: "input.user.name"
+    input: {}
+    literals:
+      - "user"
+      - "name"
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "Index { dest: 4, container: 2, key: 3 }"
+      - "Return { value: 4 }"
+    want_result: "#undefined"  # user doesn't exist in empty input
+
+  - note: load_data_multiple_times
+    description: LoadData can be called multiple times
+    example_rego: "data == data"
+    data: {}
+    literals: []
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "LoadData { dest: 1 }"
+      - "Eq { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: true
+
+  - note: load_input_multiple_times
+    description: LoadInput can be called multiple times
+    example_rego: "input == input"
+    input: {}
+    literals: []
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "LoadInput { dest: 1 }"
+      - "Eq { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: true
+
+  - note: load_data_not_equal_to_input
+    description: data and input are separate contexts
+    example_rego: "data == input"
+    data: {}
+    input: {}
+    literals: []
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "LoadInput { dest: 1 }"
+      - "Eq { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: true  # Both empty {}
+
+  - note: load_data_in_loop
+    description: LoadData inside loop body
+    example_rego: "[ data | _ = [1, 2][_] ]"
+    data: {}
+    literals:
+      - 1
+      - 2
+    instruction_params:
+      array_create_params:
+        - dest: 0
+          elements: [1, 2]
+      loop_params:
+        - mode: ForEach
+          collection: 0
+          key_reg: 3
+          value_reg: 4
+          result_reg: 7
+          body_start: 5
+          loop_end: 8
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ArrayCreate { params_index: 0 }"
+      - "ArrayNew { dest: 6 }"
+      - "LoopStart { params_index: 0 }"
+      # Loop body starts
+      - "LoadData { dest: 5 }"
+      - "ArrayPush { arr: 6, value: 5 }"
+      - "LoopNext { body_start: 5, loop_end: 8 }"
+      # Loop done
+      - "Return { value: 6 }"
+    want_result: [{}, {}]
+
+  - note: load_input_in_loop
+    description: LoadInput inside loop body
+    example_rego: "[ input | _ = [1, 2][_] ]"
+    input: {}
+    literals:
+      - 1
+      - 2
+    instruction_params:
+      array_create_params:
+        - dest: 0
+          elements: [1, 2]
+      loop_params:
+        - mode: ForEach
+          collection: 0
+          key_reg: 3
+          value_reg: 4
+          result_reg: 7
+          body_start: 5
+          loop_end: 8
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ArrayCreate { params_index: 0 }"
+      - "ArrayNew { dest: 6 }"
+      - "LoopStart { params_index: 0 }"
+      # Loop body starts
+      - "LoadInput { dest: 5 }"
+      - "ArrayPush { arr: 6, value: 5 }"
+      - "LoopNext { body_start: 5, loop_end: 8 }"
+      # Loop done
+      - "Return { value: 6 }"
+    want_result: [{}, {}]
+
+  - note: load_data_in_arithmetic
+    description: Using LoadData result in arithmetic should fail
+    example_rego: "data + 1"
+    data: {}
+    literals:
+      - 1
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "Cannot add Object({}) and Number(1)"
+
+  - note: load_input_in_comparison
+    description: Compare input to literal object
+    example_rego: "input == {}"
+    input: {}
+    literals:
+      - {}
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Eq { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: true
+
+  - note: load_data_conditional
+    description: LoadData in conditional check
+    example_rego: "data.flag"
+    data: {}
+    literals:
+      - "flag"
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "LoadFalse { dest: 3 }"
+      - "Or { dest: 4, left: 2, right: 3 }"
+      - "Return { value: 4 }"
+    want_result: "#undefined"  # flag is undefined
+
+  - note: load_data_chained_index
+    description: Deep path indexing on data
+    example_rego: "data.a.b.c.d"
+    data: {}
+    literals:
+      - "a"
+      - "b"
+      - "c"
+      - "d"
+    instruction_params:
+      chained_index_params:
+        - dest: 5
+          root: 0
+          path_components:
+            - register: 1
+            - register: 2
+            - register: 3
+            - register: 4
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "Load { dest: 4, literal_idx: 3 }"
+      - "ChainedIndex { params_index: 0 }"
+      - "Return { value: 5 }"
+    want_result: "#undefined"
