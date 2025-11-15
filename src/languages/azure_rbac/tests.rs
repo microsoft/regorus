@@ -79,6 +79,8 @@ mod condition_tests {
     // Test for edge cases and error conditions
     #[test]
     fn test_parsing_errors() {
+        // The parser funnels every binary/logical keyword through the same branches,
+        // so this list of malformed expressions covers all operators without duplication.
         let invalid_expressions = vec![
             ("", "Empty expression"),
             ("@", "Incomplete attribute reference"),
@@ -89,10 +91,39 @@ mod condition_tests {
             ("@Request[attr] StringEquals", "Missing right operand"),
             ("StringEquals 'value'", "Missing left operand"),
             (
+                "@Request[attr] 'value'",
+                "Missing operator between operands",
+            ),
+            ("StringEquals 'value'", "Missing left operand"),
+            ("StringEquals", "Binary operator without any operands"),
+            (
+                "@Request[attr] StringEquals 'value' AND",
+                "Missing right operand after AND",
+            ),
+            (
+                "AND @Request[attr] StringEquals 'value'",
+                "Leading AND without left operand",
+            ),
+            (
+                "@Request[attr] StringEquals 'value' OR",
+                "Missing right operand after OR",
+            ),
+            (
+                "OR @Request[attr] StringEquals 'value'",
+                "Leading OR without left operand",
+            ),
+            ("NOT", "Standalone NOT without operand"),
+            ("Exists", "Exists without operand"),
+            ("NotExists", "NotExists without operand"),
+            (
                 "(@Request[attr] StringEquals 'value'",
                 "Unmatched parenthesis",
             ),
             ("@Request[attr] StringEquals 'unclosed", "Unclosed string"),
+            (
+                "@Request[attr] StringEquals 'value')",
+                "Unexpected closing parenthesis",
+            ),
         ];
 
         for (expression, description) in invalid_expressions {

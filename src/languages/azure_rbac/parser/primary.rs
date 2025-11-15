@@ -6,9 +6,9 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use crate::languages::azure_rbac::ast::{
-    AttributeReference, AttributeSource, BooleanLiteral, ConditionExpr, EmptySpan,
-    FunctionCallExpression, IdentifierExpression, ListLiteral, NullLiteral, NumberLiteral,
-    SetLiteral, StringLiteral,
+    AttributeReference, AttributeSource, BooleanLiteral, ConditionExpr, ConditionOperator,
+    EmptySpan, FunctionCallExpression, IdentifierExpression, ListLiteral, NullLiteral,
+    NumberLiteral, SetLiteral, StringLiteral,
 };
 use crate::lexer::{AzureRbacTokenKind, TokenKind};
 
@@ -98,6 +98,13 @@ impl<'source> ConditionParser<'source> {
                         if self.current.0 == TokenKind::Symbol && self.current_text() == "(" {
                             self.parse_function_call(name)
                         } else {
+                            if ConditionOperator::from_name(&name).is_some() {
+                                return Err(ConditionParseError::UnsupportedCondition(format!(
+                                    "Operator '{}' missing operands",
+                                    name
+                                )));
+                            }
+
                             // Just an identifier
                             Ok(ConditionExpr::Identifier(IdentifierExpression {
                                 span: EmptySpan,
