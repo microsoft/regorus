@@ -9,7 +9,7 @@ extern "C" {
 
 #[cfg(feature = "custom_allocator")]
 mod allocator {
-    use std::alloc::{GlobalAlloc, Layout};
+    use core::alloc::{GlobalAlloc, Layout};
 
     struct RegorusAllocator {}
 

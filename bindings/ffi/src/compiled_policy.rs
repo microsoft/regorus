@@ -2,8 +2,11 @@
 // Licensed under the MIT License.
 
 use crate::common::*;
+use alloc::boxed::Box;
+use alloc::string::String;
 use anyhow::Result;
-use std::os::raw::c_char;
+use core::ffi::c_char;
+use core::ptr;
 
 /// Wrapper for `regorus::CompiledPolicy`.
 #[derive(Clone)]
@@ -16,7 +19,7 @@ pub struct RegorusCompiledPolicy {
 pub extern "C" fn regorus_compiled_policy_drop(compiled_policy: *mut RegorusCompiledPolicy) {
     if let Ok(cp) = to_ref(compiled_policy) {
         unsafe {
-            let _ = Box::from_raw(std::ptr::from_mut(cp));
+            let _ = Box::from_raw(ptr::from_mut(cp));
         }
     }
 }

@@ -2,12 +2,14 @@
 // Licensed under the MIT License.
 use crate::common::{from_c_str, RegorusResult, RegorusStatus};
 use crate::compiled_policy::RegorusCompiledPolicy;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::vec::Vec;
+use core::ffi::{c_char, c_void};
 use regorus::{compile_policy_with_entrypoint, PolicyModule, Value};
 
 #[cfg(feature = "azure_policy")]
 use regorus::compile_policy_for_target;
-
-use std::os::raw::c_char;
 
 /// FFI wrapper for PolicyModule struct.
 #[repr(C)]
@@ -83,7 +85,7 @@ pub extern "C" fn regorus_compile_policy_with_entrypoint(
         Ok(compiled_policy) => {
             let wrapped_policy = RegorusCompiledPolicy { compiled_policy };
             let boxed_policy = Box::new(wrapped_policy);
-            RegorusResult::ok_pointer(Box::into_raw(boxed_policy) as *mut std::os::raw::c_void)
+            RegorusResult::ok_pointer(Box::into_raw(boxed_policy) as *mut c_void)
         }
         Err(e) => RegorusResult::err_with_message(
             RegorusStatus::CompilationFailed,
@@ -152,7 +154,7 @@ pub extern "C" fn regorus_compile_policy_for_target(
         Ok(compiled_policy) => {
             let wrapped_policy = RegorusCompiledPolicy { compiled_policy };
             let boxed_policy = Box::new(wrapped_policy);
-            RegorusResult::ok_pointer(Box::into_raw(boxed_policy) as *mut std::os::raw::c_void)
+            RegorusResult::ok_pointer(Box::into_raw(boxed_policy) as *mut c_void)
         }
         Err(e) => RegorusResult::err_with_message(
             RegorusStatus::CompilationFailed,
@@ -184,7 +186,7 @@ fn convert_c_modules_to_rust(
             let id = match from_c_str(module_ref.id) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("Invalid module ID at index {}: {}", i, e);
+                    report_module_error(i, "module ID", &e);
                     return Err(RegorusStatus::InvalidModuleId);
                 }
             };
@@ -192,7 +194,7 @@ fn convert_c_modules_to_rust(
             let content = match from_c_str(module_ref.content) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("Invalid module content at index {}: {}", i, e);
+                    report_module_error(i, "module content", &e);
                     return Err(RegorusStatus::InvalidPolicy);
                 }
             };
@@ -206,3 +208,11 @@ fn convert_c_modules_to_rust(
 
     Ok(policy_modules)
 }
+
+#[cfg(feature = "std")]
+fn report_module_error(index: usize, kind: &str, err: &anyhow::Error) {
+    eprintln!("Invalid {} at index {}: {}", kind, index, err);
+}
+
+#[cfg(not(feature = "std"))]
+fn report_module_error(_index: usize, _kind: &str, _err: &anyhow::Error) {}

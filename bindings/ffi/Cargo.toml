@@ -13,6 +13,7 @@ crate-type = ["cdylib", "staticlib"]
 anyhow = "1.0"
 regorus = { path  = "../..", default-features = false }
 serde_json = "1.0.140"
+parking_lot = { version = "0.12", optional = true }
 
 [profile.release]
 # Enable full debug info for optimized builds.
@@ -23,11 +24,12 @@ lto = true
 codegen-units = 1
 
 [features]
-default = ["ast", "azure_policy", "std", "coverage", "regorus/arc", "regorus/full-opa"]
+default = ["ast", "azure_policy", "std", "coverage", "regorus/arc", "regorus/full-opa", "contention_checks"]
 ast = ["regorus/ast"]
 azure_policy = ["regorus/azure_policy"]
 std = ["regorus/std"]
 coverage = ["regorus/coverage"]
+contention_checks = ["parking_lot"]
 custom_allocator = []
 
 [build-dependencies]
