@@ -49,3 +49,5 @@ jobs:
     - name: Run tests (Azure Policy)
       run: >-
         cargo test --frozen --features azure_policy
+    - name: Run tests (Azure RBAC)
+      run: cargo test -r --frozen --features azure-rbac

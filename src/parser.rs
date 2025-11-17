@@ -82,10 +82,8 @@ impl<'source> Parser<'source> {
 
     pub fn token_text(&self) -> &str {
         match self.tok.0 {
-            TokenKind::Symbol | TokenKind::Number | TokenKind::Ident | TokenKind::Eof => {
-                self.tok.1.text()
-            }
             TokenKind::String | TokenKind::RawString => "",
+            _ => self.tok.1.text(),
         }
     }
 

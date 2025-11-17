@@ -1,0 +1,1091 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Azure RBAC Condition Expression Test Cases
+# Each test case contains:
+# - name: descriptive test name
+# - condition: the condition expression to parse
+# - expected: the expected JSON structure
+
+test_cases:
+  - name: simple_string_equals
+    condition: "@Request[Microsoft.Storage:storageAccount] StringEquals 'test-account'"
+    expected:
+      type: Binary
+      operator: StringEquals
+      left:
+        type: AttributeReference
+        source: Request
+        namespace: Microsoft.Storage
+        attribute: storageAccount
+      right:
+        type: StringLiteral
+        value: test-account
+
+  - name: numeric_greater_than
+    condition: "@Resource[size] NumericGreaterThan 1024"
+    expected:
+      type: Binary
+      operator: NumericGreaterThan
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: size
+      right:
+        type: NumberLiteral
+        raw: "1024"
+
+  - name: boolean_equals_true
+    condition: "@Principal[isActive] BoolEquals true"
+    expected:
+      type: Binary
+      operator: BoolEquals
+      left:
+        type: AttributeReference
+        source: Principal
+        attribute: isActive
+      right:
+        type: BooleanLiteral
+        value: true
+
+  - name: boolean_equals_false
+    condition: "@Environment[isPrivateLink] BoolEquals false"
+    expected:
+      type: Binary
+      operator: BoolEquals
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: isPrivateLink
+      right:
+        type: BooleanLiteral
+        value: false
+
+  - name: logical_and_expression
+    condition: "@Request[action] StringEquals 'read' AND @Resource[type] StringEquals 'blob'"
+    expected:
+      type: Logical
+      operator: And
+      left:
+        type: Binary
+        operator: StringEquals
+        left:
+          type: AttributeReference
+          source: Request
+          attribute: action
+        right:
+          type: StringLiteral
+          value: read
+      right:
+        type: Binary
+        operator: StringEquals
+        left:
+          type: AttributeReference
+          source: Resource
+          attribute: type
+        right:
+          type: StringLiteral
+          value: blob
+
+  - name: logical_or_expression
+    condition: "@Principal[department] StringEquals 'IT' OR @Principal[department] StringEquals 'Security'"
+    expected:
+      type: Logical
+      operator: Or
+      left:
+        type: Binary
+        operator: StringEquals
+        left:
+          type: AttributeReference
+          source: Principal
+          attribute: department
+        right:
+          type: StringLiteral
+          value: IT
+      right:
+        type: Binary
+        operator: StringEquals
+        left:
+          type: AttributeReference
+          source: Principal
+          attribute: department
+        right:
+          type: StringLiteral
+          value: Security
+
+  - name: unary_not_expression
+    condition: "NOT @Resource[encrypted] BoolEquals false"
+    expected:
+      type: Unary
+      operator: Not
+      operand:
+        type: Binary
+        operator: BoolEquals
+        left:
+          type: AttributeReference
+          source: Resource
+          attribute: encrypted
+        right:
+          type: BooleanLiteral
+          value: false
+
+  - name: exists_expression
+    condition: "Exists @Principal[Microsoft.Directory:department]"
+    expected:
+      type: Unary
+      operator: Exists
+      operand:
+        type: AttributeReference
+        source: Principal
+        namespace: Microsoft.Directory
+        attribute: department
+
+  - name: not_exists_expression
+    condition: "NotExists @Request[customAttribute]"
+    expected:
+      type: Unary
+      operator: NotExists
+      operand:
+        type: AttributeReference
+        source: Request
+        attribute: customAttribute
+
+  - name: parenthesized_expression
+    condition: "(@Principal[role] StringEquals 'admin' OR @Principal[role] StringEquals 'owner') AND @Resource[confidential] BoolEquals true"
+    expected:
+      type: Logical
+      operator: And
+      left:
+        type: Logical
+        operator: Or
+        left:
+          type: Binary
+          operator: StringEquals
+          left:
+            type: AttributeReference
+            source: Principal
+            attribute: role
+          right:
+            type: StringLiteral
+            value: admin
+        right:
+          type: Binary
+          operator: StringEquals
+          left:
+            type: AttributeReference
+            source: Principal
+            attribute: role
+          right:
+            type: StringLiteral
+            value: owner
+      right:
+        type: Binary
+        operator: BoolEquals
+        left:
+          type: AttributeReference
+          source: Resource
+          attribute: confidential
+        right:
+          type: BooleanLiteral
+          value: true
+
+  - name: function_call_expression
+    condition: "ToLower(@Principal[email]) StringContains '@company.com'"
+    expected:
+      type: Binary
+      operator: StringContains
+      left:
+        type: FunctionCall
+        function: ToLower
+        arguments:
+          - type: AttributeReference
+            source: Principal
+            attribute: email
+      right:
+        type: StringLiteral
+        value: "@company.com"
+
+  - name: set_literal_expression
+    condition: "@Principal[role] StringEquals {'admin', 'owner', 'contributor'}"
+    expected:
+      type: Binary
+      operator: StringEquals
+      left:
+        type: AttributeReference
+        source: Principal
+        attribute: role
+      right:
+        type: SetLiteral
+        elements:
+          - type: StringLiteral
+            value: admin
+          - type: StringLiteral
+            value: owner
+          - type: StringLiteral
+            value: contributor
+
+  - name: list_literal_expression
+    condition: "@Request[allowedActions] ListContains ['read', 'write']"
+    expected:
+      type: Binary
+      operator: ListContains
+      left:
+        type: AttributeReference
+        source: Request
+        attribute: allowedActions
+      right:
+        type: ListLiteral
+        elements:
+          - type: StringLiteral
+            value: read
+          - type: StringLiteral
+            value: write
+
+  - name: datetime_comparison
+    condition: "@Environment[utcNow] DateTimeGreaterThan '2023-01-01T00:00:00Z'"
+    expected:
+      type: Binary
+      operator: DateTimeGreaterThan
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: utcNow
+      right:
+        type: StringLiteral
+        value: "2023-01-01T00:00:00Z"
+
+  - name: ip_range_check
+    condition: "@Request[clientIP] IpInRange '192.168.1.0/24'"
+    expected:
+      type: Binary
+      operator: IpInRange
+      left:
+        type: AttributeReference
+        source: Request
+        attribute: clientIP
+      right:
+        type: StringLiteral
+        value: "192.168.1.0/24"
+
+  - name: null_literal
+    condition: "@Resource[metadata] StringEquals null"
+    expected:
+      type: Binary
+      operator: StringEquals
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: metadata
+      right:
+        type: NullLiteral
+
+  - name: string_case_insensitive
+    condition: "@Principal[displayName] StringEqualsIgnoreCase 'John Doe'"
+    expected:
+      type: Binary
+      operator: StringEqualsIgnoreCase
+      left:
+        type: AttributeReference
+        source: Principal
+        attribute: displayName
+      right:
+        type: StringLiteral
+        value: "John Doe"
+
+  - name: time_range_check
+    condition: "@Environment[timeOfDay] TimeOfDayInRange '09:00:00'"
+    expected:
+      type: Binary
+      operator: TimeOfDayInRange
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: timeOfDay
+      right:
+        type: StringLiteral
+        value: "09:00:00"
+
+  - name: guid_comparison
+    condition: "@Principal[objectId] GuidEquals '12345678-1234-1234-1234-123456789012'"
+    expected:
+      type: Binary
+      operator: GuidEquals
+      left:
+        type: AttributeReference
+        source: Principal
+        attribute: objectId
+      right:
+        type: StringLiteral
+        value: "12345678-1234-1234-1234-123456789012"
+
+  - name: complex_logical_precedence
+    condition: "NOT (@Request[action] StringEquals 'write' AND (@Resource[type] StringEquals 'blob' OR @Resource[type] StringEquals 'file')) OR @Environment[Microsoft.Time:weekday] StringEquals 'Saturday'"
+    expected:
+      type: Logical
+      operator: Or
+      left:
+        type: Unary
+        operator: Not
+        operand:
+          type: Logical
+          operator: And
+          left:
+            type: Binary
+            operator: StringEquals
+            left:
+              type: AttributeReference
+              source: Request
+              attribute: action
+            right:
+              type: StringLiteral
+              value: write
+          right:
+            type: Logical
+            operator: Or
+            left:
+              type: Binary
+              operator: StringEquals
+              left:
+                type: AttributeReference
+                source: Resource
+                attribute: type
+              right:
+                type: StringLiteral
+                value: blob
+            right:
+              type: Binary
+              operator: StringEquals
+              left:
+                type: AttributeReference
+                source: Resource
+                attribute: type
+              right:
+                type: StringLiteral
+                value: file
+      right:
+        type: Binary
+        operator: StringEquals
+        left:
+          type: AttributeReference
+          source: Environment
+          namespace: Microsoft.Time
+          attribute: weekday
+        right:
+          type: StringLiteral
+          value: Saturday
+
+  - name: numeric_in_range_set
+    condition: "@Resource[size] NumericInRange {0, 10}"
+    expected:
+      type: Binary
+      operator: NumericInRange
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: size
+      right:
+        type: SetLiteral
+        elements:
+          - type: NumberLiteral
+            raw: "0"
+          - type: NumberLiteral
+            raw: "10"
+
+  - name: time_of_day_less_than_equals_function
+    condition: "@Environment[timeOfDay] TimeOfDayLessThanEquals ToTime('18:30:00')"
+    expected:
+      type: Binary
+      operator: TimeOfDayLessThanEquals
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: timeOfDay
+      right:
+        type: FunctionCall
+        function: ToTime
+        arguments:
+          - type: StringLiteral
+            value: "18:30:00"
+
+  - name: list_not_contains
+    condition: "@Request[allowedIPRanges] ListNotContains ['10.0.0.1', '10.0.0.2']"
+    expected:
+      type: Binary
+      operator: ListNotContains
+      left:
+        type: AttributeReference
+        source: Request
+        attribute: allowedIPRanges
+      right:
+        type: ListLiteral
+        elements:
+          - type: StringLiteral
+            value: "10.0.0.1"
+          - type: StringLiteral
+            value: "10.0.0.2"
+
+  - name: ip_not_match
+    condition: "@Request[clientIP] IpNotMatch '10.0.0.0/24'"
+    expected:
+      type: Binary
+      operator: IpNotMatch
+      left:
+        type: AttributeReference
+        source: Request
+        attribute: clientIP
+      right:
+        type: StringLiteral
+        value: "10.0.0.0/24"
+
+  - name: guid_not_equals
+    condition: "@Principal[objectId] GuidNotEquals '87654321-4321-4321-4321-210987654321'"
+    expected:
+      type: Binary
+      operator: GuidNotEquals
+      left:
+        type: AttributeReference
+        source: Principal
+        attribute: objectId
+      right:
+        type: StringLiteral
+        value: "87654321-4321-4321-4321-210987654321"
+
+  - name: string_complex_operators
+    condition: "(@Resource[category] StringStartsWith 'finance' AND (@Resource[label] StringNotContains 'deprecated' AND @Resource[name] StringEndsWith '-prod')) OR @Resource[description] StringMatches '^FIN-[0-9]{4}$'"
+    expected:
+      type: Logical
+      operator: Or
+      left:
+        type: Logical
+        operator: And
+        left:
+          type: Binary
+          operator: StringStartsWith
+          left:
+            type: AttributeReference
+            source: Resource
+            attribute: category
+          right:
+            type: StringLiteral
+            value: finance
+        right:
+          type: Logical
+          operator: And
+          left:
+            type: Binary
+            operator: StringNotContains
+            left:
+              type: AttributeReference
+              source: Resource
+              attribute: label
+            right:
+              type: StringLiteral
+              value: deprecated
+          right:
+            type: Binary
+            operator: StringEndsWith
+            left:
+              type: AttributeReference
+              source: Resource
+              attribute: name
+            right:
+              type: StringLiteral
+              value: -prod
+      right:
+        type: Binary
+        operator: StringMatches
+        left:
+          type: AttributeReference
+          source: Resource
+          attribute: description
+        right:
+          type: StringLiteral
+          value: "^FIN-[0-9]{4}$"
+
+  - name: identifier_action_matches
+    condition: "operationName ActionMatches 'Microsoft.Storage/storageAccounts/write'"
+    expected:
+      type: Binary
+      operator: ActionMatches
+      left:
+        type: Identifier
+        name: operationName
+      right:
+        type: StringLiteral
+        value: "Microsoft.Storage/storageAccounts/write"
+
+  - name: function_call_chain
+    condition: "ToUpper(Trim(@Principal[displayName])) StringNotEqualsIgnoreCase 'SERVICE PRINCIPAL'"
+    expected:
+      type: Binary
+      operator: StringNotEqualsIgnoreCase
+      left:
+        type: FunctionCall
+        function: ToUpper
+        arguments:
+          - type: FunctionCall
+            function: Trim
+            arguments:
+              - type: AttributeReference
+                source: Principal
+                attribute: displayName
+      right:
+        type: StringLiteral
+        value: "SERVICE PRINCIPAL"
+
+  - name: time_of_day_in_range_set
+    condition: "@Environment[timeOfDay] TimeOfDayInRange {'08:00:00', '17:00:00'}"
+    expected:
+      type: Binary
+      operator: TimeOfDayInRange
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: timeOfDay
+      right:
+        type: SetLiteral
+        elements:
+          - type: StringLiteral
+            value: "08:00:00"
+          - type: StringLiteral
+            value: "17:00:00"
+
+  - name: datetime_less_than_equals_function
+    condition: "@Environment[utcNow] DateTimeLessThanEquals AddDays('2023-03-15T00:00:00Z', 5)"
+    expected:
+      type: Binary
+      operator: DateTimeLessThanEquals
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: utcNow
+      right:
+        type: FunctionCall
+        function: AddDays
+        arguments:
+          - type: StringLiteral
+            value: "2023-03-15T00:00:00Z"
+          - type: NumberLiteral
+            raw: "5"
+
+  - name: boolean_not_equals
+    condition: "@Environment[isHoliday] BoolNotEquals true"
+    expected:
+      type: Binary
+      operator: BoolNotEquals
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: isHoliday
+      right:
+        type: BooleanLiteral
+        value: true
+
+  - name: exists_function_operand
+    condition: "Exists ToLower(@Principal[Microsoft.Directory:department])"
+    expected:
+      type: Unary
+      operator: Exists
+      operand:
+        type: FunctionCall
+        function: ToLower
+        arguments:
+          - type: AttributeReference
+            source: Principal
+            namespace: Microsoft.Directory
+            attribute: department
+
+  - name: not_exists_namespace_context
+    condition: "NotExists @Context[Custom.Extension:claimType]"
+    expected:
+      type: Unary
+      operator: NotExists
+      operand:
+        type: AttributeReference
+        source: Context
+        namespace: Custom.Extension
+        attribute: claimType
+
+  - name: string_not_equals
+    condition: "@Resource[classification] StringNotEquals 'internal'"
+    expected:
+      type: Binary
+      operator: StringNotEquals
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: classification
+      right:
+        type: StringLiteral
+        value: internal
+
+  - name: string_like_pattern
+    condition: "@Resource[name] StringLike 'prod-*'"
+    expected:
+      type: Binary
+      operator: StringLike
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: name
+      right:
+        type: StringLiteral
+        value: prod-*
+
+  - name: string_not_like_pattern
+    condition: "@Resource[name] StringNotLike 'dev-*'"
+    expected:
+      type: Binary
+      operator: StringNotLike
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: name
+      right:
+        type: StringLiteral
+        value: dev-*
+
+  - name: string_not_starts_with
+    condition: "@Resource[path] StringNotStartsWith '/secure/'"
+    expected:
+      type: Binary
+      operator: StringNotStartsWith
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: path
+      right:
+        type: StringLiteral
+        value: "/secure/"
+
+  - name: string_not_ends_with
+    condition: "@Resource[fileName] StringNotEndsWith '.tmp'"
+    expected:
+      type: Binary
+      operator: StringNotEndsWith
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: fileName
+      right:
+        type: StringLiteral
+        value: .tmp
+
+  - name: string_not_matches
+    condition: "@Resource[identifier] StringNotMatches 'TEMP-[0-9]+'"
+    expected:
+      type: Binary
+      operator: StringNotMatches
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: identifier
+      right:
+        type: StringLiteral
+        value: "TEMP-[0-9]+"
+
+  - name: numeric_equals
+    condition: "@Resource[version] NumericEquals 2"
+    expected:
+      type: Binary
+      operator: NumericEquals
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: version
+      right:
+        type: NumberLiteral
+        raw: "2"
+
+  - name: numeric_not_equals
+    condition: "@Resource[count] NumericNotEquals 5"
+    expected:
+      type: Binary
+      operator: NumericNotEquals
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: count
+      right:
+        type: NumberLiteral
+        raw: "5"
+
+  - name: numeric_less_than
+    condition: "@Request[latency] NumericLessThan 100"
+    expected:
+      type: Binary
+      operator: NumericLessThan
+      left:
+        type: AttributeReference
+        source: Request
+        attribute: latency
+      right:
+        type: NumberLiteral
+        raw: "100"
+
+  - name: numeric_less_than_equals
+    condition: "@Request[latency] NumericLessThanEquals 200"
+    expected:
+      type: Binary
+      operator: NumericLessThanEquals
+      left:
+        type: AttributeReference
+        source: Request
+        attribute: latency
+      right:
+        type: NumberLiteral
+        raw: "200"
+
+  - name: numeric_greater_than_equals
+    condition: "@Resource[replicaCount] NumericGreaterThanEquals 3"
+    expected:
+      type: Binary
+      operator: NumericGreaterThanEquals
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: replicaCount
+      right:
+        type: NumberLiteral
+        raw: "3"
+
+  - name: datetime_equals
+    condition: "@Environment[utcNow] DateTimeEquals '2023-05-01T12:00:00Z'"
+    expected:
+      type: Binary
+      operator: DateTimeEquals
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: utcNow
+      right:
+        type: StringLiteral
+        value: "2023-05-01T12:00:00Z"
+
+  - name: datetime_not_equals
+    condition: "@Environment[utcNow] DateTimeNotEquals '2023-06-01T12:00:00Z'"
+    expected:
+      type: Binary
+      operator: DateTimeNotEquals
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: utcNow
+      right:
+        type: StringLiteral
+        value: "2023-06-01T12:00:00Z"
+
+  - name: datetime_greater_than_equals
+    condition: "@Environment[utcNow] DateTimeGreaterThanEquals '2023-04-01T00:00:00Z'"
+    expected:
+      type: Binary
+      operator: DateTimeGreaterThanEquals
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: utcNow
+      right:
+        type: StringLiteral
+        value: "2023-04-01T00:00:00Z"
+
+  - name: datetime_less_than
+    condition: "@Environment[utcNow] DateTimeLessThan '2023-12-31T23:59:59Z'"
+    expected:
+      type: Binary
+      operator: DateTimeLessThan
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: utcNow
+      right:
+        type: StringLiteral
+        value: "2023-12-31T23:59:59Z"
+
+  - name: time_of_day_equals
+    condition: "@Environment[timeOfDay] TimeOfDayEquals '10:15:00'"
+    expected:
+      type: Binary
+      operator: TimeOfDayEquals
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: timeOfDay
+      right:
+        type: StringLiteral
+        value: "10:15:00"
+
+  - name: time_of_day_not_equals
+    condition: "@Environment[timeOfDay] TimeOfDayNotEquals '20:00:00'"
+    expected:
+      type: Binary
+      operator: TimeOfDayNotEquals
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: timeOfDay
+      right:
+        type: StringLiteral
+        value: "20:00:00"
+
+  - name: time_of_day_greater_than
+    condition: "@Environment[timeOfDay] TimeOfDayGreaterThan '17:00:00'"
+    expected:
+      type: Binary
+      operator: TimeOfDayGreaterThan
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: timeOfDay
+      right:
+        type: StringLiteral
+        value: "17:00:00"
+
+  - name: time_of_day_greater_than_equals
+    condition: "@Environment[timeOfDay] TimeOfDayGreaterThanEquals '09:00:00'"
+    expected:
+      type: Binary
+      operator: TimeOfDayGreaterThanEquals
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: timeOfDay
+      right:
+        type: StringLiteral
+        value: "09:00:00"
+
+  - name: time_of_day_less_than
+    condition: "@Environment[timeOfDay] TimeOfDayLessThan '12:00:00'"
+    expected:
+      type: Binary
+      operator: TimeOfDayLessThan
+      left:
+        type: AttributeReference
+        source: Environment
+        attribute: timeOfDay
+      right:
+        type: StringLiteral
+        value: "12:00:00"
+
+  - name: ip_match
+    condition: "@Request[clientIP] IpMatch '10.1.0.0/16'"
+    expected:
+      type: Binary
+      operator: IpMatch
+      left:
+        type: AttributeReference
+        source: Request
+        attribute: clientIP
+      right:
+        type: StringLiteral
+        value: "10.1.0.0/16"
+
+  - name: sub_operation_matches
+    condition: "subOperationName SubOperationMatches 'Microsoft.Storage/storageAccounts/write/sas'"
+    expected:
+      type: Binary
+      operator: SubOperationMatches
+      left:
+        type: Identifier
+        name: subOperationName
+      right:
+        type: StringLiteral
+        value: "Microsoft.Storage/storageAccounts/write/sas"
+
+  - name: for_any_of_any_values
+    condition: "@Resource[tags] ForAnyOfAnyValues @Request[allowedTags]"
+    expected:
+      type: Binary
+      operator: ForAnyOfAnyValues
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: tags
+      right:
+        type: AttributeReference
+        source: Request
+        attribute: allowedTags
+
+  - name: for_all_of_any_values
+    condition: "@Resource[tags] ForAllOfAnyValues @Request[requiredTags]"
+    expected:
+      type: Binary
+      operator: ForAllOfAnyValues
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: tags
+      right:
+        type: AttributeReference
+        source: Request
+        attribute: requiredTags
+
+  - name: for_any_of_all_values
+    condition: "@Resource[tags] ForAnyOfAllValues @Request[restrictedTags]"
+    expected:
+      type: Binary
+      operator: ForAnyOfAllValues
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: tags
+      right:
+        type: AttributeReference
+        source: Request
+        attribute: restrictedTags
+
+  - name: for_all_of_all_values
+    condition: "@Resource[tags] ForAllOfAllValues @Request[mandatoryTags]"
+    expected:
+      type: Binary
+      operator: ForAllOfAllValues
+      left:
+        type: AttributeReference
+        source: Resource
+        attribute: tags
+      right:
+        type: AttributeReference
+        source: Request
+        attribute: mandatoryTags
+
+  - name: deeply_nested_quantifiers
+    condition: "((@Resource[tags] ForAllOfAnyValues @Request[requiredTags]) AND (NormalizeSet(@Resource[regions]) ForAnyOfAllValues NormalizeSet(@Environment[allowedRegions]))) OR (NOT Exists ToLower(@Principal[manager]) AND (@Resource[sensitivity] StringNotEqualsIgnoreCase 'high'))"
+    expected:
+      type: Logical
+      operator: Or
+      left:
+        type: Logical
+        operator: And
+        left:
+          type: Binary
+          operator: ForAllOfAnyValues
+          left:
+            type: AttributeReference
+            source: Resource
+            attribute: tags
+          right:
+            type: AttributeReference
+            source: Request
+            attribute: requiredTags
+        right:
+          type: Binary
+          operator: ForAnyOfAllValues
+          left:
+            type: FunctionCall
+            function: NormalizeSet
+            arguments:
+              - type: AttributeReference
+                source: Resource
+                attribute: regions
+          right:
+            type: FunctionCall
+            function: NormalizeSet
+            arguments:
+              - type: AttributeReference
+                source: Environment
+                attribute: allowedRegions
+      right:
+        type: Logical
+        operator: And
+        left:
+          type: Unary
+          operator: Not
+          operand:
+            type: Unary
+            operator: Exists
+            operand:
+              type: FunctionCall
+              function: ToLower
+              arguments:
+                - type: AttributeReference
+                  source: Principal
+                  attribute: manager
+        right:
+          type: Binary
+          operator: StringNotEqualsIgnoreCase
+          left:
+            type: AttributeReference
+            source: Resource
+            attribute: sensitivity
+          right:
+            type: StringLiteral
+            value: high
+
+  - name: multi_level_mixed_chains
+    condition: "(ToUpper(@Principal[role]) StringEquals 'OWNER' AND (@Resource[tags] ForAllOfAllValues @Request[mandatoryTags]) AND (NormalizeList(@Resource[scopes]) ForAnyOfAnyValues NormalizeList(@Principal[assignableScopes]))) OR (Exists @Resource[metadata] AND NOT (@Request[operations] ListContains ['read', 'list']))"
+    expected:
+      type: Logical
+      operator: Or
+      left:
+        type: Logical
+        operator: And
+        left:
+          type: Logical
+          operator: And
+          left:
+            type: Binary
+            operator: StringEquals
+            left:
+              type: FunctionCall
+              function: ToUpper
+              arguments:
+                - type: AttributeReference
+                  source: Principal
+                  attribute: role
+            right:
+              type: StringLiteral
+              value: OWNER
+          right:
+            type: Binary
+            operator: ForAllOfAllValues
+            left:
+              type: AttributeReference
+              source: Resource
+              attribute: tags
+            right:
+              type: AttributeReference
+              source: Request
+              attribute: mandatoryTags
+        right:
+          type: Binary
+          operator: ForAnyOfAnyValues
+          left:
+            type: FunctionCall
+            function: NormalizeList
+            arguments:
+              - type: AttributeReference
+                source: Resource
+                attribute: scopes
+          right:
+            type: FunctionCall
+            function: NormalizeList
+            arguments:
+              - type: AttributeReference
+                source: Principal
+                attribute: assignableScopes
+      right:
+        type: Logical
+        operator: And
+        left:
+          type: Unary
+          operator: Exists
+          operand:
+            type: AttributeReference
+            source: Resource
+            attribute: metadata
+        right:
+          type: Unary
+          operator: Not
+          operand:
+            type: Binary
+            operator: ListContains
+            left:
+              type: AttributeReference
+              source: Request
+              attribute: operations
+            right:
+              type: ListLiteral
+              elements:
+                - type: StringLiteral
+                  value: read
+                - type: StringLiteral
+                  value: list

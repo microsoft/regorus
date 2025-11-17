@@ -42,3 +42,5 @@ jobs:
     - name: Run tests (OPA Conformance)
       run: >-
         cargo test --test opa --frozen --features opa-testutil,serde_json/arbitrary_precision  -- $(tr '\n' ' ' < tests/opa.passing)
+    - name: Run tests (Azure RBAC)
+      run: cargo test --frozen --features azure-rbac
