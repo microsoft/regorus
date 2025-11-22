@@ -3,6 +3,8 @@
 
 use anyhow::{anyhow, bail, Result};
 
+mod helpers;
+
 #[allow(dead_code)]
 fn read_file(path: &String) -> Result<String> {
     std::fs::read_to_string(path).map_err(|_| anyhow!("could not read {path}"))
@@ -25,7 +27,7 @@ fn read_value_from_json_file(path: &String) -> Result<regorus::Value> {
     regorus::Value::from_json_str(&read_file(path)?)
 }
 
-fn add_policy_from_file(engine: &mut regorus::Engine, path: String) -> Result<String> {
+pub(crate) fn add_policy_from_file(engine: &mut regorus::Engine, path: String) -> Result<String> {
     #[cfg(feature = "std")]
     return engine.add_policy_from_file(path);
 
@@ -267,6 +269,37 @@ enum RegorusCommand {
         #[arg(long)]
         v0: bool,
     },
+
+    /// Analyze types in Rego policies.
+    Analyze {
+        /// Directories containing Rego files.
+        #[arg(long, short, value_name = "bundle")]
+        bundles: Vec<String>,
+
+        /// Policy files.
+        #[arg(long, short, value_name = "policy.rego")]
+        data: Vec<String>,
+
+        /// Input schema file (JSON).
+        #[arg(long, value_name = "schema.json")]
+        input_schema: Option<String>,
+
+        /// Data schema file (JSON).
+        #[arg(long, value_name = "schema.json")]
+        data_schema: Option<String>,
+
+        /// Only analyze rules reachable from these paths (e.g., data.package.rule).
+        #[arg(long, short = 'e', value_name = "RULE_PATH")]
+        entrypoints: Vec<String>,
+
+        /// Turn on Rego language v0.
+        #[arg(long)]
+        v0: bool,
+
+        /// Verbose output (show dependencies and origins).
+        #[arg(long, short)]
+        verbose: bool,
+    },
 }
 
 #[derive(clap::Parser)]
@@ -306,5 +339,22 @@ fn main() -> Result<()> {
         RegorusCommand::Lex { file, verbose } => rego_lex(file, verbose),
         RegorusCommand::Parse { file, v0 } => rego_parse(file, v0),
         RegorusCommand::Ast { file } => rego_ast(file),
+        RegorusCommand::Analyze {
+            bundles,
+            data,
+            input_schema,
+            data_schema,
+            entrypoints,
+            v0,
+            verbose,
+        } => helpers::type_analysis::rego_type_analysis(
+            &bundles,
+            &data,
+            input_schema,
+            data_schema,
+            entrypoints,
+            v0,
+            verbose,
+        ),
     }
 }

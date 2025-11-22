@@ -1,0 +1,30 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: membership on arrays and sets
+    modules:
+      - |
+        package type_analysis.membership
+        import rego.v1
+
+        arr := [1, 2, 3]
+        present := 2 in arr
+        absent := 5 in arr
+
+        numbers := {1, 2, 3}
+        set_present := 2 in numbers
+        set_absent := 5 in numbers
+    rules:
+      - rule: data.type_analysis.membership.present
+        type: Boolean
+        constant: true
+      - rule: data.type_analysis.membership.absent
+        type: Boolean
+        constant: false
+      - rule: data.type_analysis.membership.set_present
+        type: Boolean
+        constant: true
+      - rule: data.type_analysis.membership.set_absent
+        type: Boolean
+        constant: false

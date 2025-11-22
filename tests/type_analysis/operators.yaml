@@ -1,0 +1,124 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: arithmetic operations
+    modules:
+      - |
+        package type_analysis.operators.arith
+        import rego.v1
+
+        sum := 1 + 2
+        difference := 5 - 3
+        product := 2 * 4
+        quotient := 8 / 2
+        remainder := 9 % 4
+        mix := input.amount + 5
+    input_schema:
+      type: object
+      properties:
+        amount:
+          type: number
+      required:
+        - amount
+    rules:
+      - rule: data.type_analysis.operators.arith.sum
+        type: Integer
+        provenance: Propagated
+      - rule: data.type_analysis.operators.arith.difference
+        type: Integer
+        provenance: Propagated
+      - rule: data.type_analysis.operators.arith.product
+        type: Integer
+        provenance: Propagated
+      - rule: data.type_analysis.operators.arith.quotient
+        type: Integer
+        provenance: Propagated
+      - rule: data.type_analysis.operators.arith.remainder
+        type: Integer
+        provenance: Propagated
+      - rule: data.type_analysis.operators.arith.mix
+        type: Number
+        provenance: Propagated
+
+  - note: comparison operations
+    modules:
+      - |
+        package type_analysis.operators.compare
+        import rego.v1
+
+        lt := 3 < 4
+        le := input.score <= 100
+        gt := 5 > 1
+        ge := input.score >= input.threshold
+        ne := 1 != 2
+    input_schema:
+      type: object
+      properties:
+        score:
+          type: number
+        threshold:
+          type: number
+      required:
+        - score
+        - threshold
+    rules:
+      - rule: data.type_analysis.operators.compare.lt
+        type: Boolean
+        provenance: Propagated
+      - rule: data.type_analysis.operators.compare.le
+        type: Boolean
+        provenance: Propagated
+      - rule: data.type_analysis.operators.compare.gt
+        type: Boolean
+        provenance: Propagated
+      - rule: data.type_analysis.operators.compare.ge
+        type: Boolean
+        provenance: Propagated
+      - rule: data.type_analysis.operators.compare.ne
+        type: Boolean
+        constant: true
+        provenance: Propagated
+
+  - note: set union and intersection
+    modules:
+      - |
+        package type_analysis.operators.sets
+        import rego.v1
+
+        left := {1, 2}
+        right := {2, 3}
+        union := left | right
+        intersection := left & right
+        difference := left - right
+    rules:
+      - rule: data.type_analysis.operators.sets.left
+        type:
+          kind: Set
+          element:
+            kind: Integer
+        provenance: Literal
+      - rule: data.type_analysis.operators.sets.right
+        type:
+          kind: Set
+          element:
+            kind: Integer
+        provenance: Literal
+      - rule: data.type_analysis.operators.sets.union
+        type:
+          kind: Set
+          element:
+            kind: Integer
+        provenance: Literal
+      - rule: data.type_analysis.operators.sets.intersection
+        type:
+          kind: Set
+          element:
+            kind: Integer
+        provenance: Literal
+      - rule: data.type_analysis.operators.sets.difference
+        type:
+          kind: Set
+          element:
+            kind: Integer
+        provenance: Literal

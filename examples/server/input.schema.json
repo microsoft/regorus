@@ -1,0 +1,72 @@
+{
+  "type": "object",
+  "properties": {
+    "servers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the server"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable server name"
+          },
+          "protocols": {
+            "type": "array",
+            "items": {
+              "enum": ["http", "https", "ssh", "telnet", "ftp", "sftp"],
+              "description": "Protocol name"
+            },
+            "description": "List of protocols supported by the server"
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of port IDs this server is listening on"
+          }
+        },
+        "required": ["id", "protocols", "ports"]
+      }
+    },
+    "ports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the port"
+          },
+          "network": {
+            "type": "string",
+            "description": "Network ID this port belongs to"
+          }
+        },
+        "required": ["id", "network"]
+      }
+    },
+    "networks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the network"
+          },
+          "public": {
+            "type": "boolean",
+            "description": "Whether this network is publicly accessible"
+          }
+        },
+        "required": ["id", "public"]
+      }
+    }
+  },
+  "required": ["servers", "ports", "networks"]
+}

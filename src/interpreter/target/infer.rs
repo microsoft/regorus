@@ -171,16 +171,18 @@ fn extract_input_field_access(expr: &Expr, _expected_field: &str) -> Option<Stri
     match expr {
         // Handle input.field
         Expr::RefDot { refr, field, .. } => {
-            if let (
-                Expr::Var {
-                    value: Value::String(var_name),
-                    ..
-                },
-                Value::String(field_name),
-            ) = (refr.as_ref(), &field.1)
-            {
-                if var_name.as_ref() == "input" {
-                    return Some(field_name.clone());
+            if let Some((_, field_value)) = field.as_ref() {
+                if let (
+                    Expr::Var {
+                        value: Value::String(var_name),
+                        ..
+                    },
+                    Value::String(field_name),
+                ) = (refr.as_ref(), field_value)
+                {
+                    if var_name.as_ref() == "input" {
+                        return Some(field_name.clone());
+                    }
                 }
             }
         }

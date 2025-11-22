@@ -95,4 +95,9 @@ impl<T: Clone> Lookup<T> {
             None
         }
     }
+
+    /// Get read-only access to all module slots.
+    pub fn modules(&self) -> &[Vec<Option<T>>] {
+        &self.slots
+    }
 }

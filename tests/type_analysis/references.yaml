@@ -1,0 +1,270 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: input schema property access
+    modules:
+      - |
+        package type_analysis.references.schema
+        import rego.v1
+
+        user := input.user
+        user_name := user.name
+        user_age := input.user.age
+    input_schema:
+      type: object
+      properties:
+        user:
+          type: object
+          properties:
+            name:
+              type: string
+            age:
+              type: integer
+          required:
+            - name
+            - age
+      required:
+        - user
+    rules:
+      - rule: data.type_analysis.references.schema.user
+        type:
+          kind: Object
+          properties:
+            name:
+              kind: String
+            age:
+              kind: Integer
+        schema_backed: true
+        provenance: SchemaInput
+      - rule: data.type_analysis.references.schema.user_name
+        type:
+          kind: String
+        schema_backed: true
+        provenance: SchemaInput
+      - rule: data.type_analysis.references.schema.user_age
+        type:
+          kind: Integer
+        schema_backed: true
+        provenance: SchemaInput
+
+  - note: data schema property access
+    modules:
+      - |
+        package type_analysis.references.data
+        import rego.v1
+
+        catalog := data.catalog
+        first_price := data.catalog.items[0].price
+    data_schema:
+      type: object
+      properties:
+        catalog:
+          type: object
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                properties:
+                  price:
+                    type: number
+                required:
+                  - price
+          required:
+            - items
+      required:
+        - catalog
+    rules:
+      - rule: data.type_analysis.references.data.catalog
+        type:
+          kind: Object
+          properties:
+            items:
+              kind: Array
+              element:
+                kind: Object
+                properties:
+                  price:
+                    kind: Number
+        schema_backed: true
+        provenance: SchemaData
+      - rule: data.type_analysis.references.data.first_price
+        type:
+          kind: Number
+        schema_backed: true
+        provenance: SchemaData
+
+  - note: structural object property fallback
+    modules:
+      - |
+        package type_analysis.references.structural
+        import rego.v1
+
+        person := {"name": "Alice", "age": 30}
+        person_name := person.name
+    rules:
+      - rule: data.type_analysis.references.structural.person
+        type:
+          kind: Object
+          fields:
+            name:
+              kind: String
+            age:
+              kind: Integer
+        provenance: Literal
+      - rule: data.type_analysis.references.structural.person_name
+        type: String
+        provenance: Propagated
+
+  - note: schema array element access
+    modules:
+      - |
+        package type_analysis.references.array
+        import rego.v1
+
+        first_order := input.orders[0]
+        first_price := input.orders[0].price
+        any_order := input.orders[input.pick]
+        any_price := any_order.price
+    input_schema:
+      type: object
+      properties:
+        pick:
+          type: integer
+        orders:
+          type: array
+          items:
+            type: object
+            properties:
+              price:
+                type: number
+            required:
+              - price
+      required:
+        - orders
+    rules:
+      - rule: data.type_analysis.references.array.first_order
+        type:
+          kind: Object
+          properties:
+            price:
+              kind: Number
+        schema_backed: true
+        provenance: SchemaInput
+      - rule: data.type_analysis.references.array.first_price
+        type:
+          kind: Number
+        schema_backed: true
+        provenance: SchemaInput
+      - rule: data.type_analysis.references.array.any_order
+        type:
+          kind: Object
+          properties:
+            price:
+              kind: Number
+        schema_backed: true
+        provenance: SchemaInput
+      - rule: data.type_analysis.references.array.any_price
+        type:
+          kind: Number
+        schema_backed: true
+        provenance: SchemaInput
+
+  - note: schema property missing -> structural any
+    modules:
+      - |
+        package type_analysis.references.unknown
+        import rego.v1
+
+        user := input.user
+        nickname := user.nickname
+    input_schema:
+      type: object
+      properties:
+        user:
+          type: object
+          properties:
+            name:
+              type: string
+          additionalProperties: false
+          required:
+            - name
+      required:
+        - user
+    rules:
+      - rule: data.type_analysis.references.unknown.user
+        type:
+          kind: Object
+          properties:
+            name:
+              kind: String
+        schema_backed: true
+        provenance: SchemaInput
+      - rule: data.type_analysis.references.unknown.nickname
+        type: Any
+        provenance: SchemaInput
+    diagnostics:
+      - kind: SchemaViolation
+        message: "Property 'nickname' is not defined by the schema; known properties: name"
+
+  - note: dynamic key access on schema object
+    modules:
+      - |
+        package type_analysis.references.dynamic_key
+        import rego.v1
+
+        selected := input.selected
+        value := input.user[selected]
+    input_schema:
+      type: object
+      properties:
+        selected:
+          type: string
+        user:
+          type: object
+          properties:
+            name:
+              type: string
+            age:
+              type: integer
+          required:
+            - name
+            - age
+      required:
+        - selected
+        - user
+    rules:
+      - rule: data.type_analysis.references.dynamic_key.value
+        type: Any
+        provenance: SchemaInput
+
+  - note: structural array indexing fallback
+    modules:
+      - |
+        package type_analysis.references.structural_array
+        import rego.v1
+
+        items := [{"value": 1}, {"value": 2}]
+        first := items[0]
+        first_value := first.value
+    rules:
+      - rule: data.type_analysis.references.structural_array.items
+        type:
+          kind: Array
+          element:
+            kind: Object
+            fields:
+              value:
+                kind: Integer
+        provenance: Literal
+      - rule: data.type_analysis.references.structural_array.first
+        type:
+          kind: Object
+          fields:
+            value:
+              kind: Integer
+        provenance: Propagated
+      - rule: data.type_analysis.references.structural_array.first_value
+        type: Integer
+        provenance: Propagated
