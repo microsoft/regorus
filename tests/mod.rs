@@ -8,3 +8,6 @@ mod engine;
 mod lexer;
 mod parser;
 mod value;
+
+#[cfg(feature = "rvm")]
+mod rvm;

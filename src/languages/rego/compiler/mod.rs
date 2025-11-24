@@ -9,7 +9,6 @@ mod program;
 mod queries;
 mod references;
 mod rules;
-mod scheduling;
 
 pub use error::{CompilerError, Result};
 

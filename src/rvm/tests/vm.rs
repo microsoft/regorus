@@ -24,7 +24,7 @@ mod tests {
     }
 
     use crate::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, SuspendReason, VmError};
-    use crate::tests::interpreter::process_value;
+    use crate::test_utils::process_value;
     use crate::value::Value;
     use alloc::collections::{BTreeMap, VecDeque};
     use alloc::string::{String, ToString};

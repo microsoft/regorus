@@ -34,6 +34,9 @@ mod interpreter;
 pub mod languages {
     #[cfg(feature = "azure-rbac")]
     pub mod azure_rbac;
+
+    #[cfg(feature = "rvm")]
+    pub mod rego;
 }
 
 mod lexer;
@@ -51,6 +54,8 @@ mod scheduler;
 mod schema;
 #[cfg(feature = "azure_policy")]
 pub mod target;
+#[cfg(any(test, all(feature = "yaml", feature = "std")))]
+pub mod test_utils;
 mod utils;
 mod value;
 
