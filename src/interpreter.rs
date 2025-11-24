@@ -3371,6 +3371,39 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Evaluate a default rule and return the resulting value for compiler consumers.
+    pub fn eval_default_rule_for_compiler(&mut self, rule_path: &str) -> Result<Value> {
+        self.input = Value::Undefined;
+        self.data = Value::Undefined;
+
+        let default_rules = self.compiled_policy.default_rules.get(rule_path).cloned();
+
+        if let Some(rules) = default_rules {
+            for (rule, _) in rules {
+                for module in self.compiled_policy.modules.iter() {
+                    if module.policy.contains(&rule) {
+                        let prev_module = self.set_current_module(Some(module.clone()))?;
+                        let result = self.eval_default_rule(&rule);
+                        self.set_current_module(prev_module)?;
+
+                        if result.is_ok() {
+                            let components: Vec<&str> = rule_path.split('.').skip(1).collect();
+                            let value = Self::get_value_chained(self.data.clone(), &components);
+
+                            if value != Value::Undefined {
+                                return Ok(value);
+                            }
+                        }
+
+                        return result.map(|_| Value::Undefined);
+                    }
+                }
+            }
+        }
+
+        bail!("Could not find default rule for path: {}", rule_path);
+    }
+
     fn update_data(
         &mut self,
         span: &Span,

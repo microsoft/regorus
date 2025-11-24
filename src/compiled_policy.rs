@@ -25,13 +25,28 @@ pub(crate) type InferredResourceTypes = BTreeMap<Ref<Query>, ResourceTypeInfo>;
 /// Wrapper around CompiledPolicyData that holds an Rc reference.
 #[derive(Debug, Clone)]
 pub struct CompiledPolicy {
-    inner: Rc<CompiledPolicyData>,
+    pub(crate) inner: Rc<CompiledPolicyData>,
 }
 
 impl CompiledPolicy {
     /// Create a new CompiledPolicy from CompiledPolicyData.
     pub(crate) fn new(inner: Rc<CompiledPolicyData>) -> Self {
         Self { inner }
+    }
+
+    /// Get access to the rules in the compiled policy for downstream consumers like the RVM compiler.
+    pub fn get_rules(&self) -> &Map<String, Vec<Ref<Rule>>> {
+        &self.inner.rules
+    }
+
+    /// Get access to the modules in the compiled policy.
+    pub fn get_modules(&self) -> &Vec<Ref<Module>> {
+        self.inner.modules.as_ref()
+    }
+
+    /// Returns true when the compiled policy should use Rego v0 semantics.
+    pub fn is_rego_v0(&self) -> bool {
+        !self.inner.modules.iter().any(|module| module.rego_v1)
     }
 }
 
