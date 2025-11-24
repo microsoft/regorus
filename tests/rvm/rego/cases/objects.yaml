@@ -1,0 +1,108 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Objects Test Suite
+# Tests object creation, nested objects, field access, and dynamic field operations
+
+cases:
+  - note: object_creation
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := {"name": "Alice", "age": 30, "active": true}
+        }
+    query: data.test.main
+    want_result: {"name": "Alice", "age": 30, "active": true}
+
+  - note: nested_objects
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := {
+            "user": {
+              "name": "Alice", 
+              "details": {"age": 30, "active": true}
+            },
+            "config": {"debug": false}
+          }
+        }
+    query: data.test.main
+    want_result: {"user": {"name": "Alice", "details": {"age": 30, "active": true}}, "config": {"debug": false}}
+
+  - note: object_field_access
+    data: {}
+    modules:
+      - |
+        package test
+        user := {"name": "Alice", "age": 30}
+        main := result if {
+          result := user.name
+        }
+    query: data.test.main
+    want_result: "Alice"
+
+  - note: nested_object_access
+    data: {}
+    modules:
+      - |
+        package test
+        user := {
+          "name": "Alice", 
+          "details": {
+            "age": 30, 
+            "profile": {
+              "country": "USA",
+              "city": "Seattle"
+            }
+          }
+        }
+        main := result if {
+          result := user.details.profile.city
+        }
+    query: data.test.main
+    want_result: "Seattle"
+
+  - note: dynamic_field_name_get
+    data: {}
+    modules:
+      - |
+        package test
+        user := {"name": "Alice", "age": 30, "status": "active"}
+        field_name := "status"
+        main := result if {
+          result := user[field_name]
+        }
+    query: data.test.main
+    want_result: "active"
+
+  - note: dynamic_field_name_set
+    data: {}
+    modules:
+      - |
+        package test
+        field_name := "email"
+        field_value := "alice@example.com"
+        main := result if {
+          result := {field_name: field_value, "name": "Alice"}
+        }
+    query: data.test.main
+    want_result: {"email": "alice@example.com", "name": "Alice"}
+
+  - note: dynamic_object_construction
+    data: {}
+    modules:
+      - |
+        package test
+        name_field := "username"
+        name_value := "alice123"
+        age_field := "user_age" 
+        age_value := 25
+        main := result if {
+          result := {name_field: name_value, age_field: age_value}
+        }
+    query: data.test.main
+    want_result: {"username": "alice123", "user_age": 25}

@@ -1,0 +1,293 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Chained Access and Variable Resolution Test Suite
+# Tests complex chained reference expressions, dynamic indexing, and variable precedence
+
+cases:
+  - note: simple_data_rule_access
+    data: {}
+    modules:
+      - |
+        package test.users
+        alice = {"name": "Alice", "age": 30}
+      - |
+        package test
+        main := result if {
+          result := data.test.users.alice.name
+        }
+    query: data.test.main
+    want_result: "Alice"
+
+  - note: local_variable_precedence_over_rule
+    data: {}
+    modules:
+      - |
+        package test
+        alice = {"name": "Global Alice"}
+        main := result if {
+          alice := {"name": "Local Alice"}
+          result := alice.name
+        }
+    query: data.test.main
+    want_result: "Local Alice"
+
+  - note: chained_rule_access_with_fields
+    data: {}
+    modules:
+      - |
+        package test.auth
+        user_permissions = {
+          "alice": {"read": true, "write": false, "admin": false},
+          "bob": {"read": true, "write": true, "admin": true}
+        }
+      - |
+        package test
+        main := result if {
+          result := data.test.auth.user_permissions.alice.read
+        }
+    query: data.test.main
+    want_result: true
+
+  - note: dynamic_indexing_with_variable
+    data: {}
+    modules:
+      - |
+        package test.data
+        users = {
+          "alice": {"name": "Alice Smith", "role": "user"},
+          "bob": {"name": "Bob Jones", "role": "admin"}
+        }
+      - |
+        package test
+        main := result if {
+          user_id := "alice"
+          result := data.test.data.users[user_id].name
+        }
+    query: data.test.main
+    want_result: "Alice Smith"
+
+  - note: mixed_static_and_dynamic_chaining
+    data: {}
+    modules:
+      - |
+        package test.config
+        settings = {
+          "databases": {
+            "primary": {"host": "db1.example.com", "port": 5432},
+            "backup": {"host": "db2.example.com", "port": 5433}
+          }
+        }
+      - |
+        package test
+        main := result if {
+          db_type := "primary"
+          result := data.test.config.settings.databases[db_type].host
+        }
+    query: data.test.main
+    want_result: "db1.example.com"
+
+  - note: input_field_access
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := input.user.profile.email
+        }
+    query: data.test.main
+    input: {"user": {"profile": {"email": "alice@example.com", "verified": true}}}
+    want_result: "alice@example.com"
+
+  - note: dynamic_input_access
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          field := "email"
+          result := input.user.profile[field]
+        }
+    query: data.test.main
+    input: {"user": {"profile": {"email": "alice@example.com", "phone": "+1234567890"}}}
+    want_result: "alice@example.com"
+
+  - note: data_document_with_rule_override
+    data: {"test": {"existing": {"value": "from_data"}}}
+    modules:
+      - |
+        package test.existing
+        computed = "from_rule"
+      - |
+        package test
+        main := result if {
+          result := [data.test.existing.value, data.test.existing.computed]
+        }
+    query: data.test.main
+    want_result: ["from_data", "from_rule"]
+
+  - note: longest_rule_prefix_matching
+    data: {}
+    modules:
+      - |
+        package test.api.v1
+        users = ["alice", "bob"]
+      - |
+        package test.api.v1.users_pkg
+        count = 2
+      - |
+        package test
+        main := result if {
+          result := [data.test.api.v1.users, data.test.api.v1.users_pkg.count]
+        }
+    query: data.test.main
+    want_result: [["alice", "bob"], 2]
+
+  - note: nested_dynamic_access
+    data: {}
+    modules:
+      - |
+        package test.complex
+        matrix = {
+          "level1": {
+            "level2a": {"value": "found_a"},
+            "level2b": {"value": "found_b"}
+          }
+        }
+      - |
+        package test
+        main := result if {
+          level1_key := "level1"
+          level2_key := "level2a"
+          result := data.test.complex.matrix[level1_key][level2_key].value
+        }
+    query: data.test.main
+    want_result: "found_a"
+
+  - note: variable_shadowing_in_chain
+    data: {}
+    modules:
+      - |
+        package test
+        config = {"timeout": 30}
+        main := result if {
+          config := {"nested": {"timeout": 60}}
+          result := config.nested.timeout
+        }
+    query: data.test.main
+    want_result: 60
+
+  - note: array_indexing_in_chain
+    data: {}
+    modules:
+      - |
+        package test.data
+        servers = [
+          {"name": "web1", "status": "active"},
+          {"name": "web2", "status": "inactive"},
+          {"name": "db1", "status": "active"}
+        ]
+      - |
+        package test
+        main := result if {
+          index := 0
+          result := data.test.data.servers[index].name
+        }
+    query: data.test.main
+    want_result: "web1"
+
+  - note: string_literal_bracket_access
+    data: {}
+    modules:
+      - |
+        package test.metrics
+        cpu_usage = {
+          "server-1": 45.2,
+          "server-2": 78.9,
+          "load-balancer": 12.3
+        }
+      - |
+        package test
+        main := result if {
+          result := data.test.metrics.cpu_usage["server-1"]
+        }
+    query: data.test.main
+    want_result: 45.2
+
+  - note: complex_nested_rule_resolution
+    data: {}
+    modules:
+      - |
+        package test.auth.policies
+        admin_policy = {
+          "permissions": ["read", "write", "delete"],
+          "resources": ["users", "configs", "logs"]
+        }
+      - |
+        package test.auth.config
+        max_sessions = 5
+      - |
+        package test
+        main := result if {
+          perms := data.test.auth.policies.admin_policy.permissions
+          max_sess := data.test.auth.config.max_sessions
+          result := {"permissions": perms, "max_sessions": max_sess}
+        }
+    query: data.test.main
+    want_result: {"permissions": ["read", "write", "delete"], "max_sessions": 5}
+
+  - note: undefined_chain_access
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := data.nonexistent.path.value
+        }
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: variable_in_nested_scope
+    data: {}
+    modules:
+      - |
+        package test.utils
+        default_config = {"retries": 3, "timeout": 30}
+      - |
+        package test
+        main := result if {
+          outer_var := "outer"
+          some x in [1, 2]
+          inner_var := "inner"
+          config := data.test.utils.default_config
+          result := {
+            "outer": outer_var,
+            "inner": inner_var, 
+            "x": x,
+            "retries": config.retries
+          }
+          x == 2
+        }
+    query: data.test.main
+    want_result: {"outer": "outer", "inner": "inner", "x": 2, "retries": 3}
+
+  - note: computed_field_name_access
+    data: {}
+    modules:
+      - |
+        package test.api
+        endpoints = {
+          "v1_users": "/api/v1/users",
+          "v1_posts": "/api/v1/posts",
+          "v2_users": "/api/v2/users"
+        }
+      - |
+        package test
+        main := result if {
+          version := "v1"
+          resource := "users"
+          key := sprintf("%s_%s", [version, resource])
+          result := data.test.api.endpoints[key]
+        }
+    query: data.test.main
+    want_result: "/api/v1/users"

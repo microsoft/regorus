@@ -1,0 +1,50 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Comparison Operations Test Suite
+# Tests comparison operators: ==, <, >, <=, >=, !=
+
+cases:
+  - note: comparison_equals
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := (5 == 5)
+        }
+    query: data.test.main
+    want_result: true
+
+  - note: comparison_not_equals
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := (5 == 3)
+        }
+    query: data.test.main
+    want_result: false
+
+  - note: comparison_less_than
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := (3 < 5)
+        }
+    query: data.test.main
+    want_result: true
+
+  - note: comparison_greater_than
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := (7 > 5)
+        }
+    query: data.test.main
+    want_result: true

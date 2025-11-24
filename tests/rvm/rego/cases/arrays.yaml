@@ -1,0 +1,64 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Arrays Test Suite
+# Tests array creation, nested arrays, indexing, and mixed data structures
+
+cases:
+  - note: array_creation
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := [1, 2, 3, "hello", true]
+        }
+    query: data.test.main
+    want_result: [1, 2, 3, "hello", true]
+
+  - note: nested_arrays
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := [[1, 2], [3, 4], ["a", "b"]]
+        }
+    query: data.test.main
+    want_result: [[1, 2], [3, 4], ["a", "b"]]
+
+  - note: array_indexing
+    data: {}
+    modules:
+      - |
+        package test
+        arr := [10, 20, 30, 40]
+        main := result if {
+          result := arr[2]
+        }
+    query: data.test.main
+    want_result: 30
+
+  - note: dynamic_array_indexing
+    data: {}
+    modules:
+      - |
+        package test
+        arr := ["first", "second", "third"]
+        index := 1
+        main := result if {
+          result := arr[index]
+        }
+    query: data.test.main
+    want_result: "second"
+
+  - note: mixed_array_object
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := [{"name": "Alice"}, {"name": "Bob"}, [1, 2, 3]]
+        }
+    query: data.test.main
+    want_result: [{"name": "Alice"}, {"name": "Bob"}, [1, 2, 3]]

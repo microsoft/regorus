@@ -1,0 +1,50 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Arithmetic Operations Test Suite
+# Tests basic arithmetic operations: addition, multiplication, division, subtraction
+
+cases:
+  - note: arithmetic_basic
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := 2 + 3
+        }
+    query: data.test.main
+    want_result: 5
+
+  - note: arithmetic_multiply
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := 4 * 6
+        }
+    query: data.test.main
+    want_result: 24
+
+  - note: arithmetic_division
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := 15 / 3
+        }
+    query: data.test.main
+    want_result: 5
+
+  - note: arithmetic_subtraction
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := 10 - 7
+        }
+    query: data.test.main
+    want_result: 3

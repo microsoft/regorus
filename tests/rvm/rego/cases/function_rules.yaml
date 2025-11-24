@@ -1,0 +1,230 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Function Rules Test Suite
+# Tests user-defined function rule calls with arguments
+# Covers function definitions, argument passing, return values, and consistency
+
+cases:
+  - note: simple_function_call
+    description: Test basic function rule definition and call
+    data: {}
+    modules:
+      - |
+        package test
+        
+        # Define a simple function rule
+        add_ten(x) := x + 10
+        
+        # Call the function
+        main := add_ten(5)
+    query: data.test.main
+    want_result: 15
+
+  - note: function_with_multiple_args
+    description: Test function rule with multiple arguments
+    data: {}
+    modules:
+      - |
+        package test
+        
+        # Function that adds two numbers
+        add(x, y) := x + y
+        
+        # Call with two arguments
+        main := add(7, 3)
+    query: data.test.main
+    want_result: 10
+
+  - note: function_with_variable_args
+    description: Test function call with variables as arguments
+    data: {}
+    modules:
+      - |
+        package test
+        
+        multiply(x, y) := x * y
+        
+        main := result if {
+          a := 4
+          b := 6
+          result := multiply(a, b)
+        }
+    query: data.test.main
+    want_result: 24
+
+  - note: function_returning_object
+    description: Test function that returns an object
+    data: {}
+    modules:
+      - |
+        package test
+        
+        make_person(name, age) := {"name": name, "age": age}
+        
+        main := make_person("Alice", 30)
+    query: data.test.main
+    want_result: {"name": "Alice", "age": 30}
+
+  - note: function_returning_array
+    description: Test function that returns an array
+    data: {}
+    modules:
+      - |
+        package test
+        
+        make_range(start, end) := [start, end] if start <= end
+        
+        main := make_range(1, 3)
+    query: data.test.main
+    want_result: [1, 3]
+
+  - note: nested_function_calls
+    description: Test nested function calls
+    data: {}
+    modules:
+      - |
+        package test
+        
+        double(x) := x * 2
+        add_one(x) := x + 1
+        
+        main := double(add_one(5))
+    query: data.test.main
+    want_result: 12
+
+  - note: function_with_condition
+    description: Test function rule with conditional body
+    data: {}
+    modules:
+      - |
+        package test
+        
+        max(x, y) := x if x >= y
+        max(x, y) := y if y > x
+        
+        main := max(7, 3)
+    query: data.test.main
+    want_result: 7
+
+  - note: function_consistency_check
+    description: Test that function definitions must be consistent
+    data: {}
+    modules:
+      - |
+        package test
+        
+        # These definitions would be inconsistent if both conditions were true
+        inconsistent_func(x) := x + 1 if x < 5
+        inconsistent_func(x) := x + 2 if x < 5
+        
+        # This should work for x >= 5
+        main := inconsistent_func(10)
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: function_with_undefined_result
+    description: Test function that can return undefined
+    data: {}
+    modules:
+      - |
+        package test
+        
+        # Function only defined for positive numbers
+        positive_double(x) := x * 2 if x > 0
+        
+        # Calling with negative number should return undefined
+        main := positive_double(-1)
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: function_using_data
+    description: Test function that accesses global data
+    data: {"multiplier": 3}
+    modules:
+      - |
+        package test
+        
+        scale(x) := x * data.multiplier
+        
+        main := scale(5)
+    query: data.test.main
+    want_result: 15
+
+  - note: function_using_input
+    description: Test function that accesses input
+    data: {}
+    input: {"base": 10}
+    modules:
+      - |
+        package test
+        
+        add_to_base(x) := x + input.base
+        
+        main := add_to_base(5)
+    query: data.test.main
+    want_result: 15
+
+  - note: function_with_complex_logic
+    description: Test function with complex conditional logic
+    data: {}
+    modules:
+      - |
+        package test
+        
+        classify_number(x) := "negative" if x < 0
+        classify_number(x) := "zero" if x == 0
+        classify_number(x) := "small positive" if {
+          x > 0
+          x <= 10
+        }
+        classify_number(x) := "large positive" if x > 10
+        
+        main := classify_number(5)
+    query: data.test.main
+    want_result: "small positive"
+
+  - note: function_with_array_processing
+    description: Test function that processes arrays
+    data: {}
+    modules:
+      - |
+        package test
+        
+        first_element(arr) := arr[0]
+        
+        main := first_element([1, 2, 3])
+    query: data.test.main
+    want_result: 1
+
+  - note: function_with_object_processing
+    description: Test function that processes objects
+    data: {}
+    modules:
+      - |
+        package test
+        
+        get_field(obj, field) := obj[field]
+        
+        main := get_field({"name": "Bob", "age": 25}, "name")
+    query: data.test.main
+    want_result: "Bob"
+
+  - note: function_call_chain
+    description: Test chain of function calls
+    data: {}
+    modules:
+      - |
+        package test
+        
+        step1(x) := x + 1
+        step2(x) := x * 2
+        step3(x) := x - 3
+        
+        main := result if {
+          a := step1(5)    # 6
+          b := step2(a)    # 12
+          result := step3(b)  # 9
+        }
+    query: data.test.main
+    want_result: 9

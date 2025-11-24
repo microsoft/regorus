@@ -1,0 +1,50 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Variables and Rules Test Suite
+# Tests variable assignment, rule definitions, and rule dependencies
+
+cases:
+  - note: variable_assignment
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          x := 42
+          result := x
+        }
+    query: data.test.main
+    want_result: 42
+
+  - note: rule_without_body
+    data: {}
+    modules:
+      - |
+        package test
+        main = 100
+    query: data.test.main
+    want_result: 100
+
+  - note: rule_dependency
+    data: {}
+    modules:
+      - |
+        package test
+        x = 42
+        main := result if {
+          result := x + 10
+        }
+    query: data.test.main
+    want_result: 52
+
+  - note: rule_undefined_condition_fails
+    data: {}
+    modules:
+      - |
+        package test
+        main := "success" if {
+          false  # condition always fails
+        }
+    query: data.test.main
+    want_result: "#undefined"

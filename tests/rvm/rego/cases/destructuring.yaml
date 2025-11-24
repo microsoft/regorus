@@ -1,0 +1,260 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Destructuring Pattern Test Suite
+# Tests destructuring patterns in assignments, function parameters, and some-in loops
+# Note: Set destructuring is not supported by Rego and should produce compilation errors
+
+cases:
+  # Basic array destructuring with colon assignment
+  - note: array_destructuring_basic
+    data: {}
+    modules:
+      - |
+        package test
+        main := [a, b] if {
+          [a, b] := [1, 2]
+        }
+    query: data.test.main
+    want_result: [1, 2]
+
+  # Array destructuring with equals assignment
+  - note: array_destructuring_equals
+    data: {}
+    modules:
+      - |
+        package test
+        main := [x, y, z] if {
+          arr := [10, 20, 30]
+          [x, y, z] = arr
+        }
+    query: data.test.main
+    want_result: [10, 20, 30]
+
+  # Object destructuring with colon assignment
+  - note: object_destructuring_basic
+    data: {}
+    modules:
+      - |
+        package test
+        main := [name, age] if {
+          {"name": name, "age": age} := {"name": "Alice", "age": 30}
+        }
+    query: data.test.main
+    want_result: ["Alice", 30]
+
+  # Object destructuring with equals assignment  
+  - note: object_destructuring_equals
+    data: {}
+    modules:
+      - |
+        package test
+        main := [x, y] if {
+          obj := {"x": 100, "y": 200}
+          {"x": x, "y": y} = obj
+        }
+    query: data.test.main
+    want_result: [100, 200]
+
+  # Nested array destructuring
+  - note: nested_array_destructuring
+    data: {}
+    modules:
+      - |
+        package test
+        main := [a, c, d] if {
+          [[a, b], [c, d]] := [[1, 2], [3, 4]]
+        }
+    query: data.test.main
+    want_result: [1, 3, 4]
+
+  # Array destructuring in function parameters
+  - note: array_destructuring_function_param
+    data: {}
+    modules:
+      - |
+        package test
+        add_first_two([x, y]) := x + y
+        main := add_first_two([5, 7])
+    query: data.test.main
+    want_result: 12
+
+  # Object destructuring in function parameters
+  - note: object_destructuring_function_param
+    data: {}
+    modules:
+      - |
+        package test
+        get_name({"name": name}) := name
+        main := get_name({"name": "Bob", "age": 25})
+    query: data.test.main
+    want_result: "Bob"
+
+  # Mixed array and object destructuring
+  - note: mixed_destructuring
+    data: {}
+    modules:
+      - |
+        package test
+        main := [name, x, y] if {
+          [user, {"x": x, "y": y}] := [{"name": "Grace"}, {"x": 1, "y": 2}]
+          {"name": name} = user
+        }
+    query: data.test.main
+    want_result: ["Grace", 1, 2]
+
+  # Destructuring with literal matching
+  - note: destructuring_with_literals
+    data: {}
+    modules:
+      - |
+        package test
+        main := value if {
+          [1, value, 3] := [1, 42, 3]
+        }
+    query: data.test.main
+    want_result: 42
+
+  # SET DESTRUCTURING ERROR CASES - These should fail compilation
+  # RVM correctly rejects these, but interpreter incorrectly allows them
+
+  # Set destructuring in colon assignment should error
+  - note: set_destructuring_colon_error
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          {a, b} := {1, 2, 3}
+          result := [a, b]
+        }
+    query: data.test.main
+    want_error: "assignment operator := requires left-hand side to have bindable variables"
+    allow_interpreter_success: true
+
+  # Set destructuring in function parameters should error
+  - note: set_destructuring_function_param_error
+    data: {}
+    modules:
+      - |
+        package test
+        has_element({x, y}, elem) := elem in {x, y}
+        main := has_element({10, 20}, 20)
+    query: data.test.main
+    want_error: "Undefined variable"
+    allow_interpreter_success: true
+
+  # Set destructuring in equals assignment should error
+  - note: set_destructuring_equals_error
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          s := {1, 2}
+          {x, y} = s
+          result := [x, y]
+        }
+    query: data.test.main
+    want_error: "Undefined variable"
+    allow_interpreter_success: true
+
+  # Option 2: Function parameter destructuring with multiple definitions and definition-level failure
+  - note: function_param_destructuring_multiple_definitions
+    data: {}
+    modules:
+      - |
+        package test
+        # This function has multiple definitions with different parameter patterns
+        # Only the matching definition should succeed, others should fail at definition level
+        process_input([x, y]) := sprintf("array: %v, %v", [x, y])
+        process_input([x, y, z]) := sprintf("array: %v, %v, %v", [x, y, z])  
+        process_input({"name": name, "age": age}) := sprintf("object: %s is %d", [name, age])
+        
+        # Test with 2-element array - should match first definition
+        test_2_elements := process_input([1, 2])
+        
+        # Test with 3-element array - should match second definition
+        test_3_elements := process_input([1, 2, 3])
+        
+        # Test with object - should match third definition
+        test_object := process_input({"name": "Alice", "age": 30})
+        
+        # Combined result for testing
+        main := {
+          "test_2_elements": test_2_elements,
+          "test_3_elements": test_3_elements,
+          "test_object": test_object
+        }
+    query: data.test.main
+    want_result:
+      test_2_elements: "array: 1, 2"
+      test_3_elements: "array: 1, 2, 3"
+      test_object: "object: Alice is 30"
+
+
+  # Option 2: Complex nested destructuring in function parameters
+  - note: function_param_nested_destructuring
+    data: {}
+    modules:
+      - |
+        package test
+        # Function with nested destructuring patterns
+        extract_info({"user": {"name": name, "details": {"age": age, "city": city}}, "active": active}) := {
+          "user_name": name,
+          "user_age": age,
+          "user_city": city,
+          "is_active": active
+        }
+        
+        main := extract_info({
+          "user": {
+            "name": "Bob",
+            "details": {
+              "age": 25,
+              "city": "Seattle"
+            }
+          },
+          "active": true
+        })
+    query: data.test.main
+    want_result:
+      user_name: "Bob"
+      user_age: 25
+      user_city: "Seattle"
+      is_active: true
+
+  # Option 2: Mixed destructuring and non-destructuring definitions
+  - note: function_mixed_destructuring_and_simple
+    data: {}
+    modules:
+      - |
+        package test
+        # Function with mixed parameter styles - some with destructuring, some without
+        handle_request(method) := sprintf("simple method: %s", [method]) if {
+          method in ["GET", "POST", "PUT", "DELETE"]
+        }
+        handle_request({"method": method, "path": path}) := sprintf("structured request: %s %s", [method, path])
+        handle_request({"method": method, "headers": {"auth": token}}) := sprintf("authenticated %s with token %s", [method, token])
+        
+        # Test simple string parameter - should match first definition
+        test_simple := handle_request("GET")
+        
+        # Test structured request - should match second definition  
+        test_structured := handle_request({"method": "POST", "path": "/users"})
+        
+        # Test with auth header - should match third definition
+        test_auth := handle_request({"method": "PUT", "headers": {"auth": "abc123"}})
+        
+        # Test that fails all patterns - this should be undefined
+        test_invalid := handle_request(42)
+        
+        # Combined result for testing
+        main := {
+          "test_simple": test_simple,
+          "test_structured": test_structured, 
+          "test_auth": test_auth,
+          "test_invalid": test_invalid
+        }
+    query: data.test.main
+    want_result: "#undefined"
