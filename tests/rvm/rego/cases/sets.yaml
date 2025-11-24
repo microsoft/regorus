@@ -1,0 +1,69 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Sets Test Suite
+# Tests set creation, deduplication, membership testing, and nested sets
+
+cases:
+  - note: set_creation
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := {1, 2, 3, "hello", true}
+        }
+    query: data.test.main
+    want_result:
+      set!: [1, 2, 3, "hello", true]
+
+  - note: set_with_duplicates
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := {1, 2, 2, 3, 1}
+        }
+    query: data.test.main
+    want_result:
+      set!: [1, 2, 3]
+
+  - note: set_membership
+    data: {}
+    modules:
+      - |
+        package test
+        my_set := {1, 2, 3, 4, 5}
+        main := result if {
+          result := 3 in my_set
+        }
+    query: data.test.main
+    want_result: true
+
+  - note: set_non_membership
+    data: {}
+    modules:
+      - |
+        package test
+        my_set := {"a", "b", "c"}
+        main := result if {
+          result := "d" in my_set
+        }
+    query: data.test.main
+    want_result: false
+
+  - note: nested_sets
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := {{1, 2}, {3, 4}, {"a", "b"}}
+        }
+    query: data.test.main
+    want_result:
+      set!:
+        - set!: [1, 2]
+        - set!: [3, 4]
+        - set!: ["a", "b"]

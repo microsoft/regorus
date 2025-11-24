@@ -3,10 +3,11 @@
 
 use std::env;
 
+use crate::test_utils::{check_output, ValueOrVec};
 use crate::*;
 
 use anyhow::{bail, Result};
-use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use test_generator::test_resources;
 
 #[cfg(feature = "azure_policy")]
@@ -120,106 +121,6 @@ mod load_target_definitions {
 
         Ok(())
     }
-}
-
-// Process test value specified in json/yaml to interpret special encodings.
-pub fn process_value(v: &Value) -> Result<Value> {
-    match v {
-        // Handle Undefined encoded as a string "#undefined"
-        Value::String(s) if s.as_ref() == "#undefined" => Ok(Value::Undefined),
-
-        // Handle set encoded as an object
-        // set! :
-        //   - item1
-        //   - item2
-        //   ...
-        Value::Object(ref fields) if fields.len() == 1 && matches!(&v["set!"], Value::Array(_)) => {
-            let mut set_value = Value::new_set();
-            let set = set_value.as_set_mut()?;
-            for item in v["set!"].as_array()? {
-                set.insert(process_value(item)?);
-            }
-            Ok(set_value)
-        }
-
-        // Handle complex object specified explicitly:
-        // object! :
-        //  - key: ...
-        //    value: ...
-        Value::Object(fields) if fields.len() == 1 && matches!(&v["object!"], Value::Array(_)) => {
-            let mut object_value = Value::new_object();
-            let object = object_value.as_object_mut()?;
-            for item in v["object!"].as_array()? {
-                object.insert(process_value(&item["key"])?, process_value(&item["value"])?);
-            }
-            Ok(object_value)
-        }
-
-        // Recursively process arrays
-        Value::Array(items) => {
-            let mut array_value = Value::new_array();
-            let array = array_value.as_array_mut()?;
-            for item in items.iter() {
-                array.push(process_value(item)?);
-            }
-            Ok(array_value)
-        }
-
-        // Recursively process objects
-        Value::Object(fields) => {
-            let mut object_value = Value::new_object();
-            let object = object_value.as_object_mut()?;
-            for (key, value) in fields.iter() {
-                object.insert(process_value(key)?, process_value(value)?);
-            }
-            Ok(object_value)
-        }
-
-        Value::Set(_) => bail!("unexpected set in value read from json/yaml"),
-
-        // Simple variants
-        _ => Ok(v.clone()),
-    }
-}
-
-fn match_values(computed: &Value, expected: &Value) -> Result<()> {
-    if computed != expected {
-        let expected_yaml = serde_yaml::to_string(&expected)?;
-        let computed_yaml = serde_yaml::to_string(&computed)?;
-        panic!(
-            "expected:\n{}computed:\n{}diff:\n{}",
-            expected_yaml,
-            computed_yaml,
-            prettydiff::diff_chars(&expected_yaml, &computed_yaml)
-        );
-    }
-    Ok(())
-}
-
-pub fn check_output(computed_results: &[Value], expected_results: &[Value]) -> Result<()> {
-    if computed_results.len() != expected_results.len() {
-        bail!(
-            "the number of computed results ({}) and expected results ({}) is not equal",
-            computed_results.len(),
-            expected_results.len()
-        );
-    }
-
-    for (n, expected_result) in expected_results.iter().enumerate() {
-        let expected = match process_value(expected_result) {
-            Ok(e) => e,
-            _ => bail!("unable to process value :\n {expected_result:?}"),
-        };
-
-        if let Some(computed_result) = computed_results.get(n) {
-            match match_values(computed_result, &expected) {
-                Ok(()) => (),
-                Err(e) => bail!("{e}"),
-            }
-        }
-    }
-
-    Ok(())
 }
 
 fn push_query_results(query_results: QueryResults, results: &mut Vec<Value>) {
@@ -383,42 +284,6 @@ pub fn eval_file_with_rule_evaluation(
     }
 
     Ok((results, engine.take_prints()?))
-}
-
-#[derive(PartialEq, Debug)]
-pub enum ValueOrVec {
-    Single(Value),
-    Many(Vec<Value>),
-}
-
-impl Serialize for ValueOrVec {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            ValueOrVec::Single(value) => value.serialize(serializer),
-            ValueOrVec::Many(v) => {
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry("many!", v)?;
-                map.end()
-            }
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ValueOrVec {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = Value::deserialize(deserializer)?;
-
-        match &value["many!"] {
-            Value::Array(arr) => Ok(ValueOrVec::Many(arr.to_vec())),
-            _ => Ok(ValueOrVec::Single(value)),
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]

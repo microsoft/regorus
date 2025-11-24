@@ -1,0 +1,153 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Examples Test Suite
+# Tests real-world patterns and advanced Rego constructs
+
+cases:
+  - note: set_rules_with_contains
+    data: {}
+    input:
+      user:
+        role: "editor"
+        name: "alice"
+    modules:
+      - |
+        package test
+        
+        # Define a set of allowed actions
+        allowed_actions contains "read" if {
+          input.user.role in ["viewer", "editor", "admin"]
+        }
+        
+        allowed_actions contains "write" if {
+          input.user.role in ["editor", "admin"]
+        }
+        
+        allowed_actions contains "admin" if {
+          input.user.role == "admin"
+        }
+        
+        # Check if a specific action is allowed
+        allow_read := "read" in allowed_actions
+        allow_write := "write" in allowed_actions
+        allow_admin := "admin" in allowed_actions
+        
+        # Main result combining all permissions
+        main := {
+          "allowed_actions": allowed_actions,
+          "can_read": allow_read,
+          "can_write": allow_write,
+          "can_admin": allow_admin
+        }
+    query: data.test.main
+    want_result:
+      allowed_actions:
+        set!: ["read", "write"]
+      can_read: true
+      can_write: true  
+      can_admin: false
+
+  - note: set_membership_with_contains
+    data: {}
+    input:
+      department: "engineering"
+      role: "developer"
+    modules:
+      - |
+        package test
+        
+        # Define sets using contains
+        valid_departments contains d if {
+          some dept in ["engineering", "marketing", "sales"]
+          d := dept
+        }
+        
+        sensitive_roles contains role if {
+          some role in ["admin", "security", "finance"]
+          r := role
+        }
+        
+        # Check membership
+        is_valid_dept := input.department in valid_departments
+        is_sensitive := input.role in sensitive_roles
+        
+        # Access decision
+        allow := is_valid_dept
+        deny := is_sensitive
+        
+        main := {
+          "valid_departments": valid_departments,
+          "sensitive_roles": sensitive_roles,
+          "department_valid": is_valid_dept,
+          "role_sensitive": is_sensitive,
+          "allow": allow,
+          "deny": deny
+        }
+    query: data.test.main
+    want_result:
+      valid_departments:
+        set!: ["engineering", "marketing", "sales"]
+      sensitive_roles:
+        set!: ["admin", "security", "finance"] 
+      department_valid: true
+      role_sensitive: false
+      allow: true
+      deny: false
+
+  - note: conditional_set_contains
+    data: {}
+    input:
+      user:
+        active: true
+        level: 3
+        department: "engineering"
+    modules:
+      - |
+        package test
+        
+        # Conditional set rules
+        permissions contains "read" if {
+          input.user.active == true
+        }
+        
+        permissions contains "write" if {
+          input.user.active == true
+          input.user.level >= 2
+        }
+        
+        permissions contains "delete" if {
+          input.user.active == true
+          input.user.level >= 5
+          input.user.department == "admin"
+        }
+        
+        main := permissions
+    query: data.test.main
+    want_result:
+      set!: ["read", "write"]
+
+  - note: empty_set_contains
+    data: {}
+    input:
+      user:
+        role: "user"
+        verified: false
+    modules:
+      - |
+        package test
+        
+        # Set that might be empty based on conditions
+        special_permissions contains "super_admin" if {
+          input.user.role == "root"
+          input.user.verified == true
+        }
+        
+        special_permissions contains "audit" if {
+          input.user.role == "auditor"
+        }
+        
+        main := special_permissions
+    query: data.test.main
+    want_result:
+      set!: []

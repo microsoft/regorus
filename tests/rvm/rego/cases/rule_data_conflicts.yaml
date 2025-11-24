@@ -1,0 +1,145 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Rule-Data Conflict Detection Test Suite
+# Tests that the RVM properly detects conflicts between rule definitions and data documents
+
+cases:
+  - note: no_conflict_different_packages
+    data:
+      users:
+        alice:
+          role: "guest"
+          level: 1
+    modules:
+      - |
+        package test
+        result := data.users.alice.role
+    query: data.test.result
+    want_result: "guest"
+
+  - note: no_conflict_different_paths
+    data:
+      config:
+        database:
+          host: "localhost"
+          port: 5432
+    modules:
+      - |
+        package test
+        users := {
+          "alice": {
+            "role": "admin"
+          }
+        }
+    query: data.test.users
+    want_result: 
+      alice:
+        role: "admin"
+
+  - note: conflict_same_path_rule_vs_data
+    data:
+      test:
+        users:
+          alice:
+            role: "guest"
+    modules:
+      - |
+        package test.users
+        alice := {
+          "role": "admin",
+          "level": 5
+        }
+    query: data.test.users.alice
+    want_error: "Conflict: rule defines path 'test.users.alice' but data also provides this path"
+    # RVM detects this conflict, but interpreter may not - that's acceptable
+    allow_interpreter_success: true
+    
+  - note: conflict_rule_parent_data_child
+    data:
+      test:
+        config:
+          database:
+            host: "localhost"
+            port: 5432
+    modules:
+      - |
+        package test
+        config := {
+          "app_name": "myapp",
+          "version": "1.0"
+        }
+    query: data.test.config
+    want_error: "Conflict: rule defines path 'test.config' but data also provides this path"
+    # RVM detects this conflict, but interpreter may not - that's acceptable
+    allow_interpreter_success: true
+
+  - note: conflict_data_parent_rule_child
+    data:
+      test:
+        users: "not an object"
+    modules:
+      - |
+        package test.users
+        alice := {"role": "admin"}
+    query: data.test.users.alice
+    want_error: "Conflict: rule defines subpaths under 'test.users' but data provides a non-object value at this path"
+    # RVM detects this conflict, but interpreter may not - that's acceptable
+    allow_interpreter_success: true
+
+  - note: no_conflict_nested_coexistence
+    data:
+      static_config:
+        database:
+          host: "localhost"
+          port: 5432
+      user_data:
+        preferences:
+          theme: "dark"
+    modules:
+      - |
+        package dynamic
+        users := {
+          "alice": {
+            "role": "admin"
+          }
+        }
+        computed_stats := {
+          "total_users": 42
+        }
+    query: data.dynamic.users
+    want_result: 
+      alice:
+        role: "admin"
+
+  - note: no_conflict_multiple_rule_levels
+    data:
+      test:
+        api:
+          v1:
+            endpoints: ["users", "posts"]
+    modules:
+      - |
+        package test.api.v1
+        auth := {
+          "required": true,
+          "methods": ["jwt", "oauth"]
+        }
+    query: data.test.api.v1.auth
+    want_result: 
+      required: true
+      methods: ["jwt", "oauth"]
+
+  - note: no_conflict_rule_extends_data_object
+    data:
+      test:
+        config:
+          database:
+            host: "localhost"
+    modules:
+      - |
+        package test.config
+        app_name := "myapp"
+        version := "1.0"
+    query: data.test.config.app_name
+    want_result: "myapp"

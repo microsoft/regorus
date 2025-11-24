@@ -1,0 +1,232 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Default Rules Test Suite
+# Tests default rule evaluation when complete rules have no successful definitions
+
+cases:
+  - note: default_rule_basic
+    data: {}
+    modules:
+      - |
+        package test
+        default allow := false
+        allow := true if {
+          false  # This will always fail
+        }
+    query: data.test.allow
+    want_result: false
+
+  - note: default_rule_with_multiple_definitions_all_fail
+    data: {}
+    modules:
+      - |
+        package test
+        default result := "default_value"
+        result := "success1" if {
+          false  # This will fail
+        }
+        result := "success2" if {
+          input.nonexistent == "value"  # This will fail
+        }
+        result := "success3" if {
+          1 == 2  # This will fail
+        }
+    query: data.test.result
+    want_result: "default_value"
+
+  - note: default_rule_not_used_when_definition_succeeds
+    data: {}
+    modules:
+      - |
+        package test
+        default allow := false
+        allow := true if {
+          1 == 1  # This will succeed
+        }
+    query: data.test.allow
+    want_result: true
+
+  - note: default_rule_with_object_key
+    skip: true  # TODO: Fix rule type classification for config["timeout"] - should be Complete, not PartialObject
+    data: {}
+    modules:
+      - |
+        package test
+        default config["timeout"] := 30
+        config["timeout"] := 60 if {
+          false  # This will fail
+        }
+    query: data.test.config.timeout
+    want_result: 30
+
+  - note: default_rule_complex_value
+    data: {}
+    modules:
+      - |
+        package test
+        default settings := {
+          "enabled": false,
+          "retries": 3,
+          "timeout": 30
+        }
+        settings := {
+          "enabled": true,
+          "retries": 5,
+          "timeout": 60
+        } if {
+          false  # This will fail
+        }
+    query: data.test.settings
+    want_result: 
+      enabled: false
+      retries: 3
+      timeout: 30
+
+  - note: default_rule_with_array
+    data: {}
+    modules:
+      - |
+        package test
+        default items := ["default1", "default2"]
+        items := ["actual1", "actual2"] if {
+          false  # This will fail
+        }
+    query: data.test.items
+    want_result: ["default1", "default2"]
+
+  - note: default_rule_with_input_dependency
+    data: {}
+    modules:
+      - |
+        package test
+        default result := "no_user"
+        result := "admin" if {
+          input.user.role == "admin"
+        }
+        result := "user" if {
+          input.user.role == "user"
+        }
+    query: data.test.result
+    want_result: "no_user"
+
+  - note: default_rule_with_input_dependency_success
+    data: {}
+    input:
+      user:
+        role: "admin"
+    modules:
+      - |
+        package test
+        default result := "no_user"
+        result := "admin" if {
+          input.user.role == "admin"
+        }
+        result := "user" if {
+          input.user.role == "user"
+        }
+    query: data.test.result
+    want_result: "admin"
+
+  - note: default_rule_with_data_dependency
+    data:
+      config:
+        mode: "production"
+    modules:
+      - |
+        package test
+        default debug_mode := false
+        debug_mode := true if {
+          data.config.mode == "development"
+        }
+    query: data.test.debug_mode
+    want_result: false
+
+  - note: default_rule_nested_package
+    data: {}
+    modules:
+      - |
+        package test.auth
+        default allow := false
+        allow := true if {
+          false  # This will fail
+        }
+    query: data.test.auth.allow
+    want_result: false
+
+  - note: multiple_default_rules_different_names
+    skip: true
+    data: {}
+    modules:
+      - |
+        package test
+        default allow := false
+        default deny := true
+        allow := true if {
+          false  # This will fail
+        }
+        deny := false if {
+          false  # This will fail
+        }
+    query: data.test
+    want_result:
+      allow: false
+      deny: true
+
+  - note: default_rule_with_computed_value
+    skip: true
+    data: {}
+    modules:
+      - |
+        package test
+        base_timeout := 10
+        default timeout := base_timeout * 3
+        timeout := base_timeout * 6 if {
+          false  # This will fail
+        }
+    query: data.test.timeout
+    want_result: 30
+
+  - note: default_rule_undefined_vs_default
+    skip: true
+    data: {}
+    modules:
+      - |
+        package test
+        default has_default := "default"
+        # no_default rule has no default and no successful definitions
+        no_default := "success" if {
+          false  # This will fail
+        }
+    query: data.test
+    want_result:
+      has_default: "default"
+
+  - note: default_rule_with_function_call
+    skip: true
+    data: {}
+    modules:
+      - |
+        package test
+        helper_func := "helper_result"
+        default result := helper_func
+        result := "success" if {
+          false  # This will fail
+        }
+    query: data.test.result
+    want_result: "helper_result"
+
+  - note: default_rule_consistency_check
+    data: {}
+    modules:
+      - |
+        package test
+        default value := 42
+        value := 42 if {
+          true  # This succeeds with same value as default
+        }
+        value := 99 if {
+          false  # This fails
+        }
+    query: data.test.value
+    want_result: 42

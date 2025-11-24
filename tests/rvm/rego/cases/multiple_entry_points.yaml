@@ -1,0 +1,78 @@
+cases:
+  - note: "multiple entry points - basic allow and deny rules"
+    modules:
+      - |
+        package example
+        
+        default allow := false
+        
+        allow if {
+            input.method == "GET"
+        }
+        
+        allow if {
+            input.user == "admin"
+        }
+        
+        default deny := true
+        
+        deny if {
+            input.method == "DELETE"
+        }
+    query: "data.example.allow"
+    entry_points: 
+      - "data.example.allow"
+      - "data.example.deny"
+    input: {"method": "GET", "user": "guest"}
+    want_result: true
+
+  - note: "multiple entry points - computed rules with want_results"
+    modules:
+      - |
+        package math
+        
+        result := 42
+        
+        doubled := 84
+        
+        status := "computed"
+    query: "data.math.result"
+    entry_points:
+      - "data.math.result"
+      - "data.math.doubled"
+      - "data.math.status"
+    want_results:
+      - 42
+      - 84
+      - "computed"
+
+  - note: "multiple entry points - different packages with want_results"
+    modules:
+      - |
+        package auth
+        
+        default authenticated := false
+        
+        authenticated if {
+            input.token == "valid"
+        }
+      - |
+        package authz
+        
+        default authorized := false
+        
+        authorized if {
+            input.user == "admin"
+        }
+        
+        authorized if {
+            input.role == "manager"
+        }
+    query: "data.auth.authenticated"
+    entry_points:
+      - "data.auth.authenticated"
+      - "data.authz.authorized"
+    input: {"token": "valid", "user": "guest"}
+    want_results:
+      - true
+      - false

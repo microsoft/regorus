@@ -1,0 +1,322 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Non-Data Prefix Chained Access Test Suite
+# Tests chained reference expressions without data prefix (local rules and variables)
+
+cases:
+  - note: direct_rule_field_access
+    data: {}
+    modules:
+      - |
+        package test
+        user_config = {"name": "Alice", "role": "admin", "active": true}
+        main := result if {
+          result := user_config.name
+        }
+    query: data.test.main
+    want_result: "Alice"
+
+  - note: chained_rule_field_access
+    data: {}
+    modules:
+      - |
+        package test
+        settings = {
+          "database": {"host": "localhost", "port": 5432},
+          "cache": {"enabled": true, "ttl": 300}
+        }
+        main := result if {
+          result := settings.database.host
+        }
+    query: data.test.main
+    want_result: "localhost"
+
+  - note: local_variable_with_fields
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          config := {"server": {"name": "web1", "port": 8080}}
+          result := config.server.name
+        }
+    query: data.test.main
+    want_result: "web1"
+
+  - note: rule_access_with_dynamic_index
+    data: {}
+    modules:
+      - |
+        package test
+        servers = {
+          "web": {"status": "running", "cpu": 45},
+          "db": {"status": "stopped", "cpu": 0}
+        }
+        main := result if {
+          server_type := "web"
+          result := servers[server_type].status
+        }
+    query: data.test.main
+    want_result: "running"
+
+  - note: mixed_static_dynamic_local_access
+    data: {}
+    modules:
+      - |
+        package test
+        metrics = {
+          "hourly": [
+            {"timestamp": "2023-01-01T10:00:00Z", "value": 100},
+            {"timestamp": "2023-01-01T11:00:00Z", "value": 150}
+          ]
+        }
+        main := result if {
+          period := "hourly"
+          index := 1
+          result := metrics[period][index].value
+        }
+    query: data.test.main
+    want_result: 150
+
+  - note: nested_rule_calls_without_data_prefix
+    data: {}
+    modules:
+      - |
+        package test
+        base_config = {"timeout": 30, "retries": 3}
+        extended_config = {"base": base_config, "debug": true}
+        main := result if {
+          result := extended_config.base.timeout
+        }
+    query: data.test.main
+    want_result: 30
+
+  - note: local_var_precedence_over_same_package_rule
+    data: {}
+    modules:
+      - |
+        package test
+        config = {"source": "rule"}
+        main := result if {
+          config := {"source": "local"}
+          result := config.source
+        }
+    query: data.test.main
+    want_result: "local"
+
+  - note: array_access_without_data_prefix
+    data: {}
+    modules:
+      - |
+        package test
+        items = [
+          {"id": 1, "name": "first"},
+          {"id": 2, "name": "second"},
+          {"id": 3, "name": "third"}
+        ]
+        main := result if {
+          idx := 2
+          result := items[idx].name
+        }
+    query: data.test.main
+    want_result: "third"
+
+  - note: string_literal_bracket_local_access
+    data: {}
+    modules:
+      - |
+        package test
+        status_codes = {
+          "200": "OK",
+          "404": "Not Found",
+          "500": "Internal Server Error"
+        }
+        main := result if {
+          result := status_codes["404"]
+        }
+    query: data.test.main
+    want_result: "Not Found"
+
+  - note: complex_local_chaining
+    data: {}
+    modules:
+      - |
+        package test
+        app_config = {
+          "environments": {
+            "dev": {
+              "database": {"url": "dev.db.com", "pool_size": 5},
+              "logging": {"level": "debug"}
+            },
+            "prod": {
+              "database": {"url": "prod.db.com", "pool_size": 20},
+              "logging": {"level": "error"}
+            }
+          }
+        }
+        main := result if {
+          env := "prod"
+          result := app_config.environments[env].database.url
+        }
+    query: data.test.main
+    want_result: "prod.db.com"
+
+  - note: rule_with_computed_field_access
+    data: {}
+    modules:
+      - |
+        package test
+        api_versions = {
+          "v1": {"path": "/api/v1", "deprecated": true},
+          "v2": {"path": "/api/v2", "deprecated": false}
+        }
+        main := result if {
+          version := "v2"
+          field := "deprecated"
+          result := api_versions[version][field]
+        }
+    query: data.test.main
+    want_result: false
+
+  - note: nested_local_variables_with_chaining
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          user := {"profile": {"settings": {"theme": "dark", "notifications": true}}}
+          theme_setting := user.profile.settings.theme
+          result := theme_setting
+        }
+    query: data.test.main
+    want_result: "dark"
+
+  - note: rule_reference_with_multiple_field_access
+    data: {}
+    modules:
+      - |
+        package test
+        network_config = {
+          "interfaces": {
+            "eth0": {"ip": "192.168.1.10", "mask": "255.255.255.0"},
+            "eth1": {"ip": "10.0.0.5", "mask": "255.255.0.0"}
+          }
+        }
+        main := result if {
+          interface := "eth0"
+          result := {
+            "ip": network_config.interfaces[interface].ip,
+            "mask": network_config.interfaces[interface].mask
+          }
+        }
+    query: data.test.main
+    want_result: {"ip": "192.168.1.10", "mask": "255.255.255.0"}
+
+  - note: undefined_rule_field_access
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          result := nonexistent_rule.field
+        }
+    query: data.test.main
+    want_error: "undefined variable"
+
+  - note: undefined_field_on_existing_rule
+    data: {}
+    modules:
+      - |
+        package test
+        my_rule = {"existing": "value"}
+        main := result if {
+          result := my_rule.nonexistent_field
+        }
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: variable_assignment_with_chained_access
+    data: {}
+    modules:
+      - |
+        package test
+        source_data = {
+          "users": {
+            "alice": {"email": "alice@example.com", "active": true},
+            "bob": {"email": "bob@example.com", "active": false}
+          }
+        }
+        main := result if {
+          user_id := "alice"
+          user_email := source_data.users[user_id].email
+          result := user_email
+        }
+    query: data.test.main
+    want_result: "alice@example.com"
+
+  - note: rule_call_in_middle_of_chain
+    data: {}
+    modules:
+      - |
+        package test
+        get_user_data = {"profile": {"name": "Alice", "age": 30}}
+        main := result if {
+          result := get_user_data.profile.name
+        }
+    query: data.test.main
+    want_result: "Alice"
+
+  - note: local_var_shadowing_with_different_structure
+    data: {}
+    modules:
+      - |
+        package test
+        config = {"type": "global", "value": 100}
+        main := result if {
+          config := [{"type": "local", "value": 200}]
+          result := config[0].type
+        }
+    query: data.test.main
+    want_result: "local"
+
+  - note: deep_nested_field_access
+    data: {}
+    modules:
+      - |
+        package test
+        deep_structure = {
+          "level1": {
+            "level2": {
+              "level3": {
+                "level4": {
+                  "level5": {"final_value": "found it!"}
+                }
+              }
+            }
+          }
+        }
+        main := result if {
+          result := deep_structure.level1.level2.level3.level4.level5.final_value
+        }
+    query: data.test.main
+    want_result: "found it!"
+
+  - note: bracket_access_with_computed_key
+    data: {}
+    modules:
+      - |
+        package test
+        lookup_table = {
+          "key_1": "value_1",
+          "key_2": "value_2", 
+          "key_3": "value_3"
+        }
+        main := result if {
+          prefix := "key"
+          suffix := 2
+          key := sprintf("%s_%d", [prefix, suffix])
+          result := lookup_table[key]
+        }
+    query: data.test.main
+    want_result: "value_2"

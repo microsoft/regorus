@@ -1,0 +1,89 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Loops and Quantifiers Test Suite
+# Tests basic loop constructs, quantifiers (some/every), and comprehensions
+
+cases:
+  - note: basic_variable_test
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          x := 5
+          result := x > 2
+        }
+    query: data.test.main
+    want_result: true
+
+  - note: basic_some_test
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          some x in [1, 2, 3]
+          x > 2
+          result := x
+        }
+    query: data.test.main
+    want_result: 3
+
+  - note: basic_every_test
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          every x in [1, 2, 3] {
+            x > 0
+          }
+          result := true
+        }
+    query: data.test.main
+    want_result: true
+
+  - note: simple_loop_test
+    data: {}
+    modules:
+      - |
+        package test
+        main := result if {
+          x := 1
+          y := 2
+          result := x * y
+        }
+    query: data.test.main
+    want_result: 2
+
+  - note: loop_array_comprehension
+    data: {}
+    modules:
+      - |
+        package test
+        main := [(x * 2) | x := [1, 2, 3][_]]
+    query: data.test.main
+    want_result: [2, 4, 6]
+
+  - note: loop_set_comprehension
+    data: {}
+    modules:
+      - |
+        package test
+        main := {(x * 2) | x := [1, 2, 3][_]}
+    query: data.test.main
+    want_result:
+      set!: [2, 4, 6]
+
+  - note: loop_object_comprehension
+    data: {}
+    modules:
+      - |
+        package test
+        main := {k: (v * 2) | v := {"a": 1, "b": 2, "c": 3}[k]}
+    query: data.test.main
+    want_result:
+      a: 2
+      b: 4
+      c: 6

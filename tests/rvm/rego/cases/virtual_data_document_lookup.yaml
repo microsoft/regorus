@@ -1,0 +1,396 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# VirtualDataDocumentLookup Test Suite
+# Tests the four cases of virtual data document lookup:
+# 1. All components consumed and rule index found -> evaluate rule
+# 2. Rule index found with remaining components -> evaluate rule then index result
+# 3. All components consumed but undefined -> apply components to data directly  
+# 4. Subobject found -> panic (not yet implemented)
+
+cases:
+  # Case 1: All components consumed and rule index found
+  - note: rule_index_all_components_consumed
+    data:
+      users:
+        alice: {"name": "Alice", "age": 30}
+    input:
+      rule_name: "alice_profile"
+    modules:
+      - |
+        package test.users
+        alice_profile := data.users.alice
+      - |
+        package test
+        main := result if {
+          result := data.test.users[input.rule_name]
+        }
+    query: data.test.main
+    want_result: {"name": "Alice", "age": 30}
+    allow_interpreter_incorrect_behavior: true
+
+  # Case 2: Rule index found with remaining components  
+  - note: rule_index_with_remaining_components
+    data:
+      users:
+        alice: {"name": "Alice", "age": 30, "profile": {"bio": "Software Engineer"}}
+    input:
+      rule_name: "alice_data"
+      field1: "profile"
+      field2: "bio"
+    modules:
+      - |
+        package test.users
+        alice_data := data.users.alice
+      - |
+        package test
+        main := result if {
+          result := data.test.users[input.rule_name][input.field1][input.field2]
+        }
+    query: data.test.main
+    want_result: "Software Engineer"
+    allow_interpreter_incorrect_behavior: true
+
+  # Case 2b: Rule index with multiple remaining components
+  - note: rule_index_multiple_remaining_components
+    data:
+      config:
+        app:
+          settings: {"theme": "dark", "lang": "en"}
+    input:
+      rule: "app_config"
+      path1: "settings"
+      path2: "theme"
+    modules:
+      - |
+        package test.config
+        app_config := data.config.app
+      - |
+        package test
+        main := result if {
+          result := data.test.config[input.rule][input.path1][input.path2]
+        }
+    query: data.test.main
+    want_result: "dark"
+    allow_interpreter_incorrect_behavior: true
+
+  # Case 3: All components consumed but no rule exists (direct data access)
+  - note: direct_data_access_no_rules
+    data:
+      users:
+        bob: {"name": "Bob", "age": 25}
+    input:
+      person: "bob"
+      attribute: "name"
+    modules:
+      - |
+        package test
+        main := result if {
+          # No rule defined for data.users.bob, should access data directly
+          result := data.users[input.person][input.attribute]
+        }
+    query: data.test.main
+    want_result: "Bob"
+
+  # Case 3b: Direct nested data access (no rules)
+  - note: direct_nested_data_access
+    data:
+      system:
+        metrics:
+          cpu: 85
+          memory: 70
+    input:
+      metric: "cpu"
+    modules:
+      - |
+        package test
+        main := result if {
+          # No rules defined for data.system.metrics, access data directly
+          result := data.system.metrics[input.metric]
+        }
+    query: data.test.main
+    want_result: 85
+
+  # Case 3c: Direct array indexing (no rules)  
+  - note: direct_array_indexing
+    data:
+      inventory:
+        fruits: ["apple", "banana", "cherry"]
+    input:
+      collection: "fruits"
+      index: 1
+    modules:
+      - |
+        package test
+        main := result if {
+          # No rules defined for data.inventory.fruits, access array directly
+          result := data.inventory[input.collection][input.index]
+        }
+    query: data.test.main
+    want_result: "banana"
+
+  # Mixed case: Rule exists at intermediate level, then data access
+  - note: rule_at_intermediate_level
+    data:
+      company:
+        employees: 
+          - {"name": "Alice", "dept": "Engineering"}
+          - {"name": "Bob", "dept": "Marketing"}
+    input:
+      rule_name: "staff"
+      idx: 0
+      field: "name"
+    modules:
+      - |
+        package test.company
+        staff := data.company.employees
+      - |
+        package test  
+        main := result if {
+          # Rule exists at data.test.company.staff, then access array element
+          result := data.test.company[input.rule_name][input.idx][input.field]
+        }
+    query: data.test.main
+    want_result: "Alice"
+    allow_interpreter_incorrect_behavior: true
+
+  # Case with dynamic indexing via register
+  - note: rule_with_dynamic_indexing
+    data:
+      products:
+        electronics: {"laptop": 1200, "phone": 800}
+        clothing: {"shirt": 25, "pants": 50}
+    input:
+      rule: "electronics_catalog"
+      item: "laptop"
+    modules:
+      - |
+        package test.products
+        electronics_catalog := data.products.electronics
+      - |
+        package test
+        main := result if {
+          result := data.test.products[input.rule][input.item]
+        }
+    query: data.test.main
+    want_result: 1200
+    allow_interpreter_incorrect_behavior: true
+
+  # Case 3d: Undefined path access returns undefined
+  - note: undefined_path_access
+    data: {}
+    input:
+      path2: "path"
+      path3: "value"
+    modules:
+      - |
+        package test
+        main := result if {
+          # This should access undefined data, returning undefined
+          result := data.nonexistent[input.path2][input.path3]
+        }
+    query: data.test.main
+    want_result: "#undefined"
+
+  # Case that actually triggers VirtualDataDocumentLookup:
+  # Path is a prefix of multiple rules
+  - note: virtual_lookup_with_rule_prefix
+    data:
+      config:
+        app: {"name": "MyApp", "version": "1.0"}
+    input:
+      submodule: "app"
+      field: "name"
+    modules:
+      - |
+        package test.config.app
+        name := data.config.app.name
+        version := data.config.app.version
+        full_info := {"name": data.config.app.name, "version": data.config.app.version}
+      - |
+        package test
+        main := result if {
+          # This should trigger VirtualDataDocumentLookup since data.test.config.app
+          # is a prefix of multiple rules: data.test.config.app.name, data.test.config.app.version, etc.
+          result := data.test.config[input.submodule][input.field]
+        }
+    query: data.test.main
+    want_result: "MyApp"
+
+  # Case 4: Subobject case - evaluate all rules in a subobject and merge with data
+  - note: subobject_case_multiple_rules
+    data:
+      users:
+        alice: {"name": "Alice", "age": 30}
+        bob: {"name": "Bob", "age": 25} 
+      permissions:
+        alice: {"admin": true}
+        bob: {"admin": false}
+    modules:
+      - |
+        package test.users.alice
+        profile := {"name": data.users.alice.name, "age": data.users.alice.age}
+        is_admin := data.permissions.alice.admin
+      - |
+        package test.users.bob  
+        profile := {"name": data.users.bob.name, "age": data.users.bob.age}
+        is_admin := data.permissions.bob.admin
+      - |
+        package test
+        main := result if {
+          # This should trigger Case 4: all components consumed and we have a subobject
+          # data.test.users should contain the evaluated rules from both alice and bob packages
+          result := data.test.users
+        }
+    query: data.test.main
+    want_result:
+      alice:
+        profile: {"name": "Alice", "age": 30}
+        is_admin: true
+      bob:
+        profile: {"name": "Bob", "age": 25}
+        is_admin: false
+
+  # Case 4b: Nested subobject evaluation with cache hits
+  - note: nested_subobject_with_cache_hits
+    data:
+      company:
+        departments:
+          engineering: {"budget": 1000000}
+          marketing: {"budget": 500000}
+        employees:
+          alice: {"dept": "engineering", "salary": 100000}
+          bob: {"dept": "marketing", "salary": 70000}
+          charlie: {"dept": "engineering", "salary": 90000}
+    modules:
+      - |
+        package test.company.departments.engineering
+        total_budget := data.company.departments.engineering.budget
+        employee_count := count([e | e := data.company.employees[_]; e.dept == "engineering"])
+        avg_budget_per_employee := total_budget / employee_count
+      - |
+        package test.company.departments.marketing  
+        total_budget := data.company.departments.marketing.budget
+        employee_count := count([e | e := data.company.employees[_]; e.dept == "marketing"])
+        avg_budget_per_employee := total_budget / employee_count
+      - |
+        package test.company.employees.alice
+        profile := data.company.employees.alice
+        department_info := data.test.company.departments[profile.dept]  # Should hit cache
+      - |
+        package test.company.employees.bob
+        profile := data.company.employees.bob  
+        department_info := data.test.company.departments[profile.dept]  # Should hit cache
+      - |
+        package test.company.employees.charlie
+        profile := data.company.employees.charlie
+        department_info := data.test.company.departments[profile.dept]  # Should hit cache again
+      - |
+        package test
+        main := result if {
+          # This creates nested subobject evaluations:
+          # 1. data.test.company (subobject with departments and employees)
+          # 2. data.test.company.departments (subobject with engineering and marketing)  
+          # 3. data.test.company.employees (subobject with alice, bob, charlie)
+          # The departments should be cached and reused multiple times
+          result := {
+            "company_overview": data.test.company,
+            "departments_only": data.test.company.departments,  # Cache hit for departments
+            "employees_only": data.test.company.employees,      # Cache hit for employees  
+            "engineering_dept": data.test.company.departments.engineering  # Cache hit for specific dept
+          }
+        }
+    query: data.test.main
+    want_result:
+      company_overview:
+        departments:
+          engineering:
+            total_budget: 1000000
+            employee_count: 2
+            avg_budget_per_employee: 500000
+          marketing:
+            total_budget: 500000  
+            employee_count: 1
+            avg_budget_per_employee: 500000
+        employees:
+          alice:
+            profile: {"dept": "engineering", "salary": 100000}
+            department_info:
+              total_budget: 1000000
+              employee_count: 2
+              avg_budget_per_employee: 500000
+          bob:
+            profile: {"dept": "marketing", "salary": 70000}
+            department_info:
+              total_budget: 500000
+              employee_count: 1
+              avg_budget_per_employee: 500000
+          charlie:
+            profile: {"dept": "engineering", "salary": 90000}  
+            department_info:
+              total_budget: 1000000
+              employee_count: 2
+              avg_budget_per_employee: 500000
+      departments_only:
+        engineering:
+          total_budget: 1000000
+          employee_count: 2
+          avg_budget_per_employee: 500000
+        marketing:
+          total_budget: 500000
+          employee_count: 1
+          avg_budget_per_employee: 500000
+      employees_only:
+        alice:
+          profile: {"dept": "engineering", "salary": 100000}
+          department_info:
+            total_budget: 1000000
+            employee_count: 2
+            avg_budget_per_employee: 500000
+        bob:
+          profile: {"dept": "marketing", "salary": 70000}
+          department_info:
+            total_budget: 500000
+            employee_count: 1
+            avg_budget_per_employee: 500000
+        charlie:
+          profile: {"dept": "engineering", "salary": 90000}
+          department_info:
+            total_budget: 1000000
+            employee_count: 2
+            avg_budget_per_employee: 500000
+      engineering_dept:
+        total_budget: 1000000
+        employee_count: 2
+        avg_budget_per_employee: 500000
+
+  # Test that function rules are excluded from virtual data document lookup
+  - note: function_rules_excluded_from_virtual_lookup
+    data:
+      config:
+        app_name: "TestApp"
+        version: "1.0.0"
+    modules:
+      - |
+        package test.config
+        # Regular rule - should be accessible via virtual lookup
+        application_info := {"name": data.config.app_name, "version": data.config.version}
+        
+        # Function rule - should NOT be accessible via virtual lookup
+        format_version(major, minor) := sprintf("%d.%d", [major, minor])
+        
+        # Another regular rule - should be accessible
+        app_status := "running"
+      - |
+        package test
+        main := result if {
+          # This should only include regular rules, not function rules
+          # data.test.config should contain: application_info, app_status
+          # but NOT: format_version (because it's a function rule)
+          result := data.test.config
+        }
+    query: data.test.main
+    want_result:
+      application_info: {"name": "TestApp", "version": "1.0.0"}
+      app_status: "running"
+      # Note: format_version should NOT appear here since it's a function rule
