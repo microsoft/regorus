@@ -6,6 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/anakrish/regorus/compare/regorus-v0.5.0...regorus-v0.6.0) - 2025-11-17
+
+### Added
+
+- Detect incorrect multi-threaded use from c based ffi ([#499](https://github.com/anakrish/regorus/pull/499))
+- Add Azure RBAC condition parser ([#496](https://github.com/anakrish/regorus/pull/496))
+- [**breaking**] add Rego Virtual Machine (RVM) implementation ([#495](https://github.com/anakrish/regorus/pull/495))
+- Optimize C# binding interop ([#488](https://github.com/anakrish/regorus/pull/488))
+- [**breaking**] Introduce structured destructuring plans for bindings ([#485](https://github.com/anakrish/regorus/pull/485))
+- *(hoist)* pre-compute loop hoisting metadata at compilation time ([#483](https://github.com/anakrish/regorus/pull/483))
+- Implement `net.cidr_contains` builtin ([#471](https://github.com/anakrish/regorus/pull/471))
+- Implement efficient node lookup table using node indices ([#463](https://github.com/anakrish/regorus/pull/463))
+- modernize GitHub Actions with security hardening and centralized Rust toolchain ([#470](https://github.com/anakrish/regorus/pull/470))
+- feat! Mimalloc as the default allocator ([#434](https://github.com/anakrish/regorus/pull/434))
+
+### Fixed
+
+- CodeQL reported printf format specifier issues ([#480](https://github.com/anakrish/regorus/pull/480))
+
+### Other
+
+- Add xtask automation for binding version management ([#491](https://github.com/anakrish/regorus/pull/491))
+- *(deps)* bump clap from 4.5.45 to 4.5.49 ([#487](https://github.com/anakrish/regorus/pull/487))
+- Bump the version of the C# bindings ([#482](https://github.com/anakrish/regorus/pull/482))
+- Add CodeQl workflow ([#478](https://github.com/anakrish/regorus/pull/478))
+- Set input in with_document too when reuse engine ([#474](https://github.com/anakrish/regorus/pull/474))
+
 ## [0.5.0](https://github.com/microsoft/regorus/compare/regorus-v0.4.0...regorus-v0.5.0) - 2025-07-08
 
 ### Added
