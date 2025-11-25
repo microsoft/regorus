@@ -152,7 +152,7 @@ cases:
       - "Load { dest: 1, literal_idx: 1 }"
       - "Add { dest: 2, left: 0, right: 1 }"
       - "Return { value: 2 }"
-    want_result: 0.3
+    want_result: 0.30000000000000004
 
   - note: arithmetic_large_numbers
     description: Test arithmetic with large numbers

@@ -25,7 +25,7 @@ cases:
         }
     query: data.test
     want_result:
-      d: 5.1
+      d: 5.1000000000000005 # 15.3/3 in IEEE‑754 rounds slightly above 5.1; keep the literal parsed value for parity with runtime results.
       e: 3.25
 
   - note: non-numeric

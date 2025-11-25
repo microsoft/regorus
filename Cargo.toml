@@ -22,7 +22,7 @@ doctest = false
 [features]
 default = ["full-opa", "arc", "rvm"]
 
-arc = ["scientific/arc"]
+arc = []
 ast = []
 azure_policy = ["dep:jsonschema", "arc", "dashmap"]
 azure-rbac = []
@@ -101,7 +101,8 @@ lazy_static =  { version = "1.4.0", default-features = false }
 thiserror = { version = "2.0", default-features = false }
 
 data-encoding = { version = "2.8.0", optional = true, default-features=false, features = ["alloc"] }
-scientific = { version = "0.5.3", default-features = false }
+num-bigint = { version = "0.4", default-features = false }
+num-traits = { version = "0.2", default-features = false }
 
 globset = { version = "0.4.16", features = ["simd-accel"], default-features = false, optional = true }
 regex = {version = "1.11.1", optional = true, default-features = false }
