@@ -24,7 +24,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 18
+          node-version: 22
 
       - name: Install wasmlpack
         run: cargo install wasm-pack
@@ -35,7 +35,5 @@ jobs:
           cargo fetch
           cargo clippy --all-targets --no-deps -- -Dwarnings
           wasm-pack build --target nodejs --release
-          # Enable when upstream issue is fixed.
-          # https://github.com/microsoft/regorus/issues/371
-          # wasm-pack test --release --node
+          wasm-pack test --release --node
           node test.js
