@@ -299,7 +299,10 @@ impl RegoVM {
                 let operand_value = &self.registers[operand as usize];
 
                 if operand_value == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    // In Rego, `not expr` succeeds when `expr` has no results.
+                    // When the operand evaluates to undefined we should treat it as
+                    // a successful negation instead of propagating undefined.
+                    self.registers[dest as usize] = Value::Bool(true);
                     return Ok(InstructionOutcome::Continue);
                 }
 

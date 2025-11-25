@@ -11,7 +11,7 @@ cases:
     target: /run/layers/p0-layer0
   data:
     metadata: {}
-  query: data.policy.mount_device=x
+  query: data.policy.mount_device
   want_result: 
   - x:
       allowed: true
@@ -44,7 +44,7 @@ cases:
         "/run/layers/p0-layer3": 41d64cdeb347bf236b4c13b7403b633ff11f1cf94dbc7cf881a44d6da88c5156
         "/run/layers/p0-layer4": 4dedae42847c704da891a28c25d32201a1ae440bce2aecccfa8e6f03b97a6a6c
         "/run/layers/p0-layer5": fe84c9d5bfddd07a2624d00333cf13c1a9c941f3a261f13ead44fc6a93bc0e7a
-  query: data.policy.mount_overlay=x
+  query: data.policy.mount_overlay
   want_result:
   - x:
       allowed: true
@@ -68,7 +68,7 @@ cases:
     target: /mnt/layer6
   data:
     metadata: {}
-  query: data.policy.scratch_mount=x
+  query: data.policy.scratch_mount
   want_result:
   - x:
       allowed: true
@@ -201,7 +201,7 @@ cases:
       scratch_mounts:
         "/mnt/layer6":
           encrypted: true
-  query: data.policy.create_container=x
+  query: data.policy.create_container
   want_result:
   - x:
       allow_stdio_access: false
@@ -257,7 +257,7 @@ cases:
       started:
         container0:
         - {"privileged": false}
-  query: data.policy.shutdown_container=x
+  query: data.policy.shutdown_container
   want_result:
   - x:
       allowed: true
@@ -286,7 +286,7 @@ cases:
       scratch_mounts:
         "/mnt/layer6":
           encrypted: true
-  query: data.policy.scratch_unmount=x
+  query: data.policy.scratch_unmount
   want_result:
   - x:
       allowed: true
@@ -313,7 +313,7 @@ cases:
       overlayTargets:
         "/run/gcs/c/container0/rootfs": true
       scratch_mounts: []
-  query: data.policy.unmount_overlay=x
+  query: data.policy.unmount_overlay
   want_result:
   - x:
       allowed: true
@@ -332,7 +332,7 @@ cases:
     metadata:
       devices:
         "/run/layers/p0-layer0": 1b80f120dbd88e4355d6241b519c3e25290215c469516b49dece9cf07175a766
-  query: data.policy.unmount_device=x
+  query: data.policy.unmount_device
   want_result:
   - x:
       allowed: true
@@ -378,7 +378,7 @@ cases:
     namespace: fragment
   data:
     metadata: {}
-  query: data.policy.load_fragment=x
+  query: data.policy.load_fragment
   want_result:
   - x: 
       add_module: false
