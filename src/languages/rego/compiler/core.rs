@@ -140,6 +140,14 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Returns true when a variable is already bound in the innermost scope
+    pub fn is_var_bound_in_current_scope(&self, var_name: &str) -> bool {
+        self.scopes
+            .last()
+            .map(|scope| scope.bound_vars.contains_key(var_name))
+            .unwrap_or(false)
+    }
+
     /// Look up a variable in all scopes starting from innermost (like interpreter's lookup_local_var)
     pub fn lookup_local_var(&self, var_name: &str) -> Option<Register> {
         self.scopes

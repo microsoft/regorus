@@ -289,7 +289,7 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
 
-        if self.lookup_local_var(var_name).is_some() {
+        if self.is_var_bound_in_current_scope(var_name) {
             bail!("Variable '{var_name}' already defined in current scope");
         }
 
