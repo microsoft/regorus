@@ -1,7 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+use regorus::languages::rego::compiler::Compiler;
+use regorus::rvm::tests::test_utils::test_round_trip_serialization;
+use regorus::rvm::vm::RegoVM;
 use regorus::*;
 
+use regorus::Rc;
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::Path;
@@ -14,6 +18,88 @@ use walkdir::WalkDir;
 
 const OPA_REPO: &str = "https://github.com/open-policy-agent/opa";
 const OPA_BRANCH: &str = "v1.2.0";
+
+const OPA_TODO_FOLDERS: &[&str] = &[
+    "arithmetic",
+    "aggregates",
+    "array",
+    "base64builtins",
+    "base64urlbuiltins",
+    "baseandvirtualdocs",
+    "bitsand",
+    "bitsnegate",
+    "bitsor",
+    "bitsshiftleft",
+    "bitsshiftright",
+    "bitsxor",
+    "casts",
+    "comparisonexpr",
+    "comprehensions",
+    "dataderef",
+    "defaultkeyword",
+    "disjunction",
+    "elsekeyword",
+    "eqexpr",
+    "every",
+    "example",
+    "fix1863",
+    "functions",
+    "functionerrors",
+    "globmatch",
+    "globquotemeta",
+    "hexbuiltins",
+    "indirectreferences",
+    "intersection",
+    "jsonbuiltins",
+    "jsonfilter",
+    "jsonfilteridempotent",
+    "jsonremove",
+    "jsonremoveidempotent",
+    "jsonschema",
+    "netcidrcontains",
+    "netcidrisvalid",
+    "numbersrange",
+    "objectfilter",
+    "objectfilteridempotent",
+    "objectfilternonstringkey",
+    "objectget",
+    "objectremove",
+    "objectremoveidempotent",
+    "objectremovenonstringkey",
+    "objectunion",
+    "partialdocconstants",
+    "partialobjectdoc",
+    "planner-ir",
+    "rand",
+    "reachable",
+    "refheads",
+    "regexfind",
+    "regexfindallstringsubmatch",
+    "regexisvalid",
+    "regexmatchtemplate",
+    "regexsplit",
+    "replacen",
+    "semvercompare",
+    "semverisvalid",
+    "sets",
+    "strings",
+    "time",
+    "trim",
+    "trimleft",
+    "trimprefix",
+    "trimright",
+    "trimspace",
+    "trimsuffix",
+    "type",
+    "typebuiltin",
+    "typenamebuiltin",
+    "union",
+    "urlbuiltins",
+    "varreferences",
+    "virtualdocs",
+    "walkbuiltin",
+    "withkeyword",
+];
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
@@ -51,7 +137,34 @@ struct YamlTest {
     cases: Vec<TestCase>,
 }
 
-fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Value> {
+struct EngineSetup {
+    engine: Engine,
+    resolved_input: Value,
+}
+
+fn folder_name_from_path(path: &Path) -> Option<String> {
+    let mut components = path.components();
+    components.next()?; // Skip version prefix (e.g., v0 or v1).
+    components
+        .next()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+}
+
+fn log_rvm_skip(case_note: &str, folder_name: Option<&str>) {
+    if let Some(folder) = folder_name {
+        println!(
+            "    skipping RVM check for '{}' (folder '{}' tracked in OPA_TODO_FOLDERS)",
+            case_note, folder
+        );
+    } else {
+        println!(
+            "    skipping RVM check for '{}' (tracked in OPA_TODO_FOLDERS)",
+            case_note
+        );
+    }
+}
+
+fn setup_engine_for_case(case: &TestCase, is_rego_v0_test: bool) -> Result<EngineSetup> {
     let mut engine = Engine::new();
 
     #[cfg(feature = "coverage")]
@@ -62,9 +175,8 @@ fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Value> {
     if let Some(data) = &case.data {
         engine.add_data(data.clone())?;
     }
-    if let Some(input) = &case.input {
-        engine.set_input(input.clone());
-    }
+    let mut resolved_input = case.input.clone().unwrap_or(Value::Undefined);
+    engine.set_input(resolved_input.clone());
     if let Some(input_term) = &case.input_term {
         let input = match engine.eval_query(input_term.clone(), true)?.result.last() {
             Some(r) if r.expressions.last().is_some() => r
@@ -75,7 +187,8 @@ fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Value> {
                 .clone(),
             _ => bail!("no results in evaluated input term"),
         };
-        engine.set_input(input);
+        engine.set_input(input.clone());
+        resolved_input = input;
     }
     if let Some(modules) = &case.modules {
         for (idx, rego) in modules.iter().enumerate() {
@@ -84,6 +197,15 @@ fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Value> {
     }
 
     engine.set_strict_builtin_errors(case.strict_error.unwrap_or_default());
+
+    Ok(EngineSetup {
+        engine,
+        resolved_input,
+    })
+}
+
+fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Value> {
+    let EngineSetup { mut engine, .. } = setup_engine_for_case(case, is_rego_v0_test)?;
 
     let mut engine_full = engine.clone();
     let mut query_results = engine.eval_query(case.query.clone(), true)?;
@@ -127,6 +249,134 @@ fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Value> {
     Value::from_json_str(&result.to_string())
 }
 
+fn is_simple_identifier(token: &str) -> bool {
+    let mut chars = token.chars();
+    match chars.next() {
+        Some(c) if c == '_' || c.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+fn is_rule_path(expr: &str) -> bool {
+    if !expr.trim_start().starts_with("data.") {
+        return false;
+    }
+    expr.trim()
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_'))
+}
+
+fn parse_assignment_query(query: &str) -> Option<(String, String)> {
+    let mut parts = query.splitn(2, '=');
+    let lhs = parts.next()?.trim();
+    let rhs = parts.next()?.trim();
+    if lhs.is_empty() || rhs.is_empty() {
+        return None;
+    }
+
+    match (
+        is_rule_path(lhs),
+        is_simple_identifier(lhs),
+        is_rule_path(rhs),
+        is_simple_identifier(rhs),
+    ) {
+        (true, _, _, true) => Some((lhs.to_string(), rhs.to_string())),
+        (_, true, true, _) => Some((rhs.to_string(), lhs.to_string())),
+        _ => None,
+    }
+}
+
+fn wrap_binding_result(var_name: &str, value: Value) -> Value {
+    let mut binding = BTreeMap::new();
+    binding.insert(Value::from(var_name.to_string()), value);
+    Value::from(vec![Value::from(binding)])
+}
+
+fn eval_rule_with_rvm(case: &TestCase, is_rego_v0_test: bool, rule_path: &str) -> Result<Value> {
+    let EngineSetup {
+        mut engine,
+        resolved_input,
+    } = setup_engine_for_case(case, is_rego_v0_test)?;
+
+    let rule = Rc::from(rule_path.to_string());
+    let compiled_policy = engine.compile_with_entrypoint(&rule)?;
+    let program = Compiler::compile_from_policy(&compiled_policy, &[rule_path])?;
+    test_round_trip_serialization(program.as_ref()).map_err(|e| {
+        anyhow::anyhow!(
+            "Round-trip serialization test failed for query '{}': {}",
+            rule_path,
+            e
+        )
+    })?;
+
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    let data_value = case.data.clone().unwrap_or_else(Value::new_object);
+    vm.set_data(data_value)?;
+    vm.set_input(resolved_input);
+
+    let result = vm.execute()?;
+    if result == Value::Undefined {
+        Ok(Value::Undefined)
+    } else {
+        Value::from_json_str(&result.to_string())
+    }
+}
+
+fn is_not_valid_rule_path_error(err: &anyhow::Error) -> bool {
+    err.chain()
+        .any(|cause| cause.to_string().contains("not a valid rule path"))
+}
+
+fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value) -> Result<()> {
+    if case.note == "defaultkeyword/function with var arg, ref head query" {
+        println!(
+            "    skipping RVM check for '{}' (function defaults with refs unsupported)",
+            case.note
+        );
+        return Ok(());
+    }
+
+    let (rule_path, binding_var) = match parse_assignment_query(&case.query) {
+        Some(info) => info,
+        None => return Ok(()),
+    };
+
+    let rvm_value = match eval_rule_with_rvm(case, is_rego_v0_test, &rule_path) {
+        Ok(value) => value,
+        Err(err) => {
+            if is_not_valid_rule_path_error(&err) {
+                println!(
+                    "    skipping RVM check for '{}' (rule path not compiled)",
+                    case.note
+                );
+                return Ok(());
+            }
+
+            return Err(err);
+        }
+    };
+    let rvm_binding = if rvm_value == Value::Undefined {
+        Value::new_array()
+    } else {
+        wrap_binding_result(&binding_var, rvm_value)
+    };
+
+    if &rvm_binding != actual {
+        let interpreter_yaml = serde_yaml::to_string(actual)?;
+        let rvm_yaml = serde_yaml::to_string(&rvm_binding)?;
+        bail!(
+            "RVM mismatch for query '{}':\nINTERPRETER:\n{}\nRVM:\n{}",
+            case.query,
+            interpreter_yaml,
+            rvm_yaml
+        );
+    }
+
+    Ok(())
+}
+
 fn json_schema_tests_check(actual: &Value, expected: &Value) -> bool {
     // Fetch `x` binding.
     let actual = &actual[0]["x"];
@@ -161,6 +411,11 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         let path = Path::new(&path_str);
         let path_dir = path.strip_prefix(tests_path)?.parent().unwrap();
         let path_dir_str = path_dir.to_string_lossy().to_string();
+        let folder_name = folder_name_from_path(path_dir);
+        let skip_rvm_for_folder = folder_name
+            .as_deref()
+            .map(|folder| OPA_TODO_FOLDERS.contains(&folder))
+            .unwrap_or(false);
 
         if path.is_dir() {
             n = 0;
@@ -183,6 +438,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         for mut case in test.cases {
             let is_json_schema_test = case.note.starts_with("json_verify_schema")
                 || case.note.starts_with("json_match_schema");
+            let skip_rvm_validation = skip_rvm_for_folder;
 
             if case.note == "reachable_paths/cycle_1022_3" {
                 // The OPA behavior is not well-defined.
@@ -253,10 +509,38 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                 (Ok(actual), Some(expected))
                     if is_json_schema_test && json_schema_tests_check(&actual, &expected) =>
                 {
-                    entry.0 += 1;
+                    if skip_rvm_validation {
+                        log_rvm_skip(&case.note, folder_name.as_deref());
+                        entry.0 += 1;
+                    } else if let Err(rvm_err) =
+                        maybe_verify_rvm_case(&case, is_rego_v0_test, &actual)
+                    {
+                        println!("\n{} failed.", case.note);
+                        println!("{}", serde_yaml::to_string(&case)?);
+                        println!("{rvm_err}");
+                        entry.1 += 1;
+                        n += 1;
+                        continue;
+                    } else {
+                        entry.0 += 1;
+                    }
                 }
                 (Ok(actual), Some(expected)) if &actual == expected => {
-                    entry.0 += 1;
+                    if skip_rvm_validation {
+                        log_rvm_skip(&case.note, folder_name.as_deref());
+                        entry.0 += 1;
+                    } else if let Err(rvm_err) =
+                        maybe_verify_rvm_case(&case, is_rego_v0_test, &actual)
+                    {
+                        println!("\n{} failed.", case.note);
+                        println!("{}", serde_yaml::to_string(&case)?);
+                        println!("{rvm_err}");
+                        entry.1 += 1;
+                        n += 1;
+                        continue;
+                    } else {
+                        entry.0 += 1;
+                    }
                 }
                 (Ok(_), Some(_)) if case.note == "strings/sprintf: float too big" => {
                     // OPA renders large floats in scientific notation while Regorus emits full decimal digits.
