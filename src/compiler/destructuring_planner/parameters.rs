@@ -37,12 +37,13 @@ pub fn create_loop_index_binding_plan<T: VariableBindingContext>(
 pub fn create_parameter_binding_plan<T: VariableBindingContext>(
     param_expr: &ExprRef,
     context: &T,
+    scoping: ScopingMode,
 ) -> Result<BindingPlan> {
     let mut newly_bound = BTreeSet::new();
     let destructuring_plan = create_destructuring_plan_with_tracking(
         param_expr,
         context,
-        ScopingMode::AllowShadowing,
+        scoping,
         &mut newly_bound,
     )
     .ok_or_else(|| BindingPlannerError::FailedToCreateDestructuringPlan {
@@ -50,7 +51,9 @@ pub fn create_parameter_binding_plan<T: VariableBindingContext>(
         span: param_expr.span().clone(),
     })?;
 
-    validate_pattern_bindings(param_expr, &newly_bound, context)?;
+    if scoping == ScopingMode::AllowShadowing {
+        validate_pattern_bindings(param_expr, &newly_bound, context)?;
+    }
 
     Ok(BindingPlan::Parameter {
         param_expr: param_expr.clone(),

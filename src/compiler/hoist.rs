@@ -381,7 +381,9 @@ impl LoopHoister {
                     for param in args {
                         // Create binding plan for function parameter
                         match super::destructuring_planner::create_parameter_binding_plan(
-                            param, &context,
+                            param,
+                            &context,
+                            ScopingMode::AllowShadowing,
                         ) {
                             Ok(binding_plan) => {
                                 let expr_idx = param.as_ref().eidx();
@@ -708,7 +710,9 @@ impl LoopHoister {
                 // If the last parameter expression contains unbound vars, create a binding plan
                 if let Some(last_param) = params.last() {
                     match super::destructuring_planner::create_parameter_binding_plan(
-                        last_param, context,
+                        last_param,
+                        context,
+                        ScopingMode::RespectParent,
                     ) {
                         Ok(binding_plan) => {
                             let expr_idx = last_param.as_ref().eidx();
