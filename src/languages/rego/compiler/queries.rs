@@ -192,7 +192,7 @@ impl<'a> Compiler<'a> {
             }
             Ok(())
         } else {
-            Err(CompilerError::MissingYieldContext)
+            Err(CompilerError::MissingYieldContext.into())
         }
     }
 
@@ -204,7 +204,7 @@ impl<'a> Compiler<'a> {
                     self.compile_rego_expr_with_span(expr, &stmt.span, assert_condition)?;
             }
             ast::Literal::SomeIn { .. } => {
-                return Err(CompilerError::SomeInNotHoisted);
+                return Err(CompilerError::SomeInNotHoisted.at(&stmt.span));
             }
             ast::Literal::Every {
                 key,

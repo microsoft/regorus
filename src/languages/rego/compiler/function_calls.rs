@@ -16,15 +16,15 @@ impl<'a> Compiler<'a> {
         params: &[ExprRef],
         span: Span,
     ) -> Result<Register> {
-        let fcn_path =
-            get_path_string(fcn, None).map_err(|_| CompilerError::InvalidFunctionExpression)?;
+        let fcn_path = get_path_string(fcn, None)
+            .map_err(|_| CompilerError::InvalidFunctionExpression.at(&span))?;
 
         let original_fcn_path = fcn_path.clone();
         let full_fcn_path = if self.policy.inner.rules.contains_key(&fcn_path) {
             fcn_path
         } else {
             get_path_string(fcn, Some(&self.current_package))
-                .map_err(|_| CompilerError::InvalidFunctionExpressionWithPackage)?
+                .map_err(|_| CompilerError::InvalidFunctionExpressionWithPackage.at(&span))?
         };
 
         let mut arg_regs = Vec::new();
@@ -68,7 +68,8 @@ impl<'a> Compiler<'a> {
         } else {
             return Err(CompilerError::UnknownFunction {
                 name: original_fcn_path,
-            });
+            }
+            .at(&span));
         }
 
         Ok(dest)

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use super::{Compiler, Result};
+use super::{Compiler, CompilerError, Result};
 use crate::interpreter::Interpreter;
 use crate::rvm::program::{Program, RuleType, SpanInfo};
 use crate::rvm::Instruction;
@@ -129,7 +129,9 @@ impl<'a> Compiler<'a> {
         self.program.entry_points = self.entry_points;
 
         if !self.program.builtin_info_table.is_empty() {
-            self.program.initialize_resolved_builtins()?;
+            self.program
+                .initialize_resolved_builtins()
+                .map_err(|err| CompilerError::from(err))?;
         }
 
         Ok(self.program)

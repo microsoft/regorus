@@ -28,7 +28,8 @@ impl<'a> Compiler<'a> {
         if !self.is_builtin(builtin_name) {
             return Err(CompilerError::NotBuiltinFunction {
                 name: builtin_name.to_string(),
-            });
+            }
+            .into());
         }
 
         // Check if we already have an index for this builtin
@@ -44,7 +45,8 @@ impl<'a> Compiler<'a> {
         } else {
             return Err(CompilerError::UnknownBuiltinFunction {
                 name: builtin_name.to_string(),
-            });
+            }
+            .into());
         };
 
         // Create builtin info and add it to the program
@@ -199,10 +201,12 @@ impl<'a> Compiler<'a> {
         expr: &ExprRef,
         context: &str,
     ) -> Result<BindingPlan> {
-        self.get_binding_plan_for_expr(expr)
-            .ok_or_else(|| CompilerError::MissingBindingPlan {
+        self.get_binding_plan_for_expr(expr).ok_or_else(|| {
+            CompilerError::MissingBindingPlan {
                 context: context.to_string(),
-            })
+            }
+            .at(expr.span())
+        })
     }
 
     pub(super) fn resolve_variable(&mut self, var_name: &str, span: &Span) -> Result<Register> {

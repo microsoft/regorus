@@ -21,7 +21,8 @@ impl<'a> Compiler<'a> {
         let Some(definitions) = self.policy.inner.rules.get(rule_path) else {
             return Err(CompilerError::General {
                 message: format!("no definitions found for rule path '{}'", rule_path),
-            });
+            }
+            .into());
         };
 
         let rule_types: BTreeSet<RuleType> = definitions
@@ -51,15 +52,16 @@ impl<'a> Compiler<'a> {
                     "internal: rule '{}' has multiple types: {:?}",
                     rule_path, rule_types
                 ),
-            });
+            }
+            .into());
         }
 
-        rule_types
-            .into_iter()
-            .next()
-            .ok_or_else(|| CompilerError::RuleTypeNotFound {
+        rule_types.into_iter().next().ok_or_else(|| {
+            CompilerError::RuleTypeNotFound {
                 rule_path: rule_path.to_string(),
-            })
+            }
+            .into()
+        })
     }
 
     pub(super) fn get_or_assign_rule_index(&mut self, rule_path: &str) -> Result<u16> {
@@ -130,13 +132,19 @@ impl<'a> Compiler<'a> {
                     for policy_rule in &module.policy {
                         let policy_rule_ptr = policy_rule.as_ref() as *const Rule;
                         if policy_rule_ptr == rule_ptr {
-                            let package_path = get_path_string(&module.package.refr, Some("data"))
-                                .map_err(|e| CompilerError::General {
-                                    message: format!(
-                                        "Failed to get package path for module: {}",
-                                        e
-                                    ),
-                                })?;
+                            let package_path =
+                                match get_path_string(&module.package.refr, Some("data")) {
+                                    Ok(path) => path,
+                                    Err(e) => {
+                                        return Err(CompilerError::General {
+                                            message: format!(
+                                                "Failed to get package path for module: {}",
+                                                e
+                                            ),
+                                        }
+                                        .into());
+                                    }
+                                };
                             return Ok((package_path, module_index as u32));
                         }
                     }
@@ -212,7 +220,8 @@ impl<'a> Compiler<'a> {
                             "Compile-time recursion detected in rule call chain: {}",
                             chain.join(" -> ")
                         ),
-                    });
+                    }
+                    .into());
                 }
             }
 
@@ -225,7 +234,8 @@ impl<'a> Compiler<'a> {
             } else {
                 return Err(CompilerError::General {
                     message: format!("Rule index not found for '{}'", entry.rule_path),
-                });
+                }
+                .into());
             };
 
             call_stack.push(entry.rule_path.clone());
@@ -264,14 +274,15 @@ impl<'a> Compiler<'a> {
 
         let saved_register_counter = self.register_counter;
         if let Some(rule_definitions) = rules.get(rule_path) {
-            let rule_index = self.rule_index_map.get(rule_path).copied().ok_or_else(|| {
-                CompilerError::General {
+            let Some(rule_index) = self.rule_index_map.get(rule_path).copied() else {
+                return Err(CompilerError::General {
                     message: format!(
                         "Rule '{}' not found in rule index map during compilation",
                         rule_path
                     ),
                 }
-            })?;
+                .into());
+            };
             let rule_type = self.rule_types[rule_index as usize].clone();
 
             let result_register = 0;
@@ -358,12 +369,13 @@ impl<'a> Compiler<'a> {
 
                                 if let BindingPlan::Parameter { .. } = &binding_plan {
                                     self.apply_binding_plan(&binding_plan, param_reg, arg.span())
-                                        .map_err(CompilerError::from)?;
+                                        .map_err(|e| CompilerError::from(e).at(arg.span()))?;
                                 } else {
                                     return Err(CompilerError::UnexpectedBindingPlan {
                                         context: context_desc,
                                         found: format!("{binding_plan:?}"),
-                                    });
+                                    }
+                                    .at(arg.span()));
                                 }
 
                                 last_param_span = Some(arg.span().clone());
@@ -396,7 +408,8 @@ impl<'a> Compiler<'a> {
 												"Function rule '{}' definition {} has {} parameters but expected {} parameters",
 												rule_path, def_idx, param_names.len(), expected_count
 											),
-                                        });
+                                        }
+                                        .at(span));
                                     }
                                 }
                             }
