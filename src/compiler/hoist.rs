@@ -510,6 +510,7 @@ impl LoopHoister {
         query: &Query,
         parent_context: &ScopeContext,
     ) -> Result<ScopeContext> {
+        self.lookup.ensure_query_capacity(module_idx, query.qidx);
         let mut context = parent_context.clone();
         context.current_scope_bound_vars = parent_context.current_scope_bound_vars.clone();
 

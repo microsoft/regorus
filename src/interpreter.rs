@@ -3375,6 +3375,7 @@ impl Interpreter {
     pub fn eval_default_rule_for_compiler(&mut self, rule_path: &str) -> Result<Value> {
         self.input = Value::Undefined;
         self.data = Value::Undefined;
+        self.ensure_loop_var_values_capacity();
 
         let default_rules = self.compiled_policy.default_rules.get(rule_path).cloned();
 
@@ -4088,7 +4089,12 @@ impl Interpreter {
 
         // Populate loop hoisting lookup table
         use crate::compiler::hoist::LoopHoister;
-        let hoister = LoopHoister::new();
+        // Re-run hoisting with the analyzer's schedule so statement order is preserved.
+        let hoister = if let Some(schedule) = compiled_policy.schedule.clone() {
+            LoopHoister::new_with_schedule(schedule)
+        } else {
+            LoopHoister::new()
+        };
         let loop_lookup = hoister.populate(compiled_policy.modules.as_ref())?;
         compiled_policy.loop_hoisting_table = loop_lookup;
 
