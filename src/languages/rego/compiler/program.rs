@@ -131,7 +131,7 @@ impl<'a> Compiler<'a> {
         if !self.program.builtin_info_table.is_empty() {
             self.program
                 .initialize_resolved_builtins()
-                .map_err(|err| CompilerError::from(err))?;
+                .map_err(CompilerError::from)?;
         }
 
         Ok(self.program)

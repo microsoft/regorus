@@ -40,16 +40,12 @@ pub fn create_parameter_binding_plan<T: VariableBindingContext>(
     scoping: ScopingMode,
 ) -> Result<BindingPlan> {
     let mut newly_bound = BTreeSet::new();
-    let destructuring_plan = create_destructuring_plan_with_tracking(
-        param_expr,
-        context,
-        scoping,
-        &mut newly_bound,
-    )
-    .ok_or_else(|| BindingPlannerError::FailedToCreateDestructuringPlan {
-        plan_type: "parameter".to_string(),
-        span: param_expr.span().clone(),
-    })?;
+    let destructuring_plan =
+        create_destructuring_plan_with_tracking(param_expr, context, scoping, &mut newly_bound)
+            .ok_or_else(|| BindingPlannerError::FailedToCreateDestructuringPlan {
+                plan_type: "parameter".to_string(),
+                span: param_expr.span().clone(),
+            })?;
 
     if scoping == ScopingMode::AllowShadowing {
         validate_pattern_bindings(param_expr, &newly_bound, context)?;

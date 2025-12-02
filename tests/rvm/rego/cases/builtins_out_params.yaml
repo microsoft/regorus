@@ -81,3 +81,15 @@ cases:
         }
     query: data.test.rule5
     want_result: "#undefined"
+
+  - note: builtin_out_param_negated_equality
+    data: {}
+    modules:
+      - |
+        package test
+
+        rule5 if {
+            not abs(-5, 3)
+        }
+    query: data.test.rule5
+    want_result: true

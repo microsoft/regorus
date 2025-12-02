@@ -221,7 +221,9 @@ impl<'a> Compiler<'a> {
                 }
             }
             ast::Literal::NotExpr { expr, .. } => {
-                let expr_reg = self.compile_rego_expr_with_span(expr, expr.span(), false)?;
+                let expr_reg = self.with_soft_assert_mode(true, |compiler| {
+                    compiler.compile_rego_expr_with_span(expr, expr.span(), false)
+                })?;
 
                 let negated_reg = self.alloc_register();
                 self.emit_instruction(

@@ -368,7 +368,8 @@ impl<'a> Compiler<'a> {
                                     self.expect_binding_plan_for_expr(arg, &context_desc)?;
 
                                 if let BindingPlan::Parameter { .. } = &binding_plan {
-                                    self.apply_binding_plan(&binding_plan, param_reg, arg.span())
+                                    let _ = self
+                                        .apply_binding_plan(&binding_plan, param_reg, arg.span())
                                         .map_err(|e| CompilerError::from(e).at(arg.span()))?;
                                 } else {
                                     return Err(CompilerError::UnexpectedBindingPlan {

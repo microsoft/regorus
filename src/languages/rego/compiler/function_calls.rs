@@ -117,9 +117,20 @@ impl<'a> Compiler<'a> {
         }
 
         if let Some((plan, plan_span)) = &out_param_plan {
-            self.apply_binding_plan(plan, dest, plan_span)
+            let plan_result = self
+                .apply_binding_plan(plan, dest, plan_span)
                 .map_err(|err| CompilerError::from(err).at(plan_span))?;
-            self.emit_instruction(Instruction::LoadBool { dest, value: true }, &span);
+            if let Some(result_reg) = plan_result {
+                self.emit_instruction(
+                    Instruction::Move {
+                        dest,
+                        src: result_reg,
+                    },
+                    &span,
+                );
+            } else {
+                self.emit_instruction(Instruction::LoadBool { dest, value: true }, &span);
+            }
         }
 
         Ok(dest)

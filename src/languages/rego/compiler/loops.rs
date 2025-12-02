@@ -249,7 +249,8 @@ impl<'a> Compiler<'a> {
         let body_start = self.program.instructions.len() as u16;
 
         if let Some((binding_plan, plan_span)) = key_binding_plan.as_ref() {
-            self.apply_binding_plan(binding_plan, key_reg, plan_span)
+            let _ = self
+                .apply_binding_plan(binding_plan, key_reg, plan_span)
                 .map_err(|e| CompilerError::from(e).at(plan_span))?;
         }
 
