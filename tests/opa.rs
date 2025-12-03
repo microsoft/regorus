@@ -32,10 +32,9 @@ const OPA_TODO_FOLDERS: &[&str] = &[
     "partialobjectdoc",
     "planner-ir",
     "refheads",
-    "sets",
-    "type",
     "virtualdocs",
     "walkbuiltin",
+    // RVM Compiler does not support 'with' keyword yet.
     "withkeyword",
 ];
 
@@ -267,6 +266,14 @@ fn is_not_valid_rule_path_error(err: &anyhow::Error) -> bool {
         .any(|cause| cause.to_string().contains("not a valid rule path"))
 }
 
+fn is_with_keyword_unsupported_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .to_string()
+            .contains("`with` keyword is not supported")
+    })
+}
+
 fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value) -> Result<()> {
     if case.note == "defaultkeyword/function with var arg, ref head query" {
         println!(
@@ -287,6 +294,14 @@ fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value)
             if is_not_valid_rule_path_error(&err) {
                 println!(
                     "    skipping RVM check for '{}' (rule path not compiled)",
+                    case.note
+                );
+                return Ok(());
+            }
+
+            if is_with_keyword_unsupported_error(&err) {
+                println!(
+                    "    skipping RVM check for '{}' (with keyword unsupported)",
                     case.note
                 );
                 return Ok(());
