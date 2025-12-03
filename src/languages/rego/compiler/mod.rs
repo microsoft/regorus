@@ -10,7 +10,7 @@ mod queries;
 mod references;
 mod rules;
 
-pub use error::{CompilerError, Result};
+pub use error::{CompilerError, Result, SpannedCompilerError};
 
 use crate::ast::ExprRef;
 use crate::lexer::Span;
