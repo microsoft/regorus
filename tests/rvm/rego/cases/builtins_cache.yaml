@@ -1,0 +1,15 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: builtin_rand_intn_cache_consistency
+    data: {}
+    modules:
+      - |
+        package test
+
+        rands := { rand.intn("seed", 100) | numbers.range(1, 100)[_] }
+
+        np := count(rands)
+    query: data.test.np
+    want_result: 1

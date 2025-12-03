@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+use crate::builtins;
 use crate::value::Value;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -41,6 +42,11 @@ impl RegoVM {
             });
         }
 
+        if args.iter().any(|a| a == &Value::Undefined) {
+            self.registers[params.dest as usize] = Value::Undefined;
+            return Ok(());
+        }
+
         if let Some(builtin_fcn) = self.program.get_resolved_builtin(params.builtin_index) {
             let dummy_source = crate::lexer::Source::from_contents("arg".into(), String::new())?;
             let dummy_span = crate::lexer::Span {
@@ -61,8 +67,31 @@ impl RegoVM {
                 dummy_exprs.push(crate::ast::Ref::new(dummy_expr));
             }
 
-            let result = (builtin_fcn.0)(&dummy_span, &dummy_exprs, &args, true)?;
-            self.registers[params.dest as usize] = result.clone();
+            let cache_name = builtins::must_cache(builtin_info.name.as_str());
+            if let Some(name) = cache_name {
+                if let Some(value) = self.builtins_cache.get(&(name, args.clone())) {
+                    self.registers[params.dest as usize] = value.clone();
+                    return Ok(());
+                }
+            }
+
+            let result =
+                match (builtin_fcn.0)(&dummy_span, &dummy_exprs, &args, self.strict_builtin_errors)
+                {
+                    Ok(value) => value,
+                    Err(_) if !self.strict_builtin_errors => Value::Undefined,
+                    Err(err) => return Err(err.into()),
+                };
+
+            if result == Value::Undefined {
+                self.registers[params.dest as usize] = Value::Undefined;
+            } else {
+                self.registers[params.dest as usize] = result.clone();
+            }
+
+            if let Some(name) = cache_name {
+                self.builtins_cache.insert((name, args), result);
+            }
         } else {
             return Err(VmError::BuiltinNotResolved {
                 name: builtin_info.name.clone(),
