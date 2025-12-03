@@ -36,7 +36,6 @@ const OPA_TODO_FOLDERS: &[&str] = &[
     "partialdocconstants",
     "partialobjectdoc",
     "planner-ir",
-    "rand",
     "refheads",
     "replacen",
     "semverisvalid",
