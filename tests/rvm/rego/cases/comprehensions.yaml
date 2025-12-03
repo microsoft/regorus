@@ -13,3 +13,13 @@ cases:
         main := [(x * 2) | some x in [1, 2, 3]]
     query: data.test.main
     want_result: [2, 4, 6]
+
+  - note: comprehension_equality_failure_returns_empty
+    data: {}
+    modules:
+      - |
+        package test
+
+        z := [x | x := 1; x == 2]
+    query: data.test.z
+    want_result: []
