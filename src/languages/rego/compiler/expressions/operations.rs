@@ -142,7 +142,7 @@ impl<'a> Compiler<'a> {
 
         match op {
             BinOp::Union => {
-                let builtin_index = self.get_builtin_index("sets.union")?;
+                let builtin_index = self.get_builtin_index("__builtin_sets.union")?;
                 let params = BuiltinCallParams {
                     dest,
                     builtin_index,
@@ -156,7 +156,7 @@ impl<'a> Compiler<'a> {
                 self.emit_instruction(Instruction::BuiltinCall { params_index }, span);
             }
             BinOp::Intersection => {
-                let builtin_index = self.get_builtin_index("sets.intersection")?;
+                let builtin_index = self.get_builtin_index("__builtin_sets.intersection")?;
                 let params = BuiltinCallParams {
                     dest,
                     builtin_index,
