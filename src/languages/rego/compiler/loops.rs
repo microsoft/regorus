@@ -20,11 +20,14 @@ impl<'a> Compiler<'a> {
             .loop_hoisting_table
             .get_statement_loops(self.current_module_index, stmt.sidx)
             .cloned()
-            .ok_or_else(|| CompilerError::General {
-                message: format!(
-                    "missing loop hoisting data for statement at {}:{}",
-                    stmt.span.line, stmt.span.col
-                ),
+            .ok_or_else(|| {
+                CompilerError::General {
+                    message: format!(
+                        "missing loop hoisting data for statement at {}:{}",
+                        stmt.span.line, stmt.span.col
+                    ),
+                }
+                .at(&stmt.span)
             })
     }
 
@@ -70,7 +73,8 @@ impl<'a> Compiler<'a> {
             }
             LoopType::Walk => Err(CompilerError::General {
                 message: "walk loops are not yet supported in the RVM compiler".to_string(),
-            }),
+            }
+            .into()),
         }
     }
 
@@ -195,7 +199,8 @@ impl<'a> Compiler<'a> {
                     return Err(CompilerError::UnexpectedBindingPlan {
                         context: format!("loop index pattern {}", key_var.span().text()),
                         found: format!("{binding_plan:?}"),
-                    });
+                    }
+                    .at(key_var.span()));
                 }
             } else {
                 match key_var.as_ref() {
@@ -217,7 +222,8 @@ impl<'a> Compiler<'a> {
                     _ => {
                         return Err(CompilerError::MissingBindingPlan {
                             context: format!("loop index pattern {}", key_var.span().text()),
-                        });
+                        }
+                        .at(key_var.span()));
                     }
                 }
             }
@@ -243,8 +249,9 @@ impl<'a> Compiler<'a> {
         let body_start = self.program.instructions.len() as u16;
 
         if let Some((binding_plan, plan_span)) = key_binding_plan.as_ref() {
-            self.apply_binding_plan(binding_plan, key_reg, plan_span)
-                .map_err(CompilerError::from)?;
+            let _ = self
+                .apply_binding_plan(binding_plan, key_reg, plan_span)
+                .map_err(|e| CompilerError::from(e).at(plan_span))?;
         }
 
         let body_stmts = &remaining_stmts[0..];
@@ -335,12 +342,13 @@ impl<'a> Compiler<'a> {
                     value_reg,
                     collection.span(),
                 )
-                .map_err(CompilerError::from)?;
+                .map_err(|e| CompilerError::from(e).at(collection.span()))?;
             } else {
                 return Err(CompilerError::UnexpectedBindingPlan {
                     context: format!("some-in binding {}", collection.span().text()),
                     found: format!("{binding_plan:?}"),
-                });
+                }
+                .at(collection.span()));
             }
         } else {
             if let Some(key_expr) = key {
@@ -348,13 +356,24 @@ impl<'a> Compiler<'a> {
                     ast::Expr::Var {
                         value: var_name, ..
                     } => {
-                        let var_name = var_name.as_string()?.to_string();
+                        let var_name = var_name
+                            .as_string()
+                            .map_err(|err| {
+                                CompilerError::General {
+                                    message: format!(
+                                        "Failed to read some-in key variable name: {err}"
+                                    ),
+                                }
+                                .at(key_expr.span())
+                            })?
+                            .to_string();
                         self.store_variable(var_name, key_reg);
                     }
                     _ => {
                         return Err(CompilerError::MissingBindingPlan {
                             context: format!("some-in key pattern {}", key_expr.span().text()),
-                        });
+                        }
+                        .at(key_expr.span()));
                     }
                 }
             }
@@ -363,13 +382,24 @@ impl<'a> Compiler<'a> {
                 ast::Expr::Var {
                     value: var_name, ..
                 } => {
-                    let var_name = var_name.as_string()?.to_string();
+                    let var_name = var_name
+                        .as_string()
+                        .map_err(|err| {
+                            CompilerError::General {
+                                message: format!(
+                                    "Failed to read some-in value variable name: {err}"
+                                ),
+                            }
+                            .at(value.span())
+                        })?
+                        .to_string();
                     self.store_variable(var_name, value_reg);
                 }
                 _ => {
                     return Err(CompilerError::MissingBindingPlan {
                         context: format!("some-in value pattern {}", value.span().text()),
-                    });
+                    }
+                    .at(value.span()));
                 }
             }
         }

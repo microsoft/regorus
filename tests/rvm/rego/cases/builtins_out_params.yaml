@@ -1,0 +1,95 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Builtin Out-Parameter Test Suite
+# Verifies the compiler handles builtin return-argument syntax consistently
+# across variable bindings, equality checks, scheduler ordering, and literals.
+
+cases:
+  - note: builtin_out_param_simple_binding
+    data: {}
+    modules:
+      - |
+        package test
+
+        rule1 if {
+            floor(1.001, x)
+            x == 1
+        }
+    query: data.test.rule1
+    want_result: true
+
+  - note: builtin_out_param_scheduler_reordering
+    data: {}
+    modules:
+      - |
+        package test
+
+        rule2 if {
+            x == 1
+            floor(1.001, x)
+        }
+    query: data.test.rule2
+    want_result: true
+
+  - note: builtin_out_param_existing_binding_equality
+    data: {}
+    modules:
+      - |
+        package test
+
+        rule3 if {
+            x := 1
+            floor(1.001, x)
+        }
+    query: data.test.rule3
+    want_result: true
+
+  - note: builtin_out_param_existing_binding_mismatch
+    data: {}
+    modules:
+      - |
+        package test
+
+        rule31 if {
+            x := 2
+            floor(1.001, x)
+        }
+    query: data.test.rule31
+    want_result: "#undefined"
+
+  - note: builtin_out_param_literal_success
+    data: {}
+    modules:
+      - |
+        package test
+
+        rule4 if {
+            floor(1.001, 1)
+        }
+    query: data.test.rule4
+    want_result: true
+
+  - note: builtin_out_param_literal_failure
+    data: {}
+    modules:
+      - |
+        package test
+
+        rule5 if {
+            floor(1.001, 2)
+        }
+    query: data.test.rule5
+    want_result: "#undefined"
+
+  - note: builtin_out_param_negated_equality
+    data: {}
+    modules:
+      - |
+        package test
+
+        rule5 if {
+            not abs(-5, 3)
+        }
+    query: data.test.rule5
+    want_result: true

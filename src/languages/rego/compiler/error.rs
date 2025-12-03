@@ -4,6 +4,9 @@
 use alloc::format;
 use alloc::string::String;
 
+use crate::lexer::Span;
+use core::fmt;
+
 #[derive(thiserror::Error, Debug)]
 pub enum CompilerError {
     #[error("Not a builtin function: {name}")]
@@ -68,4 +71,52 @@ impl From<anyhow::Error> for CompilerError {
     }
 }
 
-pub type Result<T> = ::core::result::Result<T, CompilerError>;
+#[derive(Debug)]
+pub struct SpannedCompilerError {
+    pub error: CompilerError,
+    pub span: Option<Span>,
+}
+
+impl SpannedCompilerError {
+    pub fn new(error: CompilerError) -> Self {
+        Self { error, span: None }
+    }
+
+    pub fn with_span(mut self, span: &Span) -> Self {
+        if self.span.is_none() {
+            self.span = Some(span.clone());
+        }
+        self
+    }
+}
+
+impl fmt::Display for SpannedCompilerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(span) = &self.span {
+            let msg = format!("{}", self.error);
+            write!(f, "{}", span.message("error", &msg))
+        } else {
+            write!(f, "{}", self.error)
+        }
+    }
+}
+
+impl From<CompilerError> for SpannedCompilerError {
+    fn from(error: CompilerError) -> Self {
+        Self::new(error)
+    }
+}
+
+impl core::error::Error for SpannedCompilerError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+impl CompilerError {
+    pub fn at(self, span: &Span) -> SpannedCompilerError {
+        SpannedCompilerError::from(self).with_span(span)
+    }
+}
+
+pub type Result<T> = ::core::result::Result<T, SpannedCompilerError>;

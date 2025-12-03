@@ -66,11 +66,12 @@ impl<'a> Compiler<'a> {
                 let result: Result<Register> = match binding_plan {
                     BindingPlan::Assignment { plan } => self
                         .compile_assignment_plan_using_hoisted_destructuring(&plan, span)
-                        .map_err(CompilerError::from),
+                        .map_err(|e| CompilerError::from(e).at(span)),
                     other => Err(CompilerError::UnexpectedBindingPlan {
                         context: "assignment expression".to_string(),
                         found: format!("{other:?}"),
-                    }),
+                    }
+                    .at(span)),
                 };
 
                 return result;

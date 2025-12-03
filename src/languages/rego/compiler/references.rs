@@ -81,7 +81,7 @@ pub(super) fn parse_reference_chain(expr: &ExprRef) -> Result<ReferenceChain> {
                 current_expr = refr;
             }
             _ => {
-                return Err(CompilerError::NotSimpleReferenceChain);
+                return Err(CompilerError::NotSimpleReferenceChain.at(current_expr.span()));
             }
         }
     }
@@ -117,7 +117,7 @@ impl<'a> Compiler<'a> {
     fn compile_data_chain(&mut self, chain: &ReferenceChain, span: &Span) -> Result<Register> {
         if chain.components.is_empty() {
             // Just "data" - direct access to data root is not allowed
-            return Err(CompilerError::DirectDataAccess);
+            return Err(CompilerError::DirectDataAccess.at(span));
         }
 
         // Build the static prefix path components for rule matching
@@ -301,7 +301,8 @@ impl<'a> Compiler<'a> {
         // No rule found - undefined variable
         Err(CompilerError::UndefinedVariable {
             name: chain.root.clone(),
-        })
+        }
+        .at(span))
     }
 
     /// Compile chain access using appropriate instructions based on chain length and complexity

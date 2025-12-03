@@ -220,7 +220,7 @@ impl<'a> Compiler<'a> {
                 );
                 Ok(dest)
             }
-            _ => Err(CompilerError::InvalidUnaryMinus),
+            _ => Err(CompilerError::InvalidUnaryMinus.at(span)),
         }
     }
 

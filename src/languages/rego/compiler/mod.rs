@@ -125,6 +125,7 @@ pub struct Compiler<'a> {
     current_rule_path: String,
     current_call_stack: Vec<u16>,
     entry_points: IndexMap<String, usize>,
+    soft_assert_mode: bool,
 }
 
 impl<'a> Compiler<'a> {
@@ -157,6 +158,18 @@ impl<'a> Compiler<'a> {
             current_rule_path: String::new(),
             current_call_stack: Vec::new(),
             entry_points: IndexMap::new(),
+            soft_assert_mode: false,
         }
+    }
+
+    pub(super) fn with_soft_assert_mode<F, R>(&mut self, enabled: bool, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        let previous = self.soft_assert_mode;
+        self.soft_assert_mode = enabled;
+        let result = f(self);
+        self.soft_assert_mode = previous;
+        result
     }
 }
