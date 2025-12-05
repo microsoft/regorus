@@ -63,7 +63,8 @@ cases:
     rule_infos:
       - rule_type: Complete
         definitions:
-          - [2, 5]
+          - [2]
+          - [5]
     instructions:
       - "CallRule { dest: 0, rule_index: 0 }"
       - "Return { value: 0 }"
@@ -74,3 +75,43 @@ cases:
       - "Load { dest: 1, literal_idx: 1 }"
       - "RuleReturn {}"
     want_result: "#undefined"
+
+  - note: call_rule_else_short_circuit
+    description: Rule definitions stop executing additional bodies once one succeeds
+    literals:
+      - 1
+      - 2
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [2, 5]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "RuleReturn {}"
+    want_result: 1
+
+  - note: call_rule_else_fallback_on_failure
+    description: Failed bodies can still fall back to the next else body
+    literals:
+      - 99
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [2, 6]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "LoadBool { dest: 2, value: false }"
+      - "AssertCondition { condition: 2 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "RuleReturn {}"
+    want_result: 99

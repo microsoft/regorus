@@ -196,6 +196,30 @@ cases:
     query: data.test.main
     want_result: "web1"
 
+  - note: literal_array_root_access
+    data: {}
+    modules:
+      - |
+        package test
+
+        y := ["x", "y"][1]
+
+        main := y
+    query: data.test.main
+    want_result: "y"
+
+  - note: computed_object_root_access
+    data: {}
+    modules:
+      - |
+        package test
+
+        x := strings.replace_n({k: v | k := ["f", "foo"][i]; v := ["x", "xxx"][i]}, "foo")
+
+        main := x
+    query: data.test.main
+    want_result: "xoo"
+
   - note: string_literal_bracket_access
     data: {}
     modules:

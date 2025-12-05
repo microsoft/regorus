@@ -1,0 +1,246 @@
+# Else Rule Test Suite
+# Validates VM handling of rule bodies with else chains across rule types and execution modes.
+
+cases:
+  - note: else_complete_short_circuit
+    description: First body succeeds and remaining else bodies are skipped
+    literals:
+      - 1
+      - 2
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [2, 6]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "RuleReturn {}"
+    want_result: 1
+
+  - note: else_complete_fallback
+    description: First body fails, second else body succeeds
+    literals:
+      - 10
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [2, 6]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "LoadBool { dest: 2, value: false }"
+      - "AssertCondition { condition: 2 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "RuleReturn {}"
+    want_result: 10
+
+  - note: else_complete_multi_failure_then_success
+    description: Multiple failing bodies before a later success
+    literals:
+      - 7
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [2, 6, 10]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "LoadBool { dest: 2, value: false }"
+      - "AssertCondition { condition: 2 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "LoadBool { dest: 2, value: false }"
+      - "AssertCondition { condition: 2 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "RuleReturn {}"
+    want_result: 7
+
+  - note: else_complete_all_fail_default_literal
+    description: All bodies fail and default literal is returned
+    literals:
+      - 42
+    rule_infos:
+      - rule_type: Complete
+        default_literal_index: 0
+        definitions:
+          - [2, 6]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "LoadBool { dest: 2, value: false }"
+      - "AssertCondition { condition: 2 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "LoadBool { dest: 2, value: false }"
+      - "AssertCondition { condition: 2 }"
+      - "RuleReturn {}"
+    want_result: 42
+
+  - note: else_partial_set
+    description: Partial set rule initializes result even if all bodies fail
+    literals:
+      - []
+    rule_infos:
+      - rule_type: PartialSet
+        definitions:
+          - [2, 6]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "LoadBool { dest: 2, value: false }"
+      - "AssertCondition { condition: 2 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "LoadBool { dest: 2, value: false }"
+      - "AssertCondition { condition: 2 }"
+      - "RuleReturn {}"
+    want_result:
+      set!: []
+
+  - note: else_partial_object
+    description: Partial object rule emits value from first successful branch
+    literals:
+      - {}
+      - "key"
+      - 5
+    rule_infos:
+      - rule_type: PartialObject
+        definitions:
+          - [2, 6]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "LoadBool { dest: 2, value: false }"
+      - "AssertCondition { condition: 2 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "ObjectSet { obj: 1, key: 2, value: 3 }"
+      - "RuleReturn {}"
+    want_result: { "key": 5 }
+
+  - note: else_function_rule
+    description: Function rule respects else chain and caches final value
+    literals:
+      - 0  # function rule index
+      - 1  # argument value (unused)
+      - 2  # return value from else body
+    instruction_params:
+      function_call_params:
+        - func: 0
+          dest: 3
+          args: [1]
+    rule_infos:
+      - rule_type: Complete
+        function_info:
+          param_names: ["x"]
+          num_params: 1
+        definitions:
+          - [4, 8]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "FunctionCall { params_index: 0 }"
+      - "Return { value: 3 }"
+      - "RuleInit { result_reg: 0, rule_index: 0 }"
+      - "LoadBool { dest: 2, value: false }"
+      - "AssertCondition { condition: 2 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 0, rule_index: 0 }"
+      - "Load { dest: 0, literal_idx: 2 }"
+      - "RuleReturn {}"
+    want_result: 2
+
+  - note: else_assignment_only
+    description: Assignment-only else block without query statements
+    literals:
+      - 99
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [2, 6]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "LoadBool { dest: 2, value: false }"
+      - "AssertCondition { condition: 2 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "RuleReturn {}"
+    want_result: 99
+
+  - note: else_nested_callrule
+    description: Outer rule observes inner rule else short-circuit behaviour
+    literals:
+      - 5
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [2]
+      - rule_type: Complete
+        definitions:
+          - [5, 9]
+    rule_tree:
+      data:
+        outer:
+          allow: 0
+        inner:
+          value: 1
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "CallRule { dest: 1, rule_index: 1 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 1 }"
+      - "LoadBool { dest: 3, value: false }"
+      - "AssertCondition { condition: 3 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 1 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "RuleReturn {}"
+    want_result: 5
+
+  - note: else_suspendable_step
+    description: Suspendable execution mode respects else short-circuiting
+    literals:
+      - 4
+      - "await-else"
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [2, 7]
+    execution_mode: suspendable
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "HostAwait { dest: 3, arg: 1, id: 2 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "RuleReturn {}"
+    host_await_responses:
+      - id: "await-else"
+        value: "resume-ok"
+    want_result: 4
