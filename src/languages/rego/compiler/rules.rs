@@ -471,6 +471,20 @@ impl<'a> Compiler<'a> {
 
                             ::core::convert::identity(body_idx);
 
+                            let previous_value_expr = self
+                                .context_stack
+                                .last()
+                                .and_then(|ctx| ctx.value_expr.clone());
+                            let mut body_value_expr =
+                                body.assign.as_ref().map(|assign| assign.value.clone());
+                            if body_value_expr.is_none() && body_idx == 0 {
+                                body_value_expr = previous_value_expr.clone();
+                            }
+
+                            if let Some(context) = self.context_stack.last_mut() {
+                                context.value_expr = body_value_expr.clone();
+                            }
+
                             self.emit_instruction(
                                 Instruction::RuleInit {
                                     result_reg: result_register,
@@ -481,22 +495,22 @@ impl<'a> Compiler<'a> {
 
                             if !body.query.stmts.is_empty() {
                                 self.compile_query(&body.query)?;
-                            } else {
-                                let value_expr_opt =
-                                    self.context_stack.last().unwrap().value_expr.clone();
-                                if let Some(value_expr) = value_expr_opt {
-                                    let value_reg = self.compile_rego_expr(&value_expr)?;
-                                    self.emit_instruction(
-                                        Instruction::Move {
-                                            dest: result_register,
-                                            src: value_reg,
-                                        },
-                                        value_expr.span(),
-                                    );
-                                }
+                            } else if let Some(value_expr) = body_value_expr.clone() {
+                                let value_reg = self.compile_rego_expr(&value_expr)?;
+                                self.emit_instruction(
+                                    Instruction::Move {
+                                        dest: result_register,
+                                        src: value_reg,
+                                    },
+                                    value_expr.span(),
+                                );
                             }
 
                             self.emit_instruction(Instruction::RuleReturn {}, &body.span);
+
+                            if let Some(context) = self.context_stack.last_mut() {
+                                context.value_expr = previous_value_expr;
+                            }
 
                             self.pop_scope();
                         }
