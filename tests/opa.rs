@@ -26,7 +26,6 @@ const OPA_TODO_FOLDERS: &[&str] = &[
     "baseandvirtualdocs",
     "dataderef",
     "defaultkeyword",
-    "elsekeyword",
     "every",
     "fix1863",
     "functions",
@@ -34,7 +33,7 @@ const OPA_TODO_FOLDERS: &[&str] = &[
     "partialobjectdoc",
     "planner-ir",
     "refheads",
-    "virtualdocs",
+    "type",
     "walkbuiltin",
     // RVM Compiler does not support 'with' keyword yet.
     "withkeyword",
