@@ -34,3 +34,6 @@ bindings/*/target
 
 # Visual Studio solution files
 *.sln
+
+# JetBrains IDEs files
+.idea/
