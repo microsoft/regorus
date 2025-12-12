@@ -621,6 +621,8 @@ impl RegoVM {
                     self.pc = loop_next_pc as usize - 1;
                 }
             }
+        } else if self.handle_comprehension_condition_failure_run_to_completion()? {
+            // handled by comprehension context
         } else {
             return Err(VmError::AssertionFailed);
         }
@@ -633,29 +635,31 @@ impl RegoVM {
             return Ok(());
         }
 
-        let (resume_pc, loop_ctx) = match self.execution_stack.last_mut() {
-            Some(ExecutionFrame {
-                kind: FrameKind::Loop { return_pc, context },
-                ..
-            }) => (*return_pc, context),
-            _ => return Err(VmError::AssertionFailed),
-        };
-
-        match loop_ctx.mode {
-            LoopMode::Any | LoopMode::ForEach => {
-                loop_ctx.current_iteration_failed = true;
-                self.pc = loop_ctx.loop_next_pc as usize - 1;
-            }
-            LoopMode::Every => {
-                self.registers[loop_ctx.result_reg as usize] = Value::Bool(false);
-                let completed_frame = self.execution_stack.pop().expect("loop frame exists");
-                if let Some(parent) = self.execution_stack.last_mut() {
-                    parent.pc = resume_pc;
+        if let Some(ExecutionFrame {
+            kind: FrameKind::Loop { return_pc, context },
+            ..
+        }) = self.execution_stack.last_mut()
+        {
+            let resume_pc = *return_pc;
+            match context.mode {
+                LoopMode::Any | LoopMode::ForEach => {
+                    context.current_iteration_failed = true;
+                    self.pc = context.loop_next_pc as usize - 1;
                 }
-                drop(completed_frame);
+                LoopMode::Every => {
+                    self.registers[context.result_reg as usize] = Value::Bool(false);
+                    let completed_frame = self.execution_stack.pop().expect("loop frame exists");
+                    if let Some(parent) = self.execution_stack.last_mut() {
+                        parent.pc = resume_pc;
+                    }
+                    drop(completed_frame);
+                }
             }
+            Ok(())
+        } else if self.handle_comprehension_condition_failure_suspendable()? {
+            Ok(())
+        } else {
+            Err(VmError::AssertionFailed)
         }
-
-        Ok(())
     }
 }

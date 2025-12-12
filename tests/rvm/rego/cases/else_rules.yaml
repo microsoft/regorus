@@ -1,0 +1,126 @@
+# Rego Else Rules Test Suite
+# Exercises compiler support for else bodies, including assignment overrides and boolean fallback logic.
+
+cases:
+  - note: else_rule_short_circuit
+    modules:
+      - |
+        package test
+        decision := 1 if {
+          1 == 1
+        }
+        else := 2 if {
+          1 == 1
+        }
+    query: data.test.decision
+    want_result: 1
+
+  - note: else_rule_fallback
+    modules:
+      - |
+        package test
+        decision := 1 if {
+          1 == 2
+        }
+        else := 2 if {
+          1 == 2
+        }
+        else := 3 if {
+          1 == 1
+        }
+    query: data.test.decision
+    want_result: 3
+
+  - note: else_rule_assignment_only
+    modules:
+      - |
+        package test
+        decision := 1 if {
+          1 == 2
+        }
+        else := 99
+    query: data.test.decision
+    want_result: 99
+
+  - note: else_rule_no_assignment_boolean
+    input:
+      method: "POST"
+    modules:
+      - |
+        package test
+        allow if {
+          input.method == "GET"
+        }
+        else if {
+          input.method == "POST"
+        }
+    query: data.test.allow
+    want_result: true
+
+  - note: else_rule_multiple_definitions
+    modules:
+      - |
+        package test
+        decision := "first" if {
+          false
+        }
+        else := "first-else" if {
+          false
+        }
+        decision := "second" if {
+          false
+        }
+        else := "second-else" if {
+          true
+        }
+    query: data.test.decision
+    want_result: "second-else"
+
+  - note: else_rule_function_fallback
+    modules:
+      - |
+        package test
+        f(x) := "small" if {
+          x < 5
+        }
+        else := "medium" if {
+          x < 10
+        }
+        f(x) := "large" if {
+          x >= 10
+        }
+        result := f(8)
+    query: data.test.result
+    want_result: "medium"
+
+  - note: else_rule_multiple_defined_single
+    modules:
+      - |
+        package ex
+
+        multiple_defined := false if {
+          false
+        }
+        else if {
+          true
+        }
+        else := false
+    query: data.ex.multiple_defined
+    want_result: true
+
+  - note: else_rule_boolean_middle_then_assignment
+    modules:
+      - |
+        package corner
+
+        corner_case := 7 if {
+          false
+        }
+        else := 6 if {
+          false
+        } else if {
+          true
+        }
+        else := 99
+    query: data.corner.corner_case
+    want_result: true
