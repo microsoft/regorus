@@ -75,4 +75,13 @@ cases:
         }
     query: data.test
     error: expects numeric argument.
-    
+
+  - note: multiline-member-access-should-error
+    data: {}
+    modules:
+      - |
+        package test
+        output := regex.
+        match("^a", "b")
+    query: data.test
+    error: invalid whitespace between . and identifier

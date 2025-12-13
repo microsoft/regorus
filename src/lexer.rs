@@ -203,7 +203,7 @@ impl Source {
 
         let line_str = format!("{line}");
         let line_num_width = line_str.len() + 1;
-        let col_spaces = col as usize - 1;
+        let col_spaces = (col as usize).saturating_sub(1);
 
         format!(
             "\n--> {}:{}:{}\n{:<line_num_width$}|\n\
