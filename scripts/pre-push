@@ -16,7 +16,7 @@ if [ -f Cargo.toml ]; then
    # Build for a target that has no std available.
    if command -v rustup > /dev/null; then
        rustup target add thumbv7m-none-eabi
-       (cd tests/ensure_no_std; cargo build -r --target thumbv7m-none-eabi --no-default-features --features opa-no-std)
+       (cd tests/ensure_no_std; cargo build -r --target thumbv7m-none-eabi)
    fi
 
    # Ensure that we can build with only std.
