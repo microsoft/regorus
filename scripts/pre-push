@@ -10,7 +10,7 @@ if [ -f Cargo.toml ]; then
    "$dir/pre-commit"
 
    # Ensure that the public API works.
-   cargo test -r --doc
+   cargo test --doc
 
    # Ensure that no_std build succeeds.
    # Build for a target that has no std available.
@@ -20,21 +20,21 @@ if [ -f Cargo.toml ]; then
    fi
 
    # Ensure that we can build with only std.
-   cargo build -r --example regorus --no-default-features --features std
+   cargo build --example regorus --no-default-features --features std
 
    # Ensure that we can build with all features.
-   cargo build -r --all-features
+   cargo build --all-features
    
    # Ensure that all tests pass.
-   cargo test -r
-   cargo test -r --test aci
-   cargo test -r --test kata
+   cargo test
+   cargo test --test aci
+   cargo test --test kata
 
    # Ensure that all tests pass with extensions
-   cargo test -r --features rego-extensions
-   cargo test -r --test aci --features rego-extensions
-   cargo test -r --test kata --features rego-extensions
+   cargo test --features rego-extensions
+   cargo test --test aci --features rego-extensions
+   cargo test --test kata --features rego-extensions
 
    # Ensure that OPA conformance tests don't regress.
-   cargo test -r --features opa-testutil,serde_json/arbitrary_precision,rego-extensions --test opa -- $(tr '\n' ' ' < tests/opa.passing)
+   cargo test --features opa-testutil,serde_json/arbitrary_precision,rego-extensions --test opa -- $(tr '\n' ' ' < tests/opa.passing)
 fi
