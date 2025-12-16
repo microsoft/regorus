@@ -38,6 +38,9 @@ impl<'a> Compiler<'a> {
         stmts: &[&LiteralStmt],
     ) -> Result<()> {
         for (idx, stmt) in stmts.iter().enumerate() {
+            if !stmt.with_mods.is_empty() {
+                return Err(CompilerError::WithKeywordUnsupported.at(&stmt.span));
+            }
             let loop_exprs = self.get_statement_loops(stmt)?;
 
             if !loop_exprs.is_empty() {

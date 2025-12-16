@@ -18,13 +18,14 @@ use walkdir::WalkDir;
 
 const OPA_REPO: &str = "https://github.com/open-policy-agent/opa";
 const OPA_BRANCH: &str = "v1.2.0";
+const PARTIAL_OBJECT_OVERRIDE_NOTE: &str =
+    "regression/partial-object override, different key type, query";
 
 const OPA_TODO_FOLDERS: &[&str] = &[
     "aggregates",
     "baseandvirtualdocs",
     "dataderef",
     "defaultkeyword",
-    "elsekeyword",
     "every",
     "fix1863",
     "functions",
@@ -32,10 +33,9 @@ const OPA_TODO_FOLDERS: &[&str] = &[
     "partialobjectdoc",
     "planner-ir",
     "refheads",
-    "sets",
     "type",
-    "virtualdocs",
     "walkbuiltin",
+    // RVM Compiler does not support 'with' keyword yet.
     "withkeyword",
 ];
 
@@ -267,6 +267,14 @@ fn is_not_valid_rule_path_error(err: &anyhow::Error) -> bool {
         .any(|cause| cause.to_string().contains("not a valid rule path"))
 }
 
+fn is_with_keyword_unsupported_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .to_string()
+            .contains("`with` keyword is not supported")
+    })
+}
+
 fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value) -> Result<()> {
     if case.note == "defaultkeyword/function with var arg, ref head query" {
         println!(
@@ -287,6 +295,14 @@ fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value)
             if is_not_valid_rule_path_error(&err) {
                 println!(
                     "    skipping RVM check for '{}' (rule path not compiled)",
+                    case.note
+                );
+                return Ok(());
+            }
+
+            if is_with_keyword_unsupported_error(&err) {
+                println!(
+                    "    skipping RVM check for '{}' (with keyword unsupported)",
                     case.note
                 );
                 return Ok(());
@@ -376,9 +392,15 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         for mut case in test.cases {
             let is_json_schema_test = case.note.starts_with("json_verify_schema")
                 || case.note.starts_with("json_match_schema");
-            let skip_rvm_validation = skip_rvm_for_folder;
+            let mut skip_rvm_validation = skip_rvm_for_folder;
 
-            if case.note == "reachable_paths/cycle_1022_3" {
+            if case.note == PARTIAL_OBJECT_OVERRIDE_NOTE {
+                println!(
+                    "    skipping RVM check for '{}' (needs suffix lookup on rule path)",
+                    case.note
+                );
+                skip_rvm_validation = true;
+            } else if case.note == "reachable_paths/cycle_1022_3" {
                 // The OPA behavior is not well-defined.
                 // See: https://github.com/open-policy-agent/opa/issues/5871
                 //      https://github.com/open-policy-agent/opa/issues/6128

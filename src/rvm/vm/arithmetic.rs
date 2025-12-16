@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use alloc::collections::BTreeSet;
+
 use crate::number::Number;
 use crate::value::Value;
 
@@ -23,6 +25,10 @@ impl RegoVM {
     pub(super) fn sub_values(&self, a: &Value, b: &Value) -> Result<Value> {
         match (a, b) {
             (Value::Number(x), Value::Number(y)) => Ok(Value::from(x.sub(y)?)),
+            (Value::Set(left), Value::Set(right)) => {
+                let diff: BTreeSet<Value> = left.difference(right).cloned().collect();
+                Ok(Value::from_set(diff))
+            }
             _ => Err(VmError::InvalidSubtraction {
                 left: a.clone(),
                 right: b.clone(),

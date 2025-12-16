@@ -15,6 +15,9 @@ pub enum CompilerError {
     #[error("Unknown builtin function: {name}")]
     UnknownBuiltinFunction { name: String },
 
+    #[error("the `with` keyword is not supported by the compiler yet")]
+    WithKeywordUnsupported,
+
     #[error("internal: missing context for yield")]
     MissingYieldContext,
 

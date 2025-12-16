@@ -67,3 +67,23 @@ cases:
         - set!: [1, 2]
         - set!: [3, 4]
         - set!: ["a", "b"]
+
+  - note: set_difference_literals
+    data: {}
+    modules:
+      - |
+        package test
+        x := {2, 3} - {4, 2}
+    query: data.test.x
+    want_result:
+      set!: [3]
+
+  - note: set_intersection_literals
+    data: {}
+    modules:
+      - |
+        package test
+        y := {2, 3} & {4, 2}
+    query: data.test.y
+    want_result:
+      set!: [2]

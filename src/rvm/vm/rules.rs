@@ -96,6 +96,10 @@ impl RegoVM {
                                 }
                             }
                         }
+
+                        // Once a body in this definition succeeds, remaining bodies
+                        // are treated as else-branches and must not be evaluated.
+                        break;
                     }
                     Err(_e) => {
                         continue;
@@ -502,7 +506,14 @@ impl RegoVM {
             }
         }
 
-        frame_data.current_body_index += 1;
+        if let Some(definition_bodies) = rule_info
+            .definitions
+            .get(frame_data.current_definition_index)
+        {
+            frame_data.current_body_index = definition_bodies.len();
+        } else {
+            frame_data.current_body_index += 1;
+        }
         self.rule_frame_schedule_segment(frame_data, rule_info)
     }
 
