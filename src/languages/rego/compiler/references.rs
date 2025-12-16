@@ -24,26 +24,37 @@ pub(super) enum AccessComponent {
     Expression(ExprRef),
 }
 
+/// Root of a reference chain - either a named variable or another arbitrary expression
+#[derive(Debug, Clone)]
+pub(super) enum ReferenceRoot {
+    Variable(String),
+    Expression(ExprRef),
+}
+
 /// Represents a chained reference like data.a.b[expr].c[expr]
 #[derive(Debug, Clone)]
 pub(super) struct ReferenceChain {
-    /// The root variable (e.g., "data", "input", "local_var")
-    pub(super) root: String,
+    /// The root of the chain (variable or arbitrary expression)
+    pub(super) root: ReferenceRoot,
     /// Chain of field accesses - either literal field names or dynamic expressions
     pub(super) components: Vec<AccessComponent>,
 }
 
 impl ReferenceChain {
     /// Get the static prefix path (all literal components from the start)
-    pub(super) fn get_static_prefix(&self) -> Vec<&str> {
-        let mut prefix = vec![self.root.as_str()];
+    pub(super) fn get_static_prefix(&self) -> Option<Vec<&str>> {
+        let ReferenceRoot::Variable(root) = &self.root else {
+            return None;
+        };
+
+        let mut prefix = vec![root.as_str()];
         for component in &self.components {
             match component {
                 AccessComponent::Field(field) => prefix.push(field.as_str()),
                 AccessComponent::Expression(_) => break,
             }
         }
-        prefix
+        Some(prefix)
     }
 }
 
@@ -57,7 +68,7 @@ pub(super) fn parse_reference_chain(expr: &ExprRef) -> Result<ReferenceChain> {
         match current_expr.as_ref() {
             Expr::Var { span, .. } => {
                 // Found the root variable
-                let root = span.text().to_string();
+                let root = ReferenceRoot::Variable(span.text().to_string());
                 components.reverse(); // We built backwards, so reverse
                 return Ok(ReferenceChain { root, components });
             }
@@ -81,7 +92,12 @@ pub(super) fn parse_reference_chain(expr: &ExprRef) -> Result<ReferenceChain> {
                 current_expr = refr;
             }
             _ => {
-                return Err(CompilerError::NotSimpleReferenceChain.at(current_expr.span()));
+                // Fallback root expression (e.g., array literal, function call)
+                components.reverse();
+                return Ok(ReferenceChain {
+                    root: ReferenceRoot::Expression(current_expr.clone()),
+                    components,
+                });
             }
         }
     }
@@ -94,10 +110,17 @@ impl<'a> Compiler<'a> {
         // Parse the expression into a reference chain
         let chain = parse_reference_chain(expr)?;
 
-        match chain.root.as_str() {
-            "input" => self.compile_input_chain(&chain, span),
-            "data" => self.compile_data_chain(&chain, span),
-            _ => self.compile_local_var_chain(&chain, span),
+        match chain.root.clone() {
+            ReferenceRoot::Variable(name) => match name.as_str() {
+                "input" => self.compile_input_chain(&chain, span),
+                "data" => self.compile_data_chain(&chain, span),
+                _ => self.compile_local_var_chain(&name, &chain, span),
+            },
+            ReferenceRoot::Expression(root_expr) => {
+                let root_reg =
+                    self.compile_rego_expr_with_span(&root_expr, root_expr.span(), false)?;
+                self.compile_chain_access(root_reg, &chain.components, span)
+            }
         }
     }
 
@@ -121,7 +144,9 @@ impl<'a> Compiler<'a> {
         }
 
         // Build the static prefix path components for rule matching
-        let static_prefix = chain.get_static_prefix();
+        let static_prefix = chain
+            .get_static_prefix()
+            .expect("data references must have variable roots");
 
         // Try to find the longest matching rule prefix
         // Start from the full path and work backwards
@@ -252,9 +277,14 @@ impl<'a> Compiler<'a> {
     }
 
     /// Compile local variable access chain
-    fn compile_local_var_chain(&mut self, chain: &ReferenceChain, span: &Span) -> Result<Register> {
+    fn compile_local_var_chain(
+        &mut self,
+        root: &str,
+        chain: &ReferenceChain,
+        span: &Span,
+    ) -> Result<Register> {
         // Check if it's a local variable first (precedence over rules)
-        if let Some(var_reg) = self.lookup_variable(&chain.root) {
+        if let Some(var_reg) = self.lookup_variable(root) {
             if chain.components.is_empty() {
                 return Ok(var_reg);
             }
@@ -262,7 +292,7 @@ impl<'a> Compiler<'a> {
         }
 
         // Check if there's a rule in the current package that matches
-        let current_pkg_prefix = format!("{}.{}", &self.current_package, &chain.root);
+        let current_pkg_prefix = format!("{}.{}", &self.current_package, root);
 
         // Build static path for rule matching
         let mut rule_path_parts = vec![current_pkg_prefix.as_str()];
@@ -300,7 +330,7 @@ impl<'a> Compiler<'a> {
 
         // No rule found - undefined variable
         Err(CompilerError::UndefinedVariable {
-            name: chain.root.clone(),
+            name: root.to_string(),
         }
         .at(span))
     }

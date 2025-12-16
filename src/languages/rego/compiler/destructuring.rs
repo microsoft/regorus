@@ -99,6 +99,9 @@ impl<'a> Compiler<'a> {
                     },
                     span,
                 );
+                if !self.soft_assert_mode {
+                    self.emit_instruction(Instruction::AssertCondition { condition: dest }, span);
+                }
                 Ok(dest)
             }
             AssignmentPlan::WildcardMatch {

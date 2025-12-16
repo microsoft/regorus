@@ -98,6 +98,9 @@ pub struct RegoVM {
 
     /// Whether builtins should raise errors strictly or return undefined on failure
     pub(super) strict_builtin_errors: bool,
+
+    /// Cache for builtin calls that must stay deterministic across a single evaluation
+    pub(super) builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
 }
 
 impl Default for RegoVM {
@@ -135,6 +138,7 @@ impl RegoVM {
             execution_mode: ExecutionMode::RunToCompletion,
             frame_pc_overridden: false,
             strict_builtin_errors: false,
+            builtins_cache: BTreeMap::new(),
         }
     }
 

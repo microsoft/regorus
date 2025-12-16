@@ -457,6 +457,83 @@ impl RegoVM {
         }
     }
 
+    pub(super) fn handle_comprehension_condition_failure_run_to_completion(
+        &mut self,
+    ) -> Result<bool> {
+        if let Some(mut context) = self.comprehension_stack.pop() {
+            self.advance_comprehension_after_failure(&mut context)?;
+            self.comprehension_stack.push(context);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub(super) fn handle_comprehension_condition_failure_suspendable(&mut self) -> Result<bool> {
+        if let Some(mut frame) = self.execution_stack.pop() {
+            let handled = if let FrameKind::Comprehension { context, .. } = &mut frame.kind {
+                self.advance_comprehension_after_failure(context)?;
+                true
+            } else {
+                false
+            };
+
+            self.execution_stack.push(frame);
+            if handled {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn advance_comprehension_after_failure(
+        &mut self,
+        context: &mut ComprehensionContext,
+    ) -> Result<()> {
+        if let Some(iter_state) = context.iteration_state.as_mut() {
+            self.capture_comprehension_iteration_position(
+                iter_state,
+                context.key_reg,
+                context.value_reg,
+            );
+            iter_state.advance();
+            let has_next =
+                self.setup_next_iteration(iter_state, context.key_reg, context.value_reg)?;
+            if has_next {
+                self.pc = context.body_start.saturating_sub(1) as usize;
+            } else {
+                context.iteration_state = None;
+                self.pc = context.comprehension_end.saturating_sub(1) as usize;
+            }
+        } else {
+            self.pc = context.comprehension_end.saturating_sub(1) as usize;
+        }
+
+        Ok(())
+    }
+
+    fn capture_comprehension_iteration_position(
+        &mut self,
+        iter_state: &mut IterationState,
+        key_reg: u8,
+        value_reg: u8,
+    ) {
+        match iter_state {
+            IterationState::Object { current_key, .. } => {
+                let tracked_key = if key_reg != value_reg {
+                    self.registers[key_reg as usize].clone()
+                } else {
+                    self.registers[value_reg as usize].clone()
+                };
+                *current_key = Some(tracked_key);
+            }
+            IterationState::Set { current_item, .. } => {
+                *current_item = Some(self.registers[value_reg as usize].clone());
+            }
+            IterationState::Array { .. } => {}
+        }
+    }
+
     fn execute_comprehension_end_run_to_completion(&mut self) -> Result<()> {
         if let Some(_context) = self.comprehension_stack.pop() {
             Ok(())

@@ -48,3 +48,15 @@ cases:
         }
     query: data.test.main
     want_result: true
+
+  - note: equality_literal_failure
+    data: {}
+    modules:
+      - |
+        package test
+
+        x if {
+          0 = 1
+        }
+    query: data.test.x
+    want_result: "#undefined"

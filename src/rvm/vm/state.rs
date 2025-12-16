@@ -32,6 +32,9 @@ impl RegoVM {
         self.registers.clear();
         self.registers
             .resize(self.base_register_count, Value::Undefined);
+
+        // Builtin cache entries only live for a single execution
+        self.builtins_cache.clear();
     }
 
     /// Return all active objects to their respective pools for reuse
