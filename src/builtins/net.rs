@@ -1,7 +1,9 @@
 use core::net::IpAddr;
 use ipnet::IpNet;
 use std::format;
+use std::string::ToString;
 use std::sync::Arc;
+use std::vec::Vec;
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
@@ -16,6 +18,7 @@ use super::utils::ensure_string;
 pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("net.cidr_is_valid", (cidr_is_valid, 1));
     m.insert("net.cidr_contains", (cidr_contains, 2));
+    m.insert("net.cidr_expand", (cidr_expand, 1));
 }
 
 /// Checks if a CIDR string is valid or invalid. Uses the
@@ -62,6 +65,7 @@ fn is_valid_cidr(cidr: Arc<str>) -> bool {
     }
 }
 
+/// Checks if a CIDR string contains a given CIDR or individual network address.
 pub fn cidr_contains(
     span: &Span,
     params: &[Ref<Expr>],
@@ -106,10 +110,42 @@ fn _cidr_contains(cidr: Arc<str>, cidr_or_ip: Arc<str>) -> Result<bool> {
     Ok(net.contains(&subnet))
 }
 
+pub fn cidr_expand(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
+    ensure_args_count(span, "cidr_expand", params, args, 1)?;
+    let cidr = ensure_string("cidr_expand", &params[0], &args[0])?;
+
+    _cidr_expand(cidr)
+}
+
+fn _cidr_expand(cidr: Arc<str>) -> Result<Value> {
+    let net = cidr
+        .parse::<IpNet>()
+        .map_err(|e| anyhow!("Error parsing {cidr}: {e}"))?;
+
+    let mut hosts: Vec<Value> = net
+        .hosts()
+        .map(|h| Value::String(h.to_string().into()))
+        .collect();
+
+    // the IpNet library has some different behavior regarding CIDR expansion from the go implementation
+    // that OPA uses; it will exclude the IPv4 CIDR network address and broadcast address when the netmask < 31.
+    // Adjust accordingly for parity.
+    if matches!(net, IpNet::V4(_) if net.prefix_len() < 31) {
+        hosts.push(net.broadcast().to_string().into());
+        hosts.insert(0, net.network().to_string().into());
+    }
+
+    Ok(Value::Array(Arc::from(hosts)))
+}
+
 #[cfg(test)]
 mod net_tests {
     use super::*;
-    use std::vec::Vec;
 
     #[test]
     fn test_cidr_is_valid() {
@@ -182,6 +218,26 @@ mod net_tests {
                     )
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_cidr_expand() {
+        let cases = Vec::from([
+            ("127.0.0.1/32", Vec::from(["127.0.0.1"])),
+            (
+                "10.0.0.0/29",
+                Vec::from([
+                    "10.0.0.0", "10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5",
+                    "10.0.0.6", "10.0.0.7",
+                ]),
+            ),
+        ]);
+
+        for (cidr, exp) in cases {
+            let cidrs = _cidr_expand(cidr.into()).expect("CIDRs should be returned");
+            let expv = Value::from(exp.iter().map(|s| Value::from(*s)).collect::<Vec<Value>>());
+            assert_eq!(cidrs, expv);
         }
     }
 }

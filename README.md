@@ -304,7 +304,6 @@ The following test suites don't pass fully due to missing builtins:
 - `jwtverifyhs512`
 - `jwtverifyrsa`
 - `netcidrcontainsmatches`
-- `netcidrexpand`
 - `netcidrintersects`
 - `netcidrmerge`
 - `netcidroverlap`
