@@ -6,7 +6,7 @@ set -eo pipefail
 
 if [ -f Cargo.toml ]; then
     # Ensure that all targets can be built.
-    cargo build -r --all-targets
+    cargo build --all-targets
 
     #Ensure that code is correctly formatted.
     cargo fmt --check || (echo "Run cargo fmt to fix formatting" && exit 1)
