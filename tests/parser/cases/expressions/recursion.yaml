@@ -1,0 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: deep-parens-over-limit
+    rego: |
+      package test
+      x = ((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))
+    error: "expression nesting too deep"
+    skip: true
+
+  - note: compr-mixed-deep
+    rego: |
+      package test
+      x = (1 + ( 2 + ( 3 + ( 4 + ((((((( [ [ 1 + (2 + ((((((((((((((((((((1))))))))))))))))))))) | true ] | true ] )))))))))))))
+    error: "expression nesting too deep"
+
