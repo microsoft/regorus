@@ -180,19 +180,27 @@ impl<'source> Parser<'source> {
 
     fn handle_import_future_keywords(&mut self, comps: &[Span]) -> Result<bool> {
         if comps.len() >= 2 && comps[0].text() == "future" && comps[1].text() == "keywords" {
-            match comps.len() - 2 {
-                1 => self.set_future_keyword(comps[2].text(), &Some(comps[2].clone()))?,
+            match comps.len().saturating_sub(2) {
+                1 if comps.len() >= 3 => {
+                    self.set_future_keyword(comps[2].text(), &Some(comps[2].clone()))?
+                }
                 0 => {
                     let span = &comps[1];
                     for kw in FUTURE_KEYWORDS.iter() {
                         self.set_future_keyword(kw, &Some(span.clone()))?;
                     }
                 }
-                _ => {
+                _ if comps.len() >= 4 => {
                     let s = &comps[3];
-                    return Err(self
-                        .source
-                        .error(s.line, s.col - 1, "invalid future keyword"));
+                    return Err(self.source.error(
+                        s.line,
+                        s.col.saturating_sub(1),
+                        "invalid future keyword",
+                    ));
+                }
+                _ => {
+                    let s = &comps[1];
+                    return Err(self.source.error(s.line, s.col, "invalid future keyword"));
                 }
             }
             Ok(true)
@@ -1067,22 +1075,35 @@ impl<'source> Parser<'source> {
             }
 
             span.end = self.end;
-            // Since exprs are discarded, adjust the expression index counter.
-            self.eidx -= vars.len() as u32;
+            // Since exprs are discarded, adjust the expression index counter (saturating to avoid underflow).
+            self.eidx = self.eidx.saturating_sub(vars.len() as u32);
             return Ok(Literal::SomeVars { span, vars });
         }
 
-        let (key, value) = match refs.len() {
-            2 => (Some(refs[0].clone()), refs[1].clone()),
-            1 => (None, refs[0].clone()),
-            _ => {
-                let span = &vars[2];
+        if refs.len() >= 3 {
+            // Too many identifiers before `in`.
+            if let Some(span) = vars.get(2).or_else(|| vars.last()) {
                 return Err(anyhow!(
                     "{}:{}:{} error: encountered `{}` while expecting `in`",
                     span.source.file(),
                     span.line,
                     span.col,
                     span.text()
+                ));
+            }
+            return Err(anyhow!(
+                "invalid some-decl: expected `in` after variable names"
+            ));
+        }
+
+        let (key, value) = match refs.len() {
+            2 => (Some(refs[0].clone()), refs[1].clone()),
+            1 => (None, refs[0].clone()),
+            _ => {
+                // We always parse at least one identifier before `in`; guard defensively.
+                // parse_ident rejects `in` when no vars are present, so this is effectively unreachable.
+                return Err(anyhow!(
+                    "invalid some-decl: expected variable names before `in`"
                 ));
             }
         };

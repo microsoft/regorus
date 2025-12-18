@@ -163,6 +163,12 @@ cases:
     num_statements: 0
     want_result: {}
 
+  - note: invalid-future-component
+    rego: |
+      package test
+      import future.keywords.foo.bar
+    error: "invalid future keyword"
+
   - note: shadow/1
     rego: |
       package test

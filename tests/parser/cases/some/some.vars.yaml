@@ -78,3 +78,21 @@ cases:
            some a, 5
        }
     error: encountered `5` while expecting identifier
+
+  - note: no-vars-before-in
+    rego: |
+      package test
+      import future.keywords.in
+      x = y {
+          some in xs
+      }
+    error: "unexpected keyword `in`"
+
+  - note: too-many-before-in
+    rego: |
+      package test
+      import future.keywords.in
+      x = y {
+          some a, b, c in xs
+      }
+    error: "encountered `c` while expecting `in`"
