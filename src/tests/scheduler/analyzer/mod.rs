@@ -3,7 +3,7 @@
 
 use crate::*;
 use crate::{ast::*, lexer::*, parser::*, scheduler::*};
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 use test_generator::test_resources;
 
@@ -68,7 +68,11 @@ fn analyze_file(regos: &[String], expected_scopes: &[Scope]) -> Result<()> {
     let mut scopes = Vec::new();
     for (module_idx, qidx, query) in all_queries.iter() {
         // Find the corresponding query schedule
-        if let Some(query_schedule) = schedule.queries.get(*module_idx, *qidx) {
+        if let Some(query_schedule) = schedule
+            .queries
+            .get_checked(*module_idx, *qidx)
+            .map_err(|err| anyhow!("schedule out of bounds: {err}"))?
+        {
             scopes.push((query.clone(), &query_schedule.scope));
         }
     }

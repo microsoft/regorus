@@ -7,6 +7,49 @@
 //! with expressions, queries, and statements using their respective indices.
 
 use crate::*;
+use core::fmt;
+
+/// Error indicating that lookup indices are out of bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LookupIndexError {
+    /// The requested module index exceeds the available modules.
+    ModuleOutOfBounds { module_idx: u32, modules: usize },
+    /// The requested node index exceeds the available nodes for the module.
+    NodeOutOfBounds {
+        module_idx: u32,
+        node_idx: u32,
+        nodes: usize,
+    },
+}
+
+impl fmt::Display for LookupIndexError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LookupIndexError::ModuleOutOfBounds {
+                module_idx,
+                modules,
+            } => {
+                write!(
+                    f,
+                    "module_idx {module_idx} out of bounds (modules={modules})"
+                )
+            }
+            LookupIndexError::NodeOutOfBounds {
+                module_idx,
+                node_idx,
+                nodes,
+            } => write!(
+                f,
+                "node_idx {node_idx} out of bounds for module {module_idx} (nodes={nodes})"
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for LookupIndexError {}
+
+pub type LookupResult<T> = core::result::Result<T, LookupIndexError>;
 
 /// Generic lookup table that stores data indexed by module and node indices.
 #[derive(Debug, Clone)]
@@ -43,28 +86,19 @@ impl<T: Clone> Lookup<T> {
         }
     }
 
-    /// Set data using direct indices (bounds assumed to be ensured).
-    pub fn set(&mut self, module_idx: u32, node_idx: u32, value: T) {
-        *self.get_mut(module_idx, node_idx) = Some(value);
-    }
-
-    /// Get data using direct indices (bounds assumed to be ensured).
-    pub fn get(&self, module_idx: u32, node_idx: u32) -> Option<&T> {
-        self.slots[module_idx as usize][node_idx as usize].as_ref()
+    /// Set data using direct indices with bounds checking.
+    /// Returns Ok(()) if written, Err if either index is out of bounds.
+    pub fn set_checked(&mut self, module_idx: u32, node_idx: u32, value: T) -> LookupResult<()> {
+        let (m, n) = self.validate_indices(module_idx, node_idx)?;
+        self.slots[m][n] = Some(value);
+        Ok(())
     }
 
     /// Get data using direct indices with bounds checking.
-    /// Returns None if the module or node index is out of range or unset.
-    pub fn get_checked(&self, module_idx: u32, node_idx: u32) -> Option<&T> {
-        self.slots
-            .get(module_idx as usize)
-            .and_then(|module| module.get(node_idx as usize))
-            .and_then(|slot| slot.as_ref())
-    }
-
-    /// Get mutable reference to data using direct indices (bounds assumed to be ensured).
-    pub fn get_mut(&mut self, module_idx: u32, node_idx: u32) -> &mut Option<T> {
-        &mut self.slots[module_idx as usize][node_idx as usize]
+    /// Returns Ok(None) if the entry is unset, Err if indices are out of range.
+    pub fn get_checked(&self, module_idx: u32, node_idx: u32) -> LookupResult<Option<&T>> {
+        let (m, n) = self.validate_indices(module_idx, node_idx)?;
+        Ok(self.slots[m][n].as_ref())
     }
 
     /// Clear data at the given indices by setting it to None.
@@ -94,5 +128,37 @@ impl<T: Clone> Lookup<T> {
         } else {
             None
         }
+    }
+
+    /// Validate indices and return them as usize on success.
+    fn validate_indices(&self, module_idx: u32, node_idx: u32) -> LookupResult<(usize, usize)> {
+        let m = module_idx as usize;
+        if m >= self.slots.len() {
+            debug_assert!(
+                m < self.slots.len(),
+                "module_idx {m} out of bounds (modules={})",
+                self.slots.len()
+            );
+            return Err(LookupIndexError::ModuleOutOfBounds {
+                module_idx,
+                modules: self.slots.len(),
+            });
+        }
+
+        let n = node_idx as usize;
+        if n >= self.slots[m].len() {
+            debug_assert!(
+                n < self.slots[m].len(),
+                "node_idx {n} out of bounds for module {m} (nodes={})",
+                self.slots[m].len()
+            );
+            return Err(LookupIndexError::NodeOutOfBounds {
+                module_idx,
+                node_idx,
+                nodes: self.slots[m].len(),
+            });
+        }
+
+        Ok((m, n))
     }
 }

@@ -359,16 +359,20 @@ impl Interpreter {
     }
 
     // Helper methods for working with ExprLookup
-    fn set_loop_var_value(&mut self, expr: &ExprRef, value: Value) {
+    fn set_loop_var_value(&mut self, expr: &ExprRef, value: Value) -> Result<()> {
         let module_idx = self.current_module_index;
         let expr_idx = expr.eidx();
-        self.loop_var_values.set(module_idx, expr_idx, value);
+        self.loop_var_values
+            .set_checked(module_idx, expr_idx, value)
+            .map_err(|err| anyhow!("internal error: loop var indices out of bounds: {err}"))
     }
 
-    fn get_loop_var_value(&self, expr: &ExprRef) -> Option<&Value> {
+    fn get_loop_var_value(&self, expr: &ExprRef) -> Result<Option<&Value>> {
         let module_idx = self.current_module_index;
         let expr_idx = expr.eidx();
-        self.loop_var_values.get(module_idx, expr_idx)
+        self.loop_var_values
+            .get_checked(module_idx, expr_idx)
+            .map_err(|err| anyhow!("internal error: loop var indices out of bounds: {err}"))
     }
 
     fn remove_loop_var_value(&mut self, expr: &ExprRef) {
@@ -406,12 +410,13 @@ impl Interpreter {
             if let Some(last_param) = params.last() {
                 let module_idx = self.current_module_index;
                 let expr_idx = last_param.as_ref().eidx();
-                return match self
+                let binding_plan = self
                     .compiled_policy
                     .loop_hoisting_table
                     .get_expr_binding_plan(module_idx, expr_idx)
-                    .cloned()
-                {
+                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
+
+                return match binding_plan.cloned() {
                     Some(BindingPlan::Parameter {
                         destructuring_plan, ..
                     }) => Ok(Some(destructuring_plan)),
@@ -483,7 +488,7 @@ impl Interpreter {
         // Collect a chaing of '.field' or '["field"]'
         let mut path = vec![];
         loop {
-            if let Some(v) = self.get_loop_var_value(expr) {
+            if let Some(v) = self.get_loop_var_value(expr)? {
                 path.reverse();
                 return Ok(Self::get_value_chained(v.clone(), &path[..]));
             }
@@ -876,15 +881,17 @@ impl Interpreter {
         let module_idx = self.current_module_index;
         let expr_idx = collection.as_ref().eidx();
 
+        let binding_plan = self
+            .compiled_policy
+            .loop_hoisting_table
+            .get_expr_binding_plan(module_idx, expr_idx)
+            .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
+
         let Some(BindingPlan::SomeIn {
             key_plan,
             value_plan,
             ..
-        }) = self
-            .compiled_policy
-            .loop_hoisting_table
-            .get_expr_binding_plan(module_idx, expr_idx)
-            .cloned()
+        }) = binding_plan.cloned()
         else {
             bail!("internal error: missing binding plan for some..in expression");
         };
@@ -1367,7 +1374,7 @@ impl Interpreter {
                 match loop_value {
                     Value::Array(items) => {
                         for item in items.iter() {
-                            self.set_loop_var_value(loop_target_expr, item.clone());
+                            self.set_loop_var_value(loop_target_expr, item.clone())?;
 
                             if self.execute_destructuring_plan(&walk_plan, item)?
                                 == Value::from(true)
@@ -1417,12 +1424,13 @@ impl Interpreter {
             let index_plan = if let Some(index) = index_expr {
                 let module_idx = self.current_module_index;
                 let expr_idx = index.as_ref().eidx();
-                match self
+                let plan = self
                     .compiled_policy
                     .loop_hoisting_table
                     .get_expr_binding_plan(module_idx, expr_idx)
-                    .cloned()
-                {
+                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
+
+                match plan.cloned() {
                     Some(BindingPlan::LoopIndex {
                         destructuring_plan, ..
                     }) => destructuring_plan,
@@ -1445,7 +1453,7 @@ impl Interpreter {
             match loop_value {
                 Value::Array(items) => {
                     for (idx, v) in items.iter().enumerate() {
-                        self.set_loop_var_value(loop_target_expr, v.clone());
+                        self.set_loop_var_value(loop_target_expr, v.clone())?;
 
                         if self.execute_destructuring_plan(&index_plan, &Value::from(idx))?
                             == Value::from(true)
@@ -1466,7 +1474,7 @@ impl Interpreter {
                 }
                 Value::Set(items) => {
                     for v in items.iter() {
-                        self.set_loop_var_value(loop_target_expr, v.clone());
+                        self.set_loop_var_value(loop_target_expr, v.clone())?;
 
                         // For sets, index is also the value.
                         if self.execute_destructuring_plan(&index_plan, v)? == Value::from(true) {
@@ -1485,7 +1493,7 @@ impl Interpreter {
                 }
                 Value::Object(obj) => {
                     for (k, v) in obj.iter() {
-                        self.set_loop_var_value(loop_target_expr, v.clone());
+                        self.set_loop_var_value(loop_target_expr, v.clone())?;
                         // For objects, index is key.
                         if self.execute_destructuring_plan(&index_plan, k)? == Value::from(true) {
                             result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
@@ -1830,19 +1838,19 @@ impl Interpreter {
         match self.eval_expr(Self::loop_collection_expr(loop_info))? {
             Value::Array(items) => {
                 for v in items.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone());
+                    self.set_loop_var_value(loop_target_expr, v.clone())?;
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Set(items) => {
                 for v in items.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone());
+                    self.set_loop_var_value(loop_target_expr, v.clone())?;
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Object(obj) => {
                 for (_, v) in obj.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone());
+                    self.set_loop_var_value(loop_target_expr, v.clone())?;
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
@@ -1881,9 +1889,10 @@ impl Interpreter {
                 .compiled_policy
                 .loop_hoisting_table
                 .get_expr_loops(self.current_module_index, ke.as_ref().eidx())
+                .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
                 Some(hoisted_loops) => {
-                    loops.extend(hoisted_loops.iter().cloned());
+                    loops.extend(hoisted_loops.clone());
                 }
                 None => {
                     bail!(ke.span().error("Loop hoisting information not found for key expression. This is likely a bug in the compilation phase."));
@@ -1897,9 +1906,10 @@ impl Interpreter {
                 .compiled_policy
                 .loop_hoisting_table
                 .get_expr_loops(self.current_module_index, oe.as_ref().eidx())
+                .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
                 Some(hoisted_loops) => {
-                    loops.extend(hoisted_loops.iter().cloned());
+                    loops.extend(hoisted_loops.clone());
                 }
                 None => {
                     bail!(oe.span().error("Loop hoisting information not found for output expression. This is likely a bug in the compilation phase."));
@@ -1927,10 +1937,11 @@ impl Interpreter {
             }
 
             // Get pre-computed hoisted loops from compilation phase
-            let loop_exprs = match self
+            let loop_exprs: Vec<HoistedLoop> = match self
                 .compiled_policy
                 .loop_hoisting_table
                 .get_statement_loops(self.current_module_index, stmt.sidx)
+                .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
                 Some(hoisted_loops) => {
                     // Use pre-computed loops from compilation phase
@@ -1994,11 +2005,14 @@ impl Interpreter {
             let query_module_index = self.compiled_policy.modules.len() as u32;
             if self.current_module_index == query_module_index {
                 // Use query schedule for the current module
-                match self
-                    .query_schedule
-                    .as_ref()
-                    .and_then(|s| s.queries.get(query_module_index, query.qidx))
-                {
+                let schedule = match self.query_schedule.as_ref() {
+                    Some(s) => s
+                        .queries
+                        .get_checked(query_module_index, query.qidx)
+                        .map_err(|err| anyhow!("schedule out of bounds: {err}"))?,
+                    None => None,
+                };
+                match schedule {
                     Some(schedule) => Some(&schedule.order),
                     None => {
                         if self.query_schedule.is_some() {
@@ -2011,12 +2025,15 @@ impl Interpreter {
                 }
             } else {
                 // Use compiled policy schedule for other modules
-                match self
-                    .compiled_policy
-                    .schedule
-                    .as_ref()
-                    .and_then(|s| s.queries.get(self.current_module_index, query.qidx))
-                {
+                let schedule = match self.compiled_policy.schedule.as_ref() {
+                    Some(s) => s
+                        .queries
+                        .get_checked(self.current_module_index, query.qidx)
+                        .map_err(|err| anyhow!("schedule out of bounds: {err}"))?,
+                    None => None,
+                };
+
+                match schedule {
                     Some(schedule) => Some(&schedule.order),
                     None => {
                         if self.compiled_policy.schedule.is_some() {
@@ -2349,7 +2366,7 @@ impl Interpreter {
         params: &[ExprRef],
     ) -> Result<Value> {
         // Return generated values of walk builtin.
-        if let Some(v) = self.get_loop_var_value(expr) {
+        if let Some(v) = self.get_loop_var_value(expr)? {
             return Ok(v.clone());
         }
 
@@ -2497,6 +2514,7 @@ impl Interpreter {
                     .compiled_policy
                     .loop_hoisting_table
                     .get_expr_binding_plan(module_idx, expr_idx)
+                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
                 {
                     // Execute the destructuring plan with the parameter value
@@ -2642,6 +2660,7 @@ impl Interpreter {
                     .compiled_policy
                     .loop_hoisting_table
                     .get_expr_binding_plan(module_idx, expr_idx)
+                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
                 {
                     // Execute the destructuring plan with the return value
@@ -2933,6 +2952,7 @@ impl Interpreter {
                     .compiled_policy
                     .loop_hoisting_table
                     .get_expr_binding_plan(module_idx, expr_idx)
+                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
                     .ok_or_else(|| {
                         expr.span().error(
@@ -3644,7 +3664,8 @@ impl Interpreter {
         if let Some(ref self_schedule) = &self.query_schedule {
             if let Some(query_schedule) = self_schedule
                 .queries
-                .get(current_module_idx, current_query_idx)
+                .get_checked(current_module_idx, current_query_idx)
+                .map_err(|err| anyhow!("schedule out of bounds: {err}"))?
             {
                 for idx in 0..results.result.len() {
                     let e = Expression {

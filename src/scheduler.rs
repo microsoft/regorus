@@ -17,7 +17,7 @@ use alloc::string::String;
 use core::cmp;
 use core::fmt;
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 
 #[derive(Debug)]
 pub struct Definition<Str: Clone + cmp::Ord> {
@@ -584,7 +584,8 @@ impl Analyzer {
                 Expr::ArrayCompr { query, term, .. } | Expr::SetCompr { query, term, .. } => {
                     self.analyze_query(None, Some(term.clone()), query, Scope::default())?;
                     self.schedule_table
-                        .get(self.current_module_index, query.qidx)
+                        .get_checked(self.current_module_index, query.qidx)
+                        .map_err(|err| anyhow!("schedule_table out of bounds: {err}"))?
                         .map(|qs| &qs.scope)
                 }
                 Expr::ObjectCompr {
@@ -597,7 +598,8 @@ impl Analyzer {
                         Scope::default(),
                     )?;
                     self.schedule_table
-                        .get(self.current_module_index, query.qidx)
+                        .get_checked(self.current_module_index, query.qidx)
+                        .map_err(|err| anyhow!("schedule_table out of bounds: {err}"))?
                         .map(|qs| &qs.scope)
                 }
                 _ => break,
@@ -1099,7 +1101,8 @@ impl Analyzer {
             order,
         };
         self.schedule_table
-            .set(self.current_module_index, query.qidx, query_schedule);
+            .set_checked(self.current_module_index, query.qidx, query_schedule)
+            .map_err(|err| anyhow!("schedule_table out of bounds: {err}"))?;
 
         // Propagate input usage to parent scopes
         if scope.uses_input && !self.scopes.is_empty() {
@@ -1174,7 +1177,9 @@ pub fn compute_module_globals(
         }
 
         result.ensure_capacity(module_idx as u32, 0);
-        result.set(module_idx as u32, 0, module_globals);
+        result
+            .set_checked(module_idx as u32, 0, module_globals)
+            .map_err(|err| anyhow!("module globals out of bounds: {err}"))?;
     }
 
     Ok(result)
