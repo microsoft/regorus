@@ -3708,14 +3708,30 @@ impl Interpreter {
                 .map_err(|err| anyhow!("schedule out of bounds: {err}"))?
             {
                 for idx in 0..results.result.len() {
+                    let exprs_len = results.result[idx].expressions.len();
+                    if query_schedule.order.len() != exprs_len {
+                        let msg = format!(
+                            "invalid schedule: expected {exprs_len} expression indices, found {}",
+                            query_schedule.order.len()
+                        );
+                        bail!(query.span.error(msg.as_str()));
+                    }
+
                     let e = Expression {
                         value: Value::Undefined,
                         text: "".into(),
                         location: Location { row: 0, col: 0 },
                     };
-                    let mut ordered_expressions = vec![e; results.result[idx].expressions.len()];
+                    let mut ordered_expressions = vec![e; exprs_len];
                     for (expr_idx, value) in results.result[idx].expressions.iter().enumerate() {
                         let orig_idx = query_schedule.order[expr_idx] as usize;
+                        if orig_idx >= exprs_len {
+                            let msg = format!(
+                                "invalid schedule expression index {orig_idx} for {} expressions",
+                                exprs_len
+                            );
+                            bail!(query.span.error(msg.as_str()));
+                        }
                         ordered_expressions[orig_idx] = value.clone();
                     }
                     if !ordered_expressions
