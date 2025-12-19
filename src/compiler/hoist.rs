@@ -13,6 +13,7 @@ use super::destructuring_planner::{
 use crate::ast::{Expr, ExprRef, Literal, LiteralStmt, Module, Query, Ref, Rule, RuleHead};
 use crate::compiler::context::{ContextType, ScopeContext};
 use crate::lookup::Lookup;
+use crate::lookup::LookupResult;
 use crate::scheduler::compute_module_globals;
 use crate::*;
 use anyhow::{anyhow, Result};
@@ -147,43 +148,87 @@ impl HoistedLoopsLookup {
     }
 
     /// Store hoisted loops for a statement
-    pub fn set_statement_loops(&mut self, module_idx: u32, stmt_idx: u32, loops: Vec<HoistedLoop>) {
-        self.statement_loops.set(module_idx, stmt_idx, loops);
+    pub fn set_statement_loops(
+        &mut self,
+        module_idx: u32,
+        stmt_idx: u32,
+        loops: Vec<HoistedLoop>,
+    ) -> Result<()> {
+        self.statement_loops
+            .set_checked(module_idx, stmt_idx, loops)
+            .map_err(|err| anyhow!("statement_loops out of bounds: {err}"))
     }
 
     /// Get hoisted loops for a statement
-    pub fn get_statement_loops(&self, module_idx: u32, stmt_idx: u32) -> Option<&Vec<HoistedLoop>> {
+    pub fn get_statement_loops(
+        &self,
+        module_idx: u32,
+        stmt_idx: u32,
+    ) -> LookupResult<Option<&Vec<HoistedLoop>>> {
         self.statement_loops.get_checked(module_idx, stmt_idx)
     }
 
     /// Store hoisted loops for an expression (output expressions)
-    pub fn set_expr_loops(&mut self, module_idx: u32, expr_idx: u32, loops: Vec<HoistedLoop>) {
-        self.expr_loops.set(module_idx, expr_idx, loops);
+    pub fn set_expr_loops(
+        &mut self,
+        module_idx: u32,
+        expr_idx: u32,
+        loops: Vec<HoistedLoop>,
+    ) -> Result<()> {
+        self.expr_loops
+            .set_checked(module_idx, expr_idx, loops)
+            .map_err(|err| anyhow!("expr_loops out of bounds: {err}"))
     }
 
     /// Get hoisted loops for an expression
-    pub fn get_expr_loops(&self, module_idx: u32, expr_idx: u32) -> Option<&Vec<HoistedLoop>> {
+    pub fn get_expr_loops(
+        &self,
+        module_idx: u32,
+        expr_idx: u32,
+    ) -> LookupResult<Option<&Vec<HoistedLoop>>> {
         self.expr_loops.get_checked(module_idx, expr_idx)
     }
 
     /// Store the compilation context for a query
-    pub fn set_query_context(&mut self, module_idx: u32, query_idx: u32, context: ScopeContext) {
-        self.query_contexts.set(module_idx, query_idx, context);
+    pub fn set_query_context(
+        &mut self,
+        module_idx: u32,
+        query_idx: u32,
+        context: ScopeContext,
+    ) -> Result<()> {
+        self.query_contexts
+            .set_checked(module_idx, query_idx, context)
+            .map_err(|err| anyhow!("query_contexts out of bounds: {err}"))
     }
 
     /// Store a binding plan for an expression
-    pub fn set_expr_binding_plan(&mut self, module_idx: u32, expr_idx: u32, plan: BindingPlan) {
-        self.expr_binding_plans.set(module_idx, expr_idx, plan);
+    pub fn set_expr_binding_plan(
+        &mut self,
+        module_idx: u32,
+        expr_idx: u32,
+        plan: BindingPlan,
+    ) -> Result<()> {
+        self.expr_binding_plans
+            .set_checked(module_idx, expr_idx, plan)
+            .map_err(|err| anyhow!("expr_binding_plans out of bounds: {err}"))
     }
 
     /// Get the compilation context for a query
     #[allow(dead_code)]
-    pub fn get_query_context(&self, module_idx: u32, query_idx: u32) -> Option<&ScopeContext> {
+    pub fn get_query_context(
+        &self,
+        module_idx: u32,
+        query_idx: u32,
+    ) -> LookupResult<Option<&ScopeContext>> {
         self.query_contexts.get_checked(module_idx, query_idx)
     }
 
     /// Get the binding plan for an expression
-    pub fn get_expr_binding_plan(&self, module_idx: u32, expr_idx: u32) -> Option<&BindingPlan> {
+    pub fn get_expr_binding_plan(
+        &self,
+        module_idx: u32,
+        expr_idx: u32,
+    ) -> LookupResult<Option<&BindingPlan>> {
         self.expr_binding_plans.get_checked(module_idx, expr_idx)
     }
 
@@ -275,14 +320,18 @@ impl LoopHoister {
         Ok(self.lookup)
     }
 
-    fn create_scope_context(&self, module_idx: u32) -> ScopeContext {
+    fn create_scope_context(&self, module_idx: u32) -> Result<ScopeContext> {
         let mut context = ScopeContext::new();
 
-        if let Some(globals) = self.module_globals.get_checked(module_idx, 0) {
+        if let Some(globals) = self
+            .module_globals
+            .get_checked(module_idx, 0)
+            .map_err(|err| anyhow!("module_globals out of bounds: {err}"))?
+        {
             context.module_globals = Some(globals.clone());
         }
 
-        context
+        Ok(context)
     }
 
     /// Populate loop hoisting information for all modules, with extra capacity
@@ -309,7 +358,8 @@ impl LoopHoister {
             self.lookup.ensure_expr_capacity(last_module_idx + i, 0);
             self.module_globals.ensure_capacity(last_module_idx + i, 0);
             self.module_globals
-                .set(last_module_idx + i, 0, crate::Rc::new(BTreeSet::new()));
+                .set_checked(last_module_idx + i, 0, crate::Rc::new(BTreeSet::new()))
+                .map_err(|err| anyhow!("module_globals out of bounds: {err}"))?;
         }
         Ok(self.lookup)
     }
@@ -360,10 +410,11 @@ impl LoopHoister {
         reserved_globals.insert("data".to_string());
         reserved_globals.insert("input".to_string());
         self.module_globals
-            .set(module_idx, 0, crate::Rc::new(reserved_globals));
+            .set_checked(module_idx, 0, crate::Rc::new(reserved_globals))
+            .map_err(|err| anyhow!("module_globals out of bounds: {err}"))?;
 
         // Populate the query with default context
-        let context = self.create_scope_context(module_idx);
+        let context = self.create_scope_context(module_idx)?;
         self.lookup.ensure_query_capacity(module_idx, query.qidx);
         self.populate_query(module_idx, query, &context)?;
         Ok(())
@@ -374,7 +425,7 @@ impl LoopHoister {
         match rule {
             Rule::Spec { head, bodies, .. } => {
                 // Create a context for this rule
-                let mut context = self.create_scope_context(module_idx);
+                let mut context = self.create_scope_context(module_idx)?;
 
                 // Bind function parameters if this is a function rule
                 if let RuleHead::Func { args, .. } = head {
@@ -396,7 +447,7 @@ impl LoopHoister {
                                     module_idx,
                                     expr_idx,
                                     binding_plan,
-                                );
+                                )?;
                             }
                             Err(err) => return Err(map_binding_error(err)),
                         }
@@ -454,7 +505,7 @@ impl LoopHoister {
                         module_idx,
                         body.query.qidx,
                         populated_body_context.clone(),
-                    );
+                    )?;
 
                     // Process the key expression if present
                     if let Some(ref key) = key_expr {
@@ -497,7 +548,7 @@ impl LoopHoister {
             }
             Rule::Default { value, .. } => {
                 // For default rules, just process the value expression
-                let context = self.create_scope_context(module_idx);
+                let context = self.create_scope_context(module_idx)?;
                 self.populate_output_expr(module_idx, value, &context)?;
             }
         }
@@ -518,7 +569,11 @@ impl LoopHoister {
 
         // Get the scheduled order if available
         let stmt_order: Vec<usize> = if let Some(ref schedule) = self.schedule {
-            if let Some(query_schedule) = schedule.queries.get(module_idx, query.qidx) {
+            if let Some(query_schedule) = schedule
+                .queries
+                .get_checked(module_idx, query.qidx)
+                .map_err(|err| anyhow!("schedule out of bounds: {err}"))?
+            {
                 query_schedule
                     .order
                     .iter()
@@ -566,7 +621,8 @@ impl LoopHoister {
         }
 
         self.lookup.ensure_statement_capacity(module_idx, stmt_idx);
-        self.lookup.set_statement_loops(module_idx, stmt_idx, loops);
+        self.lookup
+            .set_statement_loops(module_idx, stmt_idx, loops)?;
 
         Ok(())
     }
@@ -596,7 +652,7 @@ impl LoopHoister {
                 self.lookup.ensure_expr_capacity(module_idx, expr_idx);
                 Self::bind_vars_from_plan_to_context(&binding_plan, context);
                 self.lookup
-                    .set_expr_binding_plan(module_idx, expr_idx, binding_plan);
+                    .set_expr_binding_plan(module_idx, expr_idx, binding_plan)?;
 
                 if let Some(key_expr) = key {
                     self.analyze_expr(module_idx, key_expr, context, loops)?;
@@ -615,7 +671,7 @@ impl LoopHoister {
                     self.populate_query(module_idx, query.as_ref(), &every_context)?;
                 self.lookup.ensure_query_capacity(module_idx, query.qidx);
                 self.lookup
-                    .set_query_context(module_idx, query.qidx, populated_context);
+                    .set_query_context(module_idx, query.qidx, populated_context)?;
             }
             NotExpr { expr, .. } => {
                 self.analyze_expr(module_idx, expr, context, loops)?;
@@ -663,7 +719,7 @@ impl LoopHoister {
                     self.populate_query(module_idx, query.as_ref(), &compr_context)?;
                 self.lookup.ensure_query_capacity(module_idx, query.qidx);
                 self.lookup
-                    .set_query_context(module_idx, query.qidx, populated_context.clone());
+                    .set_query_context(module_idx, query.qidx, populated_context.clone())?;
                 self.populate_output_expr_with_context(module_idx, term, &populated_context)?;
             }
             E::ObjectCompr {
@@ -678,7 +734,7 @@ impl LoopHoister {
                     self.populate_query(module_idx, query.as_ref(), &compr_context)?;
                 self.lookup.ensure_query_capacity(module_idx, query.qidx);
                 self.lookup
-                    .set_query_context(module_idx, query.qidx, populated_context.clone());
+                    .set_query_context(module_idx, query.qidx, populated_context.clone())?;
                 self.populate_output_expr_with_context(module_idx, key, &populated_context)?;
                 self.populate_output_expr_with_context(module_idx, value, &populated_context)?;
             }
@@ -721,8 +777,11 @@ impl LoopHoister {
                             // Immediately bind variables from the plan to context
                             Self::bind_vars_from_plan_to_context(&binding_plan, context);
 
-                            self.lookup
-                                .set_expr_binding_plan(module_idx, expr_idx, binding_plan);
+                            self.lookup.set_expr_binding_plan(
+                                module_idx,
+                                expr_idx,
+                                binding_plan,
+                            )?;
                         }
                         Err(err) => return Err(map_binding_error(err)),
                     }
@@ -746,8 +805,11 @@ impl LoopHoister {
                             let expr_idx = index.as_ref().eidx();
                             self.lookup.ensure_expr_capacity(module_idx, expr_idx);
                             Self::bind_vars_from_plan_to_context(&binding_plan, context);
-                            self.lookup
-                                .set_expr_binding_plan(module_idx, expr_idx, binding_plan);
+                            self.lookup.set_expr_binding_plan(
+                                module_idx,
+                                expr_idx,
+                                binding_plan,
+                            )?;
                         }
                         Err(err) => return Err(map_binding_error(err)),
                     }
@@ -780,7 +842,7 @@ impl LoopHoister {
                 self.lookup.ensure_expr_capacity(module_idx, expr_idx);
                 Self::bind_vars_from_plan_to_context(&binding_plan, context);
                 self.lookup
-                    .set_expr_binding_plan(module_idx, expr_idx, binding_plan);
+                    .set_expr_binding_plan(module_idx, expr_idx, binding_plan)?;
 
                 self.analyze_expr(module_idx, lhs, context, loops)?;
                 self.analyze_expr(module_idx, rhs, context, loops)?;
@@ -857,7 +919,7 @@ impl LoopHoister {
 
         let expr_idx = expr.as_ref().eidx();
         self.lookup.ensure_expr_capacity(module_idx, expr_idx);
-        self.lookup.set_expr_loops(module_idx, expr_idx, loops);
+        self.lookup.set_expr_loops(module_idx, expr_idx, loops)?;
 
         Ok(())
     }

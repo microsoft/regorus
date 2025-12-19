@@ -22,6 +22,11 @@ pub struct Parser<'source> {
     future_keywords: BTreeMap<String, Option<Span>>,
     rego_v1: bool,
 
+    // Tracks current expression/comprehension/query nesting to enforce a recursion limit.
+    expr_depth: usize,
+    max_expr_depth: usize,
+    expr_depth_overflow: bool,
+
     // The index of the last expression that was parsed.
     eidx: u32,
     // The index of the last statement that was parsed.
@@ -31,6 +36,7 @@ pub struct Parser<'source> {
 }
 
 const FUTURE_KEYWORDS: [&str; 4] = ["contains", "every", "if", "in"];
+const DEFAULT_MAX_EXPR_DEPTH: usize = 32;
 
 impl<'source> Parser<'source> {
     pub fn new(source: &'source Source) -> Result<Self> {
@@ -44,6 +50,9 @@ impl<'source> Parser<'source> {
             end: 0,
             future_keywords: BTreeMap::new(),
             rego_v1: false,
+            expr_depth: 0,
+            max_expr_depth: DEFAULT_MAX_EXPR_DEPTH,
+            expr_depth_overflow: false,
             eidx: 0,
             sidx: 0,
             qidx: 0,
@@ -92,6 +101,32 @@ impl<'source> Parser<'source> {
         self.end = self.tok.1.end;
         self.tok = self.lexer.next_token()?;
         Ok(())
+    }
+
+    fn with_expr_depth<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        // Increment expression depth.
+        self.expr_depth = self.expr_depth.saturating_add(1);
+        let current_depth = self.expr_depth;
+
+        // Enforce recursion limit.
+        if self.expr_depth > self.max_expr_depth {
+            self.expr_depth = current_depth.saturating_sub(1);
+            self.expr_depth_overflow = true;
+            bail!(self.tok.1.error(&format!(
+                "expression nesting too deep (>{})",
+                self.max_expr_depth
+            )));
+        }
+
+        let res = f(self);
+
+        // Upon return, ensure that expression depth is still current_depth.
+        if self.expr_depth != current_depth {
+            bail!("internal error: expression depth imbalance");
+        }
+
+        self.expr_depth = current_depth.saturating_sub(1);
+        res
     }
 
     fn expect(&mut self, text: &str, context: &str) -> Result<()> {
@@ -180,19 +215,27 @@ impl<'source> Parser<'source> {
 
     fn handle_import_future_keywords(&mut self, comps: &[Span]) -> Result<bool> {
         if comps.len() >= 2 && comps[0].text() == "future" && comps[1].text() == "keywords" {
-            match comps.len() - 2 {
-                1 => self.set_future_keyword(comps[2].text(), &Some(comps[2].clone()))?,
+            match comps.len().saturating_sub(2) {
+                1 if comps.len() >= 3 => {
+                    self.set_future_keyword(comps[2].text(), &Some(comps[2].clone()))?
+                }
                 0 => {
                     let span = &comps[1];
                     for kw in FUTURE_KEYWORDS.iter() {
                         self.set_future_keyword(kw, &Some(span.clone()))?;
                     }
                 }
-                _ => {
+                _ if comps.len() >= 4 => {
                     let s = &comps[3];
-                    return Err(self
-                        .source
-                        .error(s.line, s.col - 1, "invalid future keyword"));
+                    return Err(self.source.error(
+                        s.line,
+                        s.col.saturating_sub(1),
+                        "invalid future keyword",
+                    ));
+                }
+                _ => {
+                    let s = &comps[1];
+                    return Err(self.source.error(s.line, s.col, "invalid future keyword"));
                 }
             }
             Ok(true)
@@ -384,7 +427,12 @@ impl<'source> Parser<'source> {
                 span.end = self.end;
                 Ok((term, query))
             }
-            Err(_) if self.end == pos => {
+            Err(err) if self.end == pos => {
+                // Propagate depth overflow error if any.
+                if self.expr_depth_overflow {
+                    return Err(err);
+                }
+
                 // No progress was made in parsing the query.
                 // Restore state and try parsing as set, array or object.
                 *self = state;
@@ -410,7 +458,11 @@ impl<'source> Parser<'source> {
                     eidx: self.next_eidx(),
                 })
             }
-            Err(_) if self.end == pos => {
+            Err(err) if self.end == pos => {
+                // Propagate depth overflow error if any.
+                if self.expr_depth_overflow {
+                    return Err(err);
+                }
                 // No progress was made in parsing comprehension.
                 // Parse as array.
                 let mut items = vec![];
@@ -453,11 +505,20 @@ impl<'source> Parser<'source> {
                 });
             }
             Err(err) if self.end != pos => {
+                // Propagate depth overflow error if any.
+                if self.expr_depth_overflow {
+                    return Err(err);
+                }
                 // Some progress was made parsing the set comprehension.
                 // Report errors.
                 return Err(err);
             }
-            _ => (),
+            Err(err) => {
+                // Propagate depth overflow error if any.
+                if self.expr_depth_overflow {
+                    return Err(err);
+                }
+            }
         }
 
         // It could be a set, object or object comprehension.
@@ -511,11 +572,20 @@ impl<'source> Parser<'source> {
                 });
             }
             Err(err) if self.end != pos => {
+                // Propagate depth overflow error if any.
+                if self.expr_depth_overflow {
+                    return Err(err);
+                }
                 // Some progress was made parsing the object comprehension.
                 // Report errors.
                 return Err(err);
             }
-            _ => (),
+            Err(err) => {
+                // Propagate depth overflow error if any.
+                if self.expr_depth_overflow {
+                    return Err(err);
+                }
+            }
         }
 
         // Parse object
@@ -890,11 +960,17 @@ impl<'source> Parser<'source> {
     }
 
     pub fn parse_expr(&mut self) -> Result<Expr> {
-        #[cfg(feature = "rego-extensions")]
-        return self.parse_or_expr();
+        self.with_expr_depth(|this| {
+            #[cfg(feature = "rego-extensions")]
+            {
+                this.parse_or_expr()
+            }
 
-        #[cfg(not(feature = "rego-extensions"))]
-        return self.parse_membership_expr();
+            #[cfg(not(feature = "rego-extensions"))]
+            {
+                this.parse_membership_expr()
+            }
+        })
     }
 
     #[cfg(feature = "rego-extensions")]
@@ -1067,22 +1143,35 @@ impl<'source> Parser<'source> {
             }
 
             span.end = self.end;
-            // Since exprs are discarded, adjust the expression index counter.
-            self.eidx -= vars.len() as u32;
+            // Since exprs are discarded, adjust the expression index counter (saturating to avoid underflow).
+            self.eidx = self.eidx.saturating_sub(vars.len() as u32);
             return Ok(Literal::SomeVars { span, vars });
         }
 
-        let (key, value) = match refs.len() {
-            2 => (Some(refs[0].clone()), refs[1].clone()),
-            1 => (None, refs[0].clone()),
-            _ => {
-                let span = &vars[2];
+        if refs.len() >= 3 {
+            // Too many identifiers before `in`.
+            if let Some(span) = vars.get(2).or_else(|| vars.last()) {
                 return Err(anyhow!(
                     "{}:{}:{} error: encountered `{}` while expecting `in`",
                     span.source.file(),
                     span.line,
                     span.col,
                     span.text()
+                ));
+            }
+            return Err(anyhow!(
+                "invalid some-decl: expected `in` after variable names"
+            ));
+        }
+
+        let (key, value) = match refs.len() {
+            2 => (Some(refs[0].clone()), refs[1].clone()),
+            1 => (None, refs[0].clone()),
+            _ => {
+                // We always parse at least one identifier before `in`; guard defensively.
+                // parse_ident rejects `in` when no vars are present, so this is effectively unreachable.
+                return Err(anyhow!(
+                    "invalid some-decl: expected variable names before `in`"
                 ));
             }
         };
@@ -1904,7 +1993,6 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_target_rule(&mut self) -> Result<Option<String>> {
-        // Check if the current token starts a target rule: __target__
         if self.tok.0 == TokenKind::Ident && self.token_text() == "__target__" {
             // Parse __target__
             self.next_token()?;

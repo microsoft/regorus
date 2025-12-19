@@ -5,6 +5,7 @@ use super::{Compiler, CompilerError, ComprehensionType, ContextType, Result};
 use crate::ast::{self, LiteralStmt, Query};
 use crate::rvm::program::RuleType;
 use crate::rvm::Instruction;
+use alloc::format;
 use alloc::vec::Vec;
 
 impl<'a> Compiler<'a> {
@@ -13,7 +14,15 @@ impl<'a> Compiler<'a> {
 
         let result = {
             let schedule = match &self.policy.inner.schedule {
-                Some(s) => s.queries.get(self.current_module_index, query.qidx),
+                Some(s) => s
+                    .queries
+                    .get_checked(self.current_module_index, query.qidx)
+                    .map_err(|err| {
+                        CompilerError::General {
+                            message: format!("schedule out of bounds: {err}"),
+                        }
+                        .at(&query.span)
+                    })?,
                 None => None,
             };
 
@@ -94,11 +103,11 @@ impl<'a> Compiler<'a> {
         let mut key_value_loops = Vec::new();
 
         if let Some(expr) = key_expr.as_ref() {
-            key_value_loops.extend(self.get_expr_loops(expr));
+            key_value_loops.extend(self.get_expr_loops(expr)?);
         }
 
         if let Some(expr) = value_expr.as_ref() {
-            key_value_loops.extend(self.get_expr_loops(expr));
+            key_value_loops.extend(self.get_expr_loops(expr)?);
         }
 
         if !key_value_loops.is_empty() {

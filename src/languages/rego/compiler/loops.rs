@@ -15,31 +15,54 @@ use alloc::vec::Vec;
 
 impl<'a> Compiler<'a> {
     pub(super) fn get_statement_loops(&self, stmt: &LiteralStmt) -> Result<Vec<HoistedLoop>> {
-        self.policy
+        let loops = self
+            .policy
             .inner
             .loop_hoisting_table
             .get_statement_loops(self.current_module_index, stmt.sidx)
-            .cloned()
-            .ok_or_else(|| {
+            .map_err(|err| {
                 CompilerError::General {
-                    message: format!(
-                        "missing loop hoisting data for statement at {}:{}",
-                        stmt.span.line, stmt.span.col
-                    ),
+                    message: format!("loop hoisting table out of bounds: {err}"),
                 }
                 .at(&stmt.span)
-            })
+            })?;
+
+        loops.cloned().ok_or_else(|| {
+            CompilerError::General {
+                message: format!(
+                    "missing loop hoisting data for statement at {}:{}",
+                    stmt.span.line, stmt.span.col
+                ),
+            }
+            .at(&stmt.span)
+        })
     }
 
-    pub(super) fn get_expr_loops(&self, expr: &ExprRef) -> Vec<HoistedLoop> {
+    pub(super) fn get_expr_loops(&self, expr: &ExprRef) -> Result<Vec<HoistedLoop>> {
         let module_idx = self.current_module_index;
         let expr_idx = expr.as_ref().eidx();
-        self.policy
+        let loops = self
+            .policy
             .inner
             .loop_hoisting_table
             .get_expr_loops(module_idx, expr_idx)
-            .cloned()
-            .unwrap_or_default()
+            .map_err(|err| {
+                CompilerError::General {
+                    message: format!("loop hoisting table out of bounds: {err}"),
+                }
+                .at(expr.span())
+            })?;
+
+        loops.cloned().ok_or_else(|| {
+            CompilerError::General {
+                message: format!(
+                    "missing loop hoisting data for expression at {}:{}",
+                    expr.span().line,
+                    expr.span().col
+                ),
+            }
+            .at(expr.span())
+        })
     }
 
     pub(super) fn compile_hoisted_loops(
@@ -192,7 +215,7 @@ impl<'a> Compiler<'a> {
 
         let mut key_binding_plan: Option<(BindingPlan, Span)> = None;
         if let Some(key_var) = key_var {
-            if let Some(binding_plan) = self.get_binding_plan_for_expr(key_var) {
+            if let Some(binding_plan) = self.get_binding_plan_for_expr(key_var)? {
                 if let BindingPlan::LoopIndex { .. } = &binding_plan {
                     key_binding_plan = Some((binding_plan, key_var.span().clone()));
                 } else {
@@ -327,7 +350,7 @@ impl<'a> Compiler<'a> {
 
         let body_start = self.program.instructions.len() as u16;
 
-        if let Some(binding_plan) = self.get_binding_plan_for_expr(collection) {
+        if let Some(binding_plan) = self.get_binding_plan_for_expr(collection)? {
             if let BindingPlan::SomeIn {
                 key_plan,
                 value_plan,

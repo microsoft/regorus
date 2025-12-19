@@ -98,7 +98,13 @@ impl SourceStr {
     }
 
     pub fn text(&self) -> &str {
-        &self.source.contents()[self.start as usize..self.end as usize]
+        let start = self.start as usize;
+        let end = self.end as usize;
+        // Use safe slicing to avoid panics on malformed spans
+        self.source
+            .contents()
+            .get(start..end)
+            .unwrap_or("<invalid-span>")
     }
 
     pub fn clone_empty(&self) -> SourceStr {
@@ -241,7 +247,13 @@ pub struct Span {
 
 impl Span {
     pub fn text(&self) -> &str {
-        &self.source.contents()[self.start as usize..self.end as usize]
+        let start = self.start as usize;
+        let end = self.end as usize;
+        // Use safe slicing to avoid panics on malformed spans
+        self.source
+            .contents()
+            .get(start..end)
+            .unwrap_or("<invalid-span>")
     }
 
     pub fn source_str(&self) -> SourceStr {
@@ -445,7 +457,13 @@ impl<'source> Lexer<'source> {
         }
 
         // Ensure that the number is parsable in Rust.
-        match serde_json::from_str::<Value>(&self.source.contents()[start..end]) {
+        let num_slice = self
+            .source
+            .contents()
+            .get(start..end)
+            .ok_or_else(|| self.source.error(self.line, col, "invalid number span"))?;
+
+        match serde_json::from_str::<Value>(num_slice) {
             Ok(_) => (),
             Err(e) => {
                 let serde_msg = &e.to_string();
@@ -506,6 +524,10 @@ impl<'source> Lexer<'source> {
             }
         }
         let end = self.peek().0;
+        if end <= start {
+            // Guard against invalid span that would underflow end - 1
+            return Err(self.source.error(line, col, "invalid raw string span"));
+        }
         Ok(Token(
             TokenKind::RawString,
             Span {
@@ -574,8 +596,19 @@ impl<'source> Lexer<'source> {
         let end = self.peek().0;
         self.col += (end - start) as u32;
 
+        if start == 0 || end <= start {
+            // Reject invalid spans before slicing/serde to avoid panic
+            return Err(self.source.error(line, col, "invalid string span"));
+        }
+
+        let str_slice = self
+            .source
+            .contents()
+            .get(start - 1..end)
+            .ok_or_else(|| self.source.error(line, col, "invalid string span"))?;
+
         // Ensure that the string is parsable in Rust.
-        match serde_json::from_str::<String>(&self.source.contents()[start - 1..end]) {
+        match serde_json::from_str::<String>(str_slice) {
             Ok(_) => (),
             Err(e) => {
                 let serde_msg = &e.to_string();

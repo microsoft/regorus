@@ -359,16 +359,20 @@ impl Interpreter {
     }
 
     // Helper methods for working with ExprLookup
-    fn set_loop_var_value(&mut self, expr: &ExprRef, value: Value) {
+    fn set_loop_var_value(&mut self, expr: &ExprRef, value: Value) -> Result<()> {
         let module_idx = self.current_module_index;
         let expr_idx = expr.eidx();
-        self.loop_var_values.set(module_idx, expr_idx, value);
+        self.loop_var_values
+            .set_checked(module_idx, expr_idx, value)
+            .map_err(|err| anyhow!("internal error: loop var indices out of bounds: {err}"))
     }
 
-    fn get_loop_var_value(&self, expr: &ExprRef) -> Option<&Value> {
+    fn get_loop_var_value(&self, expr: &ExprRef) -> Result<Option<&Value>> {
         let module_idx = self.current_module_index;
         let expr_idx = expr.eidx();
-        self.loop_var_values.get(module_idx, expr_idx)
+        self.loop_var_values
+            .get_checked(module_idx, expr_idx)
+            .map_err(|err| anyhow!("internal error: loop var indices out of bounds: {err}"))
     }
 
     fn remove_loop_var_value(&mut self, expr: &ExprRef) {
@@ -406,12 +410,13 @@ impl Interpreter {
             if let Some(last_param) = params.last() {
                 let module_idx = self.current_module_index;
                 let expr_idx = last_param.as_ref().eidx();
-                return match self
+                let binding_plan = self
                     .compiled_policy
                     .loop_hoisting_table
                     .get_expr_binding_plan(module_idx, expr_idx)
-                    .cloned()
-                {
+                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
+
+                return match binding_plan.cloned() {
                     Some(BindingPlan::Parameter {
                         destructuring_plan, ..
                     }) => Ok(Some(destructuring_plan)),
@@ -483,7 +488,7 @@ impl Interpreter {
         // Collect a chaing of '.field' or '["field"]'
         let mut path = vec![];
         loop {
-            if let Some(v) = self.get_loop_var_value(expr) {
+            if let Some(v) = self.get_loop_var_value(expr)? {
                 path.reverse();
                 return Ok(Self::get_value_chained(v.clone(), &path[..]));
             }
@@ -876,15 +881,17 @@ impl Interpreter {
         let module_idx = self.current_module_index;
         let expr_idx = collection.as_ref().eidx();
 
+        let binding_plan = self
+            .compiled_policy
+            .loop_hoisting_table
+            .get_expr_binding_plan(module_idx, expr_idx)
+            .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
+
         let Some(BindingPlan::SomeIn {
             key_plan,
             value_plan,
             ..
-        }) = self
-            .compiled_policy
-            .loop_hoisting_table
-            .get_expr_binding_plan(module_idx, expr_idx)
-            .cloned()
+        }) = binding_plan.cloned()
         else {
             bail!("internal error: missing binding plan for some..in expression");
         };
@@ -1367,7 +1374,7 @@ impl Interpreter {
                 match loop_value {
                     Value::Array(items) => {
                         for item in items.iter() {
-                            self.set_loop_var_value(loop_target_expr, item.clone());
+                            self.set_loop_var_value(loop_target_expr, item.clone())?;
 
                             if self.execute_destructuring_plan(&walk_plan, item)?
                                 == Value::from(true)
@@ -1417,12 +1424,13 @@ impl Interpreter {
             let index_plan = if let Some(index) = index_expr {
                 let module_idx = self.current_module_index;
                 let expr_idx = index.as_ref().eidx();
-                match self
+                let plan = self
                     .compiled_policy
                     .loop_hoisting_table
                     .get_expr_binding_plan(module_idx, expr_idx)
-                    .cloned()
-                {
+                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
+
+                match plan.cloned() {
                     Some(BindingPlan::LoopIndex {
                         destructuring_plan, ..
                     }) => destructuring_plan,
@@ -1445,7 +1453,7 @@ impl Interpreter {
             match loop_value {
                 Value::Array(items) => {
                     for (idx, v) in items.iter().enumerate() {
-                        self.set_loop_var_value(loop_target_expr, v.clone());
+                        self.set_loop_var_value(loop_target_expr, v.clone())?;
 
                         if self.execute_destructuring_plan(&index_plan, &Value::from(idx))?
                             == Value::from(true)
@@ -1466,7 +1474,7 @@ impl Interpreter {
                 }
                 Value::Set(items) => {
                     for v in items.iter() {
-                        self.set_loop_var_value(loop_target_expr, v.clone());
+                        self.set_loop_var_value(loop_target_expr, v.clone())?;
 
                         // For sets, index is also the value.
                         if self.execute_destructuring_plan(&index_plan, v)? == Value::from(true) {
@@ -1485,7 +1493,7 @@ impl Interpreter {
                 }
                 Value::Object(obj) => {
                     for (k, v) in obj.iter() {
-                        self.set_loop_var_value(loop_target_expr, v.clone());
+                        self.set_loop_var_value(loop_target_expr, v.clone())?;
                         // For objects, index is key.
                         if self.execute_destructuring_plan(&index_plan, k)? == Value::from(true) {
                             result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
@@ -1692,7 +1700,7 @@ impl Interpreter {
                 };
 
                 let comps_defined = comps.iter().all(|v| v != &Value::Undefined);
-                let ctx = self.contexts.last_mut().expect("no current context");
+                let ctx = self.get_current_context_mut()?;
 
                 if is_const_rule {
                     ctx.early_return = true;
@@ -1745,7 +1753,7 @@ impl Interpreter {
                     let key = self.eval_expr(&ke)?;
                     let value = self.eval_expr(&oe)?;
 
-                    let ctx = self.contexts.last_mut().unwrap();
+                    let ctx = self.get_current_context_mut()?;
                     if key != Value::Undefined && value != Value::Undefined {
                         let map = ctx.value.as_object_mut()?;
                         match map.get(&key) {
@@ -1774,7 +1782,7 @@ impl Interpreter {
                 }
                 (None, Some(oe)) => {
                     let output = self.eval_expr(&oe)?;
-                    let ctx = self.contexts.last_mut().unwrap();
+                    let ctx = self.get_current_context_mut()?;
                     if output != Value::Undefined {
                         match &mut ctx.value {
                             Value::Array(a) => {
@@ -1798,9 +1806,12 @@ impl Interpreter {
             }
 
             // If a query snippet is being run, gather results.
-            let ctx = self.contexts.last_mut().expect("no current context");
-            if let Some(result) = &ctx.result {
-                let mut result = result.clone();
+            let result_opt = {
+                let ctx = self.get_current_context_mut()?;
+                ctx.result.clone()
+            };
+
+            if let Some(mut result) = result_opt {
                 if let Some(scope) = self.scopes.last() {
                     for (name, value) in scope.iter() {
                         result
@@ -1816,6 +1827,7 @@ impl Interpreter {
                        .all(|v| v.value != Value::Undefined && v.value != Value::Bool(false))
                        && !result.expressions.is_empty()
                 {
+                    let ctx = self.get_current_context_mut()?;
                     ctx.results.result.push(result);
                 }
             }
@@ -1830,19 +1842,19 @@ impl Interpreter {
         match self.eval_expr(Self::loop_collection_expr(loop_info))? {
             Value::Array(items) => {
                 for v in items.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone());
+                    self.set_loop_var_value(loop_target_expr, v.clone())?;
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Set(items) => {
                 for v in items.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone());
+                    self.set_loop_var_value(loop_target_expr, v.clone())?;
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
             Value::Object(obj) => {
                 for (_, v) in obj.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone());
+                    self.set_loop_var_value(loop_target_expr, v.clone())?;
                     result = self.eval_output_expr_in_loop(&loops[1..])? || result;
                 }
             }
@@ -1859,6 +1871,13 @@ impl Interpreter {
 
     fn get_current_context(&self) -> Result<&Context> {
         match self.contexts.last() {
+            Some(ctx) => Ok(ctx),
+            _ => bail!("internal error: no active context found"),
+        }
+    }
+
+    fn get_current_context_mut(&mut self) -> Result<&mut Context> {
+        match self.contexts.last_mut() {
             Some(ctx) => Ok(ctx),
             _ => bail!("internal error: no active context found"),
         }
@@ -1881,9 +1900,10 @@ impl Interpreter {
                 .compiled_policy
                 .loop_hoisting_table
                 .get_expr_loops(self.current_module_index, ke.as_ref().eidx())
+                .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
                 Some(hoisted_loops) => {
-                    loops.extend(hoisted_loops.iter().cloned());
+                    loops.extend(hoisted_loops.clone());
                 }
                 None => {
                     bail!(ke.span().error("Loop hoisting information not found for key expression. This is likely a bug in the compilation phase."));
@@ -1897,9 +1917,10 @@ impl Interpreter {
                 .compiled_policy
                 .loop_hoisting_table
                 .get_expr_loops(self.current_module_index, oe.as_ref().eidx())
+                .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
                 Some(hoisted_loops) => {
-                    loops.extend(hoisted_loops.iter().cloned());
+                    loops.extend(hoisted_loops.clone());
                 }
                 None => {
                     bail!(oe.span().error("Loop hoisting information not found for output expression. This is likely a bug in the compilation phase."));
@@ -1927,10 +1948,11 @@ impl Interpreter {
             }
 
             // Get pre-computed hoisted loops from compilation phase
-            let loop_exprs = match self
+            let loop_exprs: Vec<HoistedLoop> = match self
                 .compiled_policy
                 .loop_hoisting_table
                 .get_statement_loops(self.current_module_index, stmt.sidx)
+                .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
                 Some(hoisted_loops) => {
                     // Use pre-computed loops from compilation phase
@@ -1960,9 +1982,12 @@ impl Interpreter {
             result = self.eval_output_expr()?;
         } else {
             // If a query snippet is being run, gather results.
-            let ctx = self.contexts.last_mut().expect("no current context");
-            if let Some(result) = &ctx.result {
-                let mut result = result.clone();
+            let result_opt = {
+                let ctx = self.get_current_context_mut()?;
+                ctx.result.clone()
+            };
+
+            if let Some(mut result) = result_opt {
                 if let Some(scope) = self.scopes.last() {
                     for (name, value) in scope.iter() {
                         result
@@ -1979,6 +2004,7 @@ impl Interpreter {
                     .all(|v| v.value != Value::Undefined && v.value != Value::Bool(false))
                     && !result.expressions.is_empty()
                 {
+                    let ctx = self.get_current_context_mut()?;
                     ctx.results.result.push(result);
                 }
             }
@@ -1994,11 +2020,14 @@ impl Interpreter {
             let query_module_index = self.compiled_policy.modules.len() as u32;
             if self.current_module_index == query_module_index {
                 // Use query schedule for the current module
-                match self
-                    .query_schedule
-                    .as_ref()
-                    .and_then(|s| s.queries.get(query_module_index, query.qidx))
-                {
+                let schedule = match self.query_schedule.as_ref() {
+                    Some(s) => s
+                        .queries
+                        .get_checked(query_module_index, query.qidx)
+                        .map_err(|err| anyhow!("schedule out of bounds: {err}"))?,
+                    None => None,
+                };
+                match schedule {
                     Some(schedule) => Some(&schedule.order),
                     None => {
                         if self.query_schedule.is_some() {
@@ -2011,12 +2040,15 @@ impl Interpreter {
                 }
             } else {
                 // Use compiled policy schedule for other modules
-                match self
-                    .compiled_policy
-                    .schedule
-                    .as_ref()
-                    .and_then(|s| s.queries.get(self.current_module_index, query.qidx))
-                {
+                let schedule = match self.compiled_policy.schedule.as_ref() {
+                    Some(s) => s
+                        .queries
+                        .get_checked(self.current_module_index, query.qidx)
+                        .map_err(|err| anyhow!("schedule out of bounds: {err}"))?,
+                    None => None,
+                };
+
+                match schedule {
                     Some(schedule) => Some(&schedule.order),
                     None => {
                         if self.compiled_policy.schedule.is_some() {
@@ -2031,7 +2063,30 @@ impl Interpreter {
         };
 
         let ordered_stmts: Vec<&LiteralStmt> = match order_indices {
-            Some(order) => order.iter().map(|i| &query.stmts[*i as usize]).collect(),
+            Some(order) => {
+                let stmts_len = query.stmts.len();
+                if order.len() != stmts_len {
+                    let msg = format!(
+                        "invalid schedule: expected {stmts_len} statement indices, found {}",
+                        order.len()
+                    );
+                    bail!(query.span.error(msg.as_str()));
+                }
+
+                let mut ordered = Vec::with_capacity(stmts_len);
+                for idx in order {
+                    let stmt_idx = *idx as usize;
+                    if stmt_idx >= stmts_len {
+                        let msg = format!(
+                            "invalid schedule index {stmt_idx} for {} statements",
+                            stmts_len
+                        );
+                        bail!(query.span.error(msg.as_str()));
+                    }
+                    ordered.push(&query.stmts[stmt_idx]);
+                }
+                ordered
+            }
             None => query.stmts.iter().collect(),
         };
 
@@ -2349,7 +2404,7 @@ impl Interpreter {
         params: &[ExprRef],
     ) -> Result<Value> {
         // Return generated values of walk builtin.
-        if let Some(v) = self.get_loop_var_value(expr) {
+        if let Some(v) = self.get_loop_var_value(expr)? {
             return Ok(v.clone());
         }
 
@@ -2497,6 +2552,7 @@ impl Interpreter {
                     .compiled_policy
                     .loop_hoisting_table
                     .get_expr_binding_plan(module_idx, expr_idx)
+                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
                 {
                     // Execute the destructuring plan with the parameter value
@@ -2642,6 +2698,7 @@ impl Interpreter {
                     .compiled_policy
                     .loop_hoisting_table
                     .get_expr_binding_plan(module_idx, expr_idx)
+                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
                 {
                     // Execute the destructuring plan with the return value
@@ -2824,7 +2881,8 @@ impl Interpreter {
 
             Ok(Self::get_value_chained(self.data.clone(), fields))
         } else if !self.compiled_policy.modules.is_empty() {
-            let path = Parser::get_path_ref_components(&self.module.clone().unwrap().package.refr)?;
+            let module = self.current_module()?;
+            let path = Parser::get_path_ref_components(&module.package.refr)?;
             let mut path: Vec<&str> = path.iter().map(|s| s.text()).collect();
             path.push(name.text());
 
@@ -2933,6 +2991,7 @@ impl Interpreter {
                     .compiled_policy
                     .loop_hoisting_table
                     .get_expr_binding_plan(module_idx, expr_idx)
+                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
                     .ok_or_else(|| {
                         expr.span().error(
@@ -3001,7 +3060,8 @@ impl Interpreter {
     }
 
     fn make_rule_context(&self, head: &RuleHead) -> Result<(Context, Vec<Span>)> {
-        let mut path = Parser::get_path_ref_components(&self.module.clone().unwrap().package.refr)?;
+        let module = self.current_module()?;
+        let mut path = Parser::get_path_ref_components(&module.package.refr)?;
         match head {
             RuleHead::Compr { refr, assign, .. } => {
                 let output_expr = assign.as_ref().map(|assign| assign.value.clone());
@@ -3321,8 +3381,8 @@ impl Interpreter {
 
             let scopes = core::mem::take(&mut self.scopes);
 
-            let mut path =
-                Parser::get_path_ref_components(&self.module.clone().unwrap().package.refr)?;
+            let module = self.current_module()?;
+            let mut path = Parser::get_path_ref_components(&module.package.refr)?;
 
             let (refr, index) = match refr.as_ref() {
                 Expr::RefBrack { refr, index, .. } => (refr, Some(index.clone())),
@@ -3638,28 +3698,49 @@ impl Interpreter {
             _ => bail!("internal error: no context"),
         };
 
-        // Apply expression ordering from the schedule if needed
+        // Apply expression ordering from the schedule when it is safe to do so.
+        // If the schedule references statements that did not produce expressions, the lengths
+        // will differ; in that case we keep the collected order to avoid spurious errors.
+        // Example: a schedule for `1 == 2; 1 == 1` may list both statements. The first produces
+        // an expression (false), but evaluation stops and the second never runs, so only one
+        // expression is collected. In that case `order.len()` can be 2 while one expression is
+        // available. In these cases, we avoid reordering - doing so requires maintaining additional
+        // data during evaluation and is not worth the complexity for now.
         let current_module_idx = compiled_modules_len;
         let current_query_idx = query.qidx;
         if let Some(ref self_schedule) = &self.query_schedule {
             if let Some(query_schedule) = self_schedule
                 .queries
-                .get(current_module_idx, current_query_idx)
+                .get_checked(current_module_idx, current_query_idx)
+                .map_err(|err| anyhow!("schedule out of bounds: {err}"))?
             {
                 for idx in 0..results.result.len() {
-                    let e = Expression {
+                    let exprs_len = results.result[idx].expressions.len();
+                    // Skip reordering when the schedule length does not match produced expressions.
+                    if query_schedule.order.len() != exprs_len {
+                        continue;
+                    }
+
+                    let placeholder = Expression {
                         value: Value::Undefined,
                         text: "".into(),
                         location: Location { row: 0, col: 0 },
                     };
-                    let mut ordered_expressions = vec![e; results.result[idx].expressions.len()];
+                    let mut ordered_expressions = vec![placeholder; exprs_len];
+                    let mut invalid = false;
                     for (expr_idx, value) in results.result[idx].expressions.iter().enumerate() {
                         let orig_idx = query_schedule.order[expr_idx] as usize;
+                        if orig_idx >= exprs_len {
+                            invalid = true;
+                            break;
+                        }
                         ordered_expressions[orig_idx] = value.clone();
                     }
-                    if !ordered_expressions
-                        .iter()
-                        .any(|v| v.value == Value::Undefined)
+
+                    if !invalid
+                        && !ordered_expressions
+                            .iter()
+                            .any(|v| v.value == Value::Undefined)
                     {
                         results.result[idx].expressions = ordered_expressions;
                     }

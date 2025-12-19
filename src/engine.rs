@@ -871,6 +871,8 @@ impl Engine {
                 debug_assert!(
                     query_lookup
                         .get_statement_loops(module_idx, stmt.sidx)
+                        .ok()
+                        .and_then(|entry| entry)
                         .is_some(),
                     "missing hoisted loop entry for query statement index {}",
                     stmt.sidx
@@ -895,6 +897,8 @@ impl Engine {
                 debug_assert!(
                     existing_table
                         .get_statement_loops(module_idx, stmt.sidx)
+                        .ok()
+                        .and_then(|entry| entry)
                         .is_some(),
                     "missing hoisted loop entry after merge for module {} stmt {}",
                     module_idx,

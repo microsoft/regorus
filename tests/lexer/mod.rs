@@ -225,6 +225,34 @@ fn invalid_line() -> Result<()> {
 }
 
 #[test]
+fn invalid_span_text_fallbacks() -> Result<()> {
+    let rego = "abc";
+    let source = Source::from_contents("case.rego".to_string(), rego.to_string())?;
+
+    let ss = SourceStr::new(source.clone(), 100, 200);
+    assert_eq!(
+        ss.text(),
+        "<invalid-span>",
+        "SourceStr should return fallback for out-of-bounds span"
+    );
+
+    let span = Span {
+        source: source.clone(),
+        line: 1,
+        col: 1,
+        start: 5,
+        end: 2,
+    };
+    assert_eq!(
+        span.text(),
+        "<invalid-span>",
+        "Span should return fallback for malformed span"
+    );
+
+    Ok(())
+}
+
+#[test]
 #[cfg(feature = "std")]
 fn file_more_than_64_kb_size() -> Result<()> {
     let source = Source::from_file("tests/kata/data/large.rego")?;

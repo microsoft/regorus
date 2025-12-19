@@ -186,14 +186,20 @@ impl<'a> Compiler<'a> {
         self.lookup_local_var(var_name)
     }
 
-    pub(super) fn get_binding_plan_for_expr(&self, expr: &ExprRef) -> Option<BindingPlan> {
+    pub(super) fn get_binding_plan_for_expr(&self, expr: &ExprRef) -> Result<Option<BindingPlan>> {
         let module_idx = self.current_module_index;
         let expr_idx = expr.as_ref().eidx();
         self.policy
             .inner
             .loop_hoisting_table
             .get_expr_binding_plan(module_idx, expr_idx)
-            .cloned()
+            .map_err(|err| {
+                CompilerError::General {
+                    message: format!("loop hoisting table out of bounds: {err}"),
+                }
+                .at(expr.span())
+            })
+            .map(|plan: Option<&BindingPlan>| plan.cloned())
     }
 
     pub(super) fn expect_binding_plan_for_expr(
@@ -201,7 +207,7 @@ impl<'a> Compiler<'a> {
         expr: &ExprRef,
         context: &str,
     ) -> Result<BindingPlan> {
-        self.get_binding_plan_for_expr(expr).ok_or_else(|| {
+        self.get_binding_plan_for_expr(expr)?.ok_or_else(|| {
             CompilerError::MissingBindingPlan {
                 context: context.to_string(),
             }
