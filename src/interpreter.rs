@@ -3698,7 +3698,14 @@ impl Interpreter {
             _ => bail!("internal error: no context"),
         };
 
-        // Apply expression ordering from the schedule if needed
+        // Apply expression ordering from the schedule when it is safe to do so.
+        // If the schedule references statements that did not produce expressions, the lengths
+        // will differ; in that case we keep the collected order to avoid spurious errors.
+        // Example: a schedule for `1 == 2; 1 == 1` may list both statements. The first produces
+        // an expression (false), but evaluation stops and the second never runs, so only one
+        // expression is collected. In that case `order.len()` can be 2 while one expression is
+        // available. In these cases, we avoid reordering - doing so requires maintaining additional
+        // data during evaluation and is not worth the complexity for now.
         let current_module_idx = compiled_modules_len;
         let current_query_idx = query.qidx;
         if let Some(ref self_schedule) = &self.query_schedule {
@@ -3709,34 +3716,31 @@ impl Interpreter {
             {
                 for idx in 0..results.result.len() {
                     let exprs_len = results.result[idx].expressions.len();
+                    // Skip reordering when the schedule length does not match produced expressions.
                     if query_schedule.order.len() != exprs_len {
-                        let msg = format!(
-                            "invalid schedule: expected {exprs_len} expression indices, found {}",
-                            query_schedule.order.len()
-                        );
-                        bail!(query.span.error(msg.as_str()));
+                        continue;
                     }
 
-                    let e = Expression {
+                    let placeholder = Expression {
                         value: Value::Undefined,
                         text: "".into(),
                         location: Location { row: 0, col: 0 },
                     };
-                    let mut ordered_expressions = vec![e; exprs_len];
+                    let mut ordered_expressions = vec![placeholder; exprs_len];
+                    let mut invalid = false;
                     for (expr_idx, value) in results.result[idx].expressions.iter().enumerate() {
                         let orig_idx = query_schedule.order[expr_idx] as usize;
                         if orig_idx >= exprs_len {
-                            let msg = format!(
-                                "invalid schedule expression index {orig_idx} for {} expressions",
-                                exprs_len
-                            );
-                            bail!(query.span.error(msg.as_str()));
+                            invalid = true;
+                            break;
                         }
                         ordered_expressions[orig_idx] = value.clone();
                     }
-                    if !ordered_expressions
-                        .iter()
-                        .any(|v| v.value == Value::Undefined)
+
+                    if !invalid
+                        && !ordered_expressions
+                            .iter()
+                            .any(|v| v.value == Value::Undefined)
                     {
                         results.result[idx].expressions = ordered_expressions;
                     }
