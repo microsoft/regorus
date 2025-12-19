@@ -2858,7 +2858,8 @@ impl Interpreter {
 
             Ok(Self::get_value_chained(self.data.clone(), fields))
         } else if !self.compiled_policy.modules.is_empty() {
-            let path = Parser::get_path_ref_components(&self.module.clone().unwrap().package.refr)?;
+            let module = self.current_module()?;
+            let path = Parser::get_path_ref_components(&module.package.refr)?;
             let mut path: Vec<&str> = path.iter().map(|s| s.text()).collect();
             path.push(name.text());
 
@@ -3036,7 +3037,8 @@ impl Interpreter {
     }
 
     fn make_rule_context(&self, head: &RuleHead) -> Result<(Context, Vec<Span>)> {
-        let mut path = Parser::get_path_ref_components(&self.module.clone().unwrap().package.refr)?;
+        let module = self.current_module()?;
+        let mut path = Parser::get_path_ref_components(&module.package.refr)?;
         match head {
             RuleHead::Compr { refr, assign, .. } => {
                 let output_expr = assign.as_ref().map(|assign| assign.value.clone());
@@ -3356,8 +3358,8 @@ impl Interpreter {
 
             let scopes = core::mem::take(&mut self.scopes);
 
-            let mut path =
-                Parser::get_path_ref_components(&self.module.clone().unwrap().package.refr)?;
+            let module = self.current_module()?;
+            let mut path = Parser::get_path_ref_components(&module.package.refr)?;
 
             let (refr, index) = match refr.as_ref() {
                 Expr::RefBrack { refr, index, .. } => (refr, Some(index.clone())),
