@@ -2063,7 +2063,30 @@ impl Interpreter {
         };
 
         let ordered_stmts: Vec<&LiteralStmt> = match order_indices {
-            Some(order) => order.iter().map(|i| &query.stmts[*i as usize]).collect(),
+            Some(order) => {
+                let stmts_len = query.stmts.len();
+                if order.len() != stmts_len {
+                    let msg = format!(
+                        "invalid schedule: expected {stmts_len} statement indices, found {}",
+                        order.len()
+                    );
+                    bail!(query.span.error(msg.as_str()));
+                }
+
+                let mut ordered = Vec::with_capacity(stmts_len);
+                for idx in order {
+                    let stmt_idx = *idx as usize;
+                    if stmt_idx >= stmts_len {
+                        let msg = format!(
+                            "invalid schedule index {stmt_idx} for {} statements",
+                            stmts_len
+                        );
+                        bail!(query.span.error(msg.as_str()));
+                    }
+                    ordered.push(&query.stmts[stmt_idx]);
+                }
+                ordered
+            }
             None => query.stmts.iter().collect(),
         };
 
