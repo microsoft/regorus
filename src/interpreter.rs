@@ -1700,7 +1700,7 @@ impl Interpreter {
                 };
 
                 let comps_defined = comps.iter().all(|v| v != &Value::Undefined);
-                let ctx = self.contexts.last_mut().expect("no current context");
+                let ctx = self.get_current_context_mut()?;
 
                 if is_const_rule {
                     ctx.early_return = true;
@@ -1753,7 +1753,7 @@ impl Interpreter {
                     let key = self.eval_expr(&ke)?;
                     let value = self.eval_expr(&oe)?;
 
-                    let ctx = self.contexts.last_mut().unwrap();
+                    let ctx = self.get_current_context_mut()?;
                     if key != Value::Undefined && value != Value::Undefined {
                         let map = ctx.value.as_object_mut()?;
                         match map.get(&key) {
@@ -1782,7 +1782,7 @@ impl Interpreter {
                 }
                 (None, Some(oe)) => {
                     let output = self.eval_expr(&oe)?;
-                    let ctx = self.contexts.last_mut().unwrap();
+                    let ctx = self.get_current_context_mut()?;
                     if output != Value::Undefined {
                         match &mut ctx.value {
                             Value::Array(a) => {
@@ -1806,9 +1806,12 @@ impl Interpreter {
             }
 
             // If a query snippet is being run, gather results.
-            let ctx = self.contexts.last_mut().expect("no current context");
-            if let Some(result) = &ctx.result {
-                let mut result = result.clone();
+            let result_opt = {
+                let ctx = self.get_current_context_mut()?;
+                ctx.result.clone()
+            };
+
+            if let Some(mut result) = result_opt {
                 if let Some(scope) = self.scopes.last() {
                     for (name, value) in scope.iter() {
                         result
@@ -1824,6 +1827,7 @@ impl Interpreter {
                        .all(|v| v.value != Value::Undefined && v.value != Value::Bool(false))
                        && !result.expressions.is_empty()
                 {
+                    let ctx = self.get_current_context_mut()?;
                     ctx.results.result.push(result);
                 }
             }
@@ -1867,6 +1871,13 @@ impl Interpreter {
 
     fn get_current_context(&self) -> Result<&Context> {
         match self.contexts.last() {
+            Some(ctx) => Ok(ctx),
+            _ => bail!("internal error: no active context found"),
+        }
+    }
+
+    fn get_current_context_mut(&mut self) -> Result<&mut Context> {
+        match self.contexts.last_mut() {
             Some(ctx) => Ok(ctx),
             _ => bail!("internal error: no active context found"),
         }
@@ -1971,9 +1982,12 @@ impl Interpreter {
             result = self.eval_output_expr()?;
         } else {
             // If a query snippet is being run, gather results.
-            let ctx = self.contexts.last_mut().expect("no current context");
-            if let Some(result) = &ctx.result {
-                let mut result = result.clone();
+            let result_opt = {
+                let ctx = self.get_current_context_mut()?;
+                ctx.result.clone()
+            };
+
+            if let Some(mut result) = result_opt {
                 if let Some(scope) = self.scopes.last() {
                     for (name, value) in scope.iter() {
                         result
@@ -1990,6 +2004,7 @@ impl Interpreter {
                     .all(|v| v.value != Value::Undefined && v.value != Value::Bool(false))
                     && !result.expressions.is_empty()
                 {
+                    let ctx = self.get_current_context_mut()?;
                     ctx.results.result.push(result);
                 }
             }
