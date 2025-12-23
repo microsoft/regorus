@@ -1,6 +1,20 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::unwrap_used,
+    clippy::shadow_unrelated,
+    clippy::unused_self,
+    clippy::option_if_let_else,
+    clippy::semicolon_if_nothing_returned,
+    clippy::print_stderr,
+    clippy::use_debug,
+    clippy::as_conversions,
+    clippy::pattern_type_mismatch
+)] // scheduler logic indexes arrays and unwraps queues intentionally
+
 use crate::ast::Expr::*;
 use crate::ast::*;
 use crate::lexer::*;

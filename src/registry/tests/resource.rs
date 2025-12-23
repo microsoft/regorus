@@ -1,6 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    clippy::assertions_on_result_states,
+    clippy::pattern_type_mismatch
+)] // registry resource tests unwrap/panic for fixture setup
+
 use super::super::registry::*;
 use crate::{
     registry::{instances::RESOURCE_SCHEMA_REGISTRY, schemas::resource},

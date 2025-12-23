@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(clippy::unwrap_used, clippy::assertions_on_result_states)] // meta-schema tests unwrap errors to assert failures
+
 use super::*;
 use serde_json::json;
 

@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(clippy::pattern_type_mismatch)]
 use crate::ast::{Expr, Ref};
 use crate::lexer::Span;
 use crate::number::Number;

@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT and Apache 2.0 License.
-
+#![allow(clippy::as_conversions, clippy::unused_trait_names)]
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Timelike};
 

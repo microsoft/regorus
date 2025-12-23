@@ -1,5 +1,22 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::unwrap_used,
+    clippy::unimplemented,
+    clippy::panic_in_result_fn,
+    clippy::shadow_unrelated,
+    clippy::missing_const_for_fn,
+    clippy::semicolon_if_nothing_returned,
+    clippy::useless_let_if_seq,
+    clippy::option_if_let_else,
+    clippy::unused_self,
+    clippy::print_stderr,
+    clippy::needless_continue,
+    clippy::as_conversions,
+    clippy::pattern_type_mismatch
+)]
 
 use crate::ast::*;
 use crate::builtins::{self, BuiltinFcn};
@@ -3432,6 +3449,7 @@ impl Interpreter {
     }
 
     /// Evaluate a default rule and return the resulting value for compiler consumers.
+    #[cfg(feature = "rvm")]
     pub fn eval_default_rule_for_compiler(&mut self, rule_path: &str) -> Result<Value> {
         self.input = Value::Undefined;
         self.data = Value::Undefined;

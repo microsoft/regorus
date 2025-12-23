@@ -1,5 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::unused_trait_names,
+    clippy::pattern_type_mismatch
+)]
 
 use super::{CompilationContext, Compiler, CompilerError, ContextType, Register, Result};
 use crate::ast::{self, ExprRef, LiteralStmt, Query};

@@ -1,5 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::unwrap_used,
+    clippy::shadow_unrelated,
+    clippy::as_conversions,
+    clippy::unused_trait_names,
+    clippy::pattern_type_mismatch
+)]
 
 use super::{CompilationContext, Compiler, CompilerError, ContextType, Result, WorklistEntry};
 use crate::ast::{Expr, Rule, RuleHead};
@@ -105,12 +114,11 @@ impl<'a> Compiler<'a> {
     }
 
     fn find_module_index_for_rule(&self, rule_ref: &crate::ast::NodeRef<Rule>) -> Result<u32> {
-        let rule_ptr = rule_ref.as_ref() as *const Rule;
+        let rule = rule_ref.as_ref();
 
         for (module_idx, module) in self.policy.get_modules().iter().enumerate() {
             for policy_rule in &module.policy {
-                let policy_rule_ptr = policy_rule.as_ref() as *const Rule;
-                if policy_rule_ptr == rule_ptr {
+                if core::ptr::eq(policy_rule.as_ref(), rule) {
                     return Ok(module_idx as u32);
                 }
             }
@@ -126,12 +134,11 @@ impl<'a> Compiler<'a> {
     ) -> Result<(String, u32)> {
         if let Some(rule_definitions) = rules.get(rule_path) {
             if let Some(first_rule_ref) = rule_definitions.first() {
-                let rule_ptr = first_rule_ref.as_ref() as *const Rule;
+                let rule = first_rule_ref.as_ref();
 
                 for (module_index, module) in self.policy.get_modules().iter().enumerate() {
                     for policy_rule in &module.policy {
-                        let policy_rule_ptr = policy_rule.as_ref() as *const Rule;
-                        if policy_rule_ptr == rule_ptr {
+                        if core::ptr::eq(policy_rule.as_ref(), rule) {
                             let package_path =
                                 match get_path_string(&module.package.refr, Some("data")) {
                                     Ok(path) => path,

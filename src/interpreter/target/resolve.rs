@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(clippy::indexing_slicing)]
 
 use super::super::error::TargetCompileError;
 #[cfg(feature = "azure_policy")]

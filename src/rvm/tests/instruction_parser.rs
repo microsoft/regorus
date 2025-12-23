@@ -1,6 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::arithmetic_side_effects,
+    clippy::option_if_let_else,
+    clippy::unused_trait_names,
+    clippy::pattern_type_mismatch
+)] // tests unwrap conversions and slice math for brevity
+
 use crate::rvm::instructions::{Instruction, LoopMode};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;

@@ -1,7 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-
+#![allow(
+    clippy::panic_in_result_fn,
+    clippy::arithmetic_side_effects,
+    clippy::shadow_unrelated,
+    clippy::unused_self,
+    clippy::pattern_type_mismatch
+)]
 #![cfg(debug_assertions)]
+#![allow(clippy::panic)] // debug-only index checks panic on invariants
 
 use crate::ast::*;
 use alloc::collections::BTreeSet;

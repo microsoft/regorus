@@ -1,6 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::panic,
+    clippy::panic_in_result_fn,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::semicolon_if_nothing_returned,
+    clippy::pattern_type_mismatch,
+    clippy::print_stderr
+)] // test harness asserts and unwraps to validate interpreter behavior
+
 use std::env;
 
 use crate::test_utils::{check_output, ValueOrVec};

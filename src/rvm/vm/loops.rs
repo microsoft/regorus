@@ -1,6 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::indexing_slicing,
+    clippy::expect_used,
+    clippy::arithmetic_side_effects,
+    clippy::unwrap_used,
+    clippy::shadow_unrelated,
+    clippy::missing_const_for_fn,
+    clippy::unused_self,
+    clippy::as_conversions,
+    clippy::pattern_type_mismatch
+)] // VM loop handling indexes directly for performance and clarity
+
 use crate::rvm::instructions::LoopMode;
 use crate::value::Value;
 

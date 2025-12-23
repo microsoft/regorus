@@ -1,3 +1,8 @@
+#![allow(
+    clippy::missing_const_for_fn,
+    clippy::as_conversions,
+    clippy::unused_trait_names
+)]
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 

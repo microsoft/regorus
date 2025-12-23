@@ -1,6 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::unwrap_used,
+    clippy::unused_self,
+    clippy::as_conversions,
+    clippy::pattern_type_mismatch
+)] // virtual data paths index directly for speed; unwraps assert invariants
+
 use crate::rvm::instructions::LiteralOrRegister;
 use crate::value::Value;
 use alloc::vec::Vec;

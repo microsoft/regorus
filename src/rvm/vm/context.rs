@@ -1,5 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::arithmetic_side_effects,
+    clippy::missing_const_for_fn,
+    clippy::pattern_type_mismatch
+)]
 
 use crate::rvm::instructions::{ComprehensionMode, LoopMode};
 use crate::value::Value;

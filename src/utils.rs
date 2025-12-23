@@ -1,6 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::arithmetic_side_effects,
+    clippy::shadow_unrelated,
+    clippy::pattern_type_mismatch,
+    clippy::as_conversions
+)] // small arithmetic checks are intentional
+
 use crate::ast::*;
 use crate::builtins::*;
 use crate::lexer::*;

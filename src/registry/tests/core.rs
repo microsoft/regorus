@@ -1,6 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::shadow_unrelated,
+    clippy::assertions_on_result_states
+)] // registry tests unwrap/panic to assert outcomes
+
 use super::super::registry::*;
 use crate::{schema::Schema, *};
 use serde_json::json;

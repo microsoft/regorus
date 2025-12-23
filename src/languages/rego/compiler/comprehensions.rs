@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(clippy::as_conversions)]
 
 use super::{CompilationContext, Compiler, ComprehensionType, ContextType, Register, Result};
 use crate::ast::{ExprRef, Query};

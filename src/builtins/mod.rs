@@ -1,6 +1,19 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::arithmetic_side_effects,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::shadow_unrelated,
+    clippy::unwrap_used,
+    clippy::missing_const_for_fn,
+    clippy::option_if_let_else,
+    clippy::semicolon_if_nothing_returned,
+    clippy::useless_let_if_seq
+)] // builtins perform validated indexing and intentional arithmetic/string ops
+
 mod aggregates;
 mod arrays;
 mod bitwise;

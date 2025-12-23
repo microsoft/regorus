@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(clippy::pattern_type_mismatch)]
+
 //! Planner support for `some .. in` expressions.
 
 use alloc::collections::BTreeSet;

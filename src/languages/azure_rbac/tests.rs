@@ -5,6 +5,7 @@
 
 #[cfg(test)]
 mod condition_tests {
+    #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)] // tests unwrap/expect to assert parse results
     use crate::languages::azure_rbac::parser::*;
     use alloc::string::String;
     use alloc::vec;

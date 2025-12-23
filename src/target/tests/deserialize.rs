@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(clippy::unwrap_used, clippy::unused_trait_names)] // tests unwrap intentional failures and import ToString anonymously
+
 use super::super::*;
 use crate::Value;
 use alloc::string::ToString;

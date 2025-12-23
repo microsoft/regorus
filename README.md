@@ -3,7 +3,7 @@
 **Regorus** is
 
   - *Rego*-*Rus(t)*  - A fast, light-weight [Rego](https://www.openpolicyagent.org/docs/latest/policy-language/)
-   interpreter written in Rust.
+    interpreter written in Rust.
   - *Rigorous* - A rigorous enforcer of well-defined Rego semantics.
 
 Regorus is also

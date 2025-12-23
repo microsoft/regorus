@@ -1,5 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::arithmetic_side_effects,
+    clippy::float_cmp,
+    clippy::unwrap_used,
+    clippy::unreachable,
+    clippy::option_if_let_else,
+    clippy::unseparated_literal_suffix,
+    clippy::as_conversions,
+    clippy::unused_trait_names,
+    clippy::pattern_type_mismatch
+)]
 
 use alloc::format;
 use alloc::string::{String, ToString};

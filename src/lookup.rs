@@ -1,5 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::std_instead_of_core,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::missing_const_for_fn,
+    clippy::if_then_some_else_none,
+    clippy::as_conversions,
+    clippy::pattern_type_mismatch
+)]
 
 //! Lookup table for associating data structures with AST nodes.
 //!

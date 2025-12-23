@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(clippy::as_conversions)]
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;

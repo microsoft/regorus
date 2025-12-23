@@ -1,6 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::pattern_type_mismatch,
+    clippy::assertions_on_result_states
+)] // test cases assert failures via unwrap/expect panic paths and pattern matching
+
 use crate::{
     schema::{error::ValidationError, validate::SchemaValidator, Schema},
     *,

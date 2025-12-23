@@ -1,6 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    missing_debug_implementations,
+    clippy::missing_const_for_fn,
+    clippy::pattern_type_mismatch
+)] // VM structs are not debug printed
+
 use crate::rvm::program::Program;
 use crate::value::Value;
 use crate::CompiledPolicy;

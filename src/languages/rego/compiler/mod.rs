@@ -1,3 +1,11 @@
+#![allow(
+    missing_debug_implementations,
+    clippy::missing_const_for_fn,
+    clippy::option_if_let_else,
+    clippy::if_then_some_else_none,
+    clippy::unused_self
+)] // compiler internals do not require Debug
+
 mod comprehensions;
 mod core;
 mod destructuring;

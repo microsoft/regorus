@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(clippy::redundant_pub_crate)]
 
 pub(crate) mod binary;
 mod json;
