@@ -135,7 +135,7 @@ pub mod languages {
 }
 
 mod lexer;
-mod lookup;
+pub(crate) mod lookup;
 mod number;
 mod parser;
 mod policy_info;
