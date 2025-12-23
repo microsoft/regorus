@@ -1,5 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::used_underscore_binding,
+    clippy::as_conversions,
+    clippy::pattern_type_mismatch
+)]
 
 use crate::rvm::instructions::{Instruction, LiteralOrRegister};
 use crate::rvm::program::Program;

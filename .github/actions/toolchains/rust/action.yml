@@ -4,7 +4,7 @@ inputs:
   toolchain:
     description: 'Rust toolchain version'
     required: false
-    default: '1.89.0'
+    default: '1.92.0'
   components:
     description: 'Additional components to install'
     required: false

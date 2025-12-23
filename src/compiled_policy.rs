@@ -1,5 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::redundant_pub_crate,
+    clippy::missing_const_for_fn,
+    clippy::option_if_let_else,
+    clippy::pattern_type_mismatch
+)]
 
 use crate::ast::*;
 use crate::compiler::hoist::HoistedLoopsLookup;

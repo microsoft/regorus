@@ -1,6 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::unreachable,
+    clippy::assertions_on_result_states,
+    clippy::pattern_type_mismatch
+)] // registry target tests unwrap/panic for expectations
+
 use super::super::registry::*;
 use crate::{
     registry::{instances::TARGET_REGISTRY, targets},

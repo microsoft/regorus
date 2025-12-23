@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(clippy::pattern_type_mismatch, clippy::unused_trait_names)]
+
 //! Shared helpers for YAML-driven integration tests.
 
 use crate::Value;

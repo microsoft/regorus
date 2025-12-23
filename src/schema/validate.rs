@@ -1,7 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(missing_debug_implementations)] // validator is zero-sized marker
 #![allow(dead_code)]
+#![allow(clippy::pattern_type_mismatch, clippy::needless_continue)]
 
 use crate::{
     schema::{error::ValidationError, Schema, Type},

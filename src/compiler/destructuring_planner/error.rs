@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(clippy::pattern_type_mismatch)]
+
 //! Error definitions for the destructuring planner.
 
 use alloc::format;

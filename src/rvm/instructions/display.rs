@@ -1,3 +1,8 @@
+#![allow(
+    clippy::option_if_let_else,
+    clippy::unused_trait_names,
+    clippy::pattern_type_mismatch
+)]
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 

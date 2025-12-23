@@ -1,5 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::missing_const_for_fn,
+    clippy::semicolon_if_nothing_returned,
+    clippy::unused_self,
+    clippy::print_stderr,
+    clippy::as_conversions,
+    clippy::unused_trait_names,
+    clippy::pattern_type_mismatch
+)]
+#![allow(missing_debug_implementations)] // parser types are internal
 
 use crate::ast::*;
 use crate::lexer::*;

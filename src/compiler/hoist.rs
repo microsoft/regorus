@@ -1,5 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::as_conversions,
+    clippy::pattern_type_mismatch
+)]
 
 //! Loop hoisting functionality for compilation.
 //!
@@ -277,6 +283,7 @@ impl HoistedLoopsLookup {
         self.query_contexts.truncate_modules(module_count);
     }
 
+    #[cfg(debug_assertions)]
     pub fn module_len(&self) -> usize {
         self.statement_loops.module_len()
     }

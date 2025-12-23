@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(missing_debug_implementations)] // policy info structs used for serialization only
+
 #[cfg(feature = "azure_policy")]
 use crate::engine::PolicyParameters;
 use crate::*;

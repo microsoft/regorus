@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(missing_debug_implementations, clippy::pattern_type_mismatch)] // registry internals are not debug logged
 #![allow(dead_code)]
 use crate::*;
 use core::fmt;

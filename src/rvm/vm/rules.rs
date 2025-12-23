@@ -1,6 +1,19 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::expect_used,
+    clippy::shadow_unrelated,
+    clippy::unused_self,
+    clippy::semicolon_if_nothing_returned,
+    clippy::missing_const_for_fn,
+    clippy::as_conversions,
+    clippy::needless_continue,
+    clippy::pattern_type_mismatch
+)] // VM rule execution indexes directly and uses expect for invariant checks
+
 use crate::rvm::instructions::FunctionCallParams;
 use crate::rvm::program::{RuleInfo, RuleType};
 use crate::value::Value;

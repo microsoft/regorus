@@ -1,5 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::std_instead_of_core,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::missing_const_for_fn,
+    clippy::semicolon_if_nothing_returned,
+    clippy::unseparated_literal_suffix,
+    clippy::as_conversions,
+    clippy::pattern_type_mismatch
+)]
+#![allow(missing_debug_implementations)] // lexer types are internal
 
 use crate::*;
 use core::cmp;

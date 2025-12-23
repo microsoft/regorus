@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(clippy::pattern_type_mismatch)]
+
 /// There are two type systems of interest:
 ///     1. JSON Schema used by Azure Policy for some of its metadata.
 ///     2. Bicep's type system generated from Azure API swagger files.

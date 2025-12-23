@@ -1,5 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::missing_const_for_fn,
+    clippy::as_conversions,
+    clippy::pattern_type_mismatch
+)]
 
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};

@@ -1,3 +1,4 @@
+#![allow(clippy::missing_const_for_fn, clippy::pattern_type_mismatch)]
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 

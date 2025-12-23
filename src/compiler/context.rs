@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(clippy::unused_trait_names)]
 
 //! Compilation context types shared across compiler components.
 //!

@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(clippy::use_debug, clippy::pattern_type_mismatch)]
+
 use crate::*;
 
 type String = Rc<str>;

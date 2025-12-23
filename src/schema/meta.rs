@@ -1,6 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::expect_used,
+    clippy::missing_const_for_fn,
+    clippy::option_if_let_else
+)] // meta schema loader expects static resources
 #![allow(dead_code)]
 use crate::*;
 use lazy_static::lazy_static;

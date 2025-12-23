@@ -1,6 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::semicolon_if_nothing_returned,
+    clippy::pattern_type_mismatch,
+    clippy::assertions_on_result_states,
+    clippy::as_conversions
+)] // schema suite tests panic/unwrap to assert specific error shapes
+
 use super::super::*;
 use crate::{format, vec};
 use serde_json::json;

@@ -31,6 +31,12 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#![allow(
+    clippy::arithmetic_side_effects,
+    clippy::unseparated_literal_suffix,
+    clippy::pattern_type_mismatch
+)] // ported Go time parsing uses intentional arithmetic and explicit suffixes
+
 use crate::*;
 use core::fmt;
 use core::iter;
@@ -584,6 +590,11 @@ where
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::unused_trait_names,
+        clippy::as_conversions
+    )] // test fixtures build durations with unwrap for brevity
     use chrono::{Datelike, Month, TimeZone, Timelike, Weekday};
     use chrono_tz::PST8PDT;
 

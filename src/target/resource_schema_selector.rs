@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(clippy::option_if_let_else, clippy::pattern_type_mismatch)]
+
 use crate::schema::Type;
 use crate::{format, Rc, Schema, Value};
 use alloc::collections::BTreeMap;

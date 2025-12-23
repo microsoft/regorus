@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-extern crate alloc;
-
 mod arithmetic;
 mod comprehension;
 mod context;

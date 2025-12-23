@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(clippy::indexing_slicing, clippy::as_conversions)]
 use crate::builtins;
 use crate::value::Value;
 use alloc::string::String;

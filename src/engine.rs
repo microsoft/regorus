@@ -1,5 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::indexing_slicing,
+    clippy::missing_const_for_fn,
+    clippy::semicolon_if_nothing_returned,
+    clippy::print_stderr,
+    clippy::as_conversions,
+    clippy::pattern_type_mismatch
+)]
 
 use crate::ast::*;
 use crate::compiled_policy::CompiledPolicy;

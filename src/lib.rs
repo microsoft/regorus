@@ -1,9 +1,104 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+// Unsafe code should not be used.
+// Hard to reason about correctness, and maintainability.
+#![forbid(unsafe_code)]
+// Ensure that all lint names are valid.
+#![deny(unknown_lints)]
+// Fail-fast lints: correctness, safety, and API surface
+#![deny(
+    // Panic sources - catch all ways code can panic
+    clippy::panic, // forbid explicit panic! macro
+    clippy::unreachable, // catches unreachable! macro usage
+    clippy::todo, // blocks remaining todo! placeholders
+    clippy::unimplemented, // blocks unimplemented! placeholders
+    clippy::unwrap_used, // reject Result/Option unwraps
+    clippy::expect_used, // reject expect with panic messages
+    clippy::manual_assert, // prefer assert! over manual if/panic
+    clippy::indexing_slicing, // reject unchecked [] indexing
+    clippy::arithmetic_side_effects, // reject overflowing/unchecked math
+    clippy::panic_in_result_fn, // disallow panic inside functions returning Result
+
+    // Rust warnings/upstream
+    dead_code, // ban unused items
+    deprecated, // prevent use of deprecated APIs
+    deprecated_in_future, // catch items scheduled for deprecation
+    exported_private_dependencies, // avoid leaking private deps in public API
+    future_incompatible, // catch patterns slated to break
+    invalid_doc_attributes, // ensure doc attributes are valid
+    keyword_idents, // disallow identifiers that are keywords
+    macro_use_extern_crate, // block legacy macro_use extern crate
+    missing_debug_implementations, // require Debug on public types
+    // TODO: Address in future pass
+    // missing_docs, // require docs on public items
+    non_ascii_idents, // disallow non-ASCII identifiers
+    nonstandard_style, // enforce idiomatic naming/style
+    noop_method_call, // catch no-op method calls
+    trivial_bounds, // forbid useless trait bounds
+    trivial_casts, // block needless casts
+    unreachable_code, // catch dead/unreachable code
+    unreachable_patterns, // catch unreachable match arms
+    // TODO: Address in future pass
+    // unreachable_pub,
+    unused_extern_crates, // remove unused extern crate declarations
+    unused_import_braces, // avoid unused braces in imports
+    absolute_paths_not_starting_with_crate, // enforce crate:: prefix for absolute paths
+
+    // Unsafe code / low-level hazards
+    clippy::unseparated_literal_suffix, // enforce underscore before literal suffixes
+    clippy::print_stderr, // discourage printing to stderr
+    clippy::use_debug, // discourage Debug formatting in display contexts
+
+    // Documentation & diagnostics
+    // TODO: Address in future pass
+    // clippy::doc_link_with_quotes, // avoid quoted intra-doc links
+    // clippy::doc_markdown, // flag bad Markdown in docs
+    // clippy::missing_docs_in_private_items, // require docs on private items
+    // clippy::missing_errors_doc, // require docs for error cases
+
+    // API correctness / style
+    clippy::missing_const_for_fn, // suggest const fn where possible
+    clippy::option_if_let_else, // prefer map_or/unwrap_or_else over if/let
+    clippy::if_then_some_else_none, // prefer Option combinators over if/else
+    clippy::semicolon_if_nothing_returned, // enforce trailing semicolon for unit
+    clippy::unused_self, // remove unused self parameters
+    clippy::used_underscore_binding, // avoid using bindings prefixed with _
+    clippy::useless_let_if_seq, // simplify let-if sequences
+    clippy::similar_names, // flag confusingly similar identifiers
+    clippy::shadow_unrelated, // discourage shadowing unrelated variables
+    clippy::redundant_pub_crate, // avoid pub(crate) on already pub items
+    clippy::wildcard_dependencies, // disallow wildcard Cargo dependency versions
+    // TODO: Address in future pass
+    // clippy::wildcard_imports, // discourage glob imports
+
+    // Numeric correctness
+    // TODO: Address in future pass
+    clippy::float_cmp, // avoid exact float equality checks
+    clippy::float_cmp_const, // avoid comparing floats to consts directly
+    clippy::float_equality_without_abs, // require tolerance in float equality
+    clippy::suspicious_operation_groupings, // catch ambiguous operator precedence
+
+    // no_std hygiene
+    clippy::std_instead_of_core, // prefer core/alloc over std in no_std
+
+    // Misc polish
+    clippy::dbg_macro, // forbid dbg! in production code
+    clippy::debug_assert_with_mut_call, // avoid mutating inside debug_assert
+    clippy::empty_line_after_outer_attr, // enforce spacing after outer attrs
+    clippy::empty_structs_with_brackets, // use unit structs without braces
+)]
+// Advisory lints: useful, but not fatal
+#![warn(
+    clippy::assertions_on_result_states, // avoid asserts on Result state
+    clippy::match_like_matches_macro, // prefer matches! macro over verbose match
+    clippy::needless_continue, // remove redundant continue statements
+    clippy::unused_trait_names, // drop unused trait imports
+    clippy::verbose_file_reads, // prefer concise file read helpers
+    clippy::as_conversions, // discourage lossy as casts
+    clippy::pattern_type_mismatch, // catch mismatched types in patterns
+)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![allow(unknown_lints)]
-#![allow(clippy::doc_lazy_continuation)]
 // Use README.md as crate documentation.
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
 // We'll default to building for no_std - use core, alloc instead of std.
@@ -86,10 +181,10 @@ use std::collections::{hash_map::Entry as MapEntry, HashMap as Map, HashSet as S
 use alloc::collections::{btree_map::Entry as MapEntry, BTreeMap as Map, BTreeSet as Set};
 
 use alloc::{
-    borrow::ToOwned,
+    borrow::ToOwned as _,
     boxed::Box,
     format,
-    string::{String, ToString},
+    string::{String, ToString as _},
     vec,
     vec::Vec,
 };
@@ -414,6 +509,7 @@ impl fmt::Debug for dyn Extension {
 pub mod coverage {
     use crate::*;
 
+    #[allow(missing_debug_implementations)]
     #[derive(Default, serde::Serialize, serde::Deserialize)]
     /// Coverage information about a rego policy file.
     pub struct File {
@@ -430,6 +526,7 @@ pub mod coverage {
         pub not_covered: alloc::collections::BTreeSet<u32>,
     }
 
+    #[allow(missing_debug_implementations)]
     #[derive(Default, serde::Serialize, serde::Deserialize)]
     /// Policy coverage report.
     pub struct Report {
@@ -444,6 +541,7 @@ pub mod coverage {
         /// Lines that are not covered are red.
         ///
         /// <img src="https://github.com/microsoft/regorus/blob/main/docs/coverage.png?raw=true">
+        #[allow(clippy::arithmetic_side_effects)]
         pub fn to_string_pretty(&self) -> anyhow::Result<String> {
             let mut s = String::default();
             s.push_str("COVERAGE REPORT:\n");
@@ -454,8 +552,8 @@ pub mod coverage {
                 }
 
                 s.push_str(&format!("{}:\n", file.path));
-                for (line, code) in file.code.split('\n').enumerate() {
-                    let line = line as u32 + 1;
+                for (line_idx, code) in file.code.split('\n').enumerate() {
+                    let line = u32::try_from(line_idx + 1).unwrap_or(u32::MAX);
                     if file.not_covered.contains(&line) {
                         s.push_str(&format!("\x1b[31m {line:4}  {code}\x1b[0m\n"));
                     } else if file.covered.contains(&line) {

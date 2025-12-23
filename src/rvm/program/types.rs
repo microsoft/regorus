@@ -1,6 +1,11 @@
+#![allow(clippy::missing_const_for_fn)]
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions
+)]
 use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};

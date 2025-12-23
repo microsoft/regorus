@@ -1,6 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pattern_type_mismatch
+)] // azure schema tests panic/unwrap to assert structures
+
 use super::super::*;
 
 #[test]

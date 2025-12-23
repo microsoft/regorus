@@ -1,6 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::panic,
+    clippy::panic_in_result_fn,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::std_instead_of_core,
+    clippy::semicolon_if_nothing_returned,
+    clippy::pattern_type_mismatch,
+    clippy::as_conversions
+)] // scheduler analyzer tests rely on asserts/unwraps and std conveniences
+
 use crate::*;
 use crate::{ast::*, lexer::*, parser::*, scheduler::*};
 use anyhow::{anyhow, bail, Result};

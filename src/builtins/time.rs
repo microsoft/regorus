@@ -1,6 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-
+#![allow(
+    clippy::as_conversions,
+    clippy::unused_trait_names,
+    clippy::pattern_type_mismatch
+)]
 use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{ensure_args_count, ensure_numeric, ensure_string};

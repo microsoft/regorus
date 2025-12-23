@@ -1,5 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(clippy::unused_trait_names)]
+#![allow(missing_debug_implementations)] // parser structs are internal; Debug not required
 
 use alloc::boxed::Box;
 use alloc::format;

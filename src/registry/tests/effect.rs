@@ -1,6 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    clippy::assertions_on_result_states,
+    clippy::pattern_type_mismatch
+)] // registry effect tests unwrap/panic for invariant checks
+
 use super::super::registry::*;
 use crate::{
     registry::{instances::EFFECT_SCHEMA_REGISTRY, schemas::effect},

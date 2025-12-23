@@ -1,6 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::panic,
+    clippy::panic_in_result_fn,
+    clippy::unwrap_used,
+    clippy::manual_assert,
+    clippy::indexing_slicing,
+    clippy::option_if_let_else,
+    clippy::semicolon_if_nothing_returned,
+    clippy::unseparated_literal_suffix,
+    clippy::use_debug,
+    clippy::unused_trait_names,
+    clippy::as_conversions,
+    clippy::pattern_type_mismatch
+)] // VM tests assert/unwrap and use manual panics to validate scenarios
+
 #[cfg(test)]
 mod tests {
     use crate::rvm::tests::instruction_parser::{parse_instruction, parse_loop_mode};

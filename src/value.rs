@@ -1,6 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::option_if_let_else,
+    clippy::semicolon_if_nothing_returned,
+    clippy::pattern_type_mismatch,
+    clippy::unused_trait_names,
+    clippy::as_conversions
+)] // value helpers index paths directly for performance
+
 use crate::number::Number;
 
 use alloc::collections::{BTreeMap, BTreeSet};

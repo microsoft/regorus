@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(clippy::pattern_type_mismatch)]
 use super::Compiler;
 use super::Register;
 use crate::compiler::destructuring_planner::plans::{

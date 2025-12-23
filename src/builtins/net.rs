@@ -1,3 +1,10 @@
+#![allow(
+    clippy::panic,
+    clippy::expect_used,
+    clippy::needless_continue,
+    clippy::unused_trait_names
+)] // net builtins panic/expect in invariant checks
+
 use core::net::IpAddr;
 use ipnet::IpNet;
 use std::format;

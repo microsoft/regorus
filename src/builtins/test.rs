@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(clippy::indexing_slicing)]
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;

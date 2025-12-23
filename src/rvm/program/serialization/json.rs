@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(clippy::as_conversions, clippy::unused_trait_names)]
+
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;

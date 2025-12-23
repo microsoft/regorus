@@ -1,5 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::option_if_let_else,
+    clippy::useless_let_if_seq,
+    clippy::as_conversions,
+    clippy::pattern_type_mismatch
+)]
 
 use crate::rvm::instructions::{ComprehensionBeginParams, ComprehensionMode};
 use crate::value::Value;

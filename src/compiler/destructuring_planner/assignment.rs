@@ -1,5 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::unreachable,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::unused_trait_names,
+    clippy::pattern_type_mismatch
+)]
 
 //! Assignment-specific planning utilities.
 

@@ -1,5 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::redundant_pub_crate,
+    clippy::unused_trait_names,
+    clippy::pattern_type_mismatch
+)]
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;

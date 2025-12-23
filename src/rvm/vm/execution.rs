@@ -1,5 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::expect_used,
+    clippy::option_if_let_else,
+    clippy::as_conversions,
+    clippy::needless_continue,
+    clippy::pattern_type_mismatch
+)]
 use crate::rvm::instructions::Instruction;
 use crate::rvm::program::Program;
 use crate::value::Value;

@@ -1,5 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::unseparated_literal_suffix,
+    clippy::as_conversions,
+    clippy::unused_trait_names,
+    clippy::pattern_type_mismatch
+)]
 
 use super::{Compiler, CompilerError, Register, Result};
 use crate::ast::ExprRef;

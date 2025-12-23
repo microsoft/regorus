@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(clippy::unused_trait_names)]
+
 use crate::registry::instances::{EFFECT_SCHEMA_REGISTRY, RESOURCE_SCHEMA_REGISTRY};
 use crate::{format, Rc, Schema, Vec};
 use alloc::collections::BTreeMap;

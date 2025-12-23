@@ -1,5 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(
+    clippy::indexing_slicing,
+    clippy::expect_used,
+    clippy::as_conversions,
+    clippy::unused_trait_names,
+    clippy::pattern_type_mismatch
+)]
 
 use super::{Compiler, CompilerError, Register, Result, WorklistEntry};
 use crate::lexer::Span;
