@@ -1,4 +1,3 @@
-#![allow(clippy::missing_const_for_fn, clippy::pattern_type_mismatch)]
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
@@ -265,61 +264,59 @@ pub enum Expr {
 }
 
 impl Expr {
-    pub fn span(&self) -> &Span {
-        use Expr::*;
-        match self {
-            String { span, .. }
-            | RawString { span, .. }
-            | Number { span, .. }
-            | Bool { span, .. }
-            | Null { span, .. }
-            | Var { span, .. }
-            | Array { span, .. }
-            | Set { span, .. }
-            | Object { span, .. }
-            | ArrayCompr { span, .. }
-            | SetCompr { span, .. }
-            | ObjectCompr { span, .. }
-            | Call { span, .. }
-            | UnaryExpr { span, .. }
-            | RefDot { span, .. }
-            | RefBrack { span, .. }
-            | BinExpr { span, .. }
-            | BoolExpr { span, .. }
-            | ArithExpr { span, .. }
-            | AssignExpr { span, .. }
-            | Membership { span, .. } => span,
+    pub const fn span(&self) -> &Span {
+        match *self {
+            Self::String { ref span, .. }
+            | Self::RawString { ref span, .. }
+            | Self::Number { ref span, .. }
+            | Self::Bool { ref span, .. }
+            | Self::Null { ref span, .. }
+            | Self::Var { ref span, .. }
+            | Self::Array { ref span, .. }
+            | Self::Set { ref span, .. }
+            | Self::Object { ref span, .. }
+            | Self::ArrayCompr { ref span, .. }
+            | Self::SetCompr { ref span, .. }
+            | Self::ObjectCompr { ref span, .. }
+            | Self::Call { ref span, .. }
+            | Self::UnaryExpr { ref span, .. }
+            | Self::RefDot { ref span, .. }
+            | Self::RefBrack { ref span, .. }
+            | Self::BinExpr { ref span, .. }
+            | Self::BoolExpr { ref span, .. }
+            | Self::ArithExpr { ref span, .. }
+            | Self::AssignExpr { ref span, .. }
+            | Self::Membership { ref span, .. } => span,
             #[cfg(feature = "rego-extensions")]
-            OrExpr { span, .. } => span,
+            Self::OrExpr { ref span, .. } => span,
         }
     }
 
-    pub fn eidx(&self) -> u32 {
-        use Expr::*;
-        match self {
-            String { eidx, .. }
-            | RawString { eidx, .. }
-            | Number { eidx, .. }
-            | Bool { eidx, .. }
-            | Null { eidx, .. }
-            | Var { eidx, .. }
-            | Array { eidx, .. }
-            | Set { eidx, .. }
-            | Object { eidx, .. }
-            | ArrayCompr { eidx, .. }
-            | SetCompr { eidx, .. }
-            | ObjectCompr { eidx, .. }
-            | Call { eidx, .. }
-            | UnaryExpr { eidx, .. }
-            | RefDot { eidx, .. }
-            | RefBrack { eidx, .. }
-            | BinExpr { eidx, .. }
-            | BoolExpr { eidx, .. }
-            | ArithExpr { eidx, .. }
-            | AssignExpr { eidx, .. }
-            | Membership { eidx, .. } => *eidx,
+    pub const fn eidx(&self) -> u32 {
+        match *self {
+            Self::String { eidx, .. }
+            | Self::RawString { eidx, .. }
+            | Self::Number { eidx, .. }
+            | Self::Bool { eidx, .. }
+            | Self::Null { eidx, .. }
+            | Self::Var { eidx, .. }
+            | Self::Array { eidx, .. }
+            | Self::Set { eidx, .. }
+            | Self::Object { eidx, .. }
+            | Self::ArrayCompr { eidx, .. }
+            | Self::SetCompr { eidx, .. }
+            | Self::ObjectCompr { eidx, .. }
+            | Self::Call { eidx, .. }
+            | Self::UnaryExpr { eidx, .. }
+            | Self::RefDot { eidx, .. }
+            | Self::RefBrack { eidx, .. }
+            | Self::BinExpr { eidx, .. }
+            | Self::BoolExpr { eidx, .. }
+            | Self::ArithExpr { eidx, .. }
+            | Self::AssignExpr { eidx, .. }
+            | Self::Membership { eidx, .. } => eidx,
             #[cfg(feature = "rego-extensions")]
-            OrExpr { eidx, .. } => *eidx,
+            Self::OrExpr { eidx, .. } => eidx,
         }
     }
 }
@@ -435,9 +432,9 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub fn span(&self) -> &Span {
-        match self {
-            Self::Spec { span, .. } | Self::Default { span, .. } => span,
+    pub const fn span(&self) -> &Span {
+        match *self {
+            Self::Spec { ref span, .. } | Self::Default { ref span, .. } => span,
         }
     }
 }

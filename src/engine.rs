@@ -1,13 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![allow(
-    clippy::indexing_slicing,
-    clippy::missing_const_for_fn,
-    clippy::semicolon_if_nothing_returned,
-    clippy::print_stderr,
-    clippy::as_conversions,
-    clippy::pattern_type_mismatch
-)]
+#![allow(clippy::print_stderr)]
 
 use crate::ast::*;
 use crate::compiled_policy::CompiledPolicy;
@@ -20,7 +13,7 @@ use crate::value::*;
 use crate::*;
 use crate::{Extension, QueryResults};
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 
 /// The Rego evaluation engine.
 ///
@@ -104,7 +97,7 @@ impl Engine {
     /// # }
     /// ```
     ///
-    pub fn set_rego_v0(&mut self, rego_v0: bool) {
+    pub const fn set_rego_v0(&mut self, rego_v0: bool) {
         self.rego_v1 = !rego_v0;
     }
 
@@ -398,7 +391,7 @@ impl Engine {
     /// **_NOTE:_** Currently not all builtins honor this flag and will always strictly raise errors.
     /// ----
     pub fn set_strict_builtin_errors(&mut self, b: bool) {
-        self.interpreter.set_strict_builtin_errors(b)
+        self.interpreter.set_strict_builtin_errors(b);
     }
 
     #[doc(hidden)]
@@ -782,13 +775,23 @@ impl Engine {
     /// ```
     pub fn eval_bool_query(&mut self, query: String, enable_tracing: bool) -> Result<bool> {
         let results = self.eval_query(query, enable_tracing)?;
-        match results.result.len() {
-            0 => bail!("query did not produce any values"),
-            1 if results.result[0].expressions.len() == 1 => {
-                results.result[0].expressions[0].value.as_bool().copied()
-            }
-            _ => bail!("query produced more than one value"),
+        let entries = results.result.as_slice();
+        let entry = entries
+            .first()
+            .ok_or_else(|| anyhow!("query did not produce any values"))?;
+        if entries.len() > 1 {
+            bail!("query produced more than one value");
         }
+
+        let expressions = entry.expressions.as_slice();
+        let expr = expressions
+            .first()
+            .ok_or_else(|| anyhow!("query result missing expression"))?;
+        if expressions.len() > 1 {
+            bail!("query produced more than one value");
+        }
+
+        expr.value.as_bool().copied()
     }
 
     /// Evaluate an `allow` query.
@@ -804,12 +807,12 @@ impl Engine {
     /// let enable_tracing = false;
     /// assert_eq!(engine.eval_allow_query("1 > 2".to_string(), enable_tracing), false);
     /// assert_eq!(engine.eval_allow_query("1 < 2".to_string(), enable_tracing), true);
-    ///
     /// assert_eq!(engine.eval_allow_query("1+1".to_string(), enable_tracing), false);
     /// assert_eq!(engine.eval_allow_query("true; true".to_string(), enable_tracing), false);
     /// assert_eq!(engine.eval_allow_query("true; false; true".to_string(), enable_tracing), false);
     /// # Ok(())
     /// # }
+    /// ```
     pub fn eval_allow_query(&mut self, query: String, enable_tracing: bool) -> bool {
         matches!(self.eval_bool_query(query, enable_tracing), Ok(true))
     }
@@ -832,6 +835,7 @@ impl Engine {
     /// assert_eq!(engine.eval_deny_query("true; false; true".to_string(), enable_tracing), true);
     /// # Ok(())
     /// # }
+    /// ```
     pub fn eval_deny_query(&mut self, query: String, enable_tracing: bool) -> bool {
         !matches!(self.eval_bool_query(query, enable_tracing), Ok(false))
     }
@@ -857,7 +861,8 @@ impl Engine {
         // Populate loop hoisting for the query snippet
         // Query snippets are treated as if they're in a module appended at the end (same as analyzer)
         // The loop hoisting table already has capacity for this (ensured in prepare_for_eval)
-        let module_idx = self.modules.len() as u32;
+        let module_idx = u32::try_from(self.modules.len())
+            .map_err(|_| anyhow!("module count exceeds u32::MAX"))?;
 
         use crate::compiler::hoist::LoopHoister;
 
@@ -1192,14 +1197,14 @@ impl Engine {
     /// If `enable` is different from the current value, then any existing coverage
     /// information will be cleared.
     pub fn set_enable_coverage(&mut self, enable: bool) {
-        self.interpreter.set_enable_coverage(enable)
+        self.interpreter.set_enable_coverage(enable);
     }
 
     #[cfg(feature = "coverage")]
     #[cfg_attr(docsrs, doc(cfg(feature = "coverage")))]
     /// Clear the gathered policy coverage data.
     pub fn clear_coverage_data(&mut self) {
-        self.interpreter.clear_coverage_data()
+        self.interpreter.clear_coverage_data();
     }
 
     /// Gather output from print statements instead of emiting to stderr.
@@ -1339,39 +1344,46 @@ impl Engine {
             let mut modifiers = vec![];
 
             for rule in &m.policy {
-                // Extract parameter definitions from the policy rule
-                // e.g. default parameters.a = 5
-                if let Rule::Default { refr, .. } = rule.as_ref() {
-                    let path = Parser::get_path_ref_components(refr)?;
-                    let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
+                match *rule.as_ref() {
+                    // Extract parameter definitions from the policy rule
+                    // e.g. default parameters.a = 5
+                    Rule::Default { ref refr, .. } => {
+                        let path = Parser::get_path_ref_components(refr)?;
+                        let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
 
-                    if paths.len() == 2 && paths[0] == "parameters" {
-                        // Todo: Fetch fields other than name from rego metadoc for the parameter
-                        parameters.push(PolicyParameter {
-                            name: paths[1].to_string(),
-                            modifiable: false,
-                            required: false,
-                        })
-                    }
-                }
-
-                // Extract modifiers to the parameters from the policy rule
-                // e.g. parameters.a = 5
-                if let Rule::Spec { head, .. } = rule.as_ref() {
-                    match head {
-                        RuleHead::Compr { refr, .. } => {
-                            let path = Parser::get_path_ref_components(refr)?;
-                            let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
-
-                            if paths.len() == 2 && paths[0] == "parameters" {
+                        if paths.len() == 2 && paths.first().is_some_and(|p| *p == "parameters") {
+                            if let Some(name) = paths.get(1) {
                                 // Todo: Fetch fields other than name from rego metadoc for the parameter
-                                modifiers.push(PolicyModifier {
-                                    name: paths[1].to_string(),
-                                })
+                                parameters.push(PolicyParameter {
+                                    name: (*name).to_string(),
+                                    modifiable: false,
+                                    required: false,
+                                });
                             }
                         }
-                        RuleHead::Func { .. } => {}
-                        RuleHead::Set { .. } => {}
+                    }
+                    // Extract modifiers to the parameters from the policy rule
+                    // e.g. parameters.a = 5
+                    Rule::Spec { ref head, .. } => {
+                        match *head {
+                            RuleHead::Compr { ref refr, .. } => {
+                                let path = Parser::get_path_ref_components(refr)?;
+                                let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
+
+                                if paths.len() == 2
+                                    && paths.first().is_some_and(|p| *p == "parameters")
+                                {
+                                    if let Some(name) = paths.get(1) {
+                                        // Todo: Fetch fields other than name from rego metadoc for the parameter
+                                        modifiers.push(PolicyModifier {
+                                            name: (*name).to_string(),
+                                        });
+                                    }
+                                }
+                            }
+                            RuleHead::Func { .. } => {}
+                            RuleHead::Set { .. } => {}
+                        }
                     }
                 }
             }
