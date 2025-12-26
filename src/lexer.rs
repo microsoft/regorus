@@ -1,27 +1,44 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![allow(
-    clippy::std_instead_of_core,
-    clippy::arithmetic_side_effects,
-    clippy::indexing_slicing,
-    clippy::shadow_unrelated,
-    clippy::missing_const_for_fn,
-    clippy::semicolon_if_nothing_returned,
-    clippy::unseparated_literal_suffix,
-    clippy::as_conversions,
-    clippy::pattern_type_mismatch
-)]
-#![allow(missing_debug_implementations)] // lexer types are internal
 
+// SAFETY: Arithmetic operations in this module are safe by design:
+// 1. MAX_COL=1024 prevents column counter overflow (enforced by advance_col)
+// 2. File size is capped by MAX_FILE_BYTES at load time
+// 3. Total line count is capped by MAX_LINES at load time
+// 4. State-modifying operations (advance_col/advance_line) use checked arithmetic
+// 5. Remaining arithmetic is for bounded calculations (spans, error reporting)
+//    where operands are constrained by MAX_COL and file size/line limits
+// 6. Defensive saturating_sub used for subtractions that could theoretically underflow
 use crate::*;
 use core::cmp;
 use core::fmt::{self, Debug, Formatter};
 use core::iter::Peekable;
+use core::ops::Range;
 use core::str::CharIndices;
 
 use crate::Value;
 
 use anyhow::{anyhow, bail, Result};
+
+// Maximum column width to prevent overflow and catch pathological input.
+// Lines exceeding this are likely minified/generated code or attack attempts.
+const MAX_COL: u32 = 1024;
+// Maximum allowed policy file size in bytes (1 MiB) to reject pathological inputs early.
+const MAX_FILE_BYTES: usize = 1_048_576;
+// Maximum allowed number of lines to avoid pathological or minified inputs.
+const MAX_LINES: usize = 20_000;
+
+#[inline]
+fn usize_to_u32(value: usize) -> Result<u32> {
+    u32::try_from(value).map_err(|_| anyhow!("value exceeds u32::MAX"))
+}
+
+#[inline]
+fn span_range(start: u32, end: u32) -> Option<Range<usize>> {
+    let s = usize::try_from(start).ok()?;
+    let e = usize::try_from(end).ok()?;
+    Some(s..e)
+}
 
 #[derive(Clone)]
 #[cfg_attr(feature = "ast", derive(serde::Serialize))]
@@ -73,9 +90,9 @@ impl cmp::PartialEq for Source {
 impl cmp::Eq for Source {}
 
 #[cfg(feature = "std")]
-impl std::hash::Hash for Source {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        Rc::as_ptr(&self.src).hash(state)
+impl core::hash::Hash for Source {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        Rc::as_ptr(&self.src).hash(state);
     }
 }
 
@@ -105,18 +122,18 @@ impl fmt::Display for SourceStr {
 }
 
 impl SourceStr {
-    pub fn new(source: Source, start: u32, end: u32) -> Self {
+    pub const fn new(source: Source, start: u32, end: u32) -> Self {
         Self { source, start, end }
     }
 
     pub fn text(&self) -> &str {
-        let start = self.start as usize;
-        let end = self.end as usize;
         // Use safe slicing to avoid panics on malformed spans
-        self.source
-            .contents()
-            .get(start..end)
-            .unwrap_or("<invalid-span>")
+        span_range(self.start, self.end).map_or("<invalid-span>", |range| {
+            self.source
+                .contents()
+                .get(range)
+                .unwrap_or("<invalid-span>")
+        })
     }
 
     pub fn clone_empty(&self) -> SourceStr {
@@ -150,33 +167,43 @@ impl cmp::Ord for SourceStr {
 
 impl Source {
     pub fn from_contents(file: String, contents: String) -> Result<Source> {
-        let max_size = u32::MAX as usize - 2; // Account for rows, cols possibly starting at 1, EOF etc.
-        if contents.len() > max_size {
-            bail!("{file} exceeds maximum allowed policy file size {max_size}");
+        if contents.len() > MAX_FILE_BYTES {
+            bail!("{file} exceeds maximum allowed policy file size {MAX_FILE_BYTES} bytes");
         }
         let mut lines = vec![];
         let mut prev_ch = ' ';
-        let mut prev_pos = 0u32;
-        let mut start = 0u32;
+        let mut prev_pos = 0_u32;
+        let mut start = 0_u32;
         for (i, ch) in contents.char_indices() {
+            let i_u32 = usize_to_u32(i)?;
             if ch == '\n' {
                 let end = match prev_ch {
                     '\r' => prev_pos,
-                    _ => i as u32,
+                    _ => i_u32,
                 };
+                if lines.len() >= MAX_LINES {
+                    bail!("{file} exceeds maximum allowed line count {MAX_LINES}");
+                }
                 lines.push((start, end));
-                start = i as u32 + 1;
+                start = i_u32.saturating_add(1);
             }
             prev_ch = ch;
-            prev_pos = i as u32;
+            prev_pos = i_u32;
         }
 
-        if (start as usize) < contents.len() {
-            lines.push((start, contents.len() as u32));
+        let start_usize = usize::try_from(start).unwrap_or(usize::MAX);
+        if start_usize < contents.len() {
+            if lines.len() >= MAX_LINES {
+                bail!("{file} exceeds maximum allowed line count {MAX_LINES}");
+            }
+            lines.push((start, usize_to_u32(contents.len())?));
         } else if contents.is_empty() {
             lines.push((0, 0));
         } else {
-            let s = (contents.len() - 1) as u32;
+            let s = usize_to_u32(contents.len().saturating_sub(1))?;
+            if lines.len() >= MAX_LINES {
+                bail!("{file} exceeds maximum allowed line count {MAX_LINES}");
+            }
             lines.push((s, s));
         }
         Ok(Self {
@@ -205,23 +232,25 @@ impl Source {
         &self.src.contents
     }
     pub fn line(&self, idx: u32) -> &str {
-        let idx = idx as usize;
-        if idx < self.src.lines.len() {
-            let (start, end) = self.src.lines[idx];
-            &self.src.contents[start as usize..end as usize]
-        } else {
-            ""
+        let idx = usize::try_from(idx).unwrap_or(usize::MAX);
+        match self.src.lines.get(idx) {
+            Some(&(start, end)) => self
+                .src
+                .contents
+                .get(span_range(start, end).unwrap_or(0..0))
+                .unwrap_or(""),
+            None => "",
         }
     }
 
     pub fn message(&self, line: u32, col: u32, kind: &str, msg: &str) -> String {
-        if line as usize > self.src.lines.len() {
+        if usize::try_from(line).unwrap_or(usize::MAX) > self.src.lines.len() {
             return format!("{}: invalid line {} specified", self.src.file, line);
         }
 
         let line_str = format!("{line}");
-        let line_num_width = line_str.len() + 1;
-        let col_spaces = (col as usize).saturating_sub(1);
+        let line_num_width = line_str.len().saturating_add(1);
+        let col_spaces = usize::try_from(col).unwrap_or(0).saturating_sub(1);
 
         format!(
             "\n--> {}:{}:{}\n{:<line_num_width$}|\n\
@@ -233,7 +262,7 @@ impl Source {
             col,
             "",
             line,
-            self.line(line - 1),
+            self.line(line.saturating_sub(1)),
             "",
             "",
             kind,
@@ -259,13 +288,13 @@ pub struct Span {
 
 impl Span {
     pub fn text(&self) -> &str {
-        let start = self.start as usize;
-        let end = self.end as usize;
         // Use safe slicing to avoid panics on malformed spans
-        self.source
-            .contents()
-            .get(start..end)
-            .unwrap_or("<invalid-span>")
+        span_range(self.start, self.end).map_or("<invalid-span>", |range| {
+            self.source
+                .contents()
+                .get(range)
+                .unwrap_or("<invalid-span>")
+        })
     }
 
     pub fn source_str(&self) -> SourceStr {
@@ -338,6 +367,12 @@ pub struct Lexer<'source> {
     allow_single_quoted_strings: bool,
 }
 
+impl<'source> fmt::Debug for Lexer<'source> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Lexer").finish_non_exhaustive()
+    }
+}
+
 impl<'source> Lexer<'source> {
     pub fn new(source: &'source Source) -> Self {
         Self {
@@ -356,37 +391,63 @@ impl<'source> Lexer<'source> {
         }
     }
 
-    pub fn set_unknown_char_is_symbol(&mut self, b: bool) {
+    pub const fn set_unknown_char_is_symbol(&mut self, b: bool) {
         self.unknown_char_is_symbol = b;
     }
 
-    pub fn set_allow_slash_star_escape(&mut self, b: bool) {
+    pub const fn set_allow_slash_star_escape(&mut self, b: bool) {
         self.allow_slash_star_escape = b;
     }
 
-    pub fn set_comment_starts_with_double_slash(&mut self, b: bool) {
+    pub const fn set_comment_starts_with_double_slash(&mut self, b: bool) {
         self.comment_starts_with_double_slash = b;
     }
 
-    pub fn set_double_colon_token(&mut self, b: bool) {
+    pub const fn set_double_colon_token(&mut self, b: bool) {
         self.double_colon_token = b;
     }
 
     #[cfg(feature = "azure-rbac")]
-    pub fn set_enable_rbac_tokens(&mut self, b: bool) {
+    pub const fn set_enable_rbac_tokens(&mut self, b: bool) {
         self.enable_rbac_tokens = b;
     }
 
     #[cfg(feature = "azure-rbac")]
-    pub fn set_allow_single_quoted_strings(&mut self, b: bool) {
+    pub const fn set_allow_single_quoted_strings(&mut self, b: bool) {
         self.allow_single_quoted_strings = b;
     }
 
     fn peek(&mut self) -> (usize, char) {
         match self.iter.peek() {
-            Some((index, chr)) => (*index, *chr),
+            Some(&(index, chr)) => (index, chr),
             _ => (self.source.contents().len(), '\x00'),
         }
+    }
+
+    #[inline]
+    fn advance_col(&mut self, delta: u32) -> Result<()> {
+        let new_col = self
+            .col
+            .checked_add(delta)
+            .filter(|&c| c <= MAX_COL)
+            .ok_or_else(|| {
+                self.source.error(
+                    self.line,
+                    self.col,
+                    &format!("line exceeds maximum column width of {MAX_COL}"),
+                )
+            })?;
+        self.col = new_col;
+        Ok(())
+    }
+
+    #[inline]
+    fn advance_line(&mut self, delta: u32) -> Result<()> {
+        self.line = self.line.checked_add(delta).ok_or_else(|| {
+            self.source
+                .error(self.line, self.col, "line number overflow")
+        })?;
+        Ok(())
     }
 
     fn peekahead(&mut self, n: usize) -> (usize, char) {
@@ -408,15 +469,15 @@ impl<'source> Lexer<'source> {
             }
         }
         let end = self.peek().0;
-        self.col += (end - start) as u32;
+        self.advance_col(usize_to_u32(end.saturating_sub(start))?)?;
         Ok(Token(
             TokenKind::Ident,
             Span {
                 source: self.source.clone(),
                 line: self.line,
                 col,
-                start: start as u32,
-                end: end as u32,
+                start: usize_to_u32(start)?,
+                end: usize_to_u32(end)?,
             },
         ))
     }
@@ -447,8 +508,8 @@ impl<'source> Lexer<'source> {
         }
 
         // Read exponent part
-        let ch = self.peek().1;
-        if ch == 'e' || ch == 'E' {
+        let exp_ch = self.peek().1;
+        if exp_ch == 'e' || exp_ch == 'E' {
             self.iter.next();
             // e must be followed by an optional sign and digits
             if matches!(self.peek().1, '+' | '-') {
@@ -459,12 +520,12 @@ impl<'source> Lexer<'source> {
         }
 
         let end = self.peek().0;
-        self.col += (end - start) as u32;
+        self.advance_col(usize_to_u32(end.saturating_sub(start))?)?;
 
         // Check for invalid number.Valid number cannot be followed by
         // these characters:
-        let ch = self.peek().1;
-        if ch == '_' || ch == '.' || ch.is_ascii_alphanumeric() {
+        let trailing_ch = self.peek().1;
+        if trailing_ch == '_' || trailing_ch == '.' || trailing_ch.is_ascii_alphanumeric() {
             return Err(self.source.error(self.line, self.col, "invalid number"));
         }
 
@@ -505,15 +566,15 @@ impl<'source> Lexer<'source> {
                 source: self.source.clone(),
                 line: self.line,
                 col,
-                start: start as u32,
-                end: end as u32,
+                start: usize_to_u32(start)?,
+                end: usize_to_u32(end)?,
             },
         ))
     }
 
     fn read_raw_string(&mut self) -> Result<Token> {
         self.iter.next();
-        self.col += 1;
+        self.advance_col(1)?;
         let (start, _) = self.peek();
         let (line, col) = (self.line, self.col);
         loop {
@@ -521,18 +582,18 @@ impl<'source> Lexer<'source> {
             self.iter.next();
             match ch {
                 '`' => {
-                    self.col += 1;
+                    self.advance_col(1)?;
                     break;
                 }
                 '\x00' => {
                     return Err(self.source.error(line, col, "unmatched `"));
                 }
-                '\t' => self.col += 4,
+                '\t' => self.advance_col(4)?,
                 '\n' => {
-                    self.line += 1;
+                    self.advance_line(1)?;
                     self.col = 1;
                 }
-                _ => self.col += 1,
+                _ => self.advance_col(1)?,
             }
         }
         let end = self.peek().0;
@@ -546,8 +607,8 @@ impl<'source> Lexer<'source> {
                 source: self.source.clone(),
                 line,
                 col,
-                start: start as u32,
-                end: end as u32 - 1,
+                start: usize_to_u32(start)?,
+                end: usize_to_u32(end)?.saturating_sub(1),
             },
         ))
     }
@@ -555,45 +616,60 @@ impl<'source> Lexer<'source> {
     fn read_string(&mut self) -> Result<Token> {
         let (line, col) = (self.line, self.col);
         self.iter.next();
-        self.col += 1;
+        self.advance_col(1)?;
         let (start, _) = self.peek();
         loop {
             let (offset, ch) = self.peek();
-            let col = self.col + (offset - start) as u32;
             match ch {
                 '"' | '\x00' => {
                     break;
                 }
                 '\\' => {
                     self.iter.next();
-                    let (_, ch) = self.peek();
+                    let (_, escape_ch) = self.peek();
                     self.iter.next();
-                    match ch {
+                    match escape_ch {
                         // json escape sequence
                         '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' => (),
                         '*' if self.allow_slash_star_escape => (),
                         'u' => {
                             for _i in 0..4 {
-                                let (offset, ch) = self.peek();
-                                let col = self.col + (offset - start) as u32;
-                                if !ch.is_ascii_hexdigit() {
+                                let (hex_offset, hex_ch) = self.peek();
+                                let rel = usize_to_u32(hex_offset.saturating_sub(start))?;
+                                let cursor_col = self.col.saturating_add(rel);
+                                if !hex_ch.is_ascii_hexdigit() {
                                     return Err(self.source.error(
                                         line,
-                                        col,
+                                        cursor_col,
                                         "invalid hex escape sequence",
                                     ));
                                 }
                                 self.iter.next();
                             }
                         }
-                        _ => return Err(self.source.error(line, col, "invalid escape sequence")),
+                        _ => {
+                            let cursor_col = self
+                                .col
+                                .saturating_add(usize_to_u32(offset.saturating_sub(start))?);
+                            return Err(self.source.error(
+                                line,
+                                cursor_col,
+                                "invalid escape sequence",
+                            ));
+                        }
                     }
                 }
                 _ => {
                     // check for valid json chars
-                    let col = self.col + (offset - start) as u32;
+                    let cursor_col = self
+                        .col
+                        .saturating_add(usize_to_u32(offset.saturating_sub(start))?);
                     if !('\u{0020}'..='\u{10FFFF}').contains(&ch) {
-                        return Err(self.source.error(line, col, "invalid character in string"));
+                        return Err(self.source.error(
+                            line,
+                            cursor_col,
+                            "invalid character in string",
+                        ));
                     }
                     self.iter.next();
                 }
@@ -606,7 +682,7 @@ impl<'source> Lexer<'source> {
 
         self.iter.next();
         let end = self.peek().0;
-        self.col += (end - start) as u32;
+        self.advance_col(usize_to_u32(end.saturating_sub(start))?)?;
 
         if start == 0 || end <= start {
             // Reject invalid spans before slicing/serde to avoid panic
@@ -616,7 +692,7 @@ impl<'source> Lexer<'source> {
         let str_slice = self
             .source
             .contents()
-            .get(start - 1..end)
+            .get(start.saturating_sub(1)..end)
             .ok_or_else(|| self.source.error(line, col, "invalid string span"))?;
 
         // Ensure that the string is parsable in Rust.
@@ -639,9 +715,9 @@ impl<'source> Lexer<'source> {
             Span {
                 source: self.source.clone(),
                 line,
-                col: col + 1,
-                start: start as u32,
-                end: end as u32 - 1,
+                col: col.saturating_add(1),
+                start: usize_to_u32(start)?,
+                end: usize_to_u32(end)?.saturating_sub(1),
             },
         ))
     }
@@ -650,30 +726,44 @@ impl<'source> Lexer<'source> {
     fn read_single_quoted_string(&mut self) -> Result<Token> {
         let (line, col) = (self.line, self.col);
         self.iter.next();
-        self.col += 1;
+        self.advance_col(1)?;
         let (start, _) = self.peek();
         loop {
             let (offset, ch) = self.peek();
-            let col = self.col + (offset - start) as u32;
+            let cursor_col = self
+                .col
+                .saturating_add(usize_to_u32(offset.saturating_sub(start))?);
             match ch {
                 '\'' | '\x00' => {
                     break;
                 }
                 '\\' => {
                     self.iter.next();
-                    let (_, ch) = self.peek();
+                    let (_, escape_ch) = self.peek();
                     self.iter.next();
-                    match ch {
+                    match escape_ch {
                         // Basic escape sequences for single-quoted strings
                         '\'' | '\\' | 'n' | 'r' | 't' => (),
-                        _ => return Err(self.source.error(line, col, "invalid escape sequence")),
+                        _ => {
+                            return Err(self.source.error(
+                                line,
+                                cursor_col,
+                                "invalid escape sequence",
+                            ))
+                        }
                     }
                 }
                 _ => {
                     // check for valid chars
-                    let col = self.col + (offset - start) as u32;
+                    let inner_cursor_col = self
+                        .col
+                        .saturating_add(usize_to_u32(offset.saturating_sub(start))?);
                     if !('\u{0020}'..='\u{10FFFF}').contains(&ch) {
-                        return Err(self.source.error(line, col, "invalid character in string"));
+                        return Err(self.source.error(
+                            line,
+                            inner_cursor_col,
+                            "invalid character in string",
+                        ));
                     }
                     self.iter.next();
                 }
@@ -686,16 +776,16 @@ impl<'source> Lexer<'source> {
 
         self.iter.next();
         let end = self.peek().0;
-        self.col += (end - start) as u32;
+        self.advance_col(usize_to_u32(end.saturating_sub(start))?)?;
 
         Ok(Token(
             TokenKind::String,
             Span {
                 source: self.source.clone(),
                 line,
-                col: col + 1,
-                start: start as u32,
-                end: end as u32 - 1,
+                col: col.saturating_add(1),
+                start: usize_to_u32(start)?,
+                end: usize_to_u32(end)?.saturating_sub(1),
             },
         ))
     }
@@ -719,8 +809,8 @@ impl<'source> Lexer<'source> {
         // A tab is considered 4 space characters.
         loop {
             match self.peek().1 {
-                ' ' => self.col += 1,
-                '\t' => self.col += 4,
+                ' ' => self.advance_col(1)?,
+                '\t' => self.advance_col(4)?,
                 '\r' => {
                     if self.peekahead(1).1 != '\n' {
                         return Err(self.source.error(
@@ -732,7 +822,7 @@ impl<'source> Lexer<'source> {
                 }
                 '\n' => {
                     self.col = 1;
-                    self.line += 1;
+                    self.advance_line(1)?;
                 }
                 '#' if !self.comment_starts_with_double_slash => {
                     self.skip_past_newline()?;
@@ -753,6 +843,7 @@ impl<'source> Lexer<'source> {
         self.skip_ws()?;
 
         let (start, chr) = self.peek();
+        let start_u32 = usize_to_u32(start)?;
         let col = self.col;
 
         match chr {
@@ -762,118 +853,118 @@ impl<'source> Lexer<'source> {
 	    '-' | '.' if self.peekahead(1).1.is_ascii_digit() => {
 		self.read_number()
 	    }
-	    // grouping characters
-	    '{' | '}' | '[' | ']' | '(' | ')' |
-	    // arith operator
-	    '+' | '-' | '*' | '/' | '%' |
-	    // separators
-	    ',' | ';' | '.' => {
-		self.col += 1;
-		self.iter.next();
-		Ok(Token(TokenKind::Symbol, Span {
-		    source: self.source.clone(),
-		    line: self.line,
-		    col,
-		    start: start as u32,
-		    end: start as u32 + 1,
-		}))
-	    }
+        // grouping characters
+        '{' | '}' | '[' | ']' | '(' | ')' |
+        // arith operator
+        '+' | '-' | '*' | '/' | '%' |
+        // separators
+        ',' | ';' | '.' => {
+        self.advance_col(1)?;
+        self.iter.next();
+        Ok(Token(TokenKind::Symbol, Span {
+            source: self.source.clone(),
+            line: self.line,
+            col,
+            start: start_u32,
+            end: start_u32.saturating_add(1),
+        }))
+        }
 	    #[cfg(feature = "azure-rbac")]
 	    // RBAC logical AND operator (&&)
-	    '&' if self.enable_rbac_tokens && self.peekahead(1).1 == '&' => {
-		self.col += 2;
+        '&' if self.enable_rbac_tokens && self.peekahead(1).1 == '&' => {
+		self.advance_col(2)?;
 		self.iter.next();
 		self.iter.next();
 		Ok(Token(TokenKind::AzureRbac(AzureRbacTokenKind::LogicalAnd), Span {
 		    source: self.source.clone(),
 		    line: self.line,
 		    col,
-		    start: start as u32,
-		    end: start as u32 + 2,
+            start: start_u32,
+            end: start_u32.saturating_add(2),
 		}))
 	    }
 	    #[cfg(feature = "azure-rbac")]
 	    // RBAC logical OR operator (||)
-	    '|' if self.enable_rbac_tokens && self.peekahead(1).1 == '|' => {
-		self.col += 2;
+        '|' if self.enable_rbac_tokens && self.peekahead(1).1 == '|' => {
+		self.advance_col(2)?;
 		self.iter.next();
 		self.iter.next();
 		Ok(Token(TokenKind::AzureRbac(AzureRbacTokenKind::LogicalOr), Span {
 		    source: self.source.clone(),
 		    line: self.line,
 		    col,
-		    start: start as u32,
-		    end: start as u32 + 2,
+            start: start_u32,
+            end: start_u32.saturating_add(2),
 		}))
 	    }
 	    // Generic bin operators (when RBAC tokens not enabled or single & |)
-	    '&' | '|' => {
-		self.col += 1;
+        '&' | '|' => {
+		self.advance_col(1)?;
 		self.iter.next();
 		Ok(Token(TokenKind::Symbol, Span {
 		    source: self.source.clone(),
 		    line: self.line,
 		    col,
-		    start: start as u32,
-		    end: start as u32 + 1,
+            start: start_u32,
+            end: start_u32.saturating_add(1),
 		}))
 	    }
-	    ':' => {
-		self.col += 1;
+        ':' => {
+		self.advance_col(1)?;
 		self.iter.next();
-		let mut end = start as u32 + 1;
+        let mut end = start_u32.saturating_add(1);
 		if self.peek().1 == '=' || (self.peek().1 == ':' && self.double_colon_token) {
-		    self.col += 1;
+		    self.advance_col(1)?;
 		    self.iter.next();
-		    end += 1;
+            end = end.saturating_add(1);
 		}
 		Ok(Token(TokenKind::Symbol, Span {
 		    source: self.source.clone(),
 		    line: self.line,
 		    col,
-		    start: start as u32,
+            start: start_u32,
 		    end
 		}))
 	    }
 	    // < <= > >= = ==
 	    '<' | '>' | '=' => {
-		self.col += 1;
+		self.advance_col(1)?;
 		self.iter.next();
 		if self.peek().1 == '=' {
-		    self.col += 1;
+		    self.advance_col(1)?;
 		    self.iter.next();
 		};
 		Ok(Token(TokenKind::Symbol, Span {
 		    source: self.source.clone(),
 		    line: self.line,
 		    col,
-		    start: start as u32,
-		    end: self.peek().0 as u32,
+            start: start_u32,
+            end: usize_to_u32(self.peek().0)?,
 		}))
 	    }
 	    '!' if self.peekahead(1).1 == '=' => {
-		self.col += 2;
+		self.advance_col(2)?;
 		self.iter.next();
 		self.iter.next();
 		Ok(Token(TokenKind::Symbol, Span {
 		    source: self.source.clone(),
 		    line: self.line,
 		    col,
-		    start: start as u32,
-		    end: self.peek().0 as u32,
+            start: start_u32,
+            end: usize_to_u32(self.peek().0)?,
 		}))
 	    }
 	    #[cfg(feature = "azure-rbac")]
 	    // RBAC @ token for attribute references
-	    '@' if self.enable_rbac_tokens => {
-		self.col += 1;
+        '@' if self.enable_rbac_tokens => {
+		self.advance_col(1)?;
 		self.iter.next();
 		Ok(Token(TokenKind::AzureRbac(AzureRbacTokenKind::At), Span {
 		    source: self.source.clone(),
 		    line: self.line,
 		    col,
-		    start: start as u32,
-		    end: start as u32 + 1,
+            start: start_u32,
+            end: start_u32.saturating_add(1),
 		}))
 	    }
 	    '"' => self.read_string(),
@@ -884,8 +975,8 @@ impl<'source> Lexer<'source> {
 		source: self.source.clone(),
 		line:self.line,
 		col,
-		start: start as u32,
-		end: start as u32
+        start: start_u32,
+        end: start_u32
 	    })),
 	    _ if chr.is_ascii_digit() => self.read_number(),
 	    _ if chr.is_ascii_alphabetic() || chr == '_' => {
@@ -905,21 +996,21 @@ impl<'source> Lexer<'source> {
 
 		    if is_setp {
 			self.iter.next();
-			self.col += 1;
-			ident.1.end += 1;
+			self.advance_col(1)?;
+            ident.1.end = ident.1.end.saturating_add(1);
 		    }
 		}
 		Ok(ident)
 	    }
 	    _ if self.unknown_char_is_symbol => {
-		self.col += 1;
+		self.advance_col(1)?;
 		self.iter.next();
 		Ok(Token(TokenKind::Symbol, Span {
 		    source: self.source.clone(),
 		    line: self.line,
 		    col,
-		    start: start as u32,
-		    end: start as u32 + 1,
+            start: start_u32,
+            end: start_u32.saturating_add(1),
 		}))
 	    }
 	    _ => Err(self.source.error(self.line, self.col, "invalid character"))
