@@ -65,7 +65,7 @@ pub struct ScopeContext {
 
 impl ScopeContext {
     /// Create a new context with Query type (default, no output expressions)
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             context_type: ContextType::Query,
             bound_vars: BTreeSet::new(),
@@ -81,7 +81,7 @@ impl ScopeContext {
 
     /// Create a new context with a specific context type
     #[allow(dead_code)]
-    pub fn with_context_type(context_type: ContextType) -> Self {
+    pub const fn with_context_type(context_type: ContextType) -> Self {
         Self {
             context_type,
             bound_vars: BTreeSet::new(),
@@ -97,7 +97,7 @@ impl ScopeContext {
 
     /// Create a new context with output expressions (for rules and comprehensions)
     #[allow(dead_code)]
-    pub fn with_output_exprs(
+    pub const fn with_output_exprs(
         context_type: ContextType,
         key_expr: Option<ExprRef>,
         value_expr: Option<ExprRef>,

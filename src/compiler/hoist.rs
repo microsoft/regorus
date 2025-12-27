@@ -576,20 +576,20 @@ impl LoopHoister {
 
         // Get the scheduled order if available
         let stmt_order: Vec<usize> = if let Some(ref schedule) = self.schedule {
-            if let Some(query_schedule) = schedule
+            schedule
                 .queries
                 .get_checked(module_idx, query.qidx)
                 .map_err(|err| anyhow!("schedule out of bounds: {err}"))?
-            {
-                query_schedule
-                    .order
-                    .iter()
-                    .map(|&idx| idx as usize)
-                    .collect()
-            } else {
-                // No schedule for this query, use source order
-                (0..query.stmts.len()).collect()
-            }
+                .map_or_else(
+                    || (0..query.stmts.len()).collect(),
+                    |query_schedule| {
+                        query_schedule
+                            .order
+                            .iter()
+                            .map(|&idx| idx as usize)
+                            .collect()
+                    },
+                )
         } else {
             // No schedule available, use source order
             (0..query.stmts.len()).collect()
