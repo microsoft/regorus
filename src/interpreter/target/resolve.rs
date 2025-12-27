@@ -219,10 +219,11 @@ pub fn resolve_effect(interpreter: &mut Interpreter) -> Result<(), TargetCompile
 
                 // Update the target info with the correct effect schema, name, and path
                 let expected_path = format!("data.{}.{}", package, effect_name);
-                if let Some(ref mut target_info) = interpreter.compiled_policy_mut().target_info {
-                    target_info.effect_schema = effect_schema;
-                    target_info.effect_name = effect_name.as_ref().into();
-                    target_info.effect_path = expected_path.as_str().into();
+                if let Some(ref mut target_info_mut) = interpreter.compiled_policy_mut().target_info
+                {
+                    target_info_mut.effect_schema = effect_schema;
+                    target_info_mut.effect_name = effect_name.as_ref().into();
+                    target_info_mut.effect_path = expected_path.as_str().into();
                 }
             }
             _ => {

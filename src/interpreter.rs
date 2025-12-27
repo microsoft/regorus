@@ -1,22 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::unwrap_used,
-    clippy::unimplemented,
-    clippy::panic_in_result_fn,
-    clippy::shadow_unrelated,
-    clippy::missing_const_for_fn,
-    clippy::semicolon_if_nothing_returned,
-    clippy::useless_let_if_seq,
-    clippy::option_if_let_else,
-    clippy::unused_self,
-    clippy::print_stderr,
-    clippy::needless_continue,
-    clippy::as_conversions,
-    clippy::pattern_type_mismatch
-)]
+#![allow(clippy::print_stderr, clippy::pattern_type_mismatch)]
 
 use crate::ast::*;
 use crate::builtins::{self, BuiltinFcn};
@@ -312,7 +296,7 @@ impl Interpreter {
         )
     }
 
-    pub fn get_data_mut(&mut self) -> &mut Value {
+    pub const fn get_data_mut(&mut self) -> &mut Value {
         &mut self.data
     }
 
@@ -320,17 +304,17 @@ impl Interpreter {
         self.init_data = data;
     }
 
-    pub fn get_init_data(&self) -> &Value {
+    pub const fn get_init_data(&self) -> &Value {
         &self.init_data
     }
 
-    pub fn get_init_data_mut(&mut self) -> &mut Value {
+    pub const fn get_init_data_mut(&mut self) -> &mut Value {
         &mut self.init_data
     }
 
     // Used by tests.
     #[allow(dead_code)]
-    pub fn get_compiled_policy(&self) -> &Rc<CompiledPolicyData> {
+    pub const fn get_compiled_policy(&self) -> &Rc<CompiledPolicyData> {
         &self.compiled_policy
     }
 
@@ -409,7 +393,7 @@ impl Interpreter {
     }
 
     #[inline]
-    fn loop_collection_expr(loop_info: &HoistedLoop) -> &ExprRef {
+    const fn loop_collection_expr(loop_info: &HoistedLoop) -> &ExprRef {
         &loop_info.collection
     }
 
@@ -451,14 +435,17 @@ impl Interpreter {
 
     fn ensure_loop_var_values_capacity(&mut self) {
         for (module_idx, module) in self.compiled_policy.modules.iter().enumerate() {
-            self.loop_var_values
-                .ensure_capacity(module_idx as u32, module.num_expressions);
+            if let Ok(idx_u32) = u32::try_from(module_idx) {
+                self.loop_var_values
+                    .ensure_capacity(idx_u32, module.num_expressions);
+            }
         }
         if let Some(query_module) = &self.query_module {
             let query_module_idx = self.compiled_policy.modules.len();
             let eidx = query_module.num_expressions;
-            self.loop_var_values
-                .ensure_capacity(query_module_idx as u32, eidx);
+            if let Ok(idx_u32) = u32::try_from(query_module_idx) {
+                self.loop_var_values.ensure_capacity(idx_u32, eidx);
+            }
         }
     }
 
@@ -541,9 +528,9 @@ impl Interpreter {
                                     _ => index.to_string(),
                                 };
                                 let ref_path = if path.is_empty() {
-                                    ref_path + "." + &index
+                                    format!("{ref_path}.{index}")
                                 } else {
-                                    ref_path + "." + &index + "." + &path.join(".")
+                                    format!("{ref_path}.{index}.{}", path.join("."))
                                 };
                                 self.ensure_rule_evaluated(ref_path)?;
                             }
@@ -738,7 +725,11 @@ impl Interpreter {
 
                     // Recursively execute each element plan
                     for (i, element_plan) in element_plans.iter().enumerate() {
-                        if self.execute_destructuring_plan(element_plan, &arr[i])?
+                        let Some(element) = arr.get(i) else {
+                            return Ok(Value::Undefined);
+                        };
+
+                        if self.execute_destructuring_plan(element_plan, element)?
                             != Value::from(true)
                         {
                             return Ok(Value::Undefined);
@@ -892,7 +883,7 @@ impl Interpreter {
         stmts: &[&LiteralStmt],
     ) -> Result<bool> {
         let scope_saved = self.current_scope()?.clone();
-        let mut count = 0;
+        let mut count: usize = 0;
 
         // Fetch the binding plan for this some..in expression
         let module_idx = self.current_module_index;
@@ -918,12 +909,12 @@ impl Interpreter {
                 for (idx, value) in a.iter().enumerate() {
                     *self.current_scope_mut()? = scope_saved.clone();
 
-                    let mut success = true;
-                    // Execute key binding if present
-                    if let Some(key_plan) = &key_plan {
-                        success = self.execute_destructuring_plan(key_plan, &Value::from(idx))?
-                            == Value::from(true);
-                    }
+                    let mut success = if let Some(key_plan) = &key_plan {
+                        self.execute_destructuring_plan(key_plan, &Value::from(idx))?
+                            == Value::from(true)
+                    } else {
+                        true
+                    };
 
                     // Execute value binding
                     success = success
@@ -937,7 +928,7 @@ impl Interpreter {
 
                     let mut should_break = false;
                     if self.eval_stmts(stmts)? {
-                        count += 1;
+                        count = count.saturating_add(1);
                         if let Some(ctx) = self.contexts.last() {
                             if ctx.early_return {
                                 should_break = true;
@@ -955,12 +946,11 @@ impl Interpreter {
                 for value in s.iter() {
                     *self.current_scope_mut()? = scope_saved.clone();
 
-                    let mut success = true;
-                    // Execute key binding if present
-                    if let Some(key_plan) = &key_plan {
-                        success =
-                            self.execute_destructuring_plan(key_plan, value)? == Value::from(true);
-                    }
+                    let mut success = if let Some(key_plan) = &key_plan {
+                        self.execute_destructuring_plan(key_plan, value)? == Value::from(true)
+                    } else {
+                        true
+                    };
 
                     // Execute value binding
                     success = success
@@ -974,7 +964,7 @@ impl Interpreter {
 
                     let mut should_break = false;
                     if self.eval_stmts(stmts)? {
-                        count += 1;
+                        count = count.saturating_add(1);
                         if let Some(ctx) = self.contexts.last() {
                             if ctx.early_return {
                                 should_break = true;
@@ -993,12 +983,11 @@ impl Interpreter {
                 for (key, value) in o.iter() {
                     *self.current_scope_mut()? = scope_saved.clone();
 
-                    let mut success = true;
-                    // Execute key binding if present
-                    if let Some(key_plan) = &key_plan {
-                        success =
-                            self.execute_destructuring_plan(key_plan, key)? == Value::from(true);
-                    }
+                    let mut success = if let Some(key_plan) = &key_plan {
+                        self.execute_destructuring_plan(key_plan, key)? == Value::from(true)
+                    } else {
+                        true
+                    };
 
                     // Execute value binding
                     success = success
@@ -1012,7 +1001,7 @@ impl Interpreter {
 
                     let mut should_break = false;
                     if self.eval_stmts(stmts)? {
-                        count += 1;
+                        count = count.saturating_add(1);
                         if let Some(ctx) = self.contexts.last() {
                             if ctx.early_return {
                                 should_break = true;
@@ -1053,9 +1042,12 @@ impl Interpreter {
             Literal::Expr { span, expr, .. } => {
                 let value = match expr.as_ref() {
                     Expr::Call {
-                        span, fcn, params, ..
+                        span: call_span,
+                        fcn,
+                        params,
+                        ..
                     } => self.eval_call(
-                        span,
+                        call_span,
                         expr,
                         fcn,
                         params,
@@ -1074,7 +1066,7 @@ impl Interpreter {
                         if value != Value::Undefined {
                             result
                                 .expressions
-                                .push(Self::make_expression_result(span, &value))
+                                .push(Self::make_expression_result(span, &value));
                         } else {
                             result.bindings = Value::new_object();
                             result.expressions.clear();
@@ -1095,9 +1087,12 @@ impl Interpreter {
                 let value = match expr.as_ref() {
                     // Extra parameter is allowed; but a return argument is not allowed.
                     Expr::Call {
-                        span, fcn, params, ..
+                        span: call_span,
+                        fcn,
+                        params,
+                        ..
                     } => self.eval_call(
-                        span,
+                        call_span,
                         expr,
                         fcn,
                         params,
@@ -1115,7 +1110,7 @@ impl Interpreter {
                     if let Some(result) = &mut ctx.result {
                         result
                             .expressions
-                            .push(Self::make_expression_result(span, &Value::Bool(true)))
+                            .push(Self::make_expression_result(span, &Value::Bool(true)));
                     }
                 }
 
@@ -1134,7 +1129,7 @@ impl Interpreter {
                     if let Some(result) = &mut ctx.result {
                         result
                             .expressions
-                            .push(Self::make_expression_result(span, &Value::Bool(true)))
+                            .push(Self::make_expression_result(span, &Value::Bool(true)));
                     }
                 }
                 true
@@ -1149,7 +1144,7 @@ impl Interpreter {
                     if let Some(result) = &mut ctx.result {
                         result
                             .expressions
-                            .push(Self::make_expression_result(span, &Value::Bool(true)))
+                            .push(Self::make_expression_result(span, &Value::Bool(true)));
                     }
                 }
                 self.eval_some_in(span, key, value, collection, stmts)?
@@ -1165,7 +1160,7 @@ impl Interpreter {
                     if let Some(result) = &mut ctx.result {
                         result
                             .expressions
-                            .push(Self::make_expression_result(span, &Value::Bool(true)))
+                            .push(Self::make_expression_result(span, &Value::Bool(true)));
                     }
                 }
                 self.eval_every(span, key, value, domain, query)?
@@ -1196,7 +1191,7 @@ impl Interpreter {
                 let mut target = path.join(".");
 
                 let mut target_is_function = self.lookup_function_by_name(&target).is_some()
-                    || self.is_builtin(wm.refr.span(), &target);
+                    || Self::is_builtin(wm.refr.span(), &target);
 
                 if !target_is_function
                     && !target.starts_with("data.")
@@ -1205,10 +1200,10 @@ impl Interpreter {
                 {
                     // target must be a function.
                     if self.lookup_function_by_name(&target).is_none()
-                        && !self.is_builtin(wm.refr.span(), &target)
+                        && !Self::is_builtin(wm.refr.span(), &target)
                     {
                         // Prefix target with current module path.
-                        target = self.current_module_path.clone() + "." + &target;
+                        target = format!("{}.{}", self.current_module_path, target);
                         if self.lookup_function_by_name(&target).is_none() {
                             bail!(wm.refr.span().error("undefined rule"));
                         }
@@ -1232,7 +1227,7 @@ impl Interpreter {
                                 // Lookup without current module path prefixed.
                                 function_path = get_path_string(&wm.r#as, None)?;
                                 if self.lookup_function_by_name(&function_path).is_none()
-                                    && !self.is_builtin(wm.r#as.span(), &function_path)
+                                    && !Self::is_builtin(wm.r#as.span(), &function_path)
                                 {
                                     // bail!(wm.r#as.span().error("could not evaluate expression"));
                                     skip_exec = true;
@@ -1245,10 +1240,13 @@ impl Interpreter {
                 } else {
                     let value = self.eval_expr(&wm.r#as)?;
                     skip_exec = value == Value::Undefined;
-                    if path[0] == "input" || path[0] == "data" {
+                    let Some(first) = path.first() else {
+                        bail!(wm.refr.span().error("empty path in with modifier"));
+                    };
+                    if *first == "input" || *first == "data" {
                         // Override existing values in case of conflict.
                         let mut obj = &mut self.with_document;
-                        for p in &path[0..path.len()] {
+                        for p in &path {
                             if !matches!(obj, Value::Object(_)) {
                                 *obj = Value::new_object();
                             }
@@ -1331,11 +1329,11 @@ impl Interpreter {
         loops: &[HoistedLoop],
     ) -> Result<bool> {
         if loops.is_empty() {
-            if !stmts.is_empty() {
+            if let Some((first_stmt, tail_stmts)) = stmts.split_first() {
                 // Evaluate the current statement whose loop expressions have been hoisted.
-                if self.eval_stmt(stmts[0], &stmts[1..])? {
-                    if !matches!(&stmts[0].literal, Literal::SomeIn { .. }) {
-                        self.eval_stmts(&stmts[1..])
+                if self.eval_stmt(first_stmt, tail_stmts)? {
+                    if !matches!(&first_stmt.literal, Literal::SomeIn { .. }) {
+                        self.eval_stmts(tail_stmts)
                     } else {
                         Ok(true)
                     }
@@ -1346,11 +1344,16 @@ impl Interpreter {
                 self.eval_stmts(stmts)
             }
         } else {
-            let loop_info = &loops[0];
+            let (loop_info, loop_tail) = loops
+                .split_first()
+                .ok_or_else(|| anyhow!("internal error: expected loop info"))?;
+            let (first_stmt, _tail_stmts) = stmts
+                .split_first()
+                .ok_or_else(|| anyhow!("internal error: expected statements for loop"))?;
             let mut result = false;
 
             // Apply with modifiers before evaluating the loop expression.
-            let (saved_state, _) = self.apply_with_modifiers(stmts[0])?;
+            let (saved_state, _) = self.apply_with_modifiers(first_stmt)?;
 
             let collection_expr = Self::loop_collection_expr(loop_info).clone();
             let loop_value = if let Expr::Call {
@@ -1364,12 +1367,15 @@ impl Interpreter {
                     &self.compiled_policy.functions,
                 );
                 // If there is an extra arg, ignore it while computing the loop value.
-                let params = if extra_arg.is_some() {
-                    &params[..params.len() - 1]
+                let params_slice: &[ExprRef] = if extra_arg.is_some() {
+                    let (_, prefix) = params
+                        .split_last()
+                        .ok_or_else(|| anyhow!("internal error: expected params"))?;
+                    prefix
                 } else {
-                    &params[..]
+                    params.as_slice()
                 };
-                self.eval_call_impl(span, &collection_expr, fcn, params)?
+                self.eval_call_impl(span, &collection_expr, fcn, params_slice)?
             } else {
                 self.eval_expr(&collection_expr)?
             };
@@ -1397,7 +1403,7 @@ impl Interpreter {
                                 == Value::from(true)
                             {
                                 walk_result =
-                                    self.eval_stmts_in_loop(stmts, &loops[1..])? || walk_result;
+                                    self.eval_stmts_in_loop(stmts, loop_tail)? || walk_result;
                             }
 
                             Self::clear_scope(self.current_scope_mut()?);
@@ -1429,7 +1435,7 @@ impl Interpreter {
             {
                 if let Some(idx) = self.lookup_local_var(&index_var.source_str()) {
                     if loop_value[&idx] != Value::Undefined {
-                        result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                        result = self.eval_stmts_in_loop(stmts, loop_tail)? || result;
                         return Ok(result);
                     } else if idx != Value::Undefined {
                         // The index is not valid for this collection.
@@ -1475,7 +1481,7 @@ impl Interpreter {
                         if self.execute_destructuring_plan(&index_plan, &Value::from(idx))?
                             == Value::from(true)
                         {
-                            result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                            result = self.eval_stmts_in_loop(stmts, loop_tail)? || result;
                         }
 
                         Self::clear_scope(self.current_scope_mut()?);
@@ -1495,7 +1501,7 @@ impl Interpreter {
 
                         // For sets, index is also the value.
                         if self.execute_destructuring_plan(&index_plan, v)? == Value::from(true) {
-                            result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                            result = self.eval_stmts_in_loop(stmts, loop_tail)? || result;
                         }
 
                         Self::clear_scope(self.current_scope_mut()?);
@@ -1513,7 +1519,7 @@ impl Interpreter {
                         self.set_loop_var_value(loop_target_expr, v.clone())?;
                         // For objects, index is key.
                         if self.execute_destructuring_plan(&index_plan, k)? == Value::from(true) {
-                            result = self.eval_stmts_in_loop(stmts, &loops[1..])? || result;
+                            result = self.eval_stmts_in_loop(stmts, loop_tail)? || result;
                         }
 
                         Self::clear_scope(self.current_scope_mut()?);
@@ -1542,22 +1548,30 @@ impl Interpreter {
         }
     }
 
-    fn eval_rule_ref(&mut self, refr: &ExprRef) -> Result<Vec<Value>> {
+    fn eval_rule_ref(&mut self, rule_refr: &ExprRef) -> Result<Vec<Value>> {
         let mut comps = vec![];
-        let mut expr = refr;
+        let mut expr = rule_refr;
         loop {
             match expr.as_ref() {
                 Expr::Var { span: v, .. } => {
                     comps.push(Value::String(v.text().into()));
                     break;
                 }
-                Expr::RefBrack { refr, index, .. } => {
+                Expr::RefBrack {
+                    refr: nested_refr,
+                    index,
+                    ..
+                } => {
                     comps.push(self.eval_expr(index)?);
-                    expr = refr;
+                    expr = nested_refr;
                 }
-                Expr::RefDot { refr, field, .. } => {
+                Expr::RefDot {
+                    refr: nested_refr,
+                    field,
+                    ..
+                } => {
                     comps.push(Value::String(field.0.text().into()));
-                    expr = refr;
+                    expr = nested_refr;
                 }
                 _ => {
                     bail!(expr.span().error("not a valid rule ref"));
@@ -1594,7 +1608,7 @@ impl Interpreter {
             if p == Value::Undefined {
                 break;
             }
-            if idx == len - 1 {
+            if idx == len.saturating_sub(1) {
                 // last key.
                 if is_set {
                     let set = obj
@@ -1640,19 +1654,21 @@ impl Interpreter {
 
     // A ref is a constant ref, if it does not contain any local variables.
     // For now, we restrict constant refs to those that contain only simple literals.
-    fn is_constant_ref(&self, mut expr: &Ref<Expr>) -> Result<bool> {
+    fn is_constant_ref(mut expr: &Ref<Expr>) -> Result<bool> {
         loop {
             match expr.as_ref() {
                 Expr::Var { .. } => break,
                 Expr::RefDot { refr, .. } => expr = refr,
-                Expr::RefBrack { refr, index, .. } if self.is_simple_literal(index)? => expr = refr,
+                Expr::RefBrack { refr, index, .. } if Self::is_simple_literal(index)? => {
+                    expr = refr;
+                }
                 _ => return Ok(false),
             }
         }
         Ok(true)
     }
 
-    fn is_simple_literal(&self, expr: &Ref<Expr>) -> Result<bool> {
+    fn is_simple_literal(expr: &Ref<Expr>) -> Result<bool> {
         Ok(matches!(
             expr.as_ref(),
             Expr::String { .. }
@@ -1665,16 +1681,13 @@ impl Interpreter {
 
     // A rule's output expression is constant if it does not contain local variables.
     // For now, we restrict output expressions to those that contain only simple literals.
-    fn is_constant_output(
-        &self,
-        key_expr: &Option<Ref<Expr>>,
-        output_expr: &Ref<Expr>,
-    ) -> Result<bool> {
-        let mut is_const = true;
-        if let Some(key_expr) = key_expr {
-            is_const = self.is_simple_literal(key_expr)?;
-        }
-        Ok(is_const && self.is_simple_literal(output_expr)?)
+    fn is_constant_output(key_expr: &Option<Ref<Expr>>, output_expr: &Ref<Expr>) -> Result<bool> {
+        let is_const = if let Some(key_expr) = key_expr {
+            Self::is_simple_literal(key_expr)?
+        } else {
+            true
+        };
+        Ok(is_const && Self::is_simple_literal(output_expr)?)
     }
 
     fn eval_output_expr_in_loop(&mut self, loops: &[HoistedLoop]) -> Result<bool> {
@@ -1691,7 +1704,7 @@ impl Interpreter {
 
             if let Some(rule_ref) = ctx.rule_ref.clone() {
                 let mut is_const_rule = if is_rule && !constness_determined {
-                    self.is_constant_ref(&rule_ref)?
+                    Self::is_constant_ref(&rule_ref)?
                 } else {
                     // Constness has already been determined or is not a rule.
                     // Treat the expression as not constant.
@@ -1704,11 +1717,14 @@ impl Interpreter {
                 }
                 let output = if let Some(oe) = &output_expr {
                     // Rule is constant only if its ref, key and output are constant.
-                    is_const_rule = is_const_rule && self.is_constant_output(&key_expr, oe)?;
+                    is_const_rule = is_const_rule && Self::is_constant_output(&key_expr, oe)?;
                     self.eval_expr(oe)?
                 } else if is_old_style_set && !comps.is_empty() {
                     // Rule's constness is determined only by its ref.
-                    let output = comps[comps.len() - 1].clone();
+                    let output = comps
+                        .last()
+                        .cloned()
+                        .ok_or_else(|| anyhow!("internal error: missing comps output"))?;
                     comps.pop();
                     output
                 } else {
@@ -1717,23 +1733,23 @@ impl Interpreter {
                 };
 
                 let comps_defined = comps.iter().all(|v| v != &Value::Undefined);
-                let ctx = self.get_current_context_mut()?;
+                let ctx_mut = self.get_current_context_mut()?;
 
                 if is_const_rule {
-                    ctx.early_return = true;
+                    ctx_mut.early_return = true;
                 }
                 if is_rule {
-                    ctx.output_constness_determined = true;
+                    ctx_mut.output_constness_determined = true;
                 }
 
                 if output == Value::Undefined || !comps_defined {
-                    ctx.rule_value = Value::Undefined;
+                    ctx_mut.rule_value = Value::Undefined;
                     return Ok(false);
                 }
 
                 if is_set {
                     // Ensure that set rule is created even if the element is undefined.
-                    let set = ctx
+                    let set = ctx_mut
                         .rule_value
                         .as_object_mut()?
                         .entry(Value::from_array(comps))
@@ -1746,7 +1762,7 @@ impl Interpreter {
                 }
 
                 // Non-set rule.
-                match ctx
+                match ctx_mut
                     .rule_value
                     .as_object_mut()?
                     .entry(Value::from_array(comps))
@@ -1770,9 +1786,9 @@ impl Interpreter {
                     let key = self.eval_expr(&ke)?;
                     let value = self.eval_expr(&oe)?;
 
-                    let ctx = self.get_current_context_mut()?;
+                    let ctx_mut = self.get_current_context_mut()?;
                     if key != Value::Undefined && value != Value::Undefined {
-                        let map = ctx.value.as_object_mut()?;
+                        let map = ctx_mut.value.as_object_mut()?;
                         match map.get(&key) {
                             Some(pv) if *pv != value => {
                                 let span = ke.span();
@@ -1791,17 +1807,17 @@ impl Interpreter {
                             _ => map.insert(key, value),
                         };
                     } else {
-                        match &ctx.value {
+                        match &ctx_mut.value {
                             Value::Object(_) => (),
-                            _ => ctx.value = Value::Undefined,
+                            _ => ctx_mut.value = Value::Undefined,
                         }
                     };
                 }
                 (None, Some(oe)) => {
                     let output = self.eval_expr(&oe)?;
-                    let ctx = self.get_current_context_mut()?;
+                    let ctx_mut = self.get_current_context_mut()?;
                     if output != Value::Undefined {
-                        match &mut ctx.value {
+                        match &mut ctx_mut.value {
                             Value::Array(a) => {
                                 Rc::make_mut(a).push(output);
                             }
@@ -1810,10 +1826,10 @@ impl Interpreter {
                             }
                             a => bail!("internal error: invalid context value {a}"),
                         }
-                    } else if !ctx.is_compr {
-                        match &ctx.value {
+                    } else if !ctx_mut.is_compr {
+                        match &ctx_mut.value {
                             Value::Set(_) => (),
-                            _ => ctx.value = Value::Undefined,
+                            _ => ctx_mut.value = Value::Undefined,
                         }
                     }
                 }
@@ -1824,28 +1840,28 @@ impl Interpreter {
 
             // If a query snippet is being run, gather results.
             let result_opt = {
-                let ctx = self.get_current_context_mut()?;
-                ctx.result.clone()
+                let current_ctx = self.get_current_context_mut()?;
+                current_ctx.result.clone()
             };
 
-            if let Some(mut result) = result_opt {
+            if let Some(mut current_result) = result_opt {
                 if let Some(scope) = self.scopes.last() {
                     for (name, value) in scope.iter() {
-                        result
+                        current_result
                             .bindings
                             .as_object_mut()?
                             .insert(Value::String(name.to_string().into()), value.clone());
                     }
                 }
-                if result.expressions.len() == 1 // Single expression query
-                    || result // Multi expression query where no value is false
+                if current_result.expressions.len() == 1 // Single expression query
+                    || current_result // Multi expression query where no value is false
                        .expressions
                        .iter()
                        .all(|v| v.value != Value::Undefined && v.value != Value::Bool(false))
-                       && !result.expressions.is_empty()
+                       && !current_result.expressions.is_empty()
                 {
-                    let ctx = self.get_current_context_mut()?;
-                    ctx.results.result.push(result);
+                    let ctx_mut = self.get_current_context_mut()?;
+                    ctx_mut.results.result.push(current_result);
                 }
             }
 
@@ -1853,26 +1869,28 @@ impl Interpreter {
         }
 
         // Try out values in current loop expr.
-        let loop_info = &loops[0];
+        let (loop_info, loop_tail) = loops
+            .split_first()
+            .ok_or_else(|| anyhow!("internal error: expected loop info"))?;
         let mut result = false;
         let loop_target_expr = Self::loop_assignment_expr(loop_info);
         match self.eval_expr(Self::loop_collection_expr(loop_info))? {
             Value::Array(items) => {
                 for v in items.iter() {
                     self.set_loop_var_value(loop_target_expr, v.clone())?;
-                    result = self.eval_output_expr_in_loop(&loops[1..])? || result;
+                    result = self.eval_output_expr_in_loop(loop_tail)? || result;
                 }
             }
             Value::Set(items) => {
                 for v in items.iter() {
                     self.set_loop_var_value(loop_target_expr, v.clone())?;
-                    result = self.eval_output_expr_in_loop(&loops[1..])? || result;
+                    result = self.eval_output_expr_in_loop(loop_tail)? || result;
                 }
             }
             Value::Object(obj) => {
                 for (_, v) in obj.iter() {
                     self.set_loop_var_value(loop_target_expr, v.clone())?;
-                    result = self.eval_output_expr_in_loop(&loops[1..])? || result;
+                    result = self.eval_output_expr_in_loop(loop_tail)? || result;
                 }
             }
             _ => {
@@ -1948,19 +1966,16 @@ impl Interpreter {
         let r = self.eval_output_expr_in_loop(&loops[..])?;
 
         let ctx = self.get_current_context()?;
-        if let Some(_oe) = &ctx.output_expr {
-            // Ensure that at least one output was generated.
-            Ok(ctx.rule_value != Value::Undefined)
-        } else {
-            Ok(r)
-        }
+        ctx.output_expr
+            .as_ref()
+            .map_or_else(|| Ok(r), |_oe| Ok(ctx.rule_value != Value::Undefined))
     }
 
     fn eval_stmts(&mut self, stmts: &[&LiteralStmt]) -> Result<bool> {
-        let mut result = true;
+        let mut eval_success = true;
 
         for (idx, stmt) in stmts.iter().enumerate() {
-            if !result {
+            if !eval_success {
                 break;
             }
 
@@ -1985,18 +2000,24 @@ impl Interpreter {
             if !loop_exprs.is_empty() {
                 // If there are hoisted loop expressions, execute subsequent statements
                 // within loops.
-                return self.eval_stmts_in_loop(&stmts[idx..], &loop_exprs[..]);
+                let remaining = stmts.get(idx..).unwrap_or(&[]);
+                return self.eval_stmts_in_loop(remaining, &loop_exprs[..]);
             }
 
-            result = self.eval_stmt(stmt, &stmts[idx + 1..])?;
+            let tail = idx
+                .checked_add(1)
+                .and_then(|n| stmts.get(n..))
+                .unwrap_or(&[]);
+
+            eval_success = self.eval_stmt(stmt, tail)?;
 
             if matches!(&stmt.literal, Literal::SomeIn { .. }) {
-                return Ok(result);
+                return Ok(eval_success);
             }
         }
 
-        if result {
-            result = self.eval_output_expr()?;
+        if eval_success {
+            eval_success = self.eval_output_expr()?;
         } else {
             // If a query snippet is being run, gather results.
             let result_opt = {
@@ -2004,37 +2025,38 @@ impl Interpreter {
                 ctx.result.clone()
             };
 
-            if let Some(mut result) = result_opt {
+            if let Some(mut gathered_result) = result_opt {
                 if let Some(scope) = self.scopes.last() {
                     for (name, value) in scope.iter() {
-                        result
+                        gathered_result
                             .bindings
                             .as_object_mut()?
                             .insert(Value::String(name.to_string().into()), value.clone());
                     }
                 }
 
-                if result.expressions.len() == 1 // Single expression query
-                    || result // Multi expression query where no value is false
+                if gathered_result.expressions.len() == 1 // Single expression query
+                    || gathered_result // Multi expression query where no value is false
                     .expressions
                     .iter()
                     .all(|v| v.value != Value::Undefined && v.value != Value::Bool(false))
-                    && !result.expressions.is_empty()
+                        && !gathered_result.expressions.is_empty()
                 {
                     let ctx = self.get_current_context_mut()?;
-                    ctx.results.result.push(result);
+                    ctx.results.result.push(gathered_result);
                 }
             }
         }
 
-        Ok(result)
+        Ok(eval_success)
     }
 
     fn eval_query(&mut self, query: &Ref<Query>) -> Result<bool> {
         // Execute the query in a new scope
         self.scopes.push(Scope::new());
         let order_indices = {
-            let query_module_index = self.compiled_policy.modules.len() as u32;
+            let query_module_index = u32::try_from(self.compiled_policy.modules.len())
+                .map_err(|err| anyhow!("query module index overflow: {err}"))?;
             if self.current_module_index == query_module_index {
                 // Use query schedule for the current module
                 let schedule = match self.query_schedule.as_ref() {
@@ -2092,15 +2114,15 @@ impl Interpreter {
 
                 let mut ordered = Vec::with_capacity(stmts_len);
                 for idx in order {
-                    let stmt_idx = *idx as usize;
-                    if stmt_idx >= stmts_len {
+                    let stmt_idx = usize::from(*idx);
+                    let stmt = query.stmts.get(stmt_idx).ok_or_else(|| {
                         let msg = format!(
                             "invalid schedule index {stmt_idx} for {} statements",
                             stmts_len
                         );
-                        bail!(query.span.error(msg.as_str()));
-                    }
-                    ordered.push(&query.stmts[stmt_idx]);
+                        query.span.error(msg.as_str())
+                    })?;
+                    ordered.push(stmt);
                 }
                 ordered
             }
@@ -2266,7 +2288,7 @@ impl Interpreter {
     fn lookup_function_by_name(&self, path: &str) -> Option<(&Vec<Ref<Rule>>, &Ref<Module>)> {
         let mut path = path.to_owned();
         if !path.starts_with("data.") {
-            path = self.current_module_path.clone() + "." + &path;
+            path = format!("{}.{}", self.current_module_path, path);
         }
 
         match self.compiled_policy.functions.get(&path) {
@@ -2289,8 +2311,8 @@ impl Interpreter {
         }
 
         let cache = builtins::must_cache(name);
-        if let Some(name) = &cache {
-            if let Some(v) = self.builtins_cache.get(&(name, args.clone())) {
+        if let Some(cached_key) = &cache {
+            if let Some(v) = self.builtins_cache.get(&(cached_key, args.clone())) {
                 return Ok(v.clone());
             }
         }
@@ -2316,26 +2338,26 @@ impl Interpreter {
             }
         }
 
-        if let Some(name) = cache {
-            self.builtins_cache.insert((name, args), v.clone());
+        if let Some(cached_key) = cache {
+            self.builtins_cache.insert((cached_key, args), v.clone());
         }
         Ok(v)
     }
 
     #[allow(unused_variables)]
-    fn lookup_builtin(&self, span: &Span, path: &str) -> Result<Option<&BuiltinFcn>> {
+    fn lookup_builtin(span: &Span, path: &str) -> Result<Option<&'static BuiltinFcn>> {
         if let Some(builtin) = builtins::BUILTINS.get(path) {
             return Ok(Some(builtin));
         }
         Ok(None)
     }
 
-    fn is_builtin(&self, span: &Span, path: &str) -> bool {
-        path == "print" || matches!(self.lookup_builtin(span, path), Ok(Some(_)))
+    fn is_builtin(span: &Span, path: &str) -> bool {
+        path == "print" || matches!(Self::lookup_builtin(span, path), Ok(Some(_)))
     }
 
-    fn to_printable(v: &Value, s: &mut String) {
-        match v {
+    fn to_printable(value: &Value, s: &mut String) {
+        match value {
             Value::Array(array) => {
                 s.push('[');
                 for (idx, e) in array.iter().enumerate() {
@@ -2358,23 +2380,23 @@ impl Interpreter {
             }
             Value::Object(map) => {
                 s.push('{');
-                for (idx, (k, v)) in map.iter().enumerate() {
+                for (idx, (k, entry_value)) in map.iter().enumerate() {
                     if idx > 0 {
                         s.push_str(", ");
                     }
                     Self::to_printable(k, s);
                     s.push_str(": ");
-                    Self::to_printable(v, s);
+                    Self::to_printable(entry_value, s);
                 }
                 s.push('}');
             }
-            v => s.push_str(&format!("{v}")),
+            other => s.push_str(&format!("{other}")),
         }
     }
 
     fn eval_print(&mut self, span: &Span, params: &[ExprRef], args: Vec<Value>) -> Result<Value> {
         const MAX_ARGS: u8 = 100;
-        if args.len() > MAX_ARGS as usize {
+        if args.len() > usize::from(MAX_ARGS) {
             bail!(span.error(&format!("print supports upto {MAX_ARGS} arguments")));
         }
 
@@ -2435,31 +2457,37 @@ impl Interpreter {
             param_values.push(self.eval_expr(p)?);
         }
 
-        let orig_fcn_path = fcn_path;
+        let orig_fcn_path = fcn_path.clone();
 
         let mut with_functions_saved = None;
-        let fcn_path = match self.with_functions.get(&orig_fcn_path) {
+        let selected_fcn_path = match self.with_functions.get(&orig_fcn_path) {
             Some(FunctionModifier::Function(p)) => {
                 let p = p.clone();
                 with_functions_saved = Some(self.with_functions.clone());
                 self.with_functions.clear();
                 p
             }
-            Some(FunctionModifier::Value(v)) => {
-                if param_values.iter().any(|v| v == &Value::Undefined) {
+            Some(FunctionModifier::Value(value_override)) => {
+                if param_values
+                    .iter()
+                    .any(|evaluated_value| evaluated_value == &Value::Undefined)
+                {
                     return Ok(Value::Undefined);
                 }
-                return Ok(v.clone());
+                return Ok(value_override.clone());
             }
             _ => orig_fcn_path.clone(),
         };
 
         let mut extension = None;
         let empty: Vec<Ref<Rule>> = vec![];
-        let (fcns_rules, fcn_module) = match self.lookup_function_by_name(&fcn_path) {
+        let (fcns_rules, fcn_module) = match self.lookup_function_by_name(&selected_fcn_path) {
             Some((fcns, m)) => (fcns, Some(m.clone())),
             _ => {
-                if self.compiled_policy.default_rules.contains_key(&fcn_path)
+                if self
+                    .compiled_policy
+                    .default_rules
+                    .contains_key(&selected_fcn_path)
                     || self
                         .compiled_policy
                         .default_rules
@@ -2469,17 +2497,17 @@ impl Interpreter {
                     (&empty, self.module.clone())
                 }
                 // Look up extension.
-                else if let Some(ext) = self.extensions.get_mut(&fcn_path) {
+                else if let Some(ext) = self.extensions.get_mut(&selected_fcn_path) {
                     extension = Some(ext);
                     (&empty, None)
-                } else if fcn_path == "print" {
+                } else if selected_fcn_path == "print" {
                     return self.eval_print(span, params, param_values);
                 }
                 // Look up builtin function.
-                else if let Some(builtin) = self.lookup_builtin(span, &fcn_path)? {
+                else if let Some(builtin) = Self::lookup_builtin(span, &selected_fcn_path)? {
                     let r = self.eval_builtin_call(
                         span,
-                        &fcn_path.clone(),
+                        &selected_fcn_path.clone(),
                         *builtin,
                         params,
                         param_values,
@@ -2489,7 +2517,9 @@ impl Interpreter {
                     }
                     return r;
                 } else {
-                    bail!(span.error(format!("could not find function {fcn_path}").as_str()));
+                    bail!(
+                        span.error(format!("could not find function {selected_fcn_path}").as_str())
+                    );
                 }
             }
         };
@@ -2501,7 +2531,7 @@ impl Interpreter {
         }
 
         if let Some((nargs, ext)) = extension {
-            if param_values.len() != *nargs as usize {
+            if param_values.len() != usize::from(*nargs) {
                 bail!(span.error("incorrect number of parameters supplied to extension"));
             }
             let r = Rc::make_mut(ext)(param_values);
@@ -2562,6 +2592,10 @@ impl Interpreter {
                 let module_idx = callee_module_idx;
                 let expr_idx = a.as_ref().eidx();
 
+                let param_value = param_values
+                    .get(idx)
+                    .ok_or_else(|| anyhow!("internal error: missing param value"))?;
+
                 let binding_success = if let Some(BindingPlan::Parameter {
                     destructuring_plan,
                     ..
@@ -2573,7 +2607,7 @@ impl Interpreter {
                     .cloned()
                 {
                     // Execute the destructuring plan with the parameter value
-                    self.execute_destructuring_plan(&destructuring_plan, &param_values[idx])?
+                    self.execute_destructuring_plan(&destructuring_plan, param_value)?
                         == Value::from(true)
                 } else {
                     // Raise error if binding plan is not found
@@ -2608,7 +2642,12 @@ impl Interpreter {
             self.set_current_module(prev_module)?;
 
             let result = match &value {
-                Value::Set(s) if s.len() == 1 => s.iter().next().unwrap().clone(),
+                Value::Set(s) if s.len() == 1 => {
+                    let Some(v) = s.iter().next() else {
+                        return Err(anyhow!("internal error: expected single value in set"));
+                    };
+                    v.clone()
+                }
                 Value::Set(s) if !s.is_empty() => {
                     return Err(span.source.error(
                         span.line,
@@ -2637,7 +2676,10 @@ impl Interpreter {
         }
 
         if self.compiled_policy.strict_builtin_errors && !errors.is_empty() {
-            return Err(anyhow!(errors[0].to_string()));
+            return Err(errors
+                .first()
+                .map(|e| anyhow!(e.to_string()))
+                .unwrap_or_else(|| anyhow!("internal error: missing error entry")));
         }
 
         if results.is_empty() {
@@ -2647,11 +2689,19 @@ impl Interpreter {
             if errors.is_empty() {
                 // Check if any default rules can be evaluated.
                 // TODO: with mod
-                let rules = match self.compiled_policy.default_rules.get(&fcn_path).cloned() {
+                let rules = match self
+                    .compiled_policy
+                    .default_rules
+                    .get(&selected_fcn_path)
+                    .cloned()
+                {
                     Some(rules) => Some(rules),
                     None => {
-                        let fcn_path = get_path_string(fcn, Some(&self.current_module_path))?;
-                        self.compiled_policy.default_rules.get(&fcn_path).cloned()
+                        let alt_fcn_path = get_path_string(fcn, Some(&self.current_module_path))?;
+                        self.compiled_policy
+                            .default_rules
+                            .get(&alt_fcn_path)
+                            .cloned()
                     }
                 };
 
@@ -2677,12 +2727,15 @@ impl Interpreter {
             if errors.is_empty() {
                 return Ok(Value::Undefined);
             } else {
-                return Err(anyhow!(errors[0].to_string()));
+                return Err(errors
+                    .first()
+                    .map(|e| anyhow!(e.to_string()))
+                    .unwrap_or_else(|| anyhow!("internal error: missing error entry")));
             }
         }
 
         // all defined values should be the equal to the same value that should be returned
-        if !results.windows(2).all(|w| w[0] == w[1]) {
+        if results.windows(2).any(|w| matches!(w, [a, b] if a != b)) {
             return Err(span.source.error(
                 span.line,
                 span.col,
@@ -2690,7 +2743,10 @@ impl Interpreter {
             ));
         }
 
-        Ok(results[0].clone())
+        results
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow!("internal error: expected function result"))
     }
 
     fn eval_call(
@@ -2704,9 +2760,12 @@ impl Interpreter {
     ) -> Result<Value> {
         // TODO: global var check; interop with `some var`
         if extra_arg.is_some() {
-            let value = self.eval_call_impl(span, expr, fcn, &params[..params.len() - 1])?;
+            let (last_param, arg_prefix) = params
+                .split_last()
+                .ok_or_else(|| anyhow!("internal error: expected at least one param"))?;
+
+            let value = self.eval_call_impl(span, expr, fcn, arg_prefix)?;
             if allow_return_arg {
-                let last_param = &params[params.len() - 1];
                 let module_idx = self.current_module_index;
                 let expr_idx = last_param.as_ref().eidx();
                 if let Some(BindingPlan::Parameter {
@@ -2729,7 +2788,7 @@ impl Interpreter {
                     )))
                 }
             } else {
-                let expected = self.eval_expr(&params[params.len() - 1])?;
+                let expected = self.eval_expr(last_param)?;
                 Ok(Value::Bool(value == expected))
             }
         } else {
@@ -2753,15 +2812,19 @@ impl Interpreter {
                 // Prevent cyclic evaluation.
                 continue;
             }
-            let module_path = get_path_string(&module.package.refr, Some("data"))?;
-            if module_path.starts_with(&path)
-                && (module_path.len() == path.len()
-                    || &module_path[path.len()..path.len() + 1] == ".")
+            let module_path_str = get_path_string(&module.package.refr, Some("data"))?;
+            let has_dot_after_prefix = module_path_str
+                .get(path.len()..)
+                .is_some_and(|suffix| suffix.starts_with('.'));
+
+            if module_path_str.starts_with(&path)
+                && (module_path_str.len() == path.len() || has_dot_after_prefix)
             {
                 // Ensure that the module is created.
-                let path = Parser::get_path_ref_components(&module.package.refr)?;
-                let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
-                let vref = Self::make_or_get_value_mut(&mut self.data, &path[..])?;
+                let module_path_components = Parser::get_path_ref_components(&module.package.refr)?;
+                let module_path_components: Vec<&str> =
+                    module_path_components.iter().map(|s| s.text()).collect();
+                let vref = Self::make_or_get_value_mut(&mut self.data, &module_path_components)?;
                 if *vref == Value::Undefined {
                     *vref = Value::new_object();
                 }
@@ -2779,7 +2842,7 @@ impl Interpreter {
                     }
                 }
                 self.set_current_module(prev_module)?;
-                self.mark_processed(&path)?;
+                self.mark_processed(&module_path_components)?;
             }
         }
 
@@ -2813,7 +2876,9 @@ impl Interpreter {
 
         if matched {
             let comps: Vec<&str> = path.split('.').collect();
-            self.mark_processed(&comps[1..])?;
+            if let Some((_, tail)) = comps.split_first() {
+                self.mark_processed(tail)?;
+            }
         }
         Ok(())
     }
@@ -2883,15 +2948,19 @@ impl Interpreter {
 
             // With modifiers may be used to specify part of a module that that not yet been
             // evaluated. Therefore ensure that module is evaluated first.
-            let path = "data.".to_owned() + &fields.join(".");
-            self.ensure_module_evaluated(path.clone())?;
+            let requested_path = format!("data.{}", fields.join("."));
+            self.ensure_module_evaluated(requested_path.clone())?;
 
-            for i in (1..fields.len() + 1).rev() {
-                let path = "data.".to_owned() + &fields[0..i].join(".");
-                if self.compiled_policy.rules.contains_key(&path)
-                    || self.compiled_policy.default_rules.contains_key(&path)
+            for i in (1..=fields.len()).rev() {
+                let prefix = fields.iter().take(i).copied().collect::<Vec<_>>();
+                let prefix_path = format!("data.{}", prefix.join("."));
+                if self.compiled_policy.rules.contains_key(&prefix_path)
+                    || self
+                        .compiled_policy
+                        .default_rules
+                        .contains_key(&prefix_path)
                 {
-                    self.ensure_rule_evaluated(path)?;
+                    self.ensure_rule_evaluated(prefix_path)?;
                     break;
                 }
             }
@@ -2899,17 +2968,17 @@ impl Interpreter {
             Ok(Self::get_value_chained(self.data.clone(), fields))
         } else if !self.compiled_policy.modules.is_empty() {
             let module = self.current_module()?;
-            let path = Parser::get_path_ref_components(&module.package.refr)?;
-            let mut path: Vec<&str> = path.iter().map(|s| s.text()).collect();
-            path.push(name.text());
+            let parsed_path = Parser::get_path_ref_components(&module.package.refr)?;
+            let mut module_var_path: Vec<&str> = parsed_path.iter().map(|s| s.text()).collect();
+            module_var_path.push(name.text());
 
-            if self.is_processed(&path)? {
-                let value = Self::get_value_chained(self.data.clone(), &path);
+            if self.is_processed(&module_var_path)? {
+                let value = Self::get_value_chained(self.data.clone(), &module_var_path);
                 return Ok(Self::get_value_chained(value, fields));
             }
 
             // Ensure that all the rules having common prefix (name) are evaluated.
-            let rule_path = "data.".to_owned() + &path.join(".");
+            let rule_path = format!("data.{}", module_var_path.join("."));
 
             if !no_error
                 && !self.compiled_policy.rules.contains_key(&rule_path)
@@ -2919,7 +2988,7 @@ impl Interpreter {
                 bail!(span.error(&format!(
                     "var {} is unsafe (path {:?}, scopes {:?})",
                     name.text(),
-                    path,
+                    module_var_path,
                     self.scopes
                 )));
             }
@@ -2927,12 +2996,12 @@ impl Interpreter {
             // Find the rule to which the var being looked up corresponds to. This is the prefix for
             // which rules exist.
             let mut found = false;
-            for i in (0..fields.len() + 1).rev() {
-                let comps = &fields[0..i];
+            for i in (0..=fields.len()).rev() {
+                let comps = fields.iter().take(i).copied().collect::<Vec<_>>();
                 let path = if comps.is_empty() {
                     rule_path.clone()
                 } else {
-                    rule_path.clone() + "." + &fields[0..i].join(".")
+                    format!("{}.{}", rule_path, comps.join("."))
                 };
 
                 if self.compiled_policy.rules.contains_key(&path)
@@ -2953,7 +3022,7 @@ impl Interpreter {
                 }
             }
 
-            let value = Self::get_value_chained(self.data.clone(), &path[..]);
+            let value = Self::get_value_chained(self.data.clone(), &module_var_path[..]);
             Ok(Self::get_value_chained(value, fields))
         } else {
             Ok(Value::Undefined)
@@ -2965,21 +3034,27 @@ impl Interpreter {
         if self.enable_coverage {
             let span = expr.span();
             let source = &span.source;
-            let line = span.line as usize;
+            let line = usize::try_from(span.line).unwrap_or(usize::MAX);
             if line > 0 {
                 // Check if coverage table already exists for source.
                 match self.coverage.get_mut(source) {
                     Some(c) => {
                         // Ensure that current line is valid.
-                        if c.len() < line + 1 {
-                            c.resize(line + 1, false);
+                        let needed = line.saturating_add(1);
+                        if c.len() < needed {
+                            c.resize(needed, false);
                         }
-                        c[line] = true;
+                        if let Some(slot) = c.get_mut(line) {
+                            *slot = true;
+                        }
                     }
                     _ => {
                         // Create new table.
-                        let mut c = vec![false; line + 1];
-                        c[line] = true;
+                        let size = line.saturating_add(1);
+                        let mut c = vec![false; size];
+                        if let Some(slot) = c.get_mut(line) {
+                            *slot = true;
+                        }
                         self.coverage.insert(source.clone(), c);
                     }
                 }
@@ -3116,7 +3191,7 @@ impl Interpreter {
                     path,
                 ))
             }
-            _ => unimplemented!("unhandled rule ref type"),
+            other => bail!("internal error: unhandled rule ref type: {other:?}"),
         }
     }
 
@@ -3162,27 +3237,32 @@ impl Interpreter {
             result
         };
 
-        let ctx = match self.contexts.pop() {
-            Some(ctx) => ctx,
+        let popped_ctx = match self.contexts.pop() {
+            Some(current_ctx) => current_ctx,
             _ => bail!("internal error: rule's context already popped"),
         };
 
         let result = result?;
 
-        assert_eq!(self.scopes.len(), n_scopes);
+        if self.scopes.len() != n_scopes {
+            return Err(anyhow!("internal error: scope leak after eval_rule_bodies"));
+        }
 
-        if ctx.rule_ref.is_some() {
+        if popped_ctx.rule_ref.is_some() {
             if result {
-                return Ok(ctx.rule_value);
+                return Ok(popped_ctx.rule_value);
             } else {
                 return Ok(Value::Undefined);
             }
         }
 
         Ok(match result {
-            true => match &ctx.value {
-                Value::Object(_) => ctx.value,
-                Value::Array(a) if a.len() == 1 => a[0].clone(),
+            true => match &popped_ctx.value {
+                Value::Object(_) => popped_ctx.value,
+                Value::Array(a) if a.len() == 1 => a
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| anyhow!("internal error: expected array element"))?,
                 Value::Array(a) if a.is_empty() => Value::Bool(true),
                 Value::Array(_) => {
                     return Err(span.source.error(
@@ -3191,8 +3271,13 @@ impl Interpreter {
                         "complete rules should not produce multiple outputs",
                     ))
                 }
-                Value::Set(_) => ctx.value,
-                _ => unimplemented!("todo fix this: ctx.value = {:?}", ctx.value),
+                Value::Set(_) => popped_ctx.value,
+                _ => {
+                    return Err(anyhow!(
+                        "internal error: unexpected ctx.value for rule evaluation: {:?}",
+                        popped_ctx.value
+                    ));
+                }
             },
             false => Value::Undefined,
         })
@@ -3207,11 +3292,12 @@ impl Interpreter {
 
     #[inline]
     pub fn make_or_get_value_mut<'a>(obj: &'a mut Value, paths: &[&str]) -> Result<&'a mut Value> {
-        if paths.is_empty() {
-            return Ok(obj);
-        }
+        let (first, tail) = match paths.split_first() {
+            Some(v) => v,
+            None => return Ok(obj),
+        };
 
-        let key = Value::String(paths[0].into());
+        let key = Value::String((*first).into());
         if obj == &Value::Undefined {
             *obj = Value::new_object();
         }
@@ -3223,11 +3309,11 @@ impl Interpreter {
 
         match obj {
             Value::Object(map) => match Rc::make_mut(map).get_mut(&key) {
-                Some(v) if paths.len() == 1 => Ok(v),
-                Some(v) => Self::make_or_get_value_mut(v, &paths[1..]),
+                Some(v) if tail.is_empty() => Ok(v),
+                Some(v) => Self::make_or_get_value_mut(v, tail),
                 _ => bail!("internal error: unexpected"),
             },
-            Value::Undefined if paths.len() > 1 => {
+            Value::Undefined if !tail.is_empty() => {
                 *obj = Value::new_object();
                 Self::make_or_get_value_mut(obj, paths)
             }
@@ -3245,30 +3331,36 @@ impl Interpreter {
 
     pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
         let mut comps = vec![];
-        let mut expr = Some(refr);
-        while let Some(e) = expr {
-            match e {
-                Expr::RefDot { refr, field, .. } => {
+        let mut expr_opt = Some(refr);
+        while let Some(expr) = expr_opt {
+            match expr {
+                Expr::RefDot {
+                    refr: nested_refr,
+                    field,
+                    ..
+                } => {
                     comps.push(field.0.text());
-                    expr = Some(refr);
+                    expr_opt = Some(nested_refr);
                 }
-                Expr::RefBrack { refr, index, .. }
-                    if matches!(index.as_ref(), Expr::String { .. }) =>
-                {
+                Expr::RefBrack {
+                    refr: nested_refr,
+                    index,
+                    ..
+                } if matches!(index.as_ref(), Expr::String { .. }) => {
                     if let Expr::String { span: s, .. } = index.as_ref() {
                         comps.push(s.text());
-                        expr = Some(refr);
+                        expr_opt = Some(nested_refr);
                     }
                 }
                 Expr::Var { span: v, .. } => {
                     comps.push(v.text());
-                    expr = None;
+                    expr_opt = None;
                 }
-                _ => bail!(e.span().error("invalid ref expression")),
+                _ => bail!(expr.span().error("invalid ref expression")),
             }
         }
-        if let Some(d) = document {
-            comps.push(d);
+        if let Some(doc_component) = document {
+            comps.push(doc_component);
         };
         comps.reverse();
         Ok(comps.join("."))
@@ -3278,35 +3370,36 @@ impl Interpreter {
         &mut self,
         module: Option<Ref<Module>>,
     ) -> Result<Option<Ref<Module>>> {
-        let m = self.module.clone();
-        if let Some(m) = &module {
-            self.current_module_path = Self::get_path_string(&m.package.refr, Some("data"))?;
-            self.current_module_index = self.find_module_index(m);
+        let previous_module = self.module.clone();
+        if let Some(new_module) = &module {
+            self.current_module_path =
+                Self::get_path_string(&new_module.package.refr, Some("data"))?;
+            self.current_module_index = self.find_module_index(new_module);
         }
         self.module = module;
-        Ok(m.clone())
+        Ok(previous_module)
     }
 
     fn find_module_index(&self, module: &Ref<Module>) -> u32 {
-        if let Some(idx) = self
-            .compiled_policy
+        self.compiled_policy
             .modules
             .iter()
             .position(|m| core::ptr::eq(m.as_ref(), module.as_ref()))
-        {
-            idx as u32
-        } else if let Some(query_module) = &self.query_module {
-            if core::ptr::eq(query_module.as_ref(), module.as_ref()) {
-                self.compiled_policy.modules.len() as u32
-            } else {
-                0
-            }
-        } else {
-            0
-        }
+            .map_or_else(
+                || {
+                    self.query_module.as_ref().map_or(0, |query_module| {
+                        if core::ptr::eq(query_module.as_ref(), module.as_ref()) {
+                            u32::try_from(self.compiled_policy.modules.len()).unwrap_or(u32::MAX)
+                        } else {
+                            0
+                        }
+                    })
+                },
+                |idx| u32::try_from(idx).unwrap_or(u32::MAX),
+            )
     }
 
-    fn get_rule_refr(rule: &Rule) -> &ExprRef {
+    const fn get_rule_refr(rule: &Rule) -> &ExprRef {
         match rule {
             Rule::Spec { head, .. } => match &head {
                 RuleHead::Compr { refr, .. }
@@ -3556,11 +3649,16 @@ impl Interpreter {
                         let package_components = self.eval_rule_ref(&module.package.refr)?;
 
                         if value != Value::Undefined {
-                            for (path, value) in value.as_object()? {
+                            for (path, value_in_map) in value.as_object()? {
                                 let mut full_path = package_components.clone();
                                 full_path.append(&mut path.as_array()?.clone());
-                                self.check_rule_path(refr, &full_path, value, is_set)?;
-                                self.update_rule_value(span, full_path, value.clone(), is_set)?;
+                                self.check_rule_path(refr, &full_path, value_in_map, is_set)?;
+                                self.update_rule_value(
+                                    span,
+                                    full_path,
+                                    value_in_map.clone(),
+                                    is_set,
+                                )?;
                             }
                         } else if is_set {
                             if let Ok(mut comps) = self.eval_rule_ref(refr) {
@@ -3596,13 +3694,10 @@ impl Interpreter {
 
                         // Ensure that for functions with a nesting level (e.g: a.foo),
                         // `a` is created as an empty object.
-                        if path.len() > 1 {
-                            self.update_data(
-                                span,
-                                refr,
-                                &path[0..path.len() - 1],
-                                Value::new_object(),
-                            )?;
+                        if let Some((_, prefix)) = path.split_last() {
+                            if !prefix.is_empty() {
+                                self.update_data(span, refr, prefix, Value::new_object())?;
+                            }
                         }
 
                         if args.is_empty() {
@@ -3643,12 +3738,13 @@ impl Interpreter {
             for r in &self.active_rules {
                 let refr = Self::get_rule_refr(r);
                 let span = refr.span();
-                msg += span
-                    .source
-                    .message(span.line, span.col, "depends on", "")
-                    .as_str();
+                msg.push_str(
+                    span.source
+                        .message(span.line, span.col, "depends on", "")
+                        .as_str(),
+                );
             }
-            msg += "cyclic evaluation";
+            msg.push_str("cyclic evaluation");
             self.active_rules.pop();
             let refr = Self::get_rule_refr(rule);
             let span = refr.span();
@@ -3703,7 +3799,8 @@ impl Interpreter {
         // For user queries, set the module index to match the schedule
         // Query snippets are scheduled as if they're in a module at the end
         let prev_module_index = self.current_module_index;
-        let compiled_modules_len = self.compiled_policy.modules.len() as u32;
+        let compiled_modules_len =
+            u32::try_from(self.compiled_policy.modules.len()).unwrap_or(u32::MAX);
         self.current_module_index = compiled_modules_len;
 
         self.ensure_loop_var_values_capacity();
@@ -3727,15 +3824,15 @@ impl Interpreter {
         let current_module_idx = compiled_modules_len;
         let current_query_idx = query.qidx;
         if let Some(ref self_schedule) = &self.query_schedule {
-            if let Some(query_schedule) = self_schedule
+            if let Some(active_schedule) = self_schedule
                 .queries
                 .get_checked(current_module_idx, current_query_idx)
                 .map_err(|err| anyhow!("schedule out of bounds: {err}"))?
             {
-                for idx in 0..results.result.len() {
-                    let exprs_len = results.result[idx].expressions.len();
+                for result in results.result.iter_mut() {
+                    let exprs_len = result.expressions.len();
                     // Skip reordering when the schedule length does not match produced expressions.
-                    if query_schedule.order.len() != exprs_len {
+                    if active_schedule.order.len() != exprs_len {
                         continue;
                     }
 
@@ -3746,13 +3843,19 @@ impl Interpreter {
                     };
                     let mut ordered_expressions = vec![placeholder; exprs_len];
                     let mut invalid = false;
-                    for (expr_idx, value) in results.result[idx].expressions.iter().enumerate() {
-                        let orig_idx = query_schedule.order[expr_idx] as usize;
-                        if orig_idx >= exprs_len {
+                    for (expr_idx, value) in result.expressions.iter().enumerate() {
+                        let Some(&order_idx) = active_schedule.order.get(expr_idx) else {
+                            invalid = true;
+                            break;
+                        };
+
+                        let orig_idx = usize::from(order_idx);
+                        if let Some(slot) = ordered_expressions.get_mut(orig_idx) {
+                            *slot = value.clone();
+                        } else {
                             invalid = true;
                             break;
                         }
-                        ordered_expressions[orig_idx] = value.clone();
                     }
 
                     if !invalid
@@ -3760,7 +3863,7 @@ impl Interpreter {
                             .iter()
                             .any(|v| v.value == Value::Undefined)
                     {
-                        results.result[idx].expressions = ordered_expressions;
+                        result.expressions = ordered_expressions;
                     }
                 }
             }
@@ -3834,11 +3937,11 @@ impl Interpreter {
                     components.pop();
                 }
 
-                if components.len() > 1 {
-                    components.pop();
-                } else {
+                if components.len() <= 1 {
                     continue;
                 }
+
+                components.pop();
 
                 prefix_path.append(&mut components);
                 let prefix_path: Vec<&str> = prefix_path.iter().map(|s| s.as_ref()).collect();
@@ -3859,9 +3962,18 @@ impl Interpreter {
     fn record_rule(&mut self, refr: &Ref<Expr>, rule: Ref<Rule>) -> Result<()> {
         let comps = Parser::get_path_ref_components(refr)?;
         let comps: Vec<&str> = comps.iter().map(|s| s.text()).collect();
-        for c in 0..comps.len() {
-            let path = self.current_module_path.clone() + "." + &comps[0..c + 1].join(".");
-            if c + 1 == comps.len() {
+        for (c, _) in comps.iter().enumerate() {
+            let path = format!(
+                "{}.{}",
+                self.current_module_path,
+                comps
+                    .iter()
+                    .take(c.saturating_add(1))
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(".")
+            );
+            if c == comps.len().saturating_sub(1) {
                 self.compiled_policy_mut().rule_paths.insert(path.clone());
             }
 
@@ -3886,15 +3998,24 @@ impl Interpreter {
     ) -> Result<()> {
         let comps = Parser::get_path_ref_components(refr)?;
         let comps: Vec<&str> = comps.iter().map(|s| s.text()).collect();
-        for (idx, c) in (0..comps.len()).enumerate() {
-            let path = self.current_module_path.clone() + "." + &comps[0..c + 1].join(".");
-            if c + 1 == comps.len() {
+        for (idx, comp_idx) in (0..comps.len()).enumerate() {
+            let path = format!(
+                "{}.{}",
+                self.current_module_path,
+                comps
+                    .iter()
+                    .take(comp_idx.saturating_add(1))
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(".")
+            );
+            if comp_idx == comps.len().saturating_sub(1) {
                 self.compiled_policy_mut().rule_paths.insert(path.clone());
             }
 
             match self.compiled_policy_mut().default_rules.entry(path) {
                 MapEntry::Occupied(o) => {
-                    if idx + 1 == comps.len() {
+                    if idx == comps.len().saturating_sub(1) {
                         for (_, i) in o.get() {
                             if let (Some(old), Some(new)) = (i, &index) {
                                 if old == new {
@@ -3951,7 +4072,7 @@ impl Interpreter {
                 }
                 self.compiled_policy_mut()
                     .imports
-                    .insert(module_path.clone() + "." + target, import.refr.clone());
+                    .insert(format!("{}.{}", module_path, target), import.refr.clone());
             }
         }
         Ok(())
@@ -4037,9 +4158,13 @@ impl Interpreter {
                 Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => {
                     self.gather_coverage_in_expr(expr, covered, file)?;
                 }
-                Literal::Every { domain, query, .. } => {
+                Literal::Every {
+                    domain,
+                    query: nested_query,
+                    ..
+                } => {
                     self.gather_coverage_in_expr(domain, covered, file)?;
-                    self.gather_coverage_in_query(query, covered, file)?;
+                    self.gather_coverage_in_query(nested_query, covered, file)?;
                 }
             }
         }
@@ -4061,11 +4186,16 @@ impl Interpreter {
                     false
                 }
                 _ => {
-                    let line = e.span().line as usize;
-                    if line >= covered.len() || !covered[line] {
-                        file.not_covered.insert(line as u32);
-                    } else if line < covered.len() && covered[line] {
-                        file.covered.insert(line as u32);
+                    let line_usize = usize::try_from(e.span().line).unwrap_or(usize::MAX);
+                    match covered.get(line_usize) {
+                        Some(true) => {
+                            let line_u32 = u32::try_from(line_usize).unwrap_or(u32::MAX);
+                            file.covered.insert(line_u32);
+                        }
+                        Some(false) | None => {
+                            let line_u32 = u32::try_from(line_usize).unwrap_or(u32::MAX);
+                            file.not_covered.insert(line_u32);
+                        }
                     }
                     true
                 }
@@ -4157,7 +4287,11 @@ impl Interpreter {
         self.ensure_rule_evaluated(path.clone())?;
         let parts: Vec<&str> = path.split('.').collect();
 
-        let value = Self::get_value_chained(self.data.clone(), &parts[1..]);
+        let (_, tail) = parts
+            .split_first()
+            .ok_or_else(|| anyhow!("internal error: expected rule path"))?;
+
+        let value = Self::get_value_chained(self.data.clone(), tail);
         #[cfg(feature = "azure_policy")]
         {
             if let Some(target_info) = &self.compiled_policy.target_info {
@@ -4189,11 +4323,10 @@ impl Interpreter {
         // Populate loop hoisting lookup table
         use crate::compiler::hoist::LoopHoister;
         // Re-run hoisting with the analyzer's schedule so statement order is preserved.
-        let hoister = if let Some(schedule) = compiled_policy.schedule.clone() {
-            LoopHoister::new_with_schedule(schedule)
-        } else {
-            LoopHoister::new()
-        };
+        let hoister = compiled_policy
+            .schedule
+            .clone()
+            .map_or_else(LoopHoister::new, LoopHoister::new_with_schedule);
         let loop_lookup = hoister.populate(compiled_policy.modules.as_ref())?;
         compiled_policy.loop_hoisting_table = loop_lookup;
 
