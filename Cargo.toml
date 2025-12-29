@@ -96,7 +96,7 @@ rand = ["dep:rand"]
 [dependencies]
 anyhow = { version = "1.0.45", default-features = false }
 serde = {version = "1.0.150", default-features = false, features = ["derive", "rc", "alloc"] }
-serde_json = { version = "1.0.89", default-features = false, features = ["alloc"] }
+serde_json = { version = "1.0.148", default-features = false, features = ["alloc"] }
 lazy_static =  { version = "1.4.0", default-features = false }
 thiserror = { version = "2.0", default-features = false }
 
