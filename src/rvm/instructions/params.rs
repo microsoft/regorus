@@ -1,13 +1,5 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::missing_const_for_fn,
-    clippy::as_conversions,
-    clippy::pattern_type_mismatch
-)]
-
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
@@ -50,12 +42,13 @@ pub struct BuiltinCallParams {
 impl BuiltinCallParams {
     /// Get the number of arguments actually used
     pub fn arg_count(&self) -> usize {
-        self.num_args as usize
+        usize::from(self.num_args)
     }
 
     /// Get argument register numbers as a slice
     pub fn arg_registers(&self) -> &[u8] {
-        &self.args[..self.num_args as usize]
+        let count = usize::from(self.num_args).min(self.args.len());
+        self.args.get(..count).unwrap_or(&[])
     }
 }
 
@@ -76,12 +69,13 @@ pub struct FunctionCallParams {
 impl FunctionCallParams {
     /// Get the number of arguments actually used
     pub fn arg_count(&self) -> usize {
-        self.num_args as usize
+        usize::from(self.num_args)
     }
 
     /// Get argument register numbers as a slice
     pub fn arg_registers(&self) -> &[u8] {
-        &self.args[..self.num_args as usize]
+        let count = usize::from(self.num_args).min(self.args.len());
+        self.args.get(..count).unwrap_or(&[])
     }
 }
 
@@ -102,8 +96,10 @@ pub struct ObjectCreateParams {
 
 impl ObjectCreateParams {
     /// Get the total number of fields
-    pub fn field_count(&self) -> usize {
-        self.literal_key_fields.len() + self.fields.len()
+    pub const fn field_count(&self) -> usize {
+        self.literal_key_fields
+            .len()
+            .saturating_add(self.fields.len())
     }
 
     /// Get literal key field pairs as a slice
@@ -129,7 +125,7 @@ pub struct ArrayCreateParams {
 
 impl ArrayCreateParams {
     /// Get the number of elements
-    pub fn element_count(&self) -> usize {
+    pub const fn element_count(&self) -> usize {
         self.elements.len()
     }
 
@@ -151,7 +147,7 @@ pub struct SetCreateParams {
 
 impl SetCreateParams {
     /// Get the number of elements
-    pub fn element_count(&self) -> usize {
+    pub const fn element_count(&self) -> usize {
         self.elements.len()
     }
 
@@ -175,7 +171,7 @@ pub struct VirtualDataDocumentLookupParams {
 
 impl VirtualDataDocumentLookupParams {
     /// Get the number of path components
-    pub fn component_count(&self) -> usize {
+    pub const fn component_count(&self) -> usize {
         self.path_components.len()
     }
 
@@ -190,8 +186,8 @@ impl VirtualDataDocumentLookupParams {
     pub fn literal_indices(&self) -> Vec<u16> {
         self.path_components
             .iter()
-            .filter_map(|c| match c {
-                LiteralOrRegister::Literal(idx) => Some(*idx),
+            .filter_map(|c| match *c {
+                LiteralOrRegister::Literal(idx) => Some(idx),
                 _ => None,
             })
             .collect()
@@ -201,8 +197,8 @@ impl VirtualDataDocumentLookupParams {
     pub fn register_numbers(&self) -> Vec<u8> {
         self.path_components
             .iter()
-            .filter_map(|c| match c {
-                LiteralOrRegister::Register(reg) => Some(*reg),
+            .filter_map(|c| match *c {
+                LiteralOrRegister::Register(reg) => Some(reg),
                 _ => None,
             })
             .collect()
@@ -223,7 +219,7 @@ pub struct ChainedIndexParams {
 
 impl ChainedIndexParams {
     /// Get the number of path components
-    pub fn component_count(&self) -> usize {
+    pub const fn component_count(&self) -> usize {
         self.path_components.len()
     }
 
@@ -238,8 +234,8 @@ impl ChainedIndexParams {
     pub fn literal_indices(&self) -> Vec<u16> {
         self.path_components
             .iter()
-            .filter_map(|c| match c {
-                LiteralOrRegister::Literal(idx) => Some(*idx),
+            .filter_map(|c| match *c {
+                LiteralOrRegister::Literal(idx) => Some(idx),
                 _ => None,
             })
             .collect()
@@ -249,8 +245,8 @@ impl ChainedIndexParams {
     pub fn register_numbers(&self) -> Vec<u8> {
         self.path_components
             .iter()
-            .filter_map(|c| match c {
-                LiteralOrRegister::Register(reg) => Some(*reg),
+            .filter_map(|c| match *c {
+                LiteralOrRegister::Register(reg) => Some(reg),
                 _ => None,
             })
             .collect()
@@ -302,8 +298,13 @@ pub struct InstructionData {
 }
 
 impl InstructionData {
+    fn ensure_u16_index(len: usize) -> u16 {
+        debug_assert!(len <= usize::from(u16::MAX));
+        u16::try_from(len).unwrap_or(u16::MAX)
+    }
+
     /// Create a new empty instruction data container
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             loop_params: Vec::new(),
             builtin_call_params: Vec::new(),
@@ -319,74 +320,74 @@ impl InstructionData {
 
     /// Add loop parameters and return the index
     pub fn add_loop_params(&mut self, params: LoopStartParams) -> u16 {
-        let index = self.loop_params.len();
+        let index = Self::ensure_u16_index(self.loop_params.len());
         self.loop_params.push(params);
-        index as u16
+        index
     }
 
     /// Add builtin call parameters and return the index
     pub fn add_builtin_call_params(&mut self, params: BuiltinCallParams) -> u16 {
-        let index = self.builtin_call_params.len();
+        let index = Self::ensure_u16_index(self.builtin_call_params.len());
         self.builtin_call_params.push(params);
-        index as u16
+        index
     }
 
     /// Add function call parameters and return the index
     pub fn add_function_call_params(&mut self, params: FunctionCallParams) -> u16 {
-        let index = self.function_call_params.len();
+        let index = Self::ensure_u16_index(self.function_call_params.len());
         self.function_call_params.push(params);
-        index as u16
+        index
     }
 
     /// Add object create parameters and return the index
     pub fn add_object_create_params(&mut self, params: ObjectCreateParams) -> u16 {
-        let index = self.object_create_params.len();
+        let index = Self::ensure_u16_index(self.object_create_params.len());
         self.object_create_params.push(params);
-        index as u16
+        index
     }
 
     /// Add array create parameters and return the index
     pub fn add_array_create_params(&mut self, params: ArrayCreateParams) -> u16 {
-        let index = self.array_create_params.len();
+        let index = Self::ensure_u16_index(self.array_create_params.len());
         self.array_create_params.push(params);
-        index as u16
+        index
     }
 
     /// Add set create parameters and return the index
     pub fn add_set_create_params(&mut self, params: SetCreateParams) -> u16 {
-        let index = self.set_create_params.len();
+        let index = Self::ensure_u16_index(self.set_create_params.len());
         self.set_create_params.push(params);
-        index as u16
+        index
     }
 
     /// Get loop parameters by index
     pub fn get_loop_params(&self, index: u16) -> Option<&LoopStartParams> {
-        self.loop_params.get(index as usize)
+        self.loop_params.get(usize::from(index))
     }
 
     /// Get builtin call parameters by index
     pub fn get_builtin_call_params(&self, index: u16) -> Option<&BuiltinCallParams> {
-        self.builtin_call_params.get(index as usize)
+        self.builtin_call_params.get(usize::from(index))
     }
 
     /// Get function call parameters by index
     pub fn get_function_call_params(&self, index: u16) -> Option<&FunctionCallParams> {
-        self.function_call_params.get(index as usize)
+        self.function_call_params.get(usize::from(index))
     }
 
     /// Get object create parameters by index
     pub fn get_object_create_params(&self, index: u16) -> Option<&ObjectCreateParams> {
-        self.object_create_params.get(index as usize)
+        self.object_create_params.get(usize::from(index))
     }
 
     /// Get array create parameters by index
     pub fn get_array_create_params(&self, index: u16) -> Option<&ArrayCreateParams> {
-        self.array_create_params.get(index as usize)
+        self.array_create_params.get(usize::from(index))
     }
 
     /// Get set create parameters by index
     pub fn get_set_create_params(&self, index: u16) -> Option<&SetCreateParams> {
-        self.set_create_params.get(index as usize)
+        self.set_create_params.get(usize::from(index))
     }
 
     /// Add virtual data document lookup parameters and return the index
@@ -394,9 +395,9 @@ impl InstructionData {
         &mut self,
         params: VirtualDataDocumentLookupParams,
     ) -> u16 {
-        let index = self.virtual_data_document_lookup_params.len();
+        let index = Self::ensure_u16_index(self.virtual_data_document_lookup_params.len());
         self.virtual_data_document_lookup_params.push(params);
-        index as u16
+        index
     }
 
     /// Get virtual data document lookup parameters by index
@@ -404,36 +405,37 @@ impl InstructionData {
         &self,
         index: u16,
     ) -> Option<&VirtualDataDocumentLookupParams> {
-        self.virtual_data_document_lookup_params.get(index as usize)
+        self.virtual_data_document_lookup_params
+            .get(usize::from(index))
     }
 
     /// Add chained index parameters and return the index
     pub fn add_chained_index_params(&mut self, params: ChainedIndexParams) -> u16 {
-        let index = self.chained_index_params.len();
+        let index = Self::ensure_u16_index(self.chained_index_params.len());
         self.chained_index_params.push(params);
-        index as u16
+        index
     }
 
     /// Get chained index parameters by index
     pub fn get_chained_index_params(&self, index: u16) -> Option<&ChainedIndexParams> {
-        self.chained_index_params.get(index as usize)
+        self.chained_index_params.get(usize::from(index))
     }
 
     /// Get mutable reference to loop parameters by index
     pub fn get_loop_params_mut(&mut self, index: u16) -> Option<&mut LoopStartParams> {
-        self.loop_params.get_mut(index as usize)
+        self.loop_params.get_mut(usize::from(index))
     }
 
     /// Add comprehension begin parameters and return the index
     pub fn add_comprehension_begin_params(&mut self, params: ComprehensionBeginParams) -> u16 {
-        let index = self.comprehension_begin_params.len();
+        let index = Self::ensure_u16_index(self.comprehension_begin_params.len());
         self.comprehension_begin_params.push(params);
-        index as u16
+        index
     }
 
     /// Get comprehension begin parameters by index
     pub fn get_comprehension_begin_params(&self, index: u16) -> Option<&ComprehensionBeginParams> {
-        self.comprehension_begin_params.get(index as usize)
+        self.comprehension_begin_params.get(usize::from(index))
     }
 
     /// Get mutable reference to comprehension begin parameters by index
@@ -441,7 +443,7 @@ impl InstructionData {
         &mut self,
         index: u16,
     ) -> Option<&mut ComprehensionBeginParams> {
-        self.comprehension_begin_params.get_mut(index as usize)
+        self.comprehension_begin_params.get_mut(usize::from(index))
     }
 }
 

@@ -1,13 +1,8 @@
-#![allow(
-    clippy::option_if_let_else,
-    clippy::unused_trait_names,
-    clippy::pattern_type_mismatch
-)]
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::{Instruction, InstructionData, LiteralOrRegister};
@@ -15,129 +10,136 @@ use super::{Instruction, InstructionData, LiteralOrRegister};
 impl Instruction {
     /// Get detailed display string with parameter resolution for debugging
     pub fn display_with_params(&self, instruction_data: &InstructionData) -> String {
-        match self {
+        match *self {
             Instruction::LoopStart { params_index } => {
-                if let Some(params) = instruction_data.get_loop_params(*params_index) {
-                    format!(
-                        "LOOP_START {:?} R({}) R({}) R({}) R({}) {} {}",
-                        params.mode,
-                        params.collection,
-                        params.key_reg,
-                        params.value_reg,
-                        params.result_reg,
-                        params.body_start,
-                        params.loop_end
-                    )
-                } else {
-                    format!("LOOP_START P({}) [INVALID INDEX]", params_index)
-                }
+                instruction_data.get_loop_params(params_index).map_or_else(
+                    || format!("LOOP_START P({}) [INVALID INDEX]", params_index),
+                    |params| {
+                        format!(
+                            "LOOP_START {:?} R({}) R({}) R({}) R({}) {} {}",
+                            params.mode,
+                            params.collection,
+                            params.key_reg,
+                            params.value_reg,
+                            params.result_reg,
+                            params.body_start,
+                            params.loop_end
+                        )
+                    },
+                )
             }
-            Instruction::BuiltinCall { params_index } => {
-                if let Some(params) = instruction_data.get_builtin_call_params(*params_index) {
-                    let args_str = params
-                        .arg_registers()
-                        .iter()
-                        .map(|&r| format!("R({})", r))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    format!(
-                        "BUILTIN_CALL R({}) B({}) [{}]",
-                        params.dest, params.builtin_index, args_str
-                    )
-                } else {
-                    format!("BUILTIN_CALL P({}) [INVALID INDEX]", params_index)
-                }
-            }
+            Instruction::BuiltinCall { params_index } => instruction_data
+                .get_builtin_call_params(params_index)
+                .map_or_else(
+                    || format!("BUILTIN_CALL P({}) [INVALID INDEX]", params_index),
+                    |params| {
+                        let args_str = params
+                            .arg_registers()
+                            .iter()
+                            .map(|&r| format!("R({})", r))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        format!(
+                            "BUILTIN_CALL R({}) B({}) [{}]",
+                            params.dest, params.builtin_index, args_str
+                        )
+                    },
+                ),
             Instruction::HostAwait { dest, arg, id } => {
                 format!("HOST_AWAIT R({}) R({}) R({})", dest, arg, id)
             }
-            Instruction::FunctionCall { params_index } => {
-                if let Some(params) = instruction_data.get_function_call_params(*params_index) {
-                    let args_str = params
-                        .arg_registers()
-                        .iter()
-                        .map(|&r| format!("R({})", r))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    format!(
-                        "FUNCTION_CALL R({}) RULE({}) [{}]",
-                        params.dest, params.func_rule_index, args_str
-                    )
-                } else {
-                    format!("FUNCTION_CALL P({}) [INVALID INDEX]", params_index)
-                }
-            }
+            Instruction::FunctionCall { params_index } => instruction_data
+                .get_function_call_params(params_index)
+                .map_or_else(
+                    || format!("FUNCTION_CALL P({}) [INVALID INDEX]", params_index),
+                    |params| {
+                        let args_str = params
+                            .arg_registers()
+                            .iter()
+                            .map(|&r| format!("R({})", r))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        format!(
+                            "FUNCTION_CALL R({}) RULE({}) [{}]",
+                            params.dest, params.func_rule_index, args_str
+                        )
+                    },
+                ),
             Instruction::ObjectCreate { params_index } => {
-                if let Some(params) = instruction_data.get_object_create_params(*params_index) {
-                    let mut field_parts = Vec::new();
+                instruction_data
+                    .get_object_create_params(params_index)
+                    .map_or_else(
+                        || format!("OBJECT_CREATE P({}) [INVALID INDEX]", params_index),
+                        |params| {
+                            let mut field_parts = Vec::new();
 
-                    // Add literal key fields
-                    for &(literal_idx, value_reg) in params.literal_key_field_pairs() {
-                        field_parts.push(format!("L({}):R({})", literal_idx, value_reg));
-                    }
+                            // Add literal key fields
+                            for &(literal_idx, value_reg) in params.literal_key_field_pairs() {
+                                field_parts.push(format!("L({}):R({})", literal_idx, value_reg));
+                            }
 
-                    // Add non-literal key fields
-                    for &(key_reg, value_reg) in params.field_pairs() {
-                        field_parts.push(format!("R({}):R({})", key_reg, value_reg));
-                    }
+                            // Add non-literal key fields
+                            for &(key_reg, value_reg) in params.field_pairs() {
+                                field_parts.push(format!("R({}):R({})", key_reg, value_reg));
+                            }
 
-                    let fields_str = field_parts.join(" ");
-                    format!(
-                        "OBJECT_CREATE R({}) L({}) [{}]",
-                        params.dest, params.template_literal_idx, fields_str
+                            let fields_str = field_parts.join(" ");
+                            format!(
+                                "OBJECT_CREATE R({}) L({}) [{}]",
+                                params.dest, params.template_literal_idx, fields_str
+                            )
+                        },
                     )
-                } else {
-                    format!("OBJECT_CREATE P({}) [INVALID INDEX]", params_index)
-                }
             }
-            Instruction::VirtualDataDocumentLookup { params_index } => {
-                if let Some(params) =
-                    instruction_data.get_virtual_data_document_lookup_params(*params_index)
-                {
-                    let components_str = params
-                        .path_components
-                        .iter()
-                        .map(|comp| match comp {
-                            LiteralOrRegister::Literal(idx) => format!("L({})", idx),
-                            LiteralOrRegister::Register(reg) => format!("R({})", reg),
-                        })
-                        .collect::<Vec<_>>()
-                        .join(".");
-                    format!(
-                        "VIRTUAL_DATA_DOCUMENT_LOOKUP R({}) [data.{}]",
-                        params.dest, components_str
-                    )
-                } else {
-                    format!(
-                        "VIRTUAL_DATA_DOCUMENT_LOOKUP P({}) [INVALID INDEX]",
-                        params_index
-                    )
-                }
-            }
-            Instruction::ComprehensionBegin { params_index } => {
-                if let Some(params) = instruction_data.get_comprehension_begin_params(*params_index)
-                {
-                    format!(
-                        "COMPREHENSION_BEGIN {:?} R({}) R({}) R({}) {} {}",
-                        params.mode,
-                        params.collection_reg,
-                        params.key_reg,
-                        params.value_reg,
-                        params.body_start,
-                        params.comprehension_end
-                    )
-                } else {
-                    format!("COMPREHENSION_BEGIN P({}) [INVALID INDEX]", params_index)
-                }
-            }
-            _ => self.to_string(),
+            Instruction::VirtualDataDocumentLookup { params_index } => instruction_data
+                .get_virtual_data_document_lookup_params(params_index)
+                .map_or_else(
+                    || {
+                        format!(
+                            "VIRTUAL_DATA_DOCUMENT_LOOKUP P({}) [INVALID INDEX]",
+                            params_index
+                        )
+                    },
+                    |params| {
+                        let components_str = params
+                            .path_components
+                            .iter()
+                            .map(|comp| match *comp {
+                                LiteralOrRegister::Literal(idx) => format!("L({})", idx),
+                                LiteralOrRegister::Register(reg) => format!("R({})", reg),
+                            })
+                            .collect::<Vec<_>>()
+                            .join(".");
+                        format!(
+                            "VIRTUAL_DATA_DOCUMENT_LOOKUP R({}) [data.{}]",
+                            params.dest, components_str
+                        )
+                    },
+                ),
+            Instruction::ComprehensionBegin { params_index } => instruction_data
+                .get_comprehension_begin_params(params_index)
+                .map_or_else(
+                    || format!("COMPREHENSION_BEGIN P({}) [INVALID INDEX]", params_index),
+                    |params| {
+                        format!(
+                            "COMPREHENSION_BEGIN {:?} R({}) R({}) R({}) {} {}",
+                            params.mode,
+                            params.collection_reg,
+                            params.key_reg,
+                            params.value_reg,
+                            params.body_start,
+                            params.comprehension_end
+                        )
+                    },
+                ),
+            _ => format!("{}", self),
         }
     }
 }
 
 impl core::fmt::Display for Instruction {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let text = match self {
+        let text = match *self {
             Instruction::Load { dest, literal_idx } => {
                 format!("LOAD R({}) L({})", dest, literal_idx)
             }
@@ -274,10 +276,10 @@ impl core::fmt::Display for Instruction {
             Instruction::ComprehensionBegin { params_index } => {
                 format!("COMPREHENSION_BEGIN P({})", params_index)
             }
-            Instruction::ComprehensionYield { value_reg, key_reg } => match key_reg {
-                Some(k) => format!("COMPREHENSION_YIELD R({}) R({})", k, value_reg),
-                None => format!("COMPREHENSION_YIELD R({})", value_reg),
-            },
+            Instruction::ComprehensionYield { value_reg, key_reg } => key_reg.as_ref().map_or_else(
+                || format!("COMPREHENSION_YIELD R({})", value_reg),
+                |k| format!("COMPREHENSION_YIELD R({}) R({})", k, value_reg),
+            ),
             Instruction::ComprehensionEnd {} => String::from("COMPREHENSION_END"),
         };
         write!(f, "{}", text)

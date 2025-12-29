@@ -1,25 +1,22 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![allow(
-    clippy::unwrap_used,
-    clippy::arithmetic_side_effects,
-    clippy::indexing_slicing,
-    clippy::option_if_let_else,
-    clippy::missing_const_for_fn,
-    clippy::as_conversions,
-    clippy::unused_trait_names,
-    clippy::pattern_type_mismatch
-)]
+#![allow(clippy::option_if_let_else)]
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
-use core::fmt::Write;
+use core::fmt::{self, Write as _};
 
 use crate::rvm::{
     instructions::{Instruction, InstructionData, LoopMode},
     program::Program,
 };
+
+// Writing into a String via fmt never fails, so we intentionally ignore writeln! results.
+fn push_line(buf: &mut String, args: fmt::Arguments) {
+    let _ = buf.write_fmt(args);
+    let _ = buf.write_char('\n');
+}
 
 /// Configuration for assembly listing output
 #[derive(Debug, Clone)]
@@ -61,65 +58,81 @@ pub fn generate_assembly_listing(program: &Program, config: &AssemblyListingConf
     let mut active_ends: Vec<u16> = Vec::new();
 
     // Add header
-    writeln!(
-        output,
-        "; RVM Assembly - {} instructions, {} literals, {} builtins",
-        program.instructions.len(),
-        program.literals.len(),
-        program.builtin_info_table.len()
-    )
-    .unwrap();
+    push_line(
+        &mut output,
+        format_args!(
+            "; RVM Assembly - {} instructions, {} literals, {} builtins",
+            program.instructions.len(),
+            program.literals.len(),
+            program.builtin_info_table.len()
+        ),
+    );
 
     // Add builtins table
     if !program.builtin_info_table.is_empty() {
-        writeln!(output, ";").unwrap();
-        writeln!(output, "; BUILTINS TABLE:").unwrap();
+        push_line(&mut output, format_args!(";"));
+        push_line(&mut output, format_args!("; BUILTINS TABLE:"));
         for (idx, builtin_info) in program.builtin_info_table.iter().enumerate() {
-            writeln!(output, ";   B{:2}: {}", idx, builtin_info.name).unwrap();
+            push_line(
+                &mut output,
+                format_args!(";   B{:2}: {}", idx, builtin_info.name),
+            );
         }
     }
 
     // Add literals table
     if config.show_literal_values && !program.literals.is_empty() {
-        writeln!(output, ";").unwrap();
-        writeln!(output, "; LITERALS (JSON values):").unwrap();
+        push_line(&mut output, format_args!(";"));
+        push_line(&mut output, format_args!("; LITERALS (JSON values):"));
         for (idx, literal) in program.literals.iter().enumerate() {
             let literal_json =
                 serde_json::to_string(literal).unwrap_or_else(|_| "<invalid>".to_string());
-            writeln!(output, ";   L{:2}: {}", idx, literal_json).unwrap();
+            push_line(
+                &mut output,
+                format_args!(";   L{:2}: {}", idx, literal_json),
+            );
         }
     }
 
     // Add rules table if available
     if !program.rule_infos.is_empty() {
-        writeln!(output, ";").unwrap();
-        writeln!(output, "; RULES TABLE:").unwrap();
+        push_line(&mut output, format_args!(";"));
+        push_line(&mut output, format_args!("; RULES TABLE:"));
         for (idx, rule_info) in program.rule_infos.iter().enumerate() {
-            writeln!(output, ";   R{:2}: {}", idx, rule_info.name).unwrap();
+            push_line(
+                &mut output,
+                format_args!(";   R{:2}: {}", idx, rule_info.name),
+            );
         }
     }
 
-    writeln!(output, ";").unwrap();
+    push_line(&mut output, format_args!(";"));
 
     for (pc, instruction) in program.instructions.iter().enumerate() {
         // Handle rule transitions and add gaps
-        if let Instruction::RuleInit { rule_index, .. } = instruction {
+        if let &Instruction::RuleInit { rule_index, .. } = instruction {
             // Add gap before new rule (except for the first rule)
             if current_rule_index.is_some() {
-                writeln!(output).unwrap();
+                push_line(&mut output, format_args!(""));
             }
-            current_rule_index = Some(*rule_index);
+            current_rule_index = Some(rule_index);
 
             // Add rule name prefix
-            if let Some(rule_info) = program.rule_infos.get(*rule_index as usize) {
-                writeln!(output, "; ===== RULE: {} =====", rule_info.name).unwrap();
+            if let Some(rule_info) = program.rule_infos.get(usize::from(rule_index)) {
+                push_line(
+                    &mut output,
+                    format_args!("; ===== RULE: {} =====", rule_info.name),
+                );
             } else {
-                writeln!(output, "; ===== RULE: rule_{} =====", rule_index).unwrap();
+                push_line(
+                    &mut output,
+                    format_args!("; ===== RULE: rule_{} =====", rule_index),
+                );
             }
         }
 
         // Check if current PC matches any active end addresses (loops, comprehensions, rules)
-        let current_pc = pc as u16;
+        let current_pc = u16::try_from(pc).unwrap_or(u16::MAX);
         while let Some(&end_addr) = active_ends.last() {
             if current_pc >= end_addr {
                 active_ends.pop();
@@ -130,7 +143,7 @@ pub fn generate_assembly_listing(program: &Program, config: &AssemblyListingConf
         }
 
         // Handle explicit end instructions
-        match instruction {
+        match *instruction {
             Instruction::LoopNext { .. } => {
                 // LoopNext already handled by end address tracking above
             }
@@ -141,13 +154,13 @@ pub fn generate_assembly_listing(program: &Program, config: &AssemblyListingConf
         }
 
         // Special case: Block end instructions should be indented at their block level (one level out)
-        let effective_indent_level = match instruction {
+        let effective_indent_level = match *instruction {
             Instruction::ComprehensionEnd {} => indent_level.saturating_sub(1),
             Instruction::LoopNext { .. } => indent_level.saturating_sub(1),
             _ => indent_level,
         };
 
-        let indent = " ".repeat(effective_indent_level * config.indent_size);
+        let indent = " ".repeat(effective_indent_level.saturating_mul(config.indent_size));
 
         // Format address
         let addr_str = if config.show_addresses {
@@ -165,27 +178,27 @@ pub fn generate_assembly_listing(program: &Program, config: &AssemblyListingConf
             config,
         );
 
-        writeln!(output, "{}{}", addr_str, inst_str).unwrap();
+        push_line(&mut output, format_args!("{}{}", addr_str, inst_str));
 
         // Increase indentation for loop/rule/comprehension starts and track their end addresses
-        match instruction {
+        match *instruction {
             Instruction::LoopStart { params_index } => {
-                if let Some(params) = program.instruction_data.get_loop_params(*params_index) {
+                if let Some(params) = program.instruction_data.get_loop_params(params_index) {
                     active_ends.push(params.loop_end);
-                    indent_level += 1;
+                    indent_level = indent_level.saturating_add(1);
                 }
             }
             Instruction::ComprehensionBegin { params_index } => {
                 if let Some(params) = program
                     .instruction_data
-                    .get_comprehension_begin_params(*params_index)
+                    .get_comprehension_begin_params(params_index)
                 {
                     active_ends.push(params.comprehension_end);
-                    indent_level += 1;
+                    indent_level = indent_level.saturating_add(1);
                 }
             }
             Instruction::RuleInit { .. } => {
-                indent_level += 1;
+                indent_level = indent_level.saturating_add(1);
                 // Note: Rules end with RuleReturn, not an address, so we don't track them here
             }
             _ => {}
@@ -201,7 +214,7 @@ fn align_comment(base_text: &str, comment: &str, target_column: usize) -> String
     if current_len >= target_column {
         format!("{} ; {}", base_text, comment)
     } else {
-        let padding = " ".repeat(target_column - current_len);
+        let padding = " ".repeat(target_column.saturating_sub(current_len));
         format!("{}{} ; {}", base_text, padding, comment)
     }
 }
@@ -214,15 +227,16 @@ fn format_instruction_readable(
     program: &Program,
     config: &AssemblyListingConfig,
 ) -> String {
-    match instruction {
+    match *instruction {
         Instruction::Load { dest, literal_idx } => {
             let base = format!("{}Load         r{} ← L{}", indent, dest, literal_idx);
-            let comment = if *literal_idx < program.literals.len() as u16 {
-                let literal_json = serde_json::to_string(&program.literals[*literal_idx as usize])
-                    .unwrap_or_else(|_| "<invalid>".to_string());
-                format!("Load literal: {}", literal_json)
-            } else {
-                "Load literal: <invalid index>".to_string()
+            let comment = match program.literals.get(usize::from(literal_idx)) {
+                Some(literal) => {
+                    let literal_json =
+                        serde_json::to_string(literal).unwrap_or_else(|_| "<invalid>".to_string());
+                    format!("Load literal: {}", literal_json)
+                }
+                None => "Load literal: <invalid index>".to_string(),
             };
             align_comment(&base, &comment, config.comment_column)
         }
@@ -348,7 +362,7 @@ fn format_instruction_readable(
             align_comment(&base, &comment, config.comment_column)
         }
         Instruction::BuiltinCall { params_index } => {
-            if let Some(params) = instruction_data.get_builtin_call_params(*params_index) {
+            if let Some(params) = instruction_data.get_builtin_call_params(params_index) {
                 let args_str = params
                     .arg_registers()
                     .iter()
@@ -358,7 +372,7 @@ fn format_instruction_readable(
 
                 let builtin_name = program
                     .builtin_info_table
-                    .get(params.builtin_index as usize)
+                    .get(usize::from(params.builtin_index))
                     .map(|info| info.name.as_str())
                     .unwrap_or("<invalid>");
 
@@ -381,7 +395,7 @@ fn format_instruction_readable(
             }
         }
         Instruction::FunctionCall { params_index } => {
-            if let Some(params) = instruction_data.get_function_call_params(*params_index) {
+            if let Some(params) = instruction_data.get_function_call_params(params_index) {
                 let args_str = params
                     .arg_registers()
                     .iter()
@@ -391,7 +405,7 @@ fn format_instruction_readable(
 
                 let func_name = program
                     .rule_infos
-                    .get(params.func_rule_index as usize)
+                    .get(usize::from(params.func_rule_index))
                     .map(|info| info.name.as_str())
                     .unwrap_or("<invalid>");
 
@@ -440,7 +454,7 @@ fn format_instruction_readable(
         Instruction::ObjectCreate { params_index } => {
             let params = program
                 .instruction_data
-                .get_object_create_params(*params_index);
+                .get_object_create_params(params_index);
             let base = format!(
                 "{}ObjectCreate r{} ← {{...}}",
                 indent,
@@ -477,15 +491,16 @@ fn format_instruction_readable(
                 "{}IndexLiteral r{} ← r{}[L{}]",
                 indent, dest, container, literal_idx
             );
-            let comment = if *literal_idx < program.literals.len() as u16 {
-                let literal_json = serde_json::to_string(&program.literals[*literal_idx as usize])
-                    .unwrap_or_else(|_| "<invalid>".to_string());
-                format!("Index with literal key: r{}[{}]", container, literal_json)
-            } else {
-                format!(
+            let comment = match program.literals.get(usize::from(literal_idx)) {
+                Some(literal) => {
+                    let literal_json =
+                        serde_json::to_string(literal).unwrap_or_else(|_| "<invalid>".to_string());
+                    format!("Index with literal key: r{}[{}]", container, literal_json)
+                }
+                None => format!(
                     "Index with literal: r{}[L{}] (invalid index)",
                     container, literal_idx
-                )
+                ),
             };
             align_comment(&base, &comment, config.comment_column)
         }
@@ -499,7 +514,7 @@ fn format_instruction_readable(
             align_comment(&base, &comment, config.comment_column)
         }
         Instruction::ArrayCreate { params_index } => {
-            if let Some(params) = instruction_data.get_array_create_params(*params_index) {
+            if let Some(params) = instruction_data.get_array_create_params(params_index) {
                 let elements = params
                     .element_registers()
                     .iter()
@@ -526,7 +541,7 @@ fn format_instruction_readable(
             align_comment(&base, &comment, config.comment_column)
         }
         Instruction::SetCreate { params_index } => {
-            if let Some(params) = instruction_data.get_set_create_params(*params_index) {
+            if let Some(params) = instruction_data.get_set_create_params(params_index) {
                 let elements = params
                     .element_registers()
                     .iter()
@@ -574,7 +589,7 @@ fn format_instruction_readable(
             align_comment(&base, &comment, config.comment_column)
         }
         Instruction::LoopStart { params_index } => {
-            if let Some(params) = instruction_data.get_loop_params(*params_index) {
+            if let Some(params) = instruction_data.get_loop_params(params_index) {
                 let mode_str = match params.mode {
                     LoopMode::Any => "any",
                     LoopMode::Every => "every",
@@ -620,7 +635,7 @@ fn format_instruction_readable(
         Instruction::CallRule { dest, rule_index } => {
             let rule_name = program
                 .rule_infos
-                .get(*rule_index as usize)
+                .get(usize::from(rule_index))
                 .map(|info| info.name.as_str())
                 .unwrap_or("<invalid>");
 
@@ -634,7 +649,7 @@ fn format_instruction_readable(
         } => {
             let rule_name = program
                 .rule_infos
-                .get(*rule_index as usize)
+                .get(usize::from(rule_index))
                 .map(|info| info.name.as_str())
                 .unwrap_or("<invalid>");
 
@@ -651,16 +666,16 @@ fn format_instruction_readable(
         }
         Instruction::ChainedIndex { params_index } => {
             let (base, comment) =
-                if let Some(params) = instruction_data.get_chained_index_params(*params_index) {
+                if let Some(params) = instruction_data.get_chained_index_params(params_index) {
                     let chain_parts: Vec<String> = params
                         .path_components
                         .iter()
-                        .map(|component| match component {
+                        .map(|component| match *component {
                             crate::rvm::instructions::LiteralOrRegister::Literal(idx) => {
-                                if let Some(literal) = program.literals.get(*idx as usize) {
-                                    match literal {
-                                        crate::Value::String(s) => format!(".{}", s.as_ref()),
-                                        other => format!(
+                                if let Some(literal) = program.literals.get(usize::from(idx)) {
+                                    match *literal {
+                                        crate::Value::String(ref s) => format!(".{}", s.as_ref()),
+                                        ref other => format!(
                                             "[{}]",
                                             serde_json::to_string(other)
                                                 .unwrap_or_else(|_| "?".to_string())
@@ -723,7 +738,7 @@ fn format_instruction_readable(
             align_comment(&base, "Stop execution", config.comment_column)
         }
         Instruction::ComprehensionBegin { params_index } => {
-            if let Some(params) = instruction_data.get_comprehension_begin_params(*params_index) {
+            if let Some(params) = instruction_data.get_comprehension_begin_params(params_index) {
                 let mode_str = match params.mode {
                     crate::rvm::instructions::ComprehensionMode::Array => "array",
                     crate::rvm::instructions::ComprehensionMode::Set => "set",
@@ -785,21 +800,28 @@ pub fn generate_tabular_assembly_listing(
     let mut indent_level: usize = 0;
 
     // Add header
-    writeln!(output, "; RVM Assembly (Tabular Format)").unwrap();
-    writeln!(
-        output,
-        "; {} instructions, {} literals",
-        program.instructions.len(),
-        program.literals.len()
-    )
-    .unwrap();
-    writeln!(output, ";").unwrap();
-    writeln!(output, "; PC  | Instruction  | Operation").unwrap();
-    writeln!(output, ";-----|--------------|----------").unwrap();
+    push_line(&mut output, format_args!("; RVM Assembly (Tabular Format)"));
+    push_line(
+        &mut output,
+        format_args!(
+            "; {} instructions, {} literals",
+            program.instructions.len(),
+            program.literals.len()
+        ),
+    );
+    push_line(&mut output, format_args!(";"));
+    push_line(
+        &mut output,
+        format_args!("; PC  | Instruction  | Operation"),
+    );
+    push_line(
+        &mut output,
+        format_args!(";-----|--------------|----------"),
+    );
 
     for (pc, instruction) in program.instructions.iter().enumerate() {
         // Handle loop indentation
-        match instruction {
+        match *instruction {
             Instruction::LoopNext { .. } => {
                 indent_level = indent_level.saturating_sub(1);
             }
@@ -809,7 +831,7 @@ pub fn generate_tabular_assembly_listing(
             _ => {}
         }
 
-        let indent = " ".repeat(indent_level * 2); // Smaller indent for tabular format
+        let indent = " ".repeat(indent_level.saturating_mul(2)); // Smaller indent for tabular format
 
         // Format in tabular style
         let addr_str = format!("{:03}", pc);
@@ -817,15 +839,18 @@ pub fn generate_tabular_assembly_listing(
         let operation =
             format_operation_compact(instruction, &indent, &program.instruction_data, program);
 
-        writeln!(output, "{:>4} | {:12} | {}", addr_str, inst_name, operation).unwrap();
+        push_line(
+            &mut output,
+            format_args!("{:>4} | {:12} | {}", addr_str, inst_name, operation),
+        );
 
         // Increase indentation for loop/rule starts
-        match instruction {
+        match *instruction {
             Instruction::LoopStart { .. } => {
-                indent_level += 1;
+                indent_level = indent_level.saturating_add(1);
             }
             Instruction::RuleInit { .. } => {
-                indent_level += 1;
+                indent_level = indent_level.saturating_add(1);
             }
             _ => {}
         }
@@ -834,8 +859,8 @@ pub fn generate_tabular_assembly_listing(
     output
 }
 
-fn get_instruction_name(instruction: &Instruction) -> &'static str {
-    match instruction {
+const fn get_instruction_name(instruction: &Instruction) -> &'static str {
+    match *instruction {
         Instruction::Load { .. } => "LOAD",
         Instruction::LoadTrue { .. } => "LOAD_TRUE",
         Instruction::LoadFalse { .. } => "LOAD_FALSE",
@@ -897,7 +922,7 @@ fn format_operation_compact(
     instruction_data: &InstructionData,
     _program: &Program,
 ) -> String {
-    match instruction {
+    match *instruction {
         Instruction::Load { dest, literal_idx } => {
             format!("{}r{} ← L{}", indent, dest, literal_idx)
         }
@@ -928,7 +953,7 @@ fn format_operation_compact(
             format!("{}r{} ← r{}[L{}]", indent, dest, container, literal_idx)
         }
         Instruction::LoopStart { params_index } => {
-            if let Some(params) = instruction_data.get_loop_params(*params_index) {
+            if let Some(params) = instruction_data.get_loop_params(params_index) {
                 format!(
                     "{}loop r{} in r{} {{",
                     indent, params.value_reg, params.collection

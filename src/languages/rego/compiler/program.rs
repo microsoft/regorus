@@ -18,6 +18,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
+use anyhow::anyhow;
 
 impl<'a> Compiler<'a> {
     pub(super) fn emit_return(&mut self, result_reg: super::Register) {
@@ -38,8 +39,8 @@ impl<'a> Compiler<'a> {
         self.program.main_entry_point = 0;
 
         self.program.max_rule_window_size =
-            self.rule_num_registers.iter().cloned().max().unwrap_or(0) as usize;
-        self.program.dispatch_window_size = self.register_counter as usize;
+            self.rule_num_registers.iter().cloned().max().unwrap_or(0);
+        self.program.dispatch_window_size = self.register_counter;
 
         let mut rule_infos_map = BTreeMap::new();
 
@@ -139,6 +140,10 @@ impl<'a> Compiler<'a> {
                 .initialize_resolved_builtins()
                 .map_err(CompilerError::from)?;
         }
+
+        self.program
+            .validate_limits()
+            .map_err(|e| CompilerError::from(anyhow!(e)))?;
 
         Ok(self.program)
     }

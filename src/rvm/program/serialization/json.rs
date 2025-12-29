@@ -1,10 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#![allow(clippy::as_conversions, clippy::unused_trait_names)]
-
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 
 use super::super::types::SourceFile;
@@ -84,7 +82,8 @@ impl Program {
         let optimization_level = metadata
             .get("optimization_level")
             .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u8;
+            .and_then(|v| u8::try_from(v).ok())
+            .unwrap_or(0);
         let rego_v0 = metadata
             .get("rego_v0")
             .and_then(|v| v.as_bool())
@@ -104,15 +103,18 @@ impl Program {
         let main_entry_point = program_structure
             .get("main_entry_point")
             .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(0);
         let max_rule_window_size = program_structure
             .get("max_rule_window_size")
             .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
+            .and_then(|v| u8::try_from(v).ok())
+            .unwrap_or(0);
         let dispatch_window_size = program_structure
             .get("dispatch_window_size")
             .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
+            .and_then(|v| u8::try_from(v).ok())
+            .unwrap_or(0);
 
         let instructions: Vec<Instruction> = serde_json::from_value(
             json_data

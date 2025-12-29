@@ -148,7 +148,7 @@ impl RegoVM {
             }
 
             self.executed_instructions += 1;
-            let instruction = program.instructions[self.pc].clone();
+            let instruction = program.instructions[self.pc];
 
             match self.execute_instruction(&program, instruction)? {
                 InstructionOutcome::Continue => {
@@ -351,7 +351,7 @@ impl RegoVM {
             }
 
             self.pc = frame_pc;
-            let instruction = program.instructions[self.pc].clone();
+            let instruction = program.instructions[self.pc];
             if let Some(frame_info) = self.execution_stack.last() {
                 if let FrameKind::Comprehension { context, .. } = &frame_info.kind {
                     if context.iteration_state.is_none()
