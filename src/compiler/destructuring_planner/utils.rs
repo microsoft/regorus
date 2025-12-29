@@ -149,10 +149,9 @@ pub(crate) fn check_literal_structure(
 }
 
 pub(crate) fn ensure_literal_match(plan: &DestructuringPlan, expr: &ExprRef) -> Result<()> {
-    match check_literal_structure(plan, expr).into_error() {
-        Some(err) => Err(err),
-        None => Ok(()),
-    }
+    check_literal_structure(plan, expr)
+        .into_error()
+        .map_or(Ok(()), Err)
 }
 
 pub(crate) fn collect_pattern_var_spans(expr: &ExprRef, spans: &mut Vec<Span>) {
@@ -248,13 +247,7 @@ pub(crate) fn ensure_structural_compatibility(
 
 /// Helper that discards destructuring plans which do not bind any variables.
 pub(crate) fn plan_only_if_binds(plan: Option<DestructuringPlan>) -> Option<DestructuringPlan> {
-    plan.and_then(|plan| {
-        if plan.introduces_binding() || plan.contains_wildcards() {
-            Some(plan)
-        } else {
-            None
-        }
-    })
+    plan.and_then(|plan| (plan.introduces_binding() || plan.contains_wildcards()).then_some(plan))
 }
 
 pub(crate) fn extract_literal_key(expr: &ExprRef) -> Option<Value> {
