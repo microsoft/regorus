@@ -1,18 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#![allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::unwrap_used,
-    clippy::unused_self,
-    clippy::as_conversions,
-    clippy::pattern_type_mismatch
-)] // virtual data paths index directly for speed; unwraps assert invariants
-
 use crate::rvm::instructions::LiteralOrRegister;
 use crate::value::Value;
 use alloc::vec::Vec;
+use core::convert::TryFrom as _;
 
 use super::errors::{Result, VmError};
 use super::machine::RegoVM;
@@ -25,17 +17,7 @@ impl RegoVM {
     ) -> Result<Value> {
         let mut root_path = Vec::new();
         for component in path_components {
-            let key_value = match component {
-                LiteralOrRegister::Literal(idx) => self
-                    .program
-                    .literals
-                    .get(*idx as usize)
-                    .ok_or(VmError::LiteralIndexOutOfBounds {
-                        index: *idx as usize,
-                    })?
-                    .clone(),
-                LiteralOrRegister::Register(reg) => self.registers[*reg as usize].clone(),
-            };
+            let key_value = self.literal_or_register_value(component)?;
             root_path.push(key_value);
         }
 
@@ -54,33 +36,32 @@ impl RegoVM {
         Ok(result_subobject)
     }
 
-    fn set_nested_value(&self, target: &mut Value, path: &[Value], value: Value) -> Result<()> {
+    fn set_nested_value(target: &mut Value, path: &[Value], value: Value) -> Result<()> {
         Self::set_nested_value_static(target, path, value)
     }
 
     fn set_nested_value_static(target: &mut Value, path: &[Value], value: Value) -> Result<()> {
-        if path.is_empty() {
+        let Some((head, tail)) = path.split_first() else {
             *target = value;
             return Ok(());
-        }
+        };
 
         if *target == Value::Undefined {
             *target = Value::new_object();
         }
 
-        if let Value::Object(ref mut map) = target {
-            let key = &path[0];
-
-            if !map.contains_key(key) {
-                crate::Rc::make_mut(map).insert(key.clone(), Value::Undefined);
+        if let Value::Object(ref mut map) = *target {
+            if !map.contains_key(head) {
+                crate::Rc::make_mut(map).insert(head.clone(), Value::Undefined);
             }
 
-            if let Some(next_target) = crate::Rc::make_mut(map).get_mut(key) {
-                Self::set_nested_value_static(next_target, &path[1..], value)?;
+            if let Some(next_target) = crate::Rc::make_mut(map).get_mut(head) {
+                Self::set_nested_value_static(next_target, tail, value)?;
             }
         } else {
             return Err(VmError::InvalidRuleTreeEntry {
                 value: target.clone(),
+                pc: 0,
             });
         }
 
@@ -108,8 +89,8 @@ impl RegoVM {
         root_path: &[Value],
         relative_path: &[Value],
     ) -> Result<()> {
-        match rule_tree_node {
-            Value::Number(rule_idx) => {
+        match *rule_tree_node {
+            Value::Number(ref rule_idx) => {
                 if let Some(rule_index) = rule_idx.as_u64() {
                     let mut full_cache_path = root_path.to_vec();
                     full_cache_path.extend_from_slice(relative_path);
@@ -119,7 +100,7 @@ impl RegoVM {
                         let mut path_exists = true;
 
                         for path_component in &full_cache_path {
-                            if let Value::Object(ref map) = cache_lookup {
+                            if let Value::Object(ref map) = *cache_lookup {
                                 if let Some(next_value) = map.get(path_component) {
                                     cache_lookup = next_value;
                                 } else {
@@ -133,7 +114,7 @@ impl RegoVM {
                         }
 
                         if path_exists {
-                            if let Value::Object(ref map) = cache_lookup {
+                            if let Value::Object(ref map) = *cache_lookup {
                                 map.get(&Value::Undefined).cloned()
                             } else {
                                 None
@@ -144,13 +125,33 @@ impl RegoVM {
                     };
 
                     let rule_result = if let Some(cached) = cached_result {
-                        self.cache_hits += 1;
+                        self.cache_hits =
+                            self.checked_add_one(self.cache_hits, "cache hits counter")?;
                         cached
                     } else {
-                        let temp_reg = self.registers.len() as u8;
+                        let temp_reg = u8::try_from(self.registers.len()).map_err(|_| {
+                            VmError::RegisterIndexOutOfBounds {
+                                index: u8::MAX,
+                                pc: self.pc,
+                                register_count: self.registers.len(),
+                            }
+                        })?;
                         self.registers.push(Value::Undefined);
-                        self.execute_call_rule_common(temp_reg, rule_index as u16, None)?;
-                        let result = self.registers.pop().unwrap();
+                        let rule_index_u16 =
+                            u16::try_from(rule_index).map_err(|_| VmError::InvalidRuleIndex {
+                                rule_index: Value::Number(rule_idx.clone()),
+                                pc: self.pc,
+                            })?;
+                        self.execute_call_rule_common(temp_reg, rule_index_u16, None)?;
+                        let register_count = self.registers.len();
+                        let result =
+                            self.registers
+                                .pop()
+                                .ok_or(VmError::RegisterIndexOutOfBounds {
+                                    index: temp_reg,
+                                    pc: self.pc,
+                                    register_count,
+                                })?;
 
                         let mut cache_path = full_cache_path.clone();
                         cache_path.push(Value::Undefined);
@@ -163,14 +164,15 @@ impl RegoVM {
                         result
                     };
 
-                    self.set_nested_value(result_subobject, relative_path, rule_result)?;
+                    Self::set_nested_value(result_subobject, relative_path, rule_result)?;
                 } else {
                     return Err(VmError::InvalidRuleIndex {
                         rule_index: Value::Number(rule_idx.clone()),
+                        pc: self.pc,
                     });
                 }
             }
-            Value::Object(obj) => {
+            Value::Object(ref obj) => {
                 for (key, value) in obj.iter() {
                     let mut new_relative_path = relative_path.to_vec();
                     new_relative_path.push(key.clone());
@@ -194,6 +196,12 @@ impl RegoVM {
             .get_virtual_data_document_lookup_params(params_index)
             .ok_or(VmError::InvalidVirtualDataDocumentLookupParams {
                 index: params_index,
+                pc: self.pc,
+                available: self
+                    .program
+                    .instruction_data
+                    .virtual_data_document_lookup_params
+                    .len(),
             })?
             .clone();
 
@@ -201,60 +209,43 @@ impl RegoVM {
         let mut components_consumed = 0;
 
         for (i, component) in params.path_components.iter().enumerate() {
-            let key_value = match component {
-                LiteralOrRegister::Literal(idx) => self
-                    .program
-                    .literals
-                    .get(*idx as usize)
-                    .ok_or(VmError::LiteralIndexOutOfBounds {
-                        index: *idx as usize,
-                    })?
-                    .clone(),
-                LiteralOrRegister::Register(reg) => self.registers[*reg as usize].clone(),
-            };
+            let key_value = self.literal_or_register_value(component)?;
 
             current_node = &current_node[&key_value];
-            components_consumed = i + 1;
+            components_consumed = self.checked_add_one(i, "path components traversed")?;
 
-            match current_node {
+            match *current_node {
                 Value::Undefined | Value::Number(_) => break,
                 _ => {}
             }
         }
 
-        match current_node {
-            Value::Number(rule_index_value) => {
+        match *current_node {
+            Value::Number(ref rule_index_value) => {
                 if let Some(rule_index) = rule_index_value.as_u64() {
-                    let rule_index = rule_index as u16;
+                    let rule_index =
+                        u16::try_from(rule_index).map_err(|_| VmError::InvalidRuleIndex {
+                            rule_index: Value::Number(rule_index_value.clone()),
+                            pc: self.pc,
+                        })?;
 
                     self.execute_call_rule_common(params.dest, rule_index, None)?;
 
                     if components_consumed < params.path_components.len() {
-                        let mut rule_result = self.registers[params.dest as usize].clone();
+                        let mut rule_result = self.get_register(params.dest)?.clone();
 
-                        for component in &params.path_components[components_consumed..] {
-                            let key_value = match component {
-                                LiteralOrRegister::Literal(idx) => self
-                                    .program
-                                    .literals
-                                    .get(*idx as usize)
-                                    .ok_or(VmError::LiteralIndexOutOfBounds {
-                                        index: *idx as usize,
-                                    })?
-                                    .clone(),
-                                LiteralOrRegister::Register(reg) => {
-                                    self.registers[*reg as usize].clone()
-                                }
-                            };
+                        for component in params.path_components.iter().skip(components_consumed) {
+                            let key_value = self.literal_or_register_value(component)?;
 
                             rule_result = rule_result[&key_value].clone();
                         }
 
-                        self.registers[params.dest as usize] = rule_result;
+                        self.set_register(params.dest, rule_result)?;
                     }
                 } else {
                     return Err(VmError::InvalidRuleIndex {
                         rule_index: Value::Number(rule_index_value.clone()),
+                        pc: self.pc,
                     });
                 }
             }
@@ -264,22 +255,12 @@ impl RegoVM {
                 let mut result = self.data.clone();
 
                 for component in &params.path_components {
-                    let key_value = match component {
-                        LiteralOrRegister::Literal(idx) => self
-                            .program
-                            .literals
-                            .get(*idx as usize)
-                            .ok_or(VmError::LiteralIndexOutOfBounds {
-                                index: *idx as usize,
-                            })?
-                            .clone(),
-                        LiteralOrRegister::Register(reg) => self.registers[*reg as usize].clone(),
-                    };
+                    let key_value = self.literal_or_register_value(component)?;
 
                     result = result[&key_value].clone();
                 }
 
-                self.registers[params.dest as usize] = result;
+                self.set_register(params.dest, result)?;
             }
             Value::Object(_) => {
                 let rule_tree_subobject = current_node.clone();
@@ -288,15 +269,33 @@ impl RegoVM {
                     &params.path_components,
                     &rule_tree_subobject,
                 )?;
-                self.registers[params.dest as usize] = result;
+                self.set_register(params.dest, result)?;
             }
             _ => {
                 return Err(VmError::InvalidRuleTreeEntry {
                     value: current_node.clone(),
+                    pc: self.pc,
                 });
             }
         }
 
         Ok(())
+    }
+
+    fn literal_or_register_value(&self, source: &LiteralOrRegister) -> Result<Value> {
+        let value = match *source {
+            LiteralOrRegister::Literal(ref idx) => self
+                .program
+                .literals
+                .get(usize::from(*idx))
+                .ok_or(VmError::LiteralIndexOutOfBounds {
+                    index: *idx,
+                    pc: self.pc,
+                })?
+                .clone(),
+            LiteralOrRegister::Register(ref reg) => self.get_register(*reg)?.clone(),
+        };
+
+        Ok(value)
     }
 }

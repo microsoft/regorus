@@ -15,7 +15,7 @@ pub enum LiteralOrRegister {
 
 /// Loop execution modes for different Rego iteration constructs
 #[repr(C)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum LoopMode {
     /// Any quantification: some x in arr, x := arr[_], etc.
     /// Succeeds if ANY iteration succeeds, exits early on first success

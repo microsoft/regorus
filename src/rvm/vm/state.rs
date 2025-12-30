@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 use crate::value::Value;
-use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::errors::{Result, VmError};
@@ -65,46 +64,30 @@ impl RegoVM {
     pub(super) fn validate_vm_state(&self) -> Result<()> {
         // Check register bounds
         if self.registers.len() < self.base_register_count {
-            return Err(VmError::Internal(alloc::format!(
-                "Register count {} < base count {}",
-                self.registers.len(),
-                self.base_register_count
-            )));
+            return Err(VmError::RegisterCountBelowBase {
+                register_count: self.registers.len(),
+                base_count: self.base_register_count,
+                pc: self.pc,
+            });
         }
 
         // Check PC bounds
         if self.pc >= self.program.instructions.len() {
-            return Err(VmError::Internal(alloc::format!(
-                "PC {} >= instruction count {}",
-                self.pc,
-                self.program.instructions.len()
-            )));
+            return Err(VmError::ProgramCounterOutOfBounds {
+                pc: self.pc,
+                instruction_count: self.program.instructions.len(),
+            });
         }
 
         // Check rule cache bounds
         if self.rule_cache.len() != self.program.rule_infos.len() {
-            return Err(VmError::Internal(alloc::format!(
-                "Rule cache size {} != rule info count {}",
-                self.rule_cache.len(),
-                self.program.rule_infos.len()
-            )));
+            return Err(VmError::RuleCacheSizeMismatch {
+                cache_size: self.rule_cache.len(),
+                rule_info_count: self.program.rule_infos.len(),
+                pc: self.pc,
+            });
         }
 
         Ok(())
-    }
-
-    /// Get current VM state for debugging
-    pub(super) fn get_debug_state(&self) -> String {
-        alloc::format!(
-            "VM State: PC={}, registers={}, executed={}/{}, stacks: loop={}, call={}, register={}, comprehension={}",
-            self.pc,
-            self.registers.len(),
-            self.executed_instructions,
-            self.max_instructions,
-            self.loop_stack.len(),
-            self.call_rule_stack.len(),
-            self.register_stack.len(),
-            self.comprehension_stack.len()
-        )
     }
 }

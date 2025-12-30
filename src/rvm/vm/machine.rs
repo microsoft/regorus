@@ -1,12 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#![allow(
-    missing_debug_implementations,
-    clippy::missing_const_for_fn,
-    clippy::pattern_type_mismatch
-)] // VM structs are not debug printed
-
 use crate::rvm::program::Program;
 use crate::value::Value;
 use crate::CompiledPolicy;
@@ -23,6 +17,7 @@ use super::execution_model::{
 };
 
 /// The Rego Virtual Machine
+#[derive(Debug)]
 pub struct RegoVM {
     /// Registers for storing values during execution
     pub(super) registers: Vec<Value>,
@@ -181,7 +176,7 @@ impl RegoVM {
     }
 
     /// Set the maximum number of instructions that can be executed
-    pub fn set_max_instructions(&mut self, max: usize) {
+    pub const fn set_max_instructions(&mut self, max: usize) {
         self.max_instructions = max;
     }
 
@@ -220,47 +215,47 @@ impl RegoVM {
     }
 
     // Public getters for visualization
-    pub fn get_pc(&self) -> usize {
+    pub const fn get_pc(&self) -> usize {
         self.pc
     }
 
-    pub fn get_registers(&self) -> &Vec<Value> {
+    pub const fn get_registers(&self) -> &Vec<Value> {
         &self.registers
     }
 
-    pub fn get_program(&self) -> &Arc<Program> {
+    pub const fn get_program(&self) -> &Arc<Program> {
         &self.program
     }
 
-    pub fn get_call_stack(&self) -> &Vec<CallRuleContext> {
+    pub const fn get_call_stack(&self) -> &Vec<CallRuleContext> {
         &self.call_rule_stack
     }
 
-    pub fn get_loop_stack(&self) -> &Vec<LoopContext> {
+    pub const fn get_loop_stack(&self) -> &Vec<LoopContext> {
         &self.loop_stack
     }
 
-    pub fn get_cache_hits(&self) -> usize {
+    pub const fn get_cache_hits(&self) -> usize {
         self.cache_hits
     }
 
     /// Set the execution mode for the VM
-    pub fn set_execution_mode(&mut self, mode: ExecutionMode) {
+    pub const fn set_execution_mode(&mut self, mode: ExecutionMode) {
         self.execution_mode = mode;
     }
 
     /// Configure whether builtin operations should raise errors strictly
-    pub fn set_strict_builtin_errors(&mut self, strict: bool) {
+    pub const fn set_strict_builtin_errors(&mut self, strict: bool) {
         self.strict_builtin_errors = strict;
     }
 
     /// Returns whether builtin operations raise errors strictly
-    pub fn strict_builtin_errors(&self) -> bool {
+    pub const fn strict_builtin_errors(&self) -> bool {
         self.strict_builtin_errors
     }
 
     /// Enable or disable single-step execution for suspendable runs
-    pub fn set_step_mode(&mut self, enabled: bool) {
+    pub const fn set_step_mode(&mut self, enabled: bool) {
         self.step_mode = enabled;
     }
 
@@ -295,6 +290,7 @@ impl RegoVM {
         let missing_error = || VmError::HostAwaitResponseMissing {
             dest,
             identifier: identifier.clone(),
+            pc: self.pc,
         };
 
         let (response, should_remove) = {
@@ -316,20 +312,48 @@ impl RegoVM {
     }
 
     /// Get the current execution mode
-    pub fn get_execution_mode(&self) -> ExecutionMode {
+    pub const fn get_execution_mode(&self) -> ExecutionMode {
         self.execution_mode
     }
 
     /// Get the current execution state of the VM
-    pub fn execution_state(&self) -> &ExecutionState {
+    pub const fn execution_state(&self) -> &ExecutionState {
         &self.execution_state
     }
 
     /// Get the suspend reason if the VM is currently suspended
-    pub fn suspend_reason(&self) -> Option<&SuspendReason> {
-        match &self.execution_state {
-            ExecutionState::Suspended { reason, .. } => Some(reason),
+    pub const fn suspend_reason(&self) -> Option<&SuspendReason> {
+        match self.execution_state {
+            ExecutionState::Suspended { ref reason, .. } => Some(reason),
             _ => None,
         }
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub(super) fn get_register(&self, index: u8) -> Result<&Value> {
+        self.registers
+            .get(usize::from(index))
+            .ok_or(VmError::RegisterIndexOutOfBounds {
+                index,
+                pc: self.pc,
+                register_count: self.registers.len(),
+            })
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub(super) fn set_register(&mut self, index: u8, value: Value) -> Result<()> {
+        let register_count = self.registers.len();
+
+        let slot = self.registers.get_mut(usize::from(index)).ok_or(
+            VmError::RegisterIndexOutOfBounds {
+                index,
+                pc: self.pc,
+                register_count,
+            },
+        )?;
+        *slot = value;
+        Ok(())
     }
 }

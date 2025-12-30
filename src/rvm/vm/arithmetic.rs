@@ -1,11 +1,6 @@
-#![allow(
-    clippy::unused_self,
-    clippy::missing_const_for_fn,
-    clippy::unseparated_literal_suffix,
-    clippy::pattern_type_mismatch
-)]
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(clippy::pattern_type_mismatch)]
 
 use alloc::collections::BTreeSet;
 
@@ -23,6 +18,7 @@ impl RegoVM {
             _ => Err(VmError::InvalidAddition {
                 left: a.clone(),
                 right: b.clone(),
+                pc: self.pc,
             }),
         }
     }
@@ -38,6 +34,7 @@ impl RegoVM {
             _ => Err(VmError::InvalidSubtraction {
                 left: a.clone(),
                 right: b.clone(),
+                pc: self.pc,
             }),
         }
     }
@@ -49,6 +46,7 @@ impl RegoVM {
             _ => Err(VmError::InvalidMultiplication {
                 left: a.clone(),
                 right: b.clone(),
+                pc: self.pc,
             }),
         }
     }
@@ -57,11 +55,12 @@ impl RegoVM {
     pub(super) fn div_values(&self, a: &Value, b: &Value) -> Result<Value> {
         match (a, b) {
             (Value::Number(x), Value::Number(y)) => {
-                if *y == Number::from(0u64) {
+                if *y == Number::from(0_u64) {
                     if self.strict_builtin_errors {
                         return Err(VmError::InvalidDivision {
                             left: a.clone(),
                             right: b.clone(),
+                            pc: self.pc,
                         });
                     }
                     return Ok(Value::Undefined);
@@ -72,6 +71,7 @@ impl RegoVM {
             _ => Err(VmError::InvalidDivision {
                 left: a.clone(),
                 right: b.clone(),
+                pc: self.pc,
             }),
         }
     }
@@ -80,18 +80,23 @@ impl RegoVM {
     pub(super) fn mod_values(&self, a: &Value, b: &Value) -> Result<Value> {
         match (a, b) {
             (Value::Number(x), Value::Number(y)) => {
-                if *y == Number::from(0u64) {
+                if *y == Number::from(0_u64) {
                     if self.strict_builtin_errors {
                         return Err(VmError::InvalidModulo {
                             left: a.clone(),
                             right: b.clone(),
+                            pc: self.pc,
                         });
                     }
                     return Ok(Value::Undefined);
                 }
 
                 if !x.is_integer() || !y.is_integer() {
-                    return Err(VmError::ModuloOnFloat);
+                    return Err(VmError::ModuloOnFloat {
+                        left: a.clone(),
+                        right: b.clone(),
+                        pc: self.pc,
+                    });
                 }
 
                 Ok(Value::from(x.clone().modulo(y)?))
@@ -99,11 +104,12 @@ impl RegoVM {
             _ => Err(VmError::InvalidModulo {
                 left: a.clone(),
                 right: b.clone(),
+                pc: self.pc,
             }),
         }
     }
 
-    pub(super) fn to_bool(&self, value: &Value) -> Option<bool> {
+    pub(super) const fn to_bool(&self, value: &Value) -> Option<bool> {
         match value {
             Value::Bool(b) => Some(*b),
             Value::Null if !self.strict_builtin_errors => Some(true),
