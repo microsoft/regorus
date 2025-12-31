@@ -1,19 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![allow(
-    clippy::redundant_pub_crate,
-    clippy::unused_trait_names,
-    clippy::pattern_type_mismatch
-)]
-
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
-use core::str::FromStr;
-use serde::de::{self, EnumAccess, VariantAccess, Visitor};
-use serde::ser::{SerializeSeq, SerializeTuple};
+use core::str::FromStr as _;
+use serde::de::{self, EnumAccess, VariantAccess as _, Visitor};
+use serde::ser::{SerializeSeq as _, SerializeTuple as _};
 use serde::{Deserialize, Serialize};
 
 use crate::number::Number;
@@ -33,19 +27,19 @@ const VARIANT_NUMBER_F64: u32 = 10;
 
 /// Wrapper type for zero-copy binary serialization of a `Value`.
 /// Keeps references into the original data so collections and strings are not cloned.
-pub(crate) struct BinaryValueRef<'a>(pub &'a Value);
+pub struct BinaryValueRef<'a>(pub &'a Value);
 
 impl<'a> Serialize for BinaryValueRef<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        match self.0 {
+        match *self.0 {
             Value::Null => serializer.serialize_unit_variant("BinaryValue", VARIANT_NULL, "Null"),
             Value::Bool(b) => {
                 serializer.serialize_newtype_variant("BinaryValue", VARIANT_BOOL, "Bool", &b)
             }
-            Value::Number(n) => {
+            Value::Number(ref n) => {
                 if let Some(value) = n.as_i64() {
                     serializer.serialize_newtype_variant(
                         "BinaryValue",
@@ -76,25 +70,25 @@ impl<'a> Serialize for BinaryValueRef<'a> {
                     )
                 }
             }
-            Value::String(s) => serializer.serialize_newtype_variant(
+            Value::String(ref s) => serializer.serialize_newtype_variant(
                 "BinaryValue",
                 VARIANT_STRING,
                 "String",
                 s.as_ref(),
             ),
-            Value::Array(items) => serializer.serialize_newtype_variant(
+            Value::Array(ref items) => serializer.serialize_newtype_variant(
                 "BinaryValue",
                 VARIANT_ARRAY,
                 "Array",
                 &BinaryValueSlice(items.as_slice()),
             ),
-            Value::Set(items) => serializer.serialize_newtype_variant(
+            Value::Set(ref items) => serializer.serialize_newtype_variant(
                 "BinaryValue",
                 VARIANT_SET,
                 "Set",
                 &BinarySetRef(items.as_ref()),
             ),
-            Value::Object(entries) => serializer.serialize_newtype_variant(
+            Value::Object(ref entries) => serializer.serialize_newtype_variant(
                 "BinaryValue",
                 VARIANT_OBJECT,
                 "Object",
@@ -108,7 +102,7 @@ impl<'a> Serialize for BinaryValueRef<'a> {
 }
 
 /// Slice wrapper allowing zero-copy serialization of value collections.
-pub(crate) struct BinaryValueSlice<'a>(pub &'a [Value]);
+pub struct BinaryValueSlice<'a>(pub &'a [Value]);
 
 impl<'a> Serialize for BinaryValueSlice<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -169,7 +163,7 @@ impl<'a> Serialize for BinaryEntryRef<'a> {
 
 /// Owned counterpart used during deserialization.
 #[derive(Debug, Clone)]
-pub(crate) struct BinaryValue(pub Value);
+pub struct BinaryValue(pub Value);
 
 impl BinaryValue {
     fn into_value(self) -> Value {
@@ -290,10 +284,10 @@ impl<'de> Deserialize<'de> for BinaryValue {
     }
 }
 
-pub(crate) fn binaries_to_values(binaries: Vec<BinaryValue>) -> Result<Vec<Value>, String> {
+pub fn binaries_to_values(binaries: Vec<BinaryValue>) -> Result<Vec<Value>, String> {
     Ok(binaries.into_iter().map(BinaryValue::into_value).collect())
 }
 
-pub(crate) fn binary_to_value(binary: BinaryValue) -> Result<Value, String> {
+pub fn binary_to_value(binary: BinaryValue) -> Result<Value, String> {
     Ok(binary.into_value())
 }

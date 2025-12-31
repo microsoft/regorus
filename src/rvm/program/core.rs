@@ -1,12 +1,8 @@
-#![allow(
-    clippy::missing_const_for_fn,
-    clippy::as_conversions,
-    clippy::unused_trait_names
-)]
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use alloc::string::{String, ToString};
+use alloc::format;
+use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 use anyhow::Result as AnyResult;
 use indexmap::IndexMap;
@@ -49,13 +45,13 @@ pub struct Program {
     pub instruction_spans: Vec<Option<SpanInfo>>,
 
     /// Main program entry point
-    pub main_entry_point: usize,
+    pub main_entry_point: u32,
 
     /// Maximum register window size observed across all rule definitions
-    pub max_rule_window_size: usize,
+    pub max_rule_window_size: u8,
 
     /// Register window size needed for entry point dispatch
-    pub dispatch_window_size: usize,
+    pub dispatch_window_size: u8,
 
     /// Program metadata
     pub metadata: ProgramMetadata,
@@ -92,6 +88,20 @@ impl Program {
     pub const SERIALIZATION_VERSION: u32 = 3;
     /// Magic bytes to identify Regorus program files
     pub const MAGIC: [u8; 4] = *b"REGO";
+    /// Maximum instructions supported (matches u16 jump targets)
+    pub const MAX_INSTRUCTIONS: usize = 65_535; // u16::MAX
+    /// Maximum literals supported (matches u16 literal indices)
+    pub const MAX_LITERALS: usize = 65_535; // u16::MAX
+    /// Generous cap for rules within a single policy bundle
+    pub const MAX_RULES: usize = 4_000;
+    /// Generous cap for exported entry points
+    pub const MAX_ENTRY_POINTS: usize = 1_000;
+    /// Generous cap for source/helper files
+    pub const MAX_SOURCES: usize = 256;
+    /// Generous cap for builtin declarations
+    pub const MAX_BUILTINS: usize = 512;
+    /// Maximum path depth for rule paths (e.g., data.a.b.c.d.rule)
+    pub const MAX_PATH_DEPTH: usize = 32;
 
     /// Create a new empty program
     pub fn new() -> Self {
@@ -119,6 +129,86 @@ impl Program {
             needs_recompilation: false,
             rego_v0: false, // Default to Rego v1
         }
+    }
+
+    /// Validate that the program stays within supported bounds
+    pub fn validate_limits(&self) -> Result<(), String> {
+        if self.instructions.len() > Self::MAX_INSTRUCTIONS {
+            return Err(format!(
+                "Program exceeds max instructions ({} > {})",
+                self.instructions.len(),
+                Self::MAX_INSTRUCTIONS
+            ));
+        }
+
+        if self.literals.len() > Self::MAX_LITERALS {
+            return Err(format!(
+                "Program exceeds max literals ({} > {})",
+                self.literals.len(),
+                Self::MAX_LITERALS
+            ));
+        }
+
+        if self.rule_infos.len() > Self::MAX_RULES {
+            return Err(format!(
+                "Program exceeds max rules ({} > {})",
+                self.rule_infos.len(),
+                Self::MAX_RULES
+            ));
+        }
+
+        if self.entry_points.len() > Self::MAX_ENTRY_POINTS {
+            return Err(format!(
+                "Program exceeds max entry points ({} > {})",
+                self.entry_points.len(),
+                Self::MAX_ENTRY_POINTS
+            ));
+        }
+
+        if self.sources.len() > Self::MAX_SOURCES {
+            return Err(format!(
+                "Program exceeds max sources ({} > {})",
+                self.sources.len(),
+                Self::MAX_SOURCES
+            ));
+        }
+
+        if self.builtin_info_table.len() > Self::MAX_BUILTINS {
+            return Err(format!(
+                "Program exceeds max builtins ({} > {})",
+                self.builtin_info_table.len(),
+                Self::MAX_BUILTINS
+            ));
+        }
+
+        for params in &self.instruction_data.loop_params {
+            let body_end = core::cmp::max(params.body_start, params.loop_end);
+            if usize::from(body_end) > Self::MAX_INSTRUCTIONS {
+                return Err("Loop offsets exceed supported instruction range".to_string());
+            }
+        }
+
+        for params in &self.instruction_data.comprehension_begin_params {
+            let body_end = core::cmp::max(params.body_start, params.comprehension_end);
+            if usize::from(body_end) > Self::MAX_INSTRUCTIONS {
+                return Err("Comprehension offsets exceed supported instruction range".to_string());
+            }
+        }
+
+        for instr in &self.instructions {
+            if let &crate::rvm::Instruction::LoopNext {
+                body_start,
+                loop_end,
+            } = instr
+            {
+                let body_end = core::cmp::max(body_start, loop_end);
+                if usize::from(body_end) > Self::MAX_INSTRUCTIONS {
+                    return Err("LoopNext offsets exceed supported instruction range".to_string());
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Add a source file and return its index
@@ -162,12 +252,12 @@ impl Program {
     pub fn add_builtin_info(&mut self, builtin_info: BuiltinInfo) -> u16 {
         let index = self.builtin_info_table.len();
         self.builtin_info_table.push(builtin_info);
-        index as u16
+        u16::try_from(index).unwrap_or(u16::MAX)
     }
 
     /// Get builtin info by index
     pub fn get_builtin_info(&self, index: u16) -> Option<&BuiltinInfo> {
-        self.builtin_info_table.get(index as usize)
+        self.builtin_info_table.get(usize::from(index))
     }
 
     /// Update loop parameters by index
@@ -281,7 +371,7 @@ impl Program {
 
     /// Get resolved builtin function by index
     pub fn get_resolved_builtin(&self, index: u16) -> Option<&BuiltinFcn> {
-        self.resolved_builtins.get(index as usize)
+        self.resolved_builtins.get(usize::from(index))
     }
 
     /// Check if resolved builtins are initialized
@@ -300,22 +390,22 @@ impl Program {
     }
 
     /// Get all entry points as IndexMap
-    pub fn get_entry_points(&self) -> &IndexMap<String, usize> {
+    pub const fn get_entry_points(&self) -> &IndexMap<String, usize> {
         &self.entry_points
     }
 
     /// Check if recompilation is needed due to partial deserialization failure
-    pub fn needs_recompilation(&self) -> bool {
+    pub const fn needs_recompilation(&self) -> bool {
         self.needs_recompilation
     }
 
     /// Mark that recompilation is needed
-    pub fn set_needs_recompilation(&mut self, needs_recompilation: bool) {
+    pub const fn set_needs_recompilation(&mut self, needs_recompilation: bool) {
         self.needs_recompilation = needs_recompilation;
     }
 
     /// Check if the program is fully functional (not needing recompilation)
-    pub fn is_fully_functional(&self) -> bool {
+    pub const fn is_fully_functional(&self) -> bool {
         !self.needs_recompilation
     }
 }

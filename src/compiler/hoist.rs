@@ -284,7 +284,7 @@ impl HoistedLoopsLookup {
     }
 
     #[cfg(debug_assertions)]
-    pub fn module_len(&self) -> usize {
+    pub const fn module_len(&self) -> usize {
         self.statement_loops.module_len()
     }
 }
