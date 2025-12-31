@@ -702,6 +702,7 @@ mod tests {
                                             VmError::HostAwaitResponseMissing {
                                                 dest,
                                                 identifier: identifier.clone(),
+                                                pc: 0,
                                             }
                                         )
                                     })?;
@@ -712,6 +713,7 @@ mod tests {
                                             VmError::HostAwaitResponseMissing {
                                                 dest,
                                                 identifier: identifier.clone(),
+                                                pc: 0,
                                             }
                                         )
                                     })?;
@@ -722,6 +724,7 @@ mod tests {
                                             VmError::HostAwaitResponseMissing {
                                                 dest,
                                                 identifier: identifier.clone(),
+                                                pc: 0,
                                             }
                                         )
                                     })?;

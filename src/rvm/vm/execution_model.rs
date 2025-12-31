@@ -1,4 +1,3 @@
-#![allow(clippy::missing_const_for_fn)]
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
@@ -20,11 +19,11 @@ pub(super) struct ExecutionFrame {
 }
 
 impl ExecutionFrame {
-    pub(super) fn new(pc: usize, kind: FrameKind) -> Self {
+    pub(super) const fn new(pc: usize, kind: FrameKind) -> Self {
         Self { pc, kind }
     }
 
-    pub(super) fn main(pc: usize, return_register: u8) -> Self {
+    pub(super) const fn main(pc: usize, return_register: u8) -> Self {
         Self {
             pc,
             kind: FrameKind::Main {
@@ -90,7 +89,7 @@ pub(super) struct ExecutionStack {
 }
 
 impl ExecutionStack {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { frames: Vec::new() }
     }
 
@@ -110,11 +109,11 @@ impl ExecutionStack {
         self.frames.last_mut()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
 
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.frames.len()
     }
 

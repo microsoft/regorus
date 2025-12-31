@@ -1,19 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::expect_used,
-    clippy::option_if_let_else,
-    clippy::as_conversions,
-    clippy::needless_continue,
-    clippy::pattern_type_mismatch
-)]
 use crate::rvm::instructions::Instruction;
 use crate::rvm::program::Program;
 use crate::value::Value;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::convert::TryFrom as _;
 
 use super::dispatch::InstructionOutcome;
 use super::errors::{Result, VmError};
@@ -43,47 +35,47 @@ impl RegoVM {
             return Err(VmError::InvalidEntryPointIndex {
                 index,
                 max_index: entry_points.len().saturating_sub(1),
+                pc: self.pc,
             });
         }
 
-        let (_entry_point_name, entry_point_pc) = &entry_points[index];
+        let &(ref entry_point_name, entry_point_pc) =
+            entry_points
+                .get(index)
+                .ok_or(VmError::InvalidEntryPointIndex {
+                    index,
+                    max_index: entry_points.len().saturating_sub(1),
+                    pc: self.pc,
+                })?;
 
-        if *entry_point_pc >= self.program.instructions.len() {
-            return Err(VmError::Internal(alloc::format!(
-                "Entry point PC {} >= instruction count {} for index {} | {}",
-                entry_point_pc,
-                self.program.instructions.len(),
-                index,
-                self.get_debug_state()
-            )));
+        if entry_point_pc >= self.program.instructions.len() {
+            return Err(VmError::EntryPointPcOutOfBounds {
+                pc: entry_point_pc,
+                instruction_count: self.program.instructions.len(),
+                entry_point: entry_point_name.clone(),
+            });
         }
 
         match self.execution_mode {
             ExecutionMode::RunToCompletion => {
                 self.reset_execution_state();
 
-                if let Err(e) = self.validate_vm_state() {
-                    return Err(VmError::Internal(alloc::format!(
-                        "VM state validation failed before entry point execution: {} | {}",
-                        e,
-                        self.get_debug_state()
-                    )));
-                }
+                self.validate_vm_state()?;
+                let entry_point_pc_u32 = u32::try_from(entry_point_pc).map_err(|_| {
+                    VmError::EntryPointPcOutOfBounds {
+                        pc: entry_point_pc,
+                        instruction_count: self.program.instructions.len(),
+                        entry_point: entry_point_name.clone(),
+                    }
+                })?;
 
-                self.jump_to(*entry_point_pc)
+                self.jump_to(entry_point_pc_u32)
             }
             ExecutionMode::Suspendable => {
                 self.reset_execution_state();
 
-                if let Err(e) = self.validate_vm_state() {
-                    return Err(VmError::Internal(alloc::format!(
-                        "VM state validation failed before entry point execution: {} | {}",
-                        e,
-                        self.get_debug_state()
-                    )));
-                }
-
-                self.execute_suspendable_entry(*entry_point_pc)
+                self.validate_vm_state()?;
+                self.execute_suspendable_entry(entry_point_pc)
             }
         }
     }
@@ -95,87 +87,88 @@ impl RegoVM {
                 .ok_or_else(|| VmError::EntryPointNotFound {
                     name: String::from(name),
                     available: self.program.entry_points.keys().cloned().collect(),
+                    pc: self.pc,
                 })?;
 
         if entry_point_pc >= self.program.instructions.len() {
-            return Err(VmError::Internal(alloc::format!(
-                "Entry point PC {} >= instruction count {} for '{}' | {}",
-                entry_point_pc,
-                self.program.instructions.len(),
-                name,
-                self.get_debug_state()
-            )));
+            return Err(VmError::EntryPointPcOutOfBounds {
+                pc: entry_point_pc,
+                instruction_count: self.program.instructions.len(),
+                entry_point: String::from(name),
+            });
         }
 
         match self.execution_mode {
             ExecutionMode::RunToCompletion => {
                 self.reset_execution_state();
 
-                if let Err(e) = self.validate_vm_state() {
-                    return Err(VmError::Internal(alloc::format!(
-                        "VM state validation failed before entry point execution: {} | {}",
-                        e,
-                        self.get_debug_state()
-                    )));
-                }
+                self.validate_vm_state()?;
+                let entry_point_pc_u32 = u32::try_from(entry_point_pc).map_err(|_| {
+                    VmError::EntryPointPcOutOfBounds {
+                        pc: entry_point_pc,
+                        instruction_count: self.program.instructions.len(),
+                        entry_point: String::from(name),
+                    }
+                })?;
 
-                self.jump_to(entry_point_pc)
+                self.jump_to(entry_point_pc_u32)
             }
             ExecutionMode::Suspendable => {
                 self.reset_execution_state();
 
-                if let Err(e) = self.validate_vm_state() {
-                    return Err(VmError::Internal(alloc::format!(
-                        "VM state validation failed before entry point execution: {} | {}",
-                        e,
-                        self.get_debug_state()
-                    )));
-                }
-
+                self.validate_vm_state()?;
                 self.execute_suspendable_entry(entry_point_pc)
             }
         }
     }
 
-    pub(super) fn jump_to(&mut self, target: usize) -> Result<Value> {
+    pub(super) fn jump_to(&mut self, target: u32) -> Result<Value> {
         let program = self.program.clone();
+        let target = self.convert_pc(target, "jump target")?;
         self.pc = target;
         while self.pc < program.instructions.len() {
             if self.executed_instructions >= self.max_instructions {
                 return Err(VmError::InstructionLimitExceeded {
                     limit: self.max_instructions,
+                    executed: self.executed_instructions,
+                    pc: self.pc,
                 });
             }
 
-            self.executed_instructions += 1;
-            let instruction = program.instructions[self.pc];
+            self.executed_instructions = self.executed_instructions.saturating_add(1);
+            let instruction = program.instructions.get(self.pc).cloned().ok_or(
+                VmError::ProgramCounterOutOfBounds {
+                    pc: self.pc,
+                    instruction_count: program.instructions.len(),
+                },
+            )?;
 
             match self.execute_instruction(&program, instruction)? {
                 InstructionOutcome::Continue => {
-                    self.pc += 1;
+                    self.pc = self.pc.saturating_add(1);
                 }
                 InstructionOutcome::Return(value) => {
                     return Ok(value);
                 }
                 InstructionOutcome::Break => {
-                    return Ok(self.registers[0].clone());
+                    return Ok(self.registers.first().cloned().unwrap_or(Value::Undefined));
                 }
                 InstructionOutcome::Suspend { reason } => {
-                    return Err(VmError::Internal(alloc::format!(
-                        "Suspend instruction {:?} is not supported in run-to-completion execution",
-                        reason
-                    )));
+                    return Err(VmError::UnsupportedSuspendInRunToCompletion {
+                        reason,
+                        pc: self.pc,
+                    });
                 }
             }
         }
 
-        Ok(self.registers[0].clone())
+        Ok(self.registers.first().cloned().unwrap_or(Value::Undefined))
     }
 
     fn execute_run_to_completion(&mut self) -> Result<Value> {
         self.reset_execution_state();
         self.execution_state = ExecutionState::Running;
-        match self.jump_to(0) {
+        match self.jump_to(0_u32) {
             Ok(value) => {
                 self.execution_state = ExecutionState::Completed {
                     result: value.clone(),
@@ -220,30 +213,43 @@ impl RegoVM {
                 ..
             } => (reason, last_result),
             current_state => {
-                return Err(VmError::Internal(alloc::format!(
-                    "Cannot resume VM when execution state is {:?}",
-                    current_state
-                )));
+                return Err(VmError::InvalidResumeState {
+                    state: alloc::format!("{:?}", current_state),
+                    pc: self.pc,
+                });
             }
         };
 
-        match reason.clone() {
-            SuspendReason::HostAwait { dest, .. } => {
-                let value = resume_value.ok_or_else(|| {
-                    VmError::Internal("HostAwait suspension requires a resume value".into())
+        match reason {
+            SuspendReason::HostAwait {
+                dest,
+                argument,
+                identifier,
+            } => {
+                let value = resume_value.ok_or_else(|| VmError::MissingResumeValue {
+                    reason: SuspendReason::HostAwait {
+                        dest,
+                        argument: argument.clone(),
+                        identifier: identifier.clone(),
+                    },
+                    pc: self.pc,
                 })?;
 
-                if self.registers.len() <= dest as usize {
-                    self.registers.resize(dest as usize + 1, Value::Undefined);
+                let dest_index = usize::from(dest);
+                if self.registers.len() <= dest_index {
+                    let new_len = dest_index.saturating_add(1);
+                    self.registers.resize(new_len, Value::Undefined);
                 }
-                self.registers[dest as usize] = value;
+                if let Some(slot) = self.registers.get_mut(dest_index) {
+                    *slot = value;
+                }
             }
             other_reason => {
                 if resume_value.is_some() {
-                    return Err(VmError::Internal(alloc::format!(
-                        "Unexpected resume value supplied for {:?}",
-                        other_reason
-                    )));
+                    return Err(VmError::UnexpectedResumeValue {
+                        reason: other_reason.clone(),
+                        pc: self.pc,
+                    });
                 }
             }
         }
@@ -288,7 +294,7 @@ impl RegoVM {
     fn run_stackless_loop(&mut self, program: &Program, last_result: &mut Value) -> Result<()> {
         while !self.execution_stack.is_empty() {
             self.frame_pc_overridden = false;
-            let should_finalize_rule = if let Some(frame) = self.execution_stack.last() {
+            let should_finalize_rule = self.execution_stack.last().is_some_and(|frame| {
                 matches!(
                     frame.kind,
                     FrameKind::Rule(RuleFrameData {
@@ -296,12 +302,16 @@ impl RegoVM {
                         ..
                     })
                 )
-            } else {
-                false
-            };
+            });
 
             if should_finalize_rule {
-                let frame = self.execution_stack.pop().expect("frame available");
+                let frame = self
+                    .execution_stack
+                    .pop()
+                    .ok_or(VmError::MissingExecutionFrame {
+                        context: "finalizing rule",
+                        pc: self.pc,
+                    })?;
                 self.finalize_rule_execution_frame(frame, last_result)?;
                 if self.execution_stack.is_empty() {
                     break;
@@ -313,7 +323,10 @@ impl RegoVM {
                 let frame = self
                     .execution_stack
                     .last()
-                    .expect("stack checked to be non-empty");
+                    .ok_or(VmError::MissingExecutionFrame {
+                        context: "determining pc",
+                        pc: self.pc,
+                    })?;
                 frame.pc
             };
 
@@ -331,7 +344,13 @@ impl RegoVM {
             }
 
             if frame_pc >= program.instructions.len() {
-                let frame = self.execution_stack.pop().expect("frame exists");
+                let frame = self
+                    .execution_stack
+                    .pop()
+                    .ok_or(VmError::MissingExecutionFrame {
+                        context: "finalizing out-of-range pc",
+                        pc: self.pc,
+                    })?;
                 self.finalize_rule_execution_frame(frame, last_result)?;
                 if self.execution_stack.is_empty() {
                     break;
@@ -343,23 +362,38 @@ impl RegoVM {
                 self.execution_state = ExecutionState::Error {
                     error: VmError::InstructionLimitExceeded {
                         limit: self.max_instructions,
+                        executed: self.executed_instructions,
+                        pc: frame_pc,
                     },
                 };
                 return Err(VmError::InstructionLimitExceeded {
                     limit: self.max_instructions,
+                    executed: self.executed_instructions,
+                    pc: frame_pc,
                 });
             }
 
             self.pc = frame_pc;
-            let instruction = program.instructions[self.pc];
+            let instruction = program.instructions.get(self.pc).cloned().ok_or(
+                VmError::ProgramCounterOutOfBounds {
+                    pc: self.pc,
+                    instruction_count: program.instructions.len(),
+                },
+            )?;
             if let Some(frame_info) = self.execution_stack.last() {
-                if let FrameKind::Comprehension { context, .. } = &frame_info.kind {
+                if let FrameKind::Comprehension { ref context, .. } = frame_info.kind {
                     if context.iteration_state.is_none()
-                        && frame_pc == context.comprehension_end as usize
+                        && frame_pc == usize::from(context.comprehension_end)
                         && !matches!(instruction, Instruction::ComprehensionEnd { .. })
                     {
                         let resume_pc = frame_pc;
-                        let _completed = self.execution_stack.pop().expect("frame exists");
+                        let _completed =
+                            self.execution_stack
+                                .pop()
+                                .ok_or(VmError::MissingExecutionFrame {
+                                    context: "unwinding comprehension",
+                                    pc: self.pc,
+                                })?;
                         if let Some(parent) = self.execution_stack.last_mut() {
                             parent.pc = resume_pc;
                             self.frame_pc_overridden = true;
@@ -368,7 +402,7 @@ impl RegoVM {
                     }
                 }
             }
-            self.executed_instructions += 1;
+            self.executed_instructions = self.executed_instructions.saturating_add(1);
 
             let stack_depth_before = self.execution_stack.len();
 
@@ -377,7 +411,7 @@ impl RegoVM {
                     let stack_depth_after = self.execution_stack.len();
                     if stack_depth_after == stack_depth_before && !self.frame_pc_overridden {
                         if let Some(frame) = self.execution_stack.last_mut() {
-                            frame.pc = self.pc + 1;
+                            frame.pc = self.pc.saturating_add(1);
                         }
                     }
                     if self.step_mode {
@@ -406,7 +440,6 @@ impl RegoVM {
                         if self.execution_stack.is_empty() {
                             break;
                         }
-                        continue;
                     } else {
                         self.execution_stack.clear();
                         return Err(err);
@@ -421,7 +454,7 @@ impl RegoVM {
     fn handle_instruction_suspend(&mut self, reason: SuspendReason, last_result: &Value) {
         if let Some(frame) = self.execution_stack.last_mut() {
             if !self.frame_pc_overridden && frame.pc <= self.pc {
-                frame.pc = self.pc + 1;
+                frame.pc = self.pc.saturating_add(1);
             }
         }
 
@@ -439,7 +472,7 @@ impl RegoVM {
             } => {
                 *last_result = self
                     .registers
-                    .get(return_value_register as usize)
+                    .get(usize::from(return_value_register))
                     .cloned()
                     .unwrap_or(Value::Undefined);
             }
@@ -464,11 +497,14 @@ impl RegoVM {
 
             match frame.kind {
                 FrameKind::Rule(mut data) => {
-                    if self.registers.len() <= data.result_reg as usize {
-                        self.registers
-                            .resize(data.result_reg as usize + 1, Value::Undefined);
+                    let result_index = usize::from(data.result_reg);
+                    if self.registers.len() <= result_index {
+                        let new_len = result_index.saturating_add(1);
+                        self.registers.resize(new_len, Value::Undefined);
                     }
-                    self.registers[data.result_reg as usize] = value.clone();
+                    if let Some(slot) = self.registers.get_mut(result_index) {
+                        *slot = value.clone();
+                    }
                     data.accumulated_result = Some(value.clone());
                     data.any_body_succeeded = true;
 
@@ -476,18 +512,21 @@ impl RegoVM {
                     *last_result = result.clone();
 
                     if let Some(parent_frame) = self.execution_stack.last_mut() {
-                        parent_frame.pc = self.pc + 1;
+                        parent_frame.pc = self.pc.saturating_add(1);
                     }
                     return Ok(());
                 }
                 FrameKind::Main {
                     return_value_register,
                 } => {
-                    if self.registers.len() <= return_value_register as usize {
-                        self.registers
-                            .resize(return_value_register as usize + 1, Value::Undefined);
+                    let ret_index = usize::from(return_value_register);
+                    if self.registers.len() <= ret_index {
+                        let new_len = ret_index.saturating_add(1);
+                        self.registers.resize(new_len, Value::Undefined);
                     }
-                    self.registers[return_value_register as usize] = value.clone();
+                    if let Some(slot) = self.registers.get_mut(ret_index) {
+                        *slot = value.clone();
+                    }
                     *last_result = value;
                     return Ok(());
                 }
@@ -496,7 +535,6 @@ impl RegoVM {
                         parent_frame.pc = return_pc;
                     }
                     // Propagate the return value outward until we reach the owning frame
-                    continue;
                 }
             }
         }
@@ -564,7 +602,7 @@ impl RegoVM {
             } => {
                 *last_result = self
                     .registers
-                    .get(return_value_register as usize)
+                    .get(usize::from(return_value_register))
                     .cloned()
                     .unwrap_or(Value::Undefined);
             }
@@ -588,7 +626,7 @@ impl RegoVM {
                 let result = self.finalize_rule_frame_data(data)?;
                 *last_result = result.clone();
                 if let Some(parent_frame) = self.execution_stack.last_mut() {
-                    parent_frame.pc = self.pc + 1;
+                    parent_frame.pc = self.pc.saturating_add(1);
                 }
             }
             other_kind => {

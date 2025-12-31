@@ -70,10 +70,13 @@ impl Program {
                         match *rule_value {
                             Value::Number(_) => {
                                 if data_value != &Value::Undefined {
-                                    return Err(crate::rvm::vm::VmError::RuleDataConflict(format!(
-                                        "Conflict: rule defines path '{}' but data also provides this path",
-                                        current_path.join("."),
-                                    )));
+                                    return Err(crate::rvm::vm::VmError::RuleDataConflict {
+                                        message: format!(
+                                            "Conflict: rule defines path '{}' but data also provides this path",
+                                            current_path.join("."),
+                                        ),
+                                        pc: 0,
+                                    });
                                 }
                             }
                             Value::Object(_) => {
@@ -84,17 +87,23 @@ impl Program {
                                         current_path,
                                     )?;
                                 } else if data_value != &Value::Undefined {
-                                    return Err(crate::rvm::vm::VmError::RuleDataConflict(format!(
-                                        "Conflict: rule defines subpaths under '{}' but data provides a non-object value at this path",
-                                        current_path.join("."),
-                                    )));
+                                    return Err(crate::rvm::vm::VmError::RuleDataConflict {
+                                        message: format!(
+                                            "Conflict: rule defines subpaths under '{}' but data provides a non-object value at this path",
+                                            current_path.join("."),
+                                        ),
+                                        pc: 0,
+                                    });
                                 }
                             }
                             _ => {
-                                return Err(crate::rvm::vm::VmError::RuleDataConflict(format!(
-                                    "Invalid rule tree structure at path '{}'",
-                                    current_path.join("."),
-                                )));
+                                return Err(crate::rvm::vm::VmError::RuleDataConflict {
+                                    message: format!(
+                                        "Invalid rule tree structure at path '{}'",
+                                        current_path.join("."),
+                                    ),
+                                    pc: 0,
+                                });
                             }
                         }
 
@@ -103,9 +112,10 @@ impl Program {
                 }
             }
             _ => {
-                return Err(crate::rvm::vm::VmError::RuleDataConflict(
-                    "Rule tree root must be an object".to_string(),
-                ));
+                return Err(crate::rvm::vm::VmError::RuleDataConflict {
+                    message: "Rule tree root must be an object".to_string(),
+                    pc: 0,
+                });
             }
         }
 
