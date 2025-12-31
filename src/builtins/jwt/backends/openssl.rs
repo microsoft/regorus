@@ -186,7 +186,7 @@ impl Backend for OpensslBackend {
             match c {
                 '+' => result.push('-'),
                 '/' => result.push('_'),
-                '=' => continue,
+                '=' => {}
                 other => result.push(other),
             }
         }

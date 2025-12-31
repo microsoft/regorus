@@ -3,7 +3,7 @@
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
-use crate::builtins::jwt::backend::Backend;
+use crate::builtins::jwt::backend::Backend as _;
 use crate::builtins::jwt::toolkit::JwtBackend;
 use crate::builtins::jwt::utils::split_token;
 use crate::builtins::utils::{ensure_args_count, ensure_object, ensure_string};
@@ -239,6 +239,10 @@ fn decode_verify(
 
 type Object = Rc<BTreeMap<Value, Value>>;
 
+fn get_value<'a>(obj: &'a Object, key: &'a Value) -> Result<&'a Value> {
+    obj.get(key).ok_or_else(|| anyhow!("Value not found"))
+}
+
 fn verify_header(header: &Object) -> Result<()> {
     if !header.iter().all(|(k, _)| ALLOWED_HEADER_KEYS.contains(k)) {
         return Err(anyhow!("Failed to verify JWT header"));
@@ -247,26 +251,18 @@ fn verify_header(header: &Object) -> Result<()> {
 }
 
 fn verify_type(header: &Object) -> Result<()> {
-    match header.get(&KEY_TYP) {
-        Some(Value::String(value)) => {
-            if value.as_ref() != "JWT" {
-                return Err(anyhow!("Non JWT tokens not supported"));
-            }
-        }
-        _ => {
-            return Err(anyhow!("Token type not found"));
-        }
+    let typ = get_value(header, &KEY_TYP)?.as_string()?;
+    if typ.as_ref() == "JWT" {
+        return Ok(());
     }
-    Ok(())
+    Err(anyhow!("Non JWT tokens not supported"))
 }
 
 fn verify_algorithm(header: &Object, constraints: &Object) -> Result<()> {
-    if let Some(Value::String(expected_alg)) = constraints.get(&KEY_ALG) {
-        if let Some(Value::String(alg)) = header.get(&KEY_ALG) {
-            if alg != expected_alg {
-                return Err(anyhow!("Failed to verify algorithm"));
-            }
-        } else {
+    if let Some(expected_val) = constraints.get(&KEY_ALG) {
+        let expected_alg = expected_val.as_string()?;
+        let alg = get_value(header, &KEY_ALG)?.as_string()?;
+        if alg != expected_alg {
             return Err(anyhow!("Failed to verify algorithm"));
         }
     }
@@ -274,14 +270,16 @@ fn verify_algorithm(header: &Object, constraints: &Object) -> Result<()> {
 }
 
 fn verify_audience(payload: &Object, constraints: &Object) -> Result<()> {
-    if let Some(Value::String(expected_aud)) = constraints.get(&KEY_AUD) {
-        match payload.get(&KEY_AUD) {
-            Some(Value::String(aud)) => {
+    if let Some(expected_val) = constraints.get(&KEY_AUD) {
+        let expected_aud = expected_val.as_string()?;
+        let val = get_value(payload, &KEY_AUD)?;
+        match *val {
+            Value::String(ref aud) => {
                 if aud != expected_aud {
                     return Err(anyhow!("Failed to verify audience"));
                 }
             }
-            Some(Value::Array(aud)) => {
+            Value::Array(ref aud) => {
                 if !aud.contains(&Value::String(expected_aud.clone())) {
                     return Err(anyhow!("Failed to verify audience"));
                 }
@@ -297,12 +295,10 @@ fn verify_audience(payload: &Object, constraints: &Object) -> Result<()> {
 }
 
 fn verify_issuer(payload: &Object, constraints: &Object) -> Result<()> {
-    if let Some(Value::String(expected_iss)) = constraints.get(&KEY_ISS) {
-        if let Some(Value::String(iss)) = payload.get(&KEY_ISS) {
-            if iss != expected_iss {
-                return Err(anyhow!("Failed to verify issuer"));
-            }
-        } else {
+    if let Some(val) = constraints.get(&KEY_ISS) {
+        let expected_iss = val.as_string()?;
+        let iss = get_value(payload, &KEY_ISS)?.as_string()?;
+        if iss != expected_iss {
             return Err(anyhow!("Failed to verify issuer"));
         }
     }
@@ -310,31 +306,36 @@ fn verify_issuer(payload: &Object, constraints: &Object) -> Result<()> {
 }
 
 fn verify_time(payload: &Object, constraints: &Object) -> Result<()> {
-    if let Some(Value::Number(time)) = constraints.get(&KEY_TIME) {
-        if let Some(Value::Number(exp)) = payload.get(&KEY_EXP) {
+    if let Some(time_val) = constraints.get(&KEY_TIME) {
+        let time = time_val.as_number()?;
+        if let Some(exp_val) = payload.get(&KEY_EXP) {
             // Convert sec to nanosec
-            let exp_ns = exp.mul(&number::Number::from(1_000_000_000.))?;
+            let exp_ns = exp_val
+                .as_number()?
+                .mul(&number::Number::from(1_000_000_000.))?;
             if time >= &exp_ns {
                 return Err(anyhow!("Failed to verify time"));
             }
         }
 
-        if let Some(Value::Number(nbf)) = payload.get(&KEY_NBF) {
+        if let Some(nbf_val) = payload.get(&KEY_NBF) {
             // Convert sec to nanosec
-            let nbf_ns = nbf.mul(&number::Number::from(1_000_000_000.))?;
+            let nbf_ns = nbf_val
+                .as_number()?
+                .mul(&number::Number::from(1_000_000_000.))?;
             if time < &nbf_ns {
                 return Err(anyhow!("Failed to verify time"));
             }
         }
     } else {
         let now = number::Number::from(Utc::now().timestamp());
-        if let Some(Value::Number(exp)) = payload.get(&KEY_EXP) {
-            if &now > exp {
+        if let Some(exp_val) = payload.get(&KEY_EXP) {
+            if &now > exp_val.as_number()? {
                 return Err(anyhow!("Failed to verify time"));
             }
         }
-        if let Some(Value::Number(nbf)) = payload.get(&KEY_NBF) {
-            if &now < nbf {
+        if let Some(nbf_val) = payload.get(&KEY_NBF) {
+            if &now < nbf_val.as_number()? {
                 return Err(anyhow!("Failed to verify time"));
             }
         }
@@ -343,36 +344,28 @@ fn verify_time(payload: &Object, constraints: &Object) -> Result<()> {
 }
 
 fn verify_hmac(token: &str, constraints: &Object, verify_impl: VerifyImpl) -> Result<bool> {
-    if let Some(Value::String(secret)) = constraints.get(&KEY_SECRET) {
-        return verify_impl(token, secret);
-    }
-
-    Err(anyhow!("Failed to verify HMAC"))
+    let secret = get_value(constraints, &KEY_SECRET)?.as_string()?;
+    verify_impl(token, secret)
 }
 
 fn verify_rsa(token: &str, constraints: &Object, verify_impl: VerifyImpl) -> Result<bool> {
-    if let Some(Value::String(certificate)) = constraints.get(&KEY_CERT) {
-        // cert may contain multiple keys
-        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(certificate) {
-            if let Some(keys) = json_val.get("keys").and_then(|k| k.as_array()) {
-                for key in keys {
-                    if let Ok(key_json) = serde_json::to_string(key) {
-                        if let Ok(result) = verify_impl(token, &key_json) {
-                            if result {
-                                return Ok(result);
-                            }
+    let cert = get_value(constraints, &KEY_CERT)?.as_string()?;
+    // cert may contain multiple keys
+    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(cert) {
+        if let Some(keys) = json_val.get("keys").and_then(|k| k.as_array()) {
+            for key in keys {
+                if let Ok(key_json) = serde_json::to_string(key) {
+                    if let Ok(result) = verify_impl(token, &key_json) {
+                        if result {
+                            return Ok(result);
                         }
                     }
                 }
             }
-
-            return Err(anyhow!("Failed to verify RSA"));
-        } else {
-            return verify_impl(token, certificate);
         }
+        return Err(anyhow!("Failed to verify RSA"));
     }
-
-    Err(anyhow!("Failed to verify RSA"))
+    verify_impl(token, cert)
 }
 
 fn decode_verify_impl(token: &str, constraints: &Object) -> Result<(Object, Object)> {
@@ -385,22 +378,20 @@ fn decode_verify_impl(token: &str, constraints: &Object) -> Result<(Object, Obje
     verify_issuer(&payload, constraints)?;
     verify_time(&payload, constraints)?;
 
-    let result = match header.get(&KEY_ALG) {
-        Some(Value::String(value)) => match value.as_ref() {
-            "HS256" => verify_hmac(token, constraints, JwtBackend::verify_hs256)?,
-            "HS384" => verify_hmac(token, constraints, JwtBackend::verify_hs384)?,
-            "HS512" => verify_hmac(token, constraints, JwtBackend::verify_hs512)?,
-            "RS256" => verify_rsa(token, constraints, JwtBackend::verify_rs256)?,
-            "RS384" => verify_rsa(token, constraints, JwtBackend::verify_rs384)?,
-            "RS512" => verify_rsa(token, constraints, JwtBackend::verify_rs512)?,
-            "PS256" => verify_rsa(token, constraints, JwtBackend::verify_ps256)?,
-            "PS384" => verify_rsa(token, constraints, JwtBackend::verify_ps384)?,
-            "PS512" => verify_rsa(token, constraints, JwtBackend::verify_ps512)?,
-            "ES256" => verify_rsa(token, constraints, JwtBackend::verify_es256)?,
-            "ES384" => verify_rsa(token, constraints, JwtBackend::verify_es384)?,
-            "ES512" => verify_rsa(token, constraints, JwtBackend::verify_es512)?,
-            _ => return Err(anyhow!("Unknown algorithm")),
-        },
+    let alg = get_value(&header, &KEY_ALG)?.as_string()?;
+    let result = match alg.as_ref() {
+        "HS256" => verify_hmac(token, constraints, JwtBackend::verify_hs256)?,
+        "HS384" => verify_hmac(token, constraints, JwtBackend::verify_hs384)?,
+        "HS512" => verify_hmac(token, constraints, JwtBackend::verify_hs512)?,
+        "RS256" => verify_rsa(token, constraints, JwtBackend::verify_rs256)?,
+        "RS384" => verify_rsa(token, constraints, JwtBackend::verify_rs384)?,
+        "RS512" => verify_rsa(token, constraints, JwtBackend::verify_rs512)?,
+        "PS256" => verify_rsa(token, constraints, JwtBackend::verify_ps256)?,
+        "PS384" => verify_rsa(token, constraints, JwtBackend::verify_ps384)?,
+        "PS512" => verify_rsa(token, constraints, JwtBackend::verify_ps512)?,
+        "ES256" => verify_rsa(token, constraints, JwtBackend::verify_es256)?,
+        "ES384" => verify_rsa(token, constraints, JwtBackend::verify_es384)?,
+        "ES512" => verify_rsa(token, constraints, JwtBackend::verify_es512)?,
         _ => return Err(anyhow!("Unknown algorithm")),
     };
 
@@ -414,10 +405,11 @@ fn decode_verify_impl(token: &str, constraints: &Object) -> Result<(Object, Obje
 fn decode_impl(token: &str) -> Result<(Object, Object, String)> {
     let (header, payload, signature) = split_token(token)?;
 
-    let header =
-        Value::from_json_str(std::str::from_utf8(&JwtBackend::decode_base64url(header)?)?)?;
+    let header = Value::from_json_str(core::str::from_utf8(&JwtBackend::decode_base64url(
+        header,
+    )?)?)?;
 
-    if let Value::Object(header_data) = &header {
+    if let Value::Object(ref header_data) = header {
         // Restrict JWE support
         if header_data.contains_key(&KEY_ENC) {
             return Err(anyhow!("JWE not supported"));
@@ -427,7 +419,7 @@ fn decode_impl(token: &str) -> Result<(Object, Object, String)> {
         if let Some(value) = header_data.get(&KEY_CTY) {
             if value.as_string()?.as_ref() == "JWT" {
                 let decoded_payload = JwtBackend::decode_base64url(payload)?;
-                let payload_str = std::str::from_utf8(&decoded_payload)?;
+                let payload_str = core::str::from_utf8(&decoded_payload)?;
 
                 // Trim the first and the last chars if they are quotes: ""
                 let trimmed_payload = if payload_str.starts_with('"') && payload_str.ends_with('"')
@@ -441,7 +433,7 @@ fn decode_impl(token: &str) -> Result<(Object, Object, String)> {
         }
     }
 
-    let payload = Value::from_json_str(std::str::from_utf8(&JwtBackend::decode_base64url(
+    let payload = Value::from_json_str(core::str::from_utf8(&JwtBackend::decode_base64url(
         payload,
     )?)?)?;
 
