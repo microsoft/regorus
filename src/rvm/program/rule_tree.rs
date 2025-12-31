@@ -1,13 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![allow(
-    clippy::arithmetic_side_effects,
-    clippy::unused_trait_names,
-    clippy::pattern_type_mismatch
-)]
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 use anyhow::Result as AnyResult;
 
@@ -26,7 +21,16 @@ impl Program {
         rule_name: &str,
         rule_index: usize,
     ) -> AnyResult<()> {
-        let mut full_path = Vec::with_capacity(path.len() + 1);
+        if path.len() >= Program::MAX_PATH_DEPTH {
+            return Err(anyhow::anyhow!(
+                "Rule path depth exceeds maximum ({} >= {})",
+                path.len(),
+                Program::MAX_PATH_DEPTH
+            ));
+        }
+
+        let capacity = path.len().checked_add(1).unwrap_or(path.len());
+        let mut full_path = Vec::with_capacity(capacity);
         full_path.extend(path.iter().map(|s| s.as_str()));
         full_path.push(rule_name);
 
@@ -41,9 +45,9 @@ impl Program {
     pub fn check_rule_data_conflicts(&self, data: &Value) -> Result<(), crate::rvm::vm::VmError> {
         let actual_rule_tree = &self.rule_tree["data"];
 
-        match actual_rule_tree {
+        match *actual_rule_tree {
             Value::Undefined => return Ok(()),
-            Value::Object(rule_obj) if rule_obj.is_empty() => return Ok(()),
+            Value::Object(ref rule_obj) if rule_obj.is_empty() => return Ok(()),
             _ => {}
         }
 
@@ -55,15 +59,15 @@ impl Program {
         data: &Value,
         current_path: &mut Vec<String>,
     ) -> Result<(), crate::rvm::vm::VmError> {
-        match rule_tree {
-            Value::Object(rule_obj) => {
+        match *rule_tree {
+            Value::Object(ref rule_obj) => {
                 for (key, rule_value) in rule_obj.iter() {
-                    if let Value::String(key_str) = key {
+                    if let Value::String(ref key_str) = *key {
                         current_path.push(key_str.to_string());
 
                         let data_value = &data[key];
 
-                        match rule_value {
+                        match *rule_value {
                             Value::Number(_) => {
                                 if data_value != &Value::Undefined {
                                     return Err(crate::rvm::vm::VmError::RuleDataConflict {
@@ -76,7 +80,7 @@ impl Program {
                                 }
                             }
                             Value::Object(_) => {
-                                if let Value::Object(_) = data_value {
+                                if let Value::Object(_) = *data_value {
                                     Self::check_conflicts_recursive(
                                         rule_value,
                                         data_value,

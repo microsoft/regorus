@@ -1,11 +1,5 @@
-#![allow(clippy::missing_const_for_fn)]
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions
-)]
 use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
@@ -34,7 +28,7 @@ pub struct SpanInfo {
 }
 
 impl SpanInfo {
-    pub fn new(source_index: usize, line: usize, column: usize, length: usize) -> Self {
+    pub const fn new(source_index: usize, line: usize, column: usize, length: usize) -> Self {
         Self {
             source_index,
             line,
@@ -47,8 +41,8 @@ impl SpanInfo {
     pub fn from_lexer_span(span: &crate::lexer::Span, source_index: usize) -> Self {
         Self {
             source_index,
-            line: span.line as usize,
-            column: span.col as usize,
+            line: span.line.try_into().unwrap_or(usize::MAX),
+            column: span.col.try_into().unwrap_or(usize::MAX),
             length: span.text().len(),
         }
     }
@@ -135,7 +129,7 @@ impl RuleInfo {
         result_reg: u8,
         num_registers: u8,
     ) -> Self {
-        let num_params = param_names.len() as u32;
+        let num_params = u32::try_from(param_names.len()).unwrap_or(u32::MAX);
         let num_definitions = definitions.len();
         Self {
             name,
@@ -153,7 +147,7 @@ impl RuleInfo {
     }
 
     /// Set the default literal index for this rule
-    pub fn set_default_literal_index(&mut self, default_literal_index: u16) {
+    pub const fn set_default_literal_index(&mut self, default_literal_index: u16) {
         self.default_literal_index = Some(default_literal_index);
     }
 }
@@ -168,7 +162,7 @@ pub struct SourceFile {
 }
 
 impl SourceFile {
-    pub fn new(name: String, content: String) -> Self {
+    pub const fn new(name: String, content: String) -> Self {
         Self { name, content }
     }
 }

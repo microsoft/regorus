@@ -1,4 +1,3 @@
-#![allow(clippy::missing_const_for_fn)]
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
@@ -17,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 /// RVM Instructions - simplified enum-based design
 #[repr(C)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Instruction {
     /// Load literal value from literal table into register
     Load {
@@ -320,47 +319,47 @@ pub enum Instruction {
 
 impl Instruction {
     /// Create a new LoopStart instruction with parameter table index
-    pub fn loop_start(params_index: u16) -> Self {
+    pub const fn loop_start(params_index: u16) -> Self {
         Self::LoopStart { params_index }
     }
 
     /// Create a new BuiltinCall instruction with parameter table index
-    pub fn builtin_call(params_index: u16) -> Self {
+    pub const fn builtin_call(params_index: u16) -> Self {
         Self::BuiltinCall { params_index }
     }
 
     /// Create a new HostAwait instruction
-    pub fn host_await(dest: u8, arg: u8, id: u8) -> Self {
+    pub const fn host_await(dest: u8, arg: u8, id: u8) -> Self {
         Self::HostAwait { dest, arg, id }
     }
 
     /// Create a new FunctionCall instruction with parameter table index
-    pub fn function_call(params_index: u16) -> Self {
+    pub const fn function_call(params_index: u16) -> Self {
         Self::FunctionCall { params_index }
     }
 
     /// Create a new ObjectCreate instruction with parameter table index
-    pub fn object_create(params_index: u16) -> Self {
+    pub const fn object_create(params_index: u16) -> Self {
         Self::ObjectCreate { params_index }
     }
 
     /// Create a new ArrayCreate instruction with parameter table index
-    pub fn array_create(params_index: u16) -> Self {
+    pub const fn array_create(params_index: u16) -> Self {
         Self::ArrayCreate { params_index }
     }
 
     /// Create a new SetCreate instruction with parameter table index
-    pub fn set_create(params_index: u16) -> Self {
+    pub const fn set_create(params_index: u16) -> Self {
         Self::SetCreate { params_index }
     }
 
     /// Create a new ComprehensionBegin instruction with parameter table index
-    pub fn comprehension_begin(params_index: u16) -> Self {
+    pub const fn comprehension_begin(params_index: u16) -> Self {
         Self::ComprehensionBegin { params_index }
     }
 
     /// Create a new ComprehensionYield instruction
-    pub fn comprehension_yield(value_reg: u8) -> Self {
+    pub const fn comprehension_yield(value_reg: u8) -> Self {
         Self::ComprehensionYield {
             value_reg,
             key_reg: None,
@@ -368,7 +367,7 @@ impl Instruction {
     }
 
     /// Create a new ComprehensionYield instruction for object comprehensions
-    pub fn comprehension_yield_object(key_reg: u8, value_reg: u8) -> Self {
+    pub const fn comprehension_yield_object(key_reg: u8, value_reg: u8) -> Self {
         Self::ComprehensionYield {
             value_reg,
             key_reg: Some(key_reg),
@@ -376,7 +375,7 @@ impl Instruction {
     }
 
     /// Create a new ComprehensionEnd instruction
-    pub fn comprehension_end() -> Self {
+    pub const fn comprehension_end() -> Self {
         Self::ComprehensionEnd {}
     }
 }

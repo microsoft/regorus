@@ -616,8 +616,8 @@ mod tests {
         program.main_entry_point = 0;
 
         // Set a reasonable default for register window size in VM tests
-        // Most tests use registers 0-10, so we'll allocate 256 registers to be safe
-        program.max_rule_window_size = 256;
+        // Most tests use registers 0-10, so we'll allocate 255 registers (u8 max)
+        program.max_rule_window_size = 255;
         program.dispatch_window_size = 50;
 
         // Initialize resolved builtins if we have builtin info

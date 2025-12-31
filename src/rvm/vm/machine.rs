@@ -155,7 +155,7 @@ impl RegoVM {
         self.program = program.clone();
 
         // Use the dispatch window size from the program for initial register allocation
-        let dispatch_size = program.dispatch_window_size.max(2); // Ensure at least 2 registers
+        let dispatch_size = usize::from(program.dispatch_window_size).max(2); // Ensure at least 2 registers
         self.base_register_count = dispatch_size;
 
         // Resize registers to match program requirements
@@ -166,7 +166,7 @@ impl RegoVM {
         self.rule_cache = vec![(false, Value::Undefined); program.rule_infos.len()];
 
         // Set PC to main entry point
-        self.pc = program.main_entry_point;
+        self.pc = usize::try_from(program.main_entry_point).unwrap_or(0);
         self.executed_instructions = 0; // Reset instruction counter
     }
 
