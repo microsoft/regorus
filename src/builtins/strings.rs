@@ -792,11 +792,8 @@ fn render_template(
                 // Prepare variable names and capture prior values to restore after the range block
                 let var0_name = names[0].trim_start_matches('$').to_string();
                 let prev_var0 = locals.get(&var0_name).cloned();
-                let var1_name_opt = if names.len() > 1 {
-                    Some(names[1].trim_start_matches('$').to_string())
-                } else {
-                    None
-                };
+                let var1_name_opt =
+                    (names.len() > 1).then(|| names[1].trim_start_matches('$').to_string());
                 let prev_var1 = var1_name_opt.as_ref().and_then(|n| locals.get(n).cloned());
 
                 // Evaluate iterable
@@ -866,7 +863,6 @@ fn render_template(
                 }
 
                 i = block_end_after; // continue after {{end}}
-                continue;
             } else if let Some(rest) = action.strip_prefix("if ") {
                 let (body_start, block_end_after) = find_block_end(t, end + 2, err_span)?;
                 let cond = eval_expr(rest, root, locals);
@@ -875,7 +871,6 @@ fn render_template(
                     out.push_str(&render_inner(body, root, locals, strict, err_span)?);
                 }
                 i = block_end_after;
-                continue;
             } else {
                 // Interpolation: $var or .path
                 let val = eval_expr(action, root, locals);
