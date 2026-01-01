@@ -739,13 +739,24 @@ fn render_template(
     }
 
     // Render with recursion to support nested blocks.
+    const MAX_RECURSION_DEPTH: u32 = 100;
     fn render_inner(
         t: &str,
         root: &Value,
         locals: &mut BTreeMap<String, Value>,
         strict: bool,
         err_span: &Span,
+        depth: u32,
     ) -> Result<String> {
+        if depth > MAX_RECURSION_DEPTH {
+            bail!(err_span.error(
+                format!(
+                    "`strings.render_template` maximum recursion depth {} exceeded",
+                    MAX_RECURSION_DEPTH
+                )
+                .as_str()
+            ));
+        }
         let mut out = String::with_capacity(t.len());
         let mut i = 0usize;
         while let Some(start_rel) = t[i..].find("{{") {
@@ -810,7 +821,14 @@ fn render_template(
                                     locals.insert(var1_name.clone(), item.clone());
                                 }
                             }
-                            out.push_str(&render_inner(body, root, locals, strict, err_span)?);
+                            out.push_str(&render_inner(
+                                body,
+                                root,
+                                locals,
+                                strict,
+                                err_span,
+                                depth + 1,
+                            )?);
                         }
                     }
                     Value::Object(map) => {
@@ -823,7 +841,14 @@ fn render_template(
                                     locals.insert(var1_name.clone(), v.clone());
                                 }
                             }
-                            out.push_str(&render_inner(body, root, locals, strict, err_span)?);
+                            out.push_str(&render_inner(
+                                body,
+                                root,
+                                locals,
+                                strict,
+                                err_span,
+                                depth + 1,
+                            )?);
                         }
                     }
                     Value::Set(set) => {
@@ -836,7 +861,14 @@ fn render_template(
                                     locals.insert(var1_name.clone(), v.clone());
                                 }
                             }
-                            out.push_str(&render_inner(body, root, locals, strict, err_span)?);
+                            out.push_str(&render_inner(
+                                body,
+                                root,
+                                locals,
+                                strict,
+                                err_span,
+                                depth + 1,
+                            )?);
                         }
                     }
                     Value::Undefined | Value::Null => { /* no iterations */ }
@@ -868,7 +900,14 @@ fn render_template(
                 let cond = eval_expr(rest, root, locals);
                 if is_truthy(&cond) {
                     let body = &t[end + 2..body_start];
-                    out.push_str(&render_inner(body, root, locals, strict, err_span)?);
+                    out.push_str(&render_inner(
+                        body,
+                        root,
+                        locals,
+                        strict,
+                        err_span,
+                        depth + 1,
+                    )?);
                 }
                 i = block_end_after;
             } else {
@@ -903,6 +942,7 @@ fn render_template(
         &mut locals,
         strict,
         params[0].span(),
+        0,
     )?;
     Ok(Value::String(rendered.into()))
 }
