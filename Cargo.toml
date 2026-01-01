@@ -46,8 +46,7 @@ time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
 yaml = ["serde_yaml"]
-jwt = []
-jwt_backend_openssl = ["openssl"]
+jwt_openssl = ["openssl"]
 full-opa = [
     "base64",
     "base64url",
@@ -66,9 +65,7 @@ full-opa = [
     "time",
     "uuid",
     "urlquery",
-    "yaml",
-    "jwt",
-    "jwt_backend_openssl"
+    "yaml"
     #"rego-extensions"
 ]
 
@@ -146,6 +143,7 @@ num_cpus = "1.16"
 
 [build-dependencies]
 anyhow = "1.0"
+openssl = { version = "0.10.73", optional = true}
 
 [profile.release]
 debug = true
