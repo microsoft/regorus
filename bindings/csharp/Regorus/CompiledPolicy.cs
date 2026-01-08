@@ -203,5 +203,14 @@ namespace Regorus
                 }
             }
         }
+
+        private void UseHandle(Action<IntPtr> action)
+        {
+            UseHandle<object?>(handlePtr =>
+            {
+                action(handlePtr);
+                return null;
+            });
+        }
     }
 }

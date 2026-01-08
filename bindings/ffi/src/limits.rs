@@ -1,8 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::common::{RegorusResult, RegorusStatus};
+use crate::common::{to_regorus_result, RegorusResult, RegorusStatus};
 use alloc::format;
+use anyhow::{anyhow, Result};
+use core::num::NonZeroU32;
+use core::time::Duration;
+use regorus::utils::limits::{self, ExecutionTimerConfig};
 
 #[cfg(feature = "allocator-memory-limits")]
 fn some_or_none(flag: bool, value: u64) -> Option<u64> {
@@ -129,6 +133,45 @@ fn feature_disabled(function: &str) -> RegorusResult {
         RegorusStatus::InvalidArgument,
         format!("{function} unavailable: regorus built without allocator-memory-limits feature"),
     )
+}
+
+/// FFI representation of [`ExecutionTimerConfig`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct RegorusExecutionTimerConfig {
+    /// Wall-clock limit expressed in nanoseconds.
+    pub limit_ns: u64,
+    /// Number of work units between timer checks (must be non-zero).
+    pub check_interval: u32,
+}
+
+impl RegorusExecutionTimerConfig {
+    pub fn to_execution_timer_config(self) -> Result<ExecutionTimerConfig> {
+        let check_interval = NonZeroU32::new(self.check_interval)
+            .ok_or_else(|| anyhow!("execution_timer.check_interval must be non-zero"))?;
+        let limit = Duration::from_nanos(self.limit_ns);
+
+        Ok(ExecutionTimerConfig {
+            limit,
+            check_interval,
+        })
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn regorus_set_fallback_execution_timer_config(
+    config: RegorusExecutionTimerConfig,
+) -> RegorusResult {
+    to_regorus_result(|| -> Result<()> {
+        limits::set_fallback_execution_timer_config(Some(config.to_execution_timer_config()?));
+        Ok(())
+    }())
+}
+
+#[no_mangle]
+pub extern "C" fn regorus_clear_fallback_execution_timer_config() -> RegorusResult {
+    limits::set_fallback_execution_timer_config(None);
+    RegorusResult::ok_void()
 }
 
 #[cfg(test)]

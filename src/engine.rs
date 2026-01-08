@@ -8,11 +8,13 @@ use crate::interpreter::*;
 use crate::lexer::*;
 use crate::parser::*;
 use crate::scheduler::*;
-use crate::utils::{gather_functions, limits};
+use crate::utils::gather_functions;
+use crate::utils::limits::{self, fallback_execution_timer_config, ExecutionTimerConfig};
 use crate::value::*;
 use crate::*;
 use crate::{Extension, QueryResults};
 
+use crate::Rc;
 use anyhow::{anyhow, bail, Result};
 
 /// The Rego evaluation engine.
@@ -23,6 +25,7 @@ pub struct Engine {
     interpreter: Interpreter,
     prepared: bool,
     rego_v1: bool,
+    execution_timer_config: Option<ExecutionTimerConfig>,
 }
 
 #[cfg(feature = "azure_policy")]
@@ -62,14 +65,27 @@ impl Default for Engine {
 }
 
 impl Engine {
+    fn effective_execution_timer_config(&self) -> Option<ExecutionTimerConfig> {
+        self.execution_timer_config
+            .or_else(fallback_execution_timer_config)
+    }
+
+    fn apply_effective_execution_timer_config(&mut self) {
+        let config = self.effective_execution_timer_config();
+        self.interpreter.set_execution_timer_config(config);
+    }
+
     /// Create an instance of [Engine].
     pub fn new() -> Self {
-        Self {
+        let mut engine = Self {
             modules: Rc::new(vec![]),
             interpreter: Interpreter::new(),
             prepared: false,
             rego_v1: true,
-        }
+            execution_timer_config: None,
+        };
+        engine.apply_effective_execution_timer_config();
+        engine
     }
 
     /// Enable rego v0.
@@ -99,6 +115,60 @@ impl Engine {
     ///
     pub const fn set_rego_v0(&mut self, rego_v0: bool) {
         self.rego_v1 = !rego_v0;
+    }
+
+    /// Configure the execution timer.
+    ///
+    /// Stores the supplied configuration and ensures the next evaluation is checked against those
+    /// limits. Engines start without a time limit and otherwise fall back to the global
+    /// configuration (if provided).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::num::NonZeroU32;
+    /// use std::time::Duration;
+    /// use regorus::utils::limits::ExecutionTimerConfig;
+    /// use regorus::Engine;
+    ///
+    /// let mut engine = Engine::new();
+    /// let config = ExecutionTimerConfig {
+    ///     limit: Duration::from_millis(10),
+    ///     check_interval: NonZeroU32::new(1).unwrap(),
+    /// };
+    ///
+    /// engine.set_execution_timer_config(config);
+    /// ```
+    pub fn set_execution_timer_config(&mut self, config: ExecutionTimerConfig) {
+        self.execution_timer_config = Some(config);
+        self.interpreter.set_execution_timer_config(Some(config));
+    }
+
+    /// Clear the engine-specific execution timer configuration, falling back to the global value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::num::NonZeroU32;
+    /// use std::time::Duration;
+    /// use regorus::utils::limits::{
+    ///     set_fallback_execution_timer_config,
+    ///     ExecutionTimerConfig,
+    /// };
+    /// use regorus::Engine;
+    ///
+    /// let mut engine = Engine::new();
+    /// let global = ExecutionTimerConfig {
+    ///     limit: Duration::from_millis(5),
+    ///     check_interval: NonZeroU32::new(1).unwrap(),
+    /// };
+    /// set_fallback_execution_timer_config(Some(global));
+    ///
+    /// engine.clear_execution_timer_config();
+    /// ```
+    pub fn clear_execution_timer_config(&mut self) {
+        self.execution_timer_config = None;
+        self.apply_effective_execution_timer_config();
     }
 
     /// Add a policy.
@@ -524,6 +594,7 @@ impl Engine {
     #[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
     pub fn compile_for_target(&mut self) -> Result<CompiledPolicy> {
         self.prepare_for_eval(false, true)?;
+        self.apply_effective_execution_timer_config();
         self.interpreter.clean_internal_evaluation_state();
         self.interpreter.compile(None).map(CompiledPolicy::new)
     }
@@ -648,6 +719,7 @@ impl Engine {
     /// - [`crate::compile_policy_with_entrypoint`] for a higher-level convenience function
     pub fn compile_with_entrypoint(&mut self, rule: &Rc<str>) -> Result<CompiledPolicy> {
         self.prepare_for_eval(false, false)?;
+        self.apply_effective_execution_timer_config();
         self.interpreter.clean_internal_evaluation_state();
         self.interpreter
             .compile(Some(rule.clone()))
@@ -696,6 +768,7 @@ impl Engine {
     /// ```
     pub fn eval_rule(&mut self, rule: String) -> Result<Value> {
         self.prepare_for_eval(false, false)?;
+        self.apply_effective_execution_timer_config();
         self.interpreter.clean_internal_evaluation_state();
         self.interpreter.eval_rule_in_path(rule)
     }
@@ -737,6 +810,7 @@ impl Engine {
     /// ```
     pub fn eval_query(&mut self, query: String, enable_tracing: bool) -> Result<QueryResults> {
         self.prepare_for_eval(enable_tracing, false)?;
+        self.apply_effective_execution_timer_config();
         self.interpreter.clean_internal_evaluation_state();
 
         self.interpreter.create_rule_prefixes()?;
@@ -936,6 +1010,8 @@ impl Engine {
         enable_tracing: bool,
     ) -> Result<QueryResults> {
         self.eval_modules(enable_tracing)?;
+        // Restart the timer window for the user query after module evaluation.
+        self.apply_effective_execution_timer_config();
 
         let (query_module, query_node, query_schedule) = self.make_query(query)?;
         self.interpreter
@@ -1011,6 +1087,7 @@ impl Engine {
         enable_tracing: bool,
     ) -> Result<Value> {
         self.prepare_for_eval(enable_tracing, false)?;
+        self.apply_effective_execution_timer_config();
         self.interpreter.clean_internal_evaluation_state();
 
         self.interpreter.eval_rule(module, rule)?;
@@ -1021,6 +1098,7 @@ impl Engine {
     #[doc(hidden)]
     pub fn eval_modules(&mut self, enable_tracing: bool) -> Result<Value> {
         self.prepare_for_eval(enable_tracing, false)?;
+        self.apply_effective_execution_timer_config();
         self.interpreter.clean_internal_evaluation_state();
 
         // Ensure that empty modules are created.
@@ -1440,11 +1518,14 @@ impl Engine {
         compiled_policy: Rc<crate::compiled_policy::CompiledPolicyData>,
     ) -> Self {
         let modules = compiled_policy.modules.clone();
-        Self {
+        let mut engine = Self {
             modules,
             interpreter: Interpreter::new_from_compiled_policy(compiled_policy),
             rego_v1: true, // Value doesn't matter since this is used only for policy parsing
             prepared: true,
-        }
+            execution_timer_config: None,
+        };
+        engine.apply_effective_execution_timer_config();
+        engine
     }
 }

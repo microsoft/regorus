@@ -5,6 +5,7 @@ use crate::common::{
     from_c_str, to_ref, to_regorus_result, to_regorus_string_result, RegorusResult, RegorusStatus,
 };
 use crate::compiled_policy::RegorusCompiledPolicy;
+use crate::limits::RegorusExecutionTimerConfig;
 use crate::lock::{new_handle, read, try_read, try_write, Handle, ReadGuard, WriteGuard};
 use crate::panic_guard::with_unwind_guard;
 use alloc::boxed::Box;
@@ -448,6 +449,39 @@ pub extern "C" fn regorus_engine_set_strict_builtin_errors(
             Ok(())
         }())
     })
+}
+
+#[no_mangle]
+/// Configure the execution timer for a specific engine instance.
+pub extern "C" fn regorus_engine_set_execution_timer_config(
+    engine: *mut RegorusEngine,
+    config: *const RegorusExecutionTimerConfig,
+) -> RegorusResult {
+    to_regorus_result(|| -> Result<()> {
+        let engine = to_ref(engine)?;
+        let config = unsafe {
+            config
+                .as_ref()
+                .copied()
+                .ok_or_else(|| anyhow!("execution timer config pointer is null"))?
+        };
+        let mut guard = engine.try_write()?;
+        guard.set_execution_timer_config(config.to_execution_timer_config()?);
+        Ok(())
+    }())
+}
+
+#[no_mangle]
+/// Clear the engine-specific execution timer configuration.
+pub extern "C" fn regorus_engine_clear_execution_timer_config(
+    engine: *mut RegorusEngine,
+) -> RegorusResult {
+    to_regorus_result(|| -> Result<()> {
+        let engine = to_ref(engine)?;
+        let mut guard = engine.try_write()?;
+        guard.clear_execution_timer_config();
+        Ok(())
+    }())
 }
 
 /// Get pretty printed coverage report.

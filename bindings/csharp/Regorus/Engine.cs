@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Runtime.InteropServices;
+using System.Text;
 using Regorus.Internal;
 
 
@@ -22,6 +24,17 @@ namespace Regorus
         public Engine()
         {
             _handle = RegorusEngineHandle.Create();
+        }
+
+        public static void SetFallbackExecutionTimerConfig(ExecutionTimerConfig config)
+        {
+            var nativeConfig = config.ToNative();
+            CheckAndDropResult(Regorus.Internal.API.regorus_set_fallback_execution_timer_config(nativeConfig));
+        }
+
+        public static void ClearFallbackExecutionTimerConfig()
+        {
+            CheckAndDropResult(Regorus.Internal.API.regorus_clear_fallback_execution_timer_config());
         }
 
         public void Dispose()
@@ -84,6 +97,32 @@ namespace Regorus
                 unsafe
                 {
                     CheckAndDropResult(Regorus.Internal.API.regorus_engine_set_strict_builtin_errors((Regorus.Internal.RegorusEngine*)enginePtr, strict));
+                }
+            });
+        }
+
+        public void SetExecutionTimerConfig(ExecutionTimerConfig config)
+        {
+            ThrowIfDisposed();
+            var nativeConfig = config.ToNative();
+            UseHandle(enginePtr =>
+            {
+                unsafe
+                {
+                    var localConfig = nativeConfig;
+                    CheckAndDropResult(Regorus.Internal.API.regorus_engine_set_execution_timer_config((Regorus.Internal.RegorusEngine*)enginePtr, &localConfig));
+                }
+            });
+        }
+
+        public void ClearExecutionTimerConfig()
+        {
+            ThrowIfDisposed();
+            UseHandle(enginePtr =>
+            {
+                unsafe
+                {
+                    CheckAndDropResult(Regorus.Internal.API.regorus_engine_clear_execution_timer_config((Regorus.Internal.RegorusEngine*)enginePtr));
                 }
             });
         }
@@ -355,7 +394,21 @@ namespace Regorus
             });
         }
 
-        string? CheckAndDropResult(Regorus.Internal.RegorusResult result)
+    private static string? StringFromUtf8(IntPtr ptr)
+        {
+
+#if NETSTANDARD2_1
+			return Marshal.PtrToStringUTF8(ptr);
+#else
+            int len = 0;
+            while (Marshal.ReadByte(ptr, len) != 0) { ++len; }
+            byte[] buffer = new byte[len];
+            Marshal.Copy(ptr, buffer, 0, buffer.Length);
+            return Encoding.UTF8.GetString(buffer);
+#endif
+        }
+
+    private static string? CheckAndDropResult(Regorus.Internal.RegorusResult result)
         {
             try
             {

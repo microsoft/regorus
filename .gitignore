@@ -28,6 +28,7 @@ bindings/*/target
 # C# build folders
 **bin
 **obj
+bindings/csharp/.nuget/
 
 # Bundler binstubs regenerated during ruby setup
 bindings/ruby/bin/

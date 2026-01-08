@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Linq;
 using System.Text.Json;
 
 namespace TargetExampleApp;
@@ -32,14 +33,14 @@ allow if {
 
 # Allow network security groups with proper inbound rules
 allow if {
-        input.type == ""Microsoft.Network/networkSecurityGroups""
-        count([rule | 
-                rule := input.properties.securityRules[_]
-                rule.properties.direction == ""Inbound""
-                rule.properties.access == ""Allow""
-                rule.properties.sourceAddressPrefix == ""*""
-                rule.properties.destinationPortRange in [parameters.allowedPorts]
-        ]) == 0
+    input.type == ""Microsoft.Network/networkSecurityGroups""
+    count([rule | 
+        rule := input.properties.securityRules[_]
+        rule.properties.direction == ""Inbound""
+        rule.properties.access == ""Allow""
+        rule.properties.sourceAddressPrefix == ""*""
+        rule.properties.destinationPortRange in [parameters.allowedPorts]
+    ]) == 0
 }";
 
     private const string AZURE_STORAGE_POLICY_ASSIGNMENT = @"
@@ -50,44 +51,58 @@ import rego.v1
 parameters.requiredTLSVersion = ""TLS1_2""
 parameters.allowedPorts = [""22"", ""3389""]";
 
+    private const string EXECUTION_TIMER_POLICY = @"
+package limits.timer
+import rego.v1
+
+triplet_count := count([1 |
+    x := data.values[_]
+    y := data.values[_]
+    z := data.values[_]
+])
+";
+
+    private const string EXECUTION_TIMER_QUERY = "data.limits.timer.triplet_count";
+    private const int EXECUTION_TIMER_VALUE_COUNT = 40;
+
     // Test data constants
     private const string COMPLIANT_STORAGE_ACCOUNT = @"{
-    ""type"": ""Microsoft.Storage/storageAccounts"",
-    ""name"": ""compliantstorageacct"",
-    ""location"": ""eastus"",
-    ""kind"": ""StorageV2"",
-    ""properties"": {
-        ""supportsHttpsTrafficOnly"": true,
-        ""minimumTlsVersion"": ""TLS1_2"",
-        ""allowBlobPublicAccess"": false,
-        ""encryption"": {
-            ""services"": {
-                ""blob"": { ""enabled"": true },
-                ""file"": { ""enabled"": true }
-            }
-        }
-    },
-    ""tags"": {
-        ""environment"": ""production""
+  ""type"": ""Microsoft.Storage/storageAccounts"",
+  ""name"": ""compliantstorageacct"",
+  ""location"": ""eastus"",
+  ""kind"": ""StorageV2"",
+  ""properties"": {
+    ""supportsHttpsTrafficOnly"": true,
+    ""minimumTlsVersion"": ""TLS1_2"",
+    ""allowBlobPublicAccess"": false,
+    ""encryption"": {
+      ""services"": {
+        ""blob"": { ""enabled"": true },
+        ""file"": { ""enabled"": true }
+      }
     }
+  },
+  ""tags"": {
+    ""environment"": ""production""
+  }
 }";
 
     private const string NON_COMPLIANT_STORAGE_ACCOUNT = @"{
-    ""type"": ""Microsoft.Storage/storageAccounts"",
-    ""name"": ""insecurestorageacct"",
-    ""location"": ""westus"",
-    ""kind"": ""Storage"",
-    ""properties"": {
-        ""supportsHttpsTrafficOnly"": false,
-        ""minimumTlsVersion"": ""TLS1_0"",
-        ""allowBlobPublicAccess"": true,
-        ""encryption"": {
-            ""services"": {
-                ""blob"": { ""enabled"": false },
-                ""file"": { ""enabled"": false }
-            }
-        }
+  ""type"": ""Microsoft.Storage/storageAccounts"",
+  ""name"": ""insecurestorageacct"",
+  ""location"": ""westus"",
+  ""kind"": ""Storage"",
+  ""properties"": {
+    ""supportsHttpsTrafficOnly"": false,
+    ""minimumTlsVersion"": ""TLS1_0"",
+    ""allowBlobPublicAccess"": true,
+    ""encryption"": {
+      ""services"": {
+        ""blob"": { ""enabled"": false },
+        ""file"": { ""enabled"": false }
+      }
     }
+  }
 }";
 
     static void Main(string[] args)
@@ -96,7 +111,6 @@ parameters.allowedPorts = [""22"", ""3389""]";
 
         try
         {
-            DemonstrateMemoryLimitHelpers();
             DemonstrateTargetFunctionality();
             Console.WriteLine("\n=== Target demonstration completed successfully! ===");
         }
@@ -157,6 +171,9 @@ parameters.allowedPorts = [""22"", ""3389""]";
         // 4. Demonstrate thread-safe concurrent evaluation
         Console.WriteLine("\n4. Testing concurrent evaluation from multiple threads:");
         DemonstrateConcurrentEvaluation(compiledPolicy);
+
+        Console.WriteLine("\n5. Execution timer configuration:");
+        DemonstrateExecutionTimer();
     }
 
     static void DemonstrateConcurrentEvaluation(Regorus.CompiledPolicy compiledPolicy)
@@ -212,45 +229,6 @@ parameters.allowedPorts = [""22"", ""3389""]";
         Console.WriteLine($"✓ All threads consistent: {allConsistent}");
         Console.WriteLine($"✓ Approximate throughput: {totalEvaluations * 1000000.0 / maxTime:F0} evaluations/second");
         Console.WriteLine("✓ No locks required - CompiledPolicy is thread-safe!");
-    }
-
-    static void DemonstrateMemoryLimitHelpers()
-    {
-        Console.WriteLine("REGORUS MEMORY LIMIT UTILITIES");
-        Console.WriteLine("==============================");
-
-        var originalLimit = Regorus.MemoryLimits.GetGlobalMemoryLimit();
-        var originalThreshold = Regorus.MemoryLimits.GetThreadMemoryFlushThreshold();
-
-        try
-        {
-            const ulong demoLimit = 64 * 1024 * 1024;
-            Regorus.MemoryLimits.SetGlobalMemoryLimit(demoLimit);
-            Console.WriteLine($"✓ Global memory limit set to {Regorus.MemoryLimits.GetGlobalMemoryLimit():N0} bytes");
-
-            const ulong flushThreshold = 256 * 1024;
-            Regorus.MemoryLimits.SetThreadFlushThresholdOverride(flushThreshold);
-            Console.WriteLine($"✓ Thread flush threshold configured for {Regorus.MemoryLimits.GetThreadMemoryFlushThreshold():N0} bytes");
-
-            Console.WriteLine("Attempting an allocation that exceeds a 1 byte budget...");
-            Regorus.MemoryLimits.SetGlobalMemoryLimit(1);
-
-            using var engine = new Regorus.Engine();
-            var payload = new string('x', 128 * 1024);
-            engine.SetInputJson($"{{\"payload\":\"{payload}\"}}");
-        }
-        catch (InvalidOperationException error)
-        {
-            Console.WriteLine($"✗ Memory limit exceeded: {error.Message}");
-        }
-        finally
-        {
-            Regorus.MemoryLimits.SetThreadFlushThresholdOverride(null);
-            Regorus.MemoryLimits.SetGlobalMemoryLimit(originalLimit);
-            Regorus.MemoryLimits.FlushThreadMemoryCounters();
-        }
-
-        Console.WriteLine();
     }
 
     static void DemonstratePolicyInfo(Regorus.CompiledPolicy compiledPolicy)
@@ -326,6 +304,59 @@ parameters.allowedPorts = [""22"", ""3389""]";
         catch (Exception ex)
         {
             Console.WriteLine($"✗ Failed to get policy info: {ex.Message}");
+        }
+    }
+
+    static void DemonstrateExecutionTimer()
+    {
+        var dataJson = JsonSerializer.Serialize(new
+        {
+            values = Enumerable.Range(0, EXECUTION_TIMER_VALUE_COUNT).ToArray()
+        });
+
+        var fallback = new Regorus.ExecutionTimerConfig(TimeSpan.FromMilliseconds(2), checkInterval: 1);
+        var relaxed = new Regorus.ExecutionTimerConfig(TimeSpan.FromMilliseconds(1000), checkInterval: 1);
+
+        Console.WriteLine($"  Configuring fallback timer (limit={fallback.Limit.TotalMilliseconds:F0} ms, interval={fallback.CheckInterval})...");
+
+        Regorus.Engine.SetFallbackExecutionTimerConfig(fallback);
+        try
+        {
+            using var engine = new Regorus.Engine();
+            engine.AddPolicy("limits_timer.rego", EXECUTION_TIMER_POLICY);
+            engine.AddDataJson(dataJson);
+
+            Console.WriteLine("  Evaluating under fallback limit (expected failure)...");
+            try
+            {
+                engine.EvalRule(EXECUTION_TIMER_QUERY);
+                Console.WriteLine("  ⚠ Evaluation unexpectedly succeeded under fallback limit.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  ✓ Fallback enforced: {ex.Message}");
+            }
+
+            Console.WriteLine($"  Applying per-engine override ({relaxed.Limit.TotalMilliseconds:F0} ms) and retrying...");
+            engine.SetExecutionTimerConfig(relaxed);
+            var result = engine.EvalRule(EXECUTION_TIMER_QUERY);
+            Console.WriteLine($"  ✓ Override succeeded; triplet_count = {result}");
+
+            Console.WriteLine("  Clearing engine override to restore fallback...");
+            engine.ClearExecutionTimerConfig();
+            try
+            {
+                engine.EvalRule(EXECUTION_TIMER_QUERY);
+                Console.WriteLine("  ⚠ Evaluation unexpectedly succeeded after clearing override.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  ✓ Fallback restored: {ex.Message}");
+            }
+        }
+        finally
+        {
+            Regorus.Engine.ClearFallbackExecutionTimerConfig();
         }
     }
 }

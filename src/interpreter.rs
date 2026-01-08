@@ -15,7 +15,11 @@ use crate::lexer::*;
 use crate::lookup::Lookup;
 use crate::parser::Parser;
 use crate::scheduler::*;
+use crate::utils::limits::{monotonic_now, ExecutionTimer, ExecutionTimerConfig};
+#[cfg(feature = "std")]
 use crate::utils::*;
+#[cfg(not(feature = "std"))]
+use crate::utils::{get_extra_arg, get_path_string, get_root_var, FunctionTable};
 use crate::value::*;
 use crate::*;
 use crate::{Expression, Extension, Location, QueryResult, QueryResults};
@@ -23,6 +27,7 @@ use crate::{Expression, Extension, Location, QueryResult, QueryResults};
 #[cfg(feature = "coverage")]
 use crate::query::traversal::traverse;
 
+use crate::Rc;
 use alloc::collections::btree_map::Entry as BTreeMapEntry;
 use alloc::collections::{BTreeMap, BTreeSet};
 use anyhow::{anyhow, bail, Result};
@@ -96,6 +101,7 @@ pub struct Interpreter {
     active_rules: Vec<Ref<Rule>>,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
+    execution_timer: ExecutionTimer,
 }
 
 impl Default for Interpreter {
@@ -143,6 +149,7 @@ impl Clone for Interpreter {
             query_module: None,
             module: None,
             no_rules_lookup: false,
+            execution_timer: ExecutionTimer::new(self.execution_timer.config()),
         }
     }
 }
@@ -223,6 +230,7 @@ impl Interpreter {
 
             gather_prints: false,
             prints: Vec::default(),
+            execution_timer: ExecutionTimer::new(None),
         }
     }
 
@@ -266,7 +274,36 @@ impl Interpreter {
                 .data
                 .clone()
                 .unwrap_or_else(Value::new_object),
+            execution_timer: ExecutionTimer::new(None),
         }
+    }
+
+    fn reset_execution_timer_state(&mut self) {
+        self.execution_timer.reset();
+        if self.execution_timer.limit().is_none() {
+            return;
+        }
+        if let Some(now) = monotonic_now() {
+            self.execution_timer.start(now);
+        }
+    }
+
+    fn execution_timer_tick(&mut self, work_units: u32) -> Result<()> {
+        if self.execution_timer.limit().is_none() {
+            return Ok(());
+        }
+
+        let Some(now) = monotonic_now() else {
+            return Ok(());
+        };
+
+        self.execution_timer.tick(work_units, now)?;
+        Ok(())
+    }
+
+    #[inline]
+    fn check_execution_time(&mut self) -> Result<()> {
+        self.execution_timer_tick(1)
     }
 
     fn compiled_policy_mut(&mut self) -> &mut CompiledPolicyData {
@@ -329,6 +366,11 @@ impl Interpreter {
         self.compiled_policy_mut().strict_builtin_errors = b;
     }
 
+    pub fn set_execution_timer_config(&mut self, config: Option<ExecutionTimerConfig>) {
+        self.execution_timer = ExecutionTimer::new(config);
+        self.reset_execution_timer_state();
+    }
+
     pub fn set_input(&mut self, input: Value) {
         self.input = input.clone();
         // Update with_document["input"] too, in case if engine is being reused and was already prepared
@@ -357,6 +399,7 @@ impl Interpreter {
         self.contexts = vec![];
         self.rule_values.clear();
         self.builtins_cache.clear();
+        self.reset_execution_timer_state();
     }
 
     #[cfg(feature = "allocator-memory-limits")]
@@ -366,7 +409,7 @@ impl Interpreter {
     }
 
     #[cfg(not(feature = "allocator-memory-limits"))]
-    fn memory_check(&mut self) -> Result<()> {
+    const fn memory_check(&mut self) -> Result<()> {
         let _ = self; // quiet clippy::unused_self; retained for symmetry with VM path
         Ok(())
     }
@@ -640,6 +683,7 @@ impl Interpreter {
         domain: &ExprRef,
         query: &Ref<Query>,
     ) -> Result<bool> {
+        self.check_execution_time()?;
         let domain = self.eval_expr(domain)?;
 
         self.scopes.push(Scope::new());
@@ -700,6 +744,7 @@ impl Interpreter {
         plan: &DestructuringPlan,
         value: &Value,
     ) -> Result<Value> {
+        self.check_execution_time()?;
         if value == &Value::Undefined {
             return Ok(Value::Undefined);
         }
@@ -799,6 +844,7 @@ impl Interpreter {
     }
 
     fn execute_assignment_plan(&mut self, plan: &AssignmentPlan) -> Result<Value> {
+        self.check_execution_time()?;
         match plan {
             AssignmentPlan::ColonEquals {
                 lhs_expr: _,
@@ -894,6 +940,7 @@ impl Interpreter {
         collection: &ExprRef,
         stmts: &[&LiteralStmt],
     ) -> Result<bool> {
+        self.check_execution_time()?;
         let scope_saved = self.current_scope()?.clone();
         let mut count: usize = 0;
 
@@ -1051,7 +1098,7 @@ impl Interpreter {
 
     fn eval_stmt_impl(&mut self, stmt: &LiteralStmt, stmts: &[&LiteralStmt]) -> Result<bool> {
         self.memory_check()?;
-
+        self.check_execution_time()?;
         Ok(match &stmt.literal {
             Literal::Expr { span, expr, .. } => {
                 let value = match expr.as_ref() {
@@ -1343,7 +1390,7 @@ impl Interpreter {
         loops: &[HoistedLoop],
     ) -> Result<bool> {
         self.memory_check()?;
-
+        self.check_execution_time()?;
         if loops.is_empty() {
             if let Some((first_stmt, tail_stmts)) = stmts.split_first() {
                 // Evaluate the current statement whose loop expressions have been hoisted.
@@ -1569,6 +1616,7 @@ impl Interpreter {
     }
 
     fn eval_rule_ref(&mut self, rule_refr: &ExprRef) -> Result<Vec<Value>> {
+        self.check_execution_time()?;
         let mut comps = vec![];
         let mut expr = rule_refr;
         loop {
@@ -1711,6 +1759,7 @@ impl Interpreter {
     }
 
     fn eval_output_expr_in_loop(&mut self, loops: &[HoistedLoop]) -> Result<bool> {
+        self.check_execution_time()?;
         if loops.is_empty() {
             let (key_expr, output_expr) = self.get_exprs_from_context()?;
 
@@ -1944,6 +1993,7 @@ impl Interpreter {
     }
 
     fn eval_output_expr(&mut self) -> Result<bool> {
+        self.check_execution_time()?;
         // Evaluate output expression after all the statements have been executed.
 
         let (key_expr, output_expr) = self.get_exprs_from_context()?;
@@ -2074,6 +2124,7 @@ impl Interpreter {
     }
 
     fn eval_query(&mut self, query: &Ref<Query>) -> Result<bool> {
+        self.check_execution_time()?;
         // Execute the query in a new scope
         self.scopes.push(Scope::new());
         let order_indices = {
@@ -2157,6 +2208,7 @@ impl Interpreter {
     }
 
     fn eval_array(&mut self, items: &Vec<ExprRef>) -> Result<Value> {
+        self.check_execution_time()?;
         let mut array = Vec::new();
 
         for item in items {
@@ -2172,6 +2224,7 @@ impl Interpreter {
     }
 
     fn eval_object(&mut self, fields: &Vec<(Span, ExprRef, ExprRef)>) -> Result<Value> {
+        self.check_execution_time()?;
         let mut object = BTreeMap::new();
 
         for (_, key, value) in fields {
@@ -2194,6 +2247,7 @@ impl Interpreter {
     }
 
     fn eval_set(&mut self, items: &Vec<ExprRef>) -> Result<Value> {
+        self.check_execution_time()?;
         let mut set = BTreeSet::new();
 
         for item in items {
@@ -2213,6 +2267,7 @@ impl Interpreter {
         value: &ExprRef,
         collection: &ExprRef,
     ) -> Result<Value> {
+        self.check_execution_time()?;
         let value = self.eval_expr(value)?;
         let collection = self.eval_expr(collection)?;
 
@@ -2250,6 +2305,7 @@ impl Interpreter {
     }
 
     fn eval_array_compr(&mut self, term: &ExprRef, query: &Ref<Query>) -> Result<Value> {
+        self.check_execution_time()?;
         // Push new context
         self.contexts.push(Context {
             output_expr: Some(term.clone()),
@@ -2268,6 +2324,7 @@ impl Interpreter {
     }
 
     fn eval_set_compr(&mut self, term: &ExprRef, query: &Ref<Query>) -> Result<Value> {
+        self.check_execution_time()?;
         // Push new context
         self.contexts.push(Context {
             output_expr: Some(term.clone()),
@@ -2290,6 +2347,7 @@ impl Interpreter {
         value: &ExprRef,
         query: &Ref<Query>,
     ) -> Result<Value> {
+        self.check_execution_time()?;
         // Push new context
         self.contexts.push(Context {
             key_expr: Some(key.clone()),
@@ -2327,6 +2385,7 @@ impl Interpreter {
         params: &[ExprRef],
         args: Vec<Value>,
     ) -> Result<Value> {
+        self.check_execution_time()?;
         // If any argument is undefined, then the call is undefined.
         if args.iter().any(|a| a == &Value::Undefined) {
             return Ok(Value::Undefined);
@@ -2467,6 +2526,7 @@ impl Interpreter {
         fcn: &ExprRef,
         params: &[ExprRef],
     ) -> Result<Value> {
+        self.check_execution_time()?;
         // Return generated values of walk builtin.
         if let Some(v) = self.get_loop_var_value(expr)? {
             return Ok(v.clone());
@@ -2783,6 +2843,7 @@ impl Interpreter {
         extra_arg: Option<ExprRef>,
         allow_return_arg: bool,
     ) -> Result<Value> {
+        self.check_execution_time()?;
         // TODO: global var check; interop with `some var`
         if extra_arg.is_some() {
             let (last_param, arg_prefix) = params
@@ -2832,6 +2893,7 @@ impl Interpreter {
     }
 
     fn ensure_module_evaluated(&mut self, path: String) -> Result<()> {
+        self.check_execution_time()?;
         for module in self.compiled_policy.modules.clone().iter().cloned() {
             if Some(&module) == self.module.as_ref() {
                 // Prevent cyclic evaluation.
@@ -2875,6 +2937,7 @@ impl Interpreter {
     }
 
     fn ensure_rule_evaluated(&mut self, path: String) -> Result<()> {
+        self.check_execution_time()?;
         let mut matched = false;
         if let Some(rules) = self.compiled_policy.rules.get(&path) {
             matched = true;
@@ -3055,6 +3118,7 @@ impl Interpreter {
     }
 
     fn eval_expr(&mut self, expr: &ExprRef) -> Result<Value> {
+        self.check_execution_time()?;
         #[cfg(feature = "coverage")]
         if self.enable_coverage {
             let span = expr.span();
@@ -3235,6 +3299,7 @@ impl Interpreter {
         span: &Span,
         bodies: &[RuleBody],
     ) -> Result<Value> {
+        self.check_execution_time()?;
         let n_scopes = self.scopes.len();
         let result = if bodies.is_empty() {
             self.contexts.push(ctx.clone());
@@ -3496,6 +3561,7 @@ impl Interpreter {
     }
 
     pub fn eval_default_rule(&mut self, rule: &Ref<Rule>) -> Result<()> {
+        self.check_execution_time()?;
         // Skip reprocessing rule.
         if self.processed.contains(rule) {
             return Ok(());
@@ -3569,6 +3635,7 @@ impl Interpreter {
     /// Evaluate a default rule and return the resulting value for compiler consumers.
     #[cfg(feature = "rvm")]
     pub fn eval_default_rule_for_compiler(&mut self, rule_path: &str) -> Result<Value> {
+        self.check_execution_time()?;
         self.input = Value::Undefined;
         self.data = Value::Undefined;
         self.ensure_loop_var_values_capacity();
@@ -3658,6 +3725,7 @@ impl Interpreter {
     }
 
     fn eval_rule_impl(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
+        self.check_execution_time()?;
         match rule.as_ref() {
             Rule::Spec {
                 span,
@@ -3744,6 +3812,7 @@ impl Interpreter {
     }
 
     pub fn eval_rule(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
+        self.check_execution_time()?;
         // Set current module index
         self.current_module_index = self.find_module_index(module);
 
@@ -3802,6 +3871,7 @@ impl Interpreter {
         query_schedule: Schedule,
         enable_tracing: bool,
     ) -> Result<QueryResults> {
+        self.check_execution_time()?;
         self.traces = match enable_tracing {
             true => Some(vec![]),
             false => None,
@@ -4308,6 +4378,7 @@ impl Interpreter {
     }
 
     pub fn eval_rule_in_path(&mut self, path: String) -> Result<Value> {
+        self.check_execution_time()?;
         if !self.compiled_policy.rule_paths.contains(&path) {
             bail!("not a valid rule path");
         }

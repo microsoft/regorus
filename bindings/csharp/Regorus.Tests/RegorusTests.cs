@@ -12,7 +12,7 @@ namespace Regorus.Tests;
 [TestClass]
 public class RegorusTests
 {
-  private static readonly object LimitLock = new();
+    private static readonly object LimitLock = new();
 
     [TestMethod]
     public void Basic_evaluation_succeeds()
@@ -374,17 +374,17 @@ stretched := concat("", [input.block | numbers.range(0, input.repeat - 1)[_]])
 
     private sealed class MemoryLimitScope : IDisposable
     {
-      private readonly ulong? _originalLimit;
+        private readonly ulong? _originalLimit;
 
-      public MemoryLimitScope()
-      {
-        _originalLimit = MemoryLimits.GetGlobalMemoryLimit();
-      }
+        public MemoryLimitScope()
+        {
+            _originalLimit = MemoryLimits.GetGlobalMemoryLimit();
+        }
 
-      public void Dispose()
-      {
-        MemoryLimits.SetGlobalMemoryLimit(_originalLimit);
-        MemoryLimits.FlushThreadMemoryCounters();
-      }
+        public void Dispose()
+        {
+            MemoryLimits.SetGlobalMemoryLimit(_originalLimit);
+            MemoryLimits.FlushThreadMemoryCounters();
+        }
     }
 }

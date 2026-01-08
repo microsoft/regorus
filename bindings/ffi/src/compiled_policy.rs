@@ -52,6 +52,7 @@ pub extern "C" fn regorus_compiled_policy_eval_with_input(
     })
 }
 
+/// Configure the execution timer for evaluations of this compiled policy.
 /// Get information about the compiled policy including metadata about modules,
 /// target configuration, and resource types.
 ///

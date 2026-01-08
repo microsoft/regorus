@@ -257,7 +257,7 @@ namespace Regorus.Internal
         [DllImport(LibraryName, EntryPoint = "regorus_engine_compile_with_entrypoint", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_engine_compile_with_entrypoint(RegorusEngine* engine, byte* rule);
 
-    #if REGORUS_FFI_TEST_HOOKS
+#if REGORUS_FFI_TEST_HOOKS
         /// <summary>
         /// Trigger a panic inside the engine for testing purposes.
         /// </summary>
@@ -269,7 +269,35 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_engine_test_reset_poison", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void regorus_engine_test_reset_poison();
-    #endif
+#endif
+
+        /// <summary>
+        /// Configure the execution timer for a specific engine instance.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_set_execution_timer_config", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_set_execution_timer_config(RegorusEngine* engine, RegorusExecutionTimerConfig* config);
+
+        /// <summary>
+        /// Clear the execution timer configuration for a specific engine instance.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_clear_execution_timer_config", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_clear_execution_timer_config(RegorusEngine* engine);
+
+        #endregion
+
+        #region Execution Timer Global Methods
+
+        /// <summary>
+        /// Set the process-wide fallback execution timer configuration.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_set_fallback_execution_timer_config", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_set_fallback_execution_timer_config(RegorusExecutionTimerConfig config);
+
+        /// <summary>
+        /// Clear the process-wide fallback execution timer configuration.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_clear_fallback_execution_timer_config", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_clear_fallback_execution_timer_config();
 
         #endregion
 
@@ -577,6 +605,16 @@ namespace Regorus.Internal
         /// Owned by Rust.
         /// </summary>
         public byte* error_message;
+    }
+
+    /// <summary>
+    /// FFI representation of the execution timer configuration.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct RegorusExecutionTimerConfig
+    {
+        public ulong limit_ns;
+        public uint check_interval;
     }
 
     /// <summary>

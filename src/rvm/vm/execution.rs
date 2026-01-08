@@ -59,6 +59,7 @@ impl RegoVM {
         match self.execution_mode {
             ExecutionMode::RunToCompletion => {
                 self.reset_execution_state();
+                self.reset_execution_timer_state();
 
                 self.validate_vm_state()?;
                 let entry_point_pc_u32 = u32::try_from(entry_point_pc).map_err(|_| {
@@ -73,6 +74,7 @@ impl RegoVM {
             }
             ExecutionMode::Suspendable => {
                 self.reset_execution_state();
+                self.reset_execution_timer_state();
 
                 self.validate_vm_state()?;
                 self.execute_suspendable_entry(entry_point_pc)
@@ -101,6 +103,7 @@ impl RegoVM {
         match self.execution_mode {
             ExecutionMode::RunToCompletion => {
                 self.reset_execution_state();
+                self.reset_execution_timer_state();
 
                 self.validate_vm_state()?;
                 let entry_point_pc_u32 = u32::try_from(entry_point_pc).map_err(|_| {
@@ -115,6 +118,7 @@ impl RegoVM {
             }
             ExecutionMode::Suspendable => {
                 self.reset_execution_state();
+                self.reset_execution_timer_state();
 
                 self.validate_vm_state()?;
                 self.execute_suspendable_entry(entry_point_pc)
@@ -136,6 +140,7 @@ impl RegoVM {
                 });
             }
 
+            self.execution_timer_tick(1)?;
             self.executed_instructions = self.executed_instructions.saturating_add(1);
             let instruction = program.instructions.get(self.pc).cloned().ok_or(
                 VmError::ProgramCounterOutOfBounds {
@@ -168,6 +173,7 @@ impl RegoVM {
 
     fn execute_run_to_completion(&mut self) -> Result<Value> {
         self.reset_execution_state();
+        self.reset_execution_timer_state();
         self.execution_state = ExecutionState::Running;
         match self.jump_to(0_u32) {
             Ok(value) => {
@@ -185,6 +191,7 @@ impl RegoVM {
 
     fn execute_suspendable(&mut self) -> Result<Value> {
         self.reset_execution_state();
+        self.reset_execution_timer_state();
         self.execution_state = ExecutionState::Running;
         match self.run_stackless_from(0) {
             Ok(result) => Ok(result),
@@ -197,6 +204,7 @@ impl RegoVM {
 
     fn execute_suspendable_entry(&mut self, entry_point_pc: usize) -> Result<Value> {
         self.execution_state = ExecutionState::Running;
+        self.reset_execution_timer_state();
         match self.run_stackless_from(entry_point_pc) {
             Ok(result) => Ok(result),
             Err(err) => {
@@ -256,6 +264,7 @@ impl RegoVM {
         }
 
         self.execution_state = ExecutionState::Running;
+        self.restore_execution_timer_after_resume();
 
         let program = self.program.clone();
         self.run_stackless_loop(&program, &mut last_result)?;
@@ -376,6 +385,10 @@ impl RegoVM {
             }
 
             self.pc = frame_pc;
+            if let Err(err) = self.execution_timer_tick(1) {
+                self.execution_state = ExecutionState::Error { error: err.clone() };
+                return Err(err);
+            }
             let instruction = program.instructions.get(self.pc).cloned().ok_or(
                 VmError::ProgramCounterOutOfBounds {
                     pc: self.pc,
@@ -460,6 +473,7 @@ impl RegoVM {
             }
         }
 
+        self.snapshot_execution_timer_on_suspend();
         self.execution_state = ExecutionState::Suspended {
             reason,
             pc: self.pc,

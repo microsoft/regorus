@@ -5,6 +5,7 @@ use super::execution_model::SuspendReason;
 use crate::value::Value;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::time::Duration;
 use thiserror::Error;
 
 /// VM execution errors
@@ -17,7 +18,14 @@ pub enum VmError {
         pc: usize,
     },
 
-    #[error("Execution stopped: exceeded maximum memory limit of {limit} bytes with usage {usage} bytes (pc={pc})")]
+    #[error("Execution exceeded time limit (elapsed={elapsed:?}, limit={limit:?}, pc={pc})")]
+    TimeLimitExceeded {
+        elapsed: Duration,
+        limit: Duration,
+        pc: usize,
+    },
+
+    #[error("Execution exceeded memory limit (usage={usage} bytes, limit={limit} bytes, pc={pc})")]
     MemoryLimitExceeded { usage: u64, limit: u64, pc: usize },
 
     #[error("Literal index {index} out of bounds (pc={pc})")]
