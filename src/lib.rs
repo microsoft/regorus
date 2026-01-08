@@ -151,7 +151,7 @@ mod schema;
 pub mod target;
 #[cfg(any(test, all(feature = "yaml", feature = "std")))]
 pub mod test_utils;
-mod utils;
+pub mod utils;
 mod value;
 
 #[cfg(feature = "azure_policy")]

@@ -1,0 +1,90 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: engine-configured timer triggers limit error
+    data:
+      values: [1, 2, 3, 4, 5]
+    modules:
+      - |
+        package limits.timer
+        import rego.v1
+
+        count_values := count({value | value := data.values[_]})
+    query: data.limits.timer.count_values
+    execution_timer:
+      limit_ms: 1
+      check_interval: 1
+    time_source:
+      default_increment_ms: 5
+    error: execution exceeded time limit
+
+  - note: global timer limit applies without engine override
+    data:
+      values: [1, 2, 3, 4, 5]
+    modules:
+      - |
+        package limits.timer
+        import rego.v1
+
+        count_values := count({value | value := data.values[_]})
+    query: data.limits.timer.count_values
+    global_execution_timer:
+      limit_ms: 1
+      check_interval: 1
+    time_source:
+      default_increment_ms: 5
+    error: execution exceeded time limit
+
+  - note: engine override increases limit above global default
+    data:
+      values: [1, 2, 3, 4, 5]
+    modules:
+      - |
+        package limits.timer
+        import rego.v1
+
+        count_values := count({value | value := data.values[_]})
+    query: data.limits.timer.count_values
+    global_execution_timer:
+      limit_ms: 1
+      check_interval: 1
+    execution_timer:
+      limit_ms: 500
+      check_interval: 1
+    time_source:
+      default_increment_ms: 5
+    want_result: 5
+
+  - note: repeated ticks eventually exceed limit
+    data:
+      values: [1, 2, 3, 4, 5]
+    modules:
+      - |
+        package limits.timer
+        import rego.v1
+
+        count_values := count({value | value := data.values[_]})
+    query: data.limits.timer.count_values
+    execution_timer:
+      limit_ms: 6
+      check_interval: 1
+    time_source:
+      default_increment_ms: 2
+    error: execution exceeded time limit
+
+  - note: global timer disabled removes limit
+    data:
+      values: [1, 2, 3, 4, 5]
+    modules:
+      - |
+        package limits.timer
+        import rego.v1
+
+        count_values := count({value | value := data.values[_]})
+    query: data.limits.timer.count_values
+    global_execution_timer:
+      disable: true
+    time_source:
+      default_increment_ms: 5
+    want_result: 5
