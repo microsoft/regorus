@@ -8,6 +8,8 @@
     clippy::as_conversions
 )] // small arithmetic checks are intentional
 
+pub mod limits;
+
 use crate::ast::*;
 use crate::builtins::*;
 use crate::lexer::*;
