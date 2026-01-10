@@ -10,7 +10,7 @@ name = "regorus"
 description = "A fast, lightweight Rego (OPA policy language) interpreter"
 version = "0.5.0"
 edition = "2021"
-license = "MIT"
+license = "MIT AND Apache-2.0 AND BSD-3-Clause"
 repository = "https://github.com/microsoft/regorus"
 keywords = ["interpreter", "no_std", "opa", "policy-as-code", "rego"]
 
