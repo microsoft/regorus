@@ -1,23 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#![allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::expect_used,
-    clippy::shadow_unrelated,
-    clippy::unused_self,
-    clippy::semicolon_if_nothing_returned,
-    clippy::missing_const_for_fn,
-    clippy::as_conversions,
-    clippy::needless_continue,
-    clippy::pattern_type_mismatch
-)] // VM rule execution indexes directly and uses expect for invariant checks
-
 use crate::rvm::instructions::FunctionCallParams;
 use crate::rvm::program::{RuleInfo, RuleType};
 use crate::value::Value;
+use alloc::format;
 use alloc::vec::Vec;
+use core::convert::TryFrom as _;
 use core::mem;
 
 use super::context::CallRuleContext;
@@ -37,9 +26,9 @@ impl RegoVM {
         let mut first_successful_result: Option<Value> = None;
         let mut rule_failed_due_to_inconsistency = false;
         let is_function_call = rule_info.function_info.is_some();
-        let result_reg = rule_info.result_reg as usize;
+        let result_reg = rule_info.result_reg;
 
-        let num_registers = rule_info.num_registers as usize;
+        let num_registers = usize::from(rule_info.num_registers);
         let mut register_window = self.new_register_window();
         register_window.clear();
         register_window.reserve(num_registers);
@@ -48,10 +37,10 @@ impl RegoVM {
 
         let num_retained_registers = match function_call_params {
             Some(params) => {
-                for arg in params.args[0..params.num_args as usize].iter() {
-                    register_window.push(self.registers[*arg as usize].clone());
+                for &arg in params.arg_registers() {
+                    register_window.push(self.get_register(arg)?.clone());
                 }
-                params.num_args as usize + 1
+                self.checked_add_one(params.arg_count(), "retained function registers")?
             }
             _ => match rule_info.rule_type {
                 RuleType::PartialSet | RuleType::PartialObject => 1,
@@ -59,16 +48,19 @@ impl RegoVM {
             },
         };
 
-        let mut old_registers = Vec::default();
-        mem::swap(&mut old_registers, &mut self.registers);
+        let mut previous_registers = Vec::default();
+        mem::swap(&mut previous_registers, &mut self.registers);
 
-        let mut old_loop_stack = Vec::default();
-        mem::swap(&mut old_loop_stack, &mut self.loop_stack);
+        let mut previous_loop_stack = Vec::default();
+        mem::swap(&mut previous_loop_stack, &mut self.loop_stack);
 
-        let mut old_comprehension_stack = Vec::default();
-        mem::swap(&mut old_comprehension_stack, &mut self.comprehension_stack);
+        let mut previous_comprehension_stack = Vec::default();
+        mem::swap(
+            &mut previous_comprehension_stack,
+            &mut self.comprehension_stack,
+        );
 
-        self.register_stack.push(old_registers);
+        self.register_stack.push(previous_registers);
         self.registers = register_window;
 
         'outer: for (def_idx, definition_bodies) in rule_definitions.iter().enumerate() {
@@ -85,7 +77,7 @@ impl RegoVM {
                 if let Some(destructuring_entry_point) =
                     rule_info.destructuring_blocks.get(def_idx).and_then(|x| *x)
                 {
-                    match self.jump_to(destructuring_entry_point as usize) {
+                    match self.jump_to(destructuring_entry_point) {
                         Ok(_result) => {}
                         Err(_e) => {
                             continue 'outer;
@@ -93,15 +85,15 @@ impl RegoVM {
                     }
                 }
 
-                match self.jump_to(*body_entry_point as usize) {
+                match self.jump_to(*body_entry_point) {
                     Ok(_) => {
                         if matches!(rule_info.rule_type, RuleType::Complete) || is_function_call {
-                            let current_result = self.registers[result_reg].clone();
+                            let current_result = self.get_register(result_reg)?.clone();
                             if current_result != Value::Undefined {
                                 if let Some(ref expected) = first_successful_result {
                                     if *expected != current_result {
                                         rule_failed_due_to_inconsistency = true;
-                                        self.registers[result_reg] = Value::Undefined;
+                                        self.set_register(result_reg, Value::Undefined)?;
                                         break;
                                     }
                                 } else {
@@ -114,9 +106,7 @@ impl RegoVM {
                         // are treated as else-branches and must not be evaluated.
                         break;
                     }
-                    Err(_e) => {
-                        continue;
-                    }
+                    Err(_e) => {}
                 }
             }
 
@@ -130,19 +120,19 @@ impl RegoVM {
         } else if let Some(successful_result) = first_successful_result {
             successful_result
         } else {
-            self.registers[result_reg].clone()
+            self.get_register(result_reg)?.clone()
         };
 
-        if let Some(old_registers) = self.register_stack.pop() {
+        if let Some(restored_registers) = self.register_stack.pop() {
             let mut current_register_window = Vec::default();
             mem::swap(&mut current_register_window, &mut self.registers);
             self.return_register_window(current_register_window);
 
-            self.registers = old_registers;
+            self.registers = restored_registers;
         }
 
-        self.loop_stack = old_loop_stack;
-        self.comprehension_stack = old_comprehension_stack;
+        self.loop_stack = previous_loop_stack;
+        self.comprehension_stack = previous_comprehension_stack;
 
         Ok((final_result, rule_failed_due_to_inconsistency))
     }
@@ -153,25 +143,41 @@ impl RegoVM {
         rule_index: u16,
         function_call_params: Option<&FunctionCallParams>,
     ) -> Result<()> {
-        let rule_idx = rule_index as usize;
+        let rule_idx = usize::from(rule_index);
 
         if rule_idx >= self.rule_cache.len() {
-            return Err(VmError::RuleIndexOutOfBounds { index: rule_index });
+            return Err(VmError::RuleIndexOutOfBounds {
+                index: rule_index,
+                pc: self.pc,
+                available: self.rule_cache.len(),
+            });
         }
 
         let rule_info = self
             .program
             .rule_infos
             .get(rule_idx)
-            .ok_or(VmError::RuleInfoMissing { index: rule_index })?
+            .ok_or(VmError::RuleInfoMissing {
+                index: rule_index,
+                pc: self.pc,
+                available: self.program.rule_infos.len(),
+            })?
             .clone();
 
         let is_function_rule = rule_info.function_info.is_some();
 
         if !is_function_rule {
-            let (computed, cached_result) = &self.rule_cache[rule_idx];
+            let (ref computed, ref cached_result) =
+                *self
+                    .rule_cache
+                    .get(rule_idx)
+                    .ok_or(VmError::RuleIndexOutOfBounds {
+                        index: rule_index,
+                        pc: self.pc,
+                        available: self.rule_cache.len(),
+                    })?;
             if *computed {
-                self.registers[dest as usize] = cached_result.clone();
+                self.set_register(dest, cached_result.clone())?;
                 return Ok(());
             }
         }
@@ -182,9 +188,18 @@ impl RegoVM {
         if rule_definitions.is_empty() {
             let result = Value::Undefined;
             if !is_function_rule {
-                self.rule_cache[rule_idx] = (true, result.clone());
+                let available = self.rule_cache.len();
+                let entry =
+                    self.rule_cache
+                        .get_mut(rule_idx)
+                        .ok_or(VmError::RuleIndexOutOfBounds {
+                            index: rule_index,
+                            pc: self.pc,
+                            available,
+                        })?;
+                *entry = (true, result.clone());
             }
-            self.registers[dest as usize] = result;
+            self.set_register(dest, result)?;
             return Ok(());
         }
 
@@ -201,9 +216,12 @@ impl RegoVM {
         let (final_result, rule_failed_due_to_inconsistency) = self
             .execute_rule_definitions_common(&rule_definitions, &rule_info, function_call_params)?;
 
-        self.registers[dest as usize] = Value::Undefined;
+        self.set_register(dest, Value::Undefined)?;
 
-        let call_context = self.call_rule_stack.pop().expect("Call stack underflow");
+        let call_context = self
+            .call_rule_stack
+            .pop()
+            .ok_or(VmError::CallRuleStackUnderflow { pc: self.pc })?;
         self.pc = call_context.return_pc;
 
         let result_from_rule = if !rule_failed_due_to_inconsistency {
@@ -212,27 +230,30 @@ impl RegoVM {
             Value::Undefined
         };
 
-        self.registers[dest as usize] = result_from_rule.clone();
+        self.set_register(dest, result_from_rule.clone())?;
 
-        if self.registers[dest as usize] == Value::Undefined && !rule_failed_due_to_inconsistency {
+        if self.get_register(dest)? == &Value::Undefined && !rule_failed_due_to_inconsistency {
             match call_context.rule_type {
                 RuleType::PartialSet => {
-                    self.registers[dest as usize] = Value::new_set();
+                    self.set_register(dest, Value::new_set())?;
                 }
                 RuleType::PartialObject => {
-                    self.registers[dest as usize] = Value::new_object();
+                    self.set_register(dest, Value::new_object())?;
                 }
                 RuleType::Complete => {
-                    if let Some(rule_info) = self
+                    if let Some(rule_metadata) = self
                         .program
                         .rule_infos
-                        .get(call_context.rule_index as usize)
+                        .get(usize::from(call_context.rule_index))
                     {
-                        if let Some(default_literal_index) = rule_info.default_literal_index {
-                            if let Some(default_value) =
-                                self.program.literals.get(default_literal_index as usize)
+                        if let Some(default_literal_index) = rule_metadata.default_literal_index {
+                            if let Some(default_value) = self
+                                .program
+                                .literals
+                                .get(usize::from(default_literal_index))
+                                .cloned()
                             {
-                                self.registers[dest as usize] = default_value.clone();
+                                self.set_register(dest, default_value)?;
                             }
                         }
                     }
@@ -240,13 +261,21 @@ impl RegoVM {
             }
         }
 
-        let final_result = self.registers[dest as usize].clone();
+        let final_value = self.get_register(dest)?.clone();
         if !is_function_rule {
-            self.rule_cache[rule_idx] = (true, final_result);
+            let available = self.rule_cache.len();
+            let entry = self
+                .rule_cache
+                .get_mut(rule_idx)
+                .ok_or(VmError::RuleIndexOutOfBounds {
+                    index: rule_index,
+                    pc: self.pc,
+                    available,
+                })?;
+            *entry = (true, final_value.clone());
         }
         Ok(())
     }
-
     pub(super) fn execute_call_rule(&mut self, dest: u8, rule_index: u16) -> Result<()> {
         match self.execution_mode {
             ExecutionMode::RunToCompletion => self.execute_call_rule_common(dest, rule_index, None),
@@ -262,25 +291,41 @@ impl RegoVM {
         rule_index: u16,
         function_call_params: Option<&FunctionCallParams>,
     ) -> Result<()> {
-        let rule_idx = rule_index as usize;
+        let rule_idx = usize::from(rule_index);
 
         if rule_idx >= self.rule_cache.len() {
-            return Err(VmError::RuleIndexOutOfBounds { index: rule_index });
+            return Err(VmError::RuleIndexOutOfBounds {
+                index: rule_index,
+                pc: self.pc,
+                available: self.rule_cache.len(),
+            });
         }
 
         let rule_info = self
             .program
             .rule_infos
             .get(rule_idx)
-            .ok_or(VmError::RuleInfoMissing { index: rule_index })?
+            .ok_or(VmError::RuleInfoMissing {
+                index: rule_index,
+                pc: self.pc,
+                available: self.program.rule_infos.len(),
+            })?
             .clone();
 
         let is_function_rule = rule_info.function_info.is_some();
 
         if !is_function_rule {
-            let (computed, cached_result) = &self.rule_cache[rule_idx];
+            let (ref computed, ref cached_result) =
+                *self
+                    .rule_cache
+                    .get(rule_idx)
+                    .ok_or(VmError::RuleIndexOutOfBounds {
+                        index: rule_index,
+                        pc: self.pc,
+                        available: self.rule_cache.len(),
+                    })?;
             if *computed {
-                self.registers[dest as usize] = cached_result.clone();
+                self.set_register(dest, cached_result.clone())?;
                 return Ok(());
             }
         }
@@ -288,19 +333,33 @@ impl RegoVM {
         if rule_info.definitions.is_empty() {
             let result = Value::Undefined;
             if !is_function_rule {
-                self.rule_cache[rule_idx] = (true, result.clone());
+                let available = self.rule_cache.len();
+                let entry =
+                    self.rule_cache
+                        .get_mut(rule_idx)
+                        .ok_or(VmError::RuleIndexOutOfBounds {
+                            index: rule_index,
+                            pc: self.pc,
+                            available,
+                        })?;
+                *entry = (true, result.clone());
             }
-            if self.registers.len() <= dest as usize {
-                self.registers.resize(dest as usize + 1, Value::Undefined);
+            let dest_index = usize::from(dest);
+            if self.registers.len() <= dest_index {
+                let new_len =
+                    self.checked_add_one(dest_index, "register capacity for destination")?;
+                self.registers.resize(new_len, Value::Undefined);
             }
-            self.registers[dest as usize] = result;
+            self.set_register(dest, result)?;
             return Ok(());
         }
 
-        let num_registers = rule_info.num_registers as usize;
+        let num_registers = usize::from(rule_info.num_registers);
 
         let num_retained_registers = match function_call_params {
-            Some(params) => params.arg_count() + 1,
+            Some(params) => {
+                self.checked_add_one(params.arg_count(), "retained function registers")?
+            }
             None => match rule_info.rule_type {
                 RuleType::PartialSet | RuleType::PartialObject => 1,
                 RuleType::Complete => 0,
@@ -314,7 +373,7 @@ impl RegoVM {
 
         if let Some(params) = function_call_params {
             for &arg in params.arg_registers() {
-                register_window.push(self.registers[arg as usize].clone());
+                register_window.push(self.get_register(arg)?.clone());
             }
         }
 
@@ -367,7 +426,7 @@ impl RegoVM {
 
         let initial_pc = self
             .prepare_rule_frame_initial_pc(&mut frame_data, &rule_info)?
-            .ok_or_else(|| VmError::Internal("Rule frame has no initial PC".into()))?;
+            .ok_or(VmError::RuleFrameMissingInitialPc { pc: self.pc })?;
 
         let frame = ExecutionFrame::new(initial_pc, FrameKind::Rule(frame_data));
         self.execution_stack.push(frame);
@@ -379,29 +438,30 @@ impl RegoVM {
         let current_ctx = self
             .call_rule_stack
             .last_mut()
-            .expect("Call stack underflow");
+            .ok_or(VmError::CallRuleStackUnderflow { pc: self.pc })?;
         current_ctx.result_reg = result_reg;
         match current_ctx.rule_type {
             RuleType::Complete => {
-                self.registers[result_reg as usize] = Value::Undefined;
+                self.set_register(result_reg, Value::Undefined)?;
             }
             RuleType::PartialSet => {
                 if current_ctx.current_definition_index == 0 && current_ctx.current_body_index == 0
                 {
-                    self.registers[result_reg as usize] = Value::new_set();
+                    self.set_register(result_reg, Value::new_set())?;
                 }
             }
             RuleType::PartialObject => {
                 if current_ctx.current_definition_index == 0 && current_ctx.current_body_index == 0
                 {
-                    self.registers[result_reg as usize] = Value::new_object();
+                    self.set_register(result_reg, Value::new_object())?;
                 }
             }
         }
         Ok(())
     }
 
-    pub(super) fn execute_rule_return(&mut self) -> Result<()> {
+    pub(super) const fn execute_rule_return(&mut self) -> Result<()> {
+        let _ = self;
         Ok(())
     }
 
@@ -427,7 +487,16 @@ impl RegoVM {
         }
 
         while frame_data.current_definition_index < frame_data.total_definitions {
-            let definition_bodies = &rule_info.definitions[frame_data.current_definition_index];
+            let definition_bodies = match rule_info
+                .definitions
+                .get(frame_data.current_definition_index)
+            {
+                Some(bodies) => bodies,
+                None => {
+                    frame_data.current_definition_index = frame_data.total_definitions;
+                    break;
+                }
+            };
 
             if frame_data.current_body_index < definition_bodies.len() {
                 if let Some(ctx) = self.call_rule_stack.last_mut() {
@@ -446,15 +515,29 @@ impl RegoVM {
                     .and_then(|opt| *opt)
                 {
                     frame_data.phase = RuleFramePhase::ExecutingDestructuring;
-                    return Ok(Some(destructuring_entry_point as usize));
-                } else {
-                    frame_data.phase = RuleFramePhase::ExecutingBody;
-                    return Ok(Some(
-                        definition_bodies[frame_data.current_body_index] as usize,
-                    ));
+                    let next_pc =
+                        self.convert_pc(destructuring_entry_point, "destructuring entry point")?;
+                    return Ok(Some(next_pc));
                 }
+
+                if let Some(&body_entry_point) =
+                    definition_bodies.get(frame_data.current_body_index)
+                {
+                    frame_data.phase = RuleFramePhase::ExecutingBody;
+                    let next_pc = self.convert_pc(body_entry_point, "rule body entry point")?;
+                    return Ok(Some(next_pc));
+                }
+
+                self.increment_counter(
+                    &mut frame_data.current_definition_index,
+                    "rule definition index",
+                )?;
+                frame_data.current_body_index = 0;
             } else {
-                frame_data.current_definition_index += 1;
+                self.increment_counter(
+                    &mut frame_data.current_definition_index,
+                    "rule definition index",
+                )?;
                 frame_data.current_body_index = 0;
             }
         }
@@ -469,15 +552,24 @@ impl RegoVM {
         rule_info: &RuleInfo,
     ) -> Result<Option<usize>> {
         frame_data.phase = RuleFramePhase::ExecutingBody;
-        let definition_bodies = &rule_info.definitions[frame_data.current_definition_index];
-        if frame_data.current_body_index >= definition_bodies.len() {
-            frame_data.current_body_index += 1;
-            return self.rule_frame_schedule_segment(frame_data, rule_info);
-        }
+        let definition_bodies = match rule_info
+            .definitions
+            .get(frame_data.current_definition_index)
+        {
+            Some(bodies) => bodies,
+            None => {
+                frame_data.current_definition_index = frame_data.total_definitions;
+                return Ok(None);
+            }
+        };
 
-        Ok(Some(
-            definition_bodies[frame_data.current_body_index] as usize,
-        ))
+        if let Some(&entry_point) = definition_bodies.get(frame_data.current_body_index) {
+            let next_pc = self.convert_pc(entry_point, "rule body entry point")?;
+            Ok(Some(next_pc))
+        } else {
+            self.increment_counter(&mut frame_data.current_body_index, "rule body index")?;
+            self.rule_frame_schedule_segment(frame_data, rule_info)
+        }
     }
 
     fn rule_frame_after_failure(
@@ -485,7 +577,7 @@ impl RegoVM {
         frame_data: &mut RuleFrameData,
         rule_info: &RuleInfo,
     ) -> Result<Option<usize>> {
-        frame_data.current_body_index += 1;
+        self.increment_counter(&mut frame_data.current_body_index, "rule body index")?;
         self.rule_frame_schedule_segment(frame_data, rule_info)
     }
 
@@ -499,16 +591,16 @@ impl RegoVM {
         if matches!(frame_data.rule_type, RuleType::Complete) || frame_data.is_function_rule {
             let current_result = self
                 .registers
-                .get(frame_data.result_reg as usize)
+                .get(usize::from(frame_data.result_reg))
                 .cloned()
                 .unwrap_or(Value::Undefined);
 
             if current_result != Value::Undefined {
-                if let Some(expected) = &frame_data.accumulated_result {
+                if let Some(ref expected) = frame_data.accumulated_result {
                     if *expected != current_result {
                         frame_data.rule_failed_due_to_inconsistency = true;
                         if let Some(result_slot) =
-                            self.registers.get_mut(frame_data.result_reg as usize)
+                            self.registers.get_mut(usize::from(frame_data.result_reg))
                         {
                             *result_slot = Value::Undefined;
                         }
@@ -525,7 +617,7 @@ impl RegoVM {
         {
             frame_data.current_body_index = definition_bodies.len();
         } else {
-            frame_data.current_body_index += 1;
+            self.increment_counter(&mut frame_data.current_body_index, "rule body index")?;
         }
         self.rule_frame_schedule_segment(frame_data, rule_info)
     }
@@ -546,12 +638,16 @@ impl RegoVM {
             ..
         } = frame_data;
 
-        let rule_idx = rule_index as usize;
+        let rule_idx = usize::from(rule_index);
         let rule_info = self
             .program
             .rule_infos
             .get(rule_idx)
-            .ok_or(VmError::RuleInfoMissing { index: rule_index })?
+            .ok_or(VmError::RuleInfoMissing {
+                index: rule_index,
+                pc: self.pc,
+                available: self.program.rule_infos.len(),
+            })?
             .clone();
 
         let result_from_rule = if rule_failed_due_to_inconsistency {
@@ -560,7 +656,7 @@ impl RegoVM {
             value
         } else {
             self.registers
-                .get(result_reg as usize)
+                .get(usize::from(result_reg))
                 .cloned()
                 .unwrap_or(Value::Undefined)
         };
@@ -573,44 +669,104 @@ impl RegoVM {
         self.comprehension_stack = saved_comprehension_stack;
 
         let mut parent_registers = saved_registers;
-        if parent_registers.len() <= dest_reg as usize {
-            parent_registers.resize(dest_reg as usize + 1, Value::Undefined);
+        let dest_idx = usize::from(dest_reg);
+        if parent_registers.len() <= dest_idx {
+            let new_len = self.checked_add_one(dest_idx, "parent register capacity")?;
+            parent_registers.resize(new_len, Value::Undefined);
         }
-        parent_registers[dest_reg as usize] = result_from_rule.clone();
 
-        if parent_registers[dest_reg as usize] == Value::Undefined
-            && !rule_failed_due_to_inconsistency
         {
+            let register_count = parent_registers.len();
+            let slot =
+                parent_registers
+                    .get_mut(dest_idx)
+                    .ok_or(VmError::RegisterIndexOutOfBounds {
+                        index: dest_reg,
+                        pc: self.pc,
+                        register_count,
+                    })?;
+            *slot = result_from_rule.clone();
+        }
+
+        let needs_default = parent_registers
+            .get(dest_idx)
+            .is_some_and(|value| *value == Value::Undefined);
+
+        if needs_default && !rule_failed_due_to_inconsistency {
             match rule_type {
-                RuleType::PartialSet => parent_registers[dest_reg as usize] = Value::new_set(),
+                RuleType::PartialSet => {
+                    let register_count = parent_registers.len();
+                    let slot = parent_registers.get_mut(dest_idx).ok_or(
+                        VmError::RegisterIndexOutOfBounds {
+                            index: dest_reg,
+                            pc: self.pc,
+                            register_count,
+                        },
+                    )?;
+                    *slot = Value::new_set();
+                }
                 RuleType::PartialObject => {
-                    parent_registers[dest_reg as usize] = Value::new_object()
+                    let register_count = parent_registers.len();
+                    let slot = parent_registers.get_mut(dest_idx).ok_or(
+                        VmError::RegisterIndexOutOfBounds {
+                            index: dest_reg,
+                            pc: self.pc,
+                            register_count,
+                        },
+                    )?;
+                    *slot = Value::new_object();
                 }
                 RuleType::Complete => {
                     if let Some(default_literal_index) = rule_info.default_literal_index {
-                        if let Some(default_value) =
-                            self.program.literals.get(default_literal_index as usize)
+                        if let Some(default_value) = self
+                            .program
+                            .literals
+                            .get(usize::from(default_literal_index))
+                            .cloned()
                         {
-                            parent_registers[dest_reg as usize] = default_value.clone();
+                            let register_count = parent_registers.len();
+                            let slot = parent_registers.get_mut(dest_idx).ok_or(
+                                VmError::RegisterIndexOutOfBounds {
+                                    index: dest_reg,
+                                    pc: self.pc,
+                                    register_count,
+                                },
+                            )?;
+                            *slot = default_value;
                         }
                     }
                 }
             }
         }
 
-        let final_value = parent_registers[dest_reg as usize].clone();
+        let register_count = parent_registers.len();
+        let final_value =
+            parent_registers
+                .get(dest_idx)
+                .cloned()
+                .ok_or(VmError::RegisterIndexOutOfBounds {
+                    index: dest_reg,
+                    pc: self.pc,
+                    register_count,
+                })?;
 
         if !is_function_rule {
-            self.rule_cache[rule_idx] = (true, final_value.clone());
+            let available = self.rule_cache.len();
+            let entry = self
+                .rule_cache
+                .get_mut(rule_idx)
+                .ok_or(VmError::RuleIndexOutOfBounds {
+                    index: rule_index,
+                    pc: self.pc,
+                    available,
+                })?;
+            *entry = (true, final_value.clone());
         }
 
         self.registers = parent_registers;
 
         if self.call_rule_stack.pop().is_none() {
-            return Err(VmError::Internal(alloc::format!(
-                "Call rule stack underflow during rule finalization | {}",
-                self.get_debug_state()
-            )));
+            return Err(VmError::CallRuleStackUnderflow { pc: self.pc });
         }
 
         self.pc = return_pc;
@@ -641,11 +797,40 @@ impl RegoVM {
     }
 
     fn get_rule_info(&self, rule_index: u16) -> Result<RuleInfo> {
-        let idx = rule_index as usize;
+        let idx = usize::from(rule_index);
         self.program
             .rule_infos
             .get(idx)
             .cloned()
-            .ok_or(VmError::RuleInfoMissing { index: rule_index })
+            .ok_or(VmError::RuleInfoMissing {
+                index: rule_index,
+                pc: self.pc,
+                available: self.program.rule_infos.len(),
+            })
+    }
+
+    pub(super) fn checked_add_one(&self, value: usize, context: &'static str) -> Result<usize> {
+        value
+            .checked_add(1)
+            .ok_or_else(|| VmError::ArithmeticError {
+                message: format!("{context} overflow"),
+                pc: self.pc,
+            })
+    }
+
+    pub(super) fn increment_counter(
+        &self,
+        counter: &mut usize,
+        context: &'static str,
+    ) -> Result<()> {
+        *counter = self.checked_add_one(*counter, context)?;
+        Ok(())
+    }
+
+    pub(super) fn convert_pc(&self, value: u32, context: &'static str) -> Result<usize> {
+        usize::try_from(value).map_err(|_| VmError::ArithmeticError {
+            message: format!("{context} exceeds addressable range"),
+            pc: self.pc,
+        })
     }
 }

@@ -1,12 +1,5 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::used_underscore_binding,
-    clippy::as_conversions,
-    clippy::pattern_type_mismatch
-)]
 
 use crate::rvm::instructions::{Instruction, LiteralOrRegister};
 use crate::rvm::program::Program;
@@ -44,41 +37,43 @@ impl RegoVM {
         use Instruction::*;
         match instruction {
             Load { dest, literal_idx } => {
-                if let Some(value) = program.literals.get(literal_idx as usize) {
-                    self.registers[dest as usize] = value.clone();
+                if let Some(value) = program.literals.get(usize::from(literal_idx)) {
+                    self.set_register(dest, value.clone())?;
                     Ok(InstructionOutcome::Continue)
                 } else {
                     Err(VmError::LiteralIndexOutOfBounds {
-                        index: literal_idx as usize,
+                        index: literal_idx,
+                        pc: self.pc,
                     })
                 }
             }
             LoadTrue { dest } => {
-                self.registers[dest as usize] = Value::Bool(true);
+                self.set_register(dest, Value::Bool(true))?;
                 Ok(InstructionOutcome::Continue)
             }
             LoadFalse { dest } => {
-                self.registers[dest as usize] = Value::Bool(false);
+                self.set_register(dest, Value::Bool(false))?;
                 Ok(InstructionOutcome::Continue)
             }
             LoadNull { dest } => {
-                self.registers[dest as usize] = Value::Null;
+                self.set_register(dest, Value::Null)?;
                 Ok(InstructionOutcome::Continue)
             }
             LoadBool { dest, value } => {
-                self.registers[dest as usize] = Value::Bool(value);
+                self.set_register(dest, Value::Bool(value))?;
                 Ok(InstructionOutcome::Continue)
             }
             LoadData { dest } => {
-                self.registers[dest as usize] = self.data.clone();
+                self.set_register(dest, self.data.clone())?;
                 Ok(InstructionOutcome::Continue)
             }
             LoadInput { dest } => {
-                self.registers[dest as usize] = self.input.clone();
+                self.set_register(dest, self.input.clone())?;
                 Ok(InstructionOutcome::Continue)
             }
             Move { dest, src } => {
-                self.registers[dest as usize] = self.registers[src as usize].clone();
+                let value = self.get_register(src)?.clone();
+                self.set_register(dest, value)?;
                 Ok(InstructionOutcome::Continue)
             }
             other => self.execute_arithmetic_instruction(program, other),
@@ -87,246 +82,267 @@ impl RegoVM {
 
     fn execute_arithmetic_instruction(
         &mut self,
-        _program: &Program,
+        program: &Program,
         instruction: Instruction,
     ) -> Result<InstructionOutcome> {
         use Instruction::*;
         match instruction {
             Add { dest, left, right } => {
-                let a = &self.registers[left as usize];
-                let b = &self.registers[right as usize];
+                let a = self.get_register(left)?;
+                let b = self.get_register(right)?;
 
                 if a == &Value::Undefined || b == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
                 let result = self.add_values(a, b)?;
-                self.registers[dest as usize] = result;
+                self.set_register(dest, result)?;
                 Ok(InstructionOutcome::Continue)
             }
             Sub { dest, left, right } => {
-                let a = &self.registers[left as usize];
-                let b = &self.registers[right as usize];
+                let a = self.get_register(left)?;
+                let b = self.get_register(right)?;
 
                 if a == &Value::Undefined || b == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
                 let result = self.sub_values(a, b)?;
-                self.registers[dest as usize] = result;
+                self.set_register(dest, result)?;
                 Ok(InstructionOutcome::Continue)
             }
             Mul { dest, left, right } => {
-                let a = &self.registers[left as usize];
-                let b = &self.registers[right as usize];
+                let a = self.get_register(left)?;
+                let b = self.get_register(right)?;
 
                 if a == &Value::Undefined || b == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
                 let result = self.mul_values(a, b)?;
-                self.registers[dest as usize] = result;
+                self.set_register(dest, result)?;
                 Ok(InstructionOutcome::Continue)
             }
             Div { dest, left, right } => {
-                let a = &self.registers[left as usize];
-                let b = &self.registers[right as usize];
+                let a = self.get_register(left)?;
+                let b = self.get_register(right)?;
 
                 if a == &Value::Undefined || b == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
                 let result = self.div_values(a, b)?;
-                self.registers[dest as usize] = result;
+                self.set_register(dest, result)?;
                 Ok(InstructionOutcome::Continue)
             }
             Mod { dest, left, right } => {
-                let a = &self.registers[left as usize];
-                let b = &self.registers[right as usize];
+                let a = self.get_register(left)?;
+                let b = self.get_register(right)?;
 
                 if a == &Value::Undefined || b == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
                 let result = self.mod_values(a, b)?;
-                self.registers[dest as usize] = result;
+                self.set_register(dest, result)?;
                 Ok(InstructionOutcome::Continue)
             }
-            other => self.execute_comparison_instruction(_program, other),
+            other => self.execute_comparison_instruction(program, other),
         }
     }
 
     fn execute_comparison_instruction(
         &mut self,
-        _program: &Program,
+        program: &Program,
         instruction: Instruction,
     ) -> Result<InstructionOutcome> {
         use Instruction::*;
         match instruction {
             Eq { dest, left, right } => {
-                let a = &self.registers[left as usize];
-                let b = &self.registers[right as usize];
+                let a = self.get_register(left)?;
+                let b = self.get_register(right)?;
 
                 if a == &Value::Undefined || b == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                self.registers[dest as usize] = Value::Bool(a == b);
+                self.set_register(dest, Value::Bool(a == b))?;
                 Ok(InstructionOutcome::Continue)
             }
             Ne { dest, left, right } => {
-                let a = &self.registers[left as usize];
-                let b = &self.registers[right as usize];
+                let a = self.get_register(left)?;
+                let b = self.get_register(right)?;
 
                 if a == &Value::Undefined || b == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                self.registers[dest as usize] = Value::Bool(a != b);
+                self.set_register(dest, Value::Bool(a != b))?;
                 Ok(InstructionOutcome::Continue)
             }
             Lt { dest, left, right } => {
-                let a = &self.registers[left as usize];
-                let b = &self.registers[right as usize];
+                let a = self.get_register(left)?;
+                let b = self.get_register(right)?;
 
                 if a == &Value::Undefined || b == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError(alloc::format!(
-                        "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
-                    )));
+                    return Err(VmError::ArithmeticError {
+                        message: alloc::format!(
+                            "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
+                        ),
+                        pc: self.pc,
+                    });
                 }
 
-                self.registers[dest as usize] = Value::Bool(a < b);
+                self.set_register(dest, Value::Bool(a < b))?;
                 Ok(InstructionOutcome::Continue)
             }
             Le { dest, left, right } => {
-                let a = &self.registers[left as usize];
-                let b = &self.registers[right as usize];
+                let a = self.get_register(left)?;
+                let b = self.get_register(right)?;
 
                 if a == &Value::Undefined || b == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError(alloc::format!(
-                        "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
-                    )));
+                    return Err(VmError::ArithmeticError {
+                        message: alloc::format!(
+                            "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
+                        ),
+                        pc: self.pc,
+                    });
                 }
 
-                self.registers[dest as usize] = Value::Bool(a <= b);
+                self.set_register(dest, Value::Bool(a <= b))?;
                 Ok(InstructionOutcome::Continue)
             }
             Gt { dest, left, right } => {
-                let a = &self.registers[left as usize];
-                let b = &self.registers[right as usize];
+                let a = self.get_register(left)?;
+                let b = self.get_register(right)?;
 
                 if a == &Value::Undefined || b == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError(alloc::format!(
-                        "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
-                    )));
+                    return Err(VmError::ArithmeticError {
+                        message: alloc::format!(
+                            "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
+                        ),
+                        pc: self.pc,
+                    });
                 }
 
-                self.registers[dest as usize] = Value::Bool(a > b);
+                self.set_register(dest, Value::Bool(a > b))?;
                 Ok(InstructionOutcome::Continue)
             }
             Ge { dest, left, right } => {
-                let a = &self.registers[left as usize];
-                let b = &self.registers[right as usize];
+                let a = self.get_register(left)?;
+                let b = self.get_register(right)?;
 
                 if a == &Value::Undefined || b == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError(alloc::format!(
-                        "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
-                    )));
+                    return Err(VmError::ArithmeticError {
+                        message: alloc::format!(
+                            "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
+                        ),
+                        pc: self.pc,
+                    });
                 }
 
-                self.registers[dest as usize] = Value::Bool(a >= b);
+                self.set_register(dest, Value::Bool(a >= b))?;
                 Ok(InstructionOutcome::Continue)
             }
             And { dest, left, right } => {
-                let left_value = &self.registers[left as usize];
-                let right_value = &self.registers[right as usize];
+                let left_value = self.get_register(left)?;
+                let right_value = self.get_register(right)?;
 
                 if left_value == &Value::Undefined || right_value == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
                 match (self.to_bool(left_value), self.to_bool(right_value)) {
                     (Some(a), Some(b)) => {
-                        self.registers[dest as usize] = Value::Bool(a && b);
+                        self.set_register(dest, Value::Bool(a && b))?;
                         Ok(InstructionOutcome::Continue)
                     }
-                    _ => Err(VmError::ArithmeticError(alloc::format!(
-                        "#undefined: logical AND expects booleans (left={left_value:?}, right={right_value:?})"
-                    ))),
+                    _ => Err(VmError::ArithmeticError {
+                        message: alloc::format!(
+                            "#undefined: logical AND expects booleans (left={left_value:?}, right={right_value:?})"
+                        ),
+                        pc: self.pc,
+                    }),
                 }
             }
             Or { dest, left, right } => {
-                let left_value = &self.registers[left as usize];
-                let right_value = &self.registers[right as usize];
+                let left_value = self.get_register(left)?;
+                let right_value = self.get_register(right)?;
 
                 if left_value == &Value::Undefined || right_value == &Value::Undefined {
-                    self.registers[dest as usize] = Value::Undefined;
+                    self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
                 match (self.to_bool(left_value), self.to_bool(right_value)) {
                     (Some(a), Some(b)) => {
-                        self.registers[dest as usize] = Value::Bool(a || b);
+                        self.set_register(dest, Value::Bool(a || b))?;
                         Ok(InstructionOutcome::Continue)
                     }
-                    _ => Err(VmError::ArithmeticError(alloc::format!(
-                        "#undefined: logical OR expects booleans (left={left_value:?}, right={right_value:?})"
-                    ))),
+                    _ => Err(VmError::ArithmeticError {
+                        message: alloc::format!(
+                            "#undefined: logical OR expects booleans (left={left_value:?}, right={right_value:?})"
+                        ),
+                        pc: self.pc,
+                    }),
                 }
             }
             Not { dest, operand } => {
-                let operand_value = &self.registers[operand as usize];
+                let operand_value = self.get_register(operand)?;
 
                 if operand_value == &Value::Undefined {
                     // In Rego, `not expr` succeeds when `expr` has no results.
                     // When the operand evaluates to undefined we should treat it as
                     // a successful negation instead of propagating undefined.
-                    self.registers[dest as usize] = Value::Bool(true);
+                    self.set_register(dest, Value::Bool(true))?;
                     return Ok(InstructionOutcome::Continue);
                 }
 
                 if let Some(value) = self.to_bool(operand_value) {
-                    self.registers[dest as usize] = Value::Bool(!value);
+                    self.set_register(dest, Value::Bool(!value))?;
                     Ok(InstructionOutcome::Continue)
                 } else {
-                    Err(VmError::ArithmeticError(alloc::format!(
-                        "#undefined: logical NOT expects a boolean (operand={operand_value:?})"
-                    )))
+                    Err(VmError::ArithmeticError {
+                        message: alloc::format!(
+                            "#undefined: logical NOT expects a boolean (operand={operand_value:?})"
+                        ),
+                        pc: self.pc,
+                    })
                 }
             }
             AssertCondition { condition } => {
-                let value = &self.registers[condition as usize];
+                let value = self.get_register(condition)?;
 
-                let condition_result = match value {
-                    Value::Bool(b) => *b,
+                let condition_result = match *value {
+                    Value::Bool(b) => b,
                     Value::Undefined => false,
                     _ => true,
                 };
@@ -335,19 +351,19 @@ impl RegoVM {
                 Ok(InstructionOutcome::Continue)
             }
             AssertNotUndefined { register } => {
-                let value = &self.registers[register as usize];
+                let value = self.get_register(register)?;
 
                 let is_undefined = matches!(value, Value::Undefined);
                 self.handle_condition(!is_undefined)?;
                 Ok(InstructionOutcome::Continue)
             }
-            other => self.execute_call_instruction(_program, other),
+            other => self.execute_call_instruction(program, other),
         }
     }
 
     fn execute_call_instruction(
         &mut self,
-        _program: &Program,
+        program: &Program,
         instruction: Instruction,
     ) -> Result<InstructionOutcome> {
         use Instruction::*;
@@ -357,19 +373,16 @@ impl RegoVM {
                 Ok(InstructionOutcome::Continue)
             }
             HostAwait { dest, arg, id } => {
-                let argument = self.registers[arg as usize].clone();
+                let argument = self.get_register(arg)?.clone();
                 let identifier = self
                     .registers
-                    .get(id as usize)
+                    .get(usize::from(id))
                     .cloned()
                     .unwrap_or(Value::Undefined);
                 match self.execution_mode {
                     ExecutionMode::RunToCompletion => {
                         let response = self.next_host_await_response(&identifier, dest)?;
-                        if self.registers.len() <= dest as usize {
-                            self.registers.resize(dest as usize + 1, Value::Undefined);
-                        }
-                        self.registers[dest as usize] = response;
+                        self.set_register(dest, response)?;
                         Ok(InstructionOutcome::Continue)
                     }
                     ExecutionMode::Suspendable => Ok(InstructionOutcome::Suspend {
@@ -386,7 +399,7 @@ impl RegoVM {
                 Ok(InstructionOutcome::Continue)
             }
             Return { value } => {
-                let result = self.registers[value as usize].clone();
+                let result = self.get_register(value)?.clone();
                 Ok(InstructionOutcome::Return(result))
             }
             CallRule { dest, rule_index } => {
@@ -405,7 +418,7 @@ impl RegoVM {
                 self.execute_rule_return()?;
                 Ok(InstructionOutcome::Break)
             }
-            other => self.execute_collection_instruction(_program, other),
+            other => self.execute_collection_instruction(program, other),
         }
     }
 
@@ -417,17 +430,22 @@ impl RegoVM {
         use Instruction::*;
         match instruction {
             ObjectSet { obj, key, value } => {
-                let key_value = self.registers[key as usize].clone();
-                let value_value = self.registers[value as usize].clone();
+                let key_value = self.get_register(key)?.clone();
+                let value_value = self.get_register(value)?.clone();
 
-                let mut obj_value = mem::replace(&mut self.registers[obj as usize], Value::Null);
+                let mut obj_value = self.get_register(obj)?.clone();
 
                 if let Ok(obj_mut) = obj_value.as_object_mut() {
                     obj_mut.insert(key_value, value_value);
-                    self.registers[obj as usize] = obj_value;
+                    self.set_register(obj, obj_value)?;
                 } else {
-                    self.registers[obj as usize] = obj_value;
-                    return Err(VmError::RegisterNotObject { register: obj });
+                    let offending = obj_value.clone();
+                    self.set_register(obj, obj_value)?;
+                    return Err(VmError::RegisterNotObject {
+                        register: obj,
+                        value: offending,
+                        pc: self.pc,
+                    });
                 }
                 Ok(InstructionOutcome::Continue)
             }
@@ -437,12 +455,14 @@ impl RegoVM {
                     .get_object_create_params(params_index)
                     .ok_or(VmError::InvalidObjectCreateParams {
                         index: params_index,
+                        pc: self.pc,
+                        available: program.instruction_data.object_create_params.len(),
                     })?;
 
                 let mut any_undefined = false;
 
                 for &(_, value_reg) in params.literal_key_field_pairs() {
-                    if matches!(self.registers[value_reg as usize], Value::Undefined) {
+                    if matches!(self.get_register(value_reg)?, Value::Undefined) {
                         any_undefined = true;
                         break;
                     }
@@ -450,8 +470,8 @@ impl RegoVM {
 
                 if !any_undefined {
                     for &(key_reg, value_reg) in params.field_pairs() {
-                        if matches!(self.registers[key_reg as usize], Value::Undefined)
-                            || matches!(self.registers[value_reg as usize], Value::Undefined)
+                        if matches!(self.get_register(key_reg)?, Value::Undefined)
+                            || matches!(self.get_register(value_reg)?, Value::Undefined)
                         {
                             any_undefined = true;
                             break;
@@ -460,13 +480,15 @@ impl RegoVM {
                 }
 
                 if any_undefined {
-                    self.registers[params.dest as usize] = Value::Undefined;
+                    self.set_register(params.dest, Value::Undefined)?;
                 } else {
                     let mut obj_value = program
                         .literals
-                        .get(params.template_literal_idx as usize)
+                        .get(usize::from(params.template_literal_idx))
                         .ok_or(VmError::InvalidTemplateLiteralIndex {
                             index: params.template_literal_idx,
+                            pc: self.pc,
+                            available: program.literals.len(),
                         })?
                         .clone();
 
@@ -477,10 +499,10 @@ impl RegoVM {
                         for (key, value) in obj_mut.iter_mut() {
                             if let Some(&(literal_idx, value_reg)) = current_literal_update {
                                 if let Some(literal_key) =
-                                    program.literals.get(literal_idx as usize)
+                                    program.literals.get(usize::from(literal_idx))
                                 {
                                     if key == literal_key {
-                                        *value = self.registers[value_reg as usize].clone();
+                                        *value = self.get_register(value_reg)?.clone();
                                         current_literal_update = literal_updates.next();
                                     }
                                 }
@@ -490,23 +512,27 @@ impl RegoVM {
                         }
 
                         while let Some(&(literal_idx, value_reg)) = current_literal_update {
-                            if let Some(key_value) = program.literals.get(literal_idx as usize) {
-                                let value_value = self.registers[value_reg as usize].clone();
+                            if let Some(key_value) = program.literals.get(usize::from(literal_idx))
+                            {
+                                let value_value = self.get_register(value_reg)?.clone();
                                 obj_mut.insert(key_value.clone(), value_value);
                             }
                             current_literal_update = literal_updates.next();
                         }
 
                         for &(key_reg, value_reg) in params.field_pairs() {
-                            let key_value = self.registers[key_reg as usize].clone();
-                            let value_value = self.registers[value_reg as usize].clone();
+                            let key_value = self.get_register(key_reg)?.clone();
+                            let value_value = self.get_register(value_reg)?.clone();
                             obj_mut.insert(key_value, value_value);
                         }
                     } else {
-                        return Err(VmError::ObjectCreateInvalidTemplate);
+                        return Err(VmError::ObjectCreateInvalidTemplate {
+                            template: obj_value,
+                            pc: self.pc,
+                        });
                     }
 
-                    self.registers[params.dest as usize] = obj_value;
+                    self.set_register(params.dest, obj_value)?;
                 }
                 Ok(InstructionOutcome::Continue)
             }
@@ -515,10 +541,10 @@ impl RegoVM {
                 container,
                 key,
             } => {
-                let key_value = &self.registers[key as usize];
-                let container_value = &self.registers[container as usize];
+                let key_value = self.get_register(key)?;
+                let container_value = self.get_register(container)?;
                 let result = container_value[key_value].clone();
-                self.registers[dest as usize] = result;
+                self.set_register(dest, result)?;
                 Ok(InstructionOutcome::Continue)
             }
             IndexLiteral {
@@ -526,34 +552,40 @@ impl RegoVM {
                 container,
                 literal_idx,
             } => {
-                let container_value = &self.registers[container as usize];
+                let container_value = self.get_register(container)?;
 
-                if let Some(key_value) = program.literals.get(literal_idx as usize) {
+                if let Some(key_value) = program.literals.get(usize::from(literal_idx)) {
                     let result = container_value[key_value].clone();
-                    self.registers[dest as usize] = result;
+                    self.set_register(dest, result)?;
                     Ok(InstructionOutcome::Continue)
                 } else {
                     Err(VmError::LiteralIndexOutOfBounds {
-                        index: literal_idx as usize,
+                        index: literal_idx,
+                        pc: self.pc,
                     })
                 }
             }
             ArrayNew { dest } => {
                 let empty_array = Value::Array(crate::Rc::new(Vec::new()));
-                self.registers[dest as usize] = empty_array;
+                self.set_register(dest, empty_array)?;
                 Ok(InstructionOutcome::Continue)
             }
             ArrayPush { arr, value } => {
-                let value_to_push = self.registers[value as usize].clone();
+                let value_to_push = self.get_register(value)?.clone();
 
-                let mut arr_value = mem::replace(&mut self.registers[arr as usize], Value::Null);
+                let mut arr_value = self.get_register(arr)?.clone();
 
                 if let Ok(arr_mut) = arr_value.as_array_mut() {
                     arr_mut.push(value_to_push);
-                    self.registers[arr as usize] = arr_value;
+                    self.set_register(arr, arr_value)?;
                 } else {
-                    self.registers[arr as usize] = arr_value;
-                    return Err(VmError::RegisterNotArray { register: arr });
+                    let offending = arr_value.clone();
+                    self.set_register(arr, arr_value)?;
+                    return Err(VmError::RegisterNotArray {
+                        register: arr,
+                        value: offending,
+                        pc: self.pc,
+                    });
                 }
                 Ok(InstructionOutcome::Continue)
             }
@@ -564,47 +596,54 @@ impl RegoVM {
                 {
                     let mut any_undefined = false;
                     for &reg in params.element_registers() {
-                        if matches!(self.registers[reg as usize], Value::Undefined) {
+                        if matches!(self.get_register(reg)?, Value::Undefined) {
                             any_undefined = true;
                             break;
                         }
                     }
 
                     if any_undefined {
-                        self.registers[params.dest as usize] = Value::Undefined;
+                        self.set_register(params.dest, Value::Undefined)?;
                     } else {
                         let elements: Vec<Value> = params
                             .element_registers()
                             .iter()
-                            .map(|&reg| self.registers[reg as usize].clone())
-                            .collect();
+                            .map(|&reg| self.get_register(reg).cloned())
+                            .collect::<Result<Vec<_>>>()?;
 
                         let array_value = Value::Array(crate::Rc::new(elements));
-                        self.registers[params.dest as usize] = array_value;
+                        self.set_register(params.dest, array_value)?;
                     }
                     Ok(InstructionOutcome::Continue)
                 } else {
                     Err(VmError::InvalidArrayCreateParams {
                         index: params_index,
+                        pc: self.pc,
+                        available: program.instruction_data.array_create_params.len(),
                     })
                 }
             }
             SetNew { dest } => {
                 let empty_set = Value::Set(crate::Rc::new(BTreeSet::new()));
-                self.registers[dest as usize] = empty_set;
+                self.set_register(dest, empty_set)?;
                 Ok(InstructionOutcome::Continue)
             }
             SetAdd { set, value } => {
-                let value_to_add = self.registers[value as usize].clone();
+                let value_to_add = self.get_register(value)?.clone();
 
-                let mut set_value = mem::replace(&mut self.registers[set as usize], Value::Null);
+                let mut set_value = self.get_register(set)?.clone();
 
                 if let Ok(set_mut) = set_value.as_set_mut() {
                     set_mut.insert(value_to_add);
-                    self.registers[set as usize] = set_value;
+                    self.set_register(set, set_value)?;
                 } else {
-                    self.registers[set as usize] = set_value;
-                    return Err(VmError::RegisterNotSet { register: set });
+                    let offending = set_value.clone();
+                    self.set_register(set, set_value)?;
+                    return Err(VmError::RegisterNotSet {
+                        register: set,
+                        value: offending,
+                        pc: self.pc,
+                    });
                 }
                 Ok(InstructionOutcome::Continue)
             }
@@ -612,27 +651,29 @@ impl RegoVM {
                 if let Some(params) = program.instruction_data.get_set_create_params(params_index) {
                     let mut any_undefined = false;
                     for &reg in params.element_registers() {
-                        if matches!(self.registers[reg as usize], Value::Undefined) {
+                        if matches!(self.get_register(reg)?, Value::Undefined) {
                             any_undefined = true;
                             break;
                         }
                     }
 
                     if any_undefined {
-                        self.registers[params.dest as usize] = Value::Undefined;
+                        self.set_register(params.dest, Value::Undefined)?;
                     } else {
                         let mut set = BTreeSet::new();
                         for &reg in params.element_registers() {
-                            set.insert(self.registers[reg as usize].clone());
+                            set.insert(self.get_register(reg)?.clone());
                         }
 
                         let set_value = Value::Set(crate::Rc::new(set));
-                        self.registers[params.dest as usize] = set_value;
+                        self.set_register(params.dest, set_value)?;
                     }
                     Ok(InstructionOutcome::Continue)
                 } else {
                     Err(VmError::InvalidSetCreateParams {
                         index: params_index,
+                        pc: self.pc,
+                        available: program.instruction_data.set_create_params.len(),
                     })
                 }
             }
@@ -641,33 +682,37 @@ impl RegoVM {
                 collection,
                 value,
             } => {
-                let value_to_check = &self.registers[value as usize];
-                let collection_value = &self.registers[collection as usize];
+                let value_to_check = self.get_register(value)?;
+                let collection_value = self.get_register(collection)?;
 
-                let result = match collection_value {
-                    Value::Set(set_elements) => Value::Bool(set_elements.contains(value_to_check)),
-                    Value::Array(array_items) => Value::Bool(array_items.contains(value_to_check)),
-                    Value::Object(object_fields) => Value::Bool(
+                let result = match *collection_value {
+                    Value::Set(ref set_elements) => {
+                        Value::Bool(set_elements.contains(value_to_check))
+                    }
+                    Value::Array(ref array_items) => {
+                        Value::Bool(array_items.contains(value_to_check))
+                    }
+                    Value::Object(ref object_fields) => Value::Bool(
                         object_fields.contains_key(value_to_check)
                             || object_fields.values().any(|v| v == value_to_check),
                     ),
                     _ => Value::Bool(false),
                 };
 
-                self.registers[dest as usize] = result;
+                self.set_register(dest, result)?;
                 Ok(InstructionOutcome::Continue)
             }
             Count { dest, collection } => {
-                let collection_value = &self.registers[collection as usize];
+                let collection_value = self.get_register(collection)?;
 
-                let result = match collection_value {
-                    Value::Array(array_items) => Value::from(array_items.len()),
-                    Value::Object(object_fields) => Value::from(object_fields.len()),
-                    Value::Set(set_elements) => Value::from(set_elements.len()),
+                let result = match *collection_value {
+                    Value::Array(ref array_items) => Value::from(array_items.len()),
+                    Value::Object(ref object_fields) => Value::from(object_fields.len()),
+                    Value::Set(ref set_elements) => Value::from(set_elements.len()),
                     _ => Value::Undefined,
                 };
 
-                self.registers[dest as usize] = result;
+                self.set_register(dest, result)?;
                 Ok(InstructionOutcome::Continue)
             }
             other => self.execute_loop_instruction(program, other),
@@ -682,8 +727,17 @@ impl RegoVM {
         use Instruction::*;
         match instruction {
             LoopStart { params_index } => {
-                let loop_params = &self.program.instruction_data.loop_params[params_index as usize];
-                let mode = loop_params.mode.clone();
+                let loop_params_len = program.instruction_data.loop_params.len();
+
+                let loop_params = program
+                    .instruction_data
+                    .get_loop_params(params_index)
+                    .ok_or(VmError::InvalidLoopParams {
+                        index: params_index,
+                        pc: self.pc,
+                        available: loop_params_len,
+                    })?;
+                let mode = loop_params.mode;
                 let params = LoopParams {
                     collection: loop_params.collection,
                     key_reg: loop_params.key_reg,
@@ -703,7 +757,7 @@ impl RegoVM {
                 Ok(InstructionOutcome::Continue)
             }
             Halt {} => {
-                let result = self.registers[0].clone();
+                let result = self.get_register(0)?.clone();
                 Ok(InstructionOutcome::Return(result))
             }
             other => self.execute_virtual_instruction(program, other),
@@ -723,20 +777,23 @@ impl RegoVM {
                     .get_chained_index_params(params_index)
                     .ok_or(VmError::InvalidChainedIndexParams {
                         index: params_index,
+                        pc: self.pc,
+                        available: program.instruction_data.chained_index_params.len(),
                     })?;
 
-                let mut current_value = self.registers[params.root as usize].clone();
+                let mut current_value = self.get_register(params.root)?.clone();
 
                 for component in &params.path_components {
-                    let key_value = match component {
+                    let key_value = match *component {
                         LiteralOrRegister::Literal(idx) => program
                             .literals
-                            .get(*idx as usize)
+                            .get(usize::from(idx))
                             .ok_or(VmError::LiteralIndexOutOfBounds {
-                                index: *idx as usize,
+                                index: idx,
+                                pc: self.pc,
                             })?
                             .clone(),
-                        LiteralOrRegister::Register(reg) => self.registers[*reg as usize].clone(),
+                        LiteralOrRegister::Register(reg) => self.get_register(reg)?.clone(),
                     };
 
                     current_value = current_value[&key_value].clone();
@@ -746,7 +803,7 @@ impl RegoVM {
                     }
                 }
 
-                self.registers[params.dest as usize] = current_value;
+                self.set_register(params.dest, current_value)?;
                 Ok(InstructionOutcome::Continue)
             }
             VirtualDataDocumentLookup { params_index } => {
@@ -759,6 +816,8 @@ impl RegoVM {
                     .get_comprehension_begin_params(params_index)
                     .ok_or(VmError::InvalidComprehensionBeginParams {
                         index: params_index,
+                        pc: self.pc,
+                        available: program.instruction_data.comprehension_begin_params.len(),
                     })?
                     .clone();
                 self.execute_comprehension_begin(&params)?;
@@ -772,10 +831,10 @@ impl RegoVM {
                 self.execute_comprehension_end()?;
                 Ok(InstructionOutcome::Continue)
             }
-            unexpected => Err(VmError::Internal(alloc::format!(
-                "Unhandled instruction variant: {:?}",
-                unexpected
-            ))),
+            unexpected => Err(VmError::UnhandledInstruction {
+                instruction: alloc::format!("{:?}", unexpected),
+                pc: self.pc,
+            }),
         }
     }
 }

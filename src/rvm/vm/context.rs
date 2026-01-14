@@ -1,10 +1,5 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![allow(
-    clippy::arithmetic_side_effects,
-    clippy::missing_const_for_fn,
-    clippy::pattern_type_mismatch
-)]
 
 use crate::rvm::instructions::{ComprehensionMode, LoopMode};
 use crate::value::Value;
@@ -49,18 +44,18 @@ pub enum IterationState {
 }
 
 impl IterationState {
-    pub(super) fn advance(&mut self) {
-        match self {
-            IterationState::Array { index, .. } => {
-                *index += 1;
+    pub(super) const fn advance(&mut self) {
+        match *self {
+            Self::Array { ref mut index, .. } => {
+                *index = index.saturating_add(1);
             }
-            IterationState::Object {
-                first_iteration, ..
-            } => {
-                *first_iteration = false;
+            Self::Object {
+                ref mut first_iteration,
+                ..
             }
-            IterationState::Set {
-                first_iteration, ..
+            | Self::Set {
+                ref mut first_iteration,
+                ..
             } => {
                 *first_iteration = false;
             }
