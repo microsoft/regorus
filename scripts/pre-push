@@ -4,37 +4,4 @@
 
 set -eo pipefail
 
-if [ -f Cargo.toml ]; then
-   # Run precommit checks.
-   dir=$(dirname "${BASH_SOURCE[0]}")
-   "$dir/pre-commit"
-
-   # Ensure that the public API works.
-   cargo test --doc
-
-   # Ensure that no_std build succeeds.
-   # Build for a target that has no std available.
-   if command -v rustup > /dev/null; then
-       rustup target add thumbv7m-none-eabi
-       (cd tests/ensure_no_std; cargo build -r --target thumbv7m-none-eabi)
-   fi
-
-   # Ensure that we can build with only std.
-   cargo build --example regorus --no-default-features --features std
-
-   # Ensure that we can build with all features.
-   cargo build --all-features
-   
-   # Ensure that all tests pass.
-   cargo test
-   cargo test --test aci
-   cargo test --test kata
-
-   # Ensure that all tests pass with extensions
-   cargo test --features rego-extensions
-   cargo test --test aci --features rego-extensions
-   cargo test --test kata --features rego-extensions
-
-   # Ensure that OPA conformance tests don't regress.
-   cargo test --features opa-testutil,serde_json/arbitrary_precision,rego-extensions --test opa -- $(tr '\n' ' ' < tests/opa.passing)
-fi
+cargo xtask pre-push

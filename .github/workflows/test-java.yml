@@ -23,25 +23,15 @@ jobs:
           java-version: 8
           distribution: "corretto"
       - uses: ./.github/actions/toolchains/rust
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: ${{ runner.os }}-regorus
+      - name: Fetch dependencies
+        run: cargo fetch --locked
 
-      - name: Building binding
-        run: |
-          cargo clippy --all-targets --no-deps -- -Dwarnings
-          cargo build --release --manifest-path bindings/java/Cargo.toml --locked
+      - name: Fetch Java crate dependencies
+        run: cargo fetch --locked --manifest-path bindings/java/Cargo.toml
 
-      - name: Capture binding version
-        run: |
-          version=$(cargo metadata --manifest-path bindings/java/Cargo.toml --format-version 1 \
-            | jq -r '.packages[] | select(.name == "regorus-java") | .version')
-          echo "REGORUS_JAVA_VERSION=$version" >> "$GITHUB_ENV"
-
-      - name: Build jar
-        run: mvn package
-        working-directory: ./bindings/java
-
-      - name: Test jar
-        run: |
-          jar="regorus-java-${REGORUS_JAVA_VERSION}.jar"
-          javac -cp "target/${jar}" Test.java
-          java -Djava.library.path=target/release -cp "target/${jar}:." Test
-        working-directory: ./bindings/java
+      - name: Run Java smoke tests via xtask
+        run: cargo xtask test-java --release --frozen

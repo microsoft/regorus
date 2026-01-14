@@ -34,20 +34,19 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: ./.github/actions/toolchains/rust
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: ${{ runner.os }}-regorus
 
       - name: Install required cargo
         run: cargo install clippy-sarif sarif-fmt
 
       - name: Fetch
-        run: cargo fetch
+        run: cargo fetch --locked
 
       - name: Run rust-clippy
-        run:
-          cargo clippy
-          --all-features
-          --frozen
-          --message-format=json | clippy-sarif | tee rust-clippy-results.sarif | sarif-fmt
-
+        run: cargo xtask clippy --sarif rust-clippy-results.sarif
         continue-on-error: true
 
       - name: Upload analysis results to GitHub

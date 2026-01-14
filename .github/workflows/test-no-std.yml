@@ -22,9 +22,14 @@ jobs:
     - uses: ./.github/actions/toolchains/rust
       with:
         targets: thumbv7m-none-eabi
-    - name: Fetch
-      run: cargo fetch
-    - name: Build
-      run: cargo build -r --target thumbv7m-none-eabi --frozen
-      working-directory: ./tests/ensure_no_std
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      with:
+        shared-key: ${{ runner.os }}-regorus
+    - name: Fetch dependencies
+      run: cargo fetch --locked
+    - name: Fetch ensure_no_std crate dependencies
+      run: cargo fetch --locked --manifest-path tests/ensure_no_std/Cargo.toml --target thumbv7m-none-eabi
+    - name: Test no-std
+      run: cargo xtask test-no-std --release --frozen
 

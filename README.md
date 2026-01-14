@@ -274,6 +274,19 @@ Benchmark 1: opa eval -b tests/aci -d tests/aci/data.json -i tests/aci/input.jso
   Range (min … max):    43.8 ms …  46.7 ms    62 runs
 
 ```
+
+## Contributor Workflow
+
+Regorus uses a small companion CLI under the `xtask` package to keep CI and local development in sync.
+The commands mirror our GitHub Actions jobs, making it easy to dry-run CI steps before sending a pull request.
+
+- Run the full release pipeline with `cargo xtask ci-release` and the debug checks with `cargo xtask ci-debug`.
+- Exercise language bindings through focused helpers such as `cargo xtask test-java --release --frozen` or `cargo xtask test-go`.
+- Use `cargo xtask test-musl --release --frozen` for the cross-compilation matrix and `cargo xtask test-no-std` for embedded targets.
+- Formatting (`cargo xtask fmt`) and linting (`cargo xtask clippy --sarif`) wrap the usual Cargo tooling while matching CI defaults.
+
+The workflows in `.github/workflows` invoke the same commands, so keeping local runs green is usually enough to satisfy the checks enforced on `main`.
+
 ## OPA Conformance
 
 Regorus has been verified to be compliant with [OPA v1.2.0](https://github.com/open-policy-agent/opa/releases/tag/v1.2.0)

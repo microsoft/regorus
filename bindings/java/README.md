@@ -32,6 +32,13 @@ $ mvn package
 
 And you will have a JAR at `./target/regorus-java-0.1.5.jar`.
 
+### Automation
+
+The repository exposes helper commands for local workflows:
+
+- `cargo xtask build-java` runs `mvn package` with quiet output helpers.
+- `cargo xtask test-java` rebuilds the native library via the Maven exec plugin and executes the binding tests.
+
 ## Usage
 
 You can use Regorus Java bindings as:

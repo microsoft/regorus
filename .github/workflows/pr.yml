@@ -21,33 +21,11 @@ jobs:
     - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
     - name: Setup Rust toolchain
       uses: ./.github/actions/toolchains/rust
-    - name: Format Check
-      run: cargo fmt --check
-    - name: Fetch
-      run: cargo fetch
-    - name: Build (all features)
-      run: cargo build -r --all-features --frozen
-    - name: Build
-      run: cargo build -r --frozen
-    - name: Test no_std
-      run: cargo test -r --no-default-features --frozen
-    - name: Build only std
-      run: cargo build -r --example regorus --no-default-features --features "std" --frozen
-    - name: Doc Tests
-      run: cargo test -r --doc --frozen
-    - name: Run tests
-      run: cargo test -r --frozen
-    - name: Run example
-      run: cargo run --example regorus --frozen -- eval -d examples/server/allowed_server.rego -i examples/server/input.json data.example
-    - name: Run tests (ACI)
-      run: cargo test -r --test aci --frozen
-    - name: Run tests (KATA)
-      run: cargo test -r --test kata --frozen
-    - name: Run tests (OPA Conformance)
-      run: >-
-        cargo test -r --test opa --frozen --features opa-testutil,serde_json/arbitrary_precision  -- $(tr '\n' ' ' < tests/opa.passing)
-    - name: Run tests (Azure Policy)
-      run: >-
-        cargo test --frozen --features azure_policy
-    - name: Run tests (Azure RBAC)
-      run: cargo test -r --frozen --features azure-rbac
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      with:
+        shared-key: ${{ runner.os }}-regorus
+    - name: Fetch dependencies
+      run: cargo fetch --locked
+    - name: Run release CI suite
+      run: cargo xtask ci-release --frozen
