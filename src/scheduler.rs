@@ -337,8 +337,9 @@ impl Analyzer {
             }
 
             for import in &m.imports {
-                if let Some(var) = &import.r#as {
-                    scope.unscoped.insert(var.source_str());
+                // Ensure default alias imports (e.g. import data.pkg.mod) are visible to this scope.
+                if let Some(alias_span) = import_alias_span(import) {
+                    scope.unscoped.insert(alias_span.source_str());
                 }
             }
         }
@@ -1167,8 +1168,8 @@ pub fn compute_module_globals(
 
         // Add import aliases specific to this module
         for import in &m.imports {
-            if let Some(var) = &import.r#as {
-                crate::Rc::make_mut(&mut module_globals).insert(var.text().to_string());
+            if let Some(alias_span) = import_alias_span(import) {
+                crate::Rc::make_mut(&mut module_globals).insert(alias_span.text().to_string());
             }
         }
 
@@ -1197,4 +1198,21 @@ pub fn compute_module_globals(
     }
 
     Ok(result)
+}
+
+// Extract the binding name an import contributes, even without an explicit `as` clause.
+fn import_alias_span(import: &Import) -> Option<Span> {
+    if let Some(alias) = &import.r#as {
+        return Some(alias.clone());
+    }
+
+    match import.refr.as_ref() {
+        RefDot { field, .. } => Some(field.0.clone()),
+        RefBrack { index, .. } => match index.as_ref() {
+            Expr::String { span, .. } => Some(span.clone()),
+            _ => None,
+        },
+        Var { span, .. } => Some(span.clone()),
+        _ => None,
+    }
 }

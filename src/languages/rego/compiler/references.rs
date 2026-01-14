@@ -335,7 +335,18 @@ impl<'a> Compiler<'a> {
             }
         }
 
-        // No rule found - undefined variable
+        // No rule found; fall back to module-level imports.
+        let import_key = format!("{}.{}", &self.current_package, root);
+        if let Some(import_expr) = self.policy.inner.imports.get(&import_key) {
+            let import_reg =
+                self.compile_rego_expr_with_span(import_expr, import_expr.span(), false)?;
+            if chain.components.is_empty() {
+                return Ok(import_reg);
+            }
+            return self.compile_chain_access(import_reg, &chain.components, span);
+        }
+
+        // No rule or import found - undefined variable
         Err(CompilerError::UndefinedVariable {
             name: root.to_string(),
         }
