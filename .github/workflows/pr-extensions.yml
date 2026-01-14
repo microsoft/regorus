@@ -21,18 +21,15 @@ jobs:
     - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
     - name: Setup Rust toolchain
       uses: ./.github/actions/toolchains/rust
-    - name: Build only std
-      run: cargo build -r --example regorus --no-default-features --features "std,rego-extensions"
-    - name: Doc Tests
-      run: cargo test -r --doc --features rego-extensions
-    - name: Run tests
-      run: cargo test -r --features rego-extensions
-    - name: Run example
-      run: cargo run --example regorus --features rego-extensions -- eval -d examples/server/allowed_server.rego -i examples/server/input.json data.example
-    - name: Run tests (ACI)
-      run: cargo test -r --test aci --features rego-extensions
-    - name: Run tests (KATA)
-      run: cargo test -r --test kata --features rego-extensions
-    - name: Run tests (OPA Conformance)
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      with:
+        shared-key: ${{ runner.os }}-regorus
+    - name: Fetch dependencies
+      run: cargo fetch --locked
+    - name: Run rego extensions CI suite
       run: >-
-        cargo test -r --test opa --features opa-testutil,serde_json/arbitrary_precision,rego-extensions  -- $(tr '\n' ' ' < tests/opa.passing)
+        cargo xtask ci-release --frozen --features rego-extensions
+        --skip-all-features-build --skip-no-default-features-tests
+        --skip-azure-policy --skip-azure-rbac
+        --opa-features "opa-testutil,serde_json/arbitrary_precision,rego-extensions"

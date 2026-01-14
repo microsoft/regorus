@@ -26,7 +26,7 @@ jobs:
 
       - name: Build Python extension
         run: |
-          cargo fetch
+          cargo fetch --locked
           cargo clippy --all-targets --no-deps -- -Dwarnings
           cargo build --release --target ${{ matrix.target }} --frozen
         working-directory: bindings/python
@@ -59,7 +59,7 @@ jobs:
 
       - name: Build Python extension
         run: |
-          cargo fetch
+          cargo fetch --locked
           cargo clippy --all-targets --no-deps -- -Dwarnings
           cargo build --release --target ${{ matrix.host.target }} --frozen
         working-directory: bindings/python
@@ -90,7 +90,7 @@ jobs:
 
       - name: Build Python extension
         run: |
-          cargo fetch
+          cargo fetch --locked
           cargo clippy --all-targets --no-deps -- -Dwarnings
           cargo build --release --target ${{ matrix.host.target }} --frozen
         working-directory: bindings/python

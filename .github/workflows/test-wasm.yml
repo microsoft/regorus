@@ -20,6 +20,15 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: ./.github/actions/toolchains/rust
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: ${{ runner.os }}-regorus
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+
+      - name: Fetch WASM crate dependencies
+        run: cargo fetch --locked --manifest-path bindings/wasm/Cargo.toml
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -29,11 +38,5 @@ jobs:
       - name: Install wasmlpack
         run: cargo install wasm-pack
 
-      - name: Test wasm binding
-        run: |
-          cd bindings/wasm
-          cargo fetch
-          cargo clippy --all-targets --no-deps -- -Dwarnings
-          wasm-pack build --target nodejs --release
-          wasm-pack test --release --node
-          node test.js
+      - name: Test wasm binding via xtask
+        run: cargo xtask test-wasm --release --frozen --node node

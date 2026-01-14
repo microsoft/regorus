@@ -10,6 +10,10 @@ Regorus can be used in Python via `regorus` package. (It is not yet available in
 
 See [Repository](https://github.com/microsoft/regorus).
 
+## Automation
+
+Run `cargo xtask build-python` to produce wheels via maturin, or `cargo xtask test-python` to reinstall the package locally and execute the sample script and pytest suite.
+
 To build this binding, see [building](https://github.com/microsoft/regorus/blob/main/bindings/python/building.md)
 
 ## Usage

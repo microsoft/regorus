@@ -12,6 +12,10 @@ See [Repository](https://github.com/microsoft/regorus).
 
 To build this binding, see [building.md](https://github.com/microsoft/regorus/blob/main/bindings/wasm/building.md)
 
+## Automation
+
+Run `cargo xtask build-wasm` to invoke wasm-pack with sensible defaults, or `cargo xtask test-wasm` to rebuild the package and execute `node test.js`.
+
 
 
 ## Usage
