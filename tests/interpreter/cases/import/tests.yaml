@@ -56,6 +56,109 @@ cases:
         a: 10
         c: 22
         r: true
+  - note: import data inside rule body
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        a_value := "a_value"
+
+      - |
+        package rules
+        import data.lib
+        import rego.v1
+
+        sample if {
+          lib.a_value == "a_value"
+        }
+    query: data.rules.sample
+    want_result: true
+
+  - note: import data alias
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        value := "a_value"
+
+      - |
+        package rules
+        import data.lib as mylib
+        import rego.v1
+
+        sample if {
+          mylib.value == "a_value"
+        }
+    query: data.rules.sample
+    want_result: true
+
+  - note: import nested package chain
+    modules:
+      - |
+        package lib.inner
+        import rego.v1
+
+        nested := {"key": "value"}
+
+      - |
+        package rules
+        import data.lib.inner
+        import rego.v1
+
+        lookup := value if {
+          value := inner.nested.key
+        }
+    query: data.rules.lookup
+    want_result: "value"
+
+  - note: import alias shadowed by rule
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        value := "from data"
+
+      - |
+        package rules
+        import data.lib as lib_alias
+        import rego.v1
+
+        lib_alias := {"value": "from rule"}
+
+        # TODO: 
+        # OPA currently reports this rule as undefined. This implies that
+        # lib_alias retains the imported value eventhough there is a rule
+        # with same name. In regorus, the rule takes precedence.
+        # Needs investigation to figure out which behavior is correct. 
+        shadow if {
+          lib_alias.value == "from rule"
+        }
+    query: data.rules.shadow
+    want_result: true
+
+
+  - note: import used in comprehension
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        dataset := {"a", "b"}
+
+      - |
+        package rules
+        import data.lib
+        import rego.v1
+
+        present if {
+          some item in lib.dataset
+          item == "b"
+        }
+    query: data.rules.present
+    want_result: true
         
   - note: import overridden by rule
     modules:

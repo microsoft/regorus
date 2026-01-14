@@ -1,0 +1,97 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: import_data_inside_rule_body
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        a_value := "a_value"
+
+      - |
+        package rules
+        import data.lib
+        import rego.v1
+
+        sample if {
+          lib.a_value == "a_value"
+        }
+    query: data.rules.sample
+    want_result: true
+  - note: import_data_alias
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        value := "a_value"
+
+      - |
+        package rules
+        import data.lib as mylib
+        import rego.v1
+
+        sample if {
+          mylib.value == "a_value"
+        }
+    query: data.rules.sample
+    want_result: true
+  - note: import_nested_package_chain
+    modules:
+      - |
+        package lib.inner
+        import rego.v1
+
+        nested := {"key": "value"}
+
+      - |
+        package rules
+        import data.lib.inner
+        import rego.v1
+
+        lookup := value if {
+          value := inner.nested.key
+        }
+    query: data.rules.lookup
+    want_result: "value"
+  - note: import_alias_shadowed_by_rule
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        value := "from data"
+
+      - |
+        package rules
+        import data.lib as lib_alias
+        import rego.v1
+
+        lib_alias := {"value": "from rule"}
+
+        shadow if {
+          lib_alias.value == "from rule"
+        }
+    query: data.rules.shadow
+    want_result: true
+  - note: import_used_in_comprehension
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        dataset := {"a", "b"}
+
+      - |
+        package rules
+        import data.lib
+        import rego.v1
+
+        present if {
+          some item in lib.dataset
+          item == "b"
+        }
+    query: data.rules.present
+    want_result: true
