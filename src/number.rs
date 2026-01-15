@@ -686,11 +686,10 @@ impl Number {
     }
 
     fn ensure_integers(a: &Number, b: &Number) -> Option<(BigInt, BigInt)> {
-        if a.is_integer() && b.is_integer() {
-            Some((a.to_bigint_owned()?, b.to_bigint_owned()?))
-        } else {
-            None
-        }
+        (a.is_integer() && b.is_integer())
+            .then_some(())
+            .and_then(|_| a.to_bigint_owned())
+            .and_then(|a_int| b.to_bigint_owned().map(|b_int| (a_int, b_int)))
     }
 
     fn ensure_integer(&self) -> Option<BigInt> {
