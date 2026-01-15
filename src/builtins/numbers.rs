@@ -10,7 +10,7 @@
 
 use crate::ast::{ArithOp, Expr, Ref};
 use crate::builtins;
-use crate::builtins::utils::{ensure_args_count, ensure_numeric};
+use crate::builtins::utils::{enforce_limit, ensure_args_count, ensure_numeric};
 use crate::lexer::Span;
 use crate::number::Number;
 use crate::value::Value;
@@ -112,8 +112,12 @@ fn range(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Res
     while v != v2 {
         values.push(Value::from(v.clone()));
         v.add_assign(&incr)?;
+        // Guard vector growth while we enumerate the range.
+        enforce_limit()?;
     }
     values.push(Value::from(v));
+    // Guard the last push before materializing the array.
+    enforce_limit()?;
     Ok(Value::from_array(values))
 }
 
@@ -152,6 +156,8 @@ fn range_step(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -
     while (v <= v2 && incr.is_positive()) || (v >= v2 && !incr.is_positive()) {
         values.push(Value::from(v.clone()));
         v.add_assign(&incr)?;
+        // Guard vector growth as the stepped range accumulates.
+        enforce_limit()?;
     }
 
     Ok(Value::from_array(values))

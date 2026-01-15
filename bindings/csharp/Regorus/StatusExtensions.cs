@@ -17,7 +17,7 @@ namespace Regorus.Internal
             {
                 RegorusStatus.Panic => new InvalidOperationException($"Regorus engine panicked: {details}"),
                 RegorusStatus.Poisoned => new InvalidOperationException($"Regorus engine is poisoned: {details}"),
-                _ => new Exception(details),
+                _ => new InvalidOperationException(details),
             };
         }
     }

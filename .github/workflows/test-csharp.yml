@@ -11,7 +11,7 @@ on:
     - cron: "0 8 * * *"
 
 env:
-  VersionSuffix: ${{ github.event_name == 'workflow_dispatch' && 'manualtrigger' || null }}
+  VersionSuffix: ${{ github.run_id }}
 
 jobs:  
   build-ffi:
@@ -95,11 +95,11 @@ jobs:
 
       # Note that we need to supply the target folder within the folder where artifacts are downloaded.
       - name: Build Regorus binding
-        run: dotnet build /p:Configuration=Release /p:RegorusFFIArtifactsDir=./tmp/bindings/ffi/target
+        run: dotnet build /p:Configuration=Release /p:RegorusFFIArtifactsDir=./tmp/bindings/ffi/target /p:VersionSuffix=${{ env.VersionSuffix }}
         working-directory: ./bindings/csharp/Regorus
 
       - name: Pack
-        run: dotnet pack /p:RegorusFFIArtifactsDir=./tmp/bindings/ffi/target
+        run: dotnet pack /p:RegorusFFIArtifactsDir=./tmp/bindings/ffi/target /p:VersionSuffix=${{ env.VersionSuffix }}
         working-directory: ./bindings/csharp/Regorus
 
       - name: Upload Regorus nuget
@@ -144,15 +144,15 @@ jobs:
           path: ./bindings/csharp/regorus-nuget/
 
       - name: Restore Regorus.Tests
-        run: dotnet restore /p:RestoreAdditionalProjectSources=../regorus-nuget /p:UseLocalRegorus=false
+        run: dotnet restore /p:UseLocalRegorus=false /p:VersionSuffix=${{ env.VersionSuffix }} /p:RestoreAdditionalProjectSources=../regorus-nuget
         working-directory: ./bindings/csharp/Regorus.Tests
 
       - name: Run Regorus.Tests
-        run: dotnet test --no-restore -p:UseLocalRegorus=false
+        run: dotnet test --no-restore /p:UseLocalRegorus=false /p:VersionSuffix=${{ env.VersionSuffix }}
         working-directory: ./bindings/csharp/Regorus.Tests
 
       - name: Restore TestApp
-        run: dotnet restore /p:RestoreAdditionalProjectSources=../regorus-nuget
+        run: dotnet restore /p:VersionSuffix=${{ env.VersionSuffix }} /p:RestoreAdditionalProjectSources=../regorus-nuget
         working-directory: ./bindings/csharp/TestApp
 
       - name: Build TestApp
@@ -164,7 +164,7 @@ jobs:
         working-directory: ./bindings/csharp/TestApp
 
       - name: Restore TargetExampleApp
-        run: dotnet restore /p:RestoreAdditionalProjectSources=../regorus-nuget
+        run: dotnet restore /p:VersionSuffix=${{ env.VersionSuffix }} /p:RestoreAdditionalProjectSources=../regorus-nuget
         working-directory: ./bindings/csharp/TargetExampleApp
 
       - name: Build TargetExampleApp
@@ -174,5 +174,3 @@ jobs:
       - name: Run TargetExampleApp
         run: dotnet run --no-build --framework net8.0
         working-directory: ./bindings/csharp/TargetExampleApp
-
-      

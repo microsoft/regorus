@@ -5,7 +5,7 @@
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
-use crate::builtins::utils::{ensure_args_count, ensure_numeric};
+use crate::builtins::utils::{enforce_limit, ensure_args_count, ensure_numeric};
 use crate::lexer::Span;
 use crate::number::Number;
 use crate::value::Value;
@@ -104,7 +104,15 @@ fn sort(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Res
             Value::from(ac)
         }
         // Sorting a set produces array.
-        Value::Set(a) => Value::from(a.iter().cloned().collect::<Vec<Value>>()),
+        Value::Set(a) => {
+            let mut items = Vec::with_capacity(a.len());
+            for value in a.iter() {
+                items.push(value.clone());
+                // Guard array growth while materializing the sorted set.
+                enforce_limit()?;
+            }
+            Value::from(items)
+        }
         a => {
             let span = params[0].span();
             bail!(span.error(format!("`sort` requires array/set argument. Got `{a}`.").as_str()))

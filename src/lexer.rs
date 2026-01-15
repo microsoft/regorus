@@ -20,6 +20,11 @@ use crate::Value;
 
 use anyhow::{anyhow, bail, Result};
 
+#[inline]
+fn check_memory_limit() -> Result<()> {
+    crate::utils::limits::check_memory_limit_if_needed().map_err(|err| anyhow!(err))
+}
+
 // Maximum column width to prevent overflow and catch pathological input.
 // Lines exceeding this are likely minified/generated code or attack attempts.
 const MAX_COL: u32 = 1024;
@@ -185,6 +190,8 @@ impl Source {
                     bail!("{file} exceeds maximum allowed line count {MAX_LINES}");
                 }
                 lines.push((start, end));
+                // Enforce the current global memory cap after recording each line span.
+                check_memory_limit()?;
                 start = i_u32.saturating_add(1);
             }
             prev_ch = ch;
@@ -197,14 +204,20 @@ impl Source {
                 bail!("{file} exceeds maximum allowed line count {MAX_LINES}");
             }
             lines.push((start, usize_to_u32(contents.len())?));
+            // Enforce the global limit after appending the final line span.
+            check_memory_limit()?;
         } else if contents.is_empty() {
             lines.push((0, 0));
+            // Enforce the global limit even for empty sources.
+            check_memory_limit()?;
         } else {
             let s = usize_to_u32(contents.len().saturating_sub(1))?;
             if lines.len() >= MAX_LINES {
                 bail!("{file} exceeds maximum allowed line count {MAX_LINES}");
             }
             lines.push((s, s));
+            // Enforce the global limit after storing the trailing span.
+            check_memory_limit()?;
         }
         Ok(Self {
             src: Rc::new(SourceInternal {
@@ -536,8 +549,8 @@ impl<'source> Lexer<'source> {
             .get(start..end)
             .ok_or_else(|| self.source.error(self.line, col, "invalid number span"))?;
 
-        match serde_json::from_str::<Value>(num_slice) {
-            Ok(_) => (),
+        let parsed_number = match serde_json::from_str::<Value>(num_slice) {
+            Ok(value) => value,
             Err(e) => {
                 let serde_msg = &e.to_string();
                 let msg = match &serde_msg {
@@ -558,7 +571,11 @@ impl<'source> Lexer<'source> {
                     msg
                 )
             }
-        }
+        };
+
+        // Enforce the global memory limit after serde allocates the temporary Value.
+        check_memory_limit()?;
+        drop(parsed_number);
 
         Ok(Token(
             TokenKind::Number,
@@ -601,6 +618,7 @@ impl<'source> Lexer<'source> {
             // Guard against invalid span that would underflow end - 1
             return Err(self.source.error(line, col, "invalid raw string span"));
         }
+        check_memory_limit()?;
         Ok(Token(
             TokenKind::RawString,
             Span {
@@ -710,6 +728,8 @@ impl<'source> Lexer<'source> {
             }
         }
 
+        check_memory_limit()?;
+
         Ok(Token(
             TokenKind::String,
             Span {
@@ -777,6 +797,8 @@ impl<'source> Lexer<'source> {
         self.iter.next();
         let end = self.peek().0;
         self.advance_col(usize_to_u32(end.saturating_sub(start))?)?;
+
+        check_memory_limit()?;
 
         Ok(Token(
             TokenKind::String,
@@ -846,174 +868,175 @@ impl<'source> Lexer<'source> {
         let start_u32 = usize_to_u32(start)?;
         let col = self.col;
 
-        match chr {
-	    // Special case for - followed by digit which is a
-	    // negative json number.
-	    // . followed by digit is invalid number.
-	    '-' | '.' if self.peekahead(1).1.is_ascii_digit() => {
-		self.read_number()
-	    }
-        // grouping characters
-        '{' | '}' | '[' | ']' | '(' | ')' |
-        // arith operator
-        '+' | '-' | '*' | '/' | '%' |
-        // separators
-        ',' | ';' | '.' => {
-        self.advance_col(1)?;
-        self.iter.next();
-        Ok(Token(TokenKind::Symbol, Span {
-            source: self.source.clone(),
-            line: self.line,
-            col,
-            start: start_u32,
-            end: start_u32.saturating_add(1),
-        }))
-        }
-	    #[cfg(feature = "azure-rbac")]
-	    // RBAC logical AND operator (&&)
-        '&' if self.enable_rbac_tokens && self.peekahead(1).1 == '&' => {
-		self.advance_col(2)?;
-		self.iter.next();
-		self.iter.next();
-		Ok(Token(TokenKind::AzureRbac(AzureRbacTokenKind::LogicalAnd), Span {
-		    source: self.source.clone(),
-		    line: self.line,
-		    col,
-            start: start_u32,
-            end: start_u32.saturating_add(2),
-		}))
-	    }
-	    #[cfg(feature = "azure-rbac")]
-	    // RBAC logical OR operator (||)
-        '|' if self.enable_rbac_tokens && self.peekahead(1).1 == '|' => {
-		self.advance_col(2)?;
-		self.iter.next();
-		self.iter.next();
-		Ok(Token(TokenKind::AzureRbac(AzureRbacTokenKind::LogicalOr), Span {
-		    source: self.source.clone(),
-		    line: self.line,
-		    col,
-            start: start_u32,
-            end: start_u32.saturating_add(2),
-		}))
-	    }
-	    // Generic bin operators (when RBAC tokens not enabled or single & |)
-        '&' | '|' => {
-		self.advance_col(1)?;
-		self.iter.next();
-		Ok(Token(TokenKind::Symbol, Span {
-		    source: self.source.clone(),
-		    line: self.line,
-		    col,
-            start: start_u32,
-            end: start_u32.saturating_add(1),
-		}))
-	    }
-        ':' => {
-		self.advance_col(1)?;
-		self.iter.next();
-        let mut end = start_u32.saturating_add(1);
-		if self.peek().1 == '=' || (self.peek().1 == ':' && self.double_colon_token) {
-		    self.advance_col(1)?;
-		    self.iter.next();
-            end = end.saturating_add(1);
-		}
-		Ok(Token(TokenKind::Symbol, Span {
-		    source: self.source.clone(),
-		    line: self.line,
-		    col,
-            start: start_u32,
-		    end
-		}))
-	    }
-	    // < <= > >= = ==
-	    '<' | '>' | '=' => {
-		self.advance_col(1)?;
-		self.iter.next();
-		if self.peek().1 == '=' {
-		    self.advance_col(1)?;
-		    self.iter.next();
-		};
-		Ok(Token(TokenKind::Symbol, Span {
-		    source: self.source.clone(),
-		    line: self.line,
-		    col,
-            start: start_u32,
-            end: usize_to_u32(self.peek().0)?,
-		}))
-	    }
-	    '!' if self.peekahead(1).1 == '=' => {
-		self.advance_col(2)?;
-		self.iter.next();
-		self.iter.next();
-		Ok(Token(TokenKind::Symbol, Span {
-		    source: self.source.clone(),
-		    line: self.line,
-		    col,
-            start: start_u32,
-            end: usize_to_u32(self.peek().0)?,
-		}))
-	    }
-	    #[cfg(feature = "azure-rbac")]
-	    // RBAC @ token for attribute references
-        '@' if self.enable_rbac_tokens => {
-		self.advance_col(1)?;
-		self.iter.next();
-		Ok(Token(TokenKind::AzureRbac(AzureRbacTokenKind::At), Span {
-		    source: self.source.clone(),
-		    line: self.line,
-		    col,
-            start: start_u32,
-            end: start_u32.saturating_add(1),
-		}))
-	    }
-	    '"' => self.read_string(),
-	    #[cfg(feature = "azure-rbac")]
-	    '\'' if self.allow_single_quoted_strings => self.read_single_quoted_string(),
-	    '`' => self.read_raw_string(),
-	    '\x00' => Ok(Token(TokenKind::Eof, Span {
-		source: self.source.clone(),
-		line:self.line,
-		col,
-        start: start_u32,
-        end: start_u32
-	    })),
-	    _ if chr.is_ascii_digit() => self.read_number(),
-	    _ if chr.is_ascii_alphabetic() || chr == '_' => {
-		let mut ident = self.read_ident()?;
-		if ident.1.text() == "set" && self.peek().1 == '(' {
-		    // set immediately followed by ( is treated as set( if
-		    // the next token is ).
-		    let state = (self.iter.clone(), self.line, self.col);
-		    self.iter.next();
+        let token = match chr {
+            // Special case for - followed by digit which is a
+            // negative json number.
+            // . followed by digit is invalid number.
+            '-' | '.' if self.peekahead(1).1.is_ascii_digit() => self.read_number()?,
+            // grouping characters
+            '{' | '}' | '[' | ']' | '(' | ')' |
+            // arith operator
+            '+' | '-' | '*' | '/' | '%' |
+            // separators
+            ',' | ';' | '.' => {
+                self.advance_col(1)?;
+                self.iter.next();
+                Token(TokenKind::Symbol, Span {
+                    source: self.source.clone(),
+                    line: self.line,
+                    col,
+                    start: start_u32,
+                    end: start_u32.saturating_add(1),
+                })
+            }
+            #[cfg(feature = "azure-rbac")]
+            // RBAC logical AND operator (&&)
+            '&' if self.enable_rbac_tokens && self.peekahead(1).1 == '&' => {
+                self.advance_col(2)?;
+                self.iter.next();
+                self.iter.next();
+                Token(TokenKind::AzureRbac(AzureRbacTokenKind::LogicalAnd), Span {
+                    source: self.source.clone(),
+                    line: self.line,
+                    col,
+                    start: start_u32,
+                    end: start_u32.saturating_add(2),
+                })
+            }
+            #[cfg(feature = "azure-rbac")]
+            // RBAC logical OR operator (||)
+            '|' if self.enable_rbac_tokens && self.peekahead(1).1 == '|' => {
+                self.advance_col(2)?;
+                self.iter.next();
+                self.iter.next();
+                Token(TokenKind::AzureRbac(AzureRbacTokenKind::LogicalOr), Span {
+                    source: self.source.clone(),
+                    line: self.line,
+                    col,
+                    start: start_u32,
+                    end: start_u32.saturating_add(2),
+                })
+            }
+            // Generic bin operators (when RBAC tokens not enabled or single & |)
+            '&' | '|' => {
+                self.advance_col(1)?;
+                self.iter.next();
+                Token(TokenKind::Symbol, Span {
+                    source: self.source.clone(),
+                    line: self.line,
+                    col,
+                    start: start_u32,
+                    end: start_u32.saturating_add(1),
+                })
+            }
+            ':' => {
+                self.advance_col(1)?;
+                self.iter.next();
+                let mut end = start_u32.saturating_add(1);
+                if self.peek().1 == '=' || (self.peek().1 == ':' && self.double_colon_token) {
+                    self.advance_col(1)?;
+                    self.iter.next();
+                    end = end.saturating_add(1);
+                }
+                Token(TokenKind::Symbol, Span {
+                    source: self.source.clone(),
+                    line: self.line,
+                    col,
+                    start: start_u32,
+                    end,
+                })
+            }
+            // < <= > >= = ==
+            '<' | '>' | '=' => {
+                self.advance_col(1)?;
+                self.iter.next();
+                if self.peek().1 == '=' {
+                    self.advance_col(1)?;
+                    self.iter.next();
+                };
+                Token(TokenKind::Symbol, Span {
+                    source: self.source.clone(),
+                    line: self.line,
+                    col,
+                    start: start_u32,
+                    end: usize_to_u32(self.peek().0)?,
+                })
+            }
+            '!' if self.peekahead(1).1 == '=' => {
+                self.advance_col(2)?;
+                self.iter.next();
+                self.iter.next();
+                Token(TokenKind::Symbol, Span {
+                    source: self.source.clone(),
+                    line: self.line,
+                    col,
+                    start: start_u32,
+                    end: usize_to_u32(self.peek().0)?,
+                })
+            }
+            #[cfg(feature = "azure-rbac")]
+            // RBAC @ token for attribute references
+            '@' if self.enable_rbac_tokens => {
+                self.advance_col(1)?;
+                self.iter.next();
+                Token(TokenKind::AzureRbac(AzureRbacTokenKind::At), Span {
+                    source: self.source.clone(),
+                    line: self.line,
+                    col,
+                    start: start_u32,
+                    end: start_u32.saturating_add(1),
+                })
+            }
+            '"' => self.read_string()?,
+            #[cfg(feature = "azure-rbac")]
+            '\'' if self.allow_single_quoted_strings => self.read_single_quoted_string()?,
+            '`' => self.read_raw_string()?,
+            '\x00' => Token(TokenKind::Eof, Span {
+                source: self.source.clone(),
+                line: self.line,
+                col,
+                start: start_u32,
+                end: start_u32,
+            }),
+            _ if chr.is_ascii_digit() => self.read_number()?,
+            _ if chr.is_ascii_alphabetic() || chr == '_' => {
+                let mut ident = self.read_ident()?;
+                if ident.1.text() == "set" && self.peek().1 == '(' {
+                    // set immediately followed by ( is treated as set( if
+                    // the next token is ).
+                    let state = (self.iter.clone(), self.line, self.col);
+                    self.iter.next();
 
-		    // Check it next token is ).
-		    let next_tok = self.next_token()?;
-		    let is_setp = next_tok.1.text() == ")";
+                    // Check it next token is ).
+                    let next_tok = self.next_token()?;
+                    let is_setp = next_tok.1.text() == ")";
 
-		    // Restore state
-		    (self.iter, self.line, self.col) = state;
+                    // Restore state
+                    (self.iter, self.line, self.col) = state;
 
-		    if is_setp {
-			self.iter.next();
-			self.advance_col(1)?;
-            ident.1.end = ident.1.end.saturating_add(1);
-		    }
-		}
-		Ok(ident)
-	    }
-	    _ if self.unknown_char_is_symbol => {
-		self.advance_col(1)?;
-		self.iter.next();
-		Ok(Token(TokenKind::Symbol, Span {
-		    source: self.source.clone(),
-		    line: self.line,
-		    col,
-            start: start_u32,
-            end: start_u32.saturating_add(1),
-		}))
-	    }
-	    _ => Err(self.source.error(self.line, self.col, "invalid character"))
-	}
+                    if is_setp {
+                        self.iter.next();
+                        self.advance_col(1)?;
+                        ident.1.end = ident.1.end.saturating_add(1);
+                    }
+                }
+                ident
+            }
+            _ if self.unknown_char_is_symbol => {
+                self.advance_col(1)?;
+                self.iter.next();
+                Token(TokenKind::Symbol, Span {
+                    source: self.source.clone(),
+                    line: self.line,
+                    col,
+                    start: start_u32,
+                    end: start_u32.saturating_add(1),
+                })
+            }
+            _ => return Err(self.source.error(self.line, self.col, "invalid character")),
+        };
+
+        check_memory_limit()?;
+        Ok(token)
     }
 }

@@ -32,14 +32,14 @@ allow if {
 
 # Allow network security groups with proper inbound rules
 allow if {
-    input.type == ""Microsoft.Network/networkSecurityGroups""
-    count([rule | 
-        rule := input.properties.securityRules[_]
-        rule.properties.direction == ""Inbound""
-        rule.properties.access == ""Allow""
-        rule.properties.sourceAddressPrefix == ""*""
-        rule.properties.destinationPortRange in [parameters.allowedPorts]
-    ]) == 0
+        input.type == ""Microsoft.Network/networkSecurityGroups""
+        count([rule | 
+                rule := input.properties.securityRules[_]
+                rule.properties.direction == ""Inbound""
+                rule.properties.access == ""Allow""
+                rule.properties.sourceAddressPrefix == ""*""
+                rule.properties.destinationPortRange in [parameters.allowedPorts]
+        ]) == 0
 }";
 
     private const string AZURE_STORAGE_POLICY_ASSIGNMENT = @"
@@ -52,42 +52,42 @@ parameters.allowedPorts = [""22"", ""3389""]";
 
     // Test data constants
     private const string COMPLIANT_STORAGE_ACCOUNT = @"{
-  ""type"": ""Microsoft.Storage/storageAccounts"",
-  ""name"": ""compliantstorageacct"",
-  ""location"": ""eastus"",
-  ""kind"": ""StorageV2"",
-  ""properties"": {
-    ""supportsHttpsTrafficOnly"": true,
-    ""minimumTlsVersion"": ""TLS1_2"",
-    ""allowBlobPublicAccess"": false,
-    ""encryption"": {
-      ""services"": {
-        ""blob"": { ""enabled"": true },
-        ""file"": { ""enabled"": true }
-      }
+    ""type"": ""Microsoft.Storage/storageAccounts"",
+    ""name"": ""compliantstorageacct"",
+    ""location"": ""eastus"",
+    ""kind"": ""StorageV2"",
+    ""properties"": {
+        ""supportsHttpsTrafficOnly"": true,
+        ""minimumTlsVersion"": ""TLS1_2"",
+        ""allowBlobPublicAccess"": false,
+        ""encryption"": {
+            ""services"": {
+                ""blob"": { ""enabled"": true },
+                ""file"": { ""enabled"": true }
+            }
+        }
+    },
+    ""tags"": {
+        ""environment"": ""production""
     }
-  },
-  ""tags"": {
-    ""environment"": ""production""
-  }
 }";
 
     private const string NON_COMPLIANT_STORAGE_ACCOUNT = @"{
-  ""type"": ""Microsoft.Storage/storageAccounts"",
-  ""name"": ""insecurestorageacct"",
-  ""location"": ""westus"",
-  ""kind"": ""Storage"",
-  ""properties"": {
-    ""supportsHttpsTrafficOnly"": false,
-    ""minimumTlsVersion"": ""TLS1_0"",
-    ""allowBlobPublicAccess"": true,
-    ""encryption"": {
-      ""services"": {
-        ""blob"": { ""enabled"": false },
-        ""file"": { ""enabled"": false }
-      }
+    ""type"": ""Microsoft.Storage/storageAccounts"",
+    ""name"": ""insecurestorageacct"",
+    ""location"": ""westus"",
+    ""kind"": ""Storage"",
+    ""properties"": {
+        ""supportsHttpsTrafficOnly"": false,
+        ""minimumTlsVersion"": ""TLS1_0"",
+        ""allowBlobPublicAccess"": true,
+        ""encryption"": {
+            ""services"": {
+                ""blob"": { ""enabled"": false },
+                ""file"": { ""enabled"": false }
+            }
+        }
     }
-  }
 }";
 
     static void Main(string[] args)
@@ -96,6 +96,7 @@ parameters.allowedPorts = [""22"", ""3389""]";
 
         try
         {
+            DemonstrateMemoryLimitHelpers();
             DemonstrateTargetFunctionality();
             Console.WriteLine("\n=== Target demonstration completed successfully! ===");
         }
@@ -211,6 +212,45 @@ parameters.allowedPorts = [""22"", ""3389""]";
         Console.WriteLine($"✓ All threads consistent: {allConsistent}");
         Console.WriteLine($"✓ Approximate throughput: {totalEvaluations * 1000000.0 / maxTime:F0} evaluations/second");
         Console.WriteLine("✓ No locks required - CompiledPolicy is thread-safe!");
+    }
+
+    static void DemonstrateMemoryLimitHelpers()
+    {
+        Console.WriteLine("REGORUS MEMORY LIMIT UTILITIES");
+        Console.WriteLine("==============================");
+
+        var originalLimit = Regorus.MemoryLimits.GetGlobalMemoryLimit();
+        var originalThreshold = Regorus.MemoryLimits.GetThreadMemoryFlushThreshold();
+
+        try
+        {
+            const ulong demoLimit = 64 * 1024 * 1024;
+            Regorus.MemoryLimits.SetGlobalMemoryLimit(demoLimit);
+            Console.WriteLine($"✓ Global memory limit set to {Regorus.MemoryLimits.GetGlobalMemoryLimit():N0} bytes");
+
+            const ulong flushThreshold = 256 * 1024;
+            Regorus.MemoryLimits.SetThreadFlushThresholdOverride(flushThreshold);
+            Console.WriteLine($"✓ Thread flush threshold configured for {Regorus.MemoryLimits.GetThreadMemoryFlushThreshold():N0} bytes");
+
+            Console.WriteLine("Attempting an allocation that exceeds a 1 byte budget...");
+            Regorus.MemoryLimits.SetGlobalMemoryLimit(1);
+
+            using var engine = new Regorus.Engine();
+            var payload = new string('x', 128 * 1024);
+            engine.SetInputJson($"{{\"payload\":\"{payload}\"}}");
+        }
+        catch (InvalidOperationException error)
+        {
+            Console.WriteLine($"✗ Memory limit exceeded: {error.Message}");
+        }
+        finally
+        {
+            Regorus.MemoryLimits.SetThreadFlushThresholdOverride(null);
+            Regorus.MemoryLimits.SetGlobalMemoryLimit(originalLimit);
+            Regorus.MemoryLimits.FlushThreadMemoryCounters();
+        }
+
+        Console.WriteLine();
     }
 
     static void DemonstratePolicyInfo(Regorus.CompiledPolicy compiledPolicy)

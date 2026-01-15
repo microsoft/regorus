@@ -359,6 +359,18 @@ impl Interpreter {
         self.builtins_cache.clear();
     }
 
+    #[cfg(feature = "allocator-memory-limits")]
+    fn memory_check(&mut self) -> Result<()> {
+        let _ = self; // quiet clippy::unused_self; retained for symmetry with VM path
+        crate::utils::limits::check_memory_limit_if_needed().map_err(|err| anyhow!(err))
+    }
+
+    #[cfg(not(feature = "allocator-memory-limits"))]
+    fn memory_check(&mut self) -> Result<()> {
+        let _ = self; // quiet clippy::unused_self; retained for symmetry with VM path
+        Ok(())
+    }
+
     // Helper methods for working with ExprLookup
     fn set_loop_var_value(&mut self, expr: &ExprRef, value: Value) -> Result<()> {
         let module_idx = self.current_module_index;
@@ -1038,6 +1050,8 @@ impl Interpreter {
     }
 
     fn eval_stmt_impl(&mut self, stmt: &LiteralStmt, stmts: &[&LiteralStmt]) -> Result<bool> {
+        self.memory_check()?;
+
         Ok(match &stmt.literal {
             Literal::Expr { span, expr, .. } => {
                 let value = match expr.as_ref() {
@@ -1328,6 +1342,8 @@ impl Interpreter {
         stmts: &[&LiteralStmt],
         loops: &[HoistedLoop],
     ) -> Result<bool> {
+        self.memory_check()?;
+
         if loops.is_empty() {
             if let Some((first_stmt, tail_stmts)) = stmts.split_first() {
                 // Evaluate the current statement whose loop expressions have been hoisted.
@@ -1397,6 +1413,7 @@ impl Interpreter {
                 match loop_value {
                     Value::Array(items) => {
                         for item in items.iter() {
+                            self.memory_check()?;
                             self.set_loop_var_value(loop_target_expr, item.clone())?;
 
                             if self.execute_destructuring_plan(&walk_plan, item)?
@@ -1476,6 +1493,7 @@ impl Interpreter {
             match loop_value {
                 Value::Array(items) => {
                     for (idx, v) in items.iter().enumerate() {
+                        self.memory_check()?;
                         self.set_loop_var_value(loop_target_expr, v.clone())?;
 
                         if self.execute_destructuring_plan(&index_plan, &Value::from(idx))?
@@ -1497,6 +1515,7 @@ impl Interpreter {
                 }
                 Value::Set(items) => {
                     for v in items.iter() {
+                        self.memory_check()?;
                         self.set_loop_var_value(loop_target_expr, v.clone())?;
 
                         // For sets, index is also the value.
@@ -1516,6 +1535,7 @@ impl Interpreter {
                 }
                 Value::Object(obj) => {
                     for (k, v) in obj.iter() {
+                        self.memory_check()?;
                         self.set_loop_var_value(loop_target_expr, v.clone())?;
                         // For objects, index is key.
                         if self.execute_destructuring_plan(&index_plan, k)? == Value::from(true) {
@@ -1975,6 +1995,8 @@ impl Interpreter {
         let mut eval_success = true;
 
         for (idx, stmt) in stmts.iter().enumerate() {
+            self.memory_check()?;
+
             if !eval_success {
                 break;
             }
@@ -2334,6 +2356,7 @@ impl Interpreter {
         if name == "trace" {
             if let (Some(traces), Value::String(msg)) = (&mut self.traces, &v) {
                 traces.push(msg.clone());
+                self.memory_check()?;
                 return Ok(Value::Bool(true));
             }
         }
@@ -2341,6 +2364,8 @@ impl Interpreter {
         if let Some(cached_key) = cache {
             self.builtins_cache.insert((cached_key, args), v.clone());
         }
+
+        self.memory_check()?;
         Ok(v)
     }
 
@@ -3781,6 +3806,8 @@ impl Interpreter {
             true => Some(vec![]),
             false => None,
         };
+
+        self.memory_check()?;
 
         // Store the query schedule for lookup during evaluation
         self.query_schedule = Some(query_schedule);

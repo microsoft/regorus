@@ -20,7 +20,7 @@ use core::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
 use num_bigint::BigInt as NumBigInt;
-#[cfg(not(feature = "std"))]
+#[allow(unused)]
 use num_traits::float::FloatCore;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 

@@ -28,6 +28,46 @@ namespace Regorus.Internal
 
         #endregion
 
+        #region Memory Limit Methods
+
+        /// <summary>
+        /// Set the global memory limit. Pass hasLimit=false to clear the limit.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_set_global_memory_limit", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_set_global_memory_limit(ulong limit, [MarshalAs(UnmanagedType.U1)] bool hasLimit);
+
+        /// <summary>
+        /// Get the current global memory limit. bool_value indicates whether a limit is set.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_get_global_memory_limit", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_get_global_memory_limit();
+
+        /// <summary>
+        /// Check the global memory limit immediately.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_check_global_memory_limit", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_check_global_memory_limit();
+
+        /// <summary>
+        /// Flush the current thread's pending allocation counters into global aggregates.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_flush_thread_memory_counters", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_flush_thread_memory_counters();
+
+        /// <summary>
+        /// Set the per-thread flush threshold override. Pass hasThreshold=false to restore defaults.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_set_thread_flush_threshold_override", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_set_thread_flush_threshold_override(ulong threshold, [MarshalAs(UnmanagedType.U1)] bool hasThreshold);
+
+        /// <summary>
+        /// Get the per-thread flush threshold. bool_value indicates whether a threshold is configured.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_get_thread_memory_flush_threshold", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_get_thread_memory_flush_threshold();
+
+        #endregion
+
         #region Engine Methods
 
         /// <summary>
@@ -520,6 +560,7 @@ namespace Regorus.Internal
         /// Boolean value.
         /// Valid when data_type is Boolean.
         /// </summary>
+        [MarshalAs(UnmanagedType.I1)]
         public bool bool_value;
         /// <summary>
         /// Integer value.

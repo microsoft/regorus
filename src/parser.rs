@@ -25,6 +25,11 @@ use core::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
 
+#[inline]
+fn check_memory_limit() -> Result<()> {
+    crate::utils::limits::check_memory_limit_if_needed().map_err(|err| anyhow!(err))
+}
+
 #[derive(Clone)]
 pub struct Parser<'source> {
     source: Source,
@@ -481,12 +486,18 @@ impl<'source> Parser<'source> {
                 let mut items = vec![];
                 if self.token_text() != "]" {
                     items.push(Ref::new(self.parse_in_expr()?));
+                    // Guard array literal growth against allocator limits.
+                    check_memory_limit()?;
                     while self.token_text() == "," {
                         self.next_token()?;
                         match self.token_text() {
                             "]" => break,
                             "" if self.tok.0 == TokenKind::Eof => break,
-                            _ => items.push(Ref::new(self.parse_in_expr()?)),
+                            _ => {
+                                items.push(Ref::new(self.parse_in_expr()?));
+                                // Guard array literal growth against allocator limits.
+                                check_memory_limit()?;
+                            }
                         }
                     }
                 }
@@ -552,12 +563,18 @@ impl<'source> Parser<'source> {
         if self.token_text() != ":" {
             // Parse as set.
             let mut items = vec![Ref::new(first)];
+            // Guard set literal growth against allocator limits.
+            check_memory_limit()?;
             while self.token_text() == "," {
                 self.next_token()?;
                 match self.token_text() {
                     "}" => break,
                     "" if self.tok.0 == TokenKind::Eof => break,
-                    _ => items.push(Ref::new(self.parse_in_expr()?)),
+                    _ => {
+                        items.push(Ref::new(self.parse_in_expr()?));
+                        // Guard set literal growth against allocator limits.
+                        check_memory_limit()?;
+                    }
                 }
             }
             self.expect("}", "while parsing set")?;
@@ -607,6 +624,8 @@ impl<'source> Parser<'source> {
         let value = self.parse_in_expr()?;
         item_span.end = self.end;
         items.push((item_span, Ref::new(first), Ref::new(value)));
+        // Guard object literal growth against allocator limits.
+        check_memory_limit()?;
 
         while self.token_text() == "," {
             self.next_token()?;
@@ -624,6 +643,8 @@ impl<'source> Parser<'source> {
             item_span.end = self.end;
 
             items.push((item_span, Ref::new(key), Ref::new(value)));
+            // Guard object literal growth against allocator limits.
+            check_memory_limit()?;
         }
 
         self.expect("}", "while parsing object")?;
@@ -763,12 +784,18 @@ impl<'source> Parser<'source> {
                     let mut args = vec![];
                     if self.token_text() != ")" {
                         args.push(Ref::new(self.parse_in_expr()?));
+                        // Guard call argument list against allocator limits.
+                        check_memory_limit()?;
                         while self.token_text() == "," {
                             self.next_token()?;
                             match self.token_text() {
                                 ")" => break,
                                 "" if self.tok.0 == TokenKind::Eof => break,
-                                _ => args.push(Ref::new(self.parse_in_expr()?)),
+                                _ => {
+                                    args.push(Ref::new(self.parse_in_expr()?));
+                                    // Guard call argument list against allocator limits.
+                                    check_memory_limit()?;
+                                }
                             }
                         }
                     }
@@ -1075,6 +1102,8 @@ impl<'source> Parser<'source> {
                 refr: Ref::new(refr),
                 r#as: Ref::new(r#as),
             });
+            // Guard with-modifier list against allocator limits.
+            check_memory_limit()?;
         }
         Ok(modifiers)
     }
@@ -1123,8 +1152,12 @@ impl<'source> Parser<'source> {
         self.expect("some", "while parsing some-decl")?;
 
         // parse any vars.
-        let mut vars = vec![self.tok.1.clone()];
-        let mut refs = vec![Ref::new(self.parse_ref()?)];
+        let first_var = self.tok.1.clone();
+        let first_ref = Ref::new(self.parse_ref()?);
+        let mut vars = vec![first_var];
+        let mut refs = vec![first_ref];
+        // Guard some-statement bindings against allocator limits.
+        check_memory_limit()?;
 
         while self.token_text() == "," {
             self.next_token()?;
@@ -1132,6 +1165,8 @@ impl<'source> Parser<'source> {
             refs.push(Ref::new(self.parse_ref()?));
             span.end = self.end;
             vars.push(span);
+            // Guard some-statement bindings against allocator limits.
+            check_memory_limit()?;
         }
 
         if self.token_text() != "in" || !self.is_imported_future_keyword("in") {
@@ -1291,6 +1326,8 @@ impl<'source> Parser<'source> {
         }
 
         literals.push(stmt);
+        // Guard query literal accumulation against allocator limits.
+        check_memory_limit()?;
 
         loop {
             match self.token_text() {
@@ -1306,6 +1343,8 @@ impl<'source> Parser<'source> {
             }
             let stmt = self.parse_literal_stmt()?;
             literals.push(stmt);
+            // Guard query literal accumulation against allocator limits.
+            check_memory_limit()?;
         }
 
         if !end_delim.is_empty() {
@@ -1529,12 +1568,18 @@ impl<'source> Parser<'source> {
                 let mut args = vec![];
                 if self.token_text() != ")" {
                     args.push(Ref::new(self.parse_term()?));
+                    // Guard rule head arguments against allocator limits.
+                    check_memory_limit()?;
                     while self.token_text() == "," {
                         self.next_token()?;
                         match self.token_text() {
                             ")" => break,
                             "" if self.tok.0 == TokenKind::Eof => break,
-                            _ => args.push(Ref::new(self.parse_term()?)),
+                            _ => {
+                                args.push(Ref::new(self.parse_term()?));
+                                // Guard rule head arguments against allocator limits.
+                                check_memory_limit()?;
+                            }
                         }
                     }
                 }
@@ -1647,6 +1692,8 @@ impl<'source> Parser<'source> {
                     assign,
                     query,
                 });
+                // Guard rule body accumulation against allocator limits.
+                check_memory_limit()?;
                 true
             }
             "if" => {
@@ -1665,6 +1712,8 @@ impl<'source> Parser<'source> {
                     assign,
                     query,
                 });
+                // Guard rule body accumulation against allocator limits.
+                check_memory_limit()?;
                 true
             }
             _ => false,
@@ -1690,6 +1739,8 @@ impl<'source> Parser<'source> {
                 assign: None,
                 query,
             });
+            // Guard rule body accumulation against allocator limits.
+            check_memory_limit()?;
         }
         Ok(())
     }
@@ -1722,6 +1773,8 @@ impl<'source> Parser<'source> {
                         assign,
                         query,
                     });
+                    // Guard rule body accumulation against allocator limits.
+                    check_memory_limit()?;
                 }
                 "{" => {
                     if self.rego_v1 {
@@ -1735,6 +1788,8 @@ impl<'source> Parser<'source> {
                         assign,
                         query,
                     });
+                    // Guard rule body accumulation against allocator limits.
+                    check_memory_limit()?;
                 }
                 _ if assign.is_none() => {
                     if self.token_text() == "if" {
@@ -1760,6 +1815,8 @@ impl<'source> Parser<'source> {
                         assign,
                         query,
                     });
+                    // Guard rule body accumulation against allocator limits.
+                    check_memory_limit()?;
                     break;
                 }
             }
@@ -1782,6 +1839,8 @@ impl<'source> Parser<'source> {
                         bail!(arg.error("repeating parameter name"));
                     }
                     args.push(arg);
+                    // Guard default rule parameters against allocator limits.
+                    check_memory_limit()?;
                     if self.token_text() == ")" || self.tok.0 == TokenKind::Eof {
                         break;
                     }
@@ -1882,6 +1941,8 @@ impl<'source> Parser<'source> {
 
         if comps.len() >= 2 && comps[0] == "future" && comps[1] == "keywords" {
             imports.push(import);
+            // Guard import accumulation against allocator limits.
+            check_memory_limit()?;
             return Ok(());
         }
 
@@ -1914,6 +1975,8 @@ impl<'source> Parser<'source> {
         }
 
         imports.push(import);
+        // Guard import accumulation against allocator limits.
+        check_memory_limit()?;
         Ok(())
     }
 
@@ -2037,6 +2100,8 @@ impl<'source> Parser<'source> {
         let mut policy = vec![];
         while self.tok.0 != TokenKind::Eof {
             policy.push(Ref::new(self.parse_rule()?));
+            // Guard policy rule accumulation against allocator limits.
+            check_memory_limit()?;
             if self.token_text() == "__target__" {
                 bail!(self
                     .tok

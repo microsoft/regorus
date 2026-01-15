@@ -8,7 +8,7 @@ use crate::interpreter::*;
 use crate::lexer::*;
 use crate::parser::*;
 use crate::scheduler::*;
-use crate::utils::gather_functions;
+use crate::utils::{gather_functions, limits};
 use crate::value::*;
 use crate::*;
 use crate::{Extension, QueryResults};
@@ -131,6 +131,7 @@ impl Engine {
         let source = Source::from_contents(path, rego)?;
         let mut parser = self.make_parser(&source)?;
         let module = Ref::new(parser.parse()?);
+        limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
         Rc::make_mut(&mut self.modules).push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
@@ -164,6 +165,7 @@ impl Engine {
         let source = Source::from_file(path)?;
         let mut parser = self.make_parser(&source)?;
         let module = Ref::new(parser.parse()?);
+        limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
         Rc::make_mut(&mut self.modules).push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
@@ -942,6 +944,9 @@ impl Engine {
 
     #[doc(hidden)]
     fn prepare_for_eval(&mut self, enable_tracing: bool, for_target: bool) -> Result<()> {
+        // Fail fast if the engine already exceeds the global memory limit before evaluation work.
+        limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
+
         self.interpreter.set_traces(enable_tracing);
 
         // if the data/policies have changed or the interpreter has never been prepared

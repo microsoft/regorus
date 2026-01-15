@@ -5,7 +5,7 @@
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
-use crate::builtins::utils::{ensure_args_count, ensure_array, ensure_object};
+use crate::builtins::utils::{enforce_limit, ensure_args_count, ensure_array, ensure_object};
 use crate::lexer::Span;
 use crate::Rc;
 use crate::Value;
@@ -34,13 +34,13 @@ pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn
     }
 }
 
-fn json_filter_impl(v: &Value, filter: &Value) -> Value {
+fn json_filter_impl(v: &Value, filter: &Value) -> Result<Value> {
     let filters = match filter {
         Value::Object(fields) if fields.len() == 1 && filter[&Value::Null] == Value::Null => {
-            return v.clone()
+            return Ok(v.clone())
         }
         Value::Object(fields) if !fields.is_empty() => fields,
-        _ => return v.clone(),
+        _ => return Ok(v.clone()),
     };
 
     match v {
@@ -51,53 +51,59 @@ fn json_filter_impl(v: &Value, filter: &Value) -> Value {
                 // TODO: support integer indexes?
                 if let Value::String(idx) = idx {
                     if let Ok(idx) = Value::from_json_str(idx) {
-                        let item = json_filter_impl(&v[&idx], filter);
+                        let item = json_filter_impl(&v[&idx], filter)?;
                         if item != Value::Undefined {
                             items.push(item);
+                            // Guard array growth while filtering nested structures.
+                            enforce_limit()?;
                         }
                     }
                 }
             }
-            Value::from_array(items)
+            Ok(Value::from_array(items))
         }
 
         Value::Set(s) => {
             let mut items = BTreeSet::new();
             for (item, filter) in filters.iter() {
                 if s.contains(item) {
-                    let item = json_filter_impl(item, filter);
+                    let item = json_filter_impl(item, filter)?;
                     if item != Value::Undefined {
                         items.insert(item);
+                        // Guard set growth when preserving matched entries.
+                        enforce_limit()?;
                     }
                 }
             }
-            Value::from_set(items)
+            Ok(Value::from_set(items))
         }
 
         Value::Object(_) => {
             let mut items = BTreeMap::new();
             for (key, filter) in filters.iter() {
-                let item = json_filter_impl(&v[key], filter);
+                let item = json_filter_impl(&v[key], filter)?;
                 if item != Value::Undefined {
                     items.insert(key.clone(), item);
+                    // Guard map growth as filtered keys accumulate.
+                    enforce_limit()?;
                 }
             }
 
-            Value::from_map(items)
+            Ok(Value::from_map(items))
         }
 
-        _ => Value::Undefined,
+        _ => Ok(Value::Undefined),
     }
 }
 
-fn json_remove_impl(v: &Value, filter: &Value) -> Value {
+fn json_remove_impl(v: &Value, filter: &Value) -> Result<Value> {
     let filters = match filter {
         Value::Object(fields) if !fields.is_empty() => fields,
-        _ => return v.clone(),
+        _ => return Ok(v.clone()),
     };
 
     if filter[&Value::Null] == Value::Null {
-        return Value::Undefined;
+        return Ok(Value::Undefined);
     }
 
     match v {
@@ -106,50 +112,62 @@ fn json_remove_impl(v: &Value, filter: &Value) -> Value {
             for (idx, item) in a.iter().enumerate() {
                 let idx = Value::String(format!("{idx}").into());
                 if let Some(f) = filters.get(&idx) {
-                    let v = json_remove_impl(item, f);
+                    let v = json_remove_impl(item, f)?;
                     if v != Value::Undefined {
                         items.push(v);
+                        // Guard array size while removing JSON paths.
+                        enforce_limit()?;
                     }
                 } else {
                     // Retain the item.
                     items.push(item.clone());
+                    // Guard array size while copying retained entries.
+                    enforce_limit()?;
                 }
             }
-            Value::from_array(items)
+            Ok(Value::from_array(items))
         }
 
         Value::Set(s) => {
             let mut items = BTreeSet::new();
             for item in s.iter() {
                 if let Some(f) = filters.get(item) {
-                    let v = json_remove_impl(item, f);
+                    let v = json_remove_impl(item, f)?;
                     if v != Value::Undefined {
                         items.insert(v);
+                        // Guard set size during filtered retention.
+                        enforce_limit()?;
                     }
                 } else {
                     // Retain the item.
                     items.insert(item.clone());
+                    // Guard set size when keeping unmatched entries.
+                    enforce_limit()?;
                 }
             }
-            Value::from_set(items)
+            Ok(Value::from_set(items))
         }
 
         Value::Object(obj) => {
             let mut items = BTreeMap::new();
             for (key, value) in obj.iter() {
                 if let Some(f) = filters.get(key) {
-                    let v = json_remove_impl(value, f);
+                    let v = json_remove_impl(value, f)?;
                     if v != Value::Undefined {
                         items.insert(key.clone(), v);
+                        // Guard map size as filtered properties accumulate.
+                        enforce_limit()?;
                     }
                 } else {
                     items.insert(key.clone(), value.clone());
+                    // Guard map size while copying retained properties.
+                    enforce_limit()?;
                 }
             }
-            Value::from_map(items)
+            Ok(Value::from_map(items))
         }
 
-        _ => Value::Undefined,
+        _ => Ok(Value::Undefined),
     }
 }
 
@@ -170,9 +188,13 @@ fn merge_filters(
                         *vref = Value::new_object();
                     }
                     f = vref;
+                    // Guard recursive filter construction as path objects materialize.
+                    enforce_limit()?;
                 }
                 if let Ok(f) = f.as_object_mut() {
                     f.insert(Value::Null, Value::Null);
+                    // Guard filter map growth when marking terminal entries.
+                    enforce_limit()?;
                 };
                 filters = fc;
             }
@@ -183,14 +205,21 @@ fn merge_filters(
                     let vref = match f {
                         Value::Object(obj) => {
                             let obj = Rc::make_mut(obj);
-                            obj.entry(p.clone()).or_insert_with(Value::new_object)
+                            let entry = obj.entry(p.clone()).or_insert_with(Value::new_object);
+                            // Guard filter map growth when creating nested objects.
+                            enforce_limit()?;
+                            entry
                         }
                         _ => break,
                     };
                     f = vref;
+                    // Guard recursive descent as additional path components attach.
+                    enforce_limit()?;
                 }
                 if let Ok(f) = f.as_object_mut() {
                     f.insert(Value::Null, Value::Null);
+                    // Guard filter map growth when sealing terminal markers.
+                    enforce_limit()?;
                 };
                 filters = fc;
             }
@@ -223,7 +252,7 @@ fn json_filter(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
         }
     }
 
-    Ok(json_filter_impl(&args[0], &filters))
+    json_filter_impl(&args[0], &filters)
 }
 
 fn json_remove(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
@@ -237,7 +266,7 @@ fn json_remove(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
         _ => bail!(span.error(format!("`{name}` requires set/array argument").as_str())),
     };
 
-    Ok(json_remove_impl(&args[0], &filters))
+    json_remove_impl(&args[0], &filters)
 }
 
 fn filter(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
