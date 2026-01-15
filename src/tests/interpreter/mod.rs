@@ -15,11 +15,185 @@
 use std::env;
 
 use crate::test_utils::{check_output, ValueOrVec};
+use crate::utils::limits::acquire_limits_test_lock;
 use crate::*;
 
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use test_generator::test_resources;
+use timer_test_support::{
+    apply_engine_timer, configure_time_source, reset_time_source, GlobalTimerGuard,
+};
+
+mod timer_test_support {
+    use super::{ExecutionTimerTestConfig, TimeSourceTestConfig};
+    #[cfg(any(test, not(feature = "std")))]
+    use crate::utils::limits::set_time_source;
+    use crate::utils::limits::{
+        global_execution_timer_config, set_global_execution_timer_config, ExecutionTimerConfig,
+        TimeSource,
+    };
+    use crate::Engine;
+    use anyhow::{anyhow, Result};
+    use core::num::NonZeroU32;
+    use core::time::Duration;
+    use std::collections::VecDeque;
+    use std::sync::{Mutex, Once};
+    use std::vec::Vec;
+
+    pub struct GlobalTimerGuard {
+        previous: Option<ExecutionTimerConfig>,
+        changed: bool,
+    }
+
+    impl GlobalTimerGuard {
+        pub fn apply(spec: Option<&ExecutionTimerTestConfig>) -> Result<Self> {
+            let previous = global_execution_timer_config();
+            let mut changed = false;
+
+            if let Some(config_spec) = spec {
+                if config_spec.disable.unwrap_or(false) {
+                    set_global_execution_timer_config(None);
+                    changed = true;
+                } else {
+                    let config = config_from_spec(config_spec)?;
+                    set_global_execution_timer_config(Some(config));
+                    changed = true;
+                }
+            }
+
+            Ok(Self { previous, changed })
+        }
+    }
+
+    impl Drop for GlobalTimerGuard {
+        fn drop(&mut self) {
+            if self.changed {
+                set_global_execution_timer_config(self.previous);
+            }
+        }
+    }
+
+    pub fn configure_time_source(spec: Option<&TimeSourceTestConfig>) {
+        ensure_time_source_registered();
+
+        let mut state = TIME_SOURCE_STATE
+            .lock()
+            .expect("time source mutex poisoned");
+
+        if let Some(cfg) = spec {
+            state.default_increment = cfg
+                .default_increment_ms
+                .map(Duration::from_millis)
+                .unwrap_or(DEFAULT_INCREMENT);
+            state.template_increments = cfg
+                .increments_ms
+                .iter()
+                .copied()
+                .map(Duration::from_millis)
+                .collect();
+        } else {
+            state.default_increment = DEFAULT_INCREMENT;
+            state.template_increments.clear();
+        }
+
+        state.reset_from_template();
+    }
+
+    pub fn reset_time_source() {
+        let mut state = TIME_SOURCE_STATE
+            .lock()
+            .expect("time source mutex poisoned");
+        state.reset_from_template();
+    }
+
+    pub fn apply_engine_timer(engine: &mut Engine, spec: &ExecutionTimerTestConfig) -> Result<()> {
+        if spec.disable.unwrap_or(false) {
+            engine.clear_execution_timer_config();
+            return Ok(());
+        }
+
+        let config = config_from_spec(spec)?;
+        engine.set_execution_timer_config(config);
+        Ok(())
+    }
+
+    const DEFAULT_INCREMENT: Duration = Duration::from_millis(1);
+
+    struct TestTimeSource;
+
+    struct TimeSourceState {
+        current: Duration,
+        started: bool,
+        default_increment: Duration,
+        increments: VecDeque<Duration>,
+        template_increments: Vec<Duration>,
+    }
+
+    impl TimeSourceState {
+        const fn new() -> Self {
+            Self {
+                current: Duration::ZERO,
+                started: false,
+                default_increment: DEFAULT_INCREMENT,
+                increments: VecDeque::new(),
+                template_increments: Vec::new(),
+            }
+        }
+
+        fn reset_from_template(&mut self) {
+            self.current = Duration::ZERO;
+            self.started = false;
+            self.increments = VecDeque::from(self.template_increments.clone());
+        }
+    }
+
+    impl TimeSource for TestTimeSource {
+        fn now(&self) -> Option<Duration> {
+            let mut state = TIME_SOURCE_STATE
+                .lock()
+                .expect("time source mutex poisoned");
+
+            if !state.started {
+                state.started = true;
+                return Some(state.current);
+            }
+
+            let increment = state
+                .increments
+                .pop_front()
+                .unwrap_or(state.default_increment);
+            state.current = state.current.saturating_add(increment);
+            Some(state.current)
+        }
+    }
+
+    static TEST_TIME_SOURCE: TestTimeSource = TestTimeSource;
+    static TIME_SOURCE_STATE: Mutex<TimeSourceState> = Mutex::new(TimeSourceState::new());
+    static TIME_SOURCE_ONCE: Once = Once::new();
+
+    fn ensure_time_source_registered() {
+        #[cfg(any(test, not(feature = "std")))]
+        TIME_SOURCE_ONCE.call_once(|| {
+            let _ = set_time_source(&TEST_TIME_SOURCE);
+        });
+    }
+
+    fn config_from_spec(spec: &ExecutionTimerTestConfig) -> Result<ExecutionTimerConfig> {
+        let mut config = ExecutionTimerConfig::default();
+
+        if let Some(limit_ms) = spec.limit_ms {
+            config.limit = Some(Duration::from_millis(limit_ms));
+        }
+
+        if let Some(interval) = spec.check_interval {
+            config.check_interval = NonZeroU32::new(interval)
+                .ok_or_else(|| anyhow!("execution_timer.check_interval must be non-zero"))?;
+        }
+
+        Ok(config)
+    }
+}
 
 #[cfg(feature = "azure_policy")]
 mod load_target_definitions {
@@ -158,6 +332,7 @@ fn push_query_results(query_results: QueryResults, results: &mut Vec<Value>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn eval_file(
     regos: &[String],
     data_opt: Option<Value>,
@@ -166,6 +341,7 @@ pub fn eval_file(
     enable_tracing: bool,
     strict: bool,
     v0: bool,
+    execution_timer: Option<&ExecutionTimerTestConfig>,
 ) -> Result<(Vec<Value>, Vec<String>)> {
     let mut engine: Engine = Engine::new();
     engine.set_rego_v0(v0);
@@ -174,6 +350,10 @@ pub fn eval_file(
 
     #[cfg(feature = "coverage")]
     engine.set_enable_coverage(true);
+
+    if let Some(spec) = execution_timer {
+        apply_engine_timer(&mut engine, spec)?;
+    }
 
     let mut results = vec![];
     let mut files = vec![];
@@ -199,10 +379,15 @@ pub fn eval_file(
     }
 
     let mut engine_full = engine.clone();
+    if let Some(spec) = execution_timer {
+        apply_engine_timer(&mut engine_full, spec)?;
+    }
 
     if inputs.is_empty() {
         // Now eval the query.
+        reset_time_source();
         let r = engine.eval_query(query.to_string(), enable_tracing)?;
+        reset_time_source();
         let r_full = engine_full.eval_query_and_all_rules(query.to_string(), enable_tracing)?;
         if r != r_full {
             std::println!(
@@ -220,7 +405,9 @@ pub fn eval_file(
             engine_full.set_input(input);
 
             // Now eval the query.
+            reset_time_source();
             let r = engine.eval_query(query.to_string(), enable_tracing)?;
+            reset_time_source();
             let r_full = engine_full.eval_query_and_all_rules(query.to_string(), enable_tracing)?;
             if r != r_full {
                 std::println!(
@@ -239,6 +426,7 @@ pub fn eval_file(
 }
 
 #[cfg(feature = "azure_policy")]
+#[allow(clippy::too_many_arguments)]
 pub fn eval_file_with_rule_evaluation(
     regos: &[String],
     data_opt: Option<Value>,
@@ -247,6 +435,7 @@ pub fn eval_file_with_rule_evaluation(
     _enable_tracing: bool,
     strict: bool,
     v0: bool,
+    execution_timer: Option<&ExecutionTimerTestConfig>,
 ) -> Result<(Vec<Value>, Vec<String>)> {
     let mut engine: Engine = Engine::new();
     engine.set_rego_v0(v0);
@@ -255,6 +444,10 @@ pub fn eval_file_with_rule_evaluation(
 
     #[cfg(feature = "coverage")]
     engine.set_enable_coverage(true);
+
+    if let Some(spec) = execution_timer {
+        apply_engine_timer(&mut engine, spec)?;
+    }
 
     let mut results = vec![];
     let mut files = vec![];
@@ -288,13 +481,30 @@ pub fn eval_file_with_rule_evaluation(
     for input in inputs {
         engine.set_input(input.clone());
         // Use eval_rule instead of eval_query for target tests
+        reset_time_source();
         let r_engine = engine.eval_rule(query.to_string())?;
+        reset_time_source();
         let r_compiled_policy = compiled_policy.eval_with_input(input)?;
         assert_eq!(r_engine, r_compiled_policy);
         results.push(r_engine);
     }
 
     Ok((results, engine.take_prints()?))
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct ExecutionTimerTestConfig {
+    limit_ms: Option<u64>,
+    check_interval: Option<u32>,
+    disable: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct TimeSourceTestConfig {
+    increments_ms: Vec<u64>,
+    default_increment_ms: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -315,6 +525,12 @@ struct TestCase {
     want_error_code: Option<String>,
     #[serde(default = "default_strict")]
     strict: bool,
+    #[serde(default)]
+    execution_timer: Option<ExecutionTimerTestConfig>,
+    #[serde(default)]
+    global_execution_timer: Option<ExecutionTimerTestConfig>,
+    #[serde(default)]
+    time_source: Option<TimeSourceTestConfig>,
 }
 
 fn default_strict() -> bool {
@@ -327,6 +543,8 @@ struct YamlTest {
 }
 
 fn yaml_test_impl(file: &str) -> Result<()> {
+    let _limits_lock = acquire_limits_test_lock();
+
     let yaml_str = std::fs::read_to_string(file)?;
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
@@ -382,6 +600,9 @@ fn yaml_test_impl(file: &str) -> Result<()> {
             continue;
         }
 
+        let _timer_guard = GlobalTimerGuard::apply(case.global_execution_timer.as_ref())?;
+        configure_time_source(case.time_source.as_ref());
+
         match (&case.want_result, &case.error) {
             (Some(_), None) | (None, Some(_)) => (),
             _ if case.no_result != Some(true) => {
@@ -405,6 +626,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                     enable_tracing,
                     case.strict,
                     v0,
+                    case.execution_timer.as_ref(),
                 )
             }
             #[cfg(not(feature = "azure_policy"))]
@@ -420,6 +642,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                 enable_tracing,
                 case.strict,
                 v0,
+                case.execution_timer.as_ref(),
             )
         };
 
