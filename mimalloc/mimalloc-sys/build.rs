@@ -36,6 +36,7 @@ fn compile_mimalloc() {
     let include_dir = mimalloc_vendor_dir.join("include");
     let src_dir = mimalloc_vendor_dir.join("src");
     let static_file = src_dir.join("static.c");
+    let summary_file = PathBuf::from("src/summary.c");
 
     assert!(include_dir.exists(), "include_dir: {include_dir:?}");
     assert!(src_dir.exists(), "src_dir: {src_dir:?}");
@@ -44,6 +45,7 @@ fn compile_mimalloc() {
     build.include(include_dir);
     build.include(src_dir);
     build.file(static_file);
+    build.file(summary_file);
 
     if build.get_compiler().is_like_msvc() {
         build.static_crt(true);
