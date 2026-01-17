@@ -9,9 +9,6 @@ on:
     # Run at 8:00 AM every day
     - cron: "0 8 * * *"
 
-env:
-  PYTHON_VERSION: "3.10"
-
 jobs:
   build:
     strategy:
@@ -28,66 +25,65 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/toolchains/rust
+        with:
+          targets: ${{ matrix.host.target }}
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: ${{ runner.os }}-regorus
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+
+      - name: Fetch Python crate dependencies
+        run: cargo fetch --locked --manifest-path bindings/python/Cargo.toml --target ${{ matrix.host.target }}
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: "3.10"
           architecture: x64
 
-      - name: Build Python extension
-        run: |
-          cargo fetch
-          cargo clippy --all-targets --no-deps -- -Dwarnings
-          cargo build --release --target ${{ matrix.host.target }} --frozen
-        working-directory: bindings/python
+      - name: Install maturin
+        run: python -m pip install maturin==1.5.1
 
-      - name: Build Wheel
-        uses: PyO3/maturin-action@63b75c597b83e247fbf4fb7719801cc4220ae9f3 # v1.43.0
-        with:
-          target: x86_64
-          args: --release --out dist --manifest-path bindings/python/Cargo.toml --offline --strip
-          sccache: 'true'
+      - name: Build Python wheel via xtask
+        run: cargo xtask build-python --release --target ${{ matrix.host.target }} --target-dir bindings/python/dist --frozen
 
-      - name: Upload Wheel
+      - name: Upload wheel artefacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: regorus-wheel-${{ matrix.host.name }}
-          path: dist/regorus-*.whl
+          path: bindings/python/dist/regorus-*.whl
 
   test:
+    needs: build
     strategy:
       matrix:
+        host: [ubuntu-24.04, ubuntu-22.04, windows-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
-        host:
-          - name: ubuntu-24.04
-            wheel: regorus-0.5.0-cp310-abi3-manylinux_2_34_x86_64.whl
-          - name: ubuntu-22.04
-            wheel: regorus-0.5.0-cp310-abi3-manylinux_2_34_x86_64.whl
-          - name: windows-latest
-            wheel: regorus-0.5.0-cp310-abi3-win_amd64.whl
-
-    needs: build
-    runs-on: ${{ matrix.host.name }}
+    runs-on: ${{ matrix.host }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
         with:
           fetch-depth: 0
-
-      - name: Download Regorus wheel
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+      - uses: ./.github/actions/toolchains/rust
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          path: wheels
-          pattern: regorus-wheel-*
-          merge-multiple: true
+          shared-key: ${{ runner.os }}-regorus
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+
+      - name: Fetch Python crate dependencies
+        run: cargo fetch --locked --manifest-path bindings/python/Cargo.toml
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
           architecture: x64
 
-      - name: Test Wheel
-        run:  |
-          pip3 install ../../wheels/${{ matrix.host.wheel }}
-          python3 test.py
-        working-directory: bindings/python
+      - name: Install maturin
+        run: python -m pip install maturin==1.5.1
+
+      - name: Run Python smoke tests via xtask
+        run: cargo xtask test-python --release --python python

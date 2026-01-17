@@ -21,26 +21,11 @@ jobs:
     - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
     - name: Setup Rust toolchain
       uses: ./.github/actions/toolchains/rust
-    - name: Fetch
-      run: cargo fetch
-    - name: Build (all features)
-      run: cargo build --all-features --frozen
-    - name: Build
-      run: cargo build --frozen
-    - name: Test no_std
-      run: cargo test --no-default-features --frozen
-    - name: Build only std
-      run: cargo build --example regorus --no-default-features --features "std" --frozen
-    - name: Doc Tests
-      run: cargo test --doc --frozen
-    - name: Run tests
-      run: cargo test --frozen
-    - name: Run tests (ACI)
-      run: cargo test --test aci --frozen
-    - name: Run tests (KATA)
-      run: cargo test --test kata --frozen
-    - name: Run tests (OPA Conformance)
-      run: >-
-        cargo test --test opa --frozen --features opa-testutil,serde_json/arbitrary_precision  -- $(tr '\n' ' ' < tests/opa.passing)
-    - name: Run tests (Azure RBAC)
-      run: cargo test --frozen --features azure-rbac
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      with:
+        shared-key: ${{ runner.os }}-regorus
+    - name: Fetch dependencies
+      run: cargo fetch --locked
+    - name: Run debug CI suite
+      run: cargo xtask ci-debug --frozen

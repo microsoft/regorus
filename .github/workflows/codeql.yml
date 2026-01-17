@@ -64,8 +64,23 @@ jobs:
 
     # Setup language-specific dependencies BEFORE CodeQL init for proper tracing setup
     - name: Setup Rust
-      if: matrix.language == 'rust' || matrix.language == 'c-cpp'
       uses: ./.github/actions/toolchains/rust
+
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      with:
+        shared-key: ${{ runner.os }}-regorus
+
+    - name: Fetch workspace dependencies
+      run: cargo fetch --locked
+
+    - name: Fetch FFI crate dependencies
+      if: matrix.language == 'c-cpp' || matrix.language == 'go' || matrix.language == 'csharp'
+      run: cargo fetch --locked --manifest-path bindings/ffi/Cargo.toml
+
+    - name: Fetch Java crate dependencies
+      if: matrix.language == 'java-kotlin'
+      run: cargo fetch --locked --manifest-path bindings/java/Cargo.toml
 
     - name: Setup Python
       if: matrix.language == 'python'
@@ -91,6 +106,10 @@ jobs:
       uses: actions/setup-dotnet@v4
       with:
         global-json-file: ./bindings/csharp/global.json
+
+    - name: Invoke dotnet directly
+      if: matrix.language == 'csharp'
+      run: dotnet --info
 
     - name: Setup Node.js
       if: matrix.language == 'javascript-typescript'
@@ -132,79 +151,39 @@ jobs:
         cargo install wasm-pack
 
     # Manual build steps for different languages
-    - name: Build C/C++ FFI bindings
+    - name: Build C/C++ bindings via xtask
       if: matrix.language == 'c-cpp'
-      working-directory: ${{ matrix.working-directory }}
       run: |
-          # Build FFI library in no_std mode for embedded/constrained environments
-          cargo build --release --locked --features "ast,coverage,regorus/opa-no-std" --no-default-features
+        cargo xtask test-c --release --frozen
+        cargo xtask test-cpp --release --frozen --skip-ffi
+        cargo xtask test-c-no-std --release --frozen --skip-ffi
 
-          # Build the Rust FFI library that provides C-compatible interface
-          cargo build --release --locked
-        
-          # Build C bindings using CMake
-          cd ../c
-          mkdir -p build
-          cd build
-          cmake ..
-          make
-        
-          # Build C++ bindings using CMake
-          cd ../../cpp
-          mkdir -p build
-          cd build
-          cmake ..
-          make
-
-    - name: Build Java bindings
+    - name: Build Java bindings via xtask
       if: matrix.language == 'java-kotlin'
-      working-directory: ${{ matrix.working-directory }}
-      run: |
-        # Build the Rust JNI library that provides Java-compatible interface
-        cargo fetch
-        cargo build --release --locked
-        # Compile Java source and create JAR package with Maven
-        mvn package
+      run: cargo xtask test-java --release --frozen
 
-    - name: Build Go bindings
+    - name: Build Go bindings via xtask
       if: matrix.language == 'go'
-      working-directory: ${{ matrix.working-directory }}
-      run: |
-        # Build the FFI library that Go bindings depend on via CGO
-        cd ../ffi
-        cargo fetch
-        cargo build --release --locked
-        cd ../go
-        # Download Go dependencies
-        go mod tidy
-        # Set up environment for CGO linking to Rust FFI library
-        export CGO_ENABLED=1
-        export LD_LIBRARY_PATH="$(pwd)/../ffi/target/release:$LD_LIBRARY_PATH"
-        # Build Go packages with verbose output for CodeQL tracing
-        go build -v ./pkg/regorus
-        go build -v -o regorus_test .
+      run: cargo xtask test-go --release --frozen
 
-    - name: Build C# bindings
+    - name: Build C# bindings manually
       if: matrix.language == 'csharp'
       working-directory: ${{ matrix.working-directory }}
       run: |
+        # Temporary workaround: CodeQL's tracer replaces dotnet with a missing shim when cargo xtask test-csharp runs,
+        # so invoke dotnet directly here until the upstream fix lands.
+        # Ideal command once fixed: cargo xtask test-csharp --release
         # Build the FFI library that C# bindings access via P/Invoke
         cd ../ffi
-        cargo fetch
         cargo build --release --locked
         cd ../csharp
         # Restore NuGet packages and build .NET assemblies in release mode
-        # Build the main Regorus library project only (tests require packaged version)
         dotnet restore Regorus/Regorus.csproj
         dotnet build Regorus/Regorus.csproj --no-restore /p:Configuration=Release /p:IgnoreMissingArtifacts=true
 
-    - name: Build WASM bindings
+    - name: Build WASM bindings via xtask
       if: matrix.language == 'javascript-typescript'
-      working-directory: ${{ matrix.working-directory }}
-      run: |
-        # Build WebAssembly module with wasm-pack for Node.js target
-        cargo fetch
-        wasm-pack build --target nodejs --release
+      run: cargo xtask build-wasm --release
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
