@@ -144,11 +144,11 @@ jobs:
           path: ./bindings/csharp/regorus-nuget/
 
       - name: Restore Regorus.Tests
-        run: dotnet restore /p:RestoreAdditionalProjectSources=../regorus-nuget
+        run: dotnet restore /p:RestoreAdditionalProjectSources=../regorus-nuget /p:UseLocalRegorus=false
         working-directory: ./bindings/csharp/Regorus.Tests
 
       - name: Run Regorus.Tests
-        run: dotnet test --no-restore
+        run: dotnet test --no-restore -p:UseLocalRegorus=false
         working-directory: ./bindings/csharp/Regorus.Tests
 
       - name: Restore TestApp

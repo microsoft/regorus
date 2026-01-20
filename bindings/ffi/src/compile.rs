@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 use crate::common::{from_c_str, RegorusResult, RegorusStatus};
 use crate::compiled_policy::RegorusCompiledPolicy;
+use crate::panic_guard::with_unwind_guard;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::vec::Vec;
@@ -43,55 +44,54 @@ pub extern "C" fn regorus_compile_policy_with_entrypoint(
     modules_len: usize,
     entry_point_rule: *const c_char,
 ) -> RegorusResult {
-    let data_str = match from_c_str(data_json) {
-        Ok(s) => s,
-        Err(e) => {
-            return RegorusResult::err_with_message(
-                RegorusStatus::InvalidDataFormat,
-                format!("Invalid data JSON string: {e}"),
-            )
-        }
-    };
+    with_unwind_guard(|| {
+        let data_str = match from_c_str(data_json) {
+            Ok(s) => s,
+            Err(e) => {
+                return RegorusResult::err_with_message(
+                    RegorusStatus::InvalidDataFormat,
+                    format!("Invalid data JSON string: {e}"),
+                )
+            }
+        };
 
-    let entry_rule = match from_c_str(entry_point_rule) {
-        Ok(s) => s,
-        Err(e) => {
-            return RegorusResult::err_with_message(
-                RegorusStatus::InvalidEntrypoint,
-                format!("Invalid entry point rule string: {e}"),
-            )
-        }
-    };
+        let entry_rule = match from_c_str(entry_point_rule) {
+            Ok(s) => s,
+            Err(e) => {
+                return RegorusResult::err_with_message(
+                    RegorusStatus::InvalidEntrypoint,
+                    format!("Invalid entry point rule string: {e}"),
+                )
+            }
+        };
 
-    // Parse data JSON
-    let data = match Value::from_json_str(&data_str) {
-        Ok(data) => data,
-        Err(e) => {
-            return RegorusResult::err_with_message(
-                RegorusStatus::InvalidDataFormat,
-                format!("Failed to parse data JSON: {e}"),
-            )
-        }
-    };
+        let data = match Value::from_json_str(&data_str) {
+            Ok(data) => data,
+            Err(e) => {
+                return RegorusResult::err_with_message(
+                    RegorusStatus::InvalidDataFormat,
+                    format!("Failed to parse data JSON: {e}"),
+                )
+            }
+        };
 
-    // Convert C modules array to Rust Vec
-    let policy_modules = match convert_c_modules_to_rust(modules, modules_len) {
-        Ok(modules) => modules,
-        Err(status) => return RegorusResult::err(status),
-    };
+        let policy_modules = match convert_c_modules_to_rust(modules, modules_len) {
+            Ok(modules) => modules,
+            Err(status) => return RegorusResult::err(status),
+        };
 
-    // Call the convenience function
-    match compile_policy_with_entrypoint(data, &policy_modules, entry_rule.into()) {
-        Ok(compiled_policy) => {
-            let wrapped_policy = RegorusCompiledPolicy { compiled_policy };
-            let boxed_policy = Box::new(wrapped_policy);
-            RegorusResult::ok_pointer(Box::into_raw(boxed_policy) as *mut c_void)
+        match compile_policy_with_entrypoint(data, &policy_modules, entry_rule.into()) {
+            Ok(compiled_policy) => {
+                let wrapped_policy = RegorusCompiledPolicy { compiled_policy };
+                let boxed_policy = Box::new(wrapped_policy);
+                RegorusResult::ok_pointer(Box::into_raw(boxed_policy) as *mut c_void)
+            }
+            Err(e) => RegorusResult::err_with_message(
+                RegorusStatus::CompilationFailed,
+                format!("Policy compilation failed: {e}"),
+            ),
         }
-        Err(e) => RegorusResult::err_with_message(
-            RegorusStatus::CompilationFailed,
-            format!("Policy compilation failed: {e}"),
-        ),
-    }
+    })
 }
 
 /// Compiles a target-aware policy from data and modules.
@@ -122,45 +122,44 @@ pub extern "C" fn regorus_compile_policy_for_target(
     modules: *const RegorusPolicyModule,
     modules_len: usize,
 ) -> RegorusResult {
-    let data_str = match from_c_str(data_json) {
-        Ok(s) => s,
-        Err(e) => {
-            return RegorusResult::err_with_message(
-                RegorusStatus::InvalidDataFormat,
-                format!("Invalid data JSON string: {e}"),
-            )
-        }
-    };
+    with_unwind_guard(|| {
+        let data_str = match from_c_str(data_json) {
+            Ok(s) => s,
+            Err(e) => {
+                return RegorusResult::err_with_message(
+                    RegorusStatus::InvalidDataFormat,
+                    format!("Invalid data JSON string: {e}"),
+                )
+            }
+        };
 
-    // Parse data JSON
-    let data = match Value::from_json_str(&data_str) {
-        Ok(data) => data,
-        Err(e) => {
-            return RegorusResult::err_with_message(
-                RegorusStatus::InvalidDataFormat,
-                format!("Failed to parse data JSON: {e}"),
-            )
-        }
-    };
+        let data = match Value::from_json_str(&data_str) {
+            Ok(data) => data,
+            Err(e) => {
+                return RegorusResult::err_with_message(
+                    RegorusStatus::InvalidDataFormat,
+                    format!("Failed to parse data JSON: {e}"),
+                )
+            }
+        };
 
-    // Convert C modules array to Rust Vec
-    let policy_modules = match convert_c_modules_to_rust(modules, modules_len) {
-        Ok(modules) => modules,
-        Err(status) => return RegorusResult::err(status),
-    };
+        let policy_modules = match convert_c_modules_to_rust(modules, modules_len) {
+            Ok(modules) => modules,
+            Err(status) => return RegorusResult::err(status),
+        };
 
-    // Call the convenience function
-    match compile_policy_for_target(data, &policy_modules) {
-        Ok(compiled_policy) => {
-            let wrapped_policy = RegorusCompiledPolicy { compiled_policy };
-            let boxed_policy = Box::new(wrapped_policy);
-            RegorusResult::ok_pointer(Box::into_raw(boxed_policy) as *mut c_void)
+        match compile_policy_for_target(data, &policy_modules) {
+            Ok(compiled_policy) => {
+                let wrapped_policy = RegorusCompiledPolicy { compiled_policy };
+                let boxed_policy = Box::new(wrapped_policy);
+                RegorusResult::ok_pointer(Box::into_raw(boxed_policy) as *mut c_void)
+            }
+            Err(e) => RegorusResult::err_with_message(
+                RegorusStatus::CompilationFailed,
+                format!("Target-aware policy compilation failed: {e}"),
+            ),
         }
-        Err(e) => RegorusResult::err_with_message(
-            RegorusStatus::CompilationFailed,
-            format!("Target-aware policy compilation failed: {e}"),
-        ),
-    }
+    })
 }
 
 /// Helper function to convert C module array to Rust Vec<PolicyModule>.

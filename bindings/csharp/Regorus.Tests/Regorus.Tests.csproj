@@ -6,11 +6,17 @@
     <!-- More info about dotnet test integration https://learn.microsoft.com/dotnet/core/testing/unit-testing-platform-integration-dotnet-test -->
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
     <TestingPlatformShowTestsFailure>true</TestingPlatformShowTestsFailure>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   
   <PropertyGroup>
     <!-- If the environment variable is set (such as in a Github Action run), append the suffix to the version number -->
     <RegorusPackageVersionSuffix Condition="'$(VersionSuffix)' != ''">-$(VersionSuffix)</RegorusPackageVersionSuffix>
+    <UseLocalRegorus Condition="'$(UseLocalRegorus)' == ''">true</UseLocalRegorus>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(UseLocalRegorus)' == 'true'">
+    <DefineConstants>$(DefineConstants);REGORUS_FFI_TEST_HOOKS</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,7 +27,13 @@
     <PackageReference Include="MSTest" Version="3.8.2" />
   </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Regorus" Version="0.8.0$(RegorusPackageVersionSuffix)"/>
+  <ItemGroup Condition="'$(UseLocalRegorus)' == 'true'">
+    <ProjectReference Include="../Regorus/Regorus.csproj">
+      <AdditionalProperties>EnableRegorusTestHooks=true</AdditionalProperties>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseLocalRegorus)' != 'true'">
+    <PackageReference Include="Regorus" Version="0.8.0$(RegorusPackageVersionSuffix)" />
   </ItemGroup>
 </Project>

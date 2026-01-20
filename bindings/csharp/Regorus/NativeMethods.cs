@@ -217,6 +217,20 @@ namespace Regorus.Internal
         [DllImport(LibraryName, EntryPoint = "regorus_engine_compile_with_entrypoint", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_engine_compile_with_entrypoint(RegorusEngine* engine, byte* rule);
 
+    #if REGORUS_FFI_TEST_HOOKS
+        /// <summary>
+        /// Trigger a panic inside the engine for testing purposes.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_test_trigger_panic", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_test_trigger_panic();
+
+        /// <summary>
+        /// Reset the engine poison flag for testing.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_test_reset_poison", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void regorus_engine_test_reset_poison();
+    #endif
+
         #endregion
 
         #region Compilation Methods
@@ -472,6 +486,14 @@ namespace Regorus.Internal
         /// Invalid policy content.
         /// </summary>
         InvalidPolicy,
+        /// <summary>
+        /// The engine panicked and cannot be reused until reset.
+        /// </summary>
+        Panic,
+        /// <summary>
+        /// The engine remains poisoned because a previous panic was detected.
+        /// </summary>
+        Poisoned,
     }
 
     /// <summary>

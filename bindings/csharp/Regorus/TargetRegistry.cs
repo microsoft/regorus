@@ -135,7 +135,7 @@ namespace Regorus
                 if (result.status != Internal.RegorusStatus.Ok)
                 {
                     var message = StringFromUTF8((IntPtr)result.error_message);
-                    throw new Exception(message ?? "Unknown error occurred");
+                    throw result.status.CreateException(message);
                 }
 
                 return result.data_type switch
@@ -160,7 +160,7 @@ namespace Regorus
                 if (result.status != Internal.RegorusStatus.Ok)
                 {
                     var message = StringFromUTF8((IntPtr)result.error_message);
-                    throw new Exception(message ?? "Unknown error occurred");
+                    throw result.status.CreateException(message);
                 }
 
                 return result.data_type == Internal.RegorusDataType.Boolean ? result.bool_value : false;
@@ -178,7 +178,7 @@ namespace Regorus
                 if (result.status != Internal.RegorusStatus.Ok)
                 {
                     var message = StringFromUTF8((IntPtr)result.error_message);
-                    throw new Exception(message ?? "Unknown error occurred");
+                    throw result.status.CreateException(message);
                 }
 
                 return result.data_type == Internal.RegorusDataType.Integer ? result.int_value : 0;

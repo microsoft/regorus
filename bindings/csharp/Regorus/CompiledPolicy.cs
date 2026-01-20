@@ -5,6 +5,7 @@ using System;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using Regorus.Internal;
 
 #nullable enable
 namespace Regorus
@@ -165,7 +166,7 @@ namespace Regorus
                 if (result.status != Internal.RegorusStatus.Ok)
                 {
                     var message = StringFromUTF8((IntPtr)result.error_message);
-                    throw new Exception(message ?? "Unknown error occurred");
+                    throw result.status.CreateException(message);
                 }
 
                 return result.data_type switch

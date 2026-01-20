@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::common::*;
+use crate::panic_guard::with_unwind_guard;
 use alloc::boxed::Box;
 use alloc::string::String;
 use anyhow::Result;
@@ -35,18 +36,20 @@ pub extern "C" fn regorus_compiled_policy_eval_with_input(
     compiled_policy: *mut RegorusCompiledPolicy,
     input: *const c_char,
 ) -> RegorusResult {
-    let output = || -> Result<String> {
-        let input_value = regorus::Value::from_json_str(&from_c_str(input)?)?;
-        let result = to_ref(compiled_policy)?
-            .compiled_policy
-            .eval_with_input(input_value)?;
-        result.to_json_str()
-    }();
+    with_unwind_guard(|| {
+        let output = || -> Result<String> {
+            let input_value = regorus::Value::from_json_str(&from_c_str(input)?)?;
+            let result = to_ref(compiled_policy)?
+                .compiled_policy
+                .eval_with_input(input_value)?;
+            result.to_json_str()
+        }();
 
-    match output {
-        Ok(out) => RegorusResult::ok_string(out),
-        Err(e) => to_regorus_result(Err(e)),
-    }
+        match output {
+            Ok(out) => RegorusResult::ok_string(out),
+            Err(e) => to_regorus_result(Err(e)),
+        }
+    })
 }
 
 /// Get information about the compiled policy including metadata about modules,
@@ -59,14 +62,16 @@ pub extern "C" fn regorus_compiled_policy_eval_with_input(
 pub extern "C" fn regorus_compiled_policy_get_policy_info(
     compiled_policy: *mut RegorusCompiledPolicy,
 ) -> RegorusResult {
-    let output = || -> Result<String> {
-        let info = to_ref(compiled_policy)?.compiled_policy.get_policy_info()?;
-        serde_json::to_string(&info)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize policy info: {}", e))
-    }();
+    with_unwind_guard(|| {
+        let output = || -> Result<String> {
+            let info = to_ref(compiled_policy)?.compiled_policy.get_policy_info()?;
+            serde_json::to_string(&info)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize policy info: {}", e))
+        }();
 
-    match output {
-        Ok(out) => RegorusResult::ok_string(out),
-        Err(e) => to_regorus_result(Err(e)),
-    }
+        match output {
+            Ok(out) => RegorusResult::ok_string(out),
+            Err(e) => to_regorus_result(Err(e)),
+        }
+    })
 }
