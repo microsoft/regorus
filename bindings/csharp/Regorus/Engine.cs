@@ -373,21 +373,21 @@ namespace Regorus
 
         string? CheckAndDropResult(Regorus.Internal.RegorusResult result)
         {
-            if (result.status != Regorus.Internal.RegorusStatus.Ok)
+            try
             {
-                var message = StringFromUTF8((IntPtr)result.error_message);
-                var ex = new Exception(message);
-                Regorus.Internal.API.regorus_result_drop(result);
-                throw ex;
-            }
+                if (result.status != Regorus.Internal.RegorusStatus.Ok)
+                {
+                    var message = StringFromUTF8((IntPtr)result.error_message);
+                    throw result.status.CreateException(message);
+                }
 
-            var resultString = "";
-            if (result.output is not null)
-            {
-                resultString = StringFromUTF8((IntPtr)result.output);
+                var output = result.output is not null ? StringFromUTF8((IntPtr)result.output) : null;
+                return output ?? string.Empty;
             }
-            Regorus.Internal.API.regorus_result_drop(result);
-            return resultString;
+            finally
+            {
+                Regorus.Internal.API.regorus_result_drop(result);
+            }
         }
 
         private void ThrowIfDisposed()

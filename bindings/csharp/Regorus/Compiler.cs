@@ -177,7 +177,7 @@ namespace Regorus
                 if (result.status != Internal.RegorusStatus.Ok)
                 {
                     var message = StringFromUTF8((IntPtr)result.error_message);
-                    throw new Exception(message ?? "Unknown compilation error occurred");
+                    throw result.status.CreateException(message);
                 }
 
                 if (result.data_type != Internal.RegorusDataType.Pointer || result.pointer_value == null)

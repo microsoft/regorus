@@ -8,6 +8,7 @@
 
 #![cfg(feature = "azure_policy")]
 use crate::common::{from_c_str, RegorusResult, RegorusStatus};
+use crate::panic_guard::with_unwind_guard;
 use regorus::{registry::schemas, Schema};
 
 use std::os::raw::c_char;
@@ -29,45 +30,45 @@ pub extern "C" fn regorus_effect_schema_register(
     name: *const c_char,
     schema_json: *const c_char,
 ) -> RegorusResult {
-    let schema_name = match from_c_str(name) {
-        Ok(s) => s,
-        Err(e) => {
-            return RegorusResult::err_with_message(
-                RegorusStatus::InvalidArgument,
-                format!("Invalid effect schema name string: {e}"),
-            )
-        }
-    };
+    with_unwind_guard(|| {
+        let schema_name = match from_c_str(name) {
+            Ok(s) => s,
+            Err(e) => {
+                return RegorusResult::err_with_message(
+                    RegorusStatus::InvalidArgument,
+                    format!("Invalid effect schema name string: {e}"),
+                )
+            }
+        };
 
-    let schema_str = match from_c_str(schema_json) {
-        Ok(s) => s,
-        Err(e) => {
-            return RegorusResult::err_with_message(
-                RegorusStatus::InvalidDataFormat,
-                format!("Invalid effect schema JSON string: {e}"),
-            )
-        }
-    };
+        let schema_str = match from_c_str(schema_json) {
+            Ok(s) => s,
+            Err(e) => {
+                return RegorusResult::err_with_message(
+                    RegorusStatus::InvalidDataFormat,
+                    format!("Invalid effect schema JSON string: {e}"),
+                )
+            }
+        };
 
-    // Parse schema from JSON
-    let schema = match Schema::from_json_str(&schema_str) {
-        Ok(schema) => schema,
-        Err(e) => {
-            return RegorusResult::err_with_message(
-                RegorusStatus::InvalidDataFormat,
-                format!("Failed to parse effect schema JSON: {e}"),
-            )
-        }
-    };
+        let schema = match Schema::from_json_str(&schema_str) {
+            Ok(schema) => schema,
+            Err(e) => {
+                return RegorusResult::err_with_message(
+                    RegorusStatus::InvalidDataFormat,
+                    format!("Failed to parse effect schema JSON: {e}"),
+                )
+            }
+        };
 
-    // Register the schema
-    match schemas::effect::register(schema_name, schema.into()) {
-        Ok(()) => RegorusResult::ok_pointer(std::ptr::null_mut()),
-        Err(e) => RegorusResult::err_with_message(
-            RegorusStatus::Error,
-            format!("Failed to register effect schema: {e}"),
-        ),
-    }
+        match schemas::effect::register(schema_name, schema.into()) {
+            Ok(()) => RegorusResult::ok_pointer(std::ptr::null_mut()),
+            Err(e) => RegorusResult::err_with_message(
+                RegorusStatus::Error,
+                format!("Failed to register effect schema: {e}"),
+            ),
+        }
+    })
 }
 
 /// Check if an effect schema with the given name exists.
@@ -83,18 +84,20 @@ pub extern "C" fn regorus_effect_schema_register(
 #[cfg(feature = "azure_policy")]
 #[no_mangle]
 pub extern "C" fn regorus_effect_schema_contains(name: *const c_char) -> RegorusResult {
-    let schema_name = match from_c_str(name) {
-        Ok(s) => s,
-        Err(e) => {
-            return RegorusResult::err_with_message(
-                RegorusStatus::InvalidArgument,
-                format!("Invalid effect schema name string: {e}"),
-            )
-        }
-    };
+    with_unwind_guard(|| {
+        let schema_name = match from_c_str(name) {
+            Ok(s) => s,
+            Err(e) => {
+                return RegorusResult::err_with_message(
+                    RegorusStatus::InvalidArgument,
+                    format!("Invalid effect schema name string: {e}"),
+                )
+            }
+        };
 
-    let contains = schemas::effect::contains(&schema_name);
-    RegorusResult::ok_bool(contains)
+        let contains = schemas::effect::contains(&schema_name);
+        RegorusResult::ok_bool(contains)
+    })
 }
 
 /// Get the number of registered effect schemas.
@@ -104,8 +107,10 @@ pub extern "C" fn regorus_effect_schema_contains(name: *const c_char) -> Regorus
 #[cfg(feature = "azure_policy")]
 #[no_mangle]
 pub extern "C" fn regorus_effect_schema_len() -> RegorusResult {
-    let count = schemas::effect::len();
-    RegorusResult::ok_int(count as i64)
+    with_unwind_guard(|| {
+        let count = schemas::effect::len();
+        RegorusResult::ok_int(count as i64)
+    })
 }
 
 /// Check if the effect schema registry is empty.
@@ -115,8 +120,10 @@ pub extern "C" fn regorus_effect_schema_len() -> RegorusResult {
 #[cfg(feature = "azure_policy")]
 #[no_mangle]
 pub extern "C" fn regorus_effect_schema_is_empty() -> RegorusResult {
-    let is_empty = schemas::effect::is_empty();
-    RegorusResult::ok_bool(is_empty)
+    with_unwind_guard(|| {
+        let is_empty = schemas::effect::is_empty();
+        RegorusResult::ok_bool(is_empty)
+    })
 }
 
 /// List all registered effect schema names as a JSON array.
@@ -126,14 +133,16 @@ pub extern "C" fn regorus_effect_schema_is_empty() -> RegorusResult {
 #[cfg(feature = "azure_policy")]
 #[no_mangle]
 pub extern "C" fn regorus_effect_schema_list_names() -> RegorusResult {
-    let names = schemas::effect::list_names();
-    match serde_json::to_string(&names) {
-        Ok(json_str) => RegorusResult::ok_string(json_str),
-        Err(e) => RegorusResult::err_with_message(
-            RegorusStatus::Error,
-            format!("Failed to serialize effect schema names to JSON: {e}"),
-        ),
-    }
+    with_unwind_guard(|| {
+        let names = schemas::effect::list_names();
+        match serde_json::to_string(&names) {
+            Ok(json_str) => RegorusResult::ok_string(json_str),
+            Err(e) => RegorusResult::err_with_message(
+                RegorusStatus::Error,
+                format!("Failed to serialize effect schema names to JSON: {e}"),
+            ),
+        }
+    })
 }
 
 /// Remove an effect schema by name.
@@ -149,18 +158,20 @@ pub extern "C" fn regorus_effect_schema_list_names() -> RegorusResult {
 #[cfg(feature = "azure_policy")]
 #[no_mangle]
 pub extern "C" fn regorus_effect_schema_remove(name: *const c_char) -> RegorusResult {
-    let schema_name = match from_c_str(name) {
-        Ok(s) => s,
-        Err(e) => {
-            return RegorusResult::err_with_message(
-                RegorusStatus::InvalidArgument,
-                format!("Invalid effect schema name string: {e}"),
-            )
-        }
-    };
+    with_unwind_guard(|| {
+        let schema_name = match from_c_str(name) {
+            Ok(s) => s,
+            Err(e) => {
+                return RegorusResult::err_with_message(
+                    RegorusStatus::InvalidArgument,
+                    format!("Invalid effect schema name string: {e}"),
+                )
+            }
+        };
 
-    let removed = schemas::effect::remove(&schema_name).is_some();
-    RegorusResult::ok_bool(removed)
+        let removed = schemas::effect::remove(&schema_name).is_some();
+        RegorusResult::ok_bool(removed)
+    })
 }
 
 /// Clear all effect schemas from the registry.
@@ -170,6 +181,8 @@ pub extern "C" fn regorus_effect_schema_remove(name: *const c_char) -> RegorusRe
 #[cfg(feature = "azure_policy")]
 #[no_mangle]
 pub extern "C" fn regorus_effect_schema_clear() -> RegorusResult {
-    schemas::effect::clear();
-    RegorusResult::ok_pointer(std::ptr::null_mut())
+    with_unwind_guard(|| {
+        schemas::effect::clear();
+        RegorusResult::ok_pointer(std::ptr::null_mut())
+    })
 }

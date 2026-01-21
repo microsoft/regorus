@@ -34,6 +34,12 @@ pub enum RegorusStatus {
 
     /// Invalid policy content.
     InvalidPolicy,
+
+    /// The engine panicked and cannot be reused until reset.
+    Panic,
+
+    /// The engine remains poisoned because a previous panic was detected.
+    Poisoned,
 }
 
 /// Type of data contained in RegorusResult
