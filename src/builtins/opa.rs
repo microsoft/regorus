@@ -3,7 +3,7 @@
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
-use crate::builtins::utils::ensure_args_count;
+use crate::builtins::utils::{enforce_limit, ensure_args_count};
 use crate::*;
 
 use crate::lexer::Span;
@@ -83,27 +83,29 @@ fn opa_runtime(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
     ];
 
     let features = &features[..features.len() - 1];
+    let mut feature_values = Vec::with_capacity(features.len());
+    for feature in features.iter() {
+        feature_values.push(Value::String((*feature).to_string().into()));
+        // Guard feature list growth while reporting enabled capabilities.
+        enforce_limit()?;
+    }
     obj.insert(
         Value::String("features".into()),
-        Value::from_array(
-            features
-                .iter()
-                .map(|f| Value::String(f.to_string().into()))
-                .collect(),
-        ),
+        Value::from_array(feature_values),
     );
 
     let mut builtins: Vec<&&str> = builtins::BUILTINS.keys().collect();
     builtins.sort();
 
+    let mut builtin_values = Vec::with_capacity(builtins.len());
+    for builtin in builtins.iter() {
+        builtin_values.push(Value::String((**builtin).to_string().into()));
+        // Guard builtin list growth while reporting registered functions.
+        enforce_limit()?;
+    }
     obj.insert(
         Value::String("builtins".into()),
-        Value::from_array(
-            builtins
-                .iter()
-                .map(|f| Value::String(f.to_string().into()))
-                .collect(),
-        ),
+        Value::from_array(builtin_values),
     );
 
     Ok(Value::from_map(obj))

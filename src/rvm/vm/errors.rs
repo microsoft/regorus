@@ -17,6 +17,9 @@ pub enum VmError {
         pc: usize,
     },
 
+    #[error("Execution stopped: exceeded maximum memory limit of {limit} bytes with usage {usage} bytes (pc={pc})")]
+    MemoryLimitExceeded { usage: u64, limit: u64, pc: usize },
+
     #[error("Literal index {index} out of bounds (pc={pc})")]
     LiteralIndexOutOfBounds { index: u16, pc: usize },
 

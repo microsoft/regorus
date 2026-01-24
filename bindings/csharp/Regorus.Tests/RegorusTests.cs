@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Regorus;
@@ -11,6 +12,8 @@ namespace Regorus.Tests;
 [TestClass]
 public class RegorusTests
 {
+  private static readonly object LimitLock = new();
+
     [TestMethod]
     public void Basic_evaluation_succeeds()
     {
@@ -215,6 +218,121 @@ public class RegorusTests
         Assert.AreEqual("b", parameters![0]["modifiers"][0]["name"].ToString());
     }
 
+      [TestMethod]
+      public void Global_memory_limit_can_be_set_and_cleared()
+      {
+        lock (LimitLock)
+        {
+          using var guard = new MemoryLimitScope();
+
+          MemoryLimits.SetGlobalMemoryLimit(null);
+          Assert.IsNull(MemoryLimits.GetGlobalMemoryLimit());
+
+          const ulong limit = 32 * 1024;
+          MemoryLimits.SetGlobalMemoryLimit(limit);
+          Assert.AreEqual(limit, MemoryLimits.GetGlobalMemoryLimit());
+
+          MemoryLimits.SetGlobalMemoryLimit(null);
+          Assert.IsNull(MemoryLimits.GetGlobalMemoryLimit());
+        }
+      }
+
+      [TestMethod]
+      public void Memory_limit_violations_surface_from_engine_calls()
+      {
+        lock (LimitLock)
+        {
+          using var guard = new MemoryLimitScope();
+          using var engine = new Engine();
+
+          const ulong limit = 1;
+          var payload = new string('x', 128 * 1024);
+
+          MemoryLimits.FlushThreadMemoryCounters();
+          MemoryLimits.SetGlobalMemoryLimit(limit);
+
+          try
+          {
+            var ex = Assert.ThrowsException<InvalidOperationException>(
+              () => engine.SetInputJson($"{{\"payload\":\"{payload}\"}}"));
+            StringAssert.Contains(ex.Message, "execution exceeded memory limit");
+          }
+          finally
+          {
+            MemoryLimits.SetGlobalMemoryLimit(null);
+            MemoryLimits.FlushThreadMemoryCounters();
+          }
+        }
+      }
+
+      [TestMethod]
+      public void Evaluation_fails_when_input_pushes_policy_over_global_limit()
+      {
+        lock (LimitLock)
+        {
+          using var guard = new MemoryLimitScope();
+          using var engine = new Engine();
+
+          const string policy = """
+package memorylimit
+
+import rego.v1
+
+stretched := concat("", [input.block | numbers.range(0, input.repeat - 1)[_]])
+""";
+
+          engine.AddPolicy("memorylimit.rego", policy);
+
+          MemoryLimits.FlushThreadMemoryCounters();
+          const ulong limit = 4 * 1024 * 1024;
+          MemoryLimits.SetGlobalMemoryLimit(limit);
+
+          var block = new string('x', 16 * 1024);
+
+          var smallInput = JsonSerializer.Serialize(new { block, repeat = 16 });
+          engine.SetInputJson(smallInput);
+          var smallResult = engine.EvalRule("data.memorylimit.stretched");
+          Assert.IsNotNull(smallResult);
+          var stretched = JsonSerializer.Deserialize<string>(smallResult);
+          Assert.IsNotNull(stretched, "Policy should return a string result.");
+          Assert.AreEqual(block.Length * 16, stretched!.Length, "Policy should expand the payload under the limit.");
+
+          var largeInput = JsonSerializer.Serialize(new { block, repeat = 4096 });
+          engine.SetInputJson(largeInput);
+
+          var ex = Assert.ThrowsException<InvalidOperationException>(
+            () => engine.EvalRule("data.memorylimit.stretched"));
+          StringAssert.Contains(ex.Message, "execution exceeded memory limit");
+        }
+      }
+
+      [TestMethod]
+      public void Thread_flush_threshold_roundtrips()
+      {
+        lock (LimitLock)
+        {
+          var original = MemoryLimits.GetThreadMemoryFlushThreshold();
+          try
+          {
+            const ulong threshold = 256 * 1024;
+            MemoryLimits.SetThreadFlushThresholdOverride(threshold);
+            Assert.AreEqual(threshold, MemoryLimits.GetThreadMemoryFlushThreshold());
+
+            MemoryLimits.SetThreadFlushThresholdOverride(null);
+            var restored = MemoryLimits.GetThreadMemoryFlushThreshold();
+            Assert.IsTrue(restored.HasValue, "Clearing override should restore allocator default.");
+            if (original.HasValue)
+            {
+              Assert.AreEqual(original, restored);
+            }
+          }
+          finally
+          {
+            MemoryLimits.SetThreadFlushThresholdOverride(original);
+          }
+        }
+      }
+
   [TestMethod]
   public void SetInputJson_has_negligible_allocations_after_warmup()
   {
@@ -253,4 +371,20 @@ public class RegorusTests
       $"Expected ≤512 B/op after warmup, but observed {bytesPerOp:F2} B/op (total {allocated} bytes)."
     );
   }
+
+    private sealed class MemoryLimitScope : IDisposable
+    {
+      private readonly ulong? _originalLimit;
+
+      public MemoryLimitScope()
+      {
+        _originalLimit = MemoryLimits.GetGlobalMemoryLimit();
+      }
+
+      public void Dispose()
+      {
+        MemoryLimits.SetGlobalMemoryLimit(_originalLimit);
+        MemoryLimits.FlushThreadMemoryCounters();
+      }
+    }
 }

@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using System;
-using System.Text;
 using Regorus.Internal;
 
 #nullable enable
@@ -115,36 +114,23 @@ namespace Regorus
             }
         }
 
-        private static string? StringFromUTF8(IntPtr ptr)
-        {
-#if NETSTANDARD2_1
-            return System.Runtime.InteropServices.Marshal.PtrToStringUTF8(ptr);
-#else
-            int len = 0;
-            while (System.Runtime.InteropServices.Marshal.ReadByte(ptr, len) != 0) { ++len; }
-            byte[] buffer = new byte[len];
-            System.Runtime.InteropServices.Marshal.Copy(ptr, buffer, 0, buffer.Length);
-            return Encoding.UTF8.GetString(buffer);
-#endif
-        }
-
         private static string? CheckAndDropResult(Internal.RegorusResult result)
         {
             try
             {
                 if (result.status != Internal.RegorusStatus.Ok)
                 {
-                    var message = StringFromUTF8((IntPtr)result.error_message);
+                    var message = Utf8Marshaller.FromUtf8(result.error_message);
                     throw result.status.CreateException(message);
                 }
 
                 return result.data_type switch
                 {
-                    Internal.RegorusDataType.String => StringFromUTF8((IntPtr)result.output),
+                    Internal.RegorusDataType.String => Utf8Marshaller.FromUtf8(result.output),
                     Internal.RegorusDataType.Boolean => result.bool_value.ToString().ToLowerInvariant(),
                     Internal.RegorusDataType.Integer => result.int_value.ToString(),
                     Internal.RegorusDataType.None => null,
-                    _ => StringFromUTF8((IntPtr)result.output)
+                    _ => Utf8Marshaller.FromUtf8(result.output)
                 };
             }
             finally
@@ -159,7 +145,7 @@ namespace Regorus
             {
                 if (result.status != Internal.RegorusStatus.Ok)
                 {
-                    var message = StringFromUTF8((IntPtr)result.error_message);
+                    var message = Utf8Marshaller.FromUtf8(result.error_message);
                     throw result.status.CreateException(message);
                 }
 
@@ -177,7 +163,7 @@ namespace Regorus
             {
                 if (result.status != Internal.RegorusStatus.Ok)
                 {
-                    var message = StringFromUTF8((IntPtr)result.error_message);
+                    var message = Utf8Marshaller.FromUtf8(result.error_message);
                     throw result.status.CreateException(message);
                 }
 

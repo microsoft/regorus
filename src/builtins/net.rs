@@ -14,7 +14,7 @@ use std::vec::Vec;
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
-use crate::builtins::utils::ensure_args_count;
+use crate::builtins::utils::{enforce_limit, ensure_args_count};
 use crate::lexer::Span;
 use crate::value::Value;
 
@@ -134,17 +134,23 @@ fn _cidr_expand(cidr: Arc<str>) -> Result<Value> {
         .parse::<IpNet>()
         .map_err(|e| anyhow!("Error parsing {cidr}: {e}"))?;
 
-    let mut hosts: Vec<Value> = net
-        .hosts()
-        .map(|h| Value::String(h.to_string().into()))
-        .collect();
+    let mut hosts: Vec<Value> = Vec::new();
+    for host in net.hosts() {
+        hosts.push(Value::String(host.to_string().into()));
+        // Guard expanded host list growth while iterating over CIDR addresses.
+        enforce_limit()?;
+    }
 
     // the IpNet library has some different behavior regarding CIDR expansion from the go implementation
     // that OPA uses; it will exclude the IPv4 CIDR network address and broadcast address when the netmask < 31.
     // Adjust accordingly for parity.
     if matches!(net, IpNet::V4(_) if net.prefix_len() < 31) {
-        hosts.push(net.broadcast().to_string().into());
-        hosts.insert(0, net.network().to_string().into());
+        hosts.push(Value::String(net.broadcast().to_string().into()));
+        // Guard expanded host list growth when adding the broadcast address.
+        enforce_limit()?;
+        hosts.insert(0, Value::String(net.network().to_string().into()));
+        // Guard expanded host list growth when reintroducing the network address.
+        enforce_limit()?;
     }
 
     Ok(Value::Array(Arc::from(hosts)))

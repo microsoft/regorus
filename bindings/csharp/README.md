@@ -30,3 +30,33 @@ Once the workflow run completes, the generated Nuget can be downloaded by follow
 ## Local
 
 TODO
+
+## Memory Usage Safeguards
+
+The C# bindings expose allocator-backed memory tracking utilities via the static `Regorus.MemoryLimits` helper. Typical usage:
+
+```csharp
+// Restrict total allocations to 128 MiB for the process
+Regorus.MemoryLimits.SetGlobalMemoryLimit(128 * 1024 * 1024);
+
+// Optional: tune how frequently each thread flushes its allocation counters
+Regorus.MemoryLimits.SetThreadFlushThresholdOverride(256 * 1024);
+
+// Engine operations throw InvalidOperationException with the allocator message if the budget is exceeded
+using var engine = new Regorus.Engine();
+var veryLargeJson = new string('x', 128 * 1024);
+try
+{
+  engine.SetInputJson(veryLargeJson);
+}
+catch (InvalidOperationException ex)
+{
+  Console.WriteLine($"Allocator reported: {ex.Message}");
+}
+
+// Restore defaults once done
+Regorus.MemoryLimits.SetGlobalMemoryLimit(null);
+Regorus.MemoryLimits.SetThreadFlushThresholdOverride(null);
+```
+
+See `bindings/csharp/Regorus.Tests/RegorusTests.cs` for scenario coverage and `bindings/csharp/TargetExampleApp/Program.cs` for end-to-end usage.

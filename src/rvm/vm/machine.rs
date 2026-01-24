@@ -2,9 +2,12 @@
 // Licensed under the MIT License.
 
 use crate::rvm::program::Program;
+#[cfg(feature = "allocator-memory-limits")]
+use crate::utils::limits::{self, LimitError};
 use crate::value::Value;
 use crate::CompiledPolicy;
 use alloc::collections::{btree_map::Entry, BTreeMap, VecDeque};
+use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
@@ -354,6 +357,26 @@ impl RegoVM {
             },
         )?;
         *slot = value;
+        Ok(())
+    }
+
+    #[cfg(feature = "allocator-memory-limits")]
+    pub(super) fn memory_check(&mut self) -> Result<()> {
+        limits::check_memory_limit_if_needed().map_err(|err| match err {
+            LimitError::MemoryLimitExceeded { usage, limit } => VmError::MemoryLimitExceeded {
+                usage,
+                limit,
+                pc: self.pc,
+            },
+            other => VmError::Internal {
+                message: format!("unexpected limit error: {other}"),
+                pc: self.pc,
+            },
+        })
+    }
+
+    #[cfg(not(feature = "allocator-memory-limits"))]
+    pub(super) fn memory_check(&mut self) -> Result<()> {
         Ok(())
     }
 }

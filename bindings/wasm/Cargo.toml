@@ -13,7 +13,26 @@ keywords = ["interpreter", "opa", "policy-as-code", "rego"]
 crate-type = ["cdylib"]
 
 [features]
-default = ["ast", "coverage", "regorus/std", "regorus/full-opa"]
+default = [
+	"ast",
+	"coverage",
+	"regorus/std",
+	"regorus/base64",
+	"regorus/base64url",
+	"regorus/glob",
+	"regorus/graph",
+	"regorus/hex",
+	"regorus/http",
+	"regorus/jsonschema",
+	"regorus/net",
+	"regorus/opa-runtime",
+	"regorus/regex",
+	"regorus/semver",
+	"regorus/time",
+	"regorus/uuid",
+	"regorus/urlquery",
+	"regorus/yaml"
+]
 ast = ["regorus/ast"]
 coverage = ["regorus/coverage"]
 

@@ -150,5 +150,48 @@ namespace Regorus.Internal
         {
             return new PinnedUtf8(value);
         }
+
+        internal static unsafe string? FromUtf8(byte* pointer)
+        {
+            if (pointer is null)
+            {
+                return null;
+            }
+
+#if NETSTANDARD2_1
+            return Marshal.PtrToStringUTF8((IntPtr)pointer);
+#else
+            var intPtr = (IntPtr)pointer;
+            var length = 0;
+            while (Marshal.ReadByte(intPtr, length) != 0)
+            {
+                length++;
+            }
+
+            if (length == 0)
+            {
+                return string.Empty;
+            }
+
+            var buffer = ArrayPool<byte>.Shared.Rent(length);
+            try
+            {
+                Marshal.Copy(intPtr, buffer, 0, length);
+                return Encoding.UTF8.GetString(buffer, 0, length);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+#endif
+        }
+
+        internal static string? FromUtf8(IntPtr pointer)
+        {
+            unsafe
+            {
+                return FromUtf8((byte*)pointer);
+            }
+        }
     }
 }

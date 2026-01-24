@@ -22,7 +22,7 @@ use core::convert::AsRef;
 use core::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
-use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::de::{self, Deserializer, Error as DeError, MapAccess, SeqAccess, Visitor};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
 
@@ -68,6 +68,16 @@ pub enum Value {
     /// Undefined value.
     /// Used to indicate the absence of a value.
     Undefined,
+}
+
+#[inline]
+fn enforce_limit_anyhow() -> Result<()> {
+    crate::utils::limits::check_memory_limit_if_needed().map_err(|err| anyhow!(err))
+}
+
+#[inline]
+fn enforce_limit_for<E: DeError>() -> core::result::Result<(), E> {
+    crate::utils::limits::check_memory_limit_if_needed().map_err(|err| E::custom(err.to_string()))
 }
 
 #[doc(hidden)]
@@ -199,6 +209,8 @@ impl<'de> Visitor<'de> for ValueVisitor {
         let mut arr = vec![];
         while let Some(v) = visitor.next_element()? {
             arr.push(v);
+            // Enforce allocator limit while expanding a deserialized array.
+            enforce_limit_for::<V::Error>()?;
         }
         Ok(Value::from(arr))
     }
@@ -218,8 +230,12 @@ impl<'de> Visitor<'de> for ValueVisitor {
             }
             let mut map = BTreeMap::new();
             map.insert(key, value);
+            // Enforce allocator limit while expanding a deserialized object.
+            enforce_limit_for::<V::Error>()?;
             while let Some((key, value)) = visitor.next_entry()? {
                 map.insert(key, value);
+                // Enforce allocator limit while expanding a deserialized object.
+                enforce_limit_for::<V::Error>()?;
             }
             Ok(Value::from(map))
         } else {
@@ -334,7 +350,24 @@ impl Value {
     /// # }
     /// ```
     pub fn from_json_str(json: &str) -> Result<Value> {
-        serde_json::from_str(json).map_err(anyhow::Error::msg)
+        match serde_json::from_str::<Value>(json) {
+            Ok(value) => Ok(value),
+            Err(err) => {
+                #[cfg(feature = "allocator-memory-limits")]
+                {
+                    // Re-validate allocator limits when serde parsing fails to surface LimitError.
+                    match crate::utils::limits::check_global_memory_limit() {
+                        Err(limit_err) => Err(anyhow!(limit_err)),
+                        Ok(_) => Err(anyhow!(err)),
+                    }
+                }
+
+                #[cfg(not(feature = "allocator-memory-limits"))]
+                {
+                    Err(anyhow!(err))
+                }
+            }
+        }
     }
 
     /// Deserialize a [`Value`] from a file containing JSON.
@@ -1305,6 +1338,8 @@ impl Value {
         if let Value::Object(map) = self {
             if map.get(&key).is_none() {
                 Rc::make_mut(map).insert(key.clone(), Value::Undefined);
+                // Enforce allocator limit while creating nested object entries.
+                enforce_limit_anyhow()?;
             }
         }
 
@@ -1330,7 +1365,9 @@ impl Value {
         match (self, &mut new) {
             (v @ Value::Undefined, _) => *v = new,
             (Value::Set(ref mut set), Value::Set(new)) => {
-                Rc::make_mut(set).append(Rc::make_mut(new))
+                Rc::make_mut(set).append(Rc::make_mut(new));
+                // Enforce allocator limit after merging set entries.
+                enforce_limit_anyhow()?;
             }
             (Value::Object(map), Value::Object(new)) => {
                 for (k, v) in new.iter() {
@@ -1343,7 +1380,11 @@ impl Value {
                                 serde_json::to_string_pretty(&v).map_err(anyhow::Error::msg)?,
                             )
                         }
-                        _ => Rc::make_mut(map).insert(k.clone(), v.clone()),
+                        _ => {
+                            Rc::make_mut(map).insert(k.clone(), v.clone());
+                            // Enforce allocator limit after merging object entries.
+                            enforce_limit_anyhow()?;
+                        }
                     };
                 }
             }

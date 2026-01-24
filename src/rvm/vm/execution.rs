@@ -127,6 +127,7 @@ impl RegoVM {
         let target = self.convert_pc(target, "jump target")?;
         self.pc = target;
         while self.pc < program.instructions.len() {
+            self.memory_check()?;
             if self.executed_instructions >= self.max_instructions {
                 return Err(VmError::InstructionLimitExceeded {
                     limit: self.max_instructions,
@@ -293,6 +294,7 @@ impl RegoVM {
 
     fn run_stackless_loop(&mut self, program: &Program, last_result: &mut Value) -> Result<()> {
         while !self.execution_stack.is_empty() {
+            self.memory_check()?;
             self.frame_pc_overridden = false;
             let should_finalize_rule = self.execution_stack.last().is_some_and(|frame| {
                 matches!(

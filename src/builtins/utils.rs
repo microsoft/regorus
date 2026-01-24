@@ -13,6 +13,11 @@ use alloc::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{bail, Result};
 
+#[inline]
+pub fn enforce_limit() -> Result<()> {
+    crate::utils::limits::check_memory_limit_if_needed().map_err(anyhow::Error::new)
+}
+
 pub fn ensure_args_count(
     span: &Span,
     fcn: &'static str,
@@ -124,11 +129,15 @@ pub fn ensure_string_collection<'a>(fcn: &str, arg: &Expr, v: &'a Value) -> Resu
         Value::Array(a) => {
             for (idx, elem) in a.iter().enumerate() {
                 collection.push(ensure_string_element(fcn, arg, elem, idx)?);
+                // Enforce allocator limit while materializing the string collection.
+                enforce_limit()?;
             }
         }
         Value::Set(s) => {
             for (idx, elem) in s.iter().enumerate() {
                 collection.push(ensure_string_element(fcn, arg, elem, idx)?);
+                // Enforce allocator limit while materializing the string collection.
+                enforce_limit()?;
             }
         }
         _ => {

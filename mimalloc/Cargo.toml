@@ -1,7 +1,12 @@
 [package]
 name = "mimalloc"
 edition = "2021"
-version = "2.1.2"
+version = "2.2.6"
+
+[features]
+default = ["std"]
+std = []
+allocator-memory-limits = ["std"]
 
 [target.'cfg(not(any(target_family = "wasm")))'.dependencies]
 mimalloc-sys = { path = "./mimalloc-sys" }  

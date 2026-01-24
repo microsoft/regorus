@@ -11,10 +11,15 @@
   <PropertyGroup>
     <!-- If the environment variable is set (such as in a Github Action run), append the suffix to the version number -->
     <RegorusPackageVersionSuffix Condition="'$(VersionSuffix)' != ''">-$(VersionSuffix)</RegorusPackageVersionSuffix>
+    <UseLocalRegorus Condition="'$(UseLocalRegorus)' == ''">false</UseLocalRegorus>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Regorus" Version="0.8.0$(RegorusPackageVersionSuffix)"/>
+  <ItemGroup Condition="'$(UseLocalRegorus)' == 'true'">
+    <ProjectReference Include="../Regorus/Regorus.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseLocalRegorus)' != 'true'">
+    <PackageReference Include="Regorus" Version="0.8.0$(RegorusPackageVersionSuffix)" />
   </ItemGroup>
 
   <ItemGroup>

@@ -4,7 +4,7 @@
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
-use crate::builtins::utils::{ensure_args_count, ensure_numeric, ensure_string};
+use crate::builtins::utils::{enforce_limit, ensure_args_count, ensure_numeric, ensure_string};
 use crate::lexer::Span;
 use crate::value::Value;
 use crate::*;
@@ -56,20 +56,25 @@ fn find_all_string_submatch_n(
         pattern
             .captures_iter(&value)
             .map(|capture| {
-                Value::from_array(
-                    capture
-                        .iter()
-                        .map(|group| {
-                            Value::String(match group {
-                                Some(s) => s.as_str().into(),
-                                _ => "".into(),
-                            })
-                        })
-                        .collect(),
-                )
+                let groups = capture
+                    .iter()
+                    .map(|group| {
+                        let value = Value::String(match group {
+                            Some(s) => s.as_str().into(),
+                            _ => "".into(),
+                        });
+                        // Guard match accumulation while adding each capture group.
+                        enforce_limit()?;
+                        Ok(value)
+                    })
+                    .collect::<Result<Vec<Value>>>()?;
+                let array = Value::from_array(groups);
+                // Guard outer match accumulation as nested arrays grow.
+                enforce_limit()?;
+                Ok(array)
             })
             .take(n)
-            .collect(),
+            .collect::<Result<Vec<Value>>>()?,
     ))
 }
 
@@ -97,9 +102,14 @@ fn find_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     Ok(Value::from_array(
         pattern
             .find_iter(&value)
-            .map(|m| Value::String(m.as_str().into()))
+            .map(|m| {
+                let value = Value::String(m.as_str().into());
+                // Guard match accumulation while pushing each substring.
+                enforce_limit()?;
+                Ok(value)
+            })
             .take(n)
-            .collect(),
+            .collect::<Result<Vec<Value>>>()?,
     ))
 }
 
@@ -161,8 +171,13 @@ fn regex_split(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
     Ok(Value::from_array(
         pattern
             .split(&value)
-            .map(|s| Value::String(s.into()))
-            .collect::<Vec<Value>>(),
+            .map(|s| {
+                let value = Value::String(s.into());
+                // Guard output accumulation as each split segment is emitted.
+                enforce_limit()?;
+                Ok(value)
+            })
+            .collect::<Result<Vec<Value>>>()?,
     ))
 }
 

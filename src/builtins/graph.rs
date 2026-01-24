@@ -5,7 +5,7 @@
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
-use crate::builtins::utils::{ensure_args_count, ensure_object};
+use crate::builtins::utils::{enforce_limit, ensure_args_count, ensure_object};
 use crate::lexer::Span;
 use crate::value::Value;
 use crate::*;
@@ -28,8 +28,20 @@ fn reachable(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) ->
     let mut worklist = vec![];
 
     match &args[1] {
-        Value::Array(arr) => worklist.extend(arr.iter().cloned()),
-        Value::Set(set) => worklist.extend(set.iter().cloned()),
+        Value::Array(arr) => {
+            for node in arr.iter() {
+                worklist.push(node.clone());
+                // Guard worklist growth when seeding traversal from an array.
+                enforce_limit()?;
+            }
+        }
+        Value::Set(set) => {
+            for node in set.iter() {
+                worklist.push(node.clone());
+                // Guard worklist growth when seeding traversal from a set.
+                enforce_limit()?;
+            }
+        }
         _ if strict => bail!(params[1].span().error("initial vertices must be array/set")),
         _ => return Ok(Value::Undefined),
     }
@@ -41,13 +53,27 @@ fn reachable(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) ->
         }
 
         match graph.get(&v) {
-            Some(Value::Array(arr)) => worklist.extend(arr.iter().cloned()),
-            Some(Value::Set(set)) => worklist.extend(set.iter().cloned()),
+            Some(Value::Array(arr)) => {
+                for neighbor in arr.iter() {
+                    worklist.push(neighbor.clone());
+                    // Guard worklist growth when enqueuing array neighbors.
+                    enforce_limit()?;
+                }
+            }
+            Some(Value::Set(set)) => {
+                for neighbor in set.iter() {
+                    worklist.push(neighbor.clone());
+                    // Guard worklist growth when enqueuing set neighbors.
+                    enforce_limit()?;
+                }
+            }
             Some(_) => (),
             _ => continue,
         }
 
         reachable.insert(v);
+        // Guard reachable set size as discovered vertices accumulate.
+        enforce_limit()?;
     }
 
     Ok(Value::from_set(reachable))
@@ -64,6 +90,8 @@ fn visit(
         if s.as_ref() == "" {
             if !path.is_empty() {
                 paths.insert(Value::from_array(path.clone()));
+                // Guard path result growth when terminating at empty edge.
+                enforce_limit()?;
             }
             return Ok(());
         }
@@ -74,15 +102,23 @@ fn visit(
         // Current node is not valid. Add path as is.
         if !path.is_empty() {
             paths.insert(Value::from_array(path.clone()));
+            // Guard path set growth when encountering missing nodes.
+            enforce_limit()?;
         }
         return Ok(());
     }
 
     if visited.contains(node) {
         paths.insert(Value::from_array(path.clone()));
+        // Guard path set growth when detecting a cycle.
+        enforce_limit()?;
     } else {
         path.push(node.clone());
+        // Guard path stack growth while descending the graph.
+        enforce_limit()?;
         visited.insert(node.clone());
+        // Guard visited set growth while marking nodes as seen.
+        enforce_limit()?;
         let n = match neighbors {
             Some(Value::Array(arr)) => {
                 for n in arr.iter().rev() {
@@ -104,6 +140,8 @@ fn visit(
             // Current node has no neighbors.
             if !path.is_empty() {
                 paths.insert(Value::from_array(path.clone()));
+                // Guard path set growth when recording leaf nodes.
+                enforce_limit()?;
             }
         }
 
@@ -150,11 +188,15 @@ fn walk_visit(path: &mut Vec<Value>, value: &Value, paths: &mut Vec<Value>) -> R
     {
         let path = Value::from_array(path.clone());
         paths.push(Value::from_array([path, value.clone()].into()));
+        // Guard walk result growth when emitting a new path/value pair.
+        enforce_limit()?;
     }
     match value {
         Value::Array(arr) => {
             for (idx, elem) in arr.iter().enumerate() {
                 path.push(Value::from(idx));
+                // Guard path stack growth while traversing array members.
+                enforce_limit()?;
                 walk_visit(path, elem, paths)?;
                 path.pop();
             }
@@ -162,6 +204,8 @@ fn walk_visit(path: &mut Vec<Value>, value: &Value, paths: &mut Vec<Value>) -> R
         Value::Set(set) => {
             for elem in set.iter() {
                 path.push(elem.clone());
+                // Guard path stack growth while traversing set members.
+                enforce_limit()?;
                 walk_visit(path, elem, paths)?;
                 path.pop();
             }
@@ -169,6 +213,8 @@ fn walk_visit(path: &mut Vec<Value>, value: &Value, paths: &mut Vec<Value>) -> R
         Value::Object(obj) => {
             for (key, value) in obj.iter() {
                 path.push(key.clone());
+                // Guard path stack growth while traversing object entries.
+                enforce_limit()?;
                 walk_visit(path, value, paths)?;
                 path.pop();
             }

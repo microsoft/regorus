@@ -2,8 +2,6 @@
 // Licensed under the MIT License.
 
 using System;
-using System.Runtime.InteropServices;
-using System.Text;
 using Regorus.Internal;
 
 
@@ -357,32 +355,24 @@ namespace Regorus
             });
         }
 
-        string? StringFromUTF8(IntPtr ptr)
-        {
-
-#if NETSTANDARD2_1
-				return System.Runtime.InteropServices.Marshal.PtrToStringUTF8(ptr);
-#else
-            int len = 0;
-            while (Marshal.ReadByte(ptr, len) != 0) { ++len; }
-            byte[] buffer = new byte[len];
-            Marshal.Copy(ptr, buffer, 0, buffer.Length);
-            return Encoding.UTF8.GetString(buffer);
-#endif
-        }
-
         string? CheckAndDropResult(Regorus.Internal.RegorusResult result)
         {
             try
             {
                 if (result.status != Regorus.Internal.RegorusStatus.Ok)
                 {
-                    var message = StringFromUTF8((IntPtr)result.error_message);
+                    var message = Utf8Marshaller.FromUtf8(result.error_message);
                     throw result.status.CreateException(message);
                 }
 
-                var output = result.output is not null ? StringFromUTF8((IntPtr)result.output) : null;
-                return output ?? string.Empty;
+                return result.data_type switch
+                {
+                    Regorus.Internal.RegorusDataType.String => Utf8Marshaller.FromUtf8(result.output),
+                    Regorus.Internal.RegorusDataType.Boolean => result.bool_value.ToString().ToLowerInvariant(),
+                    Regorus.Internal.RegorusDataType.Integer => result.int_value.ToString(),
+                    Regorus.Internal.RegorusDataType.None => null,
+                    _ => Utf8Marshaller.FromUtf8(result.output)
+                };
             }
             finally
             {

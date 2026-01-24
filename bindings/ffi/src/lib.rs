@@ -11,6 +11,7 @@ mod compile;
 mod compiled_policy;
 mod effect_registry;
 mod engine;
+mod limits;
 mod lock;
 mod panic_guard;
 mod schema_registry;

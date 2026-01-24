@@ -24,11 +24,21 @@ lto = true
 codegen-units = 1
 
 [features]
-default = ["ast", "azure_policy", "std", "coverage", "regorus/arc", "regorus/full-opa", "contention_checks"]
+default = [
+	"ast",
+	"azure_policy",
+	"std",
+	"coverage",
+	"allocator-memory-limits",
+	"regorus/arc",
+	"regorus/full-opa",
+	"contention_checks",
+]
 ast = ["regorus/ast"]
 azure_policy = ["regorus/azure_policy"]
 std = ["regorus/std"]
 coverage = ["regorus/coverage"]
+allocator-memory-limits = ["regorus/allocator-memory-limits"]
 contention_checks = ["parking_lot"]
 custom_allocator = []
 

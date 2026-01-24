@@ -4,8 +4,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text;
 using Regorus.Internal;
 
 #nullable enable
@@ -157,26 +155,13 @@ namespace Regorus
             }
         }
 
-        private static string? StringFromUTF8(IntPtr ptr)
-        {
-#if NETSTANDARD2_1
-            return System.Runtime.InteropServices.Marshal.PtrToStringUTF8(ptr);
-#else
-            int len = 0;
-            while (System.Runtime.InteropServices.Marshal.ReadByte(ptr, len) != 0) { ++len; }
-            byte[] buffer = new byte[len];
-            System.Runtime.InteropServices.Marshal.Copy(ptr, buffer, 0, buffer.Length);
-            return Encoding.UTF8.GetString(buffer);
-#endif
-        }
-
         private static CompiledPolicy GetCompiledPolicyResult(Internal.RegorusResult result)
         {
             try
             {
                 if (result.status != Internal.RegorusStatus.Ok)
                 {
-                    var message = StringFromUTF8((IntPtr)result.error_message);
+                    var message = Utf8Marshaller.FromUtf8(result.error_message);
                     throw result.status.CreateException(message);
                 }
 

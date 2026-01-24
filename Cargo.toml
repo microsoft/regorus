@@ -41,6 +41,7 @@ opa-runtime = []
 regex = ["dep:regex"]
 rvm = ["dep:bincode", "dep:indexmap"]
 semver = ["dep:semver"]
+allocator-memory-limits = ["std", "mimalloc", "mimalloc/allocator-memory-limits"]
 std = ["rand/std", "rand/std_rng", "serde_json/std", "msvc_spectre_libs" ]
 time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
@@ -55,6 +56,7 @@ full-opa = [
     "hex",
     "http",
     "jsonschema",
+    "allocator-memory-limits",
     "mimalloc",
     "net",
     "opa-runtime",

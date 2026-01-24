@@ -4,6 +4,8 @@
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
+#[cfg(feature = "urlquery")]
+use crate::builtins::utils::enforce_limit;
 #[allow(unused)]
 use crate::builtins::utils::{
     ensure_args_count, ensure_object, ensure_string, ensure_string_collection,
@@ -255,7 +257,9 @@ fn urlquery_decode_object(
         let key = Value::String(k.clone().into());
         let value = Value::String(v.clone().into());
         if let Ok(a) = map.entry(key).or_insert(Value::new_array()).as_array_mut() {
-            a.push(value)
+            a.push(value);
+            // Guard decoded parameter accumulation while grouping duplicate keys.
+            enforce_limit()?;
         }
     }
     Ok(Value::from_map(map))
@@ -302,16 +306,23 @@ fn urlquery_encode_object(
         Err(_) => bail!(params[0].span().error("not a valid url query")),
     };
 
-    for (key, value) in obj.iter() {
-        let key = ensure_string(name, &params[0], key)?;
-        match value {
-            Value::String(v) => {
-                url.query_pairs_mut().append_pair(key.as_ref(), v.as_ref());
-            }
-            _ => {
-                let values = ensure_string_collection(name, &params[0], value)?;
-                for v in values {
-                    url.query_pairs_mut().append_pair(key.as_ref(), v);
+    {
+        let mut pairs = url.query_pairs_mut();
+        for (key, value) in obj.iter() {
+            let key = ensure_string(name, &params[0], key)?;
+            match value {
+                Value::String(v) => {
+                    pairs.append_pair(key.as_ref(), v.as_ref());
+                    // Guard encoded parameter growth when serializing string fields.
+                    enforce_limit()?;
+                }
+                _ => {
+                    let values = ensure_string_collection(name, &params[0], value)?;
+                    for v in values {
+                        pairs.append_pair(key.as_ref(), v);
+                        // Guard encoded parameter growth when serializing multi-valued fields.
+                        enforce_limit()?;
+                    }
                 }
             }
         }

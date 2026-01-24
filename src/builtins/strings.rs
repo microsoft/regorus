@@ -10,7 +10,7 @@
 use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::builtins::utils::{
-    ensure_args_count, ensure_array, ensure_numeric, ensure_object, ensure_string,
+    enforce_limit, ensure_args_count, ensure_array, ensure_numeric, ensure_object, ensure_string,
     ensure_string_collection,
 };
 use crate::lexer::Span;
@@ -125,6 +125,8 @@ fn indexof_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -
     for (pos, (idx, _)) in s1.char_indices().enumerate() {
         if s1[idx..].starts_with(s2.as_ref()) {
             positions.push(Value::from(Number::from(pos)));
+            // Guard position vector growth while tracking matches.
+            enforce_limit()?;
         }
     }
     Ok(Value::from_array(positions))
@@ -156,11 +158,23 @@ fn split(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
     let parts: Vec<Value> = if delimiter.as_ref() == "" {
         // If delimiter is "", str::split returns a leading and trailing "" whereas Golang's split doesn't.
         // Therefore avoid str::split and instead return each char as a Value::String.
-        s.chars().map(|c| Value::from(c.to_string())).collect()
+        s.chars()
+            .map(|c| {
+                let value = Value::from(c.to_string());
+                // Guard part accumulation when splitting into characters.
+                enforce_limit()?;
+                Ok(value)
+            })
+            .collect::<Result<Vec<Value>>>()?
     } else {
         s.split(delimiter.as_ref())
-            .map(|s| Value::String(s.into()))
-            .collect()
+            .map(|s| {
+                let value = Value::String(s.into());
+                // Guard part accumulation when splitting by delimiter.
+                enforce_limit()?;
+                Ok(value)
+            })
+            .collect::<Result<Vec<Value>>>()?
     };
 
     Ok(Value::from(parts))

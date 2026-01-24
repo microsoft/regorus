@@ -21,7 +21,7 @@ impl RegoVM {
                 pc: self.pc,
                 available: self.program.instruction_data.function_call_params.len(),
             })?;
-        match self.execution_mode {
+        let call_result = match self.execution_mode {
             ExecutionMode::RunToCompletion => {
                 self.execute_call_rule_common(params.dest, params.func_rule_index, Some(&params))
             }
@@ -30,7 +30,12 @@ impl RegoVM {
                 params.func_rule_index,
                 Some(&params),
             ),
-        }
+        };
+
+        call_result?;
+
+        self.memory_check()?;
+        Ok(())
     }
 
     pub(super) fn execute_builtin_call(&mut self, params_index: u16) -> Result<()> {
@@ -69,6 +74,7 @@ impl RegoVM {
 
         if args.iter().any(|a| a == &Value::Undefined) {
             self.set_register(params.dest, Value::Undefined)?;
+            self.memory_check()?;
             return Ok(());
         }
 
@@ -117,6 +123,8 @@ impl RegoVM {
             if let Some(name) = cache_name {
                 self.builtins_cache.insert((name, args), result);
             }
+
+            self.memory_check()?;
         } else {
             return Err(VmError::BuiltinNotResolved {
                 name: builtin_info.name.clone(),
