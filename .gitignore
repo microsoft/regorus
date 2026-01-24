@@ -29,6 +29,9 @@ bindings/*/target
 **bin
 **obj
 
+# Bundler binstubs regenerated during ruby setup
+bindings/ruby/bin/
+
 # Visual Studio folders
 **/*.vs
 
