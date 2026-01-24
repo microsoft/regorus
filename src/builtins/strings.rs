@@ -18,6 +18,7 @@ use crate::number::Number;
 use crate::value::Value;
 use crate::*;
 
+use alloc::collections::BTreeMap;
 use anyhow::{bail, Result};
 
 pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
@@ -35,6 +36,7 @@ pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn
     m.insert("strings.any_prefix_match", (any_prefix_match, 2));
     m.insert("strings.any_suffix_match", (any_suffix_match, 2));
     m.insert("strings.count", (strings_count, 2));
+    m.insert("strings.render_template", (render_template, 2));
     m.insert("strings.replace_n", (replace_n, 2));
     m.insert("strings.reverse", (reverse, 1));
     m.insert("substring", (substring, 3));
@@ -674,4 +676,293 @@ fn upper(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
     ensure_args_count(span, name, params, args, 1)?;
     let s = ensure_string(name, &params[0], &args[0])?;
     Ok(Value::String(s.to_uppercase().into()))
+}
+
+fn render_template(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    strict: bool,
+) -> Result<Value> {
+    let name = "strings.render_template";
+    ensure_args_count(span, name, params, args, 2)?;
+    let template = ensure_string(name, &params[0], &args[0])?;
+    let vars_obj = ensure_object(name, &params[1], args[1].clone())?;
+
+    // Helper: resolve truthiness roughly like Go templates (false/zero/empty/nil => false)
+    fn is_truthy(v: &Value) -> bool {
+        match v {
+            Value::Bool(b) => *b,
+            Value::Number(n) => n != &Number::from(0u64),
+            Value::String(s) => !s.is_empty(),
+            Value::Array(a) => !a.is_empty(),
+            Value::Set(s) => !s.is_empty(),
+            Value::Object(o) => !o.is_empty(),
+            Value::Null | Value::Undefined => false,
+        }
+    }
+
+    // Evaluate an expression: "$var" or ".a.b.0"
+    fn eval_expr(expr: &str, root: &Value, locals: &BTreeMap<String, Value>) -> Value {
+        let expr = expr.trim();
+        if let Some(rest) = expr.strip_prefix('$') {
+            return locals.get(rest.trim()).cloned().unwrap_or(Value::Undefined);
+        }
+        // Only support dot path or identifier (treated as top-level key)
+        let mut cur = root.clone();
+        let path = if let Some(rest) = expr.strip_prefix('.') {
+            rest
+        } else {
+            expr
+        };
+        if path.is_empty() {
+            return cur;
+        }
+        for seg in path.split('.') {
+            if seg.is_empty() {
+                continue;
+            }
+            let next = if let Ok(idx) = seg.parse::<u64>() {
+                cur[Value::from(idx)].clone()
+            } else {
+                cur[Value::from(seg)].clone()
+            };
+            cur = next;
+        }
+        cur
+    }
+
+    // Find matching {{end}} for a block starting right after the current action ends.
+    fn find_block_end(t: &str, mut j: usize, err_span: &Span) -> Result<(usize, usize)> {
+        let mut depth: i32 = 0;
+        loop {
+            let Some(a_start_rel) = t[j..].find("{{") else {
+                bail!(err_span.error("unterminated block: missing `{{end}}`"));
+            };
+            let a_start = j + a_start_rel;
+            let Some(a_end_rel) = t[a_start + 2..].find("}}") else {
+                bail!(err_span.error("unterminated template action: missing `}}`"));
+            };
+            let a_end = a_start + 2 + a_end_rel;
+            let action = t[a_start + 2..a_end].trim();
+            if action.starts_with("range ") || action.starts_with("if ") {
+                depth += 1;
+            } else if action == "end" {
+                if depth == 0 {
+                    return Ok((a_start, a_end + 2));
+                } else {
+                    depth -= 1;
+                }
+            }
+            j = a_end + 2;
+        }
+    }
+
+    // Render with recursion to support nested blocks.
+    const MAX_RECURSION_DEPTH: u32 = 100;
+    fn render_inner(
+        t: &str,
+        root: &Value,
+        locals: &mut BTreeMap<String, Value>,
+        strict: bool,
+        err_span: &Span,
+        depth: u32,
+    ) -> Result<String> {
+        if depth > MAX_RECURSION_DEPTH {
+            bail!(err_span.error(
+                format!(
+                    "`strings.render_template` maximum recursion depth {} exceeded",
+                    MAX_RECURSION_DEPTH
+                )
+                .as_str()
+            ));
+        }
+        let mut out = String::with_capacity(t.len());
+        let mut i = 0usize;
+        while let Some(start_rel) = t[i..].find("{{") {
+            let start = i + start_rel;
+            out.push_str(&t[i..start]);
+            let after_start = start + 2;
+            let Some(end_rel) = t[after_start..].find("}}") else {
+                bail!(err_span.error("unterminated template action: missing `}}`"));
+            };
+            let end = after_start + end_rel;
+            let action = t[after_start..end].trim();
+
+            // Block: range / if / end
+            if action == "end" {
+                // Signal to caller that block ended (should not occur at top level)
+                i = end + 2; // move past, though we return immediately in block handlers
+                break;
+            } else if let Some(rest) = action.strip_prefix("range ") {
+                // Parse "range $i, $v := <expr>" (support $v := <expr> and also allow spaces)
+                let Some(colon) = rest.find(":=") else {
+                    if strict {
+                        bail!(err_span.error("`range` expects `:=` with variable assignment"));
+                    } else {
+                        return Ok(String::new());
+                    }
+                };
+                let (vars_part, expr_part) = rest.split_at(colon);
+                let expr_part = &expr_part[2..];
+                let names: Vec<&str> = vars_part
+                    .split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if names.is_empty() || !names.iter().all(|n| n.starts_with('$')) {
+                    if strict {
+                        bail!(err_span.error("`range` expects variables starting with `$`"));
+                    } else {
+                        return Ok(String::new());
+                    }
+                }
+                let (body_start, block_end_after) = find_block_end(t, end + 2, err_span)?;
+                let body = &t[end + 2..body_start];
+
+                // Prepare variable names and capture prior values to restore after the range block
+                let var0_name = names[0].trim_start_matches('$').to_string();
+                let prev_var0 = locals.get(&var0_name).cloned();
+                let var1_name_opt =
+                    (names.len() > 1).then(|| names[1].trim_start_matches('$').to_string());
+                let prev_var1 = var1_name_opt.as_ref().and_then(|n| locals.get(n).cloned());
+
+                // Evaluate iterable
+                let iter_val = eval_expr(expr_part, root, locals);
+                match iter_val {
+                    Value::Array(arr) => {
+                        for (idx, item) in arr.iter().enumerate() {
+                            // Assign loop variables
+                            if names.len() == 1 {
+                                locals.insert(var0_name.clone(), item.clone());
+                            } else {
+                                locals.insert(var0_name.clone(), Value::from(idx as u64));
+                                if let Some(var1_name) = &var1_name_opt {
+                                    locals.insert(var1_name.clone(), item.clone());
+                                }
+                            }
+                            out.push_str(&render_inner(
+                                body,
+                                root,
+                                locals,
+                                strict,
+                                err_span,
+                                depth + 1,
+                            )?);
+                        }
+                    }
+                    Value::Object(map) => {
+                        for (k, v) in map.iter() {
+                            if names.len() == 1 {
+                                locals.insert(var0_name.clone(), v.clone());
+                            } else {
+                                locals.insert(var0_name.clone(), k.clone());
+                                if let Some(var1_name) = &var1_name_opt {
+                                    locals.insert(var1_name.clone(), v.clone());
+                                }
+                            }
+                            out.push_str(&render_inner(
+                                body,
+                                root,
+                                locals,
+                                strict,
+                                err_span,
+                                depth + 1,
+                            )?);
+                        }
+                    }
+                    Value::Set(set) => {
+                        for (idx, v) in set.iter().enumerate() {
+                            if names.len() == 1 {
+                                locals.insert(var0_name.clone(), v.clone());
+                            } else {
+                                locals.insert(var0_name.clone(), Value::from(idx as u64));
+                                if let Some(var1_name) = &var1_name_opt {
+                                    locals.insert(var1_name.clone(), v.clone());
+                                }
+                            }
+                            out.push_str(&render_inner(
+                                body,
+                                root,
+                                locals,
+                                strict,
+                                err_span,
+                                depth + 1,
+                            )?);
+                        }
+                    }
+                    Value::Undefined | Value::Null => { /* no iterations */ }
+                    _ => {
+                        if strict {
+                            bail!(err_span.error("`range` expects array, set, or object"));
+                        } else {
+                            return Ok(String::new());
+                        }
+                    }
+                }
+                // Restore variable scope after finishing the range block
+                if let Some(var1_name) = var1_name_opt {
+                    if let Some(prev) = prev_var1 {
+                        locals.insert(var1_name, prev);
+                    } else {
+                        locals.remove(&var1_name);
+                    }
+                }
+                if let Some(prev) = prev_var0 {
+                    locals.insert(var0_name, prev);
+                } else {
+                    locals.remove(&var0_name);
+                }
+
+                i = block_end_after; // continue after {{end}}
+            } else if let Some(rest) = action.strip_prefix("if ") {
+                let (body_start, block_end_after) = find_block_end(t, end + 2, err_span)?;
+                let cond = eval_expr(rest, root, locals);
+                if is_truthy(&cond) {
+                    let body = &t[end + 2..body_start];
+                    out.push_str(&render_inner(
+                        body,
+                        root,
+                        locals,
+                        strict,
+                        err_span,
+                        depth + 1,
+                    )?);
+                }
+                i = block_end_after;
+            } else {
+                // Interpolation: $var or .path
+                let val = eval_expr(action, root, locals);
+                if val == Value::Undefined {
+                    if strict {
+                        bail!(err_span.error(
+                            format!(
+                                "`strings.render_template` missing value for key `{}`",
+                                action
+                            )
+                            .as_str()
+                        ));
+                    } else {
+                        return Ok(String::new());
+                    }
+                }
+                out.push_str(&to_string(&val, false));
+                i = end + 2;
+            }
+        }
+        out.push_str(&t[i..]);
+        Ok(out)
+    }
+
+    let root_value = Value::from_map(vars_obj.as_ref().clone());
+    let mut locals: BTreeMap<String, Value> = BTreeMap::new();
+    let rendered = render_inner(
+        template.as_ref(),
+        &root_value,
+        &mut locals,
+        strict,
+        params[0].span(),
+        0,
+    )?;
+    Ok(Value::String(rendered.into()))
 }
