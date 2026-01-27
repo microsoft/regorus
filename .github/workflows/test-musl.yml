@@ -22,18 +22,15 @@ jobs:
     - uses: ./.github/actions/toolchains/rust
       with:
         targets: x86_64-unknown-linux-musl
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      with:
+        shared-key: ${{ runner.os }}-regorus
+    - name: Fetch dependencies
+      run: cargo fetch --locked
+    - name: Fetch MUSL target dependencies
+      run: cargo fetch --locked --target x86_64-unknown-linux-musl
     - name: Install musl-gcc
       run: sudo apt update && sudo apt install -y musl-tools
-    - name: Fetch
-      run: cargo fetch
-    - name: Build (MUSL)
-      run: cargo build --verbose --all-targets --target x86_64-unknown-linux-musl --frozen
-    - name: Run tests (MUSL)
-      run: cargo test -r --verbose --target x86_64-unknown-linux-musl --frozen
-    - name: Run tests (MUSL ACI)
-      run: cargo test -r --test aci --target x86_64-unknown-linux-musl  --frozen
-    - name: Run tests (KATA ACI)
-      run: cargo test -r --test kata --target x86_64-unknown-linux-musl --frozen
-    - name: Run tests (MUSL OPA Conformance)
-      run: >-
-        cargo test -r --test opa --frozen --features opa-testutil,serde_json/arbitrary_precision --target x86_64-unknown-linux-musl  -- $(tr '\n' ' ' < tests/opa.passing)
+    - name: Run MUSL suite via xtask
+      run: cargo xtask test-musl --release --frozen --target x86_64-unknown-linux-musl

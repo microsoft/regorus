@@ -19,36 +19,24 @@ jobs:
           fetch-depth: 0
 
       - uses: ./.github/actions/toolchains/rust
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: ${{ runner.os }}-regorus
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+
+      - name: Fetch FFI crate dependencies
+        run: cargo fetch --locked --manifest-path bindings/ffi/Cargo.toml
 
       - name: Setup gcc, g++, cmake, ninja
         run: sudo apt update && sudo apt install -y gcc g++ cmake ninja-build
 
-      - name: Workaround to ensure that regorus.h is generated
-        run: |
-          cargo fetch
-          cargo build -r --frozen
-        working-directory: ./bindings/ffi
-        
-      - name: Test c binding
-        run: |
-          mkdir bindings/c/build
-          cd bindings/c/build
-          cmake -G Ninja ..
-          ninja
-          ./regorus_test
+      - name: Test C binding via xtask
+        run: cargo xtask test-c --release --frozen
 
-      - name: Test c-nostd binding
-        run: |
-          mkdir bindings/c-nostd/build
-          cd bindings/c-nostd/build
-          cmake -G Ninja ..
-          ninja
-          ./regorus_test
+      - name: Test C (no-std) binding via xtask
+        run: cargo xtask test-c-nostd --release --frozen --skip-ffi
 
-      - name: Test cpp binding
-        run: |
-          mkdir bindings/cpp/build
-          cd bindings/cpp/build
-          cmake -G Ninja ..
-          ninja
-          ./regorus_test
+      - name: Test C++ binding via xtask
+        run: cargo xtask test-cpp --release --frozen --skip-ffi

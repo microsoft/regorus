@@ -11,7 +11,7 @@ on:
     - cron: "0 8 * * *"
 
 env:
-  VersionSuffix: ${{ github.run_id }}
+  VersionSuffix: ${{ github.event_name == 'workflow_dispatch' && 'manualtrigger' || null }}
 
 jobs:  
   build-ffi:
@@ -42,22 +42,18 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/toolchains/rust
-      
-      - name: Fetch crates
-        run: cargo fetch
-        working-directory: ./bindings/ffi
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: ${{ runner.os }}-regorus
+      - name: Fetch dependencies
+        run: cargo fetch --locked
 
-      - name: Check Regorus binding formatting
-        run: cargo fmt --check
-        working-directory: ./bindings/ffi
+      - name: Fetch FFI crate dependencies
+        run: cargo fetch --locked --manifest-path bindings/ffi/Cargo.toml --target ${{ matrix.runtime.target }}
 
-      - name: Check Clippy linting for Regorus binding
-        run: cargo clippy --frozen -- -D warnings
-        working-directory: ./bindings/ffi
-
-      - name: Build Regorus binding
-        run: cargo build -r --target ${{ matrix.runtime.target }} --locked
-        working-directory: ./bindings/ffi
+      - name: Build Regorus FFI via xtask
+        run: cargo xtask build-ffi --release --target ${{ matrix.runtime.target }}
         
       - name: Upload regorus ffi shared library
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -68,7 +64,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  build-nuget:
+  build-csharp:
     name: 'Build Regorus nuget'
     runs-on: ubuntu-latest
     needs: build-ffi
@@ -77,11 +73,20 @@ jobs:
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
         with:
           fetch-depth: 0  
+      - uses: ./.github/actions/toolchains/rust
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           global-json-file: ./bindings/csharp/global.json
 
       - run: echo '${{ steps.stepid.outputs.dotnet-version }}'
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: ${{ runner.os }}-regorus
+
+      - name: Fetch dependencies
+        run: cargo fetch --locked
 
       - name: Download regorus ffi shared libraries
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
@@ -93,14 +98,8 @@ jobs:
       - name: Display regorus ffi artifacts
         run: ls -R ./bindings/csharp/Regorus/tmp
 
-      # Note that we need to supply the target folder within the folder where artifacts are downloaded.
-      - name: Build Regorus binding
-        run: dotnet build /p:Configuration=Release /p:RegorusFFIArtifactsDir=./tmp/bindings/ffi/target /p:VersionSuffix=${{ env.VersionSuffix }}
-        working-directory: ./bindings/csharp/Regorus
-
-      - name: Pack
-        run: dotnet pack /p:RegorusFFIArtifactsDir=./tmp/bindings/ffi/target /p:VersionSuffix=${{ env.VersionSuffix }}
-        working-directory: ./bindings/csharp/Regorus
+      - name: Build Regorus nuget via xtask
+        run: cargo xtask build-csharp --release --clean --artifacts-dir ./bindings/csharp/Regorus/tmp/bindings/ffi/target --enforce-artifacts
 
       - name: Upload Regorus nuget
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -112,7 +111,7 @@ jobs:
 
   test-nuget:
     name: 'Test Regorus Nuget: (${{ matrix.runtime.target }})'
-    needs: build-nuget
+    needs: build-csharp
     runs-on: ${{ matrix.runtime.os }}
     strategy:
       # let us get failures from other jobs even if one fails
@@ -131,46 +130,32 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: ./.github/actions/toolchains/rust
+
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           global-json-file: ./bindings/csharp/global.json
 
       - run: echo '${{ steps.stepid.outputs.dotnet-version }}'
 
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: ${{ runner.os }}-regorus
+
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+
       - name: Download regorus nuget
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: regorus-nuget
-          path: ./bindings/csharp/regorus-nuget/
+          path: ./bindings/csharp/Regorus/bin/Release
 
-      - name: Restore Regorus.Tests
-        run: dotnet restore /p:UseLocalRegorus=false /p:VersionSuffix=${{ env.VersionSuffix }} /p:RestoreAdditionalProjectSources=../regorus-nuget
-        working-directory: ./bindings/csharp/Regorus.Tests
+      - name: Display regorus nuget
+        run: ls -R ./bindings/csharp/Regorus/bin/Release
 
-      - name: Run Regorus.Tests
-        run: dotnet test --no-restore /p:UseLocalRegorus=false /p:VersionSuffix=${{ env.VersionSuffix }}
-        working-directory: ./bindings/csharp/Regorus.Tests
+      - name: Run C# tests via xtask
+        run: cargo xtask test-csharp --release --clean --nuget-dir bindings/csharp/Regorus/bin/Release
 
-      - name: Restore TestApp
-        run: dotnet restore /p:VersionSuffix=${{ env.VersionSuffix }} /p:RestoreAdditionalProjectSources=../regorus-nuget
-        working-directory: ./bindings/csharp/TestApp
-
-      - name: Build TestApp
-        run: dotnet build --no-restore
-        working-directory: ./bindings/csharp/TestApp
-
-      - name: Run TestApp
-        run: dotnet run --no-build --framework net8.0
-        working-directory: ./bindings/csharp/TestApp
-
-      - name: Restore TargetExampleApp
-        run: dotnet restore /p:VersionSuffix=${{ env.VersionSuffix }} /p:RestoreAdditionalProjectSources=../regorus-nuget
-        working-directory: ./bindings/csharp/TargetExampleApp
-
-      - name: Build TargetExampleApp
-        run: dotnet build --no-restore
-        working-directory: ./bindings/csharp/TargetExampleApp
-
-      - name: Run TargetExampleApp
-        run: dotnet run --no-build --framework net8.0
-        working-directory: ./bindings/csharp/TargetExampleApp
+      

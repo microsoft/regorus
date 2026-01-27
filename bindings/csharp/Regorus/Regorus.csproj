@@ -13,6 +13,10 @@
         <PackageReadmeFile>README.md</PackageReadmeFile>
     </PropertyGroup>
 
+    <PropertyGroup>
+        <RegorusFFIArtifactsProfile Condition="'$(RegorusFFIArtifactsProfile)' == ''">release</RegorusFFIArtifactsProfile>
+    </PropertyGroup>
+
     <ItemGroup>
         <PackageReference Include="System.Text.Json" Version="8.0.5" />
     </ItemGroup>
@@ -27,7 +31,7 @@
         by the publishing pipeline.
 
         For each target triple, `Pack` expects the regorus ffi shared library
-        to be found in $(RegorusFFIArtifactsDir)/<target-triple>/release.
+        to be found in $(RegorusFFIArtifactsDir)/<target-triple>/$(RegorusFFIArtifactsProfile).
 
         If $(IgnoreMissingArtifacts) is not set, ensure that the binaries for officially supported platforms exists.
     -->
@@ -35,27 +39,27 @@
         <Error Text="RegorusFFIArtifactsDir must be supplied." Condition="$(RegorusFFIArtifactsDir) == ''" />
 
         <!-- Ensure that the binaries for officially supported platforms exists. -->
-        <Error Text="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/release/regorus_ffi.dll missing."
-               Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/release/regorus_ffi.dll')" />
-        <Error Text="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/release/regorus_ffi.pdb missing."
-               Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/release/regorus_ffi.pdb')" />
+         <Error Text="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_ffi.dll missing."
+             Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_ffi.dll')" />
+         <Error Text="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_ffi.pdb missing."
+             Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_ffi.pdb')" />
 
-        <Error Text="$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/release/libregorus_ffi.so missing."
-               Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/release/libregorus_ffi.so')" />
+         <Error Text="$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/$(RegorusFFIArtifactsProfile)/libregorus_ffi.so missing."
+             Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/$(RegorusFFIArtifactsProfile)/libregorus_ffi.so')" />
     </Target>
 
     <ItemGroup>
         <None Include="docs/README.md" Pack="true"  PackagePath="/" />
 
         <!-- Copy each binary to expected location within the package -->
-        <None Include="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/release/*.dll" Pack="true" PackagePath="runtimes/win-x64/native/" />
-        <None Include="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/release/*.pdb" Pack="true" PackagePath="runtimes/win-x64/native/" />
+        <None Include="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/*.dll" Pack="true" PackagePath="runtimes/win-x64/native/" />
+        <None Include="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/*.pdb" Pack="true" PackagePath="runtimes/win-x64/native/" />
 
-        <None Include="$(RegorusFFIArtifactsDir)/aarch64-pc-windows-msvc/release/*.dll" Pack="true" PackagePath="runtimes/win-arm64/native/" />
-        <None Include="$(RegorusFFIArtifactsDir)/aarch64-pc-windows-msvc/release/*.pdb" Pack="true" PackagePath="runtimes/win-arm64/native/" />
+        <None Include="$(RegorusFFIArtifactsDir)/aarch64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/*.dll" Pack="true" PackagePath="runtimes/win-arm64/native/" />
+        <None Include="$(RegorusFFIArtifactsDir)/aarch64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/*.pdb" Pack="true" PackagePath="runtimes/win-arm64/native/" />
 
-        <None Include="$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/release/lib*.so" Pack="true" PackagePath="runtimes/linux-x64/native/" />
+        <None Include="$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/$(RegorusFFIArtifactsProfile)/lib*.so" Pack="true" PackagePath="runtimes/linux-x64/native/" />
 
-        <None Include="$(RegorusFFIArtifactsDir)/aarch64-apple-darwin/release/lib*.dylib" Pack="true" PackagePath="runtimes/osx-arm64/native/" />
+        <None Include="$(RegorusFFIArtifactsDir)/aarch64-apple-darwin/$(RegorusFFIArtifactsProfile)/lib*.dylib" Pack="true" PackagePath="runtimes/osx-arm64/native/" />
     </ItemGroup>
 </Project>
