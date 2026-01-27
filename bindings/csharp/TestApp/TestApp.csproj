@@ -21,6 +21,6 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(UseLocalRegorus)' != 'true'">
-    <PackageReference Include="regorus" Version="0.8.0$(RegorusPackageVersionSuffix)" />
+    <PackageReference Include="Regorus" />
   </ItemGroup>
 </Project>

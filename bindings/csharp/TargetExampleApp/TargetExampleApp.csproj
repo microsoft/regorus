@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(UseLocalRegorus)' != 'true'">
-    <PackageReference Include="Regorus" Version="0.8.0$(RegorusPackageVersionSuffix)" />
+    <PackageReference Include="Regorus" />
   </ItemGroup>
 
   <ItemGroup>

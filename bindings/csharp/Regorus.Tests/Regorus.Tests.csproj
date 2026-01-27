@@ -19,10 +19,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="MSTest" Version="3.8.2" />
+    <PackageReference Include="MSTest" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Regorus" Version="0.8.0$(RegorusPackageVersionSuffix)" />
+    <PackageReference Include="Regorus" />
   </ItemGroup>
 </Project>

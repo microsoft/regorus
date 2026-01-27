@@ -26,12 +26,12 @@ pub fn check_memory_limit_if_needed() -> core::result::Result<(), LimitError> {
 
 #[cfg(not(feature = "allocator-memory-limits"))]
 #[inline]
-pub fn enforce_memory_limit() -> core::result::Result<(), LimitError> {
+pub const fn enforce_memory_limit() -> core::result::Result<(), LimitError> {
     Ok(())
 }
 
 #[cfg(not(feature = "allocator-memory-limits"))]
 #[inline]
-pub fn check_memory_limit_if_needed() -> core::result::Result<(), LimitError> {
+pub const fn check_memory_limit_if_needed() -> core::result::Result<(), LimitError> {
     Ok(())
 }

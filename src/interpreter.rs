@@ -366,7 +366,7 @@ impl Interpreter {
     }
 
     #[cfg(not(feature = "allocator-memory-limits"))]
-    fn memory_check(&mut self) -> Result<()> {
+    const fn memory_check(&mut self) -> Result<()> {
         let _ = self; // quiet clippy::unused_self; retained for symmetry with VM path
         Ok(())
     }
