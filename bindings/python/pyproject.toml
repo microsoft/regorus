@@ -5,7 +5,11 @@ build-backend = "maturin"
 [project]
 name = "regorus"
 requires-python = ">=3.8"
+license = { text = "MIT AND Apache-2.0 AND BSD-3-Clause" }
 classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "License :: OSI Approved :: BSD License",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",

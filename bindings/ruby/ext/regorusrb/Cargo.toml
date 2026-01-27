@@ -3,6 +3,7 @@ name = "regorusrb"
 version = "0.9.0"
 edition = "2024"
 description = "Ruby bindings for Regorus - a fast, lightweight Rego interpreter written in Rust"
+license = "MIT AND Apache-2.0 AND BSD-3-Clause"
 publish = false
 
 [lib]

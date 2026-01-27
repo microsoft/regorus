@@ -35,6 +35,14 @@ pub struct BuildNugetCommand {
     /// Require all platform artefacts to exist before packing.
     #[arg(long)]
     pub enforce_artifacts: bool,
+
+    /// Include repository commit metadata in the package.
+    #[arg(long = "repository-commit", value_name = "SHA")]
+    pub repository_commit: Option<String>,
+
+    /// Build a symbols package (snupkg).
+    #[arg(long)]
+    pub include_symbols: bool,
 }
 
 /// Parsed build options shared across tasks that need a NuGet package.
@@ -45,6 +53,8 @@ pub struct BuildNugetConfig {
     pub clean: bool,
     pub artifacts_dir: Option<PathBuf>,
     pub enforce_artifacts: bool,
+    pub repository_commit: Option<String>,
+    pub include_symbols: bool,
 }
 
 /// Result of a NuGet build, including generated artefacts.
@@ -86,6 +96,8 @@ pub fn build_nuget_package(config: &BuildNugetConfig) -> Result<BuildNugetResult
         &profile,
         !config.enforce_artifacts,
         config.clean,
+        config.repository_commit.as_deref(),
+        config.include_symbols,
     )?;
 
     let packages = find_packages(&package_dir)?;
@@ -132,6 +144,8 @@ fn invoke_dotnet_pack(
     profile: &str,
     ignore_missing: bool,
     clean: bool,
+    repository_commit: Option<&str>,
+    include_symbols: bool,
 ) -> Result<PathBuf> {
     let project_dir = root.join("bindings/csharp/Regorus");
     let artifacts_dir_str = artifacts_dir
@@ -140,6 +154,12 @@ fn invoke_dotnet_pack(
 
     let profile_arg = format!("/p:RegorusFFIArtifactsProfile={}", profile);
     let dir_arg = format!("/p:RegorusFFIArtifactsDir={}", artifacts_dir_str);
+    let repo_commit_arg = repository_commit.map(|sha| format!("/p:RepositoryCommit={}", sha));
+    let symbols_args = if include_symbols {
+        Some(("/p:IncludeSymbols=true", "/p:SymbolPackageFormat=snupkg"))
+    } else {
+        None
+    };
 
     if clean {
         clean_msbuild_project(&project_dir)?;
@@ -169,6 +189,9 @@ fn invoke_dotnet_pack(
     build.arg("minimal");
     build.arg(&dir_arg);
     build.arg(&profile_arg);
+    if let Some(arg) = &repo_commit_arg {
+        build.arg(arg);
+    }
     if ignore_missing {
         build.arg("/p:IgnoreMissingArtifacts=true");
     }
@@ -182,6 +205,13 @@ fn invoke_dotnet_pack(
     pack.arg(configuration);
     pack.arg(&dir_arg);
     pack.arg(&profile_arg);
+    if let Some(arg) = &repo_commit_arg {
+        pack.arg(arg);
+    }
+    if let Some((include_symbols_arg, symbols_format_arg)) = symbols_args {
+        pack.arg(include_symbols_arg);
+        pack.arg(symbols_format_arg);
+    }
     if ignore_missing {
         pack.arg("/p:IgnoreMissingArtifacts=true");
     }
@@ -217,6 +247,8 @@ impl BuildNugetCommand {
             clean: self.clean,
             artifacts_dir: self.artifacts_dir.clone(),
             enforce_artifacts: self.enforce_artifacts,
+            repository_commit: self.repository_commit.clone(),
+            include_symbols: self.include_symbols,
         }
     }
 }
@@ -307,6 +339,8 @@ impl TestCsharpCommand {
             clean: self.clean,
             artifacts_dir: self.artifacts_dir.clone(),
             enforce_artifacts: self.enforce_artifacts,
+            repository_commit: None,
+            include_symbols: false,
         };
 
         let mut packages = find_packages(&package_dir)?;
