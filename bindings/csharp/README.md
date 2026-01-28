@@ -29,8 +29,11 @@ Once the workflow run completes, the generated Nuget can be downloaded by follow
 
 ## Local
 
-<<<<<<< HEAD
-TODO
+The `cargo xtask` runner provides helpers for local builds:
+
+1. `cargo xtask ffi` builds the `bindings/ffi` crate for the host platform in debug mode. Add `--target <triple>` (repeatable) to cross-compile, or `--release` to produce optimised artefacts. Results land under `bindings/ffi/target/<triple>/<profile>`.
+2. `cargo xtask nuget` reuses those artefacts to pack the C# library. It defaults to debug builds for the host but accepts `--target`, `--release`, `--artifacts-dir <path>` to reuse existing binaries, and `--enforce-artifacts` to require every officially supported platform.
+3. `cargo xtask test-csharp` ensures a NuGet is available (rebuilding when required or when `--force-nuget` is passed) and then runs `Regorus.Tests`, `TestApp`, and `TargetExampleApp` against it. The command accepts the same build flags as `cargo xtask nuget`.
 
 ## Memory Usage Safeguards
 
@@ -48,11 +51,11 @@ using var engine = new Regorus.Engine();
 var veryLargeJson = new string('x', 128 * 1024);
 try
 {
-  engine.SetInputJson(veryLargeJson);
+    engine.SetInputJson(veryLargeJson);
 }
 catch (InvalidOperationException ex)
 {
-  Console.WriteLine($"Allocator reported: {ex.Message}");
+    Console.WriteLine($"Allocator reported: {ex.Message}");
 }
 
 // Restore defaults once done
@@ -60,11 +63,4 @@ Regorus.MemoryLimits.SetGlobalMemoryLimit(null);
 Regorus.MemoryLimits.SetThreadFlushThresholdOverride(null);
 ```
 
-See `bindings/csharp/Regorus.Tests/RegorusTests.cs` for scenario coverage and `bindings/csharp/TargetExampleApp/Program.cs` for end-to-end usage.
-=======
-The `cargo xtask` runner provides helpers for local builds:
-
-1. `cargo xtask ffi` builds the `bindings/ffi` crate for the host platform in debug mode. Add `--target <triple>` (repeatable) to cross-compile, or `--release` to produce optimised artefacts. Results land under `bindings/ffi/target/<triple>/<profile>`.
-2. `cargo xtask nuget` reuses those artefacts to pack the C# library. It defaults to debug builds for the host but accepts `--target`, `--release`, `--artifacts-dir <path>` to reuse existing binaries, and `--enforce-artifacts` to require every officially supported platform.
-3. `cargo xtask test-csharp` ensures a NuGet is available (rebuilding when required or when `--force-nuget` is passed) and then runs `Regorus.Tests`, `TestApp`, and `TargetExampleApp` against it. The command accepts the same build flags as `cargo xtask nuget`.
->>>>>>> 380a27c (feat(xtask): consolidate CI workflows onto xtask helpers)
+See bindings/csharp/Regorus.Tests/RegorusTests.cs for scenario coverage and bindings/csharp/TargetExampleApp/Program.cs for end-to-end usage.

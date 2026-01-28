@@ -1269,6 +1269,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "spin",
  "test-generator",
  "thiserror",
  "url",

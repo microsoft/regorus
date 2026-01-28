@@ -18,8 +18,17 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::rvm::program::Program;
     use crate::rvm::tests::instruction_parser::{parse_instruction, parse_loop_mode};
     use crate::rvm::tests::test_utils::test_round_trip_serialization;
+    #[cfg(any(test, not(feature = "std")))]
+    use crate::utils::limits::set_time_source;
+    use crate::utils::limits::{
+        acquire_limits_test_lock, fallback_execution_timer_config,
+        set_fallback_execution_timer_config, ExecutionTimerConfig, TimeSource,
+    };
+    use core::num::NonZeroU32;
+    use core::time::Duration;
     #[derive(Debug, Clone, Deserialize, Serialize, Default)]
     struct RuleInfoSpec {
         rule_type: String,
@@ -48,10 +57,121 @@ mod tests {
     use anyhow::Result;
     use serde::{Deserialize, Serialize};
     use std::fs;
+    use std::sync::{Mutex, Once};
     use test_generator::test_resources;
 
     extern crate alloc;
     extern crate std;
+
+    struct FallbackGuard(Option<ExecutionTimerConfig>);
+    impl Drop for FallbackGuard {
+        fn drop(&mut self) {
+            set_fallback_execution_timer_config(self.0);
+        }
+    }
+
+    fn install_fallback_config(config: Option<ExecutionTimerConfig>) -> FallbackGuard {
+        let previous = fallback_execution_timer_config();
+        set_fallback_execution_timer_config(config);
+        FallbackGuard(previous)
+    }
+
+    struct TimeSourceGuard {
+        previous_default: Duration,
+        previous_template: Vec<Duration>,
+    }
+
+    impl Drop for TimeSourceGuard {
+        fn drop(&mut self) {
+            let mut state = TIME_SOURCE_STATE
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.default_increment = self.previous_default;
+            state.template_increments = self.previous_template.clone();
+            state.reset_from_template();
+        }
+    }
+
+    fn configure_time_source(
+        increments: Vec<Duration>,
+        default_increment: Duration,
+    ) -> TimeSourceGuard {
+        ensure_time_source_registered();
+
+        let mut state = TIME_SOURCE_STATE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let guard = TimeSourceGuard {
+            previous_default: state.default_increment,
+            previous_template: state.template_increments.clone(),
+        };
+
+        state.default_increment = default_increment;
+        state.template_increments = increments;
+        state.reset_from_template();
+
+        guard
+    }
+
+    struct TestTimeSource;
+
+    struct TimeSourceState {
+        current: Duration,
+        started: bool,
+        default_increment: Duration,
+        increments: VecDeque<Duration>,
+        template_increments: Vec<Duration>,
+    }
+
+    impl TimeSourceState {
+        const fn new() -> Self {
+            Self {
+                current: Duration::ZERO,
+                started: false,
+                default_increment: Duration::from_millis(1),
+                increments: VecDeque::new(),
+                template_increments: Vec::new(),
+            }
+        }
+
+        fn reset_from_template(&mut self) {
+            self.current = Duration::ZERO;
+            self.started = false;
+            self.increments = VecDeque::from(self.template_increments.clone());
+        }
+    }
+
+    impl TimeSource for TestTimeSource {
+        fn now(&self) -> Option<Duration> {
+            let mut state = TIME_SOURCE_STATE
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+            if !state.started {
+                state.started = true;
+                return Some(state.current);
+            }
+
+            let increment = state
+                .increments
+                .pop_front()
+                .unwrap_or(state.default_increment);
+            state.current = state.current.saturating_add(increment);
+            Some(state.current)
+        }
+    }
+
+    static TEST_TIME_SOURCE: TestTimeSource = TestTimeSource;
+    static TIME_SOURCE_STATE: Mutex<TimeSourceState> = Mutex::new(TimeSourceState::new());
+    static TIME_SOURCE_ONCE: Once = Once::new();
+
+    fn ensure_time_source_registered() {
+        #[cfg(any(test, not(feature = "std")))]
+        TIME_SOURCE_ONCE.call_once(|| {
+            let _ = set_time_source(&TEST_TIME_SOURCE);
+        });
+    }
 
     #[derive(Debug, Clone, Deserialize, Serialize)]
     struct HostAwaitResponseSpec {
@@ -60,6 +180,13 @@ mod tests {
         value: Option<crate::Value>,
         #[serde(default)]
         values: Vec<crate::Value>,
+    }
+
+    fn default_vm_test_execution_timer_config() -> ExecutionTimerConfig {
+        ExecutionTimerConfig {
+            limit: Duration::from_secs(1),
+            check_interval: NonZeroU32::new(100).unwrap_or(NonZeroU32::MIN),
+        }
     }
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -644,6 +771,7 @@ mod tests {
             vm.set_execution_mode(mode);
             vm.set_step_mode(use_step_mode);
             vm.set_strict_builtin_errors(strict);
+            vm.set_execution_timer_config(Some(default_vm_test_execution_timer_config()));
 
             if let Some(data_value) = processed_data.clone() {
                 vm.set_data(data_value)?;
@@ -997,6 +1125,158 @@ mod tests {
             std::println!("✓ Test case '{}' passed", test_case.note);
         }
         std::println!("✓ Test suite '{}' completed successfully", file);
+
+        Ok(())
+    }
+
+    #[test]
+    fn vm_execution_time_limit_triggers_error() -> Result<()> {
+        use crate::rvm::instructions::Instruction;
+        use crate::utils::limits::acquire_limits_test_lock;
+        use core::num::NonZeroU32;
+        use core::time::Duration;
+
+        let _lock = acquire_limits_test_lock();
+        let config = ExecutionTimerConfig {
+            limit: Duration::from_nanos(1),
+            check_interval: NonZeroU32::new(1).unwrap(),
+        };
+        let _guard = install_fallback_config(Some(config));
+
+        let mut program = Program::new();
+        program.dispatch_window_size = 2;
+        program.max_rule_window_size = 2;
+        program.entry_points.insert("main".to_string(), 0);
+
+        const INSTRUCTION_COUNT: usize = 60_000;
+        program.instructions = (0..INSTRUCTION_COUNT)
+            .map(|_| Instruction::LoadNull { dest: 0 })
+            .collect();
+        program.instructions.push(Instruction::Return { value: 0 });
+        program.instruction_spans = alloc::vec![None; program.instructions.len()];
+        program.main_entry_point = 0;
+
+        let program = Arc::new(program);
+
+        let mut vm = RegoVM::new();
+        vm.set_max_instructions(usize::MAX);
+        vm.load_program(program);
+
+        let result = vm.execute();
+        assert!(
+            matches!(result, Err(VmError::TimeLimitExceeded { .. })),
+            "expected time limit error but got {result:?}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn vm_execution_time_limit_override_allows_completion() -> Result<()> {
+        use crate::rvm::instructions::Instruction;
+        use crate::utils::limits::acquire_limits_test_lock;
+        use core::num::NonZeroU32;
+        use core::time::Duration;
+
+        let _lock = acquire_limits_test_lock();
+        let strict_config = ExecutionTimerConfig {
+            limit: Duration::from_nanos(1),
+            check_interval: NonZeroU32::new(1).unwrap(),
+        };
+        let _guard = install_fallback_config(Some(strict_config));
+
+        let mut program = Program::new();
+        program.dispatch_window_size = 2;
+        program.max_rule_window_size = 2;
+        program.entry_points.insert("main".to_string(), 0);
+        program.instructions = alloc::vec![
+            Instruction::LoadNull { dest: 0 },
+            Instruction::Return { value: 0 },
+        ];
+        program.instruction_spans = alloc::vec![None; program.instructions.len()];
+        program.main_entry_point = 0;
+
+        let program = Arc::new(program);
+
+        let mut vm = RegoVM::new();
+        vm.load_program(program);
+
+        let relaxed_config = ExecutionTimerConfig {
+            limit: Duration::from_millis(10),
+            check_interval: NonZeroU32::new(1).unwrap(),
+        };
+        vm.set_execution_timer_config(Some(relaxed_config));
+
+        let result = vm.execute();
+        assert!(
+            result.is_ok(),
+            "expected successful execution, got {result:?}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn vm_suspend_resume_excludes_suspended_time_from_limit() -> Result<()> {
+        use crate::rvm::instructions::Instruction;
+
+        let _lock = acquire_limits_test_lock();
+        let _guard = install_fallback_config(Some(ExecutionTimerConfig {
+            limit: Duration::from_millis(10),
+            check_interval: NonZeroU32::new(1).unwrap(),
+        }));
+
+        let _time_guard = configure_time_source(
+            alloc::vec![
+                Duration::from_millis(1),
+                Duration::from_millis(1),
+                Duration::from_millis(1),
+                Duration::from_millis(1),
+                Duration::from_millis(100),
+                Duration::from_millis(1),
+            ],
+            Duration::from_millis(1),
+        );
+
+        let mut program = Program::new();
+        program.dispatch_window_size = 3;
+        program.max_rule_window_size = 3;
+        program.entry_points.insert("main".to_string(), 0);
+        program.literals = alloc::vec![Value::from("id"), Value::from(1)];
+        program.instructions = alloc::vec![
+            Instruction::Load {
+                dest: 0,
+                literal_idx: 0
+            },
+            Instruction::Load {
+                dest: 1,
+                literal_idx: 1
+            },
+            Instruction::HostAwait {
+                dest: 2,
+                arg: 1,
+                id: 0
+            },
+            Instruction::Return { value: 2 },
+        ];
+        program.instruction_spans = alloc::vec![None; program.instructions.len()];
+        program.main_entry_point = 0;
+
+        let program = Arc::new(program);
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.load_program(program);
+
+        let _ = vm.execute()?;
+        match vm.execution_state() {
+            ExecutionState::Suspended { reason, .. } => {
+                assert!(matches!(reason, SuspendReason::HostAwait { .. }));
+            }
+            other => panic!("expected suspension, got {other:?}"),
+        }
+
+        let resumed = vm.resume(Some(Value::from(42)))?;
+        assert_eq!(resumed, Value::from(42));
 
         Ok(())
     }

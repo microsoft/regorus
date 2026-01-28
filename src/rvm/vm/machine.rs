@@ -3,15 +3,21 @@
 
 use crate::rvm::program::Program;
 #[cfg(feature = "allocator-memory-limits")]
-use crate::utils::limits::{self, LimitError};
+use crate::utils::limits;
+use crate::utils::limits::{
+    fallback_execution_timer_config, monotonic_now, ExecutionTimer, ExecutionTimerConfig,
+    LimitError,
+};
 use crate::value::Value;
 use crate::CompiledPolicy;
 use alloc::collections::{btree_map::Entry, BTreeMap, VecDeque};
+#[cfg(feature = "allocator-memory-limits")]
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use super::context::{CallRuleContext, ComprehensionContext, LoopContext};
 use super::errors::{Result, VmError};
@@ -105,6 +111,15 @@ pub struct RegoVM {
 
     /// Cache for builtin calls that must stay deterministic across a single evaluation
     pub(super) builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
+
+    /// Optional override for the execution timer configuration
+    pub(super) execution_timer_config: Option<ExecutionTimerConfig>,
+
+    /// Cooperative execution timer used to enforce wall-clock limits
+    pub(super) execution_timer: ExecutionTimer,
+
+    /// Elapsed wall-clock time recorded when the VM entered a suspended state
+    pub(super) execution_timer_elapsed_at_suspend: Option<Duration>,
 }
 
 impl Default for RegoVM {
@@ -116,6 +131,8 @@ impl Default for RegoVM {
 impl RegoVM {
     /// Create a new virtual machine
     pub fn new() -> Self {
+        let fallback_timer = fallback_execution_timer_config();
+
         RegoVM {
             registers: Vec::new(), // Start with no registers - will be resized when program is loaded
             pc: 0,
@@ -143,6 +160,9 @@ impl RegoVM {
             frame_pc_overridden: false,
             strict_builtin_errors: false,
             builtins_cache: BTreeMap::new(),
+            execution_timer_config: None,
+            execution_timer: ExecutionTimer::new(fallback_timer),
+            execution_timer_elapsed_at_suspend: None,
         }
     }
 
@@ -317,6 +337,93 @@ impl RegoVM {
     /// Get the current execution mode
     pub const fn get_execution_mode(&self) -> ExecutionMode {
         self.execution_mode
+    }
+
+    /// Configure the execution timer to use the supplied configuration, or fall back to the global
+    /// default when `None` is provided.
+    pub fn set_execution_timer_config(&mut self, config: Option<ExecutionTimerConfig>) {
+        self.execution_timer_config = config;
+        self.reset_execution_timer_state();
+    }
+
+    /// Returns the currently configured execution timer, if any.
+    pub const fn execution_timer_config(&self) -> Option<ExecutionTimerConfig> {
+        self.execution_timer_config
+    }
+
+    pub(super) fn reset_execution_timer_state(&mut self) {
+        let config = self.effective_execution_timer_config();
+        self.execution_timer = ExecutionTimer::new(config);
+        self.execution_timer_elapsed_at_suspend = None;
+
+        if config.is_none() {
+            return;
+        }
+
+        if let Some(now) = monotonic_now() {
+            self.execution_timer.start(now);
+        }
+    }
+
+    fn effective_execution_timer_config(&self) -> Option<ExecutionTimerConfig> {
+        self.execution_timer_config
+            .or_else(fallback_execution_timer_config)
+    }
+
+    pub(super) fn execution_timer_tick(&mut self, work_units: u32) -> Result<()> {
+        if self.execution_timer.limit().is_none() {
+            return Ok(());
+        }
+
+        let Some(now) = monotonic_now() else {
+            return Ok(());
+        };
+
+        self.execution_timer
+            .tick(work_units, now)
+            .map_err(|err| match err {
+                LimitError::TimeLimitExceeded { elapsed, limit } => VmError::TimeLimitExceeded {
+                    elapsed,
+                    limit,
+                    pc: self.pc,
+                },
+                LimitError::MemoryLimitExceeded { usage, limit } => VmError::MemoryLimitExceeded {
+                    usage,
+                    limit,
+                    pc: self.pc,
+                },
+            })
+    }
+
+    pub(super) fn snapshot_execution_timer_on_suspend(&mut self) {
+        if self.execution_timer.config().is_none() {
+            self.execution_timer_elapsed_at_suspend = None;
+            return;
+        }
+
+        let Some(now) = monotonic_now() else {
+            self.execution_timer_elapsed_at_suspend = None;
+            return;
+        };
+
+        self.execution_timer_elapsed_at_suspend = self.execution_timer.elapsed(now);
+    }
+
+    pub(super) fn restore_execution_timer_after_resume(&mut self) {
+        if self.execution_timer.config().is_none() {
+            self.execution_timer_elapsed_at_suspend = None;
+            return;
+        }
+
+        let Some(elapsed) = self.execution_timer_elapsed_at_suspend.take() else {
+            return;
+        };
+
+        let Some(now) = monotonic_now() else {
+            return;
+        };
+
+        self.execution_timer.resume_from_elapsed(now, elapsed);
     }
 
     /// Get the current execution state of the VM
