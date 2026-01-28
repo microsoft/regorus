@@ -11,3 +11,7 @@ git_tag_enable = true
 git_release_enable = true
 changelog_update = true
 publish = true
+
+[[package]]
+name = "xtask"
+release = false
