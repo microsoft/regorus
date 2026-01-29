@@ -13,5 +13,15 @@ changelog_update = true
 publish = true
 
 [[package]]
+name = "regorus-mimalloc"
+publish = true
+changelog_update = false
+
+[[package]]
+name = "regorus-mimalloc-sys"
+publish = true
+changelog_update = false
+
+[[package]]
 name = "xtask"
 release = false
