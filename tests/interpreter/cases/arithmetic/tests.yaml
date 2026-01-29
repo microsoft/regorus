@@ -19,3 +19,100 @@ cases:
       c: 1
       d: -2
     
+  - note: integer-float-equality
+    data: {}
+    modules:
+      - |
+        package test
+
+        eq1 = 1 == 1.0
+        eq2 = 1 == 1.00
+        neq1 = 1 != 1.0001
+    query: data.test
+    want_result:
+      eq1: true
+      eq2: true
+      neq1: true
+
+  - note: float-precision
+    data: {}
+    modules:
+      - |
+        package test
+
+        sum = 0.1 + 0.2
+        diff = 0.3 - 0.2
+        product = 0.1 * 0.2
+        quotient = 0.3 / 0.1
+    query: data.test
+    want_result:
+      sum: 0.30000000000000004
+      diff: 0.09999999999999998
+      product: 0.020000000000000004
+      quotient: 2.9999999999999996
+
+  - note: numeric-comparisons
+    data: {}
+    modules:
+      - |
+        package test
+
+        lt = 1 < 1.0001
+        le = 1 <= 1.0
+        gt = 1.0001 > 1
+        ge = 1.0 >= 1
+        neg_lt = -1 < 0
+        neg_le = -1 <= -1
+    query: data.test
+    want_result:
+      lt: true
+      le: true
+      gt: true
+      ge: true
+      neg_lt: true
+      neg_le: true
+
+  - note: division
+    data: {}
+    modules:
+      - |
+        package test
+
+        div1 = 1 / 2
+        div2 = 5 / 2
+    query: data.test
+    want_result:
+      div1: 0.5
+      div2: 2.5
+
+  - note: negative-number-arithmetic
+    data: {}
+    modules:
+      - |
+        package test
+
+        neg1 = -1
+        neg2 = -1 + 2
+        neg3 = 0 - (2 + 3)
+        neg4 = 1 - -1
+    query: data.test
+    want_result:
+      neg1: -1
+      neg2: 1
+      neg3: -5
+      neg4: 2
+
+  - note: big-numbers
+    data: {}
+    modules:
+      - |
+        package test
+
+        big1 = 1000000000000000000000 + 1
+        big2 = 2 * 1000000000000000000000
+        big3 = 2 / 1e18
+    query: data.test
+    want_result:
+      big1: 1000000000000000000001
+      big2: 2000000000000000000000
+      big3: 2e-18
