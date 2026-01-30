@@ -85,3 +85,78 @@ console.log(report);
 // Print pretty report.
 report = engine.getCoverageReportPretty();
 console.log(report);
+
+// RVM regular example
+{
+const policy = `
+package demo
+import rego.v1
+
+default allow := false
+
+allow if {
+  input.user == "alice"
+  input.active == true
+}
+`;
+
+const modules = JSON.stringify([
+  { id: "demo.rego", content: policy }
+]);
+const entryPoints = JSON.stringify(["data.demo.allow"]);
+
+const program = regorus.Program.compileFromModules(
+  "{}",
+  modules,
+  entryPoints
+);
+
+console.log(program.generateListing());
+
+const binary = program.serializeBinary();
+const deserialized = regorus.Program.deserializeBinary(binary);
+if (deserialized.isPartial) {
+  throw new Error("Deserialized program marked partial");
+}
+const rehydrated = deserialized.program();
+
+const vm = new regorus.Rvm();
+vm.loadProgram(rehydrated);
+vm.setInputJson('{"user":"alice","active":true}');
+console.log(vm.execute());
+}
+
+// RVM HostAwait example
+{
+const policy = `
+package demo
+import rego.v1
+
+default allow := false
+
+allow if {
+  input.account.active == true
+  details := __builtin_host_await(input.account.id, "account")
+  details.tier == "gold"
+}
+`;
+
+const modules = JSON.stringify([
+  { id: "await.rego", content: policy }
+]);
+const entryPoints = JSON.stringify(["data.demo.allow"]);
+
+const program = regorus.Program.compileFromModules(
+  "{}",
+  modules,
+  entryPoints
+);
+
+const vm = new regorus.Rvm();
+vm.setExecutionMode(1);
+vm.loadProgram(program);
+vm.setInputJson('{"account":{"id":"acct-1","active":true}}');
+vm.execute();
+console.log(vm.getExecutionState());
+console.log(vm.resume('{"tier":"gold"}'));
+}

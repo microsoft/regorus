@@ -221,6 +221,8 @@ public class Engine implements AutoCloseable, Cloneable {
     
     /**
      * Get coverage report as json string.
+     *
+     * @return Coverage report as a JSON string.
      * 
      */
     public String getCoverageReport() {
@@ -229,6 +231,8 @@ public class Engine implements AutoCloseable, Cloneable {
     
     /**
      * Get coverage report as ANSI color coded string.
+     *
+     * @return Coverage report formatted for console output.
      * 
      */
     public String getCoverageReportPretty() {
@@ -247,10 +251,16 @@ public class Engine implements AutoCloseable, Cloneable {
     
     /**
      * Take gathered prints.
+     *
+     * @return Collected print output as JSON.
      * 
      */
     public String takePrints() {
         return nativeTakePrints(enginePtr);
+    }
+
+    long getPtr() {
+        return enginePtr;
     }
 
     

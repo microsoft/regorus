@@ -8,12 +8,31 @@ use pyo3::IntoPyObjectExt;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ::regorus::Value;
+use ::regorus::languages::rego::compiler::Compiler;
+use ::regorus::rvm::program::{
+    generate_assembly_listing, generate_tabular_assembly_listing, AssemblyListingConfig,
+    DeserializationResult, Program as RvmProgram,
+};
+use ::regorus::rvm::vm::{ExecutionMode, RegoVM};
+use ::regorus::{compile_policy_with_entrypoint, PolicyModule, Rc, Value};
+use std::sync::Arc;
 
 /// Regorus engine.
 #[pyclass(unsendable)]
 pub struct Engine {
     engine: ::regorus::Engine,
+}
+
+/// RVM program wrapper.
+#[pyclass(unsendable)]
+pub struct Program {
+    program: Arc<RvmProgram>,
+}
+
+/// RVM runtime wrapper.
+#[pyclass(unsendable)]
+pub struct Rvm {
+    vm: RegoVM,
 }
 
 impl Default for Engine {
@@ -384,7 +403,151 @@ impl Engine {
     }
 }
 
+#[pymethods]
+impl Program {
+    /// Compile an RVM program from modules and entry points.
+    #[staticmethod]
+    pub fn compile_from_modules(
+        data_json: String,
+        modules: Vec<(String, String)>,
+        entry_points: Vec<String>,
+    ) -> Result<Self> {
+        if entry_points.is_empty() {
+            return Err(anyhow!("entry_points must contain at least one entry"));
+        }
+
+        let data = Value::from_json_str(&data_json)?;
+        let policy_modules: Vec<PolicyModule> = modules
+            .into_iter()
+            .map(|(id, content)| PolicyModule {
+                id: Rc::from(id.as_str()),
+                content: Rc::from(content.as_str()),
+            })
+            .collect();
+
+        let entry_points_ref: Vec<&str> = entry_points.iter().map(|s| s.as_str()).collect();
+        let entry_rule = Rc::from(entry_points_ref[0]);
+        let compiled = compile_policy_with_entrypoint(data, &policy_modules, entry_rule)?;
+        let program = Compiler::compile_from_policy(&compiled, &entry_points_ref)?;
+        Ok(Self { program })
+    }
+
+    /// Deserialize an RVM program from binary data.
+    #[staticmethod]
+    pub fn deserialize_binary(data: Vec<u8>) -> Result<(Self, bool)> {
+        let (program, is_partial) =
+            match RvmProgram::deserialize_binary(&data).map_err(|e: String| anyhow!(e))? {
+                DeserializationResult::Complete(program) => (program, false),
+                DeserializationResult::Partial(program) => (program, true),
+            };
+        Ok((
+            Self {
+                program: Arc::new(program),
+            },
+            is_partial,
+        ))
+    }
+
+    /// Serialize a program to binary format.
+    pub fn serialize_binary(&self) -> Result<Vec<u8>> {
+        self.program
+            .serialize_binary()
+            .map_err(|e: String| anyhow!(e))
+    }
+
+    /// Generate a readable assembly listing.
+    pub fn generate_listing(&self) -> Result<String> {
+        Ok(generate_assembly_listing(
+            self.program.as_ref(),
+            &AssemblyListingConfig::default(),
+        ))
+    }
+
+    /// Generate a tabular assembly listing.
+    pub fn generate_tabular_listing(&self) -> Result<String> {
+        Ok(generate_tabular_assembly_listing(
+            self.program.as_ref(),
+            &AssemblyListingConfig::default(),
+        ))
+    }
+}
+
+impl Default for Rvm {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[pymethods]
+impl Rvm {
+    #[new]
+    pub fn new() -> Self {
+        Self { vm: RegoVM::new() }
+    }
+
+    /// Load an RVM program into the VM.
+    pub fn load_program(&mut self, program: &Program) -> Result<()> {
+        self.vm.load_program(program.program.clone());
+        Ok(())
+    }
+
+    /// Set data JSON for the VM.
+    pub fn set_data_json(&mut self, data_json: String) -> Result<()> {
+        let data = Value::from_json_str(&data_json)?;
+        self.vm.set_data(data)?;
+        Ok(())
+    }
+
+    /// Set input JSON for the VM.
+    pub fn set_input_json(&mut self, input_json: String) -> Result<()> {
+        let input = Value::from_json_str(&input_json)?;
+        self.vm.set_input(input);
+        Ok(())
+    }
+
+    /// Set execution mode (0 = run-to-completion, 1 = suspendable).
+    pub fn set_execution_mode(&mut self, mode: u8) -> Result<()> {
+        let mode = match mode {
+            0 => ExecutionMode::RunToCompletion,
+            1 => ExecutionMode::Suspendable,
+            _ => return Err(anyhow!("invalid execution mode")),
+        };
+        self.vm.set_execution_mode(mode);
+        Ok(())
+    }
+
+    /// Execute the program and return the JSON result.
+    pub fn execute(&mut self) -> Result<String> {
+        self.vm.execute()?.to_json_str()
+    }
+
+    /// Execute an entry point by name and return the JSON result.
+    pub fn execute_entry_point(&mut self, entry_point: String) -> Result<String> {
+        self.vm
+            .execute_entry_point_by_name(&entry_point)?
+            .to_json_str()
+    }
+
+    /// Resume execution with an optional JSON value.
+    pub fn resume(&mut self, resume_json: Option<String>) -> Result<String> {
+        let value = if let Some(json) = resume_json {
+            Some(Value::from_json_str(&json)?)
+        } else {
+            None
+        };
+        self.vm.resume(value)?.to_json_str()
+    }
+
+    /// Get the execution state as a string.
+    pub fn get_execution_state(&self) -> Result<String> {
+        Ok(format!("{:?}", self.vm.execution_state()))
+    }
+}
+
 #[pymodule]
 pub fn regorus(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<crate::Engine>()
+    m.add_class::<crate::Engine>()?;
+    m.add_class::<crate::Program>()?;
+    m.add_class::<crate::Rvm>()?;
+    Ok(())
 }

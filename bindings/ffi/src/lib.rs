@@ -14,5 +14,7 @@ mod engine;
 mod limits;
 mod lock;
 mod panic_guard;
+#[cfg(feature = "rvm")]
+pub(crate) mod rvm;
 mod schema_registry;
 mod target_registry;

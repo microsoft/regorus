@@ -180,7 +180,7 @@ namespace Regorus
             return handle;
         }
 
-        private T UseHandle<T>(Func<IntPtr, T> func)
+        internal T UseHandle<T>(Func<IntPtr, T> func)
         {
             var handle = GetHandleForUse();
             bool addedRef = false;
@@ -202,6 +202,11 @@ namespace Regorus
                     handle.DangerousRelease();
                 }
             }
+        }
+
+        internal T UseHandleForInterop<T>(Func<IntPtr, T> func)
+        {
+            return UseHandle(func);
         }
 
         private void UseHandle(Action<IntPtr> action)

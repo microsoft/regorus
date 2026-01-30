@@ -44,7 +44,8 @@ impl TestCCommand {
         if !self.skip_ffi {
             prepare_ffi_artifacts(self.release, self.frozen)?;
         }
-        run_binding("bindings/c", "regorus_test", self.release)
+        run_binding("bindings/c", "regorus_test", self.release)?;
+        run_binding("bindings/c", "regorus_rvm_test", self.release)
     }
 }
 

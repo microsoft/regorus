@@ -40,6 +40,14 @@ impl TestGoCommand {
         run_go_command(&go_dir, ["mod", "tidy"], "go mod tidy (bindings/go)")?;
         run_go_command(&go_dir, ["build"], "go build (bindings/go)")?;
 
+        let lib_dir = ffi_dir.join("target").join(profile);
+        let mut go_test = Command::new("go");
+        go_test.current_dir(&go_dir);
+        go_test.arg("test");
+        go_test.arg("./...");
+        add_library_search_path(&mut go_test, &lib_dir);
+        run_command(go_test, "go test ./... (bindings/go)")?;
+
         let binary = go_test_binary(&go_dir);
         if !binary.exists() {
             return Err(anyhow!(
@@ -48,7 +56,6 @@ impl TestGoCommand {
             ));
         }
 
-        let lib_dir = ffi_dir.join("target").join(profile);
         let mut run = Command::new(&binary);
         run.current_dir(&go_dir);
         add_library_search_path(&mut run, &lib_dir);

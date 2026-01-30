@@ -13,6 +13,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Corrosion)
 
 project("regorus-test")
+enable_testing()
 
 corrosion_import_crate(
   # Path to <regorus-source-folder>/bindings/ffi/Cargo.toml
@@ -35,3 +36,10 @@ add_executable(regorus_test main.c)
 # Add path to <regorus-source-folder>/bindings/ffi
 target_include_directories(regorus_test PRIVATE "../ffi")
 target_link_libraries(regorus_test regorus_ffi)
+
+add_executable(regorus_rvm_test rvm_tests.c)
+target_include_directories(regorus_rvm_test PRIVATE "../ffi")
+target_link_libraries(regorus_rvm_test regorus_ffi)
+
+add_test(NAME regorus_c_engine COMMAND regorus_test)
+add_test(NAME regorus_c_rvm COMMAND regorus_rvm_test)

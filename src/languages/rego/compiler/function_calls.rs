@@ -28,6 +28,9 @@ enum CallTarget {
         builtin_index: u16,
         expected_args: Option<usize>,
     },
+    HostAwait {
+        expected_args: Option<usize>,
+    },
 }
 
 impl<'a> Compiler<'a> {
@@ -56,6 +59,7 @@ impl<'a> Compiler<'a> {
         let expected_args = match &call_target {
             CallTarget::User { expected_args, .. } => *expected_args,
             CallTarget::Builtin { expected_args, .. } => *expected_args,
+            CallTarget::HostAwait { expected_args } => *expected_args,
         };
 
         if let Some(expected) = expected_args {
@@ -122,6 +126,26 @@ impl<'a> Compiler<'a> {
                 });
                 self.emit_instruction(Instruction::BuiltinCall { params_index }, &span);
             }
+            CallTarget::HostAwait { .. } => {
+                if arg_regs.len() != 2 {
+                    return Err(CompilerError::General {
+                        message: format!(
+                            "__builtin_host_await expects 2 arguments, got {}",
+                            arg_regs.len()
+                        ),
+                    }
+                    .at(&span));
+                }
+
+                self.emit_instruction(
+                    Instruction::HostAwait {
+                        dest,
+                        arg: arg_regs[0],
+                        id: arg_regs[1],
+                    },
+                    &span,
+                );
+            }
         }
 
         if let Some((plan, plan_span)) = &out_param_plan {
@@ -162,6 +186,12 @@ impl<'a> Compiler<'a> {
         full_fcn_path: &str,
         span: &Span,
     ) -> Result<CallTarget> {
+        if original_fcn_path == "__builtin_host_await" {
+            return Ok(CallTarget::HostAwait {
+                expected_args: Some(2),
+            });
+        }
+
         if self.is_user_defined_function(full_fcn_path) {
             let rule_index = self.get_or_assign_rule_index(full_fcn_path)?;
             let expected_args = self

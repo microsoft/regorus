@@ -407,6 +407,7 @@ fn run_regorus_tests(
     if clean {
         clean_msbuild_project(&regorus_tests)?;
     }
+    println!("Running Regorus.Tests (includes RVM program tests)...");
     restore_with_source(
         &regorus_tests,
         &property_args,

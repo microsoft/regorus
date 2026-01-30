@@ -441,7 +441,7 @@ namespace Regorus
             }
         }
 
-        private RegorusEngineHandle GetHandleForUse()
+        internal RegorusEngineHandle GetHandleForUse()
         {
             var handle = _handle;
             if (handle is null || handle.IsClosed || handle.IsInvalid)
@@ -451,7 +451,7 @@ namespace Regorus
             return handle;
         }
 
-        private void UseHandle(Action<IntPtr> action)
+        internal void UseHandle(Action<IntPtr> action)
         {
             UseHandle<object?>(handlePtr =>
             {
@@ -460,7 +460,7 @@ namespace Regorus
             });
         }
 
-        private T UseHandle<T>(Func<IntPtr, T> func)
+        internal T UseHandle<T>(Func<IntPtr, T> func)
         {
             var handle = GetHandleForUse();
             bool addedRef = false;
@@ -482,6 +482,11 @@ namespace Regorus
                     handle.DangerousRelease();
                 }
             }
+        }
+
+        internal T UseHandleForInterop<T>(Func<IntPtr, T> func)
+        {
+            return UseHandle(func);
         }
 
     }

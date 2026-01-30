@@ -1,12 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use alloc::boxed::Box;
 use alloc::ffi::CString;
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use anyhow::{anyhow, bail, Result};
 use core::ffi::{c_char, c_longlong, c_void, CStr};
-use core::ptr;
+use core::{mem, ptr};
 
 /// Status of a call on `RegorusEngine`.
 #[repr(C)]
@@ -88,6 +90,19 @@ pub struct RegorusResult {
     /// Errors produced by the call.
     /// Owned by Rust.
     pub(crate) error_message: *mut c_char,
+}
+
+/// Byte buffer returned from FFI for binary payloads.
+///
+/// Must be freed using `regorus_buffer_drop`.
+#[repr(C)]
+pub struct RegorusBuffer {
+    /// Pointer to byte buffer data.
+    pub data: *mut u8,
+    /// Number of bytes stored in `data`.
+    pub len: usize,
+    /// Capacity of the allocation backing `data`.
+    pub capacity: usize,
 }
 
 impl RegorusResult {
@@ -185,6 +200,18 @@ impl RegorusResult {
     }
 }
 
+impl RegorusBuffer {
+    pub(crate) fn from_vec(mut data: Vec<u8>) -> *mut RegorusBuffer {
+        let buffer = RegorusBuffer {
+            data: data.as_mut_ptr(),
+            len: data.len(),
+            capacity: data.capacity(),
+        };
+        mem::forget(data);
+        Box::into_raw(Box::new(buffer))
+    }
+}
+
 pub(crate) fn to_c_str(s: String) -> *mut c_char {
     match CString::new(s) {
         Ok(cs) => cs.into_raw(),
@@ -219,6 +246,21 @@ pub(crate) fn to_regorus_string_result(r: Result<String>) -> RegorusResult {
     match r {
         Ok(s) => RegorusResult::ok_string(s),
         Err(e) => RegorusResult::err_with_message(RegorusStatus::Error, format!("{e}")),
+    }
+}
+
+/// Drop a `RegorusBuffer`.
+///
+/// `data` is not valid after drop.
+#[no_mangle]
+pub extern "C" fn regorus_buffer_drop(buffer: *mut RegorusBuffer) {
+    if let Ok(buffer) = to_ref(buffer) {
+        unsafe {
+            if !buffer.data.is_null() {
+                let _ = Vec::from_raw_parts(buffer.data, buffer.len, buffer.capacity);
+            }
+            let _ = Box::from_raw(ptr::from_mut(buffer));
+        }
     }
 }
 

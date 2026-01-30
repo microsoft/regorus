@@ -3,12 +3,59 @@
 
 #![allow(non_snake_case)]
 
+use regorus::languages::rego::compiler::Compiler;
+use regorus::rvm::program::{
+    generate_assembly_listing, generate_tabular_assembly_listing, AssemblyListingConfig,
+    DeserializationResult, Program as RvmProgram,
+};
+use regorus::rvm::vm::{ExecutionMode, RegoVM};
+use regorus::{compile_policy_with_entrypoint, PolicyModule, Rc, Value};
+use serde::Deserialize;
+use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 /// WASM wrapper for [`regorus::Engine`]
 pub struct Engine {
     engine: regorus::Engine,
+}
+
+#[derive(Deserialize)]
+struct ModuleSpec {
+    id: String,
+    content: String,
+}
+
+#[wasm_bindgen]
+pub struct Program {
+    program: Arc<RvmProgram>,
+}
+
+#[wasm_bindgen]
+pub struct ProgramDeserializationResult {
+    program: Arc<RvmProgram>,
+    is_partial: bool,
+}
+
+#[wasm_bindgen]
+impl ProgramDeserializationResult {
+    /// Whether the program was partially deserialized.
+    #[wasm_bindgen(getter)]
+    pub fn isPartial(&self) -> bool {
+        self.is_partial
+    }
+
+    /// Get the deserialized program.
+    pub fn program(&self) -> Program {
+        Program {
+            program: self.program.clone(),
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub struct Rvm {
+    vm: RegoVM,
 }
 
 fn error_to_jsvalue<E: std::fmt::Display>(e: E) -> JsValue {
@@ -190,6 +237,153 @@ impl Engine {
     #[cfg(feature = "ast")]
     pub fn getAstAsJson(&self) -> Result<String, JsValue> {
         self.engine.get_ast_as_json().map_err(error_to_jsvalue)
+    }
+}
+
+#[wasm_bindgen]
+impl Program {
+    /// Compile an RVM program from modules and entry points.
+    pub fn compileFromModules(
+        data_json: String,
+        modules_json: String,
+        entry_points_json: String,
+    ) -> Result<Program, JsValue> {
+        let data = Value::from_json_str(&data_json).map_err(error_to_jsvalue)?;
+        let modules: Vec<ModuleSpec> =
+            serde_json::from_str(&modules_json).map_err(error_to_jsvalue)?;
+        let entry_points: Vec<String> =
+            serde_json::from_str(&entry_points_json).map_err(error_to_jsvalue)?;
+        if entry_points.is_empty() {
+            return Err(error_to_jsvalue(
+                "entry_points must contain at least one entry",
+            ));
+        }
+
+        let policy_modules: Vec<PolicyModule> = modules
+            .into_iter()
+            .map(|module| PolicyModule {
+                id: Rc::from(module.id.as_str()),
+                content: Rc::from(module.content.as_str()),
+            })
+            .collect();
+
+        let entry_points_ref: Vec<&str> = entry_points.iter().map(|s| s.as_str()).collect();
+        let compiled =
+            compile_policy_with_entrypoint(data, &policy_modules, Rc::from(entry_points_ref[0]))
+                .map_err(error_to_jsvalue)?;
+        let program = Compiler::compile_from_policy(&compiled, &entry_points_ref)
+            .map_err(error_to_jsvalue)?;
+        Ok(Program { program })
+    }
+
+    /// Serialize a program to binary format.
+    pub fn serializeBinary(&self) -> Result<Vec<u8>, JsValue> {
+        self.program
+            .serialize_binary()
+            .map_err(|e| error_to_jsvalue(e.to_string()))
+    }
+
+    /// Deserialize an RVM program from binary format.
+    pub fn deserializeBinary(data: Vec<u8>) -> Result<ProgramDeserializationResult, JsValue> {
+        let (program, is_partial) =
+            match RvmProgram::deserialize_binary(&data).map_err(error_to_jsvalue)? {
+                DeserializationResult::Complete(program) => (program, false),
+                DeserializationResult::Partial(program) => (program, true),
+            };
+        Ok(ProgramDeserializationResult {
+            program: Arc::new(program),
+            is_partial,
+        })
+    }
+
+    /// Generate a readable assembly listing.
+    pub fn generateListing(&self) -> Result<String, JsValue> {
+        Ok(generate_assembly_listing(
+            self.program.as_ref(),
+            &AssemblyListingConfig::default(),
+        ))
+    }
+
+    /// Generate a tabular assembly listing.
+    pub fn generateTabularListing(&self) -> Result<String, JsValue> {
+        Ok(generate_tabular_assembly_listing(
+            self.program.as_ref(),
+            &AssemblyListingConfig::default(),
+        ))
+    }
+}
+
+#[wasm_bindgen]
+impl Rvm {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self { vm: RegoVM::new() }
+    }
+
+    /// Load a program into the VM.
+    pub fn loadProgram(&mut self, program: &Program) {
+        self.vm.load_program(program.program.clone());
+    }
+
+    /// Set VM data from JSON.
+    pub fn setDataJson(&mut self, data_json: String) -> Result<(), JsValue> {
+        let data = Value::from_json_str(&data_json).map_err(error_to_jsvalue)?;
+        self.vm.set_data(data).map_err(error_to_jsvalue)
+    }
+
+    /// Set VM input from JSON.
+    pub fn setInputJson(&mut self, input_json: String) -> Result<(), JsValue> {
+        let input = Value::from_json_str(&input_json).map_err(error_to_jsvalue)?;
+        self.vm.set_input(input);
+        Ok(())
+    }
+
+    /// Set execution mode (0 = run-to-completion, 1 = suspendable).
+    pub fn setExecutionMode(&mut self, mode: u8) -> Result<(), JsValue> {
+        let mode = match mode {
+            0 => ExecutionMode::RunToCompletion,
+            1 => ExecutionMode::Suspendable,
+            _ => return Err(error_to_jsvalue("invalid execution mode")),
+        };
+        self.vm.set_execution_mode(mode);
+        Ok(())
+    }
+
+    /// Execute the program and return the JSON result.
+    pub fn execute(&mut self) -> Result<String, JsValue> {
+        let value = self.vm.execute().map_err(error_to_jsvalue)?;
+        value.to_json_str().map_err(error_to_jsvalue)
+    }
+
+    /// Execute an entry point by name and return the JSON result.
+    pub fn executeEntryPoint(&mut self, entry_point: String) -> Result<String, JsValue> {
+        let value = self
+            .vm
+            .execute_entry_point_by_name(&entry_point)
+            .map_err(error_to_jsvalue)?;
+        value.to_json_str().map_err(error_to_jsvalue)
+    }
+
+    /// Resume execution with an optional JSON value.
+    pub fn resume(&mut self, resume_json: Option<String>) -> Result<String, JsValue> {
+        let value = if let Some(json) = resume_json {
+            Some(Value::from_json_str(&json).map_err(error_to_jsvalue)?)
+        } else {
+            None
+        };
+        let result = self.vm.resume(value).map_err(error_to_jsvalue)?;
+        result.to_json_str().map_err(error_to_jsvalue)
+    }
+
+    /// Get the execution state as a string.
+    pub fn getExecutionState(&self) -> String {
+        format!("{:?}", self.vm.execution_state())
+    }
+}
+
+impl Default for Rvm {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
