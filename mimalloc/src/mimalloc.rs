@@ -29,9 +29,9 @@ unsafe impl GlobalAlloc for Mimalloc {
     }
 
     #[inline]
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
         #[cfg(feature = "allocator-memory-limits")]
-        record_free(layout.size());
+        record_free(_layout.size());
         mi_free(ptr.cast::<c_void>());
     }
 
