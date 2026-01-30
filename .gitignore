@@ -41,3 +41,10 @@ bindings/ruby/bin/
 
 # JetBrains IDEs files
 .idea/
+
+# Java build artifacts
+**/*.class
+**/*.jar
+bindings/java/.classpath
+bindings/java/.project
+bindings/java/.settings/

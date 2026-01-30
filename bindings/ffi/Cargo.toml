@@ -30,6 +30,7 @@ default = [
 	"std",
 	"coverage",
 	"allocator-memory-limits",
+	"rvm",
 	"regorus/arc",
 	"regorus/full-opa",
 	"contention_checks",
@@ -40,6 +41,7 @@ std = ["regorus/std"]
 coverage = ["regorus/coverage"]
 allocator-memory-limits = ["regorus/allocator-memory-limits"]
 contention_checks = ["parking_lot"]
+rvm = ["regorus/rvm"]
 custom_allocator = []
 
 [build-dependencies]

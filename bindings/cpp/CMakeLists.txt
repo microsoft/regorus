@@ -14,6 +14,7 @@ FetchContent_MakeAvailable(Corrosion)
 
 project("regorus-test")
 set(CMAKE_CXX_STANDARD 17)
+enable_testing()
 
 # installable ffi target
 
@@ -83,3 +84,9 @@ install(FILES
 
 add_executable(regorus_test main.cpp)
 target_link_libraries(regorus_test regorus_ffi::regorus_ffi)
+
+add_executable(regorus_rvm_test rvm_tests.cpp)
+target_link_libraries(regorus_rvm_test regorus_ffi::regorus_ffi)
+
+add_test(NAME regorus_cpp_engine COMMAND regorus_test)
+add_test(NAME regorus_cpp_rvm COMMAND regorus_rvm_test)

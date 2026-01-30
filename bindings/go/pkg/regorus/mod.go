@@ -1,6 +1,6 @@
 package regorus
 
-// #cgo LDFLAGS: -L ../../../ffi/target/release -lregorus_ffi
+// #cgo LDFLAGS: -L ../../../ffi/target/release -L ../../../ffi/target/debug -lregorus_ffi
 // #include "../../../ffi/regorus.h"
 import "C"
 import (

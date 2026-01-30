@@ -65,6 +65,55 @@ triplet_count := count([1 |
     private const string EXECUTION_TIMER_QUERY = "data.limits.timer.triplet_count";
     private const int EXECUTION_TIMER_VALUE_COUNT = 40;
 
+        private const string RVM_POLICY = """
+package demo
+import rego.v1
+
+default allow := false
+
+allow if {
+        input.user == "alice"
+        some role in data.roles[input.user]
+        role == "admin"
+}
+""";
+
+        private const string RVM_DATA = """
+{
+    "roles": {
+        "alice": ["admin", "reader"]
+    }
+}
+""";
+
+        private const string RVM_INPUT = """
+{
+    "user": "alice"
+}
+""";
+
+        private const string HOST_AWAIT_POLICY = """
+package demo
+import rego.v1
+
+default allow := false
+
+allow if {
+    input.account.active == true
+    details := __builtin_host_await(input.account.id, "account")
+    details.tier == "gold"
+}
+""";
+
+        private const string HOST_AWAIT_INPUT = """
+    {
+        "account": {
+            "id": "acct-1",
+            "active": true
+        }
+    }
+    """;
+
     // Test data constants
     private const string COMPLIANT_STORAGE_ACCOUNT = @"{
   ""type"": ""Microsoft.Storage/storageAccounts"",
@@ -174,6 +223,15 @@ triplet_count := count([1 |
 
         Console.WriteLine("\n5. Execution timer configuration:");
         DemonstrateExecutionTimer();
+
+        Console.WriteLine("\n6. RVM program execution:");
+        DemonstrateRvmUsage();
+
+        Console.WriteLine("\n7. RVM program compilation from engine:");
+        DemonstrateRvmCompileFromEngine();
+
+        Console.WriteLine("\n8. RVM host await (suspend/resume):");
+        DemonstrateRvmHostAwait();
     }
 
     static void DemonstrateConcurrentEvaluation(Regorus.CompiledPolicy compiledPolicy)
@@ -358,5 +416,78 @@ triplet_count := count([1 |
         {
             Regorus.Engine.ClearFallbackExecutionTimerConfig();
         }
+    }
+
+    static void DemonstrateRvmUsage()
+    {
+        var modules = new List<Regorus.PolicyModule>
+        {
+            new Regorus.PolicyModule("demo.rego", RVM_POLICY)
+        };
+        var entryPoints = new[] { "data.demo.allow" };
+
+        using var program = Regorus.Program.CompileFromModules(RVM_DATA, modules, entryPoints);
+        var binary = program.SerializeBinary();
+        using var rehydrated = Regorus.Program.DeserializeBinary(binary, out var isPartial);
+        if (isPartial)
+        {
+            throw new InvalidOperationException("RVM program deserialization returned a partial program.");
+        }
+
+        Console.WriteLine($"Serialized program size: {binary.Length} bytes");
+
+        var listing = rehydrated.GenerateListing();
+
+        Console.WriteLine("RVM listing:");
+        Console.WriteLine(listing);
+
+        using var vm = new Regorus.Rvm();
+        vm.LoadProgram(rehydrated);
+        vm.SetDataJson(RVM_DATA);
+        vm.SetInputJson(RVM_INPUT);
+
+        var result = vm.Execute();
+        Console.WriteLine($"RVM result: {result}");
+    }
+
+    static void DemonstrateRvmCompileFromEngine()
+    {
+        using var engine = new Regorus.Engine();
+        engine.AddPolicy("demo.rego", RVM_POLICY);
+        engine.AddDataJson(RVM_DATA);
+
+        var entryPoints = new[] { "data.demo.allow" };
+        using var program = Regorus.Program.CompileFromEngine(engine, entryPoints);
+
+        using var vm = new Regorus.Rvm();
+        vm.LoadProgram(program);
+        vm.SetDataJson(RVM_DATA);
+        vm.SetInputJson(RVM_INPUT);
+
+        var result = vm.ExecuteEntryPoint("data.demo.allow");
+        Console.WriteLine($"RVM result from engine-compiled program: {result}");
+    }
+
+    static void DemonstrateRvmHostAwait()
+    {
+        var modules = new List<Regorus.PolicyModule>
+        {
+            new Regorus.PolicyModule("host_await.rego", HOST_AWAIT_POLICY)
+        };
+        var entryPoints = new[] { "data.demo.allow" };
+
+        using var program = Regorus.Program.CompileFromModules("{}", modules, entryPoints);
+        using var vm = new Regorus.Rvm();
+        vm.SetExecutionMode(1);
+        vm.LoadProgram(program);
+        vm.SetInputJson(HOST_AWAIT_INPUT);
+
+        var initial = vm.Execute();
+        var state = vm.GetExecutionState();
+        Console.WriteLine($"HostAwait initial result: {initial}");
+        Console.WriteLine($"Execution state: {state}");
+
+        var resumed = vm.Resume("{\"tier\":\"gold\"}");
+        Console.WriteLine($"HostAwait resumed result: {resumed}");
     }
 }

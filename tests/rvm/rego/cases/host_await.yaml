@@ -1,0 +1,103 @@
+cases:
+  - note: host_await_run_to_completion
+    data: {}
+    input:
+      enabled: true
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        allow := [
+          __builtin_host_await("ping", "id-1"),
+          __builtin_host_await("pong", "id-2")
+        ] if {
+          input.enabled
+        }
+    query: data.demo.allow
+    host_await_responses:
+      - id: "id-1"
+        value: "response-1"
+      - id: "id-2"
+        value: "response-2"
+    want_result: ["response-1", "response-2"]
+
+  - note: host_await_suspendable_queue
+    data: {}
+    input:
+      enabled: true
+      payloads: ["a", "b"]
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        allow := [result |
+          input.enabled
+          payload := input.payloads[_]
+          result := __builtin_host_await(payload, "queue")
+        ]
+    query: data.demo.allow
+    host_await_responses_suspendable:
+      - id: "queue"
+        value: "first"
+      - id: "queue"
+        value: "second"
+    want_result: ["first", "second"]
+
+  - note: host_await_nested_rule
+    data: {}
+    input:
+      enabled: true
+      token: "alpha"
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        allow if {
+          input.enabled
+          result := nested_result
+          result == "ok"
+        }
+
+        nested_result := __builtin_host_await(input.token, "nested")
+    query: data.demo.allow
+    host_await_responses_suspendable:
+      - id: "nested"
+        value: "ok"
+    want_result: true
+
+  - note: host_await_nested_comprehension
+    data: {}
+    input:
+      enabled: true
+      items: ["x", "y"]
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        allow := [outer |
+          input.enabled
+          inner := [r |
+            item := input.items[_]
+            r := __builtin_host_await(item, "nested-comp")
+          ]
+          outer := inner
+        ]
+    query: data.demo.allow
+    host_await_responses_suspendable:
+      - id: "nested-comp"
+        value: "first"
+      - id: "nested-comp"
+        value: "second"
+    want_result: [["first", "second"]]

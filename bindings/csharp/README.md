@@ -64,3 +64,43 @@ Regorus.MemoryLimits.SetThreadFlushThresholdOverride(null);
 ```
 
 See bindings/csharp/Regorus.Tests/RegorusTests.cs for scenario coverage and bindings/csharp/TargetExampleApp/Program.cs for end-to-end usage.
+
+## RVM Usage Example
+
+The RVM API lets you compile a program from modules/entrypoints and execute it in a VM:
+
+```csharp
+using Regorus;
+
+const string Policy = """
+package demo
+default allow = false
+allow if {
+  input.user == "alice"
+  some role in data.roles[input.user]
+  role == "admin"
+}
+""";
+
+const string Data = """
+{ "roles": { "alice": ["admin"] } }
+""";
+
+const string Input = """
+{ "user": "alice" }
+""";
+
+var modules = new[] { new PolicyModule("demo.rego", Policy) };
+var entryPoints = new[] { "data.demo.allow" };
+
+using var program = Program.CompileFromModules(Data, modules, entryPoints);
+var listing = program.GenerateListing();
+
+using var vm = new Rvm();
+vm.LoadProgram(program);
+vm.SetDataJson(Data);
+vm.SetInputJson(Input);
+
+var result = vm.Execute();
+Console.WriteLine($"allow: {result}");
+```

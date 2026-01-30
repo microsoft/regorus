@@ -2,6 +2,10 @@
 # Licensed under the MIT License.
 
 import regorus
+import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+  sys.stdout.reconfigure(encoding="utf-8")
 
 # Create engine
 engine = regorus.Engine()
@@ -94,3 +98,68 @@ engine1.set_gather_prints(True)
 engine1.eval_query('print("Hello")')
 ps = engine1.take_prints()
 print(ps)
+
+# RVM regular example
+policy = """
+package demo
+import rego.v1
+
+default allow := false
+
+allow if {
+  input.user == "alice"
+  input.active == true
+}
+"""
+def run_regular_example():
+  module = ("demo.rego", policy)
+  program = regorus.Program.compile_from_modules(
+    "{}",
+    [module],
+    ["data.demo.allow"],
+  )
+
+  print(program.generate_listing())
+
+  binary = program.serialize_binary()
+  program, is_partial = regorus.Program.deserialize_binary(binary)
+  if is_partial:
+    raise RuntimeError("Deserialized program marked partial")
+
+  vm = regorus.Rvm()
+  vm.load_program(program)
+  vm.set_input_json('{"user":"alice","active":true}')
+  print(vm.execute())
+
+run_regular_example()
+
+# RVM HostAwait example
+policy = """
+package demo
+import rego.v1
+
+default allow := false
+
+allow if {
+  input.account.active == true
+  details := __builtin_host_await(input.account.id, "account")
+  details.tier == "gold"
+}
+"""
+def run_host_await_example():
+  module = ("await.rego", policy)
+  program = regorus.Program.compile_from_modules(
+    "{}",
+    [module],
+    ["data.demo.allow"],
+  )
+
+  vm = regorus.Rvm()
+  vm.set_execution_mode(1)
+  vm.load_program(program)
+  vm.set_input_json('{"account":{"id":"acct-1","active":true}}')
+  vm.execute()
+  print(vm.get_execution_state())
+  print(vm.resume('{"tier":"gold"}'))
+
+run_host_await_example()
