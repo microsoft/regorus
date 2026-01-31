@@ -31,17 +31,18 @@ jobs:
             target: x86_64-unknown-linux-gnu
             libpath: |
               **/release/libregorus_ffi.so
-          # Disabled for now
-          #- os: macos-latest
-          #  target: aarch64-apple-darwin
-          #  libpath: |
-          #    **/release/libregorus_ffi.dylib
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            libpath: |
+              **/release/libregorus_ffi.dylib
     steps:
       - name: Checkout repository
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
         with:
           fetch-depth: 0
       - uses: ./.github/actions/toolchains/rust
+        with:
+          targets: ${{ matrix.runtime.target }}
       - name: Cache cargo
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
@@ -122,8 +123,8 @@ jobs:
             target: x86_64-pc-windows-msvc
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          #- os: macos-latest
-          #  target: aarch64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
     steps:
       - name: Checkout repository
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4

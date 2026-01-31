@@ -46,6 +46,9 @@
 
          <Error Text="$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/$(RegorusFFIArtifactsProfile)/libregorus_ffi.so missing."
              Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/$(RegorusFFIArtifactsProfile)/libregorus_ffi.so')" />
+
+         <Error Text="$(RegorusFFIArtifactsDir)/aarch64-apple-darwin/$(RegorusFFIArtifactsProfile)/libregorus_ffi.dylib missing."
+             Condition="!Exists('$(RegorusFFIArtifactsDir)/aarch64-apple-darwin/$(RegorusFFIArtifactsProfile)/libregorus_ffi.dylib')" />
     </Target>
 
     <ItemGroup>
