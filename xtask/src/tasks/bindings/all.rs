@@ -36,6 +36,8 @@ impl BuildAllBindingsCommand {
             clean: false,
             artifacts_dir: Some(ffi_dir.clone()),
             enforce_artifacts: false,
+            repository_commit: None,
+            include_symbols: false,
         })?;
 
         if nuget_result.packages.is_empty() {

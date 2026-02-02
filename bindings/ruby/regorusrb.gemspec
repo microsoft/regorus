@@ -9,7 +9,7 @@ Gem::Specification.new do |spec|
 
   spec.summary = "Ruby bindings for Regorus - a fast, lightweight Rego interpreter written in Rust"
   spec.homepage = "https://github.com/microsoft/regorus/blob/main/bindings/ruby"
-  spec.license = "MIT"
+  spec.licenses = ["MIT", "Apache-2.0", "BSD-3-Clause"]
   spec.required_ruby_version = ">= 3.4.2"
   spec.required_rubygems_version = ">= 3.6.5"
 

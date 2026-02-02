@@ -11,6 +11,15 @@
         <VersionPrefix>0.9.0</VersionPrefix>
         <VersionSuffix>$(VersionSuffix)</VersionSuffix>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageLicenseExpression>MIT AND Apache-2.0 AND BSD-3-Clause</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/microsoft/regorus</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/microsoft/regorus</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <Authors>Microsoft</Authors>
+        <Company>Microsoft</Company>
+        <PackageTags>rego;policy;engine;authorization;opa;rust</PackageTags>
+        <Description>Fast, lightweight Rego interpreter and policy engine for .NET, powered by Rust.</Description>
+        <Copyright>Copyright (c) Microsoft Corporation.</Copyright>
     </PropertyGroup>
 
     <PropertyGroup>
@@ -46,10 +55,14 @@
 
          <Error Text="$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/$(RegorusFFIArtifactsProfile)/libregorus_ffi.so missing."
              Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/$(RegorusFFIArtifactsProfile)/libregorus_ffi.so')" />
+
+         <Error Text="$(RegorusFFIArtifactsDir)/aarch64-apple-darwin/$(RegorusFFIArtifactsProfile)/libregorus_ffi.dylib missing."
+             Condition="!Exists('$(RegorusFFIArtifactsDir)/aarch64-apple-darwin/$(RegorusFFIArtifactsProfile)/libregorus_ffi.dylib')" />
     </Target>
 
     <ItemGroup>
         <None Include="docs/README.md" Pack="true"  PackagePath="/" />
+        <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
 
         <!-- Copy each binary to expected location within the package -->
         <None Include="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/*.dll" Pack="true" PackagePath="runtimes/win-x64/native/" />
