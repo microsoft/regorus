@@ -10,4 +10,4 @@ clap = { version = "4.5", features = ["derive"] }
 regex = "1.11"
 toml_edit = "0.22"
 semver = "1.0"
-zip = { version = "0.6", default-features = false, features = ["deflate"] }
+zip = { version = "7.2", default-features = false, features = ["deflate"] }
