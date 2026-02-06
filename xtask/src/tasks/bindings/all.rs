@@ -135,6 +135,9 @@ impl TestAllBindingsCommand {
             enforce_artifacts: false,
             force_nuget: false,
             nuget_dir: None,
+            test_filter: None,
+            skip_apps: false,
+            console_logger: false,
         }
         .run()?;
 

@@ -12,17 +12,17 @@ namespace Regorus
     /// <summary>
     /// Represents a policy module with an ID and content.
     /// </summary>
-    public struct PolicyModule
+    public readonly struct PolicyModule
     {
         /// <summary>
-        /// Gets or sets the unique identifier for this policy module.
+        /// Gets the unique identifier for this policy module.
         /// </summary>
-        public string Id { get; set; }
+        public string Id { get; }
 
         /// <summary>
-        /// Gets or sets the Rego policy content.
+        /// Gets the Rego policy content.
         /// </summary>
-        public string Content { get; set; }
+        public string Content { get; }
 
         /// <summary>
         /// Initializes a new instance of the PolicyModule struct.
@@ -53,50 +53,40 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when compilation fails</exception>
         public static CompiledPolicy CompilePolicyWithEntrypoint(string dataJson, IEnumerable<PolicyModule> modules, string entryPointRule)
         {
-            var modulesArray = modules.ToArray();
-
-            var nativeModules = new Internal.RegorusPolicyModule[modulesArray.Length];
-            var pinnedStrings = new List<Utf8Marshaller.PinnedUtf8>(modulesArray.Length * 2);
-
-            try
+            if (modules is null)
             {
-                for (int i = 0; i < modulesArray.Length; i++)
+                throw new ArgumentNullException(nameof(modules));
+            }
+
+            return CompilePolicyWithEntrypoint(dataJson, modules.ToArray(), entryPointRule);
+        }
+
+        /// <summary>
+        /// Compiles a policy from data and modules with a specific entry point rule.
+        /// </summary>
+        public static CompiledPolicy CompilePolicyWithEntrypoint(string dataJson, IReadOnlyList<PolicyModule> modules, string entryPointRule)
+        {
+            if (modules is null)
+            {
+                throw new ArgumentNullException(nameof(modules));
+            }
+
+            using var pinnedModules = Internal.ModuleMarshalling.PinPolicyModules(modules);
+
+            return Utf8Marshaller.WithUtf8(dataJson, dataPtr =>
+                Utf8Marshaller.WithUtf8(entryPointRule, entryPointPtr =>
                 {
-                    var idPinned = Utf8Marshaller.Pin(modulesArray[i].Id);
-                    var contentPinned = Utf8Marshaller.Pin(modulesArray[i].Content);
-                    pinnedStrings.Add(idPinned);
-                    pinnedStrings.Add(contentPinned);
-
-                    nativeModules[i] = new Internal.RegorusPolicyModule
+                    unsafe
                     {
-                        id = idPinned.Pointer,
-                        content = contentPinned.Pointer
-                    };
-                }
-
-                return Utf8Marshaller.WithUtf8(dataJson, dataPtr =>
-                    Utf8Marshaller.WithUtf8(entryPointRule, entryPointPtr =>
-                    {
-                        unsafe
+                        fixed (Internal.RegorusPolicyModule* modulesPtr = pinnedModules.Buffer)
                         {
-                            fixed (Internal.RegorusPolicyModule* modulesPtr = nativeModules)
-                            {
-                                var result = Internal.API.regorus_compile_policy_with_entrypoint(
-                                    (byte*)dataPtr, modulesPtr, (UIntPtr)modulesArray.Length, (byte*)entryPointPtr);
+                            var result = Internal.API.regorus_compile_policy_with_entrypoint(
+                                (byte*)dataPtr, modulesPtr, (UIntPtr)pinnedModules.Length, (byte*)entryPointPtr);
 
-                                var policy = GetCompiledPolicyResult(result);
-                                return policy;
-                            }
+                            return GetCompiledPolicyResult(result);
                         }
-                    }));
-            }
-            finally
-            {
-                foreach (var pinned in pinnedStrings)
-                {
-                    pinned.Dispose();
-                }
-            }
+                    }
+                }));
         }
 
         /// <summary>
@@ -110,49 +100,39 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when compilation fails</exception>
         public static CompiledPolicy CompilePolicyForTarget(string dataJson, IEnumerable<PolicyModule> modules)
         {
-            var modulesArray = modules.ToArray();
-
-            var nativeModules = new Internal.RegorusPolicyModule[modulesArray.Length];
-            var pinnedStrings = new List<Utf8Marshaller.PinnedUtf8>(modulesArray.Length * 2);
-
-            try
+            if (modules is null)
             {
-                for (int i = 0; i < modulesArray.Length; i++)
+                throw new ArgumentNullException(nameof(modules));
+            }
+
+            return CompilePolicyForTarget(dataJson, modules.ToArray());
+        }
+
+        /// <summary>
+        /// Compiles a target-aware policy from data and modules.
+        /// </summary>
+        public static CompiledPolicy CompilePolicyForTarget(string dataJson, IReadOnlyList<PolicyModule> modules)
+        {
+            if (modules is null)
+            {
+                throw new ArgumentNullException(nameof(modules));
+            }
+
+            using var pinnedModules = Internal.ModuleMarshalling.PinPolicyModules(modules);
+
+            return Utf8Marshaller.WithUtf8(dataJson, dataPtr =>
+            {
+                unsafe
                 {
-                    var idPinned = Utf8Marshaller.Pin(modulesArray[i].Id);
-                    var contentPinned = Utf8Marshaller.Pin(modulesArray[i].Content);
-                    pinnedStrings.Add(idPinned);
-                    pinnedStrings.Add(contentPinned);
-
-                    nativeModules[i] = new Internal.RegorusPolicyModule
+                    fixed (Internal.RegorusPolicyModule* modulesPtr = pinnedModules.Buffer)
                     {
-                        id = idPinned.Pointer,
-                        content = contentPinned.Pointer
-                    };
-                }
+                        var result = Internal.API.regorus_compile_policy_for_target(
+                            (byte*)dataPtr, modulesPtr, (UIntPtr)pinnedModules.Length);
 
-                return Utf8Marshaller.WithUtf8(dataJson, dataPtr =>
-                {
-                    unsafe
-                    {
-                        fixed (Internal.RegorusPolicyModule* modulesPtr = nativeModules)
-                        {
-                            var result = Internal.API.regorus_compile_policy_for_target(
-                                (byte*)dataPtr, modulesPtr, (UIntPtr)modulesArray.Length);
-
-                            var policy = GetCompiledPolicyResult(result);
-                            return policy;
-                        }
+                        return GetCompiledPolicyResult(result);
                     }
-                });
-            }
-            finally
-            {
-                foreach (var pinned in pinnedStrings)
-                {
-                    pinned.Dispose();
                 }
-            }
+            });
         }
 
         private static CompiledPolicy GetCompiledPolicyResult(Internal.RegorusResult result)

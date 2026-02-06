@@ -193,10 +193,19 @@ public class RegorusTests
 
         var result = engine.GetPolicyPackageNames();
 
-        var packageNames = JsonNode.Parse(result!);
+        Assert.IsNotNull(result);
 
-        Assert.AreEqual("test", packageNames![0]["package_name"].ToString());
-        Assert.AreEqual("test.nested.name", packageNames![1]["package_name"].ToString());
+        var packageNames = JsonNode.Parse(result);
+        Assert.IsNotNull(packageNames);
+
+        var packageArray = packageNames.AsArray();
+        var firstPackage = packageArray[0]?.AsObject();
+        var secondPackage = packageArray[1]?.AsObject();
+
+        Assert.IsNotNull(firstPackage);
+        Assert.IsNotNull(secondPackage);
+        Assert.AreEqual("test", firstPackage!["package_name"]!.GetValue<string>());
+        Assert.AreEqual("test.nested.name", secondPackage!["package_name"]!.GetValue<string>());
     }
 
     [TestMethod]
@@ -209,71 +218,84 @@ public class RegorusTests
 
         var result = engine.GetPolicyParameters();
 
-        var parameters = JsonNode.Parse(result!);
+        Assert.IsNotNull(result);
 
-        Assert.AreEqual(1, parameters![0]["parameters"].AsArray().Count);
-        Assert.AreEqual(1, parameters![0]["modifiers"].AsArray().Count);
+        var parameters = JsonNode.Parse(result);
+        Assert.IsNotNull(parameters);
 
-        Assert.AreEqual("a", parameters![0]["parameters"][0]["name"].ToString());
-        Assert.AreEqual("b", parameters![0]["modifiers"][0]["name"].ToString());
+        var parametersArray = parameters.AsArray();
+        var firstEntry = parametersArray[0]?.AsObject();
+        Assert.IsNotNull(firstEntry);
+
+        var parameterList = firstEntry!["parameters"]!.AsArray();
+        var modifierList = firstEntry["modifiers"]!.AsArray();
+
+        Assert.AreEqual(1, parameterList.Count);
+        Assert.AreEqual(1, modifierList.Count);
+
+        var parameterName = parameterList[0]?.AsObject()?["name"]?.GetValue<string>();
+        var modifierName = modifierList[0]?.AsObject()?["name"]?.GetValue<string>();
+
+        Assert.AreEqual("a", parameterName);
+        Assert.AreEqual("b", modifierName);
     }
 
-      [TestMethod]
-      public void Global_memory_limit_can_be_set_and_cleared()
-      {
+    [TestMethod]
+    public void Global_memory_limit_can_be_set_and_cleared()
+    {
         lock (LimitLock)
         {
-          using var guard = new MemoryLimitScope();
+            using var guard = new MemoryLimitScope();
 
-          MemoryLimits.SetGlobalMemoryLimit(null);
-          Assert.IsNull(MemoryLimits.GetGlobalMemoryLimit());
-
-          const ulong limit = 32 * 1024;
-          MemoryLimits.SetGlobalMemoryLimit(limit);
-          Assert.AreEqual(limit, MemoryLimits.GetGlobalMemoryLimit());
-
-          MemoryLimits.SetGlobalMemoryLimit(null);
-          Assert.IsNull(MemoryLimits.GetGlobalMemoryLimit());
-        }
-      }
-
-      [TestMethod]
-      public void Memory_limit_violations_surface_from_engine_calls()
-      {
-        lock (LimitLock)
-        {
-          using var guard = new MemoryLimitScope();
-          using var engine = new Engine();
-
-          const ulong limit = 1;
-          var payload = new string('x', 128 * 1024);
-
-          MemoryLimits.FlushThreadMemoryCounters();
-          MemoryLimits.SetGlobalMemoryLimit(limit);
-
-          try
-          {
-            var ex = Assert.ThrowsException<InvalidOperationException>(
-              () => engine.SetInputJson($"{{\"payload\":\"{payload}\"}}"));
-            StringAssert.Contains(ex.Message, "execution exceeded memory limit");
-          }
-          finally
-          {
             MemoryLimits.SetGlobalMemoryLimit(null);
-            MemoryLimits.FlushThreadMemoryCounters();
-          }
-        }
-      }
+            Assert.IsNull(MemoryLimits.GetGlobalMemoryLimit());
 
-      [TestMethod]
-      public void Evaluation_fails_when_input_pushes_policy_over_global_limit()
-      {
+            const ulong limit = 32 * 1024;
+            MemoryLimits.SetGlobalMemoryLimit(limit);
+            Assert.AreEqual(limit, MemoryLimits.GetGlobalMemoryLimit());
+
+            MemoryLimits.SetGlobalMemoryLimit(null);
+            Assert.IsNull(MemoryLimits.GetGlobalMemoryLimit());
+        }
+    }
+
+    [TestMethod]
+    public void Memory_limit_violations_surface_from_engine_calls()
+    {
         lock (LimitLock)
         {
-          using var guard = new MemoryLimitScope();
-          using var engine = new Engine();
+            using var guard = new MemoryLimitScope();
+            using var engine = new Engine();
 
-          const string policy = """
+            const ulong limit = 1;
+            var payload = new string('x', 128 * 1024);
+
+            MemoryLimits.FlushThreadMemoryCounters();
+            MemoryLimits.SetGlobalMemoryLimit(limit);
+
+            try
+            {
+                var ex = Assert.ThrowsException<InvalidOperationException>(
+                  () => engine.SetInputJson($"{{\"payload\":\"{payload}\"}}"));
+                StringAssert.Contains(ex.Message, "execution exceeded memory limit");
+            }
+            finally
+            {
+                MemoryLimits.SetGlobalMemoryLimit(null);
+                MemoryLimits.FlushThreadMemoryCounters();
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Evaluation_fails_when_input_pushes_policy_over_global_limit()
+    {
+        lock (LimitLock)
+        {
+            using var guard = new MemoryLimitScope();
+            using var engine = new Engine();
+
+            const string policy = """
 package memorylimit
 
 import rego.v1
@@ -281,96 +303,152 @@ import rego.v1
 stretched := concat("", [input.block | numbers.range(0, input.repeat - 1)[_]])
 """;
 
-          engine.AddPolicy("memorylimit.rego", policy);
+            engine.AddPolicy("memorylimit.rego", policy);
 
-          MemoryLimits.FlushThreadMemoryCounters();
-          const ulong limit = 4 * 1024 * 1024;
-          MemoryLimits.SetGlobalMemoryLimit(limit);
+            MemoryLimits.FlushThreadMemoryCounters();
+            const ulong limit = 4 * 1024 * 1024;
+            MemoryLimits.SetGlobalMemoryLimit(limit);
 
-          var block = new string('x', 16 * 1024);
+            var block = new string('x', 16 * 1024);
 
-          var smallInput = JsonSerializer.Serialize(new { block, repeat = 16 });
-          engine.SetInputJson(smallInput);
-          var smallResult = engine.EvalRule("data.memorylimit.stretched");
-          Assert.IsNotNull(smallResult);
-          var stretched = JsonSerializer.Deserialize<string>(smallResult);
-          Assert.IsNotNull(stretched, "Policy should return a string result.");
-          Assert.AreEqual(block.Length * 16, stretched!.Length, "Policy should expand the payload under the limit.");
+            var smallInput = JsonSerializer.Serialize(new { block, repeat = 16 });
+            engine.SetInputJson(smallInput);
+            var smallResult = engine.EvalRule("data.memorylimit.stretched");
+            Assert.IsNotNull(smallResult);
+            var stretched = JsonSerializer.Deserialize<string>(smallResult);
+            Assert.IsNotNull(stretched, "Policy should return a string result.");
+            Assert.AreEqual(block.Length * 16, stretched!.Length, "Policy should expand the payload under the limit.");
 
-          var largeInput = JsonSerializer.Serialize(new { block, repeat = 4096 });
-          engine.SetInputJson(largeInput);
+            var largeInput = JsonSerializer.Serialize(new { block, repeat = 4096 });
+            engine.SetInputJson(largeInput);
 
-          var ex = Assert.ThrowsException<InvalidOperationException>(
-            () => engine.EvalRule("data.memorylimit.stretched"));
-          StringAssert.Contains(ex.Message, "execution exceeded memory limit");
+            var ex = Assert.ThrowsException<InvalidOperationException>(
+              () => engine.EvalRule("data.memorylimit.stretched"));
+            StringAssert.Contains(ex.Message, "execution exceeded memory limit");
         }
-      }
+    }
 
-      [TestMethod]
-      public void Thread_flush_threshold_roundtrips()
-      {
+    [TestMethod]
+    public void Thread_flush_threshold_roundtrips()
+    {
         lock (LimitLock)
         {
-          var original = MemoryLimits.GetThreadMemoryFlushThreshold();
-          try
-          {
-            const ulong threshold = 256 * 1024;
-            MemoryLimits.SetThreadFlushThresholdOverride(threshold);
-            Assert.AreEqual(threshold, MemoryLimits.GetThreadMemoryFlushThreshold());
-
-            MemoryLimits.SetThreadFlushThresholdOverride(null);
-            var restored = MemoryLimits.GetThreadMemoryFlushThreshold();
-            Assert.IsTrue(restored.HasValue, "Clearing override should restore allocator default.");
-            if (original.HasValue)
+            var original = MemoryLimits.GetThreadMemoryFlushThreshold();
+            try
             {
-              Assert.AreEqual(original, restored);
+                const ulong threshold = 256 * 1024;
+                MemoryLimits.SetThreadFlushThresholdOverride(threshold);
+                Assert.AreEqual(threshold, MemoryLimits.GetThreadMemoryFlushThreshold());
+
+                MemoryLimits.SetThreadFlushThresholdOverride(null);
+                var restored = MemoryLimits.GetThreadMemoryFlushThreshold();
+                Assert.IsTrue(restored.HasValue, "Clearing override should restore allocator default.");
+                if (original.HasValue)
+                {
+                    Assert.AreEqual(original, restored);
+                }
             }
-          }
-          finally
-          {
-            MemoryLimits.SetThreadFlushThresholdOverride(original);
-          }
+            finally
+            {
+                MemoryLimits.SetThreadFlushThresholdOverride(original);
+            }
         }
-      }
-
-  [TestMethod]
-  public void SetInputJson_has_negligible_allocations_after_warmup()
-  {
-    using var engine = new Engine();
-    const string payload = "{}";
-
-    // Warm up the engine and JIT to ensure subsequent measurements are representative.
-    for (int i = 0; i < 16; i++)
-    {
-      engine.SetInputJson(payload);
     }
 
-    GC.Collect();
-    GC.WaitForPendingFinalizers();
-    GC.Collect();
-
-    const int iterations = 256;
-    var before = GC.GetAllocatedBytesForCurrentThread();
-
-    for (int i = 0; i < iterations; i++)
+    [TestMethod]
+    public void SetInputJson_has_negligible_allocations_after_warmup()
     {
-      engine.SetInputJson(payload);
+        using var engine = new Engine();
+        const string payload = "{}";
+
+        // Warm up the engine and JIT to ensure subsequent measurements are representative.
+        for (int i = 0; i < 16; i++)
+        {
+            engine.SetInputJson(payload);
+        }
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        const int iterations = 256;
+        var before = GC.GetAllocatedBytesForCurrentThread();
+
+        for (int i = 0; i < iterations; i++)
+        {
+            engine.SetInputJson(payload);
+        }
+
+        var after = GC.GetAllocatedBytesForCurrentThread();
+        var allocated = Math.Max(0, after - before);
+        var bytesPerOp = allocated / (double)iterations;
+
+        // Runtime bookkeeping (delegate caches, GC write barriers) differs across platforms, so
+        // we measure bytes per call rather than absolute totals and allow a small budget.
+        // CI will flag regressions where marshalling starts allocating per invocation.
+
+        // Allow a small budget for delegates and runtime bookkeeping while still flagging regressions.
+        Assert.IsTrue(
+          bytesPerOp <= 512,
+          $"Expected ≤512 B/op after warmup, but observed {bytesPerOp:F2} B/op (total {allocated} bytes)."
+        );
     }
 
-    var after = GC.GetAllocatedBytesForCurrentThread();
-  var allocated = Math.Max(0, after - before);
-  var bytesPerOp = allocated / (double)iterations;
+    [TestMethod]
+    public void Disposed_objects_throw_object_disposed_exception()
+    {
+        var engine = new Engine();
+        engine.Dispose();
+        Assert.ThrowsException<ObjectDisposedException>(() => engine.EvalRule("data.test.message"));
 
-  // Runtime bookkeeping (delegate caches, GC write barriers) differs across platforms, so
-  // we measure bytes per call rather than absolute totals and allow a small budget.
-  // CI will flag regressions where marshalling starts allocating per invocation.
+        var program = Program.CreateEmpty();
+        program.Dispose();
+        Assert.ThrowsException<ObjectDisposedException>(() => program.SerializeBinary());
 
-    // Allow a small budget for delegates and runtime bookkeeping while still flagging regressions.
-    Assert.IsTrue(
-      bytesPerOp <= 512,
-      $"Expected ≤512 B/op after warmup, but observed {bytesPerOp:F2} B/op (total {allocated} bytes)."
-    );
-  }
+        var rvm = new Rvm();
+        rvm.Dispose();
+        Assert.ThrowsException<ObjectDisposedException>(() => rvm.Execute());
+
+        var modules = new[] { new PolicyModule("test.rego", "package test\nallow = true") };
+        var compiled = Compiler.CompilePolicyWithEntrypoint("{}", modules, "data.test.allow");
+        compiled.Dispose();
+        Assert.ThrowsException<ObjectDisposedException>(() => compiled.EvalWithInput("{}"));
+    }
+
+    [TestMethod]
+    public void Registry_helpers_return_empty_after_clear()
+    {
+        TargetRegistry.Clear();
+        Assert.IsTrue(TargetRegistry.IsEmpty);
+        Assert.AreEqual(0, TargetRegistry.GetNames().Count);
+
+        SchemaRegistry.ClearResources();
+        SchemaRegistry.ClearEffects();
+        Assert.IsTrue(SchemaRegistry.IsResourceRegistryEmpty);
+        Assert.IsTrue(SchemaRegistry.IsEffectRegistryEmpty);
+        Assert.AreEqual(0, SchemaRegistry.GetResourceNames().Count);
+        Assert.AreEqual(0, SchemaRegistry.GetEffectNames().Count);
+    }
+
+    [TestMethod]
+    public void Utf8_marshalling_handles_large_unicode_payloads()
+    {
+        var payload = string.Concat(new string('ß', 2048), "-✓-", new string('漢', 1024));
+
+        using var engine = new Engine();
+        engine.AddPolicy("test.rego", "package test\nmessage = input.msg");
+        engine.SetInputJson(JsonSerializer.Serialize(new { msg = payload }));
+
+        var result = engine.EvalRule("data.test.message");
+
+        Assert.IsNotNull(result);
+
+        // Compare by parsing the JSON string to avoid encoder differences across platforms.
+        var parsed = JsonSerializer.Deserialize<string>(result);
+        Assert.IsNotNull(parsed);
+
+        Assert.AreEqual(payload, parsed);
+    }
 
     private sealed class MemoryLimitScope : IDisposable
     {

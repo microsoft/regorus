@@ -308,6 +308,18 @@ pub struct TestCsharpCommand {
     /// Restore and test using Regorus NuGet artefacts located at DIR. Defaults to bindings/csharp/Regorus/bin/<configuration>.
     #[arg(long = "nuget-dir", value_name = "DIR")]
     pub nuget_dir: Option<PathBuf>,
+
+    /// Optional dotnet test filter to apply when running Regorus.Tests.
+    #[arg(long = "test-filter", value_name = "FILTER")]
+    pub test_filter: Option<String>,
+
+    /// Skip building/running the C# sample apps (TestApp, TargetExampleApp).
+    #[arg(long = "skip-apps")]
+    pub skip_apps: bool,
+
+    /// Emit console logger output for dotnet test.
+    #[arg(long = "console-logger")]
+    pub console_logger: bool,
 }
 
 impl TestCsharpCommand {
@@ -412,6 +424,9 @@ impl TestCsharpCommand {
             &package_dir,
             self.clean,
             &package_cache,
+            self.test_filter.as_deref(),
+            self.skip_apps,
+            self.console_logger,
         )?;
 
         Ok(())
@@ -424,6 +439,9 @@ fn run_regorus_tests(
     package_dir: &Path,
     clean: bool,
     package_cache: &Path,
+    test_filter: Option<&str>,
+    skip_apps: bool,
+    console_logger: bool,
 ) -> Result<()> {
     let nuget_source = package_dir
         .to_str()
@@ -457,8 +475,21 @@ fn run_regorus_tests(
     test.arg(configuration);
     test.arg("--arch");
     test.arg(dotnet_host_arch());
+    if console_logger {
+        test.arg("--logger");
+        test.arg("console;verbosity=detailed");
+    }
+    if let Some(filter) = test_filter {
+        test.arg("--");
+        test.arg("--filter");
+        test.arg(filter);
+    }
     test.env("NUGET_PACKAGES", package_cache);
     run_command(test, "dotnet test (Regorus.Tests)")?;
+
+    if skip_apps {
+        return Ok(());
+    }
 
     let test_app = workspace.join("bindings/csharp/TestApp");
     if clean {

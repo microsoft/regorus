@@ -96,9 +96,9 @@ allow if {
         Assert.AreEqual("true", result, "expected allow=true");
     }
 
-      [TestMethod]
-      public void Program_host_await_suspend_and_resume_succeeds()
-      {
+    [TestMethod]
+    public void Program_host_await_suspend_and_resume_succeeds()
+    {
         var modules = new[] { new PolicyModule("host_await.rego", HostAwaitPolicy) };
         var entryPoints = new[] { "data.demo.allow" };
 
@@ -115,5 +115,5 @@ allow if {
 
         var resumed = vm.Resume("{\"tier\":\"gold\"}");
         Assert.AreEqual("true", resumed, "expected allow=true after resume");
-      }
+    }
 }

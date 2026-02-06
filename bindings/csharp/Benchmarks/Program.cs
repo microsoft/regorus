@@ -7,7 +7,7 @@ namespace Benchmarks
         static void Main(string[] args)
         {
             Console.WriteLine("=== Regorus C# Benchmarks ===\n");
-            
+
             try
             {
                 Console.WriteLine("Running Engine Evaluation Benchmark...");
@@ -17,9 +17,9 @@ namespace Benchmarks
             {
                 Console.WriteLine($"Engine benchmark failed: {ex.Message}");
             }
-            
+
             Console.WriteLine("\n" + new string('=', 80) + "\n");
-            
+
             try
             {
                 Console.WriteLine("Running Compiled Policy Evaluation Benchmark...");
@@ -29,7 +29,7 @@ namespace Benchmarks
             {
                 Console.WriteLine($"Compiled policy benchmark failed: {ex.Message}");
             }
-            
+
             Console.WriteLine("\n=== Benchmarks Complete ===");
         }
     }

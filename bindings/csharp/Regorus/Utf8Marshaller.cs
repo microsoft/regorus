@@ -17,10 +17,10 @@ namespace Regorus.Internal
     /// </summary>
     internal static class Utf8Marshaller
     {
-    // Mirrors BCL patterns (e.g., System.Text.Json encoding helpers) by stackalloc'ing
-    // up to 512 bytes to cover common short strings while keeping the stack usage well
-    // below typical per-frame limits; larger payloads fall back to pooled buffers.
-    private const int StackAllocThreshold = 512;
+        // Mirrors BCL patterns (e.g., System.Text.Json encoding helpers) by stackalloc'ing
+        // up to 512 bytes to cover common short strings while keeping the stack usage well
+        // below typical per-frame limits; larger payloads fall back to pooled buffers.
+        private const int StackAllocThreshold = 512;
 
         /// <summary>
         /// Represents a pooled and pinned UTF-8 buffer suitable for scenarios where
