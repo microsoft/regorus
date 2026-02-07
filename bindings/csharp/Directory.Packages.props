@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-    <RegorusPackageVersion>0.9.0</RegorusPackageVersion>
+    <RegorusPackageVersion>0.9.1</RegorusPackageVersion>
     <RegorusPackageVersionSuffix Condition="'$(VersionSuffix)' != ''">-$(VersionSuffix)</RegorusPackageVersionSuffix>
   </PropertyGroup>
 

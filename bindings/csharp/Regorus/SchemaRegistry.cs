@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Collections.Generic;
+using System.Text.Json;
 using Regorus.Internal;
 
 #nullable enable
@@ -27,7 +29,7 @@ namespace Regorus
                 {
                     unsafe
                     {
-                        CheckAndDropResult(Internal.API.regorus_resource_schema_register((byte*)namePtr, (byte*)schemaPtr));
+                        ResultHelpers.GetStringResult(Internal.API.regorus_resource_schema_register((byte*)namePtr, (byte*)schemaPtr));
                     }
                 });
             });
@@ -46,7 +48,7 @@ namespace Regorus
                 unsafe
                 {
                     var result = Internal.API.regorus_resource_schema_contains((byte*)namePtr);
-                    return GetBoolResult(result);
+                    return ResultHelpers.GetBoolResult(result);
                 }
             });
         }
@@ -61,7 +63,7 @@ namespace Regorus
             get
             {
                 var result = Internal.API.regorus_resource_schema_len();
-                return GetIntResult(result);
+                return ResultHelpers.GetIntResult(result);
             }
         }
 
@@ -75,7 +77,7 @@ namespace Regorus
             get
             {
                 var result = Internal.API.regorus_resource_schema_is_empty();
-                return GetBoolResult(result);
+                return ResultHelpers.GetBoolResult(result);
             }
         }
 
@@ -86,7 +88,16 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when the operation fails</exception>
         public static string ListResourceNames()
         {
-            return CheckAndDropResult(Internal.API.regorus_resource_schema_list_names()) ?? "[]";
+            return ResultHelpers.GetStringResult(Internal.API.regorus_resource_schema_list_names()) ?? "[]";
+        }
+
+        /// <summary>
+        /// List all registered resource schema names as managed strings.
+        /// </summary>
+        public static IReadOnlyList<string> GetResourceNames()
+        {
+            var json = ListResourceNames();
+            return JsonSerializer.Deserialize<string[]>(json) ?? Array.Empty<string>();
         }
 
         /// <summary>
@@ -102,7 +113,7 @@ namespace Regorus
                 unsafe
                 {
                     var result = Internal.API.regorus_resource_schema_remove((byte*)namePtr);
-                    return GetBoolResult(result);
+                    return ResultHelpers.GetBoolResult(result);
                 }
             });
         }
@@ -113,7 +124,7 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when the operation fails</exception>
         public static void ClearResources()
         {
-            CheckAndDropResult(Internal.API.regorus_resource_schema_clear());
+            ResultHelpers.GetStringResult(Internal.API.regorus_resource_schema_clear());
         }
 
         /// <summary>
@@ -130,7 +141,7 @@ namespace Regorus
                 {
                     unsafe
                     {
-                        CheckAndDropResult(Internal.API.regorus_effect_schema_register((byte*)namePtr, (byte*)schemaPtr));
+                        ResultHelpers.GetStringResult(Internal.API.regorus_effect_schema_register((byte*)namePtr, (byte*)schemaPtr));
                     }
                 });
             });
@@ -149,7 +160,7 @@ namespace Regorus
                 unsafe
                 {
                     var result = Internal.API.regorus_effect_schema_contains((byte*)namePtr);
-                    return GetBoolResult(result);
+                    return ResultHelpers.GetBoolResult(result);
                 }
             });
         }
@@ -164,7 +175,7 @@ namespace Regorus
             get
             {
                 var result = Internal.API.regorus_effect_schema_len();
-                return GetIntResult(result);
+                return ResultHelpers.GetIntResult(result);
             }
         }
 
@@ -178,7 +189,7 @@ namespace Regorus
             get
             {
                 var result = Internal.API.regorus_effect_schema_is_empty();
-                return GetBoolResult(result);
+                return ResultHelpers.GetBoolResult(result);
             }
         }
 
@@ -189,7 +200,16 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when the operation fails</exception>
         public static string ListEffectNames()
         {
-            return CheckAndDropResult(Internal.API.regorus_effect_schema_list_names()) ?? "[]";
+            return ResultHelpers.GetStringResult(Internal.API.regorus_effect_schema_list_names()) ?? "[]";
+        }
+
+        /// <summary>
+        /// List all registered effect schema names as managed strings.
+        /// </summary>
+        public static IReadOnlyList<string> GetEffectNames()
+        {
+            var json = ListEffectNames();
+            return JsonSerializer.Deserialize<string[]>(json) ?? Array.Empty<string>();
         }
 
         /// <summary>
@@ -205,7 +225,7 @@ namespace Regorus
                 unsafe
                 {
                     var result = Internal.API.regorus_effect_schema_remove((byte*)namePtr);
-                    return GetBoolResult(result);
+                    return ResultHelpers.GetBoolResult(result);
                 }
             });
         }
@@ -216,68 +236,7 @@ namespace Regorus
         /// <exception cref="Exception">Thrown when the operation fails</exception>
         public static void ClearEffects()
         {
-            CheckAndDropResult(Internal.API.regorus_effect_schema_clear());
-        }
-
-        private static string? CheckAndDropResult(Internal.RegorusResult result)
-        {
-            try
-            {
-                if (result.status != Internal.RegorusStatus.Ok)
-                {
-                    var message = Utf8Marshaller.FromUtf8(result.error_message);
-                    throw result.status.CreateException(message);
-                }
-
-                return result.data_type switch
-                {
-                    Internal.RegorusDataType.String => Utf8Marshaller.FromUtf8(result.output),
-                    Internal.RegorusDataType.Boolean => result.bool_value.ToString().ToLowerInvariant(),
-                    Internal.RegorusDataType.Integer => result.int_value.ToString(),
-                    Internal.RegorusDataType.None => null,
-                    _ => Utf8Marshaller.FromUtf8(result.output)
-                };
-            }
-            finally
-            {
-                Internal.API.regorus_result_drop(result);
-            }
-        }
-
-        private static bool GetBoolResult(Internal.RegorusResult result)
-        {
-            try
-            {
-                if (result.status != Internal.RegorusStatus.Ok)
-                {
-                    var message = Utf8Marshaller.FromUtf8(result.error_message);
-                    throw result.status.CreateException(message);
-                }
-
-                return result.data_type == Internal.RegorusDataType.Boolean ? result.bool_value : false;
-            }
-            finally
-            {
-                Internal.API.regorus_result_drop(result);
-            }
-        }
-
-        private static long GetIntResult(Internal.RegorusResult result)
-        {
-            try
-            {
-                if (result.status != Internal.RegorusStatus.Ok)
-                {
-                    var message = Utf8Marshaller.FromUtf8(result.error_message);
-                    throw result.status.CreateException(message);
-                }
-
-                return result.data_type == Internal.RegorusDataType.Integer ? result.int_value : 0;
-            }
-            finally
-            {
-                Internal.API.regorus_result_drop(result);
-            }
+            ResultHelpers.GetStringResult(Internal.API.regorus_effect_schema_clear());
         }
     }
 }

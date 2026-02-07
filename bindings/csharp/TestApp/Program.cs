@@ -42,7 +42,8 @@ w.Restart();
 
 // Set input and eval rule.
 engine.SetInputFromJsonFile("../../../tests/aci/input.json");
-var value = engine.EvalRule("data.framework.mount_overlay");
+var value = engine.EvalRule("data.framework.mount_overlay")
+    ?? throw new System.InvalidOperationException("Expected EvalRule to return a JSON value.");
 
 #if NET8_0_OR_GREATER
 var valueDoc = System.Text.Json.JsonDocument.Parse(value);

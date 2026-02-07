@@ -8,21 +8,34 @@ using Regorus.Internal;
 namespace Regorus
 {
     /// <summary>
+    /// Execution mode for the RVM runtime.
+    /// </summary>
+    public enum ExecutionMode : byte
+    {
+        /// <summary>
+        /// Run to completion without yielding.
+        /// </summary>
+        RunToCompletion = 0,
+
+        /// <summary>
+        /// Suspendable execution mode.
+        /// </summary>
+        Suspendable = 1,
+    }
+
+    /// <summary>
     /// Wrapper for the Regorus RVM runtime.
     /// </summary>
-    public unsafe sealed class Rvm : IDisposable
+    public unsafe sealed class Rvm : SafeHandleWrapper
     {
-        private RegorusRvmHandle? _handle;
-        private int _isDisposed;
-
         public Rvm()
+            : base(RegorusRvmHandle.Create(), nameof(Rvm))
         {
-            _handle = RegorusRvmHandle.Create();
         }
 
         private Rvm(RegorusRvmHandle handle)
+            : base(handle, nameof(Rvm))
         {
-            _handle = handle ?? throw new ArgumentNullException(nameof(handle));
         }
 
         /// <summary>
@@ -47,13 +60,12 @@ namespace Regorus
         /// </summary>
         public void LoadProgram(Program program)
         {
-            ThrowIfDisposed();
             if (program is null)
             {
                 throw new ArgumentNullException(nameof(program));
             }
 
-            program.UseHandle(programPtr =>
+            program.UseHandleForInterop(programPtr =>
             {
                 UseHandle(vmPtr =>
                 {
@@ -69,7 +81,6 @@ namespace Regorus
         /// </summary>
         public void SetDataJson(string dataJson)
         {
-            ThrowIfDisposed();
             Utf8Marshaller.WithUtf8(dataJson, dataPtr =>
             {
                 UseHandle(vmPtr =>
@@ -85,7 +96,6 @@ namespace Regorus
         /// </summary>
         public void SetInputJson(string inputJson)
         {
-            ThrowIfDisposed();
             Utf8Marshaller.WithUtf8(inputJson, inputPtr =>
             {
                 UseHandle(vmPtr =>
@@ -101,7 +111,6 @@ namespace Regorus
         /// </summary>
         public void SetExecutionMode(byte mode)
         {
-            ThrowIfDisposed();
             UseHandle(vmPtr =>
             {
                 CheckAndDropResult(API.regorus_rvm_set_execution_mode((RegorusRvm*)vmPtr, mode));
@@ -110,11 +119,18 @@ namespace Regorus
         }
 
         /// <summary>
+        /// Set the execution mode.
+        /// </summary>
+        public void SetExecutionMode(ExecutionMode mode)
+        {
+            SetExecutionMode((byte)mode);
+        }
+
+        /// <summary>
         /// Execute the program and return the JSON result.
         /// </summary>
         public string? Execute()
         {
-            ThrowIfDisposed();
             return UseHandle(vmPtr =>
             {
                 return CheckAndDropResult(API.regorus_rvm_execute((RegorusRvm*)vmPtr));
@@ -126,7 +142,6 @@ namespace Regorus
         /// </summary>
         public string? ExecuteEntryPoint(string entryPoint)
         {
-            ThrowIfDisposed();
             return Utf8Marshaller.WithUtf8(entryPoint, entryPtr =>
             {
                 return UseHandle(vmPtr =>
@@ -141,7 +156,6 @@ namespace Regorus
         /// </summary>
         public string? ExecuteEntryPoint(ulong index)
         {
-            ThrowIfDisposed();
             return UseHandle(vmPtr =>
             {
                 return CheckAndDropResult(API.regorus_rvm_execute_entry_point_by_index((RegorusRvm*)vmPtr, (UIntPtr)index));
@@ -153,7 +167,6 @@ namespace Regorus
         /// </summary>
         public string? Resume(string? resumeValueJson)
         {
-            ThrowIfDisposed();
             if (resumeValueJson is null)
             {
                 return UseHandle(vmPtr =>
@@ -176,68 +189,10 @@ namespace Regorus
         /// </summary>
         public string? GetExecutionState()
         {
-            ThrowIfDisposed();
             return UseHandle(vmPtr =>
             {
                 return CheckAndDropResult(API.regorus_rvm_get_execution_state((RegorusRvm*)vmPtr));
             });
-        }
-
-        public void Dispose()
-        {
-            Dispose(disposing: true);
-            GC.SuppressFinalize(this);
-        }
-
-        private void Dispose(bool disposing)
-        {
-            if (System.Threading.Interlocked.CompareExchange(ref _isDisposed, 1, 0) == 0)
-            {
-                _handle?.Dispose();
-                _handle = null;
-            }
-        }
-
-        private void ThrowIfDisposed()
-        {
-            if (_isDisposed != 0 || _handle is null || _handle.IsClosed)
-            {
-                throw new ObjectDisposedException(nameof(Rvm));
-            }
-        }
-
-        internal RegorusRvmHandle GetHandleForUse()
-        {
-            var handle = _handle;
-            if (handle is null || handle.IsClosed || handle.IsInvalid)
-            {
-                throw new ObjectDisposedException(nameof(Rvm));
-            }
-            return handle;
-        }
-
-        internal T UseHandle<T>(Func<IntPtr, T> func)
-        {
-            var handle = GetHandleForUse();
-            bool addedRef = false;
-            try
-            {
-                handle.DangerousAddRef(ref addedRef);
-                var pointer = handle.DangerousGetHandle();
-                if (pointer == IntPtr.Zero)
-                {
-                    throw new ObjectDisposedException(nameof(Rvm));
-                }
-
-                return func(pointer);
-            }
-            finally
-            {
-                if (addedRef)
-                {
-                    handle.DangerousRelease();
-                }
-            }
         }
 
         private static Rvm GetRvmResult(RegorusResult result)
@@ -266,27 +221,7 @@ namespace Regorus
 
         private static string? CheckAndDropResult(RegorusResult result)
         {
-            try
-            {
-                if (result.status != RegorusStatus.Ok)
-                {
-                    var message = Utf8Marshaller.FromUtf8(result.error_message);
-                    throw result.status.CreateException(message);
-                }
-
-                return result.data_type switch
-                {
-                    RegorusDataType.String => Utf8Marshaller.FromUtf8(result.output),
-                    RegorusDataType.Boolean => result.bool_value.ToString().ToLowerInvariant(),
-                    RegorusDataType.Integer => result.int_value.ToString(),
-                    RegorusDataType.None => null,
-                    _ => Utf8Marshaller.FromUtf8(result.output)
-                };
-            }
-            finally
-            {
-                API.regorus_result_drop(result);
-            }
+            return ResultHelpers.GetStringResult(result);
         }
     }
 }

@@ -12,7 +12,7 @@ namespace Benchmarks
     public class EngineEvaluationBenchmark
     {
         private static readonly string TestDataPath = Path.Combine(
-            Directory.GetCurrentDirectory(), 
+            Directory.GetCurrentDirectory(),
             "..", "..", "..",
             "benches", "evaluation", "test_data"
         );
@@ -33,7 +33,7 @@ namespace Benchmarks
         private static readonly string[] PolicyNames = new[]
         {
             "rbac_policy",
-            "api_access_policy", 
+            "api_access_policy",
             "data_sensitivity_policy",
             "time_based_policy",
             "data_processing_policy",
@@ -46,21 +46,21 @@ namespace Benchmarks
         private static List<(string Policy, string[] Inputs)> LoadPoliciesWithInputs()
         {
             var result = new List<(string Policy, string[] Inputs)>();
-            
+
             foreach (var (policyFile, inputFiles) in PolicyInputFiles)
             {
                 var policyPath = Path.Combine(TestDataPath, "policies", policyFile);
                 var policy = File.ReadAllText(policyPath);
-                
+
                 var inputs = inputFiles.Select(inputFile =>
                 {
                     var inputPath = Path.Combine(TestDataPath, "inputs", inputFile);
                     return File.ReadAllText(inputPath);
                 }).ToArray();
-                
+
                 result.Add((policy, inputs));
             }
-            
+
             return result;
         }
 
@@ -68,12 +68,12 @@ namespace Benchmarks
         {
             var policiesWithInputs = LoadPoliciesWithInputs();
             var engines = new List<Engine>();
-            
+
             foreach (var (policy, _) in policiesWithInputs)
             {
                 var engine = new Engine();
                 engine.AddPolicy("policy.rego", policy);
-                
+
                 // Warm up the engine to ensure it's fully prepared for evaluation
                 // This prevents each cloned engine from repeating preparation work
                 engine.SetInputJson("{}");
@@ -85,10 +85,10 @@ namespace Benchmarks
                 {
                     // Ignore warmup errors
                 }
-                
+
                 engines.Add(engine);
             }
-            
+
             return engines;
         }
 
@@ -97,13 +97,13 @@ namespace Benchmarks
             var cpuCount = Environment.ProcessorCount;
             var maxThreads = cpuCount * 2;
             var threadCounts = new List<int> { 1, 2 };
-            
+
             // Add even numbers from 4 to maxThreads
             for (int i = 4; i <= maxThreads; i += 2)
             {
                 threadCounts.Add(i);
             }
-            
+
             Console.WriteLine($"Running engine benchmark with max_threads: {maxThreads}");
             Console.WriteLine($"Testing with thread counts: {string.Join(", ", threadCounts)}");
             Console.WriteLine();
@@ -132,14 +132,14 @@ namespace Benchmarks
             const int warmupSeconds = 3;
             const int durationSeconds = 3;
             var policiesWithInputs = LoadPoliciesWithInputs();
-            
+
             Console.WriteLine($"Warming up with {threads} threads for {warmupSeconds} seconds...");
-            
+
             // Warmup phase
             var (_, _, _) = RunBenchmarkPhase(threads, warmupSeconds, policiesWithInputs, useClonedEngines, isWarmup: true);
-            
+
             Console.WriteLine($"Running benchmark with {threads} threads for {durationSeconds} seconds...");
-            
+
             // Actual benchmark phase
             var (totalEvaluations, evaluationTime, policyCounters) = RunBenchmarkPhase(threads, durationSeconds, policiesWithInputs, useClonedEngines, isWarmup: false);
 
@@ -165,8 +165,8 @@ namespace Benchmarks
         }
 
         private static (int totalEvaluations, TimeSpan evaluationTime, Dictionary<string, int> policyCounters) RunBenchmarkPhase(
-            int threads, 
-            int durationSeconds, 
+            int threads,
+            int durationSeconds,
             List<(string Policy, string[] Inputs)> policiesWithInputs,
             bool useClonedEngines,
             bool isWarmup)
@@ -199,10 +199,10 @@ namespace Benchmarks
                 tasks[threadId] = Task.Run(() =>
                 {
                     barrier.SignalAndWait();
-                    
+
                     int evaluationCount = 0;
                     var localEvaluationTime = TimeSpan.Zero;
-                    
+
                     while (!stopExecution)
                     {
                         // Use different policy for each iteration
@@ -217,7 +217,7 @@ namespace Benchmarks
                         {
                             // Measure only the engine operations
                             var evalStopwatch = Stopwatch.StartNew();
-                            
+
                             Engine engine;
                             if (useClonedEngines)
                             {
@@ -228,14 +228,14 @@ namespace Benchmarks
                                 engine = new Engine();
                                 engine.AddPolicy("policy.rego", policy);
                             }
-                            
+
                             engine.SetInputJson(input);
                             var result = engine.EvalRule("data.bench.allow");
                             engine.Dispose();
-                            
+
                             evalStopwatch.Stop();
                             localEvaluationTime += evalStopwatch.Elapsed;
-                            
+
                             // Track successful evaluations (only during actual benchmark, not warmup)
                             if (!isWarmup)
                             {
@@ -249,10 +249,10 @@ namespace Benchmarks
                         {
                             // Ignore evaluation errors for benchmarking purposes
                         }
-                        
+
                         evaluationCount++;
                     }
-                    
+
                     // Store the actual evaluation time for this thread
                     if (!isWarmup)
                     {
@@ -283,10 +283,10 @@ namespace Benchmarks
 
             var totalEvaluations = policyCounters.Values.Sum();
             var totalEvaluationTime = evaluationTimes.Values.Aggregate(TimeSpan.Zero, (sum, time) => sum + time);
-            
+
             // Use pure evaluation time (consistent with Rust benchmark)
             var evaluationTime = totalEvaluationTime == TimeSpan.Zero ? stopwatch.Elapsed : totalEvaluationTime;
-            
+
             return (totalEvaluations, evaluationTime, policyCounters);
         }
     }

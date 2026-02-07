@@ -89,12 +89,14 @@ namespace Regorus
                     );
                 }
 
-                if (result.int_value < 0)
+                try
                 {
-                    throw new OverflowException($"{errorContext}: native value was negative ({result.int_value})");
+                    return checked((ulong)result.int_value);
                 }
-
-                return (ulong)result.int_value;
+                catch (OverflowException ex)
+                {
+                    throw new OverflowException($"{errorContext}: native value was out of range ({result.int_value})", ex);
+                }
             }
             finally
             {
