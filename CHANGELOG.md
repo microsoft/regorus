@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1](https://github.com/microsoft/regorus/compare/regorus-v0.9.0...regorus-v0.9.1) - 2026-02-06
+
+### Fixed
+- Release native C# handles reliably to avoid memory growth ([#571](https://github.com/microsoft/regorus/pull/571)).
+- Centralize C# handle gating with a short dispose wait and deferred release to avoid leaks while blocking new calls ([#571](https://github.com/microsoft/regorus/pull/571)).
+
+### Added
+- Manual C# memory growth tests for both `using` and finalizer paths ([#571](https://github.com/microsoft/regorus/pull/571)).
+- C# test runner options for filtered tests, console logging, and skipping sample apps ([#571](https://github.com/microsoft/regorus/pull/571)).
+
 ## [0.5.0](https://github.com/microsoft/regorus/compare/regorus-v0.4.0...regorus-v0.5.0) - 2025-07-08
 
 ### Added

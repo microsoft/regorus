@@ -44,7 +44,7 @@ namespace Regorus
 
         protected override bool ReleaseHandle()
         {
-            if (!IsInvalid && !IsClosed)
+            if (!IsInvalid)
             {
                 unsafe
                 {
@@ -76,7 +76,7 @@ namespace Regorus
 
         protected override bool ReleaseHandle()
         {
-            if (!IsInvalid && !IsClosed)
+            if (!IsInvalid)
             {
                 unsafe
                 {
@@ -124,7 +124,7 @@ namespace Regorus
 
         protected override bool ReleaseHandle()
         {
-            if (!IsInvalid && !IsClosed)
+            if (!IsInvalid)
             {
                 unsafe
                 {
@@ -172,7 +172,7 @@ namespace Regorus
 
         protected override bool ReleaseHandle()
         {
-            if (!IsInvalid && !IsClosed)
+            if (!IsInvalid)
             {
                 unsafe
                 {

@@ -3,7 +3,6 @@
 
 using System;
 using System.Text.Json;
-using System.Threading;
 using Regorus.Internal;
 
 #nullable enable
@@ -18,20 +17,15 @@ namespace Regorus
     /// Each instance represents a unique native policy object.
     /// 
     /// Thread Safety: This class is thread-safe for all operations. Multiple threads
-    /// can safely call EvalWithInput() concurrently, and Dispose() will safely wait
-    /// for all active evaluations to complete before freeing resources. No external
-    /// synchronization is required.
+    /// can safely call EvalWithInput() concurrently. Dispose() blocks new calls, waits
+    /// briefly, and defers the native release to the last in-flight caller if needed.
+    /// No external synchronization is required.
     /// </summary>
-    public unsafe sealed class CompiledPolicy : IDisposable
+    public unsafe sealed class CompiledPolicy : SafeHandleWrapper
     {
-    private RegorusCompiledPolicyHandle? _handle;
-    private readonly ManualResetEventSlim _idleEvent = new(initialState: true);
-    private int _isDisposed;
-    private int _activeEvaluations;
-
         internal CompiledPolicy(RegorusCompiledPolicyHandle handle)
+            : base(handle, nameof(CompiledPolicy))
         {
-            _handle = handle ?? throw new ArgumentNullException(nameof(handle));
         }
 
         /// <summary>
@@ -45,36 +39,16 @@ namespace Regorus
         /// <exception cref="ObjectDisposedException">Thrown when the policy has been disposed</exception>
         public string? EvalWithInput(string inputJson)
         {
-            // Increment active evaluations count
-            var active = System.Threading.Interlocked.Increment(ref _activeEvaluations);
-            if (active == 1)
+            return Internal.Utf8Marshaller.WithUtf8(inputJson, inputPtr =>
             {
-                _idleEvent.Reset();
-            }
-            try
-            {
-                ThrowIfDisposed();
-
-                return Internal.Utf8Marshaller.WithUtf8(inputJson, inputPtr =>
+                return UseHandle(policyPtr =>
                 {
-                    return UseHandle(policyPtr =>
+                    unsafe
                     {
-                        unsafe
-                        {
-                            return CheckAndDropResult(Internal.API.regorus_compiled_policy_eval_with_input((Internal.RegorusCompiledPolicy*)policyPtr, (byte*)inputPtr));
-                        }
-                    });
+                        return CheckAndDropResult(Internal.API.regorus_compiled_policy_eval_with_input((Internal.RegorusCompiledPolicy*)policyPtr, (byte*)inputPtr));
+                    }
                 });
-            }
-            finally
-            {
-                // Decrement active evaluations count
-                var remaining = System.Threading.Interlocked.Decrement(ref _activeEvaluations);
-                if (remaining == 0)
-                {
-                    _idleEvent.Set();
-                }
-            }
+            });
         }
 
         /// <summary>
@@ -86,7 +60,6 @@ namespace Regorus
         /// <exception cref="ObjectDisposedException">Thrown when the policy has been disposed</exception>
         public PolicyInfo GetPolicyInfo()
         {
-            ThrowIfDisposed();
             var jsonResult = UseHandle(policyPtr =>
             {
                 unsafe
@@ -94,7 +67,7 @@ namespace Regorus
                     return CheckAndDropResult(Internal.API.regorus_compiled_policy_get_policy_info((Internal.RegorusCompiledPolicy*)policyPtr));
                 }
             });
-            
+
             if (string.IsNullOrEmpty(jsonResult))
             {
                 throw new Exception("Failed to get policy info: empty response");
@@ -106,8 +79,8 @@ namespace Regorus
                 {
                     PropertyNameCaseInsensitive = true
                 };
-                
-                return JsonSerializer.Deserialize<PolicyInfo>(jsonResult!, options) 
+
+                return JsonSerializer.Deserialize<PolicyInfo>(jsonResult!, options)
                     ?? throw new Exception("Failed to deserialize policy info");
             }
             catch (JsonException ex)
@@ -116,106 +89,9 @@ namespace Regorus
             }
         }
 
-        public void Dispose()
-        {
-            Dispose(disposing: true);
-            GC.SuppressFinalize(this);
-        }
-
-        private void Dispose(bool disposing)
-        {
-            if (System.Threading.Interlocked.CompareExchange(ref _isDisposed, 1, 0) == 0)
-            {
-                var handle = _handle;
-                if (handle != null)
-                {
-                    _idleEvent.Wait();
-                    
-                    handle.Dispose();
-                    _handle = null;
-                }
-
-                _idleEvent.Dispose();
-            }
-        }
-
-        private void ThrowIfDisposed()
-        {
-            if (_isDisposed != 0 || _handle is null || _handle.IsClosed)
-                throw new ObjectDisposedException(nameof(CompiledPolicy));
-        }
-
         private string? CheckAndDropResult(Internal.RegorusResult result)
         {
-            try
-            {
-                if (result.status != Internal.RegorusStatus.Ok)
-                {
-                    var message = Internal.Utf8Marshaller.FromUtf8(result.error_message);
-                    throw result.status.CreateException(message);
-                }
-
-                return result.data_type switch
-                {
-                    Internal.RegorusDataType.String => Internal.Utf8Marshaller.FromUtf8(result.output),
-                    Internal.RegorusDataType.Boolean => result.bool_value.ToString().ToLowerInvariant(),
-                    Internal.RegorusDataType.Integer => result.int_value.ToString(),
-                    Internal.RegorusDataType.None => null,
-                    _ => Internal.Utf8Marshaller.FromUtf8(result.output)
-                };
-            }
-            finally
-            {
-                Internal.API.regorus_result_drop(result);
-            }
-        }
-
-        private RegorusCompiledPolicyHandle GetHandleForUse()
-        {
-            var handle = _handle;
-            if (handle is null || handle.IsClosed || handle.IsInvalid)
-            {
-                throw new ObjectDisposedException(nameof(CompiledPolicy));
-            }
-            return handle;
-        }
-
-        internal T UseHandle<T>(Func<IntPtr, T> func)
-        {
-            var handle = GetHandleForUse();
-            bool addedRef = false;
-            try
-            {
-                handle.DangerousAddRef(ref addedRef);
-                var pointer = handle.DangerousGetHandle();
-                if (pointer == IntPtr.Zero)
-                {
-                    throw new ObjectDisposedException(nameof(CompiledPolicy));
-                }
-
-                return func(pointer);
-            }
-            finally
-            {
-                if (addedRef)
-                {
-                    handle.DangerousRelease();
-                }
-            }
-        }
-
-        internal T UseHandleForInterop<T>(Func<IntPtr, T> func)
-        {
-            return UseHandle(func);
-        }
-
-        private void UseHandle(Action<IntPtr> action)
-        {
-            UseHandle<object?>(handlePtr =>
-            {
-                action(handlePtr);
-                return null;
-            });
+            return Internal.ResultHelpers.GetStringResult(result);
         }
     }
 }

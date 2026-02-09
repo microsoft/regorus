@@ -65,7 +65,7 @@ triplet_count := count([1 |
     private const string EXECUTION_TIMER_QUERY = "data.limits.timer.triplet_count";
     private const int EXECUTION_TIMER_VALUE_COUNT = 40;
 
-        private const string RVM_POLICY = """
+    private const string RVM_POLICY = """
 package demo
 import rego.v1
 
@@ -78,7 +78,7 @@ allow if {
 }
 """;
 
-        private const string RVM_DATA = """
+    private const string RVM_DATA = """
 {
     "roles": {
         "alice": ["admin", "reader"]
@@ -86,13 +86,13 @@ allow if {
 }
 """;
 
-        private const string RVM_INPUT = """
+    private const string RVM_INPUT = """
 {
     "user": "alice"
 }
 """;
 
-        private const string HOST_AWAIT_POLICY = """
+    private const string HOST_AWAIT_POLICY = """
 package demo
 import rego.v1
 
@@ -105,7 +105,7 @@ allow if {
 }
 """;
 
-        private const string HOST_AWAIT_INPUT = """
+    private const string HOST_AWAIT_INPUT = """
     {
         "account": {
             "id": "acct-1",
@@ -216,7 +216,7 @@ allow if {
 
         var nonCompliantResult = compiledPolicy.EvalWithInput(NON_COMPLIANT_STORAGE_ACCOUNT);
         Console.WriteLine($"Result: {nonCompliantResult}");
-        
+
         // 4. Demonstrate thread-safe concurrent evaluation
         Console.WriteLine("\n4. Testing concurrent evaluation from multiple threads:");
         DemonstrateConcurrentEvaluation(compiledPolicy);
@@ -246,42 +246,44 @@ allow if {
         };
 
         Console.WriteLine($"Starting {testInputs.Length} concurrent evaluations...");
-        
-        var tasks = testInputs.Select(input => 
-            Task.Run(() => {
+
+        var tasks = testInputs.Select(input =>
+            Task.Run(() =>
+            {
                 var (threadName, json) = input;
                 var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                
+
                 // Multiple evaluations per thread to stress test
                 var results = new List<string>();
                 for (int i = 0; i < 1000; i++)
                 {
-                    var result = compiledPolicy.EvalWithInput(json);
+                    var result = compiledPolicy.EvalWithInput(json)
+                        ?? throw new System.InvalidOperationException("Expected EvalWithInput to return a JSON value.");
                     results.Add(result);
                 }
-                
+
                 stopwatch.Stop();
                 var microseconds = stopwatch.ElapsedTicks * 1000000 / System.Diagnostics.Stopwatch.Frequency;
-                
+
                 // Verify all results are identical (thread safety)
                 var firstResult = results[0];
                 var allIdentical = results.All(r => r == firstResult);
-                
+
                 Console.WriteLine($"✓ {threadName}: {results.Count} evaluations in {microseconds}μs, " +
                                 $"Results consistent: {allIdentical}");
-                
+
                 return (threadName, results.Count, microseconds, allIdentical);
             })
         ).ToArray();
 
         // Wait for all threads to complete
         var results = Task.WhenAll(tasks).Result;
-        
+
         Console.WriteLine("\nConcurrency test results:");
         var totalEvaluations = results.Sum(r => r.Item2);
         var maxTime = results.Max(r => r.Item3);
         var allConsistent = results.All(r => r.allIdentical);
-        
+
         Console.WriteLine($"✓ Total evaluations: {totalEvaluations}");
         Console.WriteLine($"✓ Max thread time: {maxTime}μs");
         Console.WriteLine($"✓ All threads consistent: {allConsistent}");
@@ -292,28 +294,28 @@ allow if {
     static void DemonstratePolicyInfo(Regorus.CompiledPolicy compiledPolicy)
     {
         Console.WriteLine("Getting policy metadata using GetPolicyInfo()...");
-        
+
         try
         {
             var policyInfo = compiledPolicy.GetPolicyInfo();
-            
+
             Console.WriteLine($"✓ Policy Information Retrieved:");
             Console.WriteLine($"  Target Name: {policyInfo.TargetName ?? "None"}");
             Console.WriteLine($"  Effect Rule: {policyInfo.EffectRule ?? "None"}");
             Console.WriteLine($"  Entrypoint Rule: {policyInfo.EntrypointRule}");
-            
+
             Console.WriteLine($"  Module IDs ({policyInfo.ModuleIds.Count}):");
             foreach (var moduleId in policyInfo.ModuleIds)
             {
                 Console.WriteLine($"    - {moduleId}");
             }
-            
+
             Console.WriteLine($"  Applicable Resource Types ({policyInfo.ApplicableResourceTypes.Count}):");
             foreach (var resourceType in policyInfo.ApplicableResourceTypes)
             {
                 Console.WriteLine($"    - {resourceType}");
             }
-            
+
             if (policyInfo.Parameters != null && policyInfo.Parameters.Count > 0)
             {
                 Console.WriteLine($"  Policy Parameters:");
@@ -333,7 +335,7 @@ allow if {
                             Console.WriteLine($"          Description: {param.Description}");
                         }
                     }
-                    
+
                     if (parameterSet.Modifiers.Count > 0)
                     {
                         Console.WriteLine($"      Modifiers ({parameterSet.Modifiers.Count}):");
@@ -348,11 +350,11 @@ allow if {
             {
                 Console.WriteLine("  No parameter information available");
             }
-            
+
             // Demonstrate JSON serialization of policy info
             Console.WriteLine("\n✓ Policy Info as JSON:");
-            var jsonOptions = new JsonSerializerOptions 
-            { 
+            var jsonOptions = new JsonSerializerOptions
+            {
                 WriteIndented = true,
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase
             };
