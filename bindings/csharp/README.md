@@ -104,3 +104,49 @@ vm.SetInputJson(Input);
 var result = vm.Execute();
 Console.WriteLine($"allow: {result}");
 ```
+
+## Azure RBAC Condition Evaluation
+
+Evaluate Azure RBAC condition expressions directly with a JSON evaluation context:
+
+```csharp
+using Regorus;
+
+const string Condition = "@Resource[owner] StringEquals 'alice'";
+const string ContextJson = """
+{
+  "principal": {
+    "id": "user-1",
+    "principal_type": "User",
+    "custom_security_attributes": {}
+  },
+  "resource": {
+    "id": "/subscriptions/s1",
+    "resource_type": "Microsoft.Storage/storageAccounts",
+    "scope": "/subscriptions/s1",
+    "attributes": {
+      "owner": "alice",
+      "confidential": true
+    }
+  },
+  "request": {
+    "action": "Microsoft.Storage/storageAccounts/read",
+    "data_action": null,
+    "attributes": {
+      "clientIP": "10.0.0.1"
+    }
+  },
+  "environment": {
+    "is_private_link": null,
+    "private_endpoint": null,
+    "subnet": null,
+    "utc_now": "2023-05-01T12:00:00Z"
+  },
+  "action": "Microsoft.Storage/storageAccounts/read",
+  "suboperation": null
+}
+""";
+
+var allowed = RbacEngine.EvaluateCondition(Condition, ContextJson);
+Console.WriteLine($"RBAC condition allowed: {allowed}");
+```

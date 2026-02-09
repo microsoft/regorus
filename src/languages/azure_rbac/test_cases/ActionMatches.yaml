@@ -1,0 +1,7 @@
+test_cases:
+  - name: action_matches_true
+    condition: "ActionMatches('Microsoft.Storage/storageAccounts/*')"
+    expected: true
+  - name: action_matches_false
+    condition: "ActionMatches('Microsoft.Storage/storageAccounts/delete')"
+    expected: false

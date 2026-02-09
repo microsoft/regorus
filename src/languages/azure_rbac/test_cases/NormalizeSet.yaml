@@ -1,0 +1,7 @@
+test_cases:
+  - name: normalize_set_contains
+    condition: "NormalizeSet(['a','a','b']) ListContains 'b'"
+    expected: true
+  - name: normalize_set_not_contains
+    condition: "NormalizeSet(['a','a','b']) ListNotContains 'c'"
+    expected: true

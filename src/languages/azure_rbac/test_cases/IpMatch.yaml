@@ -1,0 +1,7 @@
+test_cases:
+  - name: ip_match_true
+    condition: "@Request[ip] IpMatch '10.0.0.0/24'"
+    expected: true
+  - name: ip_match_false
+    condition: "@Request[ip] IpMatch '192.168.0.0/16'"
+    expected: false

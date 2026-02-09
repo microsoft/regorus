@@ -1,0 +1,7 @@
+test_cases:
+  - name: datetime_less_than_true
+    condition: "@Request[date] DateTimeLessThan '2023-05-02T00:00:00Z'"
+    expected: true
+  - name: datetime_less_than_false
+    condition: "@Request[date] DateTimeLessThan '2023-05-01T00:00:00Z'"
+    expected: false

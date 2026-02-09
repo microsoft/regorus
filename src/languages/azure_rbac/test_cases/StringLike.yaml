@@ -1,0 +1,7 @@
+test_cases:
+  - name: string_like_true
+    condition: "@Request[text] StringLike 'Hello*'"
+    expected: true
+  - name: string_like_false
+    condition: "@Request[text] StringLike 'World*'"
+    expected: false

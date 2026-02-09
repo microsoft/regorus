@@ -1,0 +1,7 @@
+test_cases:
+  - name: datetime_equals_true
+    condition: "@Request[date] DateTimeEquals '2023-05-01T12:00:00Z'"
+    expected: true
+  - name: datetime_equals_false
+    condition: "@Request[date] DateTimeEquals '2023-05-02T12:00:00Z'"
+    expected: false

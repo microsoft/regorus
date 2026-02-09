@@ -1,0 +1,7 @@
+test_cases:
+  - name: string_not_ends_with_true
+    condition: "@Request[text] StringNotEndsWith 'Hello'"
+    expected: true
+  - name: string_not_ends_with_false
+    condition: "@Request[text] StringNotEndsWith 'World'"
+    expected: false

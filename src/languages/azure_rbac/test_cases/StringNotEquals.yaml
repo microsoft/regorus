@@ -1,0 +1,7 @@
+test_cases:
+  - name: string_not_equals_true
+    condition: "@Request[owner] StringNotEquals 'bob'"
+    expected: true
+  - name: string_not_equals_false
+    condition: "@Request[owner] StringNotEquals 'alice'"
+    expected: false

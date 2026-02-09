@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Azure RBAC condition interpreter with builtin evaluation coverage and YAML test suite, including quantifier (ForAnyOfAnyValues/ForAllOfAllValues), datetime (DateTimeEquals), IP (IpInRange), GUID (GuidEquals), list (ListContains), and string (StringEquals) semantics.
+- FFI surface for Azure RBAC condition evaluation (see bindings changelog for language-specific wrappers).
+
 ## [0.9.1](https://github.com/microsoft/regorus/compare/regorus-v0.9.0...regorus-v0.9.1) - 2026-02-06
 
 ### Fixed

@@ -1,0 +1,7 @@
+test_cases:
+  - name: time_of_day_less_than_true
+    condition: "@Request[time] TimeOfDayLessThan '13:00:00'"
+    expected: true
+  - name: time_of_day_less_than_false
+    condition: "@Request[time] TimeOfDayLessThan '11:00:00'"
+    expected: false

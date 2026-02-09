@@ -1,0 +1,7 @@
+test_cases:
+  - name: numeric_in_range_true
+    condition: "@Request[count] NumericInRange [5, 15]"
+    expected: true
+  - name: numeric_in_range_false
+    condition: "@Request[count] NumericInRange [11, 12]"
+    expected: false

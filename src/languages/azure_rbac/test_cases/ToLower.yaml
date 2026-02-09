@@ -1,0 +1,7 @@
+test_cases:
+  - name: to_lower_true
+    condition: "ToLower('AbC') StringEquals 'abc'"
+    expected: true
+  - name: to_lower_false
+    condition: "ToLower('AbC') StringEquals 'ABC'"
+    expected: false

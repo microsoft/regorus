@@ -1,0 +1,7 @@
+test_cases:
+  - name: string_not_equals_ignore_case_true
+    condition: "@Request[owner] StringNotEqualsIgnoreCase 'BOB'"
+    expected: true
+  - name: string_not_equals_ignore_case_false
+    condition: "@Request[owner] StringNotEqualsIgnoreCase 'ALICE'"
+    expected: false

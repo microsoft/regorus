@@ -20,9 +20,14 @@
 
   <ItemGroup>
     <PackageReference Include="MSTest" />
+    <PackageReference Include="YamlDotNet" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Regorus" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../../src/languages/azure_rbac/test_cases/*.yaml" Link="test_cases/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

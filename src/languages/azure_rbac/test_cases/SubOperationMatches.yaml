@@ -1,0 +1,7 @@
+test_cases:
+  - name: suboperation_matches_true
+    condition: "SubOperationMatches('sub/read')"
+    expected: true
+  - name: suboperation_matches_false
+    condition: "SubOperationMatches('sub/write')"
+    expected: false

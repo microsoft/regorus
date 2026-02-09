@@ -1,0 +1,7 @@
+test_cases:
+  - name: string_starts_with_true
+    condition: "@Request[text] StringStartsWith 'Hello'"
+    expected: true
+  - name: string_starts_with_false
+    condition: "@Request[text] StringStartsWith 'World'"
+    expected: false

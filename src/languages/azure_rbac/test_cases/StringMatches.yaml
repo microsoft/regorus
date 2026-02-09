@@ -1,0 +1,7 @@
+test_cases:
+  - name: string_matches_true
+    condition: "@Request[text] StringMatches 'Hello.*'"
+    expected: true
+  - name: string_matches_false
+    condition: "@Request[text] StringMatches '^World'"
+    expected: false

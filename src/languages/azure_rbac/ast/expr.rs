@@ -10,9 +10,10 @@ use serde::{Deserialize, Serialize};
 use super::literals::{
     BooleanLiteral, DateTimeLiteral, NullLiteral, NumberLiteral, StringLiteral, TimeLiteral,
 };
-use super::operators::{ArrayOperator, ConditionOperator};
+use super::operators::ArrayOperator;
 use super::references::AttributeReference;
 use super::span::EmptySpan;
+use crate::languages::azure_rbac::builtins::RbacBuiltin;
 
 /// ABAC condition expression
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -104,7 +105,7 @@ pub enum UnaryOperator {
 pub struct BinaryExpression {
     #[serde(skip)]
     pub span: EmptySpan,
-    pub operator: ConditionOperator,
+    pub operator: RbacBuiltin,
     pub left: Box<ConditionExpr>,
     pub right: Box<ConditionExpr>,
 }

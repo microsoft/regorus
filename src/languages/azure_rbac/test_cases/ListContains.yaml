@@ -1,0 +1,7 @@
+test_cases:
+  - name: list_contains_true
+    condition: "@Request[tags] ListContains 'prod'"
+    expected: true
+  - name: list_contains_false
+    condition: "@Request[tags] ListContains 'dev'"
+    expected: false

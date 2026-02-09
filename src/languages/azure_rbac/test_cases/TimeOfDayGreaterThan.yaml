@@ -1,0 +1,7 @@
+test_cases:
+  - name: time_of_day_greater_than_true
+    condition: "@Request[time] TimeOfDayGreaterThan '11:00:00'"
+    expected: true
+  - name: time_of_day_greater_than_false
+    condition: "@Request[time] TimeOfDayGreaterThan '13:00:00'"
+    expected: false
