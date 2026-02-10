@@ -1,0 +1,100 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+#
+name: "Dependency Audits"
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    name: Cargo Audit (${{ matrix.lockfile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lockfile:
+          - Cargo.lock
+          - bindings/ffi/Cargo.lock
+          - bindings/java/Cargo.lock
+          - bindings/python/Cargo.lock
+          - bindings/ruby/Cargo.lock
+          - bindings/wasm/Cargo.lock
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Run cargo audit
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          lockfile: ${{ matrix.lockfile }}
+
+  cargo-deny:
+    name: Cargo Deny (${{ matrix.manifest }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        manifest:
+          - Cargo.toml
+          - bindings/ffi/Cargo.toml
+          - bindings/java/Cargo.toml
+          - bindings/python/Cargo.toml
+          - bindings/ruby/Cargo.toml
+          - bindings/ruby/ext/regorusrb/Cargo.toml
+          - bindings/wasm/Cargo.toml
+          - tests/ensure_no_std/Cargo.toml
+          - xtask/Cargo.toml
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Setup Rust
+        uses: ./.github/actions/toolchains/rust
+
+      - name: Run cargo deny
+        uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979 # v2
+        with:
+          command: check
+          command-arguments: advisories bans
+          manifest-path: ${{ matrix.manifest }}
+
+  cargo-outdated:
+    name: Cargo Outdated (${{ matrix.manifest }})
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        manifest:
+          - Cargo.toml
+          - bindings/ffi/Cargo.toml
+          - bindings/java/Cargo.toml
+          - bindings/python/Cargo.toml
+          - bindings/ruby/Cargo.toml
+          - bindings/ruby/ext/regorusrb/Cargo.toml
+          - bindings/wasm/Cargo.toml
+          - tests/ensure_no_std/Cargo.toml
+          - xtask/Cargo.toml
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Setup Rust
+        uses: ./.github/actions/toolchains/rust
+
+      - name: Install cargo-outdated
+        run: cargo install cargo-outdated --locked
+
+      - name: Run cargo outdated
+        run: |
+          # postcard pulls both embedded-io 0.4 and 0.6; ignore the older line to avoid noise.
+          cargo outdated --manifest-path ${{ matrix.manifest }} --exit-code 1 --ignore embedded-io

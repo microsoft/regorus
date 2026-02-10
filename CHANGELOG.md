@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- [**breaking**] Switch RVM binary serialization to postcard, bump the format to v4, and mark v1-3 loads as partial (recompile required).
+
 ## [0.9.1](https://github.com/microsoft/regorus/compare/regorus-v0.9.0...regorus-v0.9.1) - 2026-02-06
 
 ### Fixed

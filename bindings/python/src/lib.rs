@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-use anyhow::{anyhow, Result};
-use pyo3::exceptions::PyTypeError;
+use anyhow::{anyhow, Result as AnyResult};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::*;
 use pyo3::IntoPyObjectExt;
@@ -127,7 +127,7 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
     })
 }
 
-fn to(mut v: Value, py: Python<'_>) -> Result<PyObject> {
+fn to(mut v: Value, py: Python<'_>) -> PyResult<Py<PyAny>> {
     let obj = match v {
         Value::Null => None::<u64>.into_bound_py_any(py),
 
@@ -173,7 +173,7 @@ fn to(mut v: Value, py: Python<'_>) -> Result<PyObject> {
     };
     match obj {
         Ok(v) => Ok(v.into()),
-        Err(e) => Err(anyhow!("{e}")),
+        Err(e) => Err(PyErr::new::<PyRuntimeError, _>(format!("{e}"))),
     }
 }
 
@@ -202,7 +202,7 @@ impl Engine {
     ///
     /// * `path`: A filename to be associated with the policy.
     /// * `rego`: Rego policy.
-    pub fn add_policy(&mut self, path: String, rego: String) -> Result<String> {
+    pub fn add_policy(&mut self, path: String, rego: String) -> AnyResult<String> {
         self.engine.add_policy(path, rego)
     }
 
@@ -211,19 +211,19 @@ impl Engine {
     /// The policy is parsed into AST.
     ///
     /// * `path`: Path to the policy file.
-    pub fn add_policy_from_file(&mut self, path: String) -> Result<String> {
+    pub fn add_policy_from_file(&mut self, path: String) -> AnyResult<String> {
         self.engine.add_policy_from_file(path)
     }
 
     /// Get the list of packages defined by loaded policies.
     ///
-    pub fn get_packages(&self) -> Result<Vec<String>> {
+    pub fn get_packages(&self) -> AnyResult<Vec<String>> {
         self.engine.get_packages()
     }
 
     /// Get the list of policies.
     ///
-    pub fn get_policies(&self) -> Result<String> {
+    pub fn get_policies(&self) -> AnyResult<String> {
         Ok(serde_json::to_string_pretty(
             &self.engine.get_policies_as_json()?,
         )?)
@@ -233,7 +233,7 @@ impl Engine {
     ///
     /// * `data`: Rego value. A Rego value is a number, bool, string, None
     ///           or a list/set/map whose items themselves are Rego values.
-    pub fn add_data(&mut self, data: &Bound<'_, PyAny>) -> Result<()> {
+    pub fn add_data(&mut self, data: &Bound<'_, PyAny>) -> AnyResult<()> {
         let data = from(data)?;
         self.engine.add_data(data)
     }
@@ -241,7 +241,7 @@ impl Engine {
     /// Add policy data.
     ///
     /// * `data`: JSON encoded value to be used as policy data.
-    pub fn add_data_json(&mut self, data: String) -> Result<()> {
+    pub fn add_data_json(&mut self, data: String) -> AnyResult<()> {
         let data = Value::from_json_str(&data)?;
         self.engine.add_data(data)
     }
@@ -249,13 +249,13 @@ impl Engine {
     /// Add policy data from file.
     ///
     /// * `path`: Path to JSON policy data.
-    pub fn add_data_from_json_file(&mut self, path: String) -> Result<()> {
+    pub fn add_data_from_json_file(&mut self, path: String) -> AnyResult<()> {
         let data = Value::from_json_file(path)?;
         self.engine.add_data(data)
     }
 
     /// Clear policy data.
-    pub fn clear_data(&mut self) -> Result<()> {
+    pub fn clear_data(&mut self) -> AnyResult<()> {
         self.engine.clear_data();
         Ok(())
     }
@@ -264,7 +264,7 @@ impl Engine {
     ///
     /// * `input`: Rego value. A Rego value is a number, bool, string, None
     ///            or a list/set/map whose items themselves are Rego values.
-    pub fn set_input(&mut self, input: &Bound<'_, PyAny>) -> Result<()> {
+    pub fn set_input(&mut self, input: &Bound<'_, PyAny>) -> AnyResult<()> {
         let input = from(input)?;
         self.engine.set_input(input);
         Ok(())
@@ -273,7 +273,7 @@ impl Engine {
     /// Set input.
     ///
     /// * `input`: JSON encoded value to be used as input to query.
-    pub fn set_input_json(&mut self, input: String) -> Result<()> {
+    pub fn set_input_json(&mut self, input: String) -> AnyResult<()> {
         let input = Value::from_json_str(&input)?;
         self.engine.set_input(input);
         Ok(())
@@ -282,7 +282,7 @@ impl Engine {
     /// Set input.
     ///
     /// * `path`: Path to JSON input data.
-    pub fn set_input_from_json_file(&mut self, path: String) -> Result<()> {
+    pub fn set_input_from_json_file(&mut self, path: String) -> AnyResult<()> {
         let input = Value::from_json_file(path)?;
         self.engine.set_input(input);
         Ok(())
@@ -291,8 +291,11 @@ impl Engine {
     /// Evaluate query.
     ///
     /// * `query`: Rego expression to be evaluate.
-    pub fn eval_query(&mut self, query: String, py: Python<'_>) -> Result<PyObject> {
-        let results = self.engine.eval_query(query, false)?;
+    pub fn eval_query(&mut self, query: String, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let results = self
+            .engine
+            .eval_query(query, false)
+            .map_err(|e| PyErr::new::<PyRuntimeError, _>(e.to_string()))?;
 
         let rlist = PyList::empty(py);
         for result in results.result.into_iter() {
@@ -324,7 +327,7 @@ impl Engine {
     /// Evaluate query. Returns result as JSON.
     ///
     /// * `query`: Rego expression to be evaluate.
-    pub fn eval_query_as_json(&mut self, query: String) -> Result<String> {
+    pub fn eval_query_as_json(&mut self, query: String) -> AnyResult<String> {
         let results = self.engine.eval_query(query, false)?;
         serde_json::to_string_pretty(&results).map_err(|e| anyhow!("{e}"))
     }
@@ -332,14 +335,18 @@ impl Engine {
     /// Evaluate rule.
     ///
     /// * `rule`: Full path to the rule.
-    pub fn eval_rule(&mut self, rule: String, py: Python<'_>) -> Result<PyObject> {
-        to(self.engine.eval_rule(rule)?, py)
+    pub fn eval_rule(&mut self, rule: String, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self
+            .engine
+            .eval_rule(rule)
+            .map_err(|e| PyErr::new::<PyRuntimeError, _>(e.to_string()))?;
+        to(value, py)
     }
 
     /// Evaluate rule and return value as json.
     ///
     /// * `rule`: Full path to the rule.
-    pub fn eval_rule_as_json(&mut self, rule: String) -> Result<String> {
+    pub fn eval_rule_as_json(&mut self, rule: String) -> AnyResult<String> {
         let v = self.engine.eval_rule(rule)?;
         v.to_json_str()
     }
@@ -354,7 +361,7 @@ impl Engine {
     /// Get coverage report as json.
     ///
     #[cfg(feature = "coverage")]
-    pub fn get_coverage_report_as_json(&self) -> Result<String> {
+    pub fn get_coverage_report_as_json(&self) -> AnyResult<String> {
         let report = self.engine.get_coverage_report()?;
         serde_json::to_string_pretty(&report).map_err(|e| anyhow!("{e}"))
     }
@@ -362,7 +369,7 @@ impl Engine {
     /// Get coverage report as pretty printable string.
     ///
     #[cfg(feature = "coverage")]
-    pub fn get_coverage_report_pretty(&self) -> Result<String> {
+    pub fn get_coverage_report_pretty(&self) -> AnyResult<String> {
         self.engine.get_coverage_report()?.to_string_pretty()
     }
 
@@ -381,7 +388,7 @@ impl Engine {
 
     /// Take gathered prints.
     ///
-    pub fn take_prints(&mut self) -> Result<Vec<String>> {
+    pub fn take_prints(&mut self) -> AnyResult<Vec<String>> {
         self.engine.take_prints()
     }
 
@@ -398,7 +405,7 @@ impl Engine {
     /// Get AST of policies.
     ///
     #[cfg(feature = "ast")]
-    pub fn get_ast_as_json(&self) -> Result<String> {
+    pub fn get_ast_as_json(&self) -> AnyResult<String> {
         self.engine.get_ast_as_json()
     }
 }
@@ -411,7 +418,7 @@ impl Program {
         data_json: String,
         modules: Vec<(String, String)>,
         entry_points: Vec<String>,
-    ) -> Result<Self> {
+    ) -> AnyResult<Self> {
         if entry_points.is_empty() {
             return Err(anyhow!("entry_points must contain at least one entry"));
         }
@@ -434,7 +441,7 @@ impl Program {
 
     /// Deserialize an RVM program from binary data.
     #[staticmethod]
-    pub fn deserialize_binary(data: Vec<u8>) -> Result<(Self, bool)> {
+    pub fn deserialize_binary(data: Vec<u8>) -> AnyResult<(Self, bool)> {
         let (program, is_partial) =
             match RvmProgram::deserialize_binary(&data).map_err(|e: String| anyhow!(e))? {
                 DeserializationResult::Complete(program) => (program, false),
@@ -449,14 +456,14 @@ impl Program {
     }
 
     /// Serialize a program to binary format.
-    pub fn serialize_binary(&self) -> Result<Vec<u8>> {
+    pub fn serialize_binary(&self) -> AnyResult<Vec<u8>> {
         self.program
             .serialize_binary()
             .map_err(|e: String| anyhow!(e))
     }
 
     /// Generate a readable assembly listing.
-    pub fn generate_listing(&self) -> Result<String> {
+    pub fn generate_listing(&self) -> AnyResult<String> {
         Ok(generate_assembly_listing(
             self.program.as_ref(),
             &AssemblyListingConfig::default(),
@@ -464,7 +471,7 @@ impl Program {
     }
 
     /// Generate a tabular assembly listing.
-    pub fn generate_tabular_listing(&self) -> Result<String> {
+    pub fn generate_tabular_listing(&self) -> AnyResult<String> {
         Ok(generate_tabular_assembly_listing(
             self.program.as_ref(),
             &AssemblyListingConfig::default(),
@@ -486,27 +493,27 @@ impl Rvm {
     }
 
     /// Load an RVM program into the VM.
-    pub fn load_program(&mut self, program: &Program) -> Result<()> {
+    pub fn load_program(&mut self, program: &Program) -> AnyResult<()> {
         self.vm.load_program(program.program.clone());
         Ok(())
     }
 
     /// Set data JSON for the VM.
-    pub fn set_data_json(&mut self, data_json: String) -> Result<()> {
+    pub fn set_data_json(&mut self, data_json: String) -> AnyResult<()> {
         let data = Value::from_json_str(&data_json)?;
         self.vm.set_data(data)?;
         Ok(())
     }
 
     /// Set input JSON for the VM.
-    pub fn set_input_json(&mut self, input_json: String) -> Result<()> {
+    pub fn set_input_json(&mut self, input_json: String) -> AnyResult<()> {
         let input = Value::from_json_str(&input_json)?;
         self.vm.set_input(input);
         Ok(())
     }
 
     /// Set execution mode (0 = run-to-completion, 1 = suspendable).
-    pub fn set_execution_mode(&mut self, mode: u8) -> Result<()> {
+    pub fn set_execution_mode(&mut self, mode: u8) -> AnyResult<()> {
         let mode = match mode {
             0 => ExecutionMode::RunToCompletion,
             1 => ExecutionMode::Suspendable,
@@ -517,19 +524,19 @@ impl Rvm {
     }
 
     /// Execute the program and return the JSON result.
-    pub fn execute(&mut self) -> Result<String> {
+    pub fn execute(&mut self) -> AnyResult<String> {
         self.vm.execute()?.to_json_str()
     }
 
     /// Execute an entry point by name and return the JSON result.
-    pub fn execute_entry_point(&mut self, entry_point: String) -> Result<String> {
+    pub fn execute_entry_point(&mut self, entry_point: String) -> AnyResult<String> {
         self.vm
             .execute_entry_point_by_name(&entry_point)?
             .to_json_str()
     }
 
     /// Resume execution with an optional JSON value.
-    pub fn resume(&mut self, resume_json: Option<String>) -> Result<String> {
+    pub fn resume(&mut self, resume_json: Option<String>) -> AnyResult<String> {
         let value = if let Some(json) = resume_json {
             Some(Value::from_json_str(&json)?)
         } else {
@@ -539,7 +546,7 @@ impl Rvm {
     }
 
     /// Get the execution state as a string.
-    pub fn get_execution_state(&self) -> Result<String> {
+    pub fn get_execution_state(&self) -> AnyResult<String> {
         Ok(format!("{:?}", self.vm.execution_state()))
     }
 }

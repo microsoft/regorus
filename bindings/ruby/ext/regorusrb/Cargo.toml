@@ -16,7 +16,7 @@ ast = ["regorus/ast"]
 coverage = ["regorus/coverage"]
 
 [dependencies]
-magnus = { version = "0.7.1" }
+magnus = { version = "0.8.2" }
 regorus = { path = "../../../..", default-features = false, features = ["arc"] }
 serde_json = "1.0.140"
-serde_magnus = "0.9.0"
+serde_magnus = "0.11.0"

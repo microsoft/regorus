@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+#
 # To get started with Dependabot version updates, you'll need to specify which
 # package ecosystems to update and where the package manifests are located.
 # Please see the documentation for all configuration options:
@@ -9,3 +11,137 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+    # Ignore vendored mimalloc crates; updates are managed manually.
+    ignore:
+      - dependency-name: "regorus-mimalloc"
+      - dependency-name: "regorus-mimalloc-sys"
+
+  - package-ecosystem: "cargo"
+    directory: "/bindings/ffi"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/bindings/java"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/bindings/python"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/bindings/ruby"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/bindings/ruby/ext/regorusrb"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/bindings/wasm"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/tests/ensure_no_std"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/xtask"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "gomod"
+    directory: "/bindings/go"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "maven"
+    directory: "/bindings/java"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "nuget"
+    directory: "/bindings/csharp"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "pip"
+    directory: "/bindings/python"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "bundler"
+    directory: "/bindings/ruby"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      per-dependency:
+        patterns:
+          - "*"

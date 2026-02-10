@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+#
 name: "CodeQL Security Analysis"
 
 on:
@@ -60,7 +62,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
     # Setup language-specific dependencies BEFORE CodeQL init for proper tracing setup
     - name: Setup Rust
@@ -84,26 +86,26 @@ jobs:
 
     - name: Setup Python
       if: matrix.language == 'python'
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
       with:
         python-version: '3.10'
 
     - name: Setup Java
       if: matrix.language == 'java-kotlin'
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
       with:
         distribution: 'corretto'
         java-version: '8'
 
     - name: Setup Go
       if: matrix.language == 'go'
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
       with:
         go-version: '1.21'
 
     - name: Setup .NET
       if: matrix.language == 'csharp'
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
       with:
         global-json-file: ./bindings/csharp/global.json
 
@@ -113,12 +115,12 @@ jobs:
 
     - name: Setup Node.js
       if: matrix.language == 'javascript-typescript'
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
         node-version: '18'
 
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
+      uses: github/codeql-action/init@b5ebac6f4c00c8ccddb7cdcd45fdb248329f808a # v3.32.2
       with:
         languages: ${{ matrix.language }}
         build-mode: ${{ matrix.build-mode }}
@@ -139,7 +141,7 @@ jobs:
 
     - name: Setup Ruby
       if: matrix.language == 'rust' && contains(matrix.working-directory, 'ruby')
-      uses: ruby/setup-ruby@v1
+      uses: ruby/setup-ruby@09a7688d3b55cf0e976497ff046b70949eeaccfd # v1
       with:
         ruby-version: '3.4.2'
         bundler-cache: true
@@ -186,6 +188,6 @@ jobs:
       run: cargo xtask build-wasm --release
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
+      uses: github/codeql-action/analyze@b5ebac6f4c00c8ccddb7cdcd45fdb248329f808a # v3.32.2
       with:
         category: "/language:${{matrix.language}}"

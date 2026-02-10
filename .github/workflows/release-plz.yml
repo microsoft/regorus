@@ -1,10 +1,13 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+#
 name: Release-plz
 
 permissions:
   pull-requests: write
   contents: write
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
 
 jobs:
   release-plz:
@@ -14,13 +17,13 @@ jobs:
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
       - name: Install Rust toolchain
         uses: ./.github/actions/toolchains/rust
       - name: Run release-plz
-        uses: MarcoIeni/release-plz-action@8724d33cd97b8295051102e2e19ca592962238f5 #v0.5.108
+        uses: MarcoIeni/release-plz-action@8724d33cd97b8295051102e2e19ca592962238f5 # v0.5.108
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

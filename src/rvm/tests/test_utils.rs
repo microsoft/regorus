@@ -13,8 +13,7 @@ use crate::rvm::program::{binaries_to_values, BinaryValue, Program};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use bincode::config::standard;
-use bincode::serde::decode_from_slice;
+use postcard::from_bytes;
 
 /// Test utility function for round-trip serialization
 /// Serializes program, deserializes it, and serializes again to check for consistency
@@ -31,7 +30,7 @@ pub fn test_round_trip_serialization(program: &Program) -> Result<(), String> {
             serialized1[7],
         ]);
 
-        if version == 2 && serialized1.len() >= 25 {
+        if version == Program::SERIALIZATION_VERSION && serialized1.len() >= 25 {
             let entry_points_len = u32::from_le_bytes([
                 serialized1[8],
                 serialized1[9],
@@ -56,11 +55,9 @@ pub fn test_round_trip_serialization(program: &Program) -> Result<(), String> {
             let rule_tree_start = literals_start + literals_len;
 
             if literals_len > 0 && serialized1.len() >= rule_tree_start {
-                match decode_from_slice::<Vec<BinaryValue>, _>(
-                    &serialized1[literals_start..rule_tree_start],
-                    standard(),
-                ) {
-                    Ok((decoded_literals, _)) => {
+                match from_bytes::<Vec<BinaryValue>>(&serialized1[literals_start..rule_tree_start])
+                {
+                    Ok(decoded_literals) => {
                         if binaries_to_values(decoded_literals).is_err() {
                             return Err(
                                 "Failed to convert literal table from binary representation".into(),
@@ -69,7 +66,7 @@ pub fn test_round_trip_serialization(program: &Program) -> Result<(), String> {
                     }
                     Err(err) => {
                         return Err(format!(
-                            "Failed to decode literal table with bincode: {}",
+                            "Failed to decode literal table with postcard: {}",
                             err
                         ));
                     }
