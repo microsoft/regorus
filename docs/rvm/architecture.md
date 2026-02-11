@@ -90,11 +90,11 @@ version:
   `3`).
 2. **Section manifest**: four little-endian `u32` lengths for entry points,
   sources, literals, and the rule tree, plus a single-byte `rego_v0` flag.
-3. **Preamble payloads**: each section is encoded with `bincode` using helper
+3. **Preamble payloads**: each section is encoded with `postcard` using helper
   wrappers (`BinaryValueSlice`, `BinaryValueRef`) to stream complex `Value`
   graphs without cloning.
 4. **Program core**: the remaining `Program` struct is serialized once more via
-  `bincode`; fields skipped by serde (entry points, literals, sources,
+  `postcard`; fields skipped by serde (entry points, literals, sources,
   rule_tree, resolved builtins) are re-inserted from the preamble when the
   program is reconstructed.
 
