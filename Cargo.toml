@@ -39,7 +39,7 @@ net = ["dep:ipnet"]
 no_std = ["lazy_static/spin_no_std"]
 opa-runtime = []
 regex = ["dep:regex"]
-rvm = ["dep:bincode", "dep:indexmap"]
+rvm = ["dep:postcard", "dep:indexmap"]
 semver = ["dep:semver"]
 allocator-memory-limits = ["std", "mimalloc", "mimalloc/allocator-memory-limits"]
 std = ["rand/std", "rand/std_rng", "serde_json/std", "msvc_spectre_libs" ]
@@ -128,7 +128,7 @@ mimalloc = { package = "regorus-mimalloc", path = "mimalloc", version = "2.2.6",
 
 # rvm related deps
 indexmap = { version = "2.12.1", default-features = false, features = ["serde"], optional = true }
-bincode = { version = "2.0.1", default-features = false, features = ["alloc", "serde"], optional = true }
+postcard = { version = "1.1.3", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.45"

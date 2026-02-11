@@ -47,9 +47,9 @@ jobs:
 
       - name: Run rust-clippy
         run: cargo xtask clippy --sarif rust-clippy-results.sarif
-        continue-on-error: true
 
       - name: Upload analysis results to GitHub
+        if: ${{ hashFiles('rust-clippy-results.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@c298edae2d512d807fe4bdc57c0ac5a036f61501 # v3.29.11
         with:
           sarif_file: rust-clippy-results.sarif

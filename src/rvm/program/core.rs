@@ -85,7 +85,7 @@ pub struct Program {
 
 impl Program {
     /// Current serialization format version
-    pub const SERIALIZATION_VERSION: u32 = 3;
+    pub const SERIALIZATION_VERSION: u32 = 4;
     /// Magic bytes to identify Regorus program files
     pub const MAGIC: [u8; 4] = *b"REGO";
     /// Maximum instructions supported (matches u16 jump targets)
