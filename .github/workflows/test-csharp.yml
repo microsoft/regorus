@@ -39,7 +39,7 @@ jobs:
               **/release/libregorus_ffi.dylib
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
       - uses: ./.github/actions/toolchains/rust
@@ -59,7 +59,7 @@ jobs:
         run: cargo xtask build-ffi --release --target ${{ matrix.runtime.target }}
         
       - name: Upload regorus ffi shared library
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: regorus-ffi-artifacts-${{ matrix.runtime.target }}
           # Note: The full path of each artifact relative to . is preserved.
@@ -73,11 +73,11 @@ jobs:
     needs: build-ffi
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0  
       - uses: ./.github/actions/toolchains/rust
-      - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
+      - uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0
         with:
           global-json-file: ./bindings/csharp/global.json
 
@@ -92,7 +92,7 @@ jobs:
         run: cargo fetch --locked
 
       - name: Download regorus ffi shared libraries
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: regorus-ffi-artifacts-*
           merge-multiple: true
@@ -105,7 +105,7 @@ jobs:
         run: cargo xtask build-csharp --release --clean --artifacts-dir ./bindings/csharp/Regorus/tmp/bindings/ffi/target --enforce-artifacts --repository-commit ${{ github.sha }} --include-symbols
 
       - name: Upload Regorus nuget
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: regorus-nuget
           path: |
@@ -131,13 +131,13 @@ jobs:
             target: aarch64-apple-darwin
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - uses: ./.github/actions/toolchains/rust
 
-      - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
+      - uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0
         with:
           global-json-file: ./bindings/csharp/global.json
 
@@ -152,7 +152,7 @@ jobs:
         run: cargo fetch --locked
 
       - name: Download regorus nuget
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: regorus-nuget
           path: ./bindings/csharp/Regorus/bin/Release

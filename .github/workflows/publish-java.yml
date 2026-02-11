@@ -35,10 +35,10 @@ jobs:
             os: windows-latest
             extension: dll
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           java-version: 8
           distribution: "corretto"
@@ -46,7 +46,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - if: ${{ matrix.build_cmd == 'zigbuild' }}
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.11"
       - if: ${{ matrix.build_cmd == 'zigbuild' }}
@@ -56,7 +56,7 @@ jobs:
       - run: cargo ${{ matrix.build_cmd || 'build' }} --release --frozen --target ${{ matrix.target }}${{ matrix.glibc && format('.{0}', matrix.glibc) || '' }} --manifest-path ./bindings/java/Cargo.toml
       - run: mkdir -p native/${{ matrix.target }}
       - run: mv target/${{ matrix.target }}/release/*.${{ matrix.extension }} ./native/${{ matrix.target }}/
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: native-libraries-${{ matrix.target }}
           path: native/
@@ -66,24 +66,24 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           java-version: 8
           distribution: "corretto"
           server-id: ossrh
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: native-libraries-*
           merge-multiple: true
           path: ./bindings/java/native/
       - run: mvn package
         working-directory: ./bindings/java
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: built-jars
           path: ./bindings/java/target/regorus-java-*.jar
