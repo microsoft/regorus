@@ -579,20 +579,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
-name = "mimalloc"
-version = "2.2.6"
-dependencies = [
- "mimalloc-sys",
-]
-
-[[package]]
-name = "mimalloc-sys"
-version = "0.0.0"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -930,7 +916,7 @@ checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
 name = "regorus"
-version = "0.5.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -940,24 +926,39 @@ dependencies = [
  "ipnet",
  "jsonschema",
  "lazy_static",
- "mimalloc",
  "msvc_spectre_libs",
  "num-bigint",
  "num-traits",
  "rand",
  "regex",
+ "regorus-mimalloc",
  "semver",
  "serde",
  "serde_json",
  "serde_yaml",
+ "spin",
  "thiserror",
  "url",
  "uuid",
 ]
 
 [[package]]
+name = "regorus-mimalloc"
+version = "2.2.6"
+dependencies = [
+ "regorus-mimalloc-sys",
+]
+
+[[package]]
+name = "regorus-mimalloc-sys"
+version = "2.2.6"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "regorusrb"
-version = "0.6.0"
+version = "0.9.1"
 dependencies = [
  "magnus",
  "regorus",
@@ -1091,6 +1092,12 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "spin"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
 name = "stable_deref_trait"
