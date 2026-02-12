@@ -48,13 +48,13 @@
     <dependency>
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>
-      <version>3.8.1</version>
+      <version>4.13.2</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>com.google.code.gson</groupId>
       <artifactId>gson</artifactId>
-      <version>2.10.1</version>
+      <version>2.13.2</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -76,7 +76,7 @@
       <plugin>
         <artifactId>exec-maven-plugin</artifactId>
         <groupId>org.codehaus.mojo</groupId>
-        <version>3.1.0</version>
+        <version>3.6.3</version>
         <executions>
           <execution>
             <!-- Build a debug release for tests -->
@@ -97,7 +97,7 @@
 
       <plugin>
         <artifactId>maven-surefire-plugin</artifactId>
-        <version>3.2.5</version>
+        <version>3.5.4</version>
         <configuration>
           <!-- Add debug build to Java path, so it's discoverable by JVM. This is only for tests. -->
           <argLine>-Djava.library.path=${project.basedir}/target/debug:${java.library.path}</argLine>
@@ -108,7 +108,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-javadoc-plugin</artifactId>
-        <version>3.6.3</version>
+        <version>3.12.0</version>
         <executions>
           <execution>
             <id>attach-javadoc</id>
@@ -123,7 +123,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-source-plugin</artifactId>
-        <version>3.3.0</version>
+        <version>3.4.0</version>
         <executions>
           <execution>
             <id>attach-sources</id>
