@@ -23,7 +23,7 @@ jobs:
     runs-on: ${{ matrix.host.name }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
       - uses: ./.github/actions/toolchains/rust
@@ -39,7 +39,7 @@ jobs:
       - name: Fetch Python crate dependencies
         run: cargo fetch --locked --manifest-path bindings/python/Cargo.toml --target ${{ matrix.host.target }}
 
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.10"
           architecture: x64
@@ -51,7 +51,7 @@ jobs:
         run: cargo xtask build-python --release --target ${{ matrix.host.target }} --target-dir bindings/python/dist --frozen
 
       - name: Upload wheel artefacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: regorus-wheel-${{ matrix.host.name }}
           path: bindings/python/dist/regorus-*.whl
@@ -65,7 +65,7 @@ jobs:
     runs-on: ${{ matrix.host }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
       - uses: ./.github/actions/toolchains/rust
@@ -79,7 +79,7 @@ jobs:
       - name: Fetch Python crate dependencies
         run: cargo fetch --locked --manifest-path bindings/python/Cargo.toml
 
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: ${{ matrix.python-version }}
           architecture: x64

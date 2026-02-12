@@ -14,12 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Setup Ruby and Rust
-        uses: oxidize-rb/actions/setup-ruby-and-rust@7ca44a16e287e5ff7dd72ab53f4bd41cbf34a571 # v1.26
+        uses: oxidize-rb/actions/setup-ruby-and-rust@e5f9a49a7812a078584072f6e3f657ad247c8771 # v1.26
         with:
           bundler: 2.6.5
           rubygems: 3.6.5
