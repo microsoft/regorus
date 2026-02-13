@@ -163,3 +163,25 @@ def run_host_await_example():
   print(vm.resume('{"tier":"gold"}'))
 
 run_host_await_example()
+
+def custom_function(arg1, arg2):
+    return f"{arg1}, {arg2}!"
+
+# Extension example
+policy = """
+package demo
+
+result := greeting(a, b) if {
+  a := data.a
+  b := data.b
+}
+"""
+def run_extension_example():
+    rego = regorus.Engine()
+    rego.add_policy("demo", policy)
+    rego.add_extension("greeting", 2, custom_function)
+
+    rego.add_data({"a": "Hello", "b": "World"})
+    print(rego.eval_rule("data.demo.result"))
+
+run_extension_example()

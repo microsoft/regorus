@@ -344,6 +344,24 @@ impl Engine {
         v.to_json_str()
     }
 
+    pub fn add_extension(&mut self, path: String, nargs: u8, extension: Py<PyAny>) -> Result<()> {
+        let func_ref = Arc::new(extension);
+
+        let extension_impl = move |args: Vec<Value>| -> Result<Value, anyhow::Error> {
+            Python::with_gil(|py| {
+                let py_args_vec: Result<Vec<PyObject>> =
+                    args.into_iter().map(|arg| to(arg, py)).collect();
+                let py_args = PyTuple::new(py, py_args_vec?)?;
+                let py_result = func_ref.call1(py, py_args)?;
+                let rego_result = from(&py_result.into_bound(py))?;
+                Ok(rego_result)
+            })
+        };
+
+        self.engine
+            .add_extension(path, nargs, Box::new(extension_impl))
+    }
+
     /// Enable code coverage
     ///
     /// * `enable`: Whether to enable coverage or not.
