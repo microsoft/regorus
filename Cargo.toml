@@ -14,6 +14,11 @@ license = "MIT AND Apache-2.0 AND BSD-3-Clause"
 repository = "https://github.com/microsoft/regorus"
 keywords = ["interpreter", "no_std", "opa", "policy-as-code", "rego"]
 
+# Enable verification with Verus
+
+[package.metadata.verus]
+verify = true
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
@@ -129,6 +134,9 @@ mimalloc = { package = "regorus-mimalloc", path = "mimalloc", version = "2.2.6",
 # rvm related deps
 indexmap = { version = "2.12.1", default-features = false, features = ["serde"], optional = true }
 bincode = { version = "2.0.1", default-features = false, features = ["alloc", "serde"], optional = true }
+
+# Use Verus for verification
+vstd = "0.0.0-2026-01-25-0057"
 
 [dev-dependencies]
 anyhow = "1.0.45"

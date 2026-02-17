@@ -21,6 +21,8 @@ use anyhow::{bail, Result};
 #[cfg(feature = "std")]
 use rand::Rng;
 
+use vstd::prelude::*;
+
 pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("abs", (abs, 1));
     m.insert("ceil", (ceil, 1));
@@ -187,4 +189,14 @@ fn intn(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Res
         }
         _ => Value::Undefined,
     })
+}
+
+// Prove properties with Verus
+
+verus! {
+    proof fn lemma_test_one_plus_one_equals_two()
+        ensures
+            1 + 1 == 2,
+    {
+    }
 }
