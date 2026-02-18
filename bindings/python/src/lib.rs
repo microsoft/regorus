@@ -344,6 +344,18 @@ impl Engine {
         v.to_json_str()
     }
 
+    /// Registers a custom Python function as a Rego extension.
+    ///
+    /// This allows you to define functions in Python that can be called directly
+    /// from your Rego policies. The Python function will be called synchronously
+    /// during policy evaluation.
+    ///
+    /// Arguments passed from Rego are automatically converted to their corresponding
+    /// Python types. The return value is converted back to a Rego value.
+    ///
+    /// * `path`: Full path to the function as it will be used in Rego.
+    /// * `nargs`: The number of arguments the function expects.
+    /// * `extension`: The Python function to execute. Must accept exactly `nargs` arguments.
     pub fn add_extension(&mut self, path: String, nargs: u8, extension: Py<PyAny>) -> Result<()> {
         let func_ref = Arc::new(extension);
 
