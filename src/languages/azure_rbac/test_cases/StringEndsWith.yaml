@@ -1,0 +1,7 @@
+test_cases:
+  - name: string_ends_with_true
+    condition: "@Request[text] StringEndsWith 'World'"
+    expected: true
+  - name: string_ends_with_false
+    condition: "@Request[text] StringEndsWith 'Hello'"
+    expected: false

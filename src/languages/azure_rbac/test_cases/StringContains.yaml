@@ -1,0 +1,7 @@
+test_cases:
+  - name: string_contains_true
+    condition: "@Request[text] StringContains 'loWo'"
+    expected: true
+  - name: string_contains_false
+    condition: "@Request[text] StringContains 'xyz'"
+    expected: false

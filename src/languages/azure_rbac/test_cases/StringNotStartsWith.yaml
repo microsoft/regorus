@@ -1,0 +1,7 @@
+test_cases:
+  - name: string_not_starts_with_true
+    condition: "@Request[text] StringNotStartsWith 'World'"
+    expected: true
+  - name: string_not_starts_with_false
+    condition: "@Request[text] StringNotStartsWith 'Hello'"
+    expected: false

@@ -1,0 +1,7 @@
+test_cases:
+  - name: bool_equals_true
+    condition: "@Request[enabled] BoolEquals true"
+    expected: true
+  - name: bool_equals_false
+    condition: "@Resource[enabled] BoolEquals true"
+    expected: false

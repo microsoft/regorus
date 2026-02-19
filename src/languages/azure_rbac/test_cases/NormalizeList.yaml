@@ -1,0 +1,7 @@
+test_cases:
+  - name: normalize_list_contains
+    condition: "NormalizeList({'a','b'}) ListContains 'a'"
+    expected: true
+  - name: normalize_list_not_contains
+    condition: "NormalizeList({'a','b'}) ListNotContains 'c'"
+    expected: true

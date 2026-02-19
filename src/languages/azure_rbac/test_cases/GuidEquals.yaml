@@ -1,0 +1,7 @@
+test_cases:
+  - name: guid_equals_true
+    condition: "@Request[guid] GuidEquals 'a1b2c3d4-0000-0000-0000-000000000000'"
+    expected: true
+  - name: guid_equals_false
+    condition: "@Request[guid] GuidEquals 'bbbbbbbb-0000-0000-0000-000000000000'"
+    expected: false

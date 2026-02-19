@@ -1,0 +1,7 @@
+test_cases:
+  - name: string_not_contains_true
+    condition: "@Request[text] StringNotContains 'xyz'"
+    expected: true
+  - name: string_not_contains_false
+    condition: "@Request[text] StringNotContains 'Hello'"
+    expected: false

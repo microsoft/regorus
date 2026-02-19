@@ -1,0 +1,51 @@
+test_cases:
+  - name: for_any_of_any_values_true
+    condition: "@Resource[tags] ForAnyOfAnyValues @Request[allowedTags]"
+    expected: true
+    context:
+      request_attributes:
+        allowedTags: ["b", "c"]
+  - name: for_any_of_any_values_false
+    condition: "@Resource[tags] ForAnyOfAnyValues @Request[allowedTags]"
+    expected: false
+    context:
+      request_attributes:
+        allowedTags: ["c", "d"]
+  - name: for_all_of_any_values_true
+    condition: "@Resource[tags] ForAllOfAnyValues @Request[requiredTags]"
+    expected: true
+    context:
+      request_attributes:
+        requiredTags: ["a", "b", "c"]
+  - name: for_all_of_any_values_false
+    condition: "@Resource[tags] ForAllOfAnyValues @Request[requiredTags]"
+    expected: false
+    context:
+      request_attributes:
+        requiredTags: ["a"]
+  - name: for_any_of_all_values_true
+    condition: "@Resource[tags] ForAnyOfAllValues @Request[restrictedTags]"
+    expected: true
+    context:
+      request_attributes:
+        restrictedTags: ["b", "b"]
+  - name: for_any_of_all_values_false
+    condition: "@Resource[tags] ForAnyOfAllValues @Request[restrictedTags]"
+    expected: false
+    context:
+      request_attributes:
+        restrictedTags: ["a", "b"]
+  - name: for_all_of_all_values_true
+    condition: "@Resource[tags] ForAllOfAllValues @Request[mandatoryTags]"
+    expected: true
+    context:
+      resource_attributes:
+        tags: ["a"]
+      request_attributes:
+        mandatoryTags: ["a", "a"]
+  - name: for_all_of_all_values_false
+    condition: "@Resource[tags] ForAllOfAllValues @Request[mandatoryTags]"
+    expected: false
+    context:
+      request_attributes:
+        mandatoryTags: ["a", "b"]

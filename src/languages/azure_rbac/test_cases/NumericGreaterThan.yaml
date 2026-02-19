@@ -1,0 +1,7 @@
+test_cases:
+  - name: numeric_greater_than_true
+    condition: "@Request[count] NumericGreaterThan 5"
+    expected: true
+  - name: numeric_greater_than_false
+    condition: "@Resource[count] NumericGreaterThan 10"
+    expected: false

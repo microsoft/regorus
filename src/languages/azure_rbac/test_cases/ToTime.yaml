@@ -1,0 +1,7 @@
+test_cases:
+  - name: to_time_true
+    condition: "ToTime('12:00:00') TimeOfDayEquals '12:00:00'"
+    expected: true
+  - name: to_time_false
+    condition: "ToTime('12:00:00') TimeOfDayEquals '13:00:00'"
+    expected: false

@@ -1,0 +1,7 @@
+test_cases:
+  - name: add_days_true
+    condition: "AddDays('2023-05-01T00:00:00Z', 2) DateTimeEquals '2023-05-03T00:00:00+00:00'"
+    expected: true
+  - name: add_days_false
+    condition: "AddDays('2023-05-01T00:00:00Z', 1) DateTimeEquals '2023-05-03T00:00:00+00:00'"
+    expected: false

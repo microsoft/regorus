@@ -1,0 +1,7 @@
+test_cases:
+  - name: to_upper_true
+    condition: "ToUpper('AbC') StringEquals 'ABC'"
+    expected: true
+  - name: to_upper_false
+    condition: "ToUpper('AbC') StringEquals 'abc'"
+    expected: false

@@ -1,0 +1,7 @@
+test_cases:
+  - name: ip_in_range_true
+    condition: "@Request[ip] IpInRange ['10.0.0.1', '10.0.0.10']"
+    expected: true
+  - name: ip_in_range_false
+    condition: "@Request[ip] IpInRange ['10.0.0.9', '10.0.0.10']"
+    expected: false

@@ -1,0 +1,7 @@
+test_cases:
+  - name: trim_true
+    condition: "Trim('  hi  ') StringEquals 'hi'"
+    expected: true
+  - name: trim_false
+    condition: "Trim('  hi  ') StringEquals '  hi'"
+    expected: false

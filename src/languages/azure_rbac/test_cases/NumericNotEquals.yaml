@@ -1,0 +1,7 @@
+test_cases:
+  - name: numeric_not_equals_true
+    condition: "@Request[count] NumericNotEquals 11"
+    expected: true
+  - name: numeric_not_equals_false
+    condition: "@Request[count] NumericNotEquals 10"
+    expected: false

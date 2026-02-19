@@ -492,6 +492,16 @@ namespace Regorus.Internal
 
         #endregion
 
+        #region RBAC Methods
+
+        /// <summary>
+        /// Evaluate an Azure RBAC condition expression against a JSON evaluation context.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_rbac_engine_eval_condition", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_rbac_engine_eval_condition(byte* condition, byte* context_json);
+
+        #endregion
+
         #region Target Registry Methods
 
         /// <summary>

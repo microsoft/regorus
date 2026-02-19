@@ -1,0 +1,7 @@
+test_cases:
+  - name: list_not_contains_true
+    condition: "@Request[tags] ListNotContains 'dev'"
+    expected: true
+  - name: list_not_contains_false
+    condition: "@Request[tags] ListNotContains 'gold'"
+    expected: false
