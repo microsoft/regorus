@@ -44,7 +44,7 @@ serde_json = "1.0.140"
 wasm-bindgen = "0.2.100"
 # Specify uuid as a mandatory dependency so as to enable `js` feature which is now required
 # when targeting wasm32-unknown-unknown.
-uuid = { version = "1.15.1", default-features = false, features = ["v4", "fast-rng", "js"]}
+uuid = { version = "1.21.0", default-features = false, features = ["v4", "fast-rng", "js"]}
 # Enable wasm_js. See https://docs.rs/getrandom/latest/getrandom/#webassembly-support
 getrandom_for_jsonschema = { package = "getrandom", version = "0.2.15", features = ["std", "js"] }
 getrandom = { version = "0.3.1", features = ["std", "wasm_js"] }
