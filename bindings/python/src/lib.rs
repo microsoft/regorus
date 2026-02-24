@@ -357,14 +357,18 @@ impl Engine {
     /// * `nargs`: The number of arguments the function expects.
     /// * `extension`: The Python function to execute. Must accept exactly `nargs` arguments.
     pub fn add_extension(&mut self, path: String, nargs: u8, extension: Py<PyAny>) -> Result<()> {
+        Python::with_gil(|py| {
+            if !extension.bind(py).is_callable() {
+                return Err(anyhow!("extension '{}' must be callable", path));
+            }
+            Ok(())
+        })?;
+
         let func_ref = Arc::new(extension);
         let path_clone = path.clone();
 
         let extension_impl = move |args: Vec<Value>| -> Result<Value, anyhow::Error> {
             Python::with_gil(|py| {
-                if !func_ref.bind(py).is_callable() {
-                    return Err(anyhow!("extension must be callable"))
-                }
                 let py_args_vec: Result<Vec<PyObject>> =
                     args.into_iter().map(|arg| to(arg, py)).collect();
                 let py_args = PyTuple::new(py, py_args_vec?)?;
