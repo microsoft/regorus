@@ -1,8 +1,5 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-import typing
-import pytest
-
 import regorus
 import sys
 
@@ -186,6 +183,8 @@ def test_extension_execution():
     result = rego.eval_rule("data.demo.result")
     assert result == "Hello, World!", f"Unexpected result: {result}"
 
+test_extension_execution()
+
 def test_extension_wrong_arity():
     rego = regorus.Engine()
     rego.add_policy("demo",
@@ -204,10 +203,14 @@ def test_extension_wrong_arity():
     rego.add_extension("greeting", 3, custom_function)
     rego.add_data({"a": "Hello", "b": "World"})
 
-    with pytest.raises(RuntimeError) as ex:
+    try:
         rego.eval_rule("data.demo.result")
+    except RuntimeError as ex:
+        assert "error: incorrect number of parameters supplied to extension" in str(str(ex)) 
+    else:
+        assert False, "exception not thrown"
 
-    assert "error: incorrect number of parameters supplied to extension" in str(ex.value) 
+test_extension_wrong_arity()
 
 def test_extension_raises_exception():
     rego = regorus.Engine()
@@ -227,10 +230,15 @@ def test_extension_raises_exception():
     rego.add_extension("greeting", 2, custom_function)
     rego.add_data({"a": "Hello", "b": "World"})
 
-    with pytest.raises(RuntimeError) as ex:
+    try:
         rego.eval_rule("data.demo.result")
+    except RuntimeError as ex:
+        assert "error: extension 'greeting' raises Python error: RuntimeError: unknown error" in str(ex) 
+    else:
+        assert False, "exception not thrown"
 
-    assert "error: extension 'greeting' raise Python error: RuntimeError: unknown error" in str(ex.value) 
+test_extension_raises_exception()
+
 
 def test_extension_zero_arg():
     rego = regorus.Engine()
@@ -250,6 +258,8 @@ def test_extension_zero_arg():
     result = rego.eval_rule("data.demo.result")
     assert result == "Hello, World!", f"Unexpected result: {result}"
 
+test_extension_zero_arg()
+
 def test_extension_non_callable():
     rego = regorus.Engine()
     rego.add_policy("demo",
@@ -259,13 +269,14 @@ def test_extension_non_callable():
         result := greeting()
         """)
 
-    rego.add_extension("greeting", 0, 123)
-    rego.add_data({"a": "Hello", "b": "World"})
+    try:
+        rego.add_extension("greeting", 0, 123)
+    except RuntimeError as ex:
+        assert "extension 'greeting' must be callable" in str(ex)
+    else:
+        assert False, "exception not thrown"
 
-    with pytest.raises(RuntimeError) as ex:
-        rego.eval_rule("data.demo.result")
-
-    assert "error: extension must be callable" in str(ex.value)
+test_extension_non_callable()
 
 
 def test_extension_duplicate():
@@ -284,10 +295,14 @@ def test_extension_duplicate():
 
     rego.add_extension("greeting", 0, custom_function1)
 
-    with pytest.raises(RuntimeError) as ex:
+    try:
         rego.add_extension("greeting", 0, custom_function2)
+    except RuntimeError as ex:
+        assert "extension already added" in str(ex)
+    else:
+        assert False, "exception not thrown"
 
-    assert "extension already added" in str(ex.value)
+test_extension_duplicate()
 
 
 def test_extension_types():
@@ -316,8 +331,8 @@ def test_extension_types():
     def negate(b):
         return not b
 
-    def first(list):
-        for i in list:
+    def first(lst):
+        for i in lst:
             if i is not None:
                 return i
         return None
@@ -326,13 +341,13 @@ def test_extension_types():
         assert isinstance(object, dict)
         return {k: v*2 for k, v in object.items()}
 
-    def modify_list(list):
-        assert isinstance(list, typing.List)
-        return [x*2 for x in list]
+    def modify_list(lst):
+        assert isinstance(lst, list)
+        return [x*2 for x in lst]
 
-    def modify_set(set):
-        assert isinstance(set, typing.Set)
-        return {x*2 for x in set}
+    def modify_set(st):
+        assert isinstance(st, set)
+        return {x*2 for x in st}
 
     rego.add_extension("custom.triple", 1, triple)
     rego.add_extension("custom.negate", 1, negate)
@@ -365,8 +380,10 @@ def test_extension_types():
     obj = rego.eval_rule("data.demo.object")
     assert obj == {"a": 2, "b": 4}, f"Unexpected object: {obj}"
 
-    list = rego.eval_rule("data.demo.list")
-    assert list == [6, 8], f"Unexpected list: {list}"
+    lst = rego.eval_rule("data.demo.list")
+    assert lst == [6, 8], f"Unexpected list: {lst}"
 
-    set = rego.eval_rule("data.demo.set")
-    assert set == {10, 12}, f"Unexpected list: {set}"
+    st = rego.eval_rule("data.demo.set")
+    assert st == {10, 12}, f"Unexpected lst: {st}"
+
+test_extension_types()
