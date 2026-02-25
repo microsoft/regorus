@@ -206,7 +206,7 @@ def test_extension_wrong_arity():
     try:
         rego.eval_rule("data.demo.result")
     except RuntimeError as ex:
-        assert "error: incorrect number of parameters supplied to extension" in str(str(ex)) 
+        assert "error: incorrect number of parameters supplied to extension" in str(ex) 
     else:
         assert False, "exception not thrown"
 
@@ -384,6 +384,6 @@ def test_extension_types():
     assert lst == [6, 8], f"Unexpected list: {lst}"
 
     st = rego.eval_rule("data.demo.set")
-    assert st == {10, 12}, f"Unexpected lst: {st}"
+    assert st == {10, 12}, f"Unexpected set: {st}"
 
 test_extension_types()
