@@ -344,6 +344,49 @@ impl Engine {
         v.to_json_str()
     }
 
+    /// Registers a custom Python function as a Rego extension.
+    ///
+    /// This allows you to define functions in Python that can be called directly
+    /// from your Rego policies. The Python function will be called synchronously
+    /// during policy evaluation.
+    ///
+    /// Arguments passed from Rego are automatically converted to their corresponding
+    /// Python types. The return value is converted back to a Rego value.
+    ///
+    /// * `path`: Full path to the function as it will be used in Rego.
+    /// * `nargs`: The number of arguments the function expects.
+    /// * `extension`: The Python function to execute. Must accept exactly `nargs` arguments.
+    ///
+    /// Note: When the engine is cloned, extensions share the same Python callable reference
+    /// rather than being deep-copied. Stateful callables will share state across clones.
+    pub fn add_extension(&mut self, path: String, nargs: u8, extension: Py<PyAny>) -> Result<()> {
+        Python::with_gil(|py| {
+            if !extension.bind(py).is_callable() {
+                return Err(anyhow!("extension '{}' must be callable", path));
+            }
+            Ok(())
+        })?;
+
+        let func_ref = Arc::new(extension);
+        let path_clone = path.clone();
+
+        let extension_impl = move |args: Vec<Value>| -> Result<Value, anyhow::Error> {
+            Python::with_gil(|py| {
+                let py_args_vec: Result<Vec<PyObject>> =
+                    args.into_iter().map(|arg| to(arg, py)).collect();
+                let py_args = PyTuple::new(py, py_args_vec?)?;
+                let py_result = func_ref.call1(py, py_args).map_err(|e| {
+                    anyhow!("extension '{}' raises Python error: {}", path_clone, e)
+                })?;
+                let rego_result = from(&py_result.into_bound(py))?;
+                Ok(rego_result)
+            })
+        };
+
+        self.engine
+            .add_extension(path, nargs, Box::new(extension_impl))
+    }
+
     /// Enable code coverage
     ///
     /// * `enable`: Whether to enable coverage or not.
