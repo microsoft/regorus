@@ -357,7 +357,7 @@ impl Engine {
     /// * `nargs`: The number of arguments the function expects.
     /// * `extension`: The Python function to execute. Must accept exactly `nargs` arguments.
     ///
-    /// Note: When the engine is cloned, extensions share the same Python callable reference 
+    /// Note: When the engine is cloned, extensions share the same Python callable reference
     /// rather than being deep-copied. Stateful callables will share state across clones.
     pub fn add_extension(&mut self, path: String, nargs: u8, extension: Py<PyAny>) -> Result<()> {
         Python::with_gil(|py| {
@@ -375,8 +375,9 @@ impl Engine {
                 let py_args_vec: Result<Vec<PyObject>> =
                     args.into_iter().map(|arg| to(arg, py)).collect();
                 let py_args = PyTuple::new(py, py_args_vec?)?;
-                let py_result = func_ref.call1(py, py_args)
-                    .map_err(|e| anyhow!("extension '{}' raises Python error: {}", path_clone, e))?;
+                let py_result = func_ref.call1(py, py_args).map_err(|e| {
+                    anyhow!("extension '{}' raises Python error: {}", path_clone, e)
+                })?;
                 let rego_result = from(&py_result.into_bound(py))?;
                 Ok(rego_result)
             })
