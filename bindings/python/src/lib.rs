@@ -356,6 +356,9 @@ impl Engine {
     /// * `path`: Full path to the function as it will be used in Rego.
     /// * `nargs`: The number of arguments the function expects.
     /// * `extension`: The Python function to execute. Must accept exactly `nargs` arguments.
+    ///
+    /// Note: When the engine is cloned, extensions share the same Python callable reference 
+    /// rather than being deep-copied. Stateful callables will share state across clones.
     pub fn add_extension(&mut self, path: String, nargs: u8, extension: Py<PyAny>) -> Result<()> {
         Python::with_gil(|py| {
             if !extension.bind(py).is_callable() {
