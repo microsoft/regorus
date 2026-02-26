@@ -7,5 +7,5 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = { version = "1.0.83", default-features = false }
+anyhow = { version = "1.0.102", default-features = false }
 regorus = { path = "../..", default-features = false, features = ["opa-no-std"] }
