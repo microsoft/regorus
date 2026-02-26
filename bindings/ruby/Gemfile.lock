@@ -8,13 +8,15 @@ GEM
   remote: https://rubygems.org/
   specs:
     ast (2.4.3)
+    drb (2.2.3)
     json (2.18.1)
     language_server-protocol (3.17.0.5)
     lint_roller (1.1.0)
-    minitest (6.0.1)
+    minitest (6.0.2)
+      drb (~> 2.0)
       prism (~> 1.5)
     parallel (1.27.0)
-    parser (3.3.10.1)
+    parser (3.3.10.2)
       ast (~> 2.4.1)
       racc
     prism (1.9.0)
@@ -27,7 +29,7 @@ GEM
     rb_sys (0.9.124)
       rake-compiler-dock (= 1.11.0)
     regexp_parser (2.11.3)
-    rubocop (1.84.1)
+    rubocop (1.84.2)
       json (~> 2.3)
       language_server-protocol (~> 3.17.0.2)
       lint_roller (~> 1.1.0)
@@ -41,7 +43,7 @@ GEM
     rubocop-ast (1.49.0)
       parser (>= 3.3.7.2)
       prism (~> 1.7)
-    rubocop-minitest (0.38.2)
+    rubocop-minitest (0.39.1)
       lint_roller (~> 1.1)
       rubocop (>= 1.75.0, < 2.0)
       rubocop-ast (>= 1.38.0, < 2.0)
@@ -64,7 +66,7 @@ DEPENDENCIES
   rake-compiler-dock (~> 1.11)
   regorusrb!
   rubocop (~> 1.84)
-  rubocop-minitest (~> 0.38.2)
+  rubocop-minitest (~> 0.39.1)
   rubocop-rake (~> 0.7.1)
 
 BUNDLED WITH
