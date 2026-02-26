@@ -85,6 +85,10 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
     else if let Ok(s) = ob.extract::<String>() {
         s.into()
     }
+    // Boolean
+    else if let Ok(b) = ob.extract::<bool>() {
+        b.into()
+    }
     // Numeric
     else if let Ok(v) = ob.extract::<i64>() {
         v.into()
@@ -92,10 +96,6 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
         v.into()
     } else if let Ok(v) = ob.extract::<f64>() {
         v.into()
-    }
-    // Boolean
-    else if let Ok(b) = ob.extract::<bool>() {
-        b.into()
     }
     // None
     else if ob.downcast::<PyNone>().is_ok() {
