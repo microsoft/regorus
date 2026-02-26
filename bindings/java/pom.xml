@@ -97,7 +97,7 @@
 
       <plugin>
         <artifactId>maven-surefire-plugin</artifactId>
-        <version>3.5.4</version>
+        <version>3.5.5</version>
         <configuration>
           <!-- Add debug build to Java path, so it's discoverable by JVM. This is only for tests. -->
           <argLine>-Djava.library.path=${project.basedir}/target/debug:${java.library.path}</argLine>
