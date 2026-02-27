@@ -1,0 +1,66 @@
+name: Dependency Audits
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    name: Cargo Audit (${{ matrix.lockfile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lockfile:
+          - Cargo.lock
+          - bindings/ffi/Cargo.lock
+          - bindings/java/Cargo.lock
+          - bindings/python/Cargo.lock
+          - bindings/ruby/Cargo.lock
+          - bindings/wasm/Cargo.lock
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run cargo audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          lockfile: ${{ matrix.lockfile }}
+
+  cargo-deny:
+    name: Cargo Deny (${{ matrix.manifest }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        manifest:
+          - Cargo.toml
+          - bindings/ffi/Cargo.toml
+          - bindings/java/Cargo.toml
+          - bindings/python/Cargo.toml
+          - bindings/ruby/Cargo.toml
+          - bindings/ruby/ext/regorusrb/Cargo.toml
+          - bindings/wasm/Cargo.toml
+          - tests/ensure_no_std/Cargo.toml
+          - xtask/Cargo.toml
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: ./.github/actions/toolchains/rust
+
+      - name: Run cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          command-arguments: advisories bans
+          manifest-path: ${{ matrix.manifest }}
