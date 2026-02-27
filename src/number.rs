@@ -27,18 +27,52 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use serde::ser::Serializer;
 use serde::Serialize;
 
+use vstd::prelude::*;
+use vstd::std_specs::convert::*;
+
 use crate::*;
+use crate::verusspec::bigint::*;
+use crate::verusspec::float::*;
+use crate::verusspec::utils::*;
+
+verus! {
 
 pub type BigInt = NumBigInt;
 
 const F64_SAFE_INTEGER: f64 = 9_007_199_254_740_992.0; // 2^53
 
+#[verifier::external_derive]
 #[derive(Clone)]
 pub enum Number {
     UInt(u64),
     Int(i64),
     Float(f64),
     BigInt(Rc<BigInt>),
+}
+
+pub assume_specification[ <Number as Clone>::clone ](n: &Number) -> (res: Number)
+    ensures
+        res == n,
+;
+
+pub enum NumberView {
+    Integer(int),
+    Float(f64),
+}
+
+impl View for Number
+{
+    type V = NumberView;
+
+    open spec fn view(&self) -> NumberView
+    {
+        match self {
+            Number::UInt(n) => NumberView::Integer(n as int),
+            Number::Int(n) => NumberView::Integer(n as int),
+            Number::Float(f) => NumberView::Float(*f),
+            Number::BigInt(b) => NumberView::Integer(b@),
+        }
+    }
 }
 
 impl Number {
@@ -74,7 +108,10 @@ impl Number {
         }
     }
 
-    fn to_bigint_owned(&self) -> Option<BigInt> {
+    fn to_bigint_owned(&self) -> (res: Option<BigInt>)
+        ensures
+            self@ matches NumberView::Integer(n) ==> res matches Some(b) && b@ == n,
+    {
         match self {
             Number::UInt(v) => Some(BigInt::from(*v)),
             Number::Int(v) => Some(BigInt::from(*v)),
@@ -93,13 +130,13 @@ impl Number {
         }
 
         if value >= 0.0 {
-            let u = value as u64;
-            if (u as f64) == value {
+            let u = f64_as_u64(value);
+            if u64_as_f64(u) == value {
                 return Some(BigInt::from(u));
             }
         } else {
-            let i = value as i64;
-            if (i as f64) == value {
+            let i = f64_as_i64(value);
+            if i64_as_f64(i) == value {
                 return Some(BigInt::from(i));
             }
         }
@@ -116,16 +153,16 @@ impl Number {
 
     fn to_f64_lossy(&self) -> f64 {
         match self {
-            Number::UInt(v) => *v as f64,
-            Number::Int(v) => *v as f64,
+            Number::UInt(v) => u64_as_f64(*v),
+            Number::Int(v) => i64_as_f64(*v),
             Number::Float(v) => *v,
             Number::BigInt(v) => {
                 if let Some(f) = v.to_f64() {
                     f
                 } else if v.is_negative() {
-                    f64::NEG_INFINITY
+                    f64_neg_infinity()
                 } else {
-                    f64::INFINITY
+                    f64_infinity()
                 }
             }
         }
@@ -140,13 +177,17 @@ impl Number {
         }
     }
 
-    fn ints_to_bigint(a: &Number, b: &Number) -> (BigInt, BigInt) {
+    fn ints_to_bigint(a: &Number, b: &Number) -> (res: (BigInt, BigInt))
+        requires
+            a@ is Integer,
+            b@ is Integer,
+    {
         (a.to_bigint_owned().unwrap(), b.to_bigint_owned().unwrap())
     }
 
     fn normalize_float(value: f64) -> Number {
-        if let Some(int) = Self::float_to_small_bigint(value) {
-            return Self::from_bigint_owned(int);
+        if let Some(i) = Self::float_to_small_bigint(value) {
+            return Self::from_bigint_owned(i);
         }
         Number::Float(value)
     }
@@ -160,6 +201,8 @@ impl Number {
         }
     }
 }
+
+} // end verus!
 
 impl Debug for Number {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {

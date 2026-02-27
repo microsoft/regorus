@@ -13,6 +13,8 @@ use alloc::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{bail, Result};
 
+use vstd::prelude::*;
+
 #[inline]
 pub fn enforce_limit() -> Result<()> {
     crate::utils::limits::check_memory_limit_if_needed().map_err(anyhow::Error::new)

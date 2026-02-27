@@ -48,3 +48,6 @@ bindings/ruby/bin/
 bindings/java/.classpath
 bindings/java/.project
 bindings/java/.settings/
+
+# Emacs temporary files
+*~
