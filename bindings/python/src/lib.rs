@@ -85,6 +85,10 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
     else if let Ok(s) = ob.extract::<String>() {
         s.into()
     }
+    // Boolean
+    else if let Ok(b) = ob.extract::<bool>() {
+        b.into()
+    }
     // Numeric
     else if let Ok(v) = ob.extract::<i64>() {
         v.into()
@@ -92,10 +96,6 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
         v.into()
     } else if let Ok(v) = ob.extract::<f64>() {
         v.into()
-    }
-    // Boolean
-    else if let Ok(b) = ob.extract::<bool>() {
-        b.into()
     }
     // None
     else if ob.downcast::<PyNone>().is_ok() {
@@ -138,12 +138,17 @@ fn to(mut v: Value, py: Python<'_>) -> Result<PyObject> {
         Value::String(s) => s.into_bound_py_any(py),
 
         Value::Number(_) => {
-            if let Ok(f) = v.as_f64() {
+            if v.as_number()?.is_integer() {
+                if let Ok(u) = v.as_u64() {
+                    u.into_bound_py_any(py)
+                } else {
+                    v.as_i64()?.into_bound_py_any(py)
+                }
+            } else if let Ok(f) = v.as_f64() {
                 f.into_bound_py_any(py)
-            } else if let Ok(u) = v.as_u64() {
-                u.into_bound_py_any(py)
             } else {
-                v.as_i64()?.into_bound_py_any(py)
+                // fallback
+                v.as_f64()?.into_bound_py_any(py)
             }
         }
 

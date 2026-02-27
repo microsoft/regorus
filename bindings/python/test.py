@@ -387,3 +387,29 @@ def test_extension_types():
     assert st == {10, 12}, f"Unexpected set: {st}"
 
 test_extension_types()
+
+def test_boolean_mapping():
+    rego = regorus.Engine()
+    rego.add_policy("demo",
+        """
+        package demo
+
+        result_b := data.a if {
+            data.a == true
+        }
+
+        result_i := data.b if {
+            data.b == 1
+        }
+        """)
+    rego.add_data({"a": True, "b": 1})
+
+    result_b = rego.eval_rule("data.demo.result_b")
+    assert isinstance(result_b, bool), f"Expected bool, got {type(result_b)}"
+    assert result_b, f"Unexpected result for 'result_b': {result_b}"
+
+    result_i = rego.eval_rule("data.demo.result_i")
+    assert isinstance(result_i, int), f"Expected int, got {type(result_i)}"
+    assert result_i == 1, f"Unexpected result for 'result_i': {result_i}"
+
+test_boolean_mapping()
