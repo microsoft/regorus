@@ -412,11 +412,8 @@ impl RegoVM {
                         }
                     };
 
-                    let key_value = if key_reg != value_reg {
-                        Some(self.get_register(key_reg)?.clone())
-                    } else {
-                        None
-                    };
+                    let key_value =
+                        (key_reg != value_reg).then_some(self.get_register(key_reg)?.clone());
                     let value_value = self.get_register(value_reg)?.clone();
 
                     let frame = self

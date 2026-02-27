@@ -26,6 +26,22 @@ fn main() -> Result<()> {
         println!("cargo:rustc-env=GIT_HASH={git_hash}");
     }
 
+    // Verify OpenSSL version
+    #[cfg(feature = "jwt-openssl")]
+    {
+        use openssl::version;
+        // Minimal OpenSSL version that meets FIPS certification
+        let min_ver_num = 0x30000000i64;
+        let ver = version::version();
+        let ver_num = version::number();
+        if !ver.starts_with("OpenSSL") || ver_num < min_ver_num {
+            panic!(
+                "FATAL: OpenSSL version must be 3.0.0 or higher, found version: {}",
+                ver
+            );
+        }
+    }
+
     // Rerun only if build.rs changes.
     println!("cargo:rerun-if-changed=build.rs");
     Ok(())

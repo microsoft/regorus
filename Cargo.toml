@@ -47,6 +47,7 @@ time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
 yaml = ["serde_yaml"]
+jwt-openssl = ["openssl"]
 full-opa = [
     "base64",
     "base64url",
@@ -66,8 +67,7 @@ full-opa = [
     "time",
     "uuid",
     "urlquery",
-    "yaml",
-
+    "yaml"
     #"rego-extensions"
 ]
 
@@ -94,6 +94,9 @@ rego-extensions = []
 # This feature enables some testing utils for OPA tests.
 opa-testutil = []
 rand = ["dep:rand"]
+
+# Enable this feature to omit some restrictions in opa test environment
+weak-safety = []
 
 [dependencies]
 anyhow = { version = "1.0.45", default-features = false }
@@ -130,6 +133,8 @@ mimalloc = { package = "regorus-mimalloc", path = "mimalloc", version = "2.2.6",
 indexmap = { version = "2.12.1", default-features = false, features = ["serde"], optional = true }
 bincode = { version = "2.0.1", default-features = false, features = ["alloc", "serde"], optional = true }
 
+openssl = { version = "0.10.73", optional = true}
+
 [dev-dependencies]
 anyhow = "1.0.45"
 cfg-if = "1.0.0"
@@ -144,6 +149,7 @@ num_cpus = "1.16"
 
 [build-dependencies]
 anyhow = "1.0"
+openssl = { version = "0.10.73", optional = true}
 
 [profile.release]
 debug = true
