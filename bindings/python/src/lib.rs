@@ -138,12 +138,17 @@ fn to(mut v: Value, py: Python<'_>) -> Result<PyObject> {
         Value::String(s) => s.into_bound_py_any(py),
 
         Value::Number(_) => {
-            if let Ok(f) = v.as_f64() {
+            if v.as_number()?.is_integer() {
+                if let Ok(u) = v.as_u64() {
+                    u.into_bound_py_any(py)
+                } else {
+                    v.as_i64()?.into_bound_py_any(py)
+                }
+            } else if let Ok(f) = v.as_f64() {
                 f.into_bound_py_any(py)
-            } else if let Ok(u) = v.as_u64() {
-                u.into_bound_py_any(py)
             } else {
-                v.as_i64()?.into_bound_py_any(py)
+                // fallback
+                v.as_f64()?.into_bound_py_any(py)
             }
         }
 

@@ -409,7 +409,7 @@ def test_boolean_mapping():
     assert result_b, f"Unexpected result for 'result_b': {result_b}"
 
     result_i = rego.eval_rule("data.demo.result_i")
-    assert isinstance(result_i, float), f"Expected float, got {type(result_i)}"
+    assert isinstance(result_i, int), f"Expected int, got {type(result_i)}"
     assert result_i == 1, f"Unexpected result for 'result_i': {result_i}"
 
 test_boolean_mapping()
