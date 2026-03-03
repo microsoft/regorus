@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -131,9 +131,32 @@ fn run_clippy_with_sarif(workspace: &Path, sarif: &Path) -> Result<()> {
     sarif_cmd.stdout(Stdio::from(sarif_file));
     run_command(sarif_cmd, "clippy-sarif")?;
 
+    let formatted_path = sarif_path.with_extension("sarif.tmp");
+    let sarif_input = File::open(&sarif_path)
+        .with_context(|| format!("failed to reopen SARIF output at {}", sarif_path.display()))?;
+    let sarif_output = File::create(&formatted_path).with_context(|| {
+        format!(
+            "failed to create SARIF output at {}",
+            formatted_path.display()
+        )
+    })?;
+
     let mut fmt = Command::new("sarif-fmt");
-    fmt.arg(&sarif_path);
+    fmt.stdin(Stdio::from(sarif_input));
+    fmt.stdout(Stdio::from(sarif_output));
     run_command(fmt, "sarif-fmt")?;
+
+    let formatted_len = fs::metadata(&formatted_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    if formatted_len == 0 {
+        let _ = fs::remove_file(&formatted_path);
+        println!("sarif-fmt produced empty output, keeping original SARIF");
+    } else {
+        fs::rename(&formatted_path, &sarif_path).with_context(|| {
+            format!("failed to replace SARIF output at {}", sarif_path.display())
+        })?;
+    }
 
     println!("SARIF report written to {}", sarif_path.display());
 
