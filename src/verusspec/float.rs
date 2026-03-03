@@ -16,6 +16,16 @@ use vstd::prelude::*;
 
 verus! {
 
+pub axiom fn axiom_f64_obeys_eq_spec()
+    ensures
+        <f64 as vstd::std_specs::cmp::PartialEqSpec>::obeys_eq_spec(),
+;
+
+pub axiom fn axiom_f64_obeys_partial_cmp_spec()
+    ensures
+        <f64 as vstd::std_specs::cmp::PartialOrdSpec>::obeys_partial_cmp_spec(),
+;
+
 pub uninterp spec fn spec_f64_as_u64(f: f64) -> u64;
 
 #[inline]

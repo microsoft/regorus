@@ -28,7 +28,9 @@ use serde::ser::Serializer;
 use serde::Serialize;
 
 use vstd::prelude::*;
+use vstd::float::*;
 use vstd::std_specs::convert::*;
+use vstd::std_specs::cmp::*;
 
 use crate::*;
 use crate::verusspec::bigint::*;
@@ -76,7 +78,10 @@ impl View for Number
 }
 
 impl Number {
-    fn from_bigint_owned(value: BigInt) -> Self {
+    fn from_bigint_owned(value: BigInt) -> (result: Self)
+        ensures
+            result@ == NumberView::Integer(value@),
+    {
         if value.is_zero() {
             return Number::Int(0);
         }
@@ -94,7 +99,10 @@ impl Number {
         Number::BigInt(Rc::new(value))
     }
 
-    fn from_i128(value: i128) -> Self {
+    fn from_i128(value: i128) -> (result: Self)
+        ensures
+            result@ == NumberView::Integer(value as int),
+    {
         if value >= 0 {
             if let Ok(u) = u64::try_from(value) {
                 return Number::UInt(u);
@@ -108,9 +116,43 @@ impl Number {
         }
     }
 
+    spec fn spec_float_to_small_int(value: f64) -> Option<int>
+    {
+        if !spec_f64_is_finite(value) ||
+           !spec_f64_fract(value).eq_spec(&0.0f64) ||
+           spec_f64_abs(value).partial_cmp_spec(&F64_SAFE_INTEGER) == Some(Ordering::Greater) {
+            None
+        }
+        else {
+            match value.partial_cmp_spec(&0.0) {
+                Some(Ordering::Greater) | Some(Ordering::Equal) =>
+                    if spec_u64_as_f64(spec_f64_as_u64(value)).eq_spec(&value) {
+                        Some(spec_f64_as_u64(value) as int)
+                    }
+                    else {
+                        None
+                    },
+                Some(Ordering::Less) | None =>
+                    if spec_i64_as_f64(spec_f64_as_i64(value)).eq_spec(&value) {
+                        Some(spec_f64_as_i64(value) as int)
+                    }
+                    else {
+                        None
+                    },
+            }
+        }
+    }
+
     fn to_bigint_owned(&self) -> (res: Option<BigInt>)
         ensures
-            self@ matches NumberView::Integer(n) ==> res matches Some(b) && b@ == n,
+            match self@ {
+                NumberView::Integer(n) => res matches Some(bi) && bi@ == n,
+                NumberView::Float(f) =>
+                    match Self::spec_float_to_small_int(f) {
+                        Some(n) => res matches Some(bi) && bi@ == n,
+                        None => res is None,
+                    },
+            },
     {
         match self {
             Number::UInt(v) => Some(BigInt::from(*v)),
@@ -120,7 +162,18 @@ impl Number {
         }
     }
 
-    fn float_to_small_bigint(value: f64) -> Option<BigInt> {
+    fn float_to_small_bigint(value: f64) -> (res: Option<BigInt>)
+        ensures
+            match Self::spec_float_to_small_int(value) {
+                Some(i) => res matches Some(bi) && bi@ == i,
+                None => res is None,
+            },
+    {
+        proof {
+            axiom_f64_obeys_eq_spec();
+            axiom_f64_obeys_partial_cmp_spec();
+        }
+
         if !value.is_finite() || value.fract() != 0.0 {
             return None;
         }
@@ -144,7 +197,7 @@ impl Number {
         None
     }
 
-    fn to_bigint_rc(&self) -> Option<Rc<BigInt>> {
+    fn to_bigint_rc(&self) -> (res: Option<Rc<BigInt>>) {
         match self {
             Number::BigInt(v) => Some(v.clone()),
             _ => self.to_bigint_owned().map(Rc::new),
