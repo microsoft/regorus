@@ -28,14 +28,17 @@ use serde::ser::Serializer;
 use serde::Serialize;
 
 use vstd::prelude::*;
+#[cfg(verus_keep_ghost)]
 use vstd::float::*;
+#[cfg(verus_keep_ghost)]
 use vstd::std_specs::convert::*;
+#[cfg(verus_keep_ghost)]
 use vstd::std_specs::cmp::*;
 
 use crate::*;
+
 use crate::verusspec::bigint::*;
 use crate::verusspec::float::*;
-use crate::verusspec::utils::*;
 
 verus! {
 

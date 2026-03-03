@@ -208,3 +208,6 @@ doctest=false
 # RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features --no-deps
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)'] }
