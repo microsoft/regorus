@@ -200,14 +200,45 @@ impl Number {
         None
     }
 
-    fn to_bigint_rc(&self) -> (res: Option<Rc<BigInt>>) {
+    fn to_bigint_rc(&self) -> (res: Option<Rc<BigInt>>)
+        ensures
+            match self@ {
+                NumberView::Integer(n) => res matches Some(bi) && bi@ == n,
+                NumberView::Float(f) =>
+                    match Self::spec_float_to_small_int(f) {
+                        Some(n) => res matches Some(bi) && bi@ == n,
+                        None => res is None,
+                    },
+            },
+    {
         match self {
             Number::BigInt(v) => Some(v.clone()),
             _ => self.to_bigint_owned().map(Rc::new),
         }
     }
 
-    fn to_f64_lossy(&self) -> f64 {
+    spec fn spec_to_f64_lossy(self: &Self) -> f64
+    {
+        match self {
+            Number::UInt(v) => spec_u64_as_f64(*v),
+            Number::Int(v) => spec_i64_as_f64(*v),
+            Number::Float(v) => *v,
+            Number::BigInt(v) => {
+                if let Some(f) = <BigInt as ToPrimitiveSpec>::spec_to_f64(v) {
+                    f
+                } else if v@ < 0 {
+                    spec_f64_neg_infinity()
+                } else {
+                    spec_f64_infinity()
+                }
+            },
+        }
+    }
+
+    fn to_f64_lossy(&self) -> (result: f64)
+        ensures
+            result == self.spec_to_f64_lossy(),
+    {
         match self {
             Number::UInt(v) => u64_as_f64(*v),
             Number::Int(v) => i64_as_f64(*v),
@@ -224,7 +255,16 @@ impl Number {
         }
     }
 
-    fn is_zero(&self) -> bool {
+    fn is_zero(&self) -> (res: bool)
+        ensures
+            match self@ {
+                NumberView::Integer(n) => res == (n == 0),
+                NumberView::Float(f) => res == f.eq_spec(&0.0f64),
+            },
+    {
+        proof {
+            axiom_f64_obeys_eq_spec();
+        }
         match self {
             Number::UInt(0) | Number::Int(0) => true,
             Number::Float(f) => *f == 0.0,
@@ -237,6 +277,9 @@ impl Number {
         requires
             a@ is Integer,
             b@ is Integer,
+        ensures
+            a@ matches NumberView::Integer(m) && res.0@ == m,
+            b@ matches NumberView::Integer(n) && res.1@ == n,
     {
         (a.to_bigint_owned().unwrap(), b.to_bigint_owned().unwrap())
     }
