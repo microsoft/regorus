@@ -61,11 +61,13 @@ pub assume_specification[ <Number as Clone>::clone ](n: &Number) -> (res: Number
         res == n,
 ;
 
+#[cfg(verus_keep_ghost)]
 pub enum NumberView {
     Integer(int),
     Float(f64),
 }
 
+#[cfg(verus_keep_ghost)]
 impl View for Number
 {
     type V = NumberView;
