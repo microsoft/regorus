@@ -37,6 +37,7 @@ use vstd::std_specs::cmp::*;
 
 use crate::*;
 
+#[cfg(verus_keep_ghost)]
 use crate::verusspec::bigint::*;
 use crate::verusspec::float::*;
 
@@ -335,6 +336,7 @@ impl Serialize for Number {
 
 verus! {
 
+#[cfg(verus_keep_ghost)]
 impl FromSpecImpl<BigInt> for Number {
     open spec fn obeys_from_spec() -> bool
     {
@@ -353,6 +355,7 @@ impl From<BigInt> for Number {
     }
 }
 
+#[cfg(verus_keep_ghost)]
 impl FromSpecImpl<u64> for Number {
     open spec fn obeys_from_spec() -> bool
     {
@@ -371,6 +374,7 @@ impl From<u64> for Number {
     }
 }
 
+#[cfg(verus_keep_ghost)]
 impl FromSpecImpl<usize> for Number {
     open spec fn obeys_from_spec() -> bool
     {
@@ -389,6 +393,7 @@ impl From<usize> for Number {
     }
 }
 
+#[cfg(verus_keep_ghost)]
 impl FromSpecImpl<u128> for Number {
     open spec fn obeys_from_spec() -> bool
     {
@@ -411,6 +416,7 @@ impl From<u128> for Number {
     }
 }
 
+#[cfg(verus_keep_ghost)]
 impl FromSpecImpl<i64> for Number {
     open spec fn obeys_from_spec() -> bool
     {
@@ -429,6 +435,7 @@ impl From<i64> for Number {
     }
 }
 
+#[cfg(verus_keep_ghost)]
 impl FromSpecImpl<i128> for Number {
     open spec fn obeys_from_spec() -> bool
     {
@@ -447,6 +454,7 @@ impl From<i128> for Number {
     }
 }
 
+#[cfg(verus_keep_ghost)]
 impl FromSpecImpl<f64> for Number {
     open spec fn obeys_from_spec() -> bool
     {
