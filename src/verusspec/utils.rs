@@ -6,6 +6,7 @@ use vstd::prelude::*;
 
 verus! {
 
+#[cfg(verus_keep_ghost)]
 #[verifier::external_body]
 pub fn verus_format_helper() -> String
 {
@@ -23,15 +24,18 @@ macro_rules! verus_format {
     }
 }
 
+#[allow(dead_code)]
 fn my_test_verus_format(fcn: &'static str, x: u32) -> String
 {
     verus_format!("The parameters are `{fcn}` and `{x}`")
 }
 
+#[cfg(verus_keep_ghost)]
 #[verifier::external_type_specification]
 #[verifier::external_body]
 pub struct ExAnyhowError(anyhow::Error);
 
+#[cfg(verus_keep_ghost)]
 #[verifier::external_body]
 pub fn verus_bail_helper<T>() -> Result<T>
 {
@@ -49,10 +53,11 @@ macro_rules! verus_bail {
     }
 }
 
+#[allow(dead_code)]
 fn my_test_verus_bail(fcn: &'static str, x: u32) -> Result<()>
 {
     if x > 0 {
-        verus_bail!(format!("Invalid parameters `{fcn}` and `{x}`").as_str())
+        verus_bail!("Invalid parameters `{}` and `{}`", fcn, x)
     }
     Ok(())
 }
