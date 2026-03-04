@@ -284,14 +284,26 @@ impl Number {
         (a.to_bigint_owned().unwrap(), b.to_bigint_owned().unwrap())
     }
 
-    fn normalize_float(value: f64) -> Number {
+    fn normalize_float(value: f64) -> (res: Number)
+        ensures
+            match Self::spec_float_to_small_int(value) {
+                Some(i) => res@ == NumberView::Integer(i),
+                None => res@ == NumberView::Float(value),
+            },
+    {
         if let Some(i) = Self::float_to_small_bigint(value) {
             return Self::from_bigint_owned(i);
         }
         Number::Float(value)
     }
 
-    fn as_u32(&self) -> Option<u32> {
+    fn as_u32(&self) -> (res: Option<u32>)
+        ensures
+            match self@ {
+                NumberView::Integer(v) => if 0 <= v <= u32::MAX { res == Some(v as u32) } else { res is None },
+                NumberView::Float(_) => res is None,
+            },
+    {
         match self {
             Number::UInt(v) if *v <= u32::MAX as u64 => Some(*v as u32),
             Number::Int(v) if *v >= 0 && *v <= u32::MAX as i64 => Some(*v as u32),
@@ -321,26 +333,76 @@ impl Serialize for Number {
     }
 }
 
+verus! {
+
+impl FromSpecImpl<BigInt> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: BigInt) -> Number;
+}
+
 impl From<BigInt> for Number {
-    fn from(value: BigInt) -> Self {
+    fn from(value: BigInt) -> (result: Self)
+        ensures
+            result@ == NumberView::Integer(value@),
+    {
         Number::from_bigint_owned(value)
     }
 }
 
+impl FromSpecImpl<u64> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: u64) -> Number;
+}
+
 impl From<u64> for Number {
-    fn from(value: u64) -> Self {
+    fn from(value: u64) -> (result: Self)
+        ensures
+            result@ == NumberView::Integer(value as int),
+    {
         Number::UInt(value)
     }
 }
 
+impl FromSpecImpl<usize> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: usize) -> Number;
+}
+
 impl From<usize> for Number {
-    fn from(value: usize) -> Self {
+    fn from(value: usize) -> (result: Self)
+        ensures
+            result@ == NumberView::Integer(value as int),
+    {
         Number::UInt(value as u64)
     }
 }
 
+impl FromSpecImpl<u128> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: u128) -> Number;
+}
+
 impl From<u128> for Number {
-    fn from(value: u128) -> Self {
+    fn from(value: u128) -> (result: Self)
+        ensures
+            result@ == NumberView::Integer(value as int),
+    {
         if let Ok(n) = u64::try_from(value) {
             Number::UInt(n)
         } else {
@@ -349,23 +411,61 @@ impl From<u128> for Number {
     }
 }
 
+impl FromSpecImpl<i64> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: i64) -> Number;
+}
+
 impl From<i64> for Number {
-    fn from(value: i64) -> Self {
+    fn from(value: i64) -> (result: Self)
+        ensures
+            result@ == NumberView::Integer(value as int),
+    {
         Number::Int(value)
     }
 }
 
+impl FromSpecImpl<i128> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: i128) -> Number;
+}
+
 impl From<i128> for Number {
-    fn from(value: i128) -> Self {
+    fn from(value: i128) -> (result: Self)
+        ensures
+            result@ == NumberView::Integer(value as int),
+    {
         Number::from_i128(value)
     }
 }
 
+impl FromSpecImpl<f64> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: f64) -> Number;
+}
+
 impl From<f64> for Number {
-    fn from(value: f64) -> Self {
+    fn from(value: f64) -> (result: Self)
+        ensures
+            result@ == NumberView::Float(value),
+    {
         Number::Float(value)
     }
 }
+
+} // end verus!
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ParseNumberError;
