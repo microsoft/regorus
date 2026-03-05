@@ -59,7 +59,7 @@ jobs:
         run: cargo xtask build-ffi --release --target ${{ matrix.runtime.target }}
         
       - name: Upload regorus ffi shared library
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: regorus-ffi-artifacts-${{ matrix.runtime.target }}
           # Note: The full path of each artifact relative to . is preserved.
@@ -92,7 +92,7 @@ jobs:
         run: cargo fetch --locked
 
       - name: Download regorus ffi shared libraries
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           pattern: regorus-ffi-artifacts-*
           merge-multiple: true
@@ -105,7 +105,7 @@ jobs:
         run: cargo xtask build-csharp --release --clean --artifacts-dir ./bindings/csharp/Regorus/tmp/bindings/ffi/target --enforce-artifacts --repository-commit ${{ github.sha }} --include-symbols
 
       - name: Upload Regorus nuget
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: regorus-nuget
           path: |
@@ -152,7 +152,7 @@ jobs:
         run: cargo fetch --locked
 
       - name: Download regorus nuget
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: regorus-nuget
           path: ./bindings/csharp/Regorus/bin/Release
