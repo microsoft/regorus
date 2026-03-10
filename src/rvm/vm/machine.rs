@@ -120,6 +120,12 @@ pub struct RegoVM {
 
     /// Elapsed wall-clock time recorded when the VM entered a suspended state
     pub(super) execution_timer_elapsed_at_suspend: Option<Duration>,
+
+    /// Cached dummy span for builtin calls (avoids Source::from_contents per call)
+    pub(super) dummy_span: Option<crate::lexer::Span>,
+
+    /// Cached dummy expressions for builtin calls (avoids Rc<Expr> allocs per call)
+    pub(super) dummy_exprs: Vec<crate::ast::Ref<crate::ast::Expr>>,
 }
 
 impl Default for RegoVM {
@@ -163,6 +169,8 @@ impl RegoVM {
             execution_timer_config: None,
             execution_timer: ExecutionTimer::new(fallback_timer),
             execution_timer_elapsed_at_suspend: None,
+            dummy_span: None,
+            dummy_exprs: Vec::new(),
         }
     }
 
@@ -502,6 +510,46 @@ impl RegoVM {
 
     #[cfg(not(feature = "allocator-memory-limits"))]
     pub(super) fn memory_check(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Get or create the cached dummy span for builtin calls.
+    pub(super) fn get_dummy_span(&mut self) -> Result<&crate::lexer::Span> {
+        if self.dummy_span.is_none() {
+            let source = crate::lexer::Source::from_contents(String::new(), String::new())
+                .map_err(|e| VmError::Internal {
+                    message: alloc::format!("failed to create dummy source: {e}"),
+                    pc: self.pc,
+                })?;
+            self.dummy_span = Some(crate::lexer::Span {
+                source,
+                line: 0,
+                col: 0,
+                start: 0,
+                end: 0,
+            });
+        }
+        // SAFETY: we just ensured it's Some above
+        self.dummy_span.as_ref().ok_or(VmError::Internal {
+            message: String::from("dummy span not initialized"),
+            pc: self.pc,
+        })
+    }
+
+    /// Ensure the cached dummy_exprs vec has at least `count` elements.
+    pub(super) fn ensure_dummy_exprs(&mut self, count: usize) -> Result<()> {
+        if self.dummy_exprs.len() >= count {
+            return Ok(());
+        }
+        let span = self.get_dummy_span()?.clone();
+        while self.dummy_exprs.len() < count {
+            self.dummy_exprs
+                .push(crate::ast::Ref::new(crate::ast::Expr::Null {
+                    span: span.clone(),
+                    value: Value::Null,
+                    eidx: 0,
+                }));
+        }
         Ok(())
     }
 }
