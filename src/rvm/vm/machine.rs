@@ -451,6 +451,24 @@ impl RegoVM {
             })
     }
 
+    /// Take ownership of a register value, replacing it with `Value::Undefined`.
+    /// This avoids bumping the Rc refcount that a clone would cause, keeping the
+    /// refcount at 1 so that subsequent `Rc::make_mut` calls can mutate in place.
+    #[inline]
+    #[allow(dead_code)]
+    pub(super) fn take_register(&mut self, index: u8) -> Result<Value> {
+        let register_count = self.registers.len();
+
+        let slot = self.registers.get_mut(usize::from(index)).ok_or(
+            VmError::RegisterIndexOutOfBounds {
+                index,
+                pc: self.pc,
+                register_count,
+            },
+        )?;
+        Ok(core::mem::replace(slot, Value::Undefined))
+    }
+
     #[inline]
     #[allow(dead_code)]
     pub(super) fn set_register(&mut self, index: u8, value: Value) -> Result<()> {
