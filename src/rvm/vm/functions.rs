@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 use crate::builtins;
 use crate::value::Value;
-use alloc::vec::Vec;
 
 use super::errors::{Result, VmError};
 use super::execution_model::ExecutionMode;
@@ -56,7 +55,8 @@ impl RegoVM {
             },
         )?;
 
-        let mut args = Vec::new();
+        let mut args = core::mem::take(&mut self.cached_builtin_args);
+        args.clear();
         for &arg_reg in params.arg_registers().iter() {
             let arg_value = self.get_register(arg_reg)?.clone();
             args.push(arg_value);
@@ -98,10 +98,16 @@ impl RegoVM {
         let dummy_exprs = core::mem::take(&mut self.dummy_exprs);
 
         if let Some(name) = cache_name {
-            if let Some(value) = self.builtins_cache.get(&(name, args.clone())) {
-                self.dummy_exprs = dummy_exprs;
-                self.set_register(params.dest, value.clone())?;
-                return Ok(());
+            if let Some(entries) = self.builtins_cache.get(name) {
+                for entry in entries {
+                    if entry.0.as_slice() == args.as_slice() {
+                        let cached = entry.1.clone();
+                        self.dummy_exprs = dummy_exprs;
+                        self.cached_builtin_args = args;
+                        self.set_register(params.dest, cached)?;
+                        return Ok(());
+                    }
+                }
             }
         }
 
@@ -122,14 +128,15 @@ impl RegoVM {
         // Put dummy_exprs back for reuse.
         self.dummy_exprs = dummy_exprs;
 
-        if result == Value::Undefined {
-            self.set_register(params.dest, Value::Undefined)?;
-        } else {
-            self.set_register(params.dest, result.clone())?;
-        }
-
         if let Some(name) = cache_name {
-            self.builtins_cache.insert((name, args), result);
+            self.builtins_cache
+                .entry(name)
+                .or_default()
+                .push((args, result.clone()));
+            self.set_register(params.dest, result)?;
+        } else {
+            self.cached_builtin_args = args;
+            self.set_register(params.dest, result)?;
         }
 
         self.memory_check()?;

@@ -110,7 +110,7 @@ pub struct RegoVM {
     pub(super) strict_builtin_errors: bool,
 
     /// Cache for builtin calls that must stay deterministic across a single evaluation
-    pub(super) builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
+    pub(super) builtins_cache: BTreeMap<&'static str, Vec<(Vec<Value>, Value)>>,
 
     /// Optional override for the execution timer configuration
     pub(super) execution_timer_config: Option<ExecutionTimerConfig>,
@@ -126,6 +126,9 @@ pub struct RegoVM {
 
     /// Cached dummy expressions for builtin calls (avoids Rc<Expr> allocs per call)
     pub(super) dummy_exprs: Vec<crate::ast::Ref<crate::ast::Expr>>,
+
+    /// Cached args Vec for builtin calls (avoids Vec allocation per call)
+    pub(super) cached_builtin_args: Vec<Value>,
 }
 
 impl Default for RegoVM {
@@ -171,6 +174,7 @@ impl RegoVM {
             execution_timer_elapsed_at_suspend: None,
             dummy_span: None,
             dummy_exprs: Vec::new(),
+            cached_builtin_args: Vec::new(),
         }
     }
 
