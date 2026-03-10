@@ -230,7 +230,7 @@ impl RegoVM {
             Value::Undefined
         };
 
-        self.set_register(dest, result_from_rule.clone())?;
+        self.set_register(dest, result_from_rule)?;
 
         if self.get_register(dest)? == &Value::Undefined && !rule_failed_due_to_inconsistency {
             match call_context.rule_type {
@@ -272,7 +272,7 @@ impl RegoVM {
                     pc: self.pc,
                     available,
                 })?;
-            *entry = (true, final_value.clone());
+            *entry = (true, final_value);
         }
         Ok(())
     }
@@ -760,6 +760,7 @@ impl RegoVM {
                     pc: self.pc,
                     available,
                 })?;
+            // Clone into cache; return the original below.
             *entry = (true, final_value.clone());
         }
 
