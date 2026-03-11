@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::rvm::program::Program;
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 use crate::utils::limits;
 use crate::utils::limits::{
     fallback_execution_timer_config, monotonic_now, ExecutionTimer, ExecutionTimerConfig,
@@ -11,7 +11,7 @@ use crate::utils::limits::{
 use crate::value::Value;
 use crate::CompiledPolicy;
 use alloc::collections::{btree_map::Entry, BTreeMap, VecDeque};
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -467,7 +467,7 @@ impl RegoVM {
         Ok(())
     }
 
-    #[cfg(feature = "allocator-memory-limits")]
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn memory_check(&mut self) -> Result<()> {
         limits::check_memory_limit_if_needed().map_err(|err| match err {
             LimitError::MemoryLimitExceeded { usage, limit } => VmError::MemoryLimitExceeded {
@@ -482,7 +482,7 @@ impl RegoVM {
         })
     }
 
-    #[cfg(not(feature = "allocator-memory-limits"))]
+    #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     pub(super) fn memory_check(&mut self) -> Result<()> {
         Ok(())
     }

@@ -167,7 +167,7 @@ pub use engine::Engine;
 pub use lexer::Source;
 pub use policy_info::PolicyInfo;
 pub use utils::limits::LimitError;
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 pub use utils::limits::{
     check_global_memory_limit, enforce_memory_limit, flush_thread_memory_counters,
     global_memory_limit, set_global_memory_limit, set_thread_flush_threshold_override,
