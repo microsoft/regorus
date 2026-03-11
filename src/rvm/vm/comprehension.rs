@@ -280,6 +280,7 @@ impl RegoVM {
             }
             (_mode, other) => {
                 let offending = core::mem::replace(other, Value::Undefined);
+                self.set_register(result_reg, current_result)?;
                 self.comprehension_stack.push(comprehension_context);
                 return Err(VmError::InvalidIteration {
                     value: offending,
@@ -426,6 +427,7 @@ impl RegoVM {
             }
             (_mode, other) => {
                 let offending = core::mem::replace(other, Value::Undefined);
+                self.set_register(result_reg_idx, current_result)?;
                 return Err(VmError::InvalidIteration {
                     value: offending,
                     pc: self.pc,

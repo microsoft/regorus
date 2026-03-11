@@ -65,6 +65,7 @@ impl RegoVM {
         let expected_args = builtin_info.num_args;
         let actual_args = args.len();
         if u16::try_from(actual_args).unwrap_or(u16::MAX) != expected_args {
+            self.cached_builtin_args = args;
             return Err(VmError::BuiltinArgumentMismatch {
                 expected: expected_args,
                 actual: actual_args,
@@ -73,6 +74,7 @@ impl RegoVM {
         }
 
         if args.iter().any(|a| a == &Value::Undefined) {
+            self.cached_builtin_args = args;
             self.set_register(params.dest, Value::Undefined)?;
             self.memory_check()?;
             return Ok(());
@@ -82,6 +84,7 @@ impl RegoVM {
         let builtin_fn = match program.get_resolved_builtin(params.builtin_index) {
             Some(fcn) => fcn.0,
             None => {
+                self.cached_builtin_args = args;
                 return Err(VmError::BuiltinNotResolved {
                     name: builtin_info.name.clone(),
                     pc: self.pc,
@@ -105,6 +108,7 @@ impl RegoVM {
                         self.dummy_exprs = dummy_exprs;
                         self.cached_builtin_args = args;
                         self.set_register(params.dest, cached)?;
+                        self.memory_check()?;
                         return Ok(());
                     }
                 }
@@ -121,6 +125,7 @@ impl RegoVM {
             Err(_) if !self.strict_builtin_errors => Value::Undefined,
             Err(err) => {
                 self.dummy_exprs = dummy_exprs;
+                self.cached_builtin_args = args;
                 return Err(err.into());
             }
         };
@@ -129,10 +134,16 @@ impl RegoVM {
         self.dummy_exprs = dummy_exprs;
 
         if let Some(name) = cache_name {
+            // Move args into the cache. The now-empty (zero-capacity) Vec is
+            // stored back in cached_builtin_args; the next call will re-allocate.
+            // This is acceptable because cache inserts are rare (once per unique
+            // argument set) while the hot path (cache hit above) reuses the Vec.
+            let cache_args = core::mem::take(&mut args);
+            self.cached_builtin_args = args;
             self.builtins_cache
                 .entry(name)
                 .or_default()
-                .push((args, result.clone()));
+                .push((cache_args, result.clone()));
             self.set_register(params.dest, result)?;
         } else {
             self.cached_builtin_args = args;

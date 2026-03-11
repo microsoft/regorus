@@ -109,7 +109,14 @@ pub struct RegoVM {
     /// Whether builtins should raise errors strictly or return undefined on failure
     pub(super) strict_builtin_errors: bool,
 
-    /// Cache for builtin calls that must stay deterministic across a single evaluation
+    /// Cache for builtin calls that must stay deterministic across a single evaluation.
+    ///
+    /// Two-level structure: outer BTreeMap keyed by builtin name, inner Vec of
+    /// (args, result) pairs scanned linearly. This avoids allocating a composite
+    /// key on every lookup (which a single-level BTreeMap<(name, Vec<Value>), Value>
+    /// would require). Linear scan is fast for the small number of entries per
+    /// builtin (typically <10). Can be revisited with a HashMap if `Value` gains
+    /// a `Hash` implementation.
     pub(super) builtins_cache: BTreeMap<&'static str, Vec<(Vec<Value>, Value)>>,
 
     /// Optional override for the execution timer configuration
@@ -520,15 +527,15 @@ impl RegoVM {
     /// Get or create the cached dummy span for builtin calls.
     pub(super) fn get_dummy_span(&mut self) -> Result<&crate::lexer::Span> {
         if self.dummy_span.is_none() {
-            let source = crate::lexer::Source::from_contents(String::new(), String::new())
+            let source = crate::lexer::Source::from_contents("<builtin>".into(), String::new())
                 .map_err(|e| VmError::Internal {
                     message: alloc::format!("failed to create dummy source: {e}"),
                     pc: self.pc,
                 })?;
             self.dummy_span = Some(crate::lexer::Span {
                 source,
-                line: 0,
-                col: 0,
+                line: 1,
+                col: 1,
                 start: 0,
                 end: 0,
             });

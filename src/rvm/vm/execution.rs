@@ -209,9 +209,10 @@ impl RegoVM {
                 ..
             } => (reason, last_result),
             current_state => {
-                self.execution_state = current_state.clone();
+                let desc = alloc::format!("{:?}", current_state);
+                self.execution_state = current_state;
                 return Err(VmError::InvalidResumeState {
-                    state: alloc::format!("{:?}", current_state),
+                    state: desc,
                     pc: self.pc,
                 });
             }
