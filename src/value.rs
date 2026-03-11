@@ -353,7 +353,7 @@ impl Value {
         match serde_json::from_str::<Value>(json) {
             Ok(value) => Ok(value),
             Err(err) => {
-                #[cfg(feature = "allocator-memory-limits")]
+                #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
                 {
                     // Re-validate allocator limits when serde parsing fails to surface LimitError.
                     match crate::utils::limits::check_global_memory_limit() {
@@ -362,7 +362,7 @@ impl Value {
                     }
                 }
 
-                #[cfg(not(feature = "allocator-memory-limits"))]
+                #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
                 {
                     Err(anyhow!(err))
                 }

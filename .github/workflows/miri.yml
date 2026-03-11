@@ -10,6 +10,8 @@ jobs:
   miri-test:
     name: miri (nightly)
     runs-on: ubuntu-latest
+    env:
+      MIRIFLAGS: "-Zmiri-disable-isolation"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

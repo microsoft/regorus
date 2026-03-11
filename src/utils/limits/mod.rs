@@ -6,7 +6,7 @@
 #![allow(dead_code)]
 
 mod error;
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 mod memory;
 mod time;
 
@@ -14,7 +14,7 @@ mod time;
 pub use error::LimitError;
 
 #[allow(unused_imports)]
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 pub use memory::{
     check_global_memory_limit, enforce_memory_limit, flush_thread_memory_counters,
     global_memory_limit, set_global_memory_limit, set_thread_flush_threshold_override,
@@ -34,19 +34,19 @@ pub use time::acquire_limits_test_lock;
 #[allow(unused_imports)]
 pub use time::{set_time_source, TimeSourceRegistrationError};
 
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 #[inline]
 pub fn check_memory_limit_if_needed() -> core::result::Result<(), LimitError> {
     memory::check_memory_limit_if_needed()
 }
 
-#[cfg(not(feature = "allocator-memory-limits"))]
+#[cfg(any(miri, not(feature = "allocator-memory-limits")))]
 #[inline]
 pub const fn enforce_memory_limit() -> core::result::Result<(), LimitError> {
     Ok(())
 }
 
-#[cfg(not(feature = "allocator-memory-limits"))]
+#[cfg(any(miri, not(feature = "allocator-memory-limits")))]
 #[inline]
 pub const fn check_memory_limit_if_needed() -> core::result::Result<(), LimitError> {
     Ok(())

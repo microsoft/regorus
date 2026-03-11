@@ -402,13 +402,13 @@ impl Interpreter {
         self.reset_execution_timer_state();
     }
 
-    #[cfg(feature = "allocator-memory-limits")]
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     fn memory_check(&mut self) -> Result<()> {
         let _ = self; // quiet clippy::unused_self; retained for symmetry with VM path
         crate::utils::limits::check_memory_limit_if_needed().map_err(|err| anyhow!(err))
     }
 
-    #[cfg(not(feature = "allocator-memory-limits"))]
+    #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     const fn memory_check(&mut self) -> Result<()> {
         let _ = self; // quiet clippy::unused_self; retained for symmetry with VM path
         Ok(())

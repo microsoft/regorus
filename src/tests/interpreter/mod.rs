@@ -620,6 +620,19 @@ fn yaml_test_impl(file: &str) -> Result<()> {
         }
     }
 
+    #[cfg(miri)]
+    {
+        // Skip tests with large-exponent Number comparisons that hit a
+        // Float-vs-BigInt representation mismatch under Miri's soft-float.
+        let skip = ["units/parse.yaml", "units/parse_bytes.yaml"];
+        for s in skip {
+            if file.contains(s) {
+                std::println!("skipped {file} under miri.");
+                return Ok(());
+            }
+        }
+    }
+
     std::println!("running {file}");
 
     let v0 = !file.contains("bindings.yaml");

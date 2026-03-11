@@ -1,4 +1,4 @@
-#![cfg(all(feature = "mimalloc", feature = "allocator-memory-limits"))]
+#![cfg(all(feature = "mimalloc", feature = "allocator-memory-limits", not(miri)))]
 
 use std::sync::{Mutex, OnceLock};
 
