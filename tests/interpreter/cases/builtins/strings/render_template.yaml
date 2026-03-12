@@ -1,0 +1,440 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: basic variable interpolation
+    data: {}
+    modules:
+      - |
+        package test
+
+        basic := strings.render_template("Hello, {{.name}}!", {"name": "World"})
+        multiple := strings.render_template("{{.greeting}}, {{.name}}!", {"greeting": "Hello", "name": "Alice"})
+    query: data.test
+    want_result:
+      basic: "Hello, World!"
+      multiple: "Hello, Alice!"
+
+  - note: nested path access
+    data: {}
+    modules:
+      - |
+        package test
+
+        nested := strings.render_template("{{.user.name}} is {{.user.age}} years old", {
+          "user": {"name": "Bob", "age": 30}
+        })
+        deep := strings.render_template("Value: {{.a.b.c.d}}", {
+          "a": {"b": {"c": {"d": 42}}}
+        })
+    query: data.test
+    want_result:
+      nested: "Bob is 30 years old"
+      deep: "Value: 42"
+
+  - note: array indexing
+    data: {}
+    modules:
+      - |
+        package test
+
+        first := strings.render_template("First: {{.items.0}}", {"items": ["apple", "banana", "cherry"]})
+        second := strings.render_template("Second: {{.items.1}}", {"items": ["apple", "banana", "cherry"]})
+        nested_array := strings.render_template("{{.matrix.0.1}}", {"matrix": [[1, 2], [3, 4]]})
+    query: data.test
+    want_result:
+      first: "First: apple"
+      second: "Second: banana"
+      nested_array: "2"
+
+  - note: range over arrays with single variable
+    data: {}
+    modules:
+      - |
+        package test
+
+        items := strings.render_template("{{range $v := .items}}{{$v}} {{end}}", {
+          "items": ["apple", "banana", "cherry"]
+        })
+        numbers := strings.render_template("{{range $n := .nums}}{{$n}} {{end}}", {
+          "nums": [1, 2, 3, 4, 5]
+        })
+    query: data.test
+    want_result:
+      items: "apple banana cherry "
+      numbers: "1 2 3 4 5 "
+
+  - note: range over arrays with index and value
+    data: {}
+    modules:
+      - |
+        package test
+
+        indexed := strings.render_template("{{range $i, $v := .items}}{{$i}}:{{$v}} {{end}}", {
+          "items": ["a", "b", "c"]
+        })
+    query: data.test
+    want_result:
+      indexed: "0:a 1:b 2:c "
+
+  - note: range over objects
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj_keys := strings.render_template("{{range $k, $v := .obj}}{{$k}}={{$v}} {{end}}", {
+          "obj": {"x": 1, "y": 2, "z": 3}
+        })
+    query: data.test
+    want_result:
+      obj_keys: "x=1 y=2 z=3 "
+
+  - note: range over sets
+    data: {}
+    modules:
+      - |
+        package test
+
+        # Create set using set comprehension - use a comprehension that doesn't export the variable
+        set_items := strings.render_template("{{range $v := .set}}{{$v}} {{end}}", {
+          "set": {10, 20, 30}
+        })
+    query: data.test.set_items
+    want_result: "10 20 30 "
+
+  - note: if condition with truthy values
+    data: {}
+    modules:
+      - |
+        package test
+
+        if_true := strings.render_template("{{if .show}}visible{{end}}", {"show": true})
+        if_nonempty_string := strings.render_template("{{if .text}}yes{{end}}", {"text": "hello"})
+        if_nonzero_number := strings.render_template("{{if .num}}yes{{end}}", {"num": 42})
+        if_nonempty_array := strings.render_template("{{if .arr}}yes{{end}}", {"arr": [1, 2, 3]})
+    query: data.test
+    want_result:
+      if_true: "visible"
+      if_nonempty_string: "yes"
+      if_nonzero_number: "yes"
+      if_nonempty_array: "yes"
+
+  - note: if condition with falsy values
+    data: {}
+    modules:
+      - |
+        package test
+
+        if_false := strings.render_template("{{if .show}}hidden{{end}}", {"show": false})
+        if_empty_string := strings.render_template("{{if .text}}hidden{{end}}", {"text": ""})
+        if_zero := strings.render_template("{{if .num}}hidden{{end}}", {"num": 0})
+        if_empty_array := strings.render_template("{{if .arr}}hidden{{end}}", {"arr": []})
+        if_null := strings.render_template("{{if .val}}hidden{{end}}", {"val": null})
+    query: data.test
+    want_result:
+      if_false: ""
+      if_empty_string: ""
+      if_zero: ""
+      if_empty_array: ""
+      if_null: ""
+
+  - note: nested range blocks
+    data: {}
+    modules:
+      - |
+        package test
+
+        nested := strings.render_template("{{range $outer := .matrix}}{{range $inner := $outer}}{{$inner}} {{end}}{{end}}", {
+          "matrix": [[1, 2], [3, 4], [5, 6]]
+        })
+    query: data.test
+    want_result:
+      nested: "1 2 3 4 5 6 "
+
+  - note: range inside if
+    data: {}
+    modules:
+      - |
+        package test
+
+        conditional_range := strings.render_template("{{if .show}}{{range $v := .items}}{{$v}} {{end}}{{end}}", {
+          "show": true,
+          "items": ["a", "b", "c"]
+        })
+        no_range := strings.render_template("{{if .show}}{{range $v := .items}}{{$v}} {{end}}{{end}}", {
+          "show": false,
+          "items": ["a", "b", "c"]
+        })
+    query: data.test
+    want_result:
+      conditional_range: "a b c "
+      no_range: ""
+
+  - note: if inside range (filtering with indexed access to pre-computed values)
+    data: {}
+    modules:
+      - |
+        package test
+
+        # Since $v.field isn't supported yet, we use a simpler pattern
+        # This test shows that conditionals work inside range
+        conditional := strings.render_template("{{range $i, $v := .items}}{{if $v}}Item {{$i}} {{end}}{{end}}", {
+          "items": [true, false, true]
+        })
+    query: data.test
+    want_result:
+      conditional: "Item 0 Item 2 "
+
+  - note: variable scope restoration after range
+    data: {}
+    modules:
+      - |
+        package test
+
+        # Test that range loop variables are properly scoped and don't interfere
+        # This tests nested ranges with same variable name
+        nested_same_var := strings.render_template("{{range $i := .outer}}{{$i}}:{{range $i := .inner}}{{$i}}{{end}} {{end}}", {
+          "outer": [1, 2],
+          "inner": [10, 20]
+        })
+    query: data.test
+    want_result:
+      nested_same_var: "1:1020 2:1020 "
+
+  - note: complex template with multiple features
+    data: {}
+    modules:
+      - |
+        package test
+
+        users := strings.render_template("Users:{{range $i := .users}}\nUser: {{$i}}{{end}}", {
+          "users": ["Alice", "Bob", "Charlie"]
+        })
+    query: data.test
+    want_result:
+      users: "Users:\nUser: Alice\nUser: Bob\nUser: Charlie"
+
+  - note: literal text preservation
+    data: {}
+    modules:
+      - |
+        package test
+
+        literal := strings.render_template("Start {{.x}} middle {{.y}} end", {"x": "A", "y": "B"})
+        newlines := strings.render_template("Line 1\n{{.x}}\nLine 3", {"x": "inserted"})
+    query: data.test
+    want_result:
+      literal: "Start A middle B end"
+      newlines: "Line 1\ninserted\nLine 3"
+
+  - note: special characters in output
+    data: {}
+    modules:
+      - |
+        package test
+
+        special := strings.render_template("{{.value}}", {"value": "{\"key\": \"value\"}"})
+        unicode := strings.render_template("{{.text}}", {"text": "Hello 世界"})
+    query: data.test
+    want_result:
+      special: "{\"key\": \"value\"}"
+      unicode: "Hello 世界"
+
+  - note: range over empty collections produces no output
+    data: {}
+    modules:
+      - |
+        package test
+
+        empty_array := strings.render_template("{{range $v := .items}}{{$v}}{{end}}", {"items": []})
+        empty_object := strings.render_template("{{range $k, $v := .obj}}{{$k}}={{$v}} {{end}}", {"obj": {}})
+    query: data.test
+    want_result:
+      empty_array: ""
+      empty_object: ""
+
+  - note: error - undefined variable in interpolation (strict mode)
+    data: {}
+    strict: true
+    modules:
+      - |
+        package test
+
+        undefined := strings.render_template("Value: {{.missing}}", {"other": "value"})
+    query: data.test
+    error: "missing value for key `.missing`"
+
+  - note: error - missing := in range (strict mode)
+    data: {}
+    strict: true
+    modules:
+      - |
+        package test
+
+        bad_range := strings.render_template("{{range $v .items}}{{end}}", {"items": [1, 2, 3]})
+    query: data.test
+    error: "expects `:=`"
+
+  - note: error - non-iterable in range (strict mode)
+    data: {}
+    strict: true
+    modules:
+      - |
+        package test
+
+        bad_iter := strings.render_template("{{range $v := .num}}{{$v}}{{end}}", {"num": 42})
+    query: data.test
+    error: "expects array, set, or object"
+
+  - note: error - unterminated block
+    data: {}
+    strict: true
+    modules:
+      - |
+        package test
+
+        unterminated := strings.render_template("{{range $v := .items}}{{$v}}", {"items": [1, 2, 3]})
+    query: data.test
+    error: "missing `{{end}}`"
+
+  - note: error - unterminated action
+    data: {}
+    strict: true
+    modules:
+      - |
+        package test
+
+        unterminated_action := strings.render_template("Value: {{.x", {"x": 42})
+    query: data.test
+    error: "missing `}}`"
+
+  - note: undefined variable in non-strict mode returns empty template
+    data: {}
+    strict: false
+    modules:
+      - |
+        package test
+
+        # Current implementation returns empty entire template when undefined value encountered
+        undefined := strings.render_template("Before {{.missing}} after", {"other": "value"})
+        # All defined values work fine
+        defined := strings.render_template("Before {{.other}} after", {"other": "value"})
+    query: data.test
+    want_result:
+      undefined: ""
+      defined: "Before value after"
+
+  - note: boolean values rendering
+    data: {}
+    modules:
+      - |
+        package test
+
+        bool_true := strings.render_template("{{.val}}", {"val": true})
+        bool_false := strings.render_template("{{.val}}", {"val": false})
+    query: data.test
+    want_result:
+      bool_true: "true"
+      bool_false: "false"
+
+  - note: null value rendering
+    data: {}
+    modules:
+      - |
+        package test
+
+        null_val := strings.render_template("Value: {{.val}}", {"val": null})
+    query: data.test
+    want_result:
+      null_val: "Value: null"
+
+  - note: complex types in interpolation
+    data: {}
+    modules:
+      - |
+        package test
+
+        arr := strings.render_template("{{.val}}", {"val": [1, 2, 3]})
+        obj := strings.render_template("{{.val}}", {"val": {"a": 1, "b": 2}})
+    query: data.test
+    want_result:
+      arr: "[1, 2, 3]"
+      obj: '{"a": 1, "b": 2}'
+
+  - note: root value access
+    data: {}
+    modules:
+      - |
+        package test
+
+        root := strings.render_template("{{.}}", {"key": "value"})
+    query: data.test
+    want_result:
+      root: '{"key": "value"}'
+
+  - note: whitespace in actions
+    data: {}
+    modules:
+      - |
+        package test
+
+        whitespace := strings.render_template("{{ .x }} {{ .y }}", {"x": "A", "y": "B"})
+    query: data.test
+    want_result:
+      whitespace: "A B"
+
+  - note: consecutive actions
+    data: {}
+    modules:
+      - |
+        package test
+
+        consecutive := strings.render_template("{{.a}}{{.b}}{{.c}}", {"a": "X", "b": "Y", "c": "Z"})
+    query: data.test
+    want_result:
+      consecutive: "XYZ"
+
+  - note: actions at start and end
+    data: {}
+    modules:
+      - |
+        package test
+
+        start_end := strings.render_template("{{.start}}middle{{.end}}", {"start": "BEGIN", "end": "END"})
+    query: data.test
+    want_result:
+      start_end: "BEGINmiddleEND"
+
+  - note: non-strict mode with invalid range returns empty template
+    data: {}
+    strict: false
+    modules:
+      - |
+        package test
+
+        # Current implementation returns empty entire template when range is invalid
+        bad_range := strings.render_template("Before {{range $v .items}}{{$v}}{{end}} after", {"items": [1, 2, 3]})
+        # Valid range works fine
+        good_range := strings.render_template("Before {{range $v := .items}}{{$v}}{{end}} after", {"items": [1, 2, 3]})
+    query: data.test
+    want_result:
+      bad_range: ""
+      good_range: "Before 123 after"
+
+  - note: non-strict mode with non-iterable returns empty template
+    data: {}
+    strict: false
+    modules:
+      - |
+        package test
+
+        # Current implementation returns empty entire template when range value is non-iterable
+        non_iterable := strings.render_template("Before {{range $v := .num}}{{$v}}{{end}} after", {"num": 42})
+        # Valid iterable works fine
+        iterable := strings.render_template("Before {{range $v := .nums}}{{$v}}{{end}} after", {"nums": [1, 2, 3]})
+    query: data.test
+    want_result:
+      non_iterable: ""
+      iterable: "Before 123 after"
+
