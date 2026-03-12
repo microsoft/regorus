@@ -4,7 +4,6 @@ use crate::rvm::instructions::Instruction;
 use crate::rvm::program::Program;
 use crate::value::Value;
 use alloc::string::String;
-use alloc::vec::Vec;
 use core::convert::TryFrom as _;
 
 use super::dispatch::InstructionOutcome;
@@ -24,35 +23,22 @@ impl RegoVM {
     }
 
     pub fn execute_entry_point_by_index(&mut self, index: usize) -> Result<Value> {
-        let entry_points: Vec<(String, usize)> = self
-            .program
-            .entry_points
-            .iter()
-            .map(|(name, pc)| (name.clone(), *pc))
-            .collect();
-
-        if index >= entry_points.len() {
-            return Err(VmError::InvalidEntryPointIndex {
-                index,
-                max_index: entry_points.len().saturating_sub(1),
-                pc: self.pc,
-            });
-        }
-
-        let &(ref entry_point_name, entry_point_pc) =
-            entry_points
-                .get(index)
-                .ok_or(VmError::InvalidEntryPointIndex {
+        let (entry_point_name, entry_point_pc) = {
+            let (name, &pc) = self.program.entry_points.get_index(index).ok_or(
+                VmError::InvalidEntryPointIndex {
                     index,
-                    max_index: entry_points.len().saturating_sub(1),
+                    max_index: self.program.entry_points.len().saturating_sub(1),
                     pc: self.pc,
-                })?;
+                },
+            )?;
+            (name.clone(), pc)
+        };
 
         if entry_point_pc >= self.program.instructions.len() {
             return Err(VmError::EntryPointPcOutOfBounds {
                 pc: entry_point_pc,
                 instruction_count: self.program.instructions.len(),
-                entry_point: entry_point_name.clone(),
+                entry_point: entry_point_name,
             });
         }
 
@@ -215,15 +201,18 @@ impl RegoVM {
     }
 
     pub fn resume(&mut self, resume_value: Option<Value>) -> Result<Value> {
-        let (reason, mut last_result) = match self.execution_state.clone() {
+        let old_state = core::mem::replace(&mut self.execution_state, ExecutionState::Running);
+        let (reason, mut last_result) = match old_state {
             ExecutionState::Suspended {
                 reason,
                 last_result,
                 ..
             } => (reason, last_result),
             current_state => {
+                let desc = alloc::format!("{:?}", current_state);
+                self.execution_state = current_state;
                 return Err(VmError::InvalidResumeState {
-                    state: alloc::format!("{:?}", current_state),
+                    state: desc,
                     pc: self.pc,
                 });
             }

@@ -189,6 +189,11 @@ harness = false
 name = "aci_benchmark"
 harness = false
 
+[[bench]]
+name = "rvm_benchmark"
+harness = false
+required-features = ["rvm"]
+
 [[example]]
 name="regorus"
 harness=false

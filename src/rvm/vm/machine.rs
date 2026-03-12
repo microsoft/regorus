@@ -109,8 +109,15 @@ pub struct RegoVM {
     /// Whether builtins should raise errors strictly or return undefined on failure
     pub(super) strict_builtin_errors: bool,
 
-    /// Cache for builtin calls that must stay deterministic across a single evaluation
-    pub(super) builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
+    /// Cache for builtin calls that must stay deterministic across a single evaluation.
+    ///
+    /// Two-level structure: outer BTreeMap keyed by builtin name, inner Vec of
+    /// (args, result) pairs scanned linearly. This avoids allocating a composite
+    /// key on every lookup (which a single-level BTreeMap<(name, Vec<Value>), Value>
+    /// would require). Linear scan is fast for the small number of entries per
+    /// builtin (typically <10). Can be revisited with a HashMap if `Value` gains
+    /// a `Hash` implementation.
+    pub(super) builtins_cache: BTreeMap<&'static str, Vec<(Vec<Value>, Value)>>,
 
     /// Optional override for the execution timer configuration
     pub(super) execution_timer_config: Option<ExecutionTimerConfig>,
@@ -120,6 +127,15 @@ pub struct RegoVM {
 
     /// Elapsed wall-clock time recorded when the VM entered a suspended state
     pub(super) execution_timer_elapsed_at_suspend: Option<Duration>,
+
+    /// Cached dummy span for builtin calls (avoids Source::from_contents per call)
+    pub(super) dummy_span: Option<crate::lexer::Span>,
+
+    /// Cached dummy expressions for builtin calls (avoids Rc<Expr> allocs per call)
+    pub(super) dummy_exprs: Vec<crate::ast::Ref<crate::ast::Expr>>,
+
+    /// Cached args Vec for builtin calls (avoids Vec allocation per call)
+    pub(super) cached_builtin_args: Vec<Value>,
 }
 
 impl Default for RegoVM {
@@ -163,6 +179,9 @@ impl RegoVM {
             execution_timer_config: None,
             execution_timer: ExecutionTimer::new(fallback_timer),
             execution_timer_elapsed_at_suspend: None,
+            dummy_span: None,
+            dummy_exprs: Vec::new(),
+            cached_builtin_args: Vec::new(),
         }
     }
 
@@ -451,6 +470,24 @@ impl RegoVM {
             })
     }
 
+    /// Take ownership of a register value, replacing it with `Value::Undefined`.
+    /// This avoids bumping the Rc refcount that a clone would cause, keeping the
+    /// refcount at 1 so that subsequent `Rc::make_mut` calls can mutate in place.
+    #[inline]
+    #[allow(dead_code)]
+    pub(super) fn take_register(&mut self, index: u8) -> Result<Value> {
+        let register_count = self.registers.len();
+
+        let slot = self.registers.get_mut(usize::from(index)).ok_or(
+            VmError::RegisterIndexOutOfBounds {
+                index,
+                pc: self.pc,
+                register_count,
+            },
+        )?;
+        Ok(core::mem::replace(slot, Value::Undefined))
+    }
+
     #[inline]
     #[allow(dead_code)]
     pub(super) fn set_register(&mut self, index: u8, value: Value) -> Result<()> {
@@ -484,6 +521,46 @@ impl RegoVM {
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     pub(super) fn memory_check(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Get or create the cached dummy span for builtin calls.
+    pub(super) fn get_dummy_span(&mut self) -> Result<&crate::lexer::Span> {
+        if self.dummy_span.is_none() {
+            let source = crate::lexer::Source::from_contents("<builtin>".into(), String::new())
+                .map_err(|e| VmError::Internal {
+                    message: alloc::format!("failed to create dummy source: {e}"),
+                    pc: self.pc,
+                })?;
+            self.dummy_span = Some(crate::lexer::Span {
+                source,
+                line: 1,
+                col: 1,
+                start: 0,
+                end: 0,
+            });
+        }
+        // SAFETY: we just ensured it's Some above
+        self.dummy_span.as_ref().ok_or(VmError::Internal {
+            message: String::from("dummy span not initialized"),
+            pc: self.pc,
+        })
+    }
+
+    /// Ensure the cached dummy_exprs vec has at least `count` elements.
+    pub(super) fn ensure_dummy_exprs(&mut self, count: usize) -> Result<()> {
+        if self.dummy_exprs.len() >= count {
+            return Ok(());
+        }
+        let span = self.get_dummy_span()?.clone();
+        while self.dummy_exprs.len() < count {
+            self.dummy_exprs
+                .push(crate::ast::Ref::new(crate::ast::Expr::Null {
+                    span: span.clone(),
+                    value: Value::Null,
+                    eidx: 0,
+                }));
+        }
         Ok(())
     }
 }

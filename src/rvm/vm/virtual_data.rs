@@ -21,14 +21,15 @@ impl RegoVM {
             root_path.push(key_value);
         }
 
-        let mut data_subobject = self.data.clone();
+        // Walk data tree by reference, only clone the leaf.
+        let mut data_ref = &self.data;
         for path_component in &root_path {
-            data_subobject = data_subobject[path_component].clone();
+            data_ref = &data_ref[path_component];
         }
 
-        let mut result_subobject = match data_subobject {
+        let mut result_subobject = match *data_ref {
             Value::Undefined => Value::new_object(),
-            _ => data_subobject,
+            _ => data_ref.clone(),
         };
 
         self.traverse_rule_tree_subobject(rule_tree_subobject, &mut result_subobject, &root_path)?;
@@ -74,11 +75,12 @@ impl RegoVM {
         result_subobject: &mut Value,
         root_path: &[Value],
     ) -> Result<()> {
+        let mut relative_path = Vec::new();
         self.traverse_rule_tree_subobject_with_path(
             rule_tree_node,
             result_subobject,
             root_path,
-            &[],
+            &mut relative_path,
         )
     }
 
@@ -87,19 +89,18 @@ impl RegoVM {
         rule_tree_node: &Value,
         result_subobject: &mut Value,
         root_path: &[Value],
-        relative_path: &[Value],
+        relative_path: &mut Vec<Value>,
     ) -> Result<()> {
         match *rule_tree_node {
             Value::Number(ref rule_idx) => {
                 if let Some(rule_index) = rule_idx.as_u64() {
-                    let mut full_cache_path = root_path.to_vec();
-                    full_cache_path.extend_from_slice(relative_path);
-
+                    // Walk the evaluated cache using root_path then relative_path,
+                    // without allocating a combined full_cache_path Vec.
                     let cached_result = {
                         let mut cache_lookup = &self.evaluated;
                         let mut path_exists = true;
 
-                        for path_component in &full_cache_path {
+                        for path_component in root_path.iter().chain(relative_path.iter()) {
                             if let Value::Object(ref map) = *cache_lookup {
                                 if let Some(next_value) = map.get(path_component) {
                                     cache_lookup = next_value;
@@ -153,7 +154,15 @@ impl RegoVM {
                                     register_count,
                                 })?;
 
-                        let mut cache_path = full_cache_path.clone();
+                        // Build cache_path from root_path + relative_path + Undefined sentinel.
+                        let mut cache_path: Vec<Value> = Vec::with_capacity(
+                            root_path
+                                .len()
+                                .saturating_add(relative_path.len())
+                                .saturating_add(1),
+                        );
+                        cache_path.extend_from_slice(root_path);
+                        cache_path.extend_from_slice(relative_path);
                         cache_path.push(Value::Undefined);
                         Self::set_nested_value_static(
                             &mut self.evaluated,
@@ -174,14 +183,14 @@ impl RegoVM {
             }
             Value::Object(ref obj) => {
                 for (key, value) in obj.iter() {
-                    let mut new_relative_path = relative_path.to_vec();
-                    new_relative_path.push(key.clone());
+                    relative_path.push(key.clone());
                     self.traverse_rule_tree_subobject_with_path(
                         value,
                         result_subobject,
                         root_path,
-                        &new_relative_path,
+                        relative_path,
                     )?;
+                    relative_path.pop();
                 }
             }
             _ => {}
@@ -232,15 +241,16 @@ impl RegoVM {
                     self.execute_call_rule_common(params.dest, rule_index, None)?;
 
                     if components_consumed < params.path_components.len() {
-                        let mut rule_result = self.get_register(params.dest)?.clone();
+                        // Walk remaining path by reference, clone only the leaf.
+                        let mut ref_val = self.get_register(params.dest)?;
 
                         for component in params.path_components.iter().skip(components_consumed) {
                             let key_value = self.literal_or_register_value(component)?;
-
-                            rule_result = rule_result[&key_value].clone();
+                            ref_val = &ref_val[&key_value];
                         }
 
-                        self.set_register(params.dest, rule_result)?;
+                        let leaf = ref_val.clone();
+                        self.set_register(params.dest, leaf)?;
                     }
                 } else {
                     return Err(VmError::InvalidRuleIndex {
@@ -252,14 +262,15 @@ impl RegoVM {
             Value::Undefined | Value::Object(_)
                 if components_consumed != params.path_components.len() =>
             {
-                let mut result = self.data.clone();
+                // Walk data tree by reference, clone only the leaf.
+                let mut data_ref = &self.data;
 
                 for component in &params.path_components {
                     let key_value = self.literal_or_register_value(component)?;
-
-                    result = result[&key_value].clone();
+                    data_ref = &data_ref[&key_value];
                 }
 
+                let result = data_ref.clone();
                 self.set_register(params.dest, result)?;
             }
             Value::Object(_) => {

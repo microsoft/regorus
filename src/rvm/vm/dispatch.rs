@@ -434,7 +434,8 @@ impl RegoVM {
                 let key_value = self.get_register(key)?.clone();
                 let value_value = self.get_register(value)?.clone();
 
-                let mut obj_value = self.get_register(obj)?.clone();
+                // Take ownership so Rc refcount stays at 1 and make_mut is a no-op.
+                let mut obj_value = self.take_register(obj)?;
 
                 if let Ok(obj_mut) = obj_value.as_object_mut() {
                     obj_mut.insert(key_value, value_value);
@@ -574,7 +575,8 @@ impl RegoVM {
             ArrayPush { arr, value } => {
                 let value_to_push = self.get_register(value)?.clone();
 
-                let mut arr_value = self.get_register(arr)?.clone();
+                // Take ownership so Rc refcount stays at 1 and make_mut is a no-op.
+                let mut arr_value = self.take_register(arr)?;
 
                 if let Ok(arr_mut) = arr_value.as_array_mut() {
                     arr_mut.push(value_to_push);
@@ -632,7 +634,8 @@ impl RegoVM {
             SetAdd { set, value } => {
                 let value_to_add = self.get_register(value)?.clone();
 
-                let mut set_value = self.get_register(set)?.clone();
+                // Take ownership so Rc refcount stays at 1 and make_mut is a no-op.
+                let mut set_value = self.take_register(set)?;
 
                 if let Ok(set_mut) = set_value.as_set_mut() {
                     set_mut.insert(value_to_add);
