@@ -95,6 +95,13 @@ pub assume_specification [ f64::abs ](f: f64) -> (res: f64)
         res == spec_f64_abs(f),
 ;
 
+pub uninterp spec fn spec_f64_is_nan(f: f64) -> bool;
+
+pub assume_specification [ f64::is_nan ](f: f64) -> (res: bool)
+    ensures
+        res == spec_f64_is_nan(f),
+;
+
 pub uninterp spec fn spec_f64_neg_infinity() -> f64;
 
 #[inline]

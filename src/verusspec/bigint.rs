@@ -50,6 +50,23 @@ pub assume_specification[ <BigInt as num_traits::Signed>::is_negative ](x: &BigI
         res == (x@ < 0),
 ;
 
+// PartialEq
+
+pub axiom fn axiom_bigint_obeys_eq_spec()
+    ensures
+        <BigInt as vstd::std_specs::cmp::PartialEqSpec>::obeys_eq_spec(),
+;
+
+pub axiom fn axiom_bigint_obeys_partial_cmp_spec()
+    ensures
+        <BigInt as vstd::std_specs::cmp::PartialOrdSpec>::obeys_partial_cmp_spec(),
+;
+
+pub assume_specification[ <BigInt as core::cmp::PartialEq>::eq ](x: &BigInt, y: &BigInt) -> (res: bool)
+    ensures
+        res == (x@ == y@),
+;
+
 // From
 
 pub assume_specification[ <BigInt as core::convert::From<i64>>::from ](i: i64) -> (res: BigInt)

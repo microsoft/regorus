@@ -539,8 +539,31 @@ impl FromStr for Number {
     }
 }
 
+verus! {
+
+#[cfg(verus_keep_ghost)]
+impl PartialEqSpecImpl for Number {
+    open spec fn obeys_eq_spec() -> bool
+    {
+        false
+    }
+
+    open spec fn eq_spec(&self, other: &Self) -> bool
+    {
+        *self == *other
+    }
+}
+
 impl PartialEq for Number {
-    fn eq(&self, other: &Self) -> bool {
+    fn eq(&self, other: &Self) -> (result: bool)
+        ensures
+            match (self@, other@) {
+                (NumberView::Integer(n1), NumberView::Integer(n2)) => result == (n1 == n2),
+                _ => true,
+            },
+    {
+        proof { axiom_bigint_obeys_eq_spec(); }
+
         if let (Some(a), Some(b)) = (self.to_bigint_owned(), other.to_bigint_owned()) {
             return a == b;
         }
@@ -552,6 +575,8 @@ impl PartialEq for Number {
         }
         a == b
     }
+}
+
 }
 
 impl Eq for Number {}
