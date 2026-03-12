@@ -18,6 +18,8 @@ func main() {
 	defer engine.Close()
 
 	engine.SetRegoV0(true)
+	// Raise the default col limit to 2000
+	engine.SetPolicyLengthConfig(regorus.PolicyLengthConfig{MaxCol: 2000, MaxFileBytes: 1048576, MaxLines: 20000})
 	elapsed1 := time.Since(t)
 	
 	

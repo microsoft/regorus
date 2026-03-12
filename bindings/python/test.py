@@ -10,6 +10,8 @@ if hasattr(sys.stdout, "reconfigure"):
 engine = regorus.Engine()
 
 engine.set_rego_v0(True)
+# Raise the default col limit to 2000
+engine.set_policy_length_config(max_col=2000, max_file_bytes=1048576, max_lines=20000)
 
 # Load policies
 pkg = engine.add_policy_from_file('../../tests/aci/framework.rego')

@@ -1,18 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use crate::utils::limits::{DEFAULT_MAX_COL, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_LINES};
 // SAFETY: Arithmetic operations in this module are safe by design:
-// 1. MAX_COL=1024 prevents column counter overflow (enforced by advance_col)
-// 2. File size is capped by MAX_FILE_BYTES at load time
-// 3. Total line count is capped by MAX_LINES at load time
+// 1. Column width is bounded by a configurable max_col limit (default DEFAULT_MAX_COL=1024,
+//    overridable via Engine::set_policy_length_config) and enforced by advance_col
+// 2. File size is bounded by a configurable limit (default DEFAULT_MAX_FILE_BYTES) at load time
+// 3. Total line count is bounded by a configurable limit (default DEFAULT_MAX_LINES) at load time
 // 4. State-modifying operations (advance_col/advance_line) use checked arithmetic
 // 5. Remaining arithmetic is for bounded calculations (spans, error reporting)
-//    where operands are constrained by MAX_COL and file size/line limits
+//    where operands are constrained by the column width and file size/line limits
 // 6. Defensive saturating_sub used for subtractions that could theoretically underflow
 use crate::*;
 use core::cmp;
 use core::fmt::{self, Debug, Formatter};
 use core::iter::Peekable;
+use core::num::{NonZeroU32, NonZeroUsize};
 use core::ops::Range;
 use core::str::CharIndices;
 
@@ -24,14 +27,6 @@ use anyhow::{anyhow, bail, Result};
 fn check_memory_limit() -> Result<()> {
     crate::utils::limits::check_memory_limit_if_needed().map_err(|err| anyhow!(err))
 }
-
-// Maximum column width to prevent overflow and catch pathological input.
-// Lines exceeding this are likely minified/generated code or attack attempts.
-const MAX_COL: u32 = 1024;
-// Maximum allowed policy file size in bytes (1 MiB) to reject pathological inputs early.
-const MAX_FILE_BYTES: usize = 1_048_576;
-// Maximum allowed number of lines to avoid pathological or minified inputs.
-const MAX_LINES: usize = 20_000;
 
 #[inline]
 fn usize_to_u32(value: usize) -> Result<u32> {
@@ -172,8 +167,17 @@ impl cmp::Ord for SourceStr {
 
 impl Source {
     pub fn from_contents(file: String, contents: String) -> Result<Source> {
-        if contents.len() > MAX_FILE_BYTES {
-            bail!("{file} exceeds maximum allowed policy file size {MAX_FILE_BYTES} bytes");
+        Self::from_contents_with_limits(file, contents, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_LINES)
+    }
+
+    pub fn from_contents_with_limits(
+        file: String,
+        contents: String,
+        max_file_bytes: NonZeroUsize,
+        max_lines: NonZeroUsize,
+    ) -> Result<Source> {
+        if contents.len() > max_file_bytes.get() {
+            bail!("{file} exceeds maximum allowed policy file size {max_file_bytes} bytes",);
         }
         let mut lines = vec![];
         let mut prev_ch = ' ';
@@ -186,8 +190,8 @@ impl Source {
                     '\r' => prev_pos,
                     _ => i_u32,
                 };
-                if lines.len() >= MAX_LINES {
-                    bail!("{file} exceeds maximum allowed line count {MAX_LINES}");
+                if lines.len() >= max_lines.get() {
+                    bail!("{file} exceeds maximum allowed line count {max_lines}",);
                 }
                 lines.push((start, end));
                 // Enforce the current global memory cap after recording each line span.
@@ -200,8 +204,8 @@ impl Source {
 
         let start_usize = usize::try_from(start).unwrap_or(usize::MAX);
         if start_usize < contents.len() {
-            if lines.len() >= MAX_LINES {
-                bail!("{file} exceeds maximum allowed line count {MAX_LINES}");
+            if lines.len() >= max_lines.get() {
+                bail!("{file} exceeds maximum allowed line count {max_lines}",);
             }
             lines.push((start, usize_to_u32(contents.len())?));
             // Enforce the global limit after appending the final line span.
@@ -212,8 +216,8 @@ impl Source {
             check_memory_limit()?;
         } else {
             let s = usize_to_u32(contents.len().saturating_sub(1))?;
-            if lines.len() >= MAX_LINES {
-                bail!("{file} exceeds maximum allowed line count {MAX_LINES}");
+            if lines.len() >= max_lines.get() {
+                bail!("{file} exceeds maximum allowed line count {max_lines}",);
             }
             lines.push((s, s));
             // Enforce the global limit after storing the trailing span.
@@ -230,12 +234,26 @@ impl Source {
 
     #[cfg(feature = "std")]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Source> {
+        Self::from_file_with_limits(path, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_LINES)
+    }
+
+    #[cfg(feature = "std")]
+    pub fn from_file_with_limits<P: AsRef<std::path::Path>>(
+        path: P,
+        max_file_bytes: NonZeroUsize,
+        max_lines: NonZeroUsize,
+    ) -> Result<Source> {
         let contents = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => bail!("Failed to read {}. {e}", path.as_ref().display()),
         };
         // TODO: retain path instead of converting to string
-        Self::from_contents(path.as_ref().to_string_lossy().to_string(), contents)
+        Self::from_contents_with_limits(
+            path.as_ref().to_string_lossy().to_string(),
+            contents,
+            max_file_bytes,
+            max_lines,
+        )
     }
 
     pub fn file(&self) -> &String {
@@ -370,6 +388,7 @@ pub struct Lexer<'source> {
     iter: Peekable<CharIndices<'source>>,
     line: u32,
     col: u32,
+    max_col: NonZeroU32,
     unknown_char_is_symbol: bool,
     allow_slash_star_escape: bool,
     comment_starts_with_double_slash: bool,
@@ -393,6 +412,7 @@ impl<'source> Lexer<'source> {
             iter: source.contents().char_indices().peekable(),
             line: 1,
             col: 1,
+            max_col: DEFAULT_MAX_COL,
             unknown_char_is_symbol: false,
             allow_slash_star_escape: false,
             comment_starts_with_double_slash: false,
@@ -420,6 +440,10 @@ impl<'source> Lexer<'source> {
         self.double_colon_token = b;
     }
 
+    pub const fn set_max_col(&mut self, max_col: NonZeroU32) {
+        self.max_col = max_col;
+    }
+
     #[cfg(feature = "azure-rbac")]
     pub const fn set_enable_rbac_tokens(&mut self, b: bool) {
         self.enable_rbac_tokens = b;
@@ -439,15 +463,16 @@ impl<'source> Lexer<'source> {
 
     #[inline]
     fn advance_col(&mut self, delta: u32) -> Result<()> {
+        let max_col = self.max_col.get();
         let new_col = self
             .col
             .checked_add(delta)
-            .filter(|&c| c <= MAX_COL)
+            .filter(|&c| c <= max_col)
             .ok_or_else(|| {
                 self.source.error(
                     self.line,
                     self.col,
-                    &format!("line exceeds maximum column width of {MAX_COL}"),
+                    &format!("line exceeds maximum column width of {max_col}"),
                 )
             })?;
         self.col = new_col;

@@ -11,6 +11,13 @@ int main() {
     if (r.status != Ok)
 	goto error;
 
+    // Raise the default col limit to 2000
+    RegorusPolicyLengthConfig len_config = { .max_col = 2000, .max_file_bytes = 1048576, .max_lines = 20000 };
+    r = regorus_engine_set_policy_length_config(engine, len_config);
+    if (r.status != Ok)
+	goto error;
+    regorus_result_drop(r);
+
     // Load policies.
     r = regorus_engine_add_policy_from_file(engine, "../../../tests/aci/framework.rego");
     if (r.status != Ok)

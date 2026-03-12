@@ -270,3 +270,90 @@ fn file_more_than_64_kb_size() -> Result<()> {
     assert_eq!(count, 8789);
     Ok(())
 }
+
+#[test]
+fn default_limits_reject_oversized_file() {
+    let big = "x".repeat(1_048_577);
+    let err = Source::from_contents("big.rego".into(), big).unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("exceeds maximum allowed policy file size"));
+}
+
+#[test]
+fn custom_limits_accept_larger_file() {
+    use core::num::NonZeroUsize;
+
+    let big = "x".repeat(1_048_577);
+    assert!(Source::from_contents_with_limits(
+        "big.rego".into(),
+        big,
+        NonZeroUsize::new(2_097_152).unwrap(),
+        NonZeroUsize::new(1).unwrap()
+    )
+    .is_ok());
+}
+
+#[test]
+fn custom_limits_reject_line_count() {
+    use core::num::NonZeroUsize;
+
+    let err = Source::from_contents_with_limits(
+        "lines.rego".into(),
+        "x\n".repeat(6),
+        NonZeroUsize::new(100).unwrap(),
+        NonZeroUsize::new(5).unwrap(),
+    )
+    .unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("exceeds maximum allowed line count"));
+}
+
+#[test]
+fn engine_policy_length_config_flows_through() -> Result<()> {
+    use core::num::NonZeroUsize;
+    use regorus::{Engine, PolicyLengthConfig};
+
+    let mut engine = Engine::new();
+    engine.set_policy_length_config(PolicyLengthConfig {
+        max_file_bytes: NonZeroUsize::new(10).unwrap(),
+        ..Default::default()
+    });
+
+    let err = engine
+        .add_policy("test.rego".into(), "package test".into())
+        .unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("exceeds maximum allowed policy file size"));
+
+    engine.clear_policy_length_config();
+    engine.add_policy("test.rego".into(), "package test".into())?;
+    Ok(())
+}
+
+#[test]
+fn custom_max_col_allows_wide_line() -> Result<()> {
+    use core::num::NonZeroU32;
+    use regorus::{Engine, PolicyLengthConfig};
+
+    // A line wider than the default 1024 columns.
+    let wide = format!("package test\na := \"{}\"", "x".repeat(2000));
+
+    let mut engine = Engine::new();
+
+    // Should fail with default limits.
+    let err = engine
+        .add_policy("wide.rego".into(), wide.clone())
+        .unwrap_err();
+    assert!(err.to_string().contains("maximum column width"));
+
+    // Should succeed with a raised max_col.
+    engine.set_policy_length_config(PolicyLengthConfig {
+        max_col: NonZeroU32::new(4096).unwrap(),
+        ..Default::default()
+    });
+    engine.add_policy("wide.rego".into(), wide)?;
+    Ok(())
+}

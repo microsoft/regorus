@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 use anyhow::{anyhow, Result};
+use core::num::{NonZeroU32, NonZeroUsize};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::*;
@@ -390,6 +391,35 @@ impl Engine {
 
         self.engine
             .add_extension(path, nargs, Box::new(extension_impl))
+    }
+
+    /// Set the policy length limits used when loading policies.
+    ///
+    /// * `max_col`: Maximum column width per line.
+    /// * `max_file_bytes`: Maximum policy file size in bytes.
+    /// * `max_lines`: Maximum number of lines per policy file.
+    #[pyo3(signature = (*, max_col, max_file_bytes, max_lines))]
+    pub fn set_policy_length_config(
+        &mut self,
+        max_col: u32,
+        max_file_bytes: usize,
+        max_lines: usize,
+    ) -> Result<()> {
+        self.engine
+            .set_policy_length_config(::regorus::PolicyLengthConfig {
+                max_col: NonZeroU32::new(max_col)
+                    .ok_or_else(|| anyhow!("max_col must be non-zero"))?,
+                max_file_bytes: NonZeroUsize::new(max_file_bytes)
+                    .ok_or_else(|| anyhow!("max_file_bytes must be non-zero"))?,
+                max_lines: NonZeroUsize::new(max_lines)
+                    .ok_or_else(|| anyhow!("max_lines must be non-zero"))?,
+            });
+        Ok(())
+    }
+
+    /// Clear the policy length configuration, reverting to defaults.
+    pub fn clear_policy_length_config(&mut self) {
+        self.engine.clear_policy_length_config();
     }
 
     /// Enable code coverage

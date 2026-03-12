@@ -3,6 +3,7 @@
 
 #![allow(non_snake_case)]
 
+use core::num::{NonZeroU32, NonZeroUsize};
 use regorus::languages::rego::compiler::Compiler;
 use regorus::rvm::program::{
     generate_assembly_listing, generate_tabular_assembly_listing, AssemblyListingConfig,
@@ -24,6 +25,14 @@ pub struct Engine {
 struct ModuleSpec {
     id: String,
     content: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PolicyLengthSpec {
+    max_col: u32,
+    max_file_bytes: usize,
+    max_lines: usize,
 }
 
 #[wasm_bindgen]
@@ -181,6 +190,29 @@ impl Engine {
     /// * `b`: Whether to enable gathering prints or not.
     pub fn setGatherPrints(&mut self, b: bool) {
         self.engine.set_gather_prints(b)
+    }
+
+    /// Set the policy length limits used when loading policies.
+    ///
+    /// Accepts a JS object: `{ maxCol, maxFileBytes, maxLines }`.
+    pub fn setPolicyLengthConfig(&mut self, config: JsValue) -> Result<(), JsValue> {
+        let spec: PolicyLengthSpec =
+            serde_wasm_bindgen::from_value(config).map_err(error_to_jsvalue)?;
+        self.engine
+            .set_policy_length_config(regorus::PolicyLengthConfig {
+                max_col: NonZeroU32::new(spec.max_col)
+                    .ok_or_else(|| JsValue::from_str("maxCol must be non-zero"))?,
+                max_file_bytes: NonZeroUsize::new(spec.max_file_bytes)
+                    .ok_or_else(|| JsValue::from_str("maxFileBytes must be non-zero"))?,
+                max_lines: NonZeroUsize::new(spec.max_lines)
+                    .ok_or_else(|| JsValue::from_str("maxLines must be non-zero"))?,
+            });
+        Ok(())
+    }
+
+    /// Clear the policy length configuration, reverting to defaults.
+    pub fn clearPolicyLengthConfig(&mut self) {
+        self.engine.clear_policy_length_config();
     }
 
     /// Take the gathered output of print statements.

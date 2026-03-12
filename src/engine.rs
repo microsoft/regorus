@@ -9,6 +9,7 @@ use crate::lexer::*;
 use crate::parser::*;
 use crate::scheduler::*;
 use crate::utils::gather_functions;
+use crate::utils::limits::PolicyLengthConfig;
 use crate::utils::limits::{self, fallback_execution_timer_config, ExecutionTimerConfig};
 use crate::value::*;
 use crate::*;
@@ -26,6 +27,7 @@ pub struct Engine {
     prepared: bool,
     rego_v1: bool,
     execution_timer_config: Option<ExecutionTimerConfig>,
+    policy_length_config: PolicyLengthConfig,
 }
 
 #[cfg(feature = "azure_policy")]
@@ -83,6 +85,7 @@ impl Engine {
             prepared: false,
             rego_v1: true,
             execution_timer_config: None,
+            policy_length_config: PolicyLengthConfig::default(),
         };
         engine.apply_effective_execution_timer_config();
         engine
@@ -144,6 +147,31 @@ impl Engine {
         self.interpreter.set_execution_timer_config(Some(config));
     }
 
+    /// Set the policy length limits used when loading policies.
+    ///
+    /// Controls maximum file size, line count, and column width for policy files.
+    /// Engines start with the default limits defined by [`PolicyLengthConfig::default`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::{NonZeroU32, NonZeroUsize};
+    /// use regorus::utils::limits::PolicyLengthConfig;
+    /// use regorus::Engine;
+    ///
+    /// let mut engine = Engine::new();
+    /// let config = PolicyLengthConfig {
+    ///     max_col: NonZeroU32::new(2048).unwrap(),
+    ///     max_file_bytes: NonZeroUsize::new(2_097_152).unwrap(),
+    ///     max_lines: NonZeroUsize::new(40_000).unwrap(),
+    /// };
+    ///
+    /// engine.set_policy_length_config(config);
+    /// ```
+    pub const fn set_policy_length_config(&mut self, config: PolicyLengthConfig) {
+        self.policy_length_config = config;
+    }
+
     /// Clear the engine-specific execution timer configuration, falling back to the global value.
     ///
     /// # Examples
@@ -169,6 +197,20 @@ impl Engine {
     pub fn clear_execution_timer_config(&mut self) {
         self.execution_timer_config = None;
         self.apply_effective_execution_timer_config();
+    }
+
+    /// Clear the policy length configuration, reverting to the defaults.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regorus::Engine;
+    ///
+    /// let mut engine = Engine::new();
+    /// engine.clear_policy_length_config();
+    /// ```
+    pub fn clear_policy_length_config(&mut self) {
+        self.policy_length_config = PolicyLengthConfig::default();
     }
 
     /// Add a policy.
@@ -198,7 +240,12 @@ impl Engine {
     /// ```
     ///
     pub fn add_policy(&mut self, path: String, rego: String) -> Result<String> {
-        let source = Source::from_contents(path, rego)?;
+        let source = Source::from_contents_with_limits(
+            path,
+            rego,
+            self.policy_length_config.max_file_bytes,
+            self.policy_length_config.max_lines,
+        )?;
         let mut parser = self.make_parser(&source)?;
         let module = Ref::new(parser.parse()?);
         limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
@@ -232,7 +279,11 @@ impl Engine {
     #[cfg(feature = "std")]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     pub fn add_policy_from_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<String> {
-        let source = Source::from_file(path)?;
+        let source = Source::from_file_with_limits(
+            path,
+            self.policy_length_config.max_file_bytes,
+            self.policy_length_config.max_lines,
+        )?;
         let mut parser = self.make_parser(&source)?;
         let module = Ref::new(parser.parse()?);
         limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
@@ -918,15 +969,24 @@ impl Engine {
 
     fn make_query(&mut self, query: String) -> Result<(NodeRef<Module>, NodeRef<Query>, Schedule)> {
         let mut query_module = {
-            let source = Source::from_contents(
+            let source = Source::from_contents_with_limits(
                 "<query_module.rego>".to_owned(),
                 "package __internal_query_module".to_owned(),
+                self.policy_length_config.max_file_bytes,
+                self.policy_length_config.max_lines,
             )?;
-            Parser::new(&source)?.parse()?
+            let mut parser = Parser::new(&source)?;
+            parser.set_max_col(self.policy_length_config.max_col);
+            parser.parse()?
         };
 
         // Parse the query.
-        let query_source = Source::from_contents("<query.rego>".to_string(), query)?;
+        let query_source = Source::from_contents_with_limits(
+            "<query.rego>".to_string(),
+            query,
+            self.policy_length_config.max_file_bytes,
+            self.policy_length_config.max_lines,
+        )?;
         let mut parser = self.make_parser(&query_source)?;
         let query_node = parser.parse_user_query()?;
         query_module.num_expressions = parser.num_expressions();
@@ -1506,6 +1566,7 @@ impl Engine {
 
     fn make_parser<'a>(&self, source: &'a Source) -> Result<Parser<'a>> {
         let mut parser = Parser::new(source)?;
+        parser.set_max_col(self.policy_length_config.max_col);
         if self.rego_v1 {
             parser.enable_rego_v1()?;
         }
@@ -1524,6 +1585,7 @@ impl Engine {
             rego_v1: true, // Value doesn't matter since this is used only for policy parsing
             prepared: true,
             execution_timer_config: None,
+            policy_length_config: PolicyLengthConfig::default(), // Compiled policies are already parsed, so these length limits are not used
         };
         engine.apply_effective_execution_timer_config();
         engine

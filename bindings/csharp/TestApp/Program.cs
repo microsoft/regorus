@@ -20,6 +20,8 @@ w.Restart();
 
 var engine = new Regorus.Engine();
 engine.SetRegoV0(true);
+// Raise the default col limit to 2000
+engine.SetPolicyLengthConfig(new Regorus.PolicyLengthConfig(maxCol: 2000, maxFileBytes: 1048576, maxLines: 20000));
 
 w.Stop();
 var newEngineTicks = w.ElapsedTicks;

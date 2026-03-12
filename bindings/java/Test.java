@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 import com.microsoft.regorus.Engine;
+import com.microsoft.regorus.PolicyLengthConfig;
 import com.microsoft.regorus.PolicyModule;
 import com.microsoft.regorus.Program;
 import com.microsoft.regorus.Rvm;
@@ -25,6 +26,9 @@ public class Test {
 
             // Enable coverage.
             engine.setEnableCoverage(true);
+
+            // Raise the default col limit to 2000
+            engine.setPolicyLengthConfig(new PolicyLengthConfig(2000, 1048576, 20000));
 
             // Evaluate rule.
             String valueJson = engine.evalRule("data.test.message");

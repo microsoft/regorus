@@ -9,6 +9,9 @@ var engine = new regorus.Engine();
 // Enable code coverage
 engine.setEnableCoverage(true);
 
+// Raise the default col limit to 2000
+engine.setPolicyLengthConfig({ maxCol: 2000, maxFileBytes: 1048576, maxLines: 20000 });
+
 // Add Rego policy.
 var pkg = engine.addPolicy(
     // Associate this file name with policy

@@ -4,7 +4,7 @@
 use crate::common::{to_regorus_result, RegorusResult, RegorusStatus};
 use alloc::format;
 use anyhow::{anyhow, Result};
-use core::num::NonZeroU32;
+use core::num::{NonZeroU32, NonZeroUsize};
 use core::time::Duration;
 use regorus::utils::limits::{self, ExecutionTimerConfig};
 
@@ -154,6 +154,31 @@ impl RegorusExecutionTimerConfig {
         Ok(ExecutionTimerConfig {
             limit,
             check_interval,
+        })
+    }
+}
+
+/// FFI representation of [`regorus::PolicyLengthConfig`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct RegorusPolicyLengthConfig {
+    /// Maximum column width per line (must be non-zero).
+    pub max_col: u32,
+    /// Maximum policy file size in bytes (must be non-zero).
+    pub max_file_bytes: usize,
+    /// Maximum number of lines per policy file (must be non-zero).
+    pub max_lines: usize,
+}
+
+impl RegorusPolicyLengthConfig {
+    pub fn to_policy_length_config(self) -> Result<regorus::PolicyLengthConfig> {
+        Ok(regorus::PolicyLengthConfig {
+            max_col: NonZeroU32::new(self.max_col)
+                .ok_or_else(|| anyhow!("max_col must be non-zero"))?,
+            max_file_bytes: NonZeroUsize::new(self.max_file_bytes)
+                .ok_or_else(|| anyhow!("max_file_bytes must be non-zero"))?,
+            max_lines: NonZeroUsize::new(self.max_lines)
+                .ok_or_else(|| anyhow!("max_lines must be non-zero"))?,
         })
     }
 }

@@ -82,6 +82,24 @@ namespace Regorus
                 CheckAndDropResult(Regorus.Internal.API.regorus_engine_clear_execution_timer_config((Regorus.Internal.RegorusEngine*)enginePtr));
             });
         }
+
+        public void SetPolicyLengthConfig(PolicyLengthConfig config)
+        {
+            var nativeConfig = config.ToNative();
+            UseHandle(enginePtr =>
+            {
+                CheckAndDropResult(Regorus.Internal.API.regorus_engine_set_policy_length_config((Regorus.Internal.RegorusEngine*)enginePtr, nativeConfig));
+            });
+        }
+
+        public void ClearPolicyLengthConfig()
+        {
+            UseHandle(enginePtr =>
+            {
+                CheckAndDropResult(Regorus.Internal.API.regorus_engine_clear_policy_length_config((Regorus.Internal.RegorusEngine*)enginePtr));
+            });
+        }
+
         public string? AddPolicy(string path, string rego)
         {
             return Utf8Marshaller.WithUtf8(path, pathPtr =>

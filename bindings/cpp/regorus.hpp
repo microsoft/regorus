@@ -131,7 +131,15 @@ namespace regorus {
 	Result get_coverage_report_pretty() {
             return Result(regorus_engine_get_coverage_report_pretty(engine));
 	}
-	
+
+	Result set_policy_length_config(RegorusPolicyLengthConfig config) {
+	    return Result(regorus_engine_set_policy_length_config(engine, config));
+	}
+
+	Result clear_policy_length_config() {
+	    return Result(regorus_engine_clear_policy_length_config(engine));
+	}
+
 	~Engine() {
 	    regorus_engine_drop(engine);
 	}
