@@ -962,6 +962,7 @@ version = "0.9.1"
 dependencies = [
  "magnus",
  "regorus",
+ "serde",
  "serde_json",
  "serde_magnus",
 ]

@@ -428,6 +428,18 @@ namespace Regorus.Internal
         [DllImport(LibraryName, EntryPoint = "regorus_engine_clear_execution_timer_config", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_engine_clear_execution_timer_config(RegorusEngine* engine);
 
+        /// <summary>
+        /// Set the policy length limits for a specific engine instance.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_set_policy_length_config", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_set_policy_length_config(RegorusEngine* engine, RegorusPolicyLengthConfig config);
+
+        /// <summary>
+        /// Clear the policy length configuration for a specific engine instance.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_clear_policy_length_config", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_clear_policy_length_config(RegorusEngine* engine);
+
         #endregion
 
         #region Execution Timer Global Methods
@@ -770,6 +782,17 @@ namespace Regorus.Internal
     {
         public ulong limit_ns;
         public uint check_interval;
+    }
+
+    /// <summary>
+    /// FFI representation of the policy length configuration.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct RegorusPolicyLengthConfig
+    {
+        public uint max_col;
+        public UIntPtr max_file_bytes;
+        public UIntPtr max_lines;
     }
 
     /// <summary>

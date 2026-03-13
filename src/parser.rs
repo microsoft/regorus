@@ -21,6 +21,7 @@ use crate::value::*;
 use crate::*;
 
 use alloc::collections::BTreeMap;
+use core::num::NonZeroU32;
 use core::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
@@ -196,6 +197,10 @@ impl<'source> Parser<'source> {
                 Ok(())
             }
         }
+    }
+
+    pub fn set_max_col(&mut self, max_col: NonZeroU32) {
+        self.lexer.set_max_col(max_col);
     }
 
     pub fn get_path_ref_components_into(refr: &Ref<Expr>, comps: &mut Vec<Span>) -> Result<()> {

@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use anyhow::Result;
+use core::num::{NonZeroU32, NonZeroUsize};
 use jni::objects::{JBooleanArray, JByteArray, JClass, JObject, JObjectArray, JString};
 use jni::sys::{jboolean, jbooleanArray, jbyteArray, jlong, jobjectArray, jstring};
 use jni::JNIEnv;
@@ -363,6 +364,39 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_getAstAsJson(
         Ok(val) => val,
         Err(_) => JObject::null().into_raw(),
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetPolicyLengthConfig(
+    env: JNIEnv,
+    _class: JClass,
+    engine_ptr: jlong,
+    max_col: u32,
+    max_file_bytes: jlong,
+    max_lines: jlong,
+) {
+    let _ = throw_err(env, |_env| {
+        let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
+        engine.set_policy_length_config(regorus::PolicyLengthConfig {
+            max_col: NonZeroU32::new(max_col)
+                .ok_or_else(|| anyhow::anyhow!("maxCol must be non-zero"))?,
+            max_file_bytes: NonZeroUsize::new(max_file_bytes as usize)
+                .ok_or_else(|| anyhow::anyhow!("maxFileBytes must be non-zero"))?,
+            max_lines: NonZeroUsize::new(max_lines as usize)
+                .ok_or_else(|| anyhow::anyhow!("maxLines must be non-zero"))?,
+        });
+        Ok(())
+    });
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClearPolicyLengthConfig(
+    _env: JNIEnv,
+    _class: JClass,
+    engine_ptr: jlong,
+) {
+    let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
+    engine.clear_policy_length_config();
 }
 
 #[no_mangle]

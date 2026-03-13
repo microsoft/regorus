@@ -183,6 +183,11 @@ class TestRegorus < Minitest::Test
     assert_equal ["<query.rego>:1: Hello"], @engine.take_prints
   end
 
+  def test_set_policy_length_config
+    @engine.set_policy_length_config({ max_col: 2000, max_file_bytes: 1048576, max_lines: 20000 })
+    @engine.clear_policy_length_config
+  end
+
   def alice_results
     {
       result: [

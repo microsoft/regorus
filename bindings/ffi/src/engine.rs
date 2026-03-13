@@ -6,6 +6,7 @@ use crate::common::{
 };
 use crate::compiled_policy::RegorusCompiledPolicy;
 use crate::limits::RegorusExecutionTimerConfig;
+use crate::limits::RegorusPolicyLengthConfig;
 use crate::lock::{new_handle, read, try_read, try_write, Handle, ReadGuard, WriteGuard};
 use crate::panic_guard::with_unwind_guard;
 use alloc::boxed::Box;
@@ -489,6 +490,37 @@ pub extern "C" fn regorus_engine_clear_execution_timer_config(
         guard.clear_execution_timer_config();
         Ok(())
     }())
+}
+
+/// Set the policy length limits used when loading policies.
+#[no_mangle]
+pub extern "C" fn regorus_engine_set_policy_length_config(
+    engine: *mut RegorusEngine,
+    config: RegorusPolicyLengthConfig,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        to_regorus_result(|| -> Result<()> {
+            let engine = to_ref(engine)?;
+            let mut guard = engine.try_write()?;
+            guard.set_policy_length_config(config.to_policy_length_config()?);
+            Ok(())
+        }())
+    })
+}
+
+/// Clear the policy length configuration, reverting to defaults.
+#[no_mangle]
+pub extern "C" fn regorus_engine_clear_policy_length_config(
+    engine: *mut RegorusEngine,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        to_regorus_result(|| -> Result<()> {
+            let engine = to_ref(engine)?;
+            let mut guard = engine.try_write()?;
+            guard.clear_policy_length_config();
+            Ok(())
+        }())
+    })
 }
 
 /// Get pretty printed coverage report.

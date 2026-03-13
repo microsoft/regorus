@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 
 mod error;
+mod length;
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 mod memory;
 mod time;
@@ -26,6 +27,9 @@ pub use time::{
     fallback_execution_timer_config, monotonic_now, set_fallback_execution_timer_config,
     ExecutionTimer, ExecutionTimerConfig, TimeSource,
 };
+
+pub use length::PolicyLengthConfig;
+pub(crate) use length::{DEFAULT_MAX_COL, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_LINES};
 
 #[cfg(test)]
 pub use time::acquire_limits_test_lock;

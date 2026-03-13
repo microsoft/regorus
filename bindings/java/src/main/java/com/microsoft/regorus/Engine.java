@@ -39,6 +39,8 @@ public class Engine implements AutoCloseable, Cloneable {
     private static native void nativeClearCoverageData(long enginePtr);
     private static native void nativeSetGatherPrints(long enginePtr, boolean b);
     private static native String nativeTakePrints(long enginePtr);
+    private static native void nativeSetPolicyLengthConfig(long enginePtr, int maxCol, long maxFileBytes, long maxLines);
+    private static native void nativeClearPolicyLengthConfig(long enginePtr);
     private static native void nativeDestroyEngine(long enginePtr);
 
     // Pointer to Engine allocated on Rust's heap, all native methods works on
@@ -257,6 +259,22 @@ public class Engine implements AutoCloseable, Cloneable {
      */
     public String takePrints() {
         return nativeTakePrints(enginePtr);
+    }
+
+    /**
+     * Set the policy length limits used when loading policies.
+     *
+     * @param config Policy length configuration.
+     */
+    public void setPolicyLengthConfig(PolicyLengthConfig config) {
+        nativeSetPolicyLengthConfig(enginePtr, config.maxCol, config.maxFileBytes, config.maxLines);
+    }
+
+    /**
+     * Clear the policy length configuration, reverting to defaults.
+     */
+    public void clearPolicyLengthConfig() {
+        nativeClearPolicyLengthConfig(enginePtr);
     }
 
     long getPtr() {

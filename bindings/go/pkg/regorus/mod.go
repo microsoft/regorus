@@ -214,3 +214,32 @@ func (e *Engine) TakePrints() (string, error) {
 
 	return C.GoString(result.output), nil
 }
+
+type PolicyLengthConfig struct {
+	MaxCol       uint32
+	MaxFileBytes uint
+	MaxLines     uint
+}
+
+func (e *Engine) SetPolicyLengthConfig(config PolicyLengthConfig) error {
+	c := C.RegorusPolicyLengthConfig{
+		max_col:       C.uint32_t(config.MaxCol),
+		max_file_bytes: C.size_t(config.MaxFileBytes),
+		max_lines:      C.size_t(config.MaxLines),
+	}
+	result := C.regorus_engine_set_policy_length_config(e.e, c)
+	defer C.regorus_result_drop(result)
+	if result.status != C.Ok {
+		return fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+	return nil
+}
+
+func (e *Engine) ClearPolicyLengthConfig() error {
+	result := C.regorus_engine_clear_policy_length_config(e.e)
+	defer C.regorus_result_drop(result)
+	if result.status != C.Ok {
+		return fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+	return nil
+}

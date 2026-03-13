@@ -1,9 +1,18 @@
+use core::num::{NonZeroU32, NonZeroUsize};
 use magnus::{Error, Ruby, exception::runtime_error, method, module, prelude::*};
 use regorus::Engine as RegorusEngine;
+use serde::Deserialize;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 
 // `Value` exists under magnus, regorus, and serde_json, so be explicit
+
+#[derive(Deserialize)]
+struct PolicyLengthSpec {
+    max_col: u32,
+    max_file_bytes: usize,
+    max_lines: usize,
+}
 
 #[derive(Default)]
 #[magnus::wrap(class = "Regorus::Engine")]
@@ -55,15 +64,17 @@ impl Engine {
             .map_err(|e| Error::new(runtime_error(), format!("Failed to add policy: {e}")))
     }
 
-    fn add_data(&self, ruby_hash: magnus::RHash) -> Result<(), Error> {
-        let data_value: regorus::Value = serde_magnus::deserialize(ruby_hash).map_err(|e| {
-            Error::new(
-                runtime_error(),
-                format!("Failed to deserialize Ruby value: {e}"),
-            )
-        })?;
+    fn add_data(ruby: &Ruby, rb_self: &Self, ruby_hash: magnus::RHash) -> Result<(), Error> {
+        let data_value: regorus::Value =
+            serde_magnus::deserialize(ruby, ruby_hash).map_err(|e| {
+                Error::new(
+                    runtime_error(),
+                    format!("Failed to deserialize Ruby value: {e}"),
+                )
+            })?;
 
-        self.engine
+        rb_self
+            .engine
             .borrow_mut()
             .add_data(data_value)
             .map_err(|e| Error::new(runtime_error(), format!("Failed to add data: {e}")))
@@ -111,15 +122,16 @@ impl Engine {
             .map_err(|e| Error::new(runtime_error(), format!("Failed to get policies: {e}")))
     }
 
-    fn set_input(&self, ruby_hash: magnus::RHash) -> Result<(), Error> {
-        let input_value: regorus::Value = serde_magnus::deserialize(ruby_hash).map_err(|e| {
-            Error::new(
-                runtime_error(),
-                format!("Failed to deserialize Ruby value: {e}"),
-            )
-        })?;
+    fn set_input(ruby: &Ruby, rb_self: &Self, ruby_hash: magnus::RHash) -> Result<(), Error> {
+        let input_value: regorus::Value =
+            serde_magnus::deserialize(ruby, ruby_hash).map_err(|e| {
+                Error::new(
+                    runtime_error(),
+                    format!("Failed to deserialize Ruby value: {e}"),
+                )
+            })?;
 
-        self.engine.borrow_mut().set_input(input_value);
+        rb_self.engine.borrow_mut().set_input(input_value);
         Ok(())
     }
 
@@ -142,14 +154,14 @@ impl Engine {
         Ok(())
     }
 
-    fn eval_query(&self, query: String) -> Result<magnus::Value, Error> {
-        let results = self
+    fn eval_query(ruby: &Ruby, rb_self: &Self, query: String) -> Result<magnus::Value, Error> {
+        let results = rb_self
             .engine
             .borrow_mut()
             .eval_query(query, false)
             .map_err(|e| Error::new(runtime_error(), format!("Failed to evaluate query: {e}")))?;
 
-        serde_magnus::serialize(&results).map_err(|e| {
+        serde_magnus::serialize(ruby, &results).map_err(|e| {
             Error::new(
                 runtime_error(),
                 format!("Failed to serailzie query results: {e}"),
@@ -177,15 +189,19 @@ impl Engine {
         })
     }
 
-    fn eval_rule(&self, query: String) -> Result<Option<magnus::Value>, Error> {
+    fn eval_rule(
+        ruby: &Ruby,
+        rb_self: &Self,
+        query: String,
+    ) -> Result<Option<magnus::Value>, Error> {
         let result =
-            self.engine.borrow_mut().eval_rule(query).map_err(|e| {
+            rb_self.engine.borrow_mut().eval_rule(query).map_err(|e| {
                 Error::new(runtime_error(), format!("Failed to evaluate rule: {e}"))
             })?;
 
         match result {
-            regorus::Value::Undefined => Ok(None), // Convert undefined to Ruby's nil
-            _ => serde_magnus::serialize(&result) // Serialize other results normally
+            regorus::Value::Undefined => Ok(None),
+            _ => serde_magnus::serialize(ruby, &result)
                 .map(Some)
                 .map_err(|e| {
                     magnus::Error::new(
@@ -280,6 +296,34 @@ impl Engine {
         })
     }
 
+    fn set_policy_length_config(
+        ruby: &Ruby,
+        rb_self: &Self,
+        hash: magnus::RHash,
+    ) -> Result<(), Error> {
+        let spec: PolicyLengthSpec = serde_magnus::deserialize(ruby, hash).map_err(|e| {
+            Error::new(
+                runtime_error(),
+                format!("Failed to deserialize policy length config: {e}"),
+            )
+        })?;
+        let config = regorus::PolicyLengthConfig {
+            max_col: NonZeroU32::new(spec.max_col)
+                .ok_or_else(|| Error::new(runtime_error(), "max_col must be non-zero"))?,
+            max_file_bytes: NonZeroUsize::new(spec.max_file_bytes)
+                .ok_or_else(|| Error::new(runtime_error(), "max_file_bytes must be non-zero"))?,
+            max_lines: NonZeroUsize::new(spec.max_lines)
+                .ok_or_else(|| Error::new(runtime_error(), "max_lines must be non-zero"))?,
+        };
+        rb_self.engine.borrow_mut().set_policy_length_config(config);
+        Ok(())
+    }
+
+    fn clear_policy_length_config(&self) -> Result<(), Error> {
+        self.engine.borrow_mut().clear_policy_length_config();
+        Ok(())
+    }
+
     #[cfg(feature = "ast")]
     fn get_ast_as_json(&self) -> Result<String, Error> {
         self.engine
@@ -360,6 +404,16 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     // print statements
     engine_class.define_method("set_gather_prints", method!(Engine::set_gather_prints, 1))?;
     engine_class.define_method("take_prints", method!(Engine::take_prints, 0))?;
+
+    // policy length limits
+    engine_class.define_method(
+        "set_policy_length_config",
+        method!(Engine::set_policy_length_config, 1),
+    )?;
+    engine_class.define_method(
+        "clear_policy_length_config",
+        method!(Engine::clear_policy_length_config, 0),
+    )?;
 
     // ast
     engine_class.define_method("get_ast_as_json", method!(Engine::get_ast_as_json, 0))?;
