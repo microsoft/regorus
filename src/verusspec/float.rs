@@ -14,6 +14,10 @@
 
 #[cfg(verus_keep_ghost)]
 use vstd::float::*;
+#[cfg(verus_keep_ghost)]
+use vstd::std_specs::cmp::PartialEqIs;
+#[cfg(verus_keep_ghost)]
+use vstd::std_specs::cmp::PartialOrdIs;
 use vstd::prelude::*;
 
 verus! {
@@ -26,6 +30,14 @@ pub axiom fn axiom_f64_obeys_eq_spec()
 pub axiom fn axiom_f64_obeys_partial_cmp_spec()
     ensures
         <f64 as vstd::std_specs::cmp::PartialOrdSpec>::obeys_partial_cmp_spec(),
+;
+
+pub axiom fn axiom_f64_comparisons_match_ieee()
+    ensures
+        forall|f1: f64, f2: f64| #[trigger] f1.ieee_lt(f2) <==> f1.is_lt(&f2),
+        forall|f1: f64, f2: f64| #[trigger] f1.ieee_le(f2) <==> f1.is_le(&f2),
+        forall|f1: f64, f2: f64| #[trigger] f1.ieee_gt(f2) <==> f1.is_gt(&f2),
+        forall|f1: f64, f2: f64| #[trigger] f1.ieee_ge(f2) <==> f1.is_ge(&f2),
 ;
 
 pub axiom fn axiom_f64_ops_deterministic()

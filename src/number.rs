@@ -90,10 +90,10 @@ pub open spec fn float_to_small_int(value: f64) -> Option<int>
 {
     if !value.is_finite_spec() ||
        !spec_f64_fract(value).eq_spec(&0.0f64) ||
-       spec_f64_abs(value).is_gt(&9_007_199_254_740_992.0) {
+       spec_f64_abs(value) > 9_007_199_254_740_992.0 {
         None
     }
-    else if value.is_ge(&0.0) {
+    else if value >= 0.0 {
         if ieee_float_cast::<u64, f64>(ieee_float_cast::<f64, u64>(value)).eq_spec(&value) {
             Some(ieee_float_cast::<f64, u64>(value) as int)
         }
@@ -285,6 +285,7 @@ impl Number {
             axiom_f64_obeys_eq_spec();
             axiom_f64_obeys_partial_cmp_spec();
             axiom_f64_ops_deterministic();
+            axiom_f64_comparisons_match_ieee();
         }
 
         if !value.is_finite() || value.fract() != 0.0 {
