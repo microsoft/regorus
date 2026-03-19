@@ -12,9 +12,6 @@
     clippy::pattern_type_mismatch
 )]
 
-#![cfg_attr(verus_keep_ghost, feature(proc_macro_hygiene))]
-#![cfg_attr(verus_keep_ghost, feature(stmt_expr_attributes))]
-
 use alloc::format;
 use alloc::string::{String, ToString};
 use core::cmp::Ordering;
@@ -30,13 +27,13 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use serde::ser::Serializer;
 use serde::Serialize;
 
-use vstd::prelude::*;
 #[cfg(verus_keep_ghost)]
 use vstd::float::*;
-#[cfg(verus_keep_ghost)]
-use vstd::std_specs::convert::*;
+use vstd::prelude::*;
 #[cfg(verus_keep_ghost)]
 use vstd::std_specs::cmp::*;
+#[cfg(verus_keep_ghost)]
+use vstd::std_specs::convert::*;
 
 use crate::*;
 
@@ -89,50 +86,68 @@ impl View for Number
     }
 }
 
-impl Number {
-    spec fn spec_float_to_small_int(value: f64) -> Option<int>
-    {
-        if !spec_f64_is_finite(value) ||
-           !spec_f64_fract(value).eq_spec(&0.0f64) ||
-           spec_f64_abs(value).partial_cmp_spec(&F64_SAFE_INTEGER) == Some(Ordering::Greater) {
-            None
-        }
-        else {
-            match value.partial_cmp_spec(&0.0) {
-                Some(Ordering::Greater) | Some(Ordering::Equal) =>
-                    if spec_u64_as_f64(spec_f64_as_u64(value)).eq_spec(&value) {
-                        Some(spec_f64_as_u64(value) as int)
-                    }
-                    else {
-                        None
-                    },
-                Some(Ordering::Less) | None =>
-                    if spec_i64_as_f64(spec_f64_as_i64(value)).eq_spec(&value) {
-                        Some(spec_f64_as_i64(value) as int)
-                    }
-                    else {
-                        None
-                    },
-            }
-        }
+pub open spec fn float_to_small_int_ensures(value: f64, result: Option<int>) -> bool
+{
+    if !value.is_finite_spec() ||
+       !spec_f64_fract(value).eq_spec(&0.0f64) ||
+       spec_f64_abs(value).partial_cmp_spec(&9_007_199_254_740_992.0) == Some(Ordering::Greater) {
+        result is None
     }
-
-
-    spec fn spec_to_f64_lossy(self: &Self) -> f64
-    {
-        match self {
-            Number::UInt(v) => spec_u64_as_f64(*v),
-            Number::Int(v) => spec_i64_as_f64(*v),
-            Number::Float(v) => *v,
-            Number::BigInt(v) => {
-                if let Some(f) = <BigInt as ToPrimitiveSpec>::spec_to_f64(v) {
-                    f
-                } else if v@ < 0 {
-                    spec_f64_neg_infinity()
-                } else {
-                    spec_f64_infinity()
+    else {
+        match value.partial_cmp_spec(&0.0) {
+            Some(Ordering::Greater) | Some(Ordering::Equal) =>
+            {
+                exists|value_as_u64: u64, value_back_to_f64: f64| {
+                    &&& float_cast_spec::<f64, u64>(value, value_as_u64)
+                    &&& float_cast_spec::<u64, f64>(value_as_u64, value_back_to_f64)
+                    &&& if value_back_to_f64.eq_spec(&value) {
+                           result == Some(value_as_u64 as int)
+                       }
+                       else {
+                           result is None
+                       }
                 }
             },
+            Some(Ordering::Less) | None =>
+            {
+                exists|value_as_i64: i64, value_back_to_f64: f64| {
+                    &&& float_cast_spec::<f64, i64>(value, value_as_i64)
+                    &&& float_cast_spec::<i64, f64>(value_as_i64, value_back_to_f64)
+                    &&& if value_back_to_f64.eq_spec(&value) {
+                           result == Some(value_as_i64 as int)
+                       }
+                       else {
+                           result is None
+                       }
+                }
+            },
+        }
+    }
+}
+
+impl NumberView {
+    pub open spec fn to_f64_lossy_ensures(self: Self, f: f64) -> bool
+    {
+        match self {
+            NumberView::Integer(v) =>
+            {
+                ||| {
+                    &&& 0 <= v <= u64::MAX
+                    &&& float_cast_spec::<u64, f64>(v as u64, f)
+                }
+                ||| {
+                    &&& i64::MIN <= v <= i64::MAX
+                    &&& float_cast_spec::<i64, f64>(v as i64, f)
+                }
+                ||| exists|bi: BigInt| {
+                    &&& bi@ == v
+                    &&& match #[trigger] verusspec::bigint::ToPrimitiveSpec::spec_to_f64(&bi) {
+                        Some(x) => f == x,
+                        None => f == if v < 0 { spec_f64_neg_infinity() } else { spec_f64_infinity() }
+                    }
+                }
+            },
+            NumberView::Float(v) => f == v,
         }
     }
 }
@@ -214,15 +229,13 @@ impl PartialEqSpecImpl for Number {
 
 } // end verus!
 
-
 #[verus_verify]
 impl Number {
     #[verus_spec(result =>
         ensures
             result@ == NumberView::Integer(value@),
     )]
-    fn from_bigint_owned(value: BigInt) -> Self
-    {
+    fn from_bigint_owned(value: BigInt) -> Self {
         if value.is_zero() {
             return Number::Int(0);
         }
@@ -244,8 +257,7 @@ impl Number {
         ensures
             result@ == NumberView::Integer(value as int),
     )]
-    fn from_i128(value: i128) -> Self
-    {
+    fn from_i128(value: i128) -> Self {
         if value >= 0 {
             if let Ok(u) = u64::try_from(value) {
                 return Number::UInt(u);
@@ -264,14 +276,15 @@ impl Number {
             match self@ {
                 NumberView::Integer(n) => result matches Some(bi) && bi@ == n,
                 NumberView::Float(f) =>
-                    match Self::spec_float_to_small_int(f) {
-                        Some(n) => result matches Some(bi) && bi@ == n,
-                        None => result is None,
-                    },
+                {
+                    match result {
+                        None => float_to_small_int_ensures(f, None),
+                        Some(bi) => float_to_small_int_ensures(f, Some(bi@)),
+                    }
+                },
             },
     )]
-    fn to_bigint_owned(&self) -> Option<BigInt>
-    {
+    fn to_bigint_owned(&self) -> Option<BigInt> {
         match self {
             Number::UInt(v) => Some(BigInt::from(*v)),
             Number::Int(v) => Some(BigInt::from(*v)),
@@ -282,13 +295,12 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            match Self::spec_float_to_small_int(value) {
-                Some(i) => result matches Some(bi) && bi@ == i,
-                None => result is None,
+            match result {
+                Some(bi) => float_to_small_int_ensures(value, Some(bi@)),
+                None => float_to_small_int_ensures(value, None),
             },
     )]
-    fn float_to_small_bigint(value: f64) -> Option<BigInt>
-    {
+    fn float_to_small_bigint(value: f64) -> Option<BigInt> {
         proof! {
             axiom_f64_obeys_eq_spec();
             axiom_f64_obeys_partial_cmp_spec();
@@ -303,13 +315,13 @@ impl Number {
         }
 
         if value >= 0.0 {
-            let u = f64_as_u64(value);
-            if u64_as_f64(u) == value {
+            let u = value as u64;
+            if u as f64 == value {
                 return Some(BigInt::from(u));
             }
         } else {
-            let i = f64_as_i64(value);
-            if i64_as_f64(i) == value {
+            let i = value as i64;
+            if i as f64 == value {
                 return Some(BigInt::from(i));
             }
         }
@@ -322,14 +334,13 @@ impl Number {
             match self@ {
                 NumberView::Integer(n) => result matches Some(bi) && bi@ == n,
                 NumberView::Float(f) =>
-                    match Self::spec_float_to_small_int(f) {
-                        Some(n) => result matches Some(bi) && bi@ == n,
-                        None => result is None,
+                    match result {
+                        Some(bi) => float_to_small_int_ensures(f, Some(bi@)),
+                        None => float_to_small_int_ensures(f, None),
                     },
             },
     )]
-    fn to_bigint_rc(&self) -> Option<Rc<BigInt>>
-    {
+    fn to_bigint_rc(&self) -> Option<Rc<BigInt>> {
         match self {
             Number::BigInt(v) => Some(v.clone()),
             _ => self.to_bigint_owned().map(Rc::new),
@@ -338,13 +349,12 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            result == self.spec_to_f64_lossy(),
+            self@.to_f64_lossy_ensures(result)
     )]
-    fn to_f64_lossy(&self) -> f64
-    {
+    fn to_f64_lossy(&self) -> f64 {
         match self {
-            Number::UInt(v) => u64_as_f64(*v),
-            Number::Int(v) => i64_as_f64(*v),
+            Number::UInt(v) => *v as f64,
+            Number::Int(v) => *v as f64,
             Number::Float(v) => *v,
             Number::BigInt(v) => {
                 if let Some(f) = v.to_f64() {
@@ -365,8 +375,7 @@ impl Number {
                 NumberView::Float(f) => result == f.eq_spec(&0.0f64),
             },
     )]
-    fn is_zero(&self) -> bool
-    {
+    fn is_zero(&self) -> bool {
         proof! {
             axiom_f64_obeys_eq_spec();
         }
@@ -386,20 +395,18 @@ impl Number {
             a@ matches NumberView::Integer(m) && result.0@ == m,
             b@ matches NumberView::Integer(n) && result.1@ == n,
     )]
-    fn ints_to_bigint(a: &Number, b: &Number) -> (BigInt, BigInt)
-    {
+    fn ints_to_bigint(a: &Number, b: &Number) -> (BigInt, BigInt) {
         (a.to_bigint_owned().unwrap(), b.to_bigint_owned().unwrap())
     }
 
     #[verus_spec(result =>
         ensures
-            match Self::spec_float_to_small_int(value) {
-                Some(i) => result@ == NumberView::Integer(i),
-                None => result@ == NumberView::Float(value),
-            },
+            match result@ {
+                NumberView::Integer(n) => float_to_small_int_ensures(value, Some(n)),
+                NumberView::Float(f) => float_to_small_int_ensures(value, None) && f == value,
+            }
     )]
-    fn normalize_float(value: f64) -> Number
-    {
+    fn normalize_float(value: f64) -> Number {
         if let Some(i) = Self::float_to_small_bigint(value) {
             return Self::from_bigint_owned(i);
         }
@@ -413,8 +420,7 @@ impl Number {
                 NumberView::Float(_) => result is None,
             },
     )]
-    fn as_u32(&self) -> Option<u32>
-    {
+    fn as_u32(&self) -> Option<u32> {
         match self {
             Number::UInt(v) if *v <= u32::MAX as u64 => Some(*v as u32),
             Number::Int(v) if *v >= 0 && *v <= u32::MAX as i64 => Some(*v as u32),
@@ -448,8 +454,7 @@ impl From<BigInt> for Number {
         ensures
             result@ == NumberView::Integer(value@),
     )]
-    fn from(value: BigInt) -> Self
-    {
+    fn from(value: BigInt) -> Self {
         Number::from_bigint_owned(value)
     }
 }
@@ -460,20 +465,18 @@ impl From<u64> for Number {
         ensures
             result@ == NumberView::Integer(value as int),
     )]
-    fn from(value: u64) -> Self
-    {
+    fn from(value: u64) -> Self {
         Number::UInt(value)
     }
 }
 
-#[verus_verify]    
+#[verus_verify]
 impl From<usize> for Number {
     #[verus_spec(result =>
         ensures
             result@ == NumberView::Integer(value as int),
     )]
-    fn from(value: usize) -> Self
-    {
+    fn from(value: usize) -> Self {
         Number::UInt(value as u64)
     }
 }
@@ -484,8 +487,7 @@ impl From<u128> for Number {
         ensures
             result@ == NumberView::Integer(value as int),
     )]
-    fn from(value: u128) -> Self
-    {
+    fn from(value: u128) -> Self {
         if let Ok(n) = u64::try_from(value) {
             Number::UInt(n)
         } else {
@@ -500,8 +502,7 @@ impl From<i64> for Number {
         ensures
             result@ == NumberView::Integer(value as int),
     )]
-    fn from(value: i64) -> Self
-    {
+    fn from(value: i64) -> Self {
         Number::Int(value)
     }
 }
@@ -512,8 +513,7 @@ impl From<i128> for Number {
         ensures
             result@ == NumberView::Integer(value as int),
     )]
-    fn from(value: i128) -> Self
-    {
+    fn from(value: i128) -> Self {
         Number::from_i128(value)
     }
 }
@@ -524,8 +524,7 @@ impl From<f64> for Number {
         ensures
             result@ == NumberView::Float(value),
     )]
-    fn from(value: f64) -> Self
-    {
+    fn from(value: f64) -> Self {
         Number::Float(value)
     }
 }
@@ -598,12 +597,47 @@ impl PartialEq for Number {
         ensures
             match (self@, other@) {
                 (NumberView::Integer(n1), NumberView::Integer(n2)) => result == (n1 == n2),
-                _ => true,
+                (NumberView::Float(f1), NumberView::Integer(n2)) => {
+                    ||| exists|n1: int| #![trigger float_to_small_int_ensures(f1, Some(n1))] {
+                        &&& float_to_small_int_ensures(f1, Some(n1))
+                        &&& result == (n1 == n2)
+                    }
+                    ||| exists|f2: f64| #![trigger other@.to_f64_lossy_ensures(f2)] {
+                        &&& float_to_small_int_ensures(f1, None)
+                        &&& other@.to_f64_lossy_ensures(f2)
+                        &&& result == (!f1.is_nan_spec() && !f2.is_nan_spec() && f1.eq_spec(&f2))
+                    }
+                },
+                (NumberView::Integer(n1), NumberView::Float(f2)) => {
+                    ||| exists|n2: int| #![trigger float_to_small_int_ensures(f2, Some(n2))] {
+                        &&& float_to_small_int_ensures(f2, Some(n2))
+                        &&& result == (n1 == n2)
+                    }
+                    ||| exists|f1: f64| #![trigger self@.to_f64_lossy_ensures(f1)] {
+                        &&& float_to_small_int_ensures(f2, None)
+                        &&& self@.to_f64_lossy_ensures(f1)
+                        &&& result == (!f1.is_nan_spec() && !f2.is_nan_spec() && f1.eq_spec(&f2))
+                    }
+                },
+                (NumberView::Float(f1), NumberView::Float(f2)) => {
+                    ||| exists|n1: int, n2: int| #![trigger float_to_small_int_ensures(f1, Some(n1)),
+                                                  float_to_small_int_ensures(f2, Some(n2))] {
+                        &&& float_to_small_int_ensures(f1, Some(n1))
+                        &&& float_to_small_int_ensures(f2, Some(n2))
+                        &&& result == (n1 == n2)
+                    }
+                    ||| {
+                        &&& float_to_small_int_ensures(f1, None) || float_to_small_int_ensures(f2, None)
+                        &&& result == (!f1.is_nan_spec() && !f2.is_nan_spec() && f1.eq_spec(&f2))
+                    }
+                }
             },
     )]
-    fn eq(&self, other: &Self) -> bool
-    {
-        proof! { axiom_bigint_obeys_eq_spec(); }
+    fn eq(&self, other: &Self) -> bool {
+        proof! {
+            axiom_bigint_obeys_eq_spec();
+            axiom_f64_obeys_eq_spec();
+        }
 
         if let (Some(a), Some(b)) = (self.to_bigint_owned(), other.to_bigint_owned()) {
             return a == b;

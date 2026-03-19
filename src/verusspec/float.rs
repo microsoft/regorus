@@ -12,6 +12,8 @@
     clippy::pattern_type_mismatch
 )]
 
+#[cfg(verus_keep_ghost)]
+use vstd::float::*;
 use vstd::prelude::*;
 
 verus! {
@@ -26,62 +28,16 @@ pub axiom fn axiom_f64_obeys_partial_cmp_spec()
         <f64 as vstd::std_specs::cmp::PartialOrdSpec>::obeys_partial_cmp_spec(),
 ;
 
-pub uninterp spec fn spec_f64_as_u64(f: f64) -> u64;
-
-#[inline]
-#[verifier::external_body]
-pub fn f64_as_u64(f: f64) -> (res: u64)
-    ensures
-        res == spec_f64_as_u64(f),
-{
-    f as u64
-}
-
-pub uninterp spec fn spec_u64_as_f64(u: u64) -> f64;
-
-#[inline]
-#[verifier::external_body]
-pub fn u64_as_f64(u: u64) -> (res: f64)
-    ensures
-        res == spec_u64_as_f64(u),
-{
-    u as f64
-}
-
-pub uninterp spec fn spec_f64_as_i64(f: f64) -> i64;
-
-#[inline]
-#[verifier::external_body]
-pub fn f64_as_i64(f: f64) -> (res: i64)
-    ensures
-        res == spec_f64_as_i64(f),
-{
-    f as i64
-}
-
-pub uninterp spec fn spec_i64_as_f64(u: i64) -> f64;
-
-#[inline]
-#[verifier::external_body]
-pub fn i64_as_f64(i: i64) -> (res: f64)
-    ensures
-        res == spec_i64_as_f64(i),
-{
-    i as f64
-}
-
-pub uninterp spec fn spec_f64_is_finite(f: f64) -> bool;
-
 pub assume_specification [ f64::is_finite ](f: f64) -> (res: bool)
     ensures
-        res == spec_f64_is_finite(f),
+        res == f.is_finite_spec(),
 ;
 
 pub uninterp spec fn spec_f64_fract(f: f64) -> f64;
 
 pub assume_specification [ f64::fract ](f: f64) -> (res: f64)
     requires
-        spec_f64_is_finite(f),
+        f.is_finite_spec(),
     ensures
         res == spec_f64_fract(f),
 ;
@@ -90,16 +46,14 @@ pub uninterp spec fn spec_f64_abs(f: f64) -> f64;
 
 pub assume_specification [ f64::abs ](f: f64) -> (res: f64)
     requires
-        spec_f64_is_finite(f),
+        f.is_finite_spec(),
     ensures
         res == spec_f64_abs(f),
 ;
 
-pub uninterp spec fn spec_f64_is_nan(f: f64) -> bool;
-
 pub assume_specification [ f64::is_nan ](f: f64) -> (res: bool)
     ensures
-        res == spec_f64_is_nan(f),
+        res == f.is_nan_spec(),
 ;
 
 pub uninterp spec fn spec_f64_neg_infinity() -> f64;

@@ -136,7 +136,7 @@ indexmap = { version = "2.12.1", default-features = false, features = ["serde"],
 bincode = { version = "2.0.1", default-features = false, features = ["alloc", "serde"], optional = true }
 
 # Use Verus for verification
-vstd = { version = "0.0.0-2026-03-08-0103" }
+vstd = { version = "0.0.0-2026-03-17-2326" }
 
 [dev-dependencies]
 anyhow = "1.0.45"
