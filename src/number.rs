@@ -112,6 +112,14 @@ pub open spec fn float_to_small_int(value: f64) -> Option<int>
 }
 
 impl NumberView {
+    pub open spec fn to_int(&self) -> Option<int>
+    {
+        match *self {
+            Self::Integer(n) => Some(n),
+            Self::Float(f) => float_to_small_int(f),
+        }
+    }
+
     pub open spec fn to_f64_lossy_ensures(self: Self, f: f64) -> bool
     {
         match self {
@@ -258,8 +266,8 @@ impl Number {
                 NumberView::Float(f) =>
                 {
                     match result {
-                        None => float_to_small_int(f) is None,
                         Some(bi) => float_to_small_int(f) == Some(bi@),
+                        None => float_to_small_int(f) is None,
                     }
                 },
             },
@@ -576,29 +584,13 @@ impl FromStr for Number {
 impl PartialEq for Number {
     #[verus_spec(result =>
         ensures
-            match (self@, other@) {
-                (NumberView::Integer(n1), NumberView::Integer(n2)) => result == (n1 == n2),
-                (NumberView::Float(f1), NumberView::Integer(n2)) =>
-                    match float_to_small_int(f1) {
-                        Some(n1) => result == (n1 == n2),
-                        None => exists|f2: f64| #![trigger other@.to_f64_lossy_ensures(f2)] {
-                            &&& other@.to_f64_lossy_ensures(f2)
-                            &&& result == (!f1.is_nan_spec() && !f2.is_nan_spec() && f1.eq_spec(&f2))
-                        },
-                    },
-                (NumberView::Integer(n1), NumberView::Float(f2)) =>
-                    match float_to_small_int(f2) {
-                        Some(n2) => result == (n1 == n2),
-                        None => exists|f1: f64| #![trigger self@.to_f64_lossy_ensures(f1)] {
-                            &&& self@.to_f64_lossy_ensures(f1)
-                            &&& result == (!f1.is_nan_spec() && !f2.is_nan_spec() && f1.eq_spec(&f2))
-                        },
-                    },
-                (NumberView::Float(f1), NumberView::Float(f2)) =>
-                    match (float_to_small_int(f1), float_to_small_int(f2)) {
-                        (Some(n1), Some(n2)) => result == (n1 == n2),
-                        _ => result == (!f1.is_nan_spec() && !f2.is_nan_spec() && f1.eq_spec(&f2)),
-                    },
+            match (self@.to_int(), other@.to_int()) {
+                (Some(n1), Some(n2)) => result == (n1 == n2),
+                _ => exists|f1: f64, f2: f64| #![trigger self@.to_f64_lossy_ensures(f1), other@.to_f64_lossy_ensures(f2)] {
+                    &&& self@.to_f64_lossy_ensures(f1)
+                    &&& other@.to_f64_lossy_ensures(f2)
+                    &&& result == (!f1.is_nan_spec() && !f2.is_nan_spec() && f1.eq_spec(&f2))
+                },
             },
     )]
     fn eq(&self, other: &Self) -> bool {
