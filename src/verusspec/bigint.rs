@@ -13,7 +13,11 @@
 )]
 
 #[cfg(verus_keep_ghost)]
+use core::cmp::Ordering;
+#[cfg(verus_keep_ghost)]
 use num_bigint::BigInt;
+#[cfg(verus_keep_ghost)]
+use vstd::std_specs::cmp::OrdSpec;
 use vstd::prelude::*;
 
 verus! {
@@ -65,6 +69,19 @@ pub axiom fn axiom_bigint_obeys_partial_cmp_spec()
 pub assume_specification[ <BigInt as core::cmp::PartialEq>::eq ](x: &BigInt, y: &BigInt) -> (res: bool)
     ensures
         res == (x@ == y@),
+;
+
+// Ord
+
+pub axiom fn axiom_bigint_obeys_cmp_spec()
+    ensures
+        <BigInt as vstd::std_specs::cmp::OrdSpec>::obeys_cmp_spec(),
+        forall|b1: &BigInt, b2: &BigInt| b1.cmp_spec(b2) == b1@.cmp_spec(&b2@),
+;
+
+pub assume_specification[ <BigInt as core::cmp::Ord>::cmp ](x: &BigInt, y: &BigInt) -> (res: Ordering)
+    ensures
+        res == x@.cmp_spec(&y@),
 ;
 
 // From

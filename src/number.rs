@@ -215,6 +215,45 @@ impl PartialEqSpecImpl for Number {
     }
 }
 
+impl Number {
+    spec fn spec_to_f64_lossy(&self) -> f64
+    {
+        match *self {
+            Number::UInt(v) => ieee_float_cast::<u64, f64>(v),
+            Number::Int(v) => ieee_float_cast::<i64, f64>(v),
+            Number::Float(v) => v,
+            Number::BigInt(v) => {
+                if let Some(f) = <BigInt as ToPrimitiveSpec>::spec_to_f64(&v) {
+                    f
+                } else if v@ < 0 {
+                    spec_f64_neg_infinity()
+                } else {
+                    spec_f64_infinity()
+                }
+            },
+        }
+    }
+}
+
+impl OrdSpecImpl for Number {
+    open spec fn obeys_cmp_spec() -> bool
+    {
+        true
+    }
+
+    closed spec fn cmp_spec(&self, other: &Self) -> Ordering
+    {
+         match (self@.to_int(), other@.to_int()) {
+             (Some(n1), Some(n2)) => n1.cmp_spec(&n2),
+             _ => {
+                 let f1 = self.spec_to_f64_lossy();
+                 let f2 = self.spec_to_f64_lossy();
+                 f1.partial_cmp_spec(&f2).unwrap_or(Ordering::Equal)
+            },
+        }
+    }
+}
+
 } // end verus!
 
 #[verus_verify]
@@ -339,7 +378,8 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            self@.to_f64_lossy_ensures(result)
+            self@.to_f64_lossy_ensures(result),
+            result == self.spec_to_f64_lossy(),
     )]
     fn to_f64_lossy(&self) -> f64 {
         proof! { axiom_f64_ops_deterministic(); }
@@ -614,12 +654,31 @@ impl PartialEq for Number {
 
 impl Eq for Number {}
 
+#[verus_verify]
 impl Ord for Number {
+    #[verus_spec(result =>
+         ensures
+             match (self@.to_int(), other@.to_int()) {
+                 (Some(n1), Some(n2)) => result == n1.cmp_spec(&n2),
+                 _ => exists|f1: f64, f2: f64| #![trigger self@.to_f64_lossy_ensures(f1), other@.to_f64_lossy_ensures(f2)] {
+                     &&& self@.to_f64_lossy_ensures(f1)
+                     &&& other@.to_f64_lossy_ensures(f2)
+                     &&& result == f1.partial_cmp_spec(&f2).unwrap_or(Ordering::Equal)
+                },
+            },
+    )]
     fn cmp(&self, other: &Self) -> Ordering {
+        proof! {
+            axiom_f64_obeys_partial_cmp_spec();
+            axiom_bigint_obeys_cmp_spec();
+        }
         if let (Some(a), Some(b)) = (self.to_bigint_owned(), other.to_bigint_owned()) {
             return a.cmp(&b);
         }
 
+        proof! {
+            assume(false);
+        }
         self.to_f64_lossy()
             .partial_cmp(&other.to_f64_lossy())
             .unwrap_or(Ordering::Equal)
