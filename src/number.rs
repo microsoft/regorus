@@ -90,29 +90,23 @@ pub open spec fn float_to_small_int(value: f64) -> Option<int>
 {
     if !value.is_finite_spec() ||
        !spec_f64_fract(value).eq_spec(&0.0f64) ||
-       spec_f64_abs(value).partial_cmp_spec(&9_007_199_254_740_992.0) == Some(Ordering::Greater) {
+       spec_f64_abs(value).is_gt(&9_007_199_254_740_992.0) {
         None
     }
+    else if value.is_ge(&0.0) {
+        if ieee_float_cast::<u64, f64>(ieee_float_cast::<f64, u64>(value)).eq_spec(&value) {
+            Some(ieee_float_cast::<f64, u64>(value) as int)
+        }
+        else {
+            None
+        }
+    }
     else {
-        match value.partial_cmp_spec(&0.0) {
-            Some(Ordering::Greater) | Some(Ordering::Equal) =>
-            {
-                if ieee_float_cast::<u64, f64>(ieee_float_cast::<f64, u64>(value)).eq_spec(&value) {
-                    Some(ieee_float_cast::<f64, u64>(value) as int)
-                }
-                else {
-                    None
-                }
-            },
-            Some(Ordering::Less) | None =>
-            {
-                if ieee_float_cast::<i64, f64>(ieee_float_cast::<f64, i64>(value)).eq_spec(&value) {
-                    Some(ieee_float_cast::<f64, i64>(value) as int)
-                }
-                else {
-                    None
-                }
-            },
+        if ieee_float_cast::<i64, f64>(ieee_float_cast::<f64, i64>(value)).eq_spec(&value) {
+            Some(ieee_float_cast::<f64, i64>(value) as int)
+        }
+        else {
+            None
         }
     }
 }
