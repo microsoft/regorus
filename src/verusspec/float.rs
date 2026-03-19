@@ -28,6 +28,35 @@ pub axiom fn axiom_f64_obeys_partial_cmp_spec()
         <f64 as vstd::std_specs::cmp::PartialOrdSpec>::obeys_partial_cmp_spec(),
 ;
 
+pub axiom fn axiom_f64_ops_deterministic()
+    ensures
+        <f64 as vstd::std_specs::ops::NegSpec>::obeys_neg_spec(),
+        <f64 as vstd::std_specs::ops::AddSpec>::obeys_add_spec(),
+        <f64 as vstd::std_specs::ops::SubSpec>::obeys_sub_spec(),
+        <f64 as vstd::std_specs::ops::MulSpec>::obeys_mul_spec(),
+        <f64 as vstd::std_specs::ops::DivSpec>::obeys_div_spec(),
+        forall|n: i8, f: f64| float_cast_spec::<i8, f64>(n, f) ==> f == ieee_float_cast::<i8, f64>(n),
+        forall|n: u8, f: f64| float_cast_spec::<u8, f64>(n, f) ==> f == ieee_float_cast::<u8, f64>(n),
+        forall|n: i8, f: f64| float_cast_spec::<f64, i8>(f, n) ==> n == ieee_float_cast::<f64, i8>(f),
+        forall|n: u8, f: f64| float_cast_spec::<f64, u8>(f, n) ==> n == ieee_float_cast::<f64, u8>(f),
+        forall|n: i16, f: f64| float_cast_spec::<i16, f64>(n, f) ==> f == ieee_float_cast::<i16, f64>(n),
+        forall|n: u16, f: f64| float_cast_spec::<u16, f64>(n, f) ==> f == ieee_float_cast::<u16, f64>(n),
+        forall|n: i16, f: f64| float_cast_spec::<f64, i16>(f, n) ==> n == ieee_float_cast::<f64, i16>(f),
+        forall|n: u16, f: f64| float_cast_spec::<f64, u16>(f, n) ==> n == ieee_float_cast::<f64, u16>(f),
+        forall|n: i32, f: f64| float_cast_spec::<i32, f64>(n, f) ==> f == ieee_float_cast::<i32, f64>(n),
+        forall|n: u32, f: f64| float_cast_spec::<u32, f64>(n, f) ==> f == ieee_float_cast::<u32, f64>(n),
+        forall|n: i32, f: f64| float_cast_spec::<f64, i32>(f, n) ==> n == ieee_float_cast::<f64, i32>(f),
+        forall|n: u32, f: f64| float_cast_spec::<f64, u32>(f, n) ==> n == ieee_float_cast::<f64, u32>(f),
+        forall|n: i64, f: f64| float_cast_spec::<i64, f64>(n, f) ==> f == ieee_float_cast::<i64, f64>(n),
+        forall|n: u64, f: f64| float_cast_spec::<u64, f64>(n, f) ==> f == ieee_float_cast::<u64, f64>(n),
+        forall|n: i64, f: f64| float_cast_spec::<f64, i64>(f, n) ==> n == ieee_float_cast::<f64, i64>(f),
+        forall|n: u64, f: f64| float_cast_spec::<f64, u64>(f, n) ==> n == ieee_float_cast::<f64, u64>(f),
+        forall|n: i128, f: f64| float_cast_spec::<i128, f64>(n, f) ==> f == ieee_float_cast::<i128, f64>(n),
+        forall|n: u128, f: f64| float_cast_spec::<u128, f64>(n, f) ==> f == ieee_float_cast::<u128, f64>(n),
+        forall|n: i128, f: f64| float_cast_spec::<f64, i128>(f, n) ==> n == ieee_float_cast::<f64, i128>(f),
+        forall|n: u128, f: f64| float_cast_spec::<f64, u128>(f, n) ==> n == ieee_float_cast::<f64, u128>(f),
+;
+
 pub assume_specification [ f64::is_finite ](f: f64) -> (res: bool)
     ensures
         res == f.is_finite_spec(),

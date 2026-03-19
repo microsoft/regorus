@@ -86,39 +86,31 @@ impl View for Number
     }
 }
 
-pub open spec fn float_to_small_int_ensures(value: f64, result: Option<int>) -> bool
+pub open spec fn float_to_small_int(value: f64) -> Option<int>
 {
     if !value.is_finite_spec() ||
        !spec_f64_fract(value).eq_spec(&0.0f64) ||
        spec_f64_abs(value).partial_cmp_spec(&9_007_199_254_740_992.0) == Some(Ordering::Greater) {
-        result is None
+        None
     }
     else {
         match value.partial_cmp_spec(&0.0) {
             Some(Ordering::Greater) | Some(Ordering::Equal) =>
             {
-                exists|value_as_u64: u64, value_back_to_f64: f64| {
-                    &&& float_cast_spec::<f64, u64>(value, value_as_u64)
-                    &&& float_cast_spec::<u64, f64>(value_as_u64, value_back_to_f64)
-                    &&& if value_back_to_f64.eq_spec(&value) {
-                           result == Some(value_as_u64 as int)
-                       }
-                       else {
-                           result is None
-                       }
+                if ieee_float_cast::<u64, f64>(ieee_float_cast::<f64, u64>(value)).eq_spec(&value) {
+                    Some(ieee_float_cast::<f64, u64>(value) as int)
+                }
+                else {
+                    None
                 }
             },
             Some(Ordering::Less) | None =>
             {
-                exists|value_as_i64: i64, value_back_to_f64: f64| {
-                    &&& float_cast_spec::<f64, i64>(value, value_as_i64)
-                    &&& float_cast_spec::<i64, f64>(value_as_i64, value_back_to_f64)
-                    &&& if value_back_to_f64.eq_spec(&value) {
-                           result == Some(value_as_i64 as int)
-                       }
-                       else {
-                           result is None
-                       }
+                if ieee_float_cast::<i64, f64>(ieee_float_cast::<f64, i64>(value)).eq_spec(&value) {
+                    Some(ieee_float_cast::<f64, i64>(value) as int)
+                }
+                else {
+                    None
                 }
             },
         }
@@ -131,14 +123,8 @@ impl NumberView {
         match self {
             NumberView::Integer(v) =>
             {
-                ||| {
-                    &&& 0 <= v <= u64::MAX
-                    &&& float_cast_spec::<u64, f64>(v as u64, f)
-                }
-                ||| {
-                    &&& i64::MIN <= v <= i64::MAX
-                    &&& float_cast_spec::<i64, f64>(v as i64, f)
-                }
+                ||| 0 <= v <= u64::MAX && f == ieee_float_cast::<u64, f64>(v as u64)
+                ||| i64::MIN <= v <= i64::MAX && f == ieee_float_cast::<i64, f64>(v as i64)
                 ||| exists|bi: BigInt| {
                     &&& bi@ == v
                     &&& match #[trigger] verusspec::bigint::ToPrimitiveSpec::spec_to_f64(&bi) {
@@ -278,8 +264,8 @@ impl Number {
                 NumberView::Float(f) =>
                 {
                     match result {
-                        None => float_to_small_int_ensures(f, None),
-                        Some(bi) => float_to_small_int_ensures(f, Some(bi@)),
+                        None => float_to_small_int(f) is None,
+                        Some(bi) => float_to_small_int(f) == Some(bi@),
                     }
                 },
             },
@@ -296,14 +282,15 @@ impl Number {
     #[verus_spec(result =>
         ensures
             match result {
-                Some(bi) => float_to_small_int_ensures(value, Some(bi@)),
-                None => float_to_small_int_ensures(value, None),
+                Some(bi) => float_to_small_int(value) == Some(bi@),
+                None => float_to_small_int(value) is None,
             },
     )]
     fn float_to_small_bigint(value: f64) -> Option<BigInt> {
         proof! {
             axiom_f64_obeys_eq_spec();
             axiom_f64_obeys_partial_cmp_spec();
+            axiom_f64_ops_deterministic();
         }
 
         if !value.is_finite() || value.fract() != 0.0 {
@@ -335,8 +322,8 @@ impl Number {
                 NumberView::Integer(n) => result matches Some(bi) && bi@ == n,
                 NumberView::Float(f) =>
                     match result {
-                        Some(bi) => float_to_small_int_ensures(f, Some(bi@)),
-                        None => float_to_small_int_ensures(f, None),
+                        Some(bi) => float_to_small_int(f) == Some(bi@),
+                        None => float_to_small_int(f) is None,
                     },
             },
     )]
@@ -352,6 +339,7 @@ impl Number {
             self@.to_f64_lossy_ensures(result)
     )]
     fn to_f64_lossy(&self) -> f64 {
+        proof! { axiom_f64_ops_deterministic(); }
         match self {
             Number::UInt(v) => *v as f64,
             Number::Int(v) => *v as f64,
@@ -376,9 +364,7 @@ impl Number {
             },
     )]
     fn is_zero(&self) -> bool {
-        proof! {
-            axiom_f64_obeys_eq_spec();
-        }
+        proof! { axiom_f64_obeys_eq_spec(); }
         match self {
             Number::UInt(0) | Number::Int(0) => true,
             Number::Float(f) => *f == 0.0,
@@ -402,8 +388,8 @@ impl Number {
     #[verus_spec(result =>
         ensures
             match result@ {
-                NumberView::Integer(n) => float_to_small_int_ensures(value, Some(n)),
-                NumberView::Float(f) => float_to_small_int_ensures(value, None) && f == value,
+                NumberView::Integer(n) => float_to_small_int(value) == Some(n),
+                NumberView::Float(f) => float_to_small_int(value) is None && f == value,
             }
     )]
     fn normalize_float(value: f64) -> Number {
@@ -598,36 +584,29 @@ impl PartialEq for Number {
             match (self@, other@) {
                 (NumberView::Integer(n1), NumberView::Integer(n2)) => result == (n1 == n2),
                 (NumberView::Float(f1), NumberView::Integer(n2)) => {
-                    ||| exists|n1: int| #![trigger float_to_small_int_ensures(f1, Some(n1))] {
-                        &&& float_to_small_int_ensures(f1, Some(n1))
-                        &&& result == (n1 == n2)
-                    }
+                    ||| float_to_small_int(f1) matches Some(n1) && result == (n1 == n2)
                     ||| exists|f2: f64| #![trigger other@.to_f64_lossy_ensures(f2)] {
-                        &&& float_to_small_int_ensures(f1, None)
+                        &&& float_to_small_int(f1) is None
                         &&& other@.to_f64_lossy_ensures(f2)
                         &&& result == (!f1.is_nan_spec() && !f2.is_nan_spec() && f1.eq_spec(&f2))
                     }
                 },
                 (NumberView::Integer(n1), NumberView::Float(f2)) => {
-                    ||| exists|n2: int| #![trigger float_to_small_int_ensures(f2, Some(n2))] {
-                        &&& float_to_small_int_ensures(f2, Some(n2))
-                        &&& result == (n1 == n2)
-                    }
+                    ||| float_to_small_int(f2) matches Some(n2) && result == (n1 == n2)
                     ||| exists|f1: f64| #![trigger self@.to_f64_lossy_ensures(f1)] {
-                        &&& float_to_small_int_ensures(f2, None)
+                        &&& float_to_small_int(f2) is None
                         &&& self@.to_f64_lossy_ensures(f1)
                         &&& result == (!f1.is_nan_spec() && !f2.is_nan_spec() && f1.eq_spec(&f2))
                     }
                 },
                 (NumberView::Float(f1), NumberView::Float(f2)) => {
-                    ||| exists|n1: int, n2: int| #![trigger float_to_small_int_ensures(f1, Some(n1)),
-                                                  float_to_small_int_ensures(f2, Some(n2))] {
-                        &&& float_to_small_int_ensures(f1, Some(n1))
-                        &&& float_to_small_int_ensures(f2, Some(n2))
+                    ||| {
+                        &&& float_to_small_int(f1) matches Some(n1)
+                        &&& float_to_small_int(f2) matches Some(n2)
                         &&& result == (n1 == n2)
                     }
                     ||| {
-                        &&& float_to_small_int_ensures(f1, None) || float_to_small_int_ensures(f2, None)
+                        &&& float_to_small_int(f1) is None || float_to_small_int(f2) is None
                         &&& result == (!f1.is_nan_spec() && !f2.is_nan_spec() && f1.eq_spec(&f2))
                     }
                 }
