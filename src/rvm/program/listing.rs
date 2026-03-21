@@ -575,6 +575,14 @@ fn format_instruction_readable(
             let comment = format!("Get count/length of collection r{}", collection);
             align_comment(&base, &comment, config.comment_column)
         }
+        Instruction::AssertEq { left, right } => {
+            let base = format!("{}AssertEq     assert r{} == r{}", indent, left, right);
+            let comment = format!(
+                "Assert r{} equals r{} (exit if unequal/undefined)",
+                left, right
+            );
+            align_comment(&base, &comment, config.comment_column)
+        }
         Instruction::AssertCondition { condition } => {
             let base = format!("{}Assert       assert r{}", indent, condition);
             let comment = format!("Assert r{} is true (exit if false/undefined)", condition);
@@ -899,6 +907,7 @@ const fn get_instruction_name(instruction: &Instruction) -> &'static str {
         Instruction::SetCreate { .. } => "SET_CREATE",
         Instruction::Contains { .. } => "CONTAINS",
         Instruction::Count { .. } => "COUNT",
+        Instruction::AssertEq { .. } => "ASSERT_EQ",
         Instruction::AssertCondition { .. } => "ASSERT",
         Instruction::AssertNotUndefined { .. } => "ASSERT_NOT_UNDEF",
         Instruction::LoopStart { .. } => "LOOP_START",

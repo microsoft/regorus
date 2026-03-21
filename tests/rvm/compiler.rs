@@ -127,3 +127,46 @@ fn non_constant_array_is_not_hoisted() {
         "non-constant array should use ArrayCreate"
     );
 }
+
+// --- AssertEq fusion tests ---
+
+/// Count occurrences of a specific instruction pattern in the program.
+fn count_instructions(
+    program: &regorus::rvm::program::Program,
+    pred: impl Fn(&Instruction) -> bool,
+) -> usize {
+    program.instructions.iter().filter(|i| pred(i)).count()
+}
+
+#[test]
+fn equality_check_emits_assert_eq() {
+    // Assignment `x = 1` followed by `x = 1` triggers EqualityCheck in destructuring.
+    let program = compile_rule(
+        r#"
+        package test
+        p if { x = 1; x = 1 }
+    "#,
+    );
+    let assert_eq_count =
+        count_instructions(&program, |i| matches!(i, Instruction::AssertEq { .. }));
+    assert!(
+        assert_eq_count > 0,
+        "expected AssertEq instruction for equality check"
+    );
+}
+
+#[test]
+fn destructuring_equality_emits_assert_eq() {
+    let program = compile_rule(
+        r#"
+        package test
+        p if { [1, x] := [1, 2] }
+    "#,
+    );
+    let assert_eq_count =
+        count_instructions(&program, |i| matches!(i, Instruction::AssertEq { .. }));
+    assert!(
+        assert_eq_count > 0,
+        "expected AssertEq for destructuring equality"
+    );
+}

@@ -243,6 +243,12 @@ pub enum Instruction {
         collection: u8,
     },
 
+    /// Assert that two registers are equal - if either is undefined or they differ, fail the condition
+    AssertEq {
+        left: u8,
+        right: u8,
+    },
+
     /// Assert condition - if register contains false or undefined, return undefined immediately
     AssertCondition {
         condition: u8,

@@ -338,6 +338,13 @@ impl RegoVM {
                     })
                 }
             }
+            AssertEq { left, right } => {
+                let a = self.get_register(left)?;
+                let b = self.get_register(right)?;
+                let passed = a != &Value::Undefined && b != &Value::Undefined && a == b;
+                self.handle_condition(passed)?;
+                Ok(InstructionOutcome::Continue)
+            }
             AssertCondition { condition } => {
                 let value = self.get_register(condition)?;
 

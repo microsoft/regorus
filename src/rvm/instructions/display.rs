@@ -242,6 +242,9 @@ impl core::fmt::Display for Instruction {
             Instruction::Count { dest, collection } => {
                 format!("COUNT R({}) R({})", dest, collection)
             }
+            Instruction::AssertEq { left, right } => {
+                format!("ASSERT_EQ R({}) R({})", left, right)
+            }
             Instruction::AssertCondition { condition } => {
                 format!("ASSERT_CONDITION R({})", condition)
             }
