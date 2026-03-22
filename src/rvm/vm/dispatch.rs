@@ -345,6 +345,16 @@ impl RegoVM {
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)
             }
+            AssertNot { operand } => {
+                let value = self.get_register(operand)?;
+                let passed = match *value {
+                    Value::Undefined => true,
+                    Value::Bool(b) => !b,
+                    _ => false,
+                };
+                self.handle_condition(passed)?;
+                Ok(InstructionOutcome::Continue)
+            }
             AssertCondition { condition } => {
                 let value = self.get_register(condition)?;
 

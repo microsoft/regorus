@@ -245,6 +245,9 @@ impl core::fmt::Display for Instruction {
             Instruction::AssertEq { left, right } => {
                 format!("ASSERT_EQ R({}) R({})", left, right)
             }
+            Instruction::AssertNot { operand } => {
+                format!("ASSERT_NOT R({})", operand)
+            }
             Instruction::AssertCondition { condition } => {
                 format!("ASSERT_CONDITION R({})", condition)
             }

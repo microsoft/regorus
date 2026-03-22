@@ -249,6 +249,11 @@ pub enum Instruction {
         right: u8,
     },
 
+    /// Assert negation - succeed if operand is false or undefined, fail if true
+    AssertNot {
+        operand: u8,
+    },
+
     /// Assert condition - if register contains false or undefined, return undefined immediately
     AssertCondition {
         condition: u8,

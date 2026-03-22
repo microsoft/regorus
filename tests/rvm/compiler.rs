@@ -170,3 +170,22 @@ fn destructuring_equality_emits_assert_eq() {
         "expected AssertEq for destructuring equality"
     );
 }
+
+#[test]
+fn not_expr_emits_assert_not() {
+    let program = compile_rule(
+        r#"
+        package test
+        p if { not false }
+    "#,
+    );
+    let assert_not_count =
+        count_instructions(&program, |i| matches!(i, Instruction::AssertNot { .. }));
+    assert!(
+        assert_not_count > 0,
+        "expected AssertNot for `not` expression"
+    );
+    // The Not+AssertCondition pair should be fused — no separate Not instruction.
+    let not_count = count_instructions(&program, |i| matches!(i, Instruction::Not { .. }));
+    assert_eq!(not_count, 0, "Not should be fused into AssertNot");
+}

@@ -583,6 +583,11 @@ fn format_instruction_readable(
             );
             align_comment(&base, &comment, config.comment_column)
         }
+        Instruction::AssertNot { operand } => {
+            let base = format!("{}AssertNot    assert !r{}", indent, operand);
+            let comment = format!("Assert r{} is false/undefined (exit if true)", operand);
+            align_comment(&base, &comment, config.comment_column)
+        }
         Instruction::AssertCondition { condition } => {
             let base = format!("{}Assert       assert r{}", indent, condition);
             let comment = format!("Assert r{} is true (exit if false/undefined)", condition);
@@ -908,6 +913,7 @@ const fn get_instruction_name(instruction: &Instruction) -> &'static str {
         Instruction::Contains { .. } => "CONTAINS",
         Instruction::Count { .. } => "COUNT",
         Instruction::AssertEq { .. } => "ASSERT_EQ",
+        Instruction::AssertNot { .. } => "ASSERT_NOT",
         Instruction::AssertCondition { .. } => "ASSERT",
         Instruction::AssertNotUndefined { .. } => "ASSERT_NOT_UNDEF",
         Instruction::LoopStart { .. } => "LOOP_START",
