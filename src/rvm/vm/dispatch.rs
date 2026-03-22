@@ -695,10 +695,9 @@ impl RegoVM {
                     Value::Array(ref array_items) => {
                         Value::Bool(array_items.contains(value_to_check))
                     }
-                    Value::Object(ref object_fields) => Value::Bool(
-                        object_fields.contains_key(value_to_check)
-                            || object_fields.values().any(|v| v == value_to_check),
-                    ),
+                    Value::Object(ref object_fields) => {
+                        Value::Bool(object_fields.values().any(|v| v == value_to_check))
+                    }
                     _ => Value::Bool(false),
                 };
 
