@@ -189,3 +189,155 @@ fn not_expr_emits_assert_not() {
     let not_count = count_instructions(&program, |i| matches!(i, Instruction::Not { .. }));
     assert_eq!(not_count, 0, "Not should be fused into AssertNot");
 }
+
+// --- B-11: early_exit_on_first_success flag tests ---
+
+/// Find a RuleInfo by name suffix (e.g., "check" matches "data.test.check").
+fn find_rule_info<'a>(
+    program: &'a regorus::rvm::program::Program,
+    name_suffix: &str,
+) -> &'a regorus::rvm::program::RuleInfo {
+    program
+        .rule_infos
+        .iter()
+        .find(|ri| ri.name.ends_with(name_suffix))
+        .unwrap_or_else(|| panic!("no RuleInfo ending with '{name_suffix}'"))
+}
+
+#[test]
+fn early_exit_set_for_implicit_true_multi_def() {
+    let program = compile_rule(
+        r#"
+        package test
+        p if { 1 == 1 }
+        p if { 2 == 2 }
+    "#,
+    );
+    let ri = find_rule_info(&program, ".p");
+    assert!(
+        ri.early_exit_on_first_success,
+        "two implicit-true defs should set early_exit_on_first_success"
+    );
+}
+
+#[test]
+fn early_exit_set_for_same_literal_string() {
+    let program = compile_rule(
+        r#"
+        package test
+        p := "ok" if { 1 == 1 }
+        p := "ok" if { 2 == 2 }
+    "#,
+    );
+    let ri = find_rule_info(&program, ".p");
+    assert!(
+        ri.early_exit_on_first_success,
+        "two defs both returning \"ok\" should set early_exit_on_first_success"
+    );
+}
+
+#[test]
+fn early_exit_not_set_for_different_literals() {
+    let program = compile_rule(
+        r#"
+        package test
+        p := "a" if { 1 == 1 }
+        p := "b" if { 2 == 2 }
+    "#,
+    );
+    let ri = find_rule_info(&program, ".p");
+    assert!(
+        !ri.early_exit_on_first_success,
+        "defs returning different literals must NOT set early_exit_on_first_success"
+    );
+}
+
+#[test]
+fn early_exit_not_set_for_computed_values() {
+    let program = compile_rule(
+        r#"
+        package test
+        p := x if { x := 1 + 1 }
+        p := x if { x := 2 + 0 }
+    "#,
+    );
+    let ri = find_rule_info(&program, ".p");
+    assert!(
+        !ri.early_exit_on_first_success,
+        "computed expressions must NOT set early_exit_on_first_success"
+    );
+}
+
+#[test]
+fn early_exit_not_set_for_single_definition() {
+    let program = compile_rule(
+        r#"
+        package test
+        p if { 1 == 1 }
+    "#,
+    );
+    let ri = find_rule_info(&program, ".p");
+    assert!(
+        !ri.early_exit_on_first_success,
+        "single definition should not set early_exit (only ≥2 defs)"
+    );
+}
+
+#[test]
+fn early_exit_not_set_for_else_with_different_values() {
+    let program = compile_rule(
+        r#"
+        package test
+        p := "a" if { false } else := "b" if { true }
+        p := "a" if { true }
+    "#,
+    );
+    let ri = find_rule_info(&program, ".p");
+    assert!(
+        !ri.early_exit_on_first_success,
+        "else branches with different values must NOT set early_exit_on_first_success"
+    );
+}
+
+#[test]
+fn early_exit_set_for_else_with_same_values() {
+    let program = compile_rule(
+        r#"
+        package test
+        p := "x" if { false } else := "x" if { true }
+        p := "x" if { true }
+    "#,
+    );
+    let ri = find_rule_info(&program, ".p");
+    assert!(
+        ri.early_exit_on_first_success,
+        "else branches all returning same literal should set early_exit_on_first_success"
+    );
+}
+
+#[test]
+fn early_exit_set_for_implicit_true_function() {
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "test.rego".to_string(),
+            r#"
+            package test
+            check(x) if { x > 0 }
+            check(x) if { x < -10 }
+            p := check(5)
+        "#
+            .to_string(),
+        )
+        .expect("failed to add policy");
+    let compiled = engine
+        .compile_with_entrypoint(&Rc::from("data.test.p"))
+        .expect("failed to compile");
+    let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])
+        .expect("failed to compile to RVM");
+    let ri = find_rule_info(&program, ".check");
+    assert!(
+        ri.early_exit_on_first_success,
+        "implicit-true function with 2 defs should set early_exit_on_first_success"
+    );
+}

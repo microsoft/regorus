@@ -98,6 +98,11 @@ impl RegoVM {
                                     }
                                 } else {
                                     first_successful_result = Some(current_result.clone());
+                                    // All definitions produce the same static value;
+                                    // no need to verify consistency with the rest.
+                                    if rule_info.early_exit_on_first_success {
+                                        break 'outer;
+                                    }
                                 }
                             }
                         }
@@ -607,6 +612,13 @@ impl RegoVM {
                     }
                 } else {
                     frame_data.accumulated_result = Some(current_result);
+                    // All definitions produce the same static value;
+                    // skip remaining definitions.
+                    if rule_info.early_exit_on_first_success {
+                        frame_data.current_definition_index = frame_data.total_definitions;
+                        frame_data.phase = RuleFramePhase::Finalizing;
+                        return Ok(None);
+                    }
                 }
             }
         }

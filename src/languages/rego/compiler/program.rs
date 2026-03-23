@@ -99,6 +99,40 @@ impl<'a> Compiler<'a> {
             };
 
             rule_info.destructuring_blocks = destructuring_blocks;
+
+            // Compute early_exit_on_first_success: if every definition has
+            // the same static value, the VM can stop after the first success.
+            // Only relevant for Complete rules and function rules with ≥2 defs.
+            let static_values = self
+                .rule_definition_static_values
+                .get(rule_index as usize);
+            if let Some(svs) = static_values {
+                if svs.len() >= 2 {
+                    // Check that all definitions have a known static value and
+                    // that they are all equal.
+                    let mut all_same = true;
+                    let mut reference: Option<&Value> = None;
+                    for sv in svs {
+                        match sv {
+                            Some(v) => match reference {
+                                None => reference = Some(v),
+                                Some(r) => {
+                                    if r != v {
+                                        all_same = false;
+                                        break;
+                                    }
+                                }
+                            },
+                            None => {
+                                all_same = false;
+                                break;
+                            }
+                        }
+                    }
+                    rule_info.early_exit_on_first_success = all_same && reference.is_some();
+                }
+            }
+
             rule_infos_map.insert(rule_index as usize, rule_info);
         }
 

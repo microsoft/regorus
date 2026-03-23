@@ -97,6 +97,11 @@ pub struct RuleInfo {
     /// Optional destructuring block entry point per definition
     /// Index: definition_index → Some(entry_point) | None
     pub destructuring_blocks: Vec<Option<u32>>,
+    /// If true, all definitions are statically known to produce the same result
+    /// value, so the VM can stop after the first successful definition without
+    /// checking consistency with remaining definitions.
+    #[serde(default)]
+    pub early_exit_on_first_success: bool,
 }
 
 impl RuleInfo {
@@ -117,6 +122,7 @@ impl RuleInfo {
             result_reg,
             num_registers,
             destructuring_blocks: alloc::vec![None; num_definitions],
+            early_exit_on_first_success: false,
         }
     }
 
@@ -143,6 +149,7 @@ impl RuleInfo {
             result_reg,
             num_registers,
             destructuring_blocks: alloc::vec![None; num_definitions],
+            early_exit_on_first_success: false,
         }
     }
 

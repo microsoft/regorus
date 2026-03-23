@@ -1,0 +1,283 @@
+# B-11: Early exit for same-value multi-definition rules
+#
+# When all definitions of a Complete or function rule produce the same
+# static value, the VM can stop after the first successful definition.
+# These tests verify correctness: both that the optimization produces
+# the right result and that edge cases (different values, else branches,
+# computed expressions) remain correct.
+
+cases:
+  # ── Implicit-true multi-def function rules ────────────────────────
+
+  - note: implicit_true_two_definitions_first_succeeds
+    description: Two implicit-true definitions; first succeeds → true
+    modules:
+      - |
+        package test
+        check(x) if { x > 0 }
+        check(x) if { x < -10 }
+        p := check(5)
+    query: data.test.p
+    want_result: true
+
+  - note: implicit_true_two_definitions_second_succeeds
+    description: Two implicit-true definitions; only second succeeds → true
+    modules:
+      - |
+        package test
+        check(x) if { x > 100 }
+        check(x) if { x < 0 }
+        p := check(-5)
+    query: data.test.p
+    want_result: true
+
+  - note: implicit_true_two_definitions_neither_succeeds
+    description: Two implicit-true definitions; neither succeeds → undefined
+    modules:
+      - |
+        package test
+        check(x) if { x > 100 }
+        check(x) if { x < -100 }
+        p := check(5)
+    query: data.test.p
+    want_result: "#undefined"
+
+  - note: implicit_true_four_definitions
+    description: Four implicit-true defs (like mountSource_ok); third succeeds
+    modules:
+      - |
+        package test
+        validate(x) if { x == "a" }
+        validate(x) if { x == "b" }
+        validate(x) if { x == "c" }
+        validate(x) if { x == "d" }
+        p := validate("c")
+    query: data.test.p
+    want_result: true
+
+  - note: implicit_true_complete_rule_two_defs
+    description: Complete rule with two implicit-true defs
+    modules:
+      - |
+        package test
+        allowed if { input.role == "admin" }
+        allowed if { input.role == "superuser" }
+        p := allowed
+    input: {"role": "superuser"}
+    query: data.test.p
+    want_result: true
+
+  # ── Same literal value (non-true) across definitions ───────────────
+
+  - note: same_string_value_two_defs
+    description: Two defs returning same string constant
+    modules:
+      - |
+        package test
+        label(x) := "ok" if { x > 0 }
+        label(x) := "ok" if { x == 0 }
+        p := label(0)
+    query: data.test.p
+    want_result: "ok"
+
+  - note: same_number_value_two_defs
+    description: Two defs returning same numeric constant
+    modules:
+      - |
+        package test
+        code(x) := 42 if { x == "answer" }
+        code(x) := 42 if { x == "the answer" }
+        p := code("the answer")
+    query: data.test.p
+    want_result: 42
+
+  - note: same_bool_false_two_defs
+    description: Two defs returning explicit false
+    modules:
+      - |
+        package test
+        deny(x) := false if { x == "blocked" }
+        deny(x) := false if { x == "banned" }
+        p := deny("banned")
+    query: data.test.p
+    want_result: false
+
+  # ── Different values across definitions (NO early exit) ────────────
+
+  - note: different_string_values_first_succeeds
+    description: Two defs with different strings; first succeeds → its value
+    modules:
+      - |
+        package test
+        classify(x) := "positive" if { x > 0 }
+        classify(x) := "non-positive" if { x <= 0 }
+        p := classify(5)
+    query: data.test.p
+    want_result: "positive"
+
+  - note: different_string_values_second_succeeds
+    description: Two defs with different strings; second succeeds → its value
+    modules:
+      - |
+        package test
+        classify(x) := "positive" if { x > 0 }
+        classify(x) := "non-positive" if { x <= 0 }
+        p := classify(-3)
+    query: data.test.p
+    want_result: "non-positive"
+
+  # ── Else branches ──────────────────────────────────────────────────
+
+  - note: else_same_value_across_defs
+    description: Two defs, each with else, all branches return same value
+    modules:
+      - |
+        package test
+        result := "match" if {
+          input.x > 10
+        }
+        else := "match" if {
+          input.x > 5
+        }
+        result := "match" if {
+          input.y > 10
+        }
+        else := "match" if {
+          input.y > 5
+        }
+        p := result
+    input: {"x": 1, "y": 7}
+    query: data.test.p
+    want_result: "match"
+
+  - note: else_different_values_within_def
+    description: One def with else returning different value → no early exit
+    modules:
+      - |
+        package test
+        grade(x) := "A" if {
+          x >= 90
+        }
+        else := "B" if {
+          x >= 80
+        }
+        grade(x) := "C" if { x >= 70; x < 80 }
+        p := grade(85)
+    query: data.test.p
+    want_result: "B"
+
+  - note: else_different_values_within_def_second
+    description: Else chain where second definition fires
+    modules:
+      - |
+        package test
+        grade(x) := "A" if {
+          x >= 90
+        }
+        else := "B" if {
+          x >= 80
+        }
+        grade(x) := "C" if { x >= 70; x < 80 }
+        p := grade(75)
+    query: data.test.p
+    want_result: "C"
+
+  # ── Computed (non-literal) values → no early exit ──────────────────
+
+  - note: computed_value_two_defs
+    description: Defs with computed expressions → no early exit, still correct
+    modules:
+      - |
+        package test
+        double(x) := x * 2 if { x > 0 }
+        double(x) := x * 2 if { x < 0 }
+        p := double(-3)
+    query: data.test.p
+    want_result: -6
+
+  # ── Single definition (flag doesn't matter) ────────────────────────
+
+  - note: single_definition_implicit_true
+    description: Single implicit-true def — flag not set but works fine
+    modules:
+      - |
+        package test
+        ok(x) if { x > 0 }
+        p := ok(5)
+    query: data.test.p
+    want_result: true
+
+  # ── Mixed implicit-true and explicit-true ───────────────────────────
+
+  - note: mixed_implicit_and_explicit_true
+    description: One def has implicit true, another has explicit := true
+    modules:
+      - |
+        package test
+        valid(x) if { x > 0 }
+        valid(x) := true if { x == 0 }
+        p := valid(0)
+    query: data.test.p
+    want_result: true
+
+  # ── Default value interaction ──────────────────────────────────────
+
+  - note: implicit_true_with_default
+    description: Multi-def rule with default; no def succeeds → default
+    modules:
+      - |
+        package test
+        default allowed := false
+        allowed if { input.role == "admin" }
+        allowed if { input.role == "superuser" }
+        p := allowed
+    input: {"role": "viewer"}
+    query: data.test.p
+    want_result: false
+
+  - note: implicit_true_with_default_succeeds
+    description: Multi-def rule with default; one def succeeds → true
+    modules:
+      - |
+        package test
+        default allowed := false
+        allowed if { input.role == "admin" }
+        allowed if { input.role == "superuser" }
+        p := allowed
+    input: {"role": "admin"}
+    query: data.test.p
+    want_result: true
+
+  # ── Nested function calls with early exit ──────────────────────────
+
+  - note: nested_early_exit_functions
+    description: Outer function calls inner multi-def function
+    modules:
+      - |
+        package test
+        inner_ok(x) if { x == "a" }
+        inner_ok(x) if { x == "b" }
+        inner_ok(x) if { x == "c" }
+        outer(x, y) if {
+          inner_ok(x)
+          inner_ok(y)
+        }
+        p := outer("a", "c")
+    query: data.test.p
+    want_result: true
+
+  - note: nested_early_exit_functions_fail
+    description: Outer function calls inner multi-def function, inner fails
+    modules:
+      - |
+        package test
+        inner_ok(x) if { x == "a" }
+        inner_ok(x) if { x == "b" }
+        inner_ok(x) if { x == "c" }
+        outer(x, y) if {
+          inner_ok(x)
+          inner_ok(y)
+        }
+        p := outer("a", "d")
+    query: data.test.p
+    want_result: "#undefined"
