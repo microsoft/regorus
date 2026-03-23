@@ -390,7 +390,7 @@ impl RegoVM {
     }
 
     pub(super) fn execution_timer_tick(&mut self, work_units: u32) -> Result<()> {
-        if self.execution_timer.limit().is_none() {
+        if !self.execution_timer.accumulate(work_units) {
             return Ok(());
         }
 
@@ -399,7 +399,7 @@ impl RegoVM {
         };
 
         self.execution_timer
-            .tick(work_units, now)
+            .check_now(now)
             .map_err(|err| match err {
                 LimitError::TimeLimitExceeded { elapsed, limit } => VmError::TimeLimitExceeded {
                     elapsed,
@@ -505,8 +505,8 @@ impl RegoVM {
     }
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    pub(super) fn memory_check(&mut self) -> Result<()> {
-        limits::check_memory_limit_if_needed().map_err(|err| match err {
+    fn map_limit_error(&self, err: LimitError) -> VmError {
+        match err {
             LimitError::MemoryLimitExceeded { usage, limit } => VmError::MemoryLimitExceeded {
                 usage,
                 limit,
@@ -516,11 +516,26 @@ impl RegoVM {
                 message: format!("unexpected limit error: {other}"),
                 pc: self.pc,
             },
-        })
+        }
+    }
+
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    pub(super) fn memory_check(&mut self) -> Result<()> {
+        limits::check_memory_limit_if_needed().map_err(|err| self.map_limit_error(err))
+    }
+
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    pub(super) fn enforce_memory_check(&mut self) -> Result<()> {
+        limits::enforce_memory_limit().map_err(|err| self.map_limit_error(err))
     }
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     pub(super) fn memory_check(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
+    pub(super) fn enforce_memory_check(&mut self) -> Result<()> {
         Ok(())
     }
 
