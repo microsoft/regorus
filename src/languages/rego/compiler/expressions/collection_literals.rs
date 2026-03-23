@@ -16,13 +16,20 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
 /// Try to evaluate an expression as a compile-time constant.
-fn try_eval_const(expr: &Expr) -> Option<Value> {
+pub(in crate::languages::rego::compiler) fn try_eval_const(expr: &Expr) -> Option<Value> {
     match expr {
         Expr::Number { value, .. }
         | Expr::String { value, .. }
         | Expr::RawString { value, .. }
         | Expr::Bool { value, .. }
         | Expr::Null { value, .. } => Some(value.clone()),
+        Expr::UnaryExpr { expr, .. } => match expr.as_ref() {
+            Expr::Number {
+                value: Value::Number(n),
+                ..
+            } => Some(Value::Number(n.neg()?)),
+            _ => None,
+        },
         Expr::Array { items, .. } => items
             .iter()
             .map(|i| try_eval_const(i.as_ref()))

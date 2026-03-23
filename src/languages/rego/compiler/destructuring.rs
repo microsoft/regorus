@@ -92,6 +92,9 @@ impl<'a> Compiler<'a> {
                 let lhs_reg = self.compile_rego_expr_with_span(lhs_expr, lhs_expr.span(), false)?;
                 let rhs_reg = self.compile_rego_expr_with_span(rhs_expr, rhs_expr.span(), false)?;
                 if !self.soft_assert_mode {
+                    // AssertEq handles the equality assertion inline; the returned
+                    // register is not used as a boolean by the caller — it is the
+                    // expression's "result register" for potential downstream use.
                     self.emit_instruction(
                         Instruction::AssertEq {
                             left: lhs_reg,

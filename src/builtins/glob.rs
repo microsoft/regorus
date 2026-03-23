@@ -54,16 +54,21 @@ fn make_delimiters_unix_style(s: &str, delimiters: &[char]) -> Result<String> {
 fn make_glob(pattern: &str, span: &Span) -> Result<GlobMatcher> {
     #[cfg(feature = "cache")]
     {
-        let mut cache = crate::cache::GLOB_CACHE.lock();
-        if let Some(matcher) = cache.get(pattern) {
-            return Ok(matcher.clone());
+        {
+            let mut cache = crate::cache::GLOB_CACHE.lock();
+            if let Some(matcher) = cache.get(pattern) {
+                return Ok(matcher.clone());
+            }
         }
         let matcher = GlobBuilder::new(pattern)
             .literal_separator(true)
             .build()
             .or_else(|_| bail!(span.error("invalid glob")))?
             .compile_matcher();
-        cache.put(alloc::string::String::from(pattern), matcher.clone());
+        {
+            let mut cache = crate::cache::GLOB_CACHE.lock();
+            cache.put(alloc::string::String::from(pattern), matcher.clone());
+        }
         Ok(matcher)
     }
     #[cfg(not(feature = "cache"))]

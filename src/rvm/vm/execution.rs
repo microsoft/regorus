@@ -193,6 +193,7 @@ impl RegoVM {
     fn execute_suspendable_entry(&mut self, entry_point_pc: usize) -> Result<Value> {
         self.execution_state = ExecutionState::Running;
         self.reset_execution_timer_state();
+        self.enforce_memory_check()?;
         match self.run_stackless_from(entry_point_pc) {
             Ok(result) => Ok(result),
             Err(err) => {

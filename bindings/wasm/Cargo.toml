@@ -33,9 +33,10 @@ default = [
 	"regorus/uuid",
 	"regorus/urlquery",
 	"regorus/yaml",
-	"regorus/cache"
+	"cache"
 ]
 ast = ["regorus/ast"]
+cache = ["regorus/cache"]
 coverage = ["regorus/coverage"]
 
 [dependencies]

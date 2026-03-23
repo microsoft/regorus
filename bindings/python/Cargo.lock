@@ -929,6 +929,7 @@ dependencies = [
  "msvc_spectre_libs",
  "num-bigint",
  "num-traits",
+ "parking_lot",
  "postcard",
  "rand",
  "regex",

@@ -131,6 +131,8 @@ pub enum Instruction {
         left: u8,
         right: u8,
     },
+    /// Rego negation - produces `true` if operand is `false` or undefined,
+    /// `false` for any other defined value (including non-booleans).
     Not {
         dest: u8,
         operand: u8,

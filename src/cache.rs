@@ -22,23 +22,35 @@
 //! cache::clear();
 //! ```
 
+#[cfg(any(feature = "regex", feature = "glob"))]
 use core::num::NonZeroUsize;
+#[cfg(any(feature = "regex", feature = "glob"))]
 use lazy_static::lazy_static;
+#[cfg(all(feature = "std", any(feature = "regex", feature = "glob")))]
+use parking_lot::Mutex;
+#[cfg(all(not(feature = "std"), any(feature = "regex", feature = "glob")))]
 use spin::Mutex;
 
+#[cfg(any(feature = "regex", feature = "glob"))]
 use alloc::string::String;
 
 /// Configuration for builtin pattern caches.
 ///
 /// Each field controls the maximum number of compiled patterns held in the
 /// corresponding LRU cache.  A value of `0` disables that cache entirely
-/// (every lookup recompiles).
+/// (every lookup recompiles).  Values exceeding [`Config::MAX_CAPACITY`] are
+/// clamped silently.
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
     /// Maximum compiled regex patterns (default 256).
     pub regex: usize,
     /// Maximum compiled glob matchers (default 128).
     pub glob: usize,
+}
+
+impl Config {
+    /// Hard upper bound for any single cache capacity (2^16 = 65 536).
+    pub const MAX_CAPACITY: usize = 1 << 16;
 }
 
 impl Default for Config {
@@ -54,10 +66,12 @@ impl Default for Config {
 // Internal generic LRU wrapper
 // ---------------------------------------------------------------------------
 
+#[cfg(any(feature = "regex", feature = "glob"))]
 pub(crate) struct LruCache<V> {
     inner: Option<lru::LruCache<String, V>>,
 }
 
+#[cfg(any(feature = "regex", feature = "glob"))]
 impl<V> LruCache<V> {
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
@@ -108,6 +122,7 @@ impl<V> LruCache<V> {
 // Global regex cache
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "regex")]
 lazy_static! {
     pub(crate) static ref REGEX_CACHE: Mutex<LruCache<regex::Regex>> =
         Mutex::new(LruCache::new(Config::default().regex));
@@ -131,15 +146,24 @@ lazy_static! {
 ///
 /// Resizes each cache to the specified capacity.  Existing entries are
 /// preserved (subject to LRU eviction if the new capacity is smaller).
+/// Values exceeding [`Config::MAX_CAPACITY`] are clamped.
 pub fn configure(config: Config) {
-    REGEX_CACHE.lock().resize(config.regex);
+    let regex = config.regex.min(Config::MAX_CAPACITY);
+    let glob = config.glob.min(Config::MAX_CAPACITY);
+
+    #[cfg(feature = "regex")]
+    REGEX_CACHE.lock().resize(regex);
 
     #[cfg(feature = "glob")]
-    GLOB_CACHE.lock().resize(config.glob);
+    GLOB_CACHE.lock().resize(glob);
+
+    // Suppress unused-variable warnings when neither regex nor glob is enabled.
+    let _ = (regex, glob);
 }
 
 /// Remove all entries from every pattern cache.
 pub fn clear() {
+    #[cfg(feature = "regex")]
     REGEX_CACHE.lock().clear();
 
     #[cfg(feature = "glob")]

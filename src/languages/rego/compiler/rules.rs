@@ -26,21 +26,13 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 impl<'a> Compiler<'a> {
-    /// Extract a compile-time literal `Value` from an expression, if it is a
-    /// simple scalar.  Returns `None` for computed / non-literal expressions
-    /// and `Some(Value::Bool(true))` for the implicit-true case (`expr_ref`
-    /// is `None`).
+    /// Extract a compile-time constant `Value` from an optional expression.
+    /// Returns `Some(Value::Bool(true))` for the implicit-true case (`expr_ref`
+    /// is `None`), delegates to `try_eval_const` for actual expressions.
     fn static_value_of_expr(expr_ref: &Option<ExprRef>) -> Option<Value> {
         match expr_ref {
             None => Some(Value::Bool(true)),
-            Some(expr) => match expr.as_ref() {
-                Expr::Bool { value, .. } => Some(value.clone()),
-                Expr::String { value, .. } => Some(value.clone()),
-                Expr::RawString { value, .. } => Some(value.clone()),
-                Expr::Number { value, .. } => Some(value.clone()),
-                Expr::Null { value, .. } => Some(value.clone()),
-                _ => None,
-            },
+            Some(expr) => super::expressions::try_eval_const(expr.as_ref()),
         }
     }
 

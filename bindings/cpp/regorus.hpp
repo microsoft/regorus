@@ -159,11 +159,11 @@ namespace regorus {
     };
 
     inline Result set_cache_config(RegorusCacheConfig config) {
-	return Result(regorus_set_cache_config(config));
+	    return Result(regorus_set_cache_config(config));
     }
 
     inline Result clear_cache() {
-	return Result(regorus_clear_cache());
+	    return Result(regorus_clear_cache());
     }
 
     class CompiledPolicy {

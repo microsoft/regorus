@@ -35,6 +35,7 @@ struct PolicyLengthSpec {
     max_lines: usize,
 }
 
+#[cfg(feature = "cache")]
 #[derive(Deserialize)]
 struct CacheConfigSpec {
     regex: usize,
@@ -44,6 +45,7 @@ struct CacheConfigSpec {
 /// Configure the global pattern caches used by regex and glob builtins.
 ///
 /// Accepts a JS object: `{ regex, glob }`.
+#[cfg(feature = "cache")]
 #[wasm_bindgen(js_name = "setCacheConfig")]
 pub fn set_cache_config(config: JsValue) -> Result<(), JsValue> {
     let spec: CacheConfigSpec = serde_wasm_bindgen::from_value(config).map_err(error_to_jsvalue)?;
@@ -55,6 +57,7 @@ pub fn set_cache_config(config: JsValue) -> Result<(), JsValue> {
 }
 
 /// Clear all entries from every pattern cache.
+#[cfg(feature = "cache")]
 #[wasm_bindgen(js_name = "clearCache")]
 pub fn clear_cache() {
     regorus::cache::clear();

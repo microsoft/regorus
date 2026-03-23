@@ -16,7 +16,8 @@ use regex::Regex;
 // Compiled-regex cache (feature = "cache")
 //
 // When enabled, compiled Regex objects are stored in a bounded LRU cache
-// protected by a spin::Mutex.  The capacity is configurable at runtime
+// protected by a Mutex (parking_lot when std, spin when no_std).
+// The capacity is configurable at runtime
 // via regorus::cache::configure().
 // ---------------------------------------------------------------------------
 
@@ -25,13 +26,18 @@ use regex::Regex;
 fn get_or_compile_regex(pattern: &str) -> core::result::Result<Regex, regex::Error> {
     #[cfg(feature = "cache")]
     {
-        let mut cache = crate::cache::REGEX_CACHE.lock();
-        if let Some(re) = cache.get(pattern) {
-            return Ok(re.clone());
+        {
+            let mut cache = crate::cache::REGEX_CACHE.lock();
+            if let Some(re) = cache.get(pattern) {
+                return Ok(re.clone());
+            }
         }
         let re = Regex::new(pattern)?;
-        cache.put(alloc::string::String::from(pattern), re.clone());
-        Ok(re)
+        {
+            let mut cache = crate::cache::REGEX_CACHE.lock();
+            cache.put(alloc::string::String::from(pattern), re.clone());
+            Ok(re)
+        }
     }
     #[cfg(not(feature = "cache"))]
     {

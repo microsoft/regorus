@@ -318,25 +318,15 @@ impl RegoVM {
             Not { dest, operand } => {
                 let operand_value = self.get_register(operand)?;
 
-                if operand_value == &Value::Undefined {
-                    // In Rego, `not expr` succeeds when `expr` has no results.
-                    // When the operand evaluates to undefined we should treat it as
-                    // a successful negation instead of propagating undefined.
-                    self.set_register(dest, Value::Bool(true))?;
-                    return Ok(InstructionOutcome::Continue);
-                }
-
-                if let Some(value) = self.to_bool(operand_value) {
-                    self.set_register(dest, Value::Bool(!value))?;
-                    Ok(InstructionOutcome::Continue)
-                } else {
-                    Err(VmError::ArithmeticError {
-                        message: alloc::format!(
-                            "#undefined: logical NOT expects a boolean (operand={operand_value:?})"
-                        ),
-                        pc: self.pc,
-                    })
-                }
+                // In Rego, `not expr` succeeds when `expr` is undefined or false,
+                // and fails for any other defined value (including non-booleans like 42).
+                let negated = match *operand_value {
+                    Value::Undefined => true,
+                    Value::Bool(b) => !b,
+                    _ => false,
+                };
+                self.set_register(dest, Value::Bool(negated))?;
+                Ok(InstructionOutcome::Continue)
             }
             AssertEq { left, right } => {
                 let a = self.get_register(left)?;
