@@ -32,7 +32,8 @@ default = [
 	"regorus/time",
 	"regorus/uuid",
 	"regorus/urlquery",
-	"regorus/yaml"
+	"regorus/yaml",
+	"regorus/cache"
 ]
 ast = ["regorus/ast"]
 coverage = ["regorus/coverage"]

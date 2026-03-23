@@ -243,3 +243,30 @@ func (e *Engine) ClearPolicyLengthConfig() error {
 	}
 	return nil
 }
+
+type CacheConfig struct {
+	Regex uint
+	Glob  uint
+}
+
+func SetCacheConfig(config CacheConfig) error {
+	c := C.RegorusCacheConfig{
+		regex: C.size_t(config.Regex),
+		glob:  C.size_t(config.Glob),
+	}
+	result := C.regorus_set_cache_config(c)
+	defer C.regorus_result_drop(result)
+	if result.status != C.Ok {
+		return fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+	return nil
+}
+
+func ClearCache() error {
+	result := C.regorus_clear_cache()
+	defer C.regorus_result_drop(result)
+	if result.status != C.Ok {
+		return fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+	return nil
+}

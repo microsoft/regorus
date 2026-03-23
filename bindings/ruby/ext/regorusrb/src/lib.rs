@@ -14,6 +14,12 @@ struct PolicyLengthSpec {
     max_lines: usize,
 }
 
+#[derive(Deserialize)]
+struct CacheConfigSpec {
+    regex: usize,
+    glob: usize,
+}
+
 #[derive(Default)]
 #[magnus::wrap(class = "Regorus::Engine")]
 pub struct Engine {
@@ -417,5 +423,30 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
 
     // ast
     engine_class.define_method("get_ast_as_json", method!(Engine::get_ast_as_json, 0))?;
+
+    // cache configuration (module-level)
+    regorus_module
+        .define_module_function("set_cache_config", magnus::function!(set_cache_config, 1))?;
+    regorus_module.define_module_function("clear_cache", magnus::function!(clear_cache, 0))?;
+
+    Ok(())
+}
+
+fn set_cache_config(ruby: &Ruby, hash: magnus::RHash) -> Result<(), Error> {
+    let spec: CacheConfigSpec = serde_magnus::deserialize(ruby, hash).map_err(|e| {
+        Error::new(
+            runtime_error(),
+            format!("Failed to deserialize cache config: {e}"),
+        )
+    })?;
+    regorus::cache::configure(regorus::cache::Config {
+        regex: spec.regex,
+        glob: spec.glob,
+    });
+    Ok(())
+}
+
+fn clear_cache() -> Result<(), Error> {
+    regorus::cache::clear();
     Ok(())
 }

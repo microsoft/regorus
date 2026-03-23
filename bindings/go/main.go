@@ -17,6 +17,9 @@ func main() {
 	engine := regorus.NewEngine()
 	defer engine.Close()
 
+	// Configure the global pattern caches.
+	regorus.SetCacheConfig(regorus.CacheConfig{Regex: 256, Glob: 128})
+
 	engine.SetRegoV0(true)
 	// Raise the default col limit to 2000
 	engine.SetPolicyLengthConfig(regorus.PolicyLengthConfig{MaxCol: 2000, MaxFileBytes: 1048576, MaxLines: 20000})

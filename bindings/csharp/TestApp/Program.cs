@@ -18,6 +18,9 @@ var w = new Stopwatch();
 
 w.Restart();
 
+// Configure the global pattern caches.
+Regorus.Engine.SetCacheConfig(new Regorus.CacheConfig(regex: 256, glob: 128));
+
 var engine = new Regorus.Engine();
 engine.SetRegoV0(true);
 // Raise the default col limit to 2000

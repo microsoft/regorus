@@ -400,6 +400,27 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClearPolicyLength
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_microsoft_regorus_CacheConfig_nativeSetCacheConfig(
+    _env: JNIEnv,
+    _class: JClass,
+    regex: jlong,
+    glob: jlong,
+) {
+    regorus::cache::configure(regorus::cache::Config {
+        regex: regex as usize,
+        glob: glob as usize,
+    });
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_microsoft_regorus_CacheConfig_nativeClearCache(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    regorus::cache::clear();
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeDestroyEngine(
     _env: JNIEnv,
     _class: JClass,

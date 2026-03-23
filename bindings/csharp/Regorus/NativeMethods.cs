@@ -458,6 +458,22 @@ namespace Regorus.Internal
 
         #endregion
 
+        #region Cache Configuration Global Methods
+
+        /// <summary>
+        /// Configure the global pattern caches used by regex and glob builtins.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_set_cache_config", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_set_cache_config(RegorusCacheConfig config);
+
+        /// <summary>
+        /// Clear all entries from every pattern cache.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_clear_cache", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_clear_cache();
+
+        #endregion
+
         #region Compilation Methods
 
         /// <summary>
@@ -793,6 +809,16 @@ namespace Regorus.Internal
         public uint max_col;
         public UIntPtr max_file_bytes;
         public UIntPtr max_lines;
+    }
+
+    /// <summary>
+    /// FFI representation of the cache configuration.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct RegorusCacheConfig
+    {
+        public UIntPtr regex;
+        public UIntPtr glob;
     }
 
     /// <summary>

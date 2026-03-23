@@ -66,8 +66,8 @@ fn find_all_string_submatch_n(
     let value = ensure_string(name, &params[1], &args[1])?;
     let n = ensure_numeric(name, &params[2], &args[2])?;
 
-    let re =
-        get_or_compile_regex(&pattern).or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let re = get_or_compile_regex(&pattern)
+        .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
 
     if !n.is_integer() {
         bail!(params[2].span().error("n must be an integer"));
@@ -80,8 +80,7 @@ fn find_all_string_submatch_n(
     };
 
     Ok(Value::from_array(
-        re
-            .captures_iter(&value)
+        re.captures_iter(&value)
             .map(|capture| {
                 let groups = capture
                     .iter()
@@ -113,8 +112,8 @@ fn find_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     let value = ensure_string(name, &params[1], &args[1])?;
     let n = ensure_numeric(name, &params[2], &args[2])?;
 
-    let re =
-        get_or_compile_regex(&pattern).or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let re = get_or_compile_regex(&pattern)
+        .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
 
     if !n.is_integer() {
         bail!(params[2].span().error("n must be an integer"));
@@ -127,8 +126,7 @@ fn find_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     };
 
     Ok(Value::from_array(
-        re
-            .find_iter(&value)
+        re.find_iter(&value)
             .map(|m| {
                 let value = Value::String(m.as_str().into());
                 // Guard match accumulation while pushing each substring.
@@ -143,8 +141,11 @@ fn find_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
 fn is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "regex.is_valid";
     ensure_args_count(span, name, params, args, 1)?;
-    Ok(ensure_string(name, &params[0], &args[0])
-        .map_or(Value::Bool(false), |p| Value::Bool(get_or_compile_regex(&p).is_ok())))
+    Ok(
+        ensure_string(name, &params[0], &args[0]).map_or(Value::Bool(false), |p| {
+            Value::Bool(get_or_compile_regex(&p).is_ok())
+        }),
+    )
 }
 
 pub fn regex_match(
@@ -158,8 +159,8 @@ pub fn regex_match(
     let pattern = ensure_string(name, &params[0], &args[0])?;
     let value = ensure_string(name, &params[1], &args[1])?;
 
-    let re =
-        get_or_compile_regex(&pattern).or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let re = get_or_compile_regex(&pattern)
+        .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
     Ok(Value::Bool(re.is_match(&value)))
 }
 
@@ -182,9 +183,7 @@ fn regex_replace(
         _ => return Ok(Value::Undefined),
     };
 
-    Ok(Value::String(
-        re.replace_all(&s, value.as_ref()).into(),
-    ))
+    Ok(Value::String(re.replace_all(&s, value.as_ref()).into()))
 }
 
 fn regex_split(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
@@ -193,11 +192,10 @@ fn regex_split(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
     let pattern = ensure_string(name, &params[0], &args[0])?;
     let value = ensure_string(name, &params[1], &args[1])?;
 
-    let re =
-        get_or_compile_regex(&pattern).or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let re = get_or_compile_regex(&pattern)
+        .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
     Ok(Value::from_array(
-        re
-            .split(&value)
+        re.split(&value)
             .map(|s| {
                 let value = Value::String(s.into());
                 // Guard output accumulation as each split segment is emitted.

@@ -11,6 +11,13 @@ int main() {
     if (r.status != Ok)
 	goto error;
 
+    // Configure the global pattern caches.
+    RegorusCacheConfig cache_config = { .regex = 256, .glob = 128 };
+    r = regorus_set_cache_config(cache_config);
+    if (r.status != Ok)
+	goto error;
+    regorus_result_drop(r);
+
     // Raise the default col limit to 2000
     RegorusPolicyLengthConfig len_config = { .max_col = 2000, .max_file_bytes = 1048576, .max_lines = 20000 };
     r = regorus_engine_set_policy_length_config(engine, len_config);

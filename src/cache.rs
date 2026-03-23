@@ -61,8 +61,7 @@ pub(crate) struct LruCache<V> {
 impl<V> LruCache<V> {
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
-            inner: NonZeroUsize::new(capacity)
-                .map(lru::LruCache::new),
+            inner: NonZeroUsize::new(capacity).map(lru::LruCache::new),
         }
     }
 

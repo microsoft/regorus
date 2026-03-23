@@ -79,7 +79,6 @@ opa-no-std = [
   "arc",
   "base64",
   "base64url",
-  "cache",
   "coverage",
   "graph",
   "hex",

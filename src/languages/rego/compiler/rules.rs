@@ -587,10 +587,13 @@ impl<'a> Compiler<'a> {
                                 }
                             }
                         }
-                        if all_same { consistent } else { None }
+                        if all_same {
+                            consistent
+                        } else {
+                            None
+                        }
                     };
-                    self.rule_definition_static_values[rule_index as usize]
-                        .push(def_static_value);
+                    self.rule_definition_static_values[rule_index as usize].push(def_static_value);
 
                     self.rule_definitions[rule_index as usize].push(body_entry_points);
 
