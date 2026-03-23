@@ -39,6 +39,7 @@ net = ["dep:ipnet"]
 no_std = ["lazy_static/spin_no_std"]
 opa-runtime = []
 regex = ["dep:regex"]
+cache = ["dep:lru"]
 rvm = ["dep:postcard", "dep:indexmap"]
 semver = ["dep:semver"]
 allocator-memory-limits = ["std", "mimalloc", "mimalloc/allocator-memory-limits"]
@@ -61,6 +62,7 @@ full-opa = [
     "net",
     "opa-runtime",
     "regex",
+    "cache",
     "semver",
     "std",
     "time",
@@ -77,6 +79,7 @@ opa-no-std = [
   "arc",
   "base64",
   "base64url",
+  "cache",
   "coverage",
   "graph",
   "hex",
@@ -124,6 +127,7 @@ rand = { version = "0.9.0", default-features = false, features = ["thread_rng"],
 # Causes the project to link with the Spectre-mitigated CRT and libs.
 msvc_spectre_libs = { version = "0.1", features = ["error"], optional = true }
 dashmap = { version = "6.1", default-features = false, optional = true }
+lru = { version = "0.16", default-features = false, optional = true }
 mimalloc = { package = "regorus-mimalloc", path = "mimalloc", version = "2.2.6", optional = true }
 
 # rvm related deps
