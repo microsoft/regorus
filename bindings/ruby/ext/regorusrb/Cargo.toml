@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [features]
-default = ["ast", "cache", "coverage", "regorus/std", "regorus/full-opa"]
+default = ["ast", "cache", "coverage", "regorus/std", "regorus/full-opa", "regorus/allocator-memory-limits"]
 ast = ["regorus/ast"]
 cache = ["regorus/cache"]
 coverage = ["regorus/coverage"]

@@ -15,7 +15,7 @@ keywords = ["interpreter", "opa", "policy-as-code", "rego"]
 crate-type = ["cdylib"]
 
 [features]
-default = ["ast", "cache", "coverage", "regorus/std", "regorus/full-opa"]
+default = ["ast", "cache", "coverage", "regorus/std", "regorus/full-opa", "regorus/allocator-memory-limits"]
 ast = ["regorus/ast"]
 cache = ["regorus/cache"]
 coverage = ["regorus/coverage"]
