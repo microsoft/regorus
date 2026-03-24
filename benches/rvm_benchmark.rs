@@ -57,6 +57,7 @@ use regorus::{Engine, Rc, Value};
 // hot path (memory_check, execution_timer_tick, instruction-limit compare).
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "allocator-memory-limits")]
 const MEMORY_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
 const TIME_LIMIT: Duration = Duration::from_secs(30);
 const TIMER_CHECK_INTERVAL: NonZeroU32 = NonZeroU32::new(16).unwrap();
@@ -360,6 +361,7 @@ fn compile_all_programs() -> Vec<BenchmarkProgram> {
 /// Apply or remove production-style limits based on a boolean flag.
 fn configure_limits(vm: &mut RegoVM, limits: bool) {
     if limits {
+        #[cfg(feature = "allocator-memory-limits")]
         regorus::set_global_memory_limit(Some(MEMORY_LIMIT_BYTES));
         vm.set_execution_timer_config(Some(ExecutionTimerConfig {
             limit: TIME_LIMIT,
@@ -367,6 +369,7 @@ fn configure_limits(vm: &mut RegoVM, limits: bool) {
         }));
         vm.set_max_instructions(INSTRUCTION_LIMIT);
     } else {
+        #[cfg(feature = "allocator-memory-limits")]
         regorus::set_global_memory_limit(None);
         vm.set_execution_timer_config(None);
         vm.set_max_instructions(usize::MAX);
