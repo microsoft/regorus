@@ -14,7 +14,7 @@ jobs:
       MIRIFLAGS: "-Zmiri-disable-isolation"
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - uses: ./.github/actions/toolchains/rust
         with:
           toolchain: nightly
