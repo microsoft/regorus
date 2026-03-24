@@ -1,0 +1,82 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+#
+# Thorough weekly test of non-default feature combinations.
+# Catches regressions from dependency updates and feature-gating issues
+# that the fast PR CI checks (cargo check only) would miss at runtime.
+name: tests/feature-matrix
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run at 3:42 AM UTC every Saturday.
+    - cron: "42 3 * * 6"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  feature-matrix:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Bare minimum: validates that the core interpreter works
+          # without any builtins or optional subsystems.
+          - name: minimal (std + arc)
+            features: std,arc
+
+          # Common library usage pattern (issue #595): consumer enables
+          # std + arc + rvm and relies on indexmap/std propagation.
+          - name: library (std + arc + rvm)
+            features: std,arc,rvm
+
+          # New default after removing mimalloc from full-opa.
+          # Ensures all builtins compile without the allocator.
+          - name: full-opa (no mimalloc)
+            features: std,arc,full-opa
+
+          # Binding-style usage: full-opa with the vendored allocator.
+          # Mirrors how ffi/java/python/ruby bindings are built.
+          - name: full-opa + allocator
+            features: std,arc,full-opa,allocator-memory-limits
+
+          # Selective builtins without full-opa: validates that popular
+          # features can be cherry-picked independently.
+          - name: cherry-picked builtins
+            features: std,arc,rvm,regex,time,semver,cache
+
+          # Observability features only: coverage + cache without the
+          # heavier builtins (regex, time, etc.).
+          - name: observability
+            features: std,arc,rvm,coverage,cache
+
+          # Azure Policy adds jsonschema + dashmap; test it compiles
+          # and runs on top of full-opa.
+          - name: azure-policy
+            features: std,arc,full-opa,azure_policy
+
+          # Azure RBAC adds regex + time + net on top of full-opa.
+          - name: azure-rbac
+            features: std,arc,full-opa,azure-rbac
+
+          # no_std with the OPA-compatible feature set: exercises the
+          # spin_no_std codepath and absence of std-only dependencies.
+          - name: no_std
+            features: arc,opa-no-std
+
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - name: Setup Rust toolchain
+      uses: ./.github/actions/toolchains/rust
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      with:
+        shared-key: ${{ runner.os }}-regorus-features
+    - name: Fetch dependencies
+      run: cargo fetch --locked
+    - name: Build
+      run: cargo build --no-default-features --features "${{ matrix.features }}" --frozen
+    - name: Test
+      run: cargo test --no-default-features --features "${{ matrix.features }}" --frozen
