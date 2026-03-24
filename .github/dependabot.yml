@@ -7,12 +7,26 @@
 
 version: 2
 updates:
+  # All Rust/Cargo directories are grouped into a single entry so that
+  # when a dependency is updated, Dependabot creates ONE PR that bumps it
+  # across the root workspace AND every binding, preventing version skew.
   - package-ecosystem: "cargo"
-    directory: "/" # Location of package manifests
+    directories:
+      - "/"
+      - "/bindings/ffi"
+      - "/bindings/java"
+      - "/bindings/python"
+      - "/bindings/ruby"
+      - "/bindings/ruby/ext/regorusrb"
+      - "/bindings/wasm"
+      - "/tests/ensure_no_std"
+      - "/xtask"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "build(deps)"
     groups:
-      per-dependency:
+      rust-dependencies:
         patterns:
           - "*"
     # Ignore vendored mimalloc crates; updates are managed manually.
@@ -20,82 +34,12 @@ updates:
       - dependency-name: "regorus-mimalloc"
       - dependency-name: "regorus-mimalloc-sys"
 
-  - package-ecosystem: "cargo"
-    directory: "/bindings/ffi"
-    schedule:
-      interval: "weekly"
-    groups:
-      per-dependency:
-        patterns:
-          - "*"
-
-  - package-ecosystem: "cargo"
-    directory: "/bindings/java"
-    schedule:
-      interval: "weekly"
-    groups:
-      per-dependency:
-        patterns:
-          - "*"
-
-  - package-ecosystem: "cargo"
-    directory: "/bindings/python"
-    schedule:
-      interval: "weekly"
-    groups:
-      per-dependency:
-        patterns:
-          - "*"
-
-  - package-ecosystem: "cargo"
-    directory: "/bindings/ruby"
-    schedule:
-      interval: "weekly"
-    groups:
-      per-dependency:
-        patterns:
-          - "*"
-
-  - package-ecosystem: "cargo"
-    directory: "/bindings/ruby/ext/regorusrb"
-    schedule:
-      interval: "weekly"
-    groups:
-      per-dependency:
-        patterns:
-          - "*"
-
-  - package-ecosystem: "cargo"
-    directory: "/bindings/wasm"
-    schedule:
-      interval: "weekly"
-    groups:
-      per-dependency:
-        patterns:
-          - "*"
-
-  - package-ecosystem: "cargo"
-    directory: "/tests/ensure_no_std"
-    schedule:
-      interval: "weekly"
-    groups:
-      per-dependency:
-        patterns:
-          - "*"
-
-  - package-ecosystem: "cargo"
-    directory: "/xtask"
-    schedule:
-      interval: "weekly"
-    groups:
-      per-dependency:
-        patterns:
-          - "*"
-
   - package-ecosystem: "gomod"
     directory: "/bindings/go"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "build(deps)"
     groups:
       per-dependency:
         patterns:
@@ -105,6 +49,8 @@ updates:
     directory: "/bindings/java"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "build(deps)"
     groups:
       per-dependency:
         patterns:
@@ -114,6 +60,8 @@ updates:
     directory: "/bindings/csharp"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "build(deps)"
     groups:
       per-dependency:
         patterns:
@@ -123,6 +71,8 @@ updates:
     directory: "/bindings/python"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "build(deps)"
     groups:
       per-dependency:
         patterns:
@@ -132,6 +82,8 @@ updates:
     directory: "/bindings/ruby"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "build(deps)"
     groups:
       per-dependency:
         patterns:
@@ -141,7 +93,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "ci(deps)"
     groups:
-      per-dependency:
+      github-actions:
         patterns:
           - "*"
