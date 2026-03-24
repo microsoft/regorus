@@ -176,6 +176,25 @@ pub use utils::limits::{
 };
 pub use value::Value;
 
+/// Compiled-pattern caches for the `regex.*` and `glob.*` Rego builtins.
+///
+/// When the `cache` feature is enabled, compiled patterns are held in
+/// bounded LRU caches so that repeated evaluations avoid recompilation.
+///
+/// # Examples
+///
+/// ```ignore
+/// use regorus::cache;
+///
+/// cache::configure(cache::Config {
+///     regex: 256,
+///     glob: 128,
+/// });
+/// cache::clear();
+/// ```
+#[cfg(feature = "cache")]
+pub mod cache;
+
 #[cfg(feature = "arc")]
 pub use alloc::sync::Arc as Rc;
 

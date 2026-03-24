@@ -12,6 +12,39 @@ use crate::*;
 use anyhow::{bail, Result};
 use regex::Regex;
 
+// ---------------------------------------------------------------------------
+// Compiled-regex cache (feature = "cache")
+//
+// When enabled, compiled Regex objects are stored in a bounded LRU cache
+// protected by a Mutex (parking_lot when std, spin when no_std).
+// The capacity is configurable at runtime
+// via regorus::cache::configure().
+// ---------------------------------------------------------------------------
+
+/// Compile a regex pattern, using the cache when the `cache` feature
+/// is enabled and falling back to direct compilation otherwise.
+fn get_or_compile_regex(pattern: &str) -> core::result::Result<Regex, regex::Error> {
+    #[cfg(feature = "cache")]
+    {
+        {
+            let mut cache = crate::cache::REGEX_CACHE.lock();
+            if let Some(re) = cache.get(pattern) {
+                return Ok(re.clone());
+            }
+        }
+        let re = Regex::new(pattern)?;
+        {
+            let mut cache = crate::cache::REGEX_CACHE.lock();
+            cache.put(alloc::string::String::from(pattern), re.clone());
+            Ok(re)
+        }
+    }
+    #[cfg(not(feature = "cache"))]
+    {
+        Regex::new(pattern)
+    }
+}
+
 pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert(
         "regex.find_all_string_submatch_n",
@@ -39,8 +72,8 @@ fn find_all_string_submatch_n(
     let value = ensure_string(name, &params[1], &args[1])?;
     let n = ensure_numeric(name, &params[2], &args[2])?;
 
-    let pattern =
-        Regex::new(&pattern).or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let re = get_or_compile_regex(&pattern)
+        .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
 
     if !n.is_integer() {
         bail!(params[2].span().error("n must be an integer"));
@@ -53,8 +86,7 @@ fn find_all_string_submatch_n(
     };
 
     Ok(Value::from_array(
-        pattern
-            .captures_iter(&value)
+        re.captures_iter(&value)
             .map(|capture| {
                 let groups = capture
                     .iter()
@@ -86,8 +118,8 @@ fn find_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     let value = ensure_string(name, &params[1], &args[1])?;
     let n = ensure_numeric(name, &params[2], &args[2])?;
 
-    let pattern =
-        Regex::new(&pattern).or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let re = get_or_compile_regex(&pattern)
+        .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
 
     if !n.is_integer() {
         bail!(params[2].span().error("n must be an integer"));
@@ -100,8 +132,7 @@ fn find_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     };
 
     Ok(Value::from_array(
-        pattern
-            .find_iter(&value)
+        re.find_iter(&value)
             .map(|m| {
                 let value = Value::String(m.as_str().into());
                 // Guard match accumulation while pushing each substring.
@@ -116,8 +147,11 @@ fn find_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
 fn is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "regex.is_valid";
     ensure_args_count(span, name, params, args, 1)?;
-    Ok(ensure_string(name, &params[0], &args[0])
-        .map_or(Value::Bool(false), |p| Value::Bool(Regex::new(&p).is_ok())))
+    Ok(
+        ensure_string(name, &params[0], &args[0]).map_or(Value::Bool(false), |p| {
+            Value::Bool(get_or_compile_regex(&p).is_ok())
+        }),
+    )
 }
 
 pub fn regex_match(
@@ -131,9 +165,9 @@ pub fn regex_match(
     let pattern = ensure_string(name, &params[0], &args[0])?;
     let value = ensure_string(name, &params[1], &args[1])?;
 
-    let pattern =
-        Regex::new(&pattern).or_else(|_| bail!(params[0].span().error("invalid regex")))?;
-    Ok(Value::Bool(pattern.is_match(&value)))
+    let re = get_or_compile_regex(&pattern)
+        .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    Ok(Value::Bool(re.is_match(&value)))
 }
 
 fn regex_replace(
@@ -149,15 +183,13 @@ fn regex_replace(
     let pattern = ensure_string(name, &params[1], &args[1])?;
     let value = ensure_string(name, &params[2], &args[2])?;
 
-    let pattern = match Regex::new(&pattern) {
+    let re = match get_or_compile_regex(&pattern) {
         Ok(p) => p,
         // TODO: This behavior is due to OPA test not raising error. Should we raise error?
         _ => return Ok(Value::Undefined),
     };
 
-    Ok(Value::String(
-        pattern.replace_all(&s, value.as_ref()).into(),
-    ))
+    Ok(Value::String(re.replace_all(&s, value.as_ref()).into()))
 }
 
 fn regex_split(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
@@ -166,11 +198,10 @@ fn regex_split(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
     let pattern = ensure_string(name, &params[0], &args[0])?;
     let value = ensure_string(name, &params[1], &args[1])?;
 
-    let pattern =
-        Regex::new(&pattern).or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let re = get_or_compile_regex(&pattern)
+        .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
     Ok(Value::from_array(
-        pattern
-            .split(&value)
+        re.split(&value)
             .map(|s| {
                 let value = Value::String(s.into());
                 // Guard output accumulation as each split segment is emitted.
@@ -211,13 +242,13 @@ fn regex_template_match(
         }
 
         // Fetch pattern, excluding delimiters.
-        let pattern = Regex::new(&template[start + delimiter_start.len()..end])
+        let re = get_or_compile_regex(&template[start + delimiter_start.len()..end])
             .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
 
         // Skip preceding literal in value.
         value = &value[start..];
 
-        let m = match pattern.find(value) {
+        let m = match re.find(value) {
             Some(m) if m.start() == 0 => m,
             _ => return Ok(Value::Bool(false)),
         };

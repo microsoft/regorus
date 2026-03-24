@@ -188,6 +188,11 @@ class TestRegorus < Minitest::Test
     @engine.clear_policy_length_config
   end
 
+  def test_set_cache_config
+    ::Regorus.set_cache_config({ regex: 256, glob: 128 })
+    ::Regorus.clear_cache
+  end
+
   def alice_results
     {
       result: [

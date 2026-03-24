@@ -11,7 +11,7 @@
 )]
 
 use super::{CompilationContext, Compiler, CompilerError, ContextType, Result, WorklistEntry};
-use crate::ast::{Expr, Rule, RuleHead};
+use crate::ast::{Expr, ExprRef, Rule, RuleHead};
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
 use crate::rvm::program::{Program, RuleType};
@@ -26,6 +26,16 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 impl<'a> Compiler<'a> {
+    /// Extract a compile-time constant `Value` from an optional expression.
+    /// Returns `Some(Value::Bool(true))` for the implicit-true case (`expr_ref`
+    /// is `None`), delegates to `try_eval_const` for actual expressions.
+    fn static_value_of_expr(expr_ref: &Option<ExprRef>) -> Option<Value> {
+        match expr_ref {
+            None => Some(Value::Bool(true)),
+            Some(expr) => super::expressions::try_eval_const(expr.as_ref()),
+        }
+    }
+
     pub(super) fn compute_rule_type(&self, rule_path: &str) -> Result<RuleType> {
         let Some(definitions) = self.policy.inner.rules.get(rule_path) else {
             return Err(CompilerError::General {
@@ -311,6 +321,10 @@ impl<'a> Compiler<'a> {
                 self.rule_definition_destructuring_patterns.push(Vec::new());
             }
 
+            while self.rule_definition_static_values.len() <= rule_index as usize {
+                self.rule_definition_static_values.push(Vec::new());
+            }
+
             let mut num_registers_used = 0;
             let mut rule_param_count: Option<usize> = None;
 
@@ -524,6 +538,54 @@ impl<'a> Compiler<'a> {
                     }
 
                     self.pop_scope();
+
+                    // Compute this definition's static value for early-exit analysis.
+                    // A definition has a known static value if every body (including
+                    // else-branches) would produce the same literal.
+                    let def_static_value = if bodies.is_empty() {
+                        // No bodies — value comes from the head's value_expr.
+                        let head_value = self
+                            .context_stack
+                            .last()
+                            .and_then(|ctx| ctx.value_expr.clone());
+                        Self::static_value_of_expr(&head_value)
+                    } else {
+                        // Replay the same value_expr resolution as the body loop.
+                        let head_value = self
+                            .context_stack
+                            .last()
+                            .and_then(|ctx| ctx.value_expr.clone());
+                        let mut consistent: Option<Value> = None;
+                        let mut all_same = true;
+                        for (bi, b) in bodies.iter().enumerate() {
+                            let mut bve: Option<ExprRef> =
+                                b.assign.as_ref().map(|a| a.value.clone());
+                            if bve.is_none() && bi == 0 {
+                                bve = head_value.clone();
+                            }
+                            match Self::static_value_of_expr(&bve) {
+                                Some(v) => match &consistent {
+                                    None => consistent = Some(v),
+                                    Some(prev) => {
+                                        if *prev != v {
+                                            all_same = false;
+                                            break;
+                                        }
+                                    }
+                                },
+                                None => {
+                                    all_same = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if all_same {
+                            consistent
+                        } else {
+                            None
+                        }
+                    };
+                    self.rule_definition_static_values[rule_index as usize].push(def_static_value);
 
                     self.rule_definitions[rule_index as usize].push(body_entry_points);
 

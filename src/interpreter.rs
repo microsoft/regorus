@@ -289,7 +289,7 @@ impl Interpreter {
     }
 
     fn execution_timer_tick(&mut self, work_units: u32) -> Result<()> {
-        if self.execution_timer.limit().is_none() {
+        if !self.execution_timer.accumulate(work_units) {
             return Ok(());
         }
 
@@ -297,7 +297,7 @@ impl Interpreter {
             return Ok(());
         };
 
-        self.execution_timer.tick(work_units, now)?;
+        self.execution_timer.check_now(now)?;
         Ok(())
     }
 

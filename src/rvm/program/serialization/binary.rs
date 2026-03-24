@@ -157,7 +157,7 @@ impl Program {
                 program.rego_v0 = Self::legacy_rego_v0(data, version).unwrap_or(false);
                 Ok(DeserializationResult::Partial(program))
             }
-            4 => {
+            4 | 5 => {
                 if data.len() < 29 {
                     return Err("Data too short for header".to_string());
                 }
@@ -281,7 +281,7 @@ impl Program {
         let version = Self::read_u32(data, 4).ok();
 
         match version {
-            Some(1..=4) => Ok(true),
+            Some(1..=5) => Ok(true),
             _ => Ok(false),
         }
     }

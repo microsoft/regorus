@@ -6,6 +6,10 @@ void example()
     // Create engine
     regorus::Engine engine;
 
+    // Configure the global pattern caches.
+    RegorusCacheConfig cache_config = { 256, 128 };
+    regorus::set_cache_config(cache_config);
+
     engine.set_rego_v0(true);
     engine.set_enable_coverage(true);
 

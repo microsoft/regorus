@@ -247,6 +247,26 @@ impl ExecutionTimer {
         self.last_elapsed
     }
 
+    /// Increment work units and return whether a time check is due.
+    ///
+    /// This method only updates the internal counter — it never reads a clock.
+    /// Callers should obtain the current time and call [`check_now`](Self::check_now)
+    /// only when this returns `true`.
+    pub const fn accumulate(&mut self, work_units: u32) -> bool {
+        let Some(config) = self.config else {
+            return false;
+        };
+        self.accumulated_units = self.accumulated_units.saturating_add(work_units);
+        if self.accumulated_units < config.check_interval.get() {
+            return false;
+        }
+
+        // Preserve the remainder so that callers do not lose fractional work.
+        let interval = config.check_interval.get();
+        self.accumulated_units %= interval;
+        true
+    }
+
     /// Increment work units and run the periodic limit check when necessary.
     pub fn tick(&mut self, work_units: u32, now: Duration) -> Result<(), LimitError> {
         let Some(config) = self.config else {
@@ -470,5 +490,51 @@ mod tests {
 
         let mut slot = super::TIME_SOURCE_OVERRIDE.lock();
         *slot = previous;
+    }
+
+    #[test]
+    fn accumulate_defers_clock_reads() {
+        let mut timer = ExecutionTimer::new(Some(ExecutionTimerConfig {
+            limit: Duration::from_secs(1),
+            check_interval: nz(4),
+        }));
+        timer.start(Duration::from_millis(0));
+
+        // First 3 work units should not require a clock read.
+        for _ in 0..3 {
+            assert!(
+                !timer.accumulate(1),
+                "accumulate before interval must return false"
+            );
+        }
+
+        // The 4th unit crosses the interval — caller should read the clock now.
+        assert!(
+            timer.accumulate(1),
+            "accumulate at interval must return true"
+        );
+
+        // After the boundary, the counter resets — next 3 units are cheap again.
+        for _ in 0..3 {
+            assert!(
+                !timer.accumulate(1),
+                "accumulate after reset must return false"
+            );
+        }
+        assert!(
+            timer.accumulate(1),
+            "second interval crossing must return true"
+        );
+    }
+
+    #[test]
+    fn accumulate_returns_false_when_disabled() {
+        let mut timer = ExecutionTimer::new(None);
+        for _ in 0..10 {
+            assert!(
+                !timer.accumulate(1),
+                "disabled timer must never request a clock read"
+            );
+        }
     }
 }

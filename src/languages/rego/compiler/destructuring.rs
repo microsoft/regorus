@@ -91,6 +91,19 @@ impl<'a> Compiler<'a> {
             AssignmentPlan::EqualityCheck { lhs_expr, rhs_expr } => {
                 let lhs_reg = self.compile_rego_expr_with_span(lhs_expr, lhs_expr.span(), false)?;
                 let rhs_reg = self.compile_rego_expr_with_span(rhs_expr, rhs_expr.span(), false)?;
+                if !self.soft_assert_mode {
+                    // AssertEq handles the equality assertion inline; the returned
+                    // register is not used as a boolean by the caller — it is the
+                    // expression's "result register" for potential downstream use.
+                    self.emit_instruction(
+                        Instruction::AssertEq {
+                            left: lhs_reg,
+                            right: rhs_reg,
+                        },
+                        span,
+                    );
+                    return Ok(lhs_reg);
+                }
                 let dest = self.alloc_register();
                 self.emit_instruction(
                     Instruction::Eq {
@@ -100,9 +113,6 @@ impl<'a> Compiler<'a> {
                     },
                     span,
                 );
-                if !self.soft_assert_mode {
-                    self.emit_instruction(Instruction::AssertCondition { condition: dest }, span);
-                }
                 Ok(dest)
             }
             AssignmentPlan::WildcardMatch {
@@ -196,35 +206,47 @@ impl<'a> Compiler<'a> {
             DestructuringPlan::EqualityExpr(expected_expr) => {
                 let expected_reg =
                     self.compile_rego_expr_with_span(expected_expr, expected_expr.span(), false)?;
-                let cmp_reg = self.alloc_register();
+                if self.soft_assert_mode {
+                    let cmp_reg = self.alloc_register();
+                    self.emit_instruction(
+                        Instruction::Eq {
+                            dest: cmp_reg,
+                            left: value_register,
+                            right: expected_reg,
+                        },
+                        span,
+                    );
+                    return Ok(Some(cmp_reg));
+                }
                 self.emit_instruction(
-                    Instruction::Eq {
-                        dest: cmp_reg,
+                    Instruction::AssertEq {
                         left: value_register,
                         right: expected_reg,
                     },
                     span,
                 );
-                if self.soft_assert_mode {
-                    return Ok(Some(cmp_reg));
-                }
-                self.emit_instruction(Instruction::AssertCondition { condition: cmp_reg }, span);
             }
             DestructuringPlan::EqualityValue(expected_value) => {
                 let expected_reg = self.load_literal_value(expected_value, span);
-                let cmp_reg = self.alloc_register();
+                if self.soft_assert_mode {
+                    let cmp_reg = self.alloc_register();
+                    self.emit_instruction(
+                        Instruction::Eq {
+                            dest: cmp_reg,
+                            left: value_register,
+                            right: expected_reg,
+                        },
+                        span,
+                    );
+                    return Ok(Some(cmp_reg));
+                }
                 self.emit_instruction(
-                    Instruction::Eq {
-                        dest: cmp_reg,
+                    Instruction::AssertEq {
                         left: value_register,
                         right: expected_reg,
                     },
                     span,
                 );
-                if self.soft_assert_mode {
-                    return Ok(Some(cmp_reg));
-                }
-                self.emit_instruction(Instruction::AssertCondition { condition: cmp_reg }, span);
             }
             DestructuringPlan::Array { element_plans } => {
                 self.assert_array_length(value_register, element_plans.len(), span)?;
@@ -371,16 +393,13 @@ impl<'a> Compiler<'a> {
             span,
         );
 
-        let cmp_reg = self.alloc_register();
         self.emit_instruction(
-            Instruction::Eq {
-                dest: cmp_reg,
+            Instruction::AssertEq {
                 left: actual_len_reg,
                 right: expected_len_reg,
             },
             span,
         );
-        self.emit_instruction(Instruction::AssertCondition { condition: cmp_reg }, span);
         Ok(())
     }
 }

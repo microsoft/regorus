@@ -7,13 +7,47 @@
 )]
 
 use super::{Compiler, Register, Result};
-use crate::ast::ExprRef;
+use crate::ast::{Expr, ExprRef};
 use crate::lexer::Span;
 use crate::rvm::instructions::{ArrayCreateParams, ObjectCreateParams, SetCreateParams};
 use crate::rvm::Instruction;
 use crate::{Rc, Value};
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
+
+/// Try to evaluate an expression as a compile-time constant.
+pub(in crate::languages::rego::compiler) fn try_eval_const(expr: &Expr) -> Option<Value> {
+    match expr {
+        Expr::Number { value, .. }
+        | Expr::String { value, .. }
+        | Expr::RawString { value, .. }
+        | Expr::Bool { value, .. }
+        | Expr::Null { value, .. } => Some(value.clone()),
+        Expr::UnaryExpr { expr, .. } => match expr.as_ref() {
+            Expr::Number {
+                value: Value::Number(n),
+                ..
+            } => Some(Value::Number(n.neg()?)),
+            _ => None,
+        },
+        Expr::Array { items, .. } => items
+            .iter()
+            .map(|i| try_eval_const(i.as_ref()))
+            .collect::<Option<Vec<_>>>()
+            .map(|v| Value::Array(Rc::new(v))),
+        Expr::Set { items, .. } => items
+            .iter()
+            .map(|i| try_eval_const(i.as_ref()))
+            .collect::<Option<BTreeSet<_>>>()
+            .map(|s| Value::Set(Rc::new(s))),
+        Expr::Object { fields, .. } => fields
+            .iter()
+            .map(|(_, k, v)| Some((try_eval_const(k.as_ref())?, try_eval_const(v.as_ref())?)))
+            .collect::<Option<BTreeMap<_, _>>>()
+            .map(|m| Value::Object(Rc::new(m))),
+        _ => None,
+    }
+}
 
 impl<'a> Compiler<'a> {
     pub(super) fn compile_array_literal(
@@ -21,6 +55,14 @@ impl<'a> Compiler<'a> {
         items: &[ExprRef],
         span: &Span,
     ) -> Result<Register> {
+        let all_const: Option<Vec<_>> = items.iter().map(|i| try_eval_const(i.as_ref())).collect();
+        if let Some(values) = all_const {
+            let dest = self.alloc_register();
+            let literal_idx = self.add_literal(Value::Array(Rc::new(values)));
+            self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
+            return Ok(dest);
+        }
+
         let mut element_registers = Vec::with_capacity(items.len());
         for item in items {
             let item_reg = self.compile_rego_expr_with_span(item, item.span(), false)?;
@@ -45,6 +87,15 @@ impl<'a> Compiler<'a> {
         items: &[ExprRef],
         span: &Span,
     ) -> Result<Register> {
+        let all_const: Option<BTreeSet<_>> =
+            items.iter().map(|i| try_eval_const(i.as_ref())).collect();
+        if let Some(values) = all_const {
+            let dest = self.alloc_register();
+            let literal_idx = self.add_literal(Value::Set(Rc::new(values)));
+            self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
+            return Ok(dest);
+        }
+
         let mut element_registers = Vec::with_capacity(items.len());
         for item in items {
             let item_reg = self.compile_rego_expr_with_span(item, item.span(), false)?;
@@ -66,6 +117,17 @@ impl<'a> Compiler<'a> {
         fields: &[(crate::lexer::Span, ExprRef, ExprRef)],
         span: &Span,
     ) -> Result<Register> {
+        let all_const: Option<BTreeMap<_, _>> = fields
+            .iter()
+            .map(|(_, k, v)| Some((try_eval_const(k.as_ref())?, try_eval_const(v.as_ref())?)))
+            .collect();
+        if let Some(obj) = all_const {
+            let dest = self.alloc_register();
+            let literal_idx = self.add_literal(Value::Object(Rc::new(obj)));
+            self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
+            return Ok(dest);
+        }
+
         let dest = self.alloc_register();
 
         let mut value_regs = Vec::with_capacity(fields.len());

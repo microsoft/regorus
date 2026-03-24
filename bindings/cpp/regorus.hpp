@@ -158,6 +158,14 @@ namespace regorus {
 	Engine& operator=(const Engine&) = delete;
     };
 
+    inline Result set_cache_config(RegorusCacheConfig config) {
+	    return Result(regorus_set_cache_config(config));
+    }
+
+    inline Result clear_cache() {
+	    return Result(regorus_clear_cache());
+    }
+
     class CompiledPolicy {
     public:
 	explicit CompiledPolicy(RegorusCompiledPolicy* p) : policy(p) {}

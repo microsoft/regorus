@@ -242,21 +242,7 @@ impl<'a> Compiler<'a> {
                     compiler.compile_rego_expr_with_span(expr, expr.span(), false)
                 })?;
 
-                let negated_reg = self.alloc_register();
-                self.emit_instruction(
-                    Instruction::Not {
-                        dest: negated_reg,
-                        operand: expr_reg,
-                    },
-                    &stmt.span,
-                );
-
-                self.emit_instruction(
-                    Instruction::AssertCondition {
-                        condition: negated_reg,
-                    },
-                    &stmt.span,
-                );
+                self.emit_instruction(Instruction::AssertNot { operand: expr_reg }, &stmt.span);
             }
         }
         Ok(())

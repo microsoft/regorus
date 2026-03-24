@@ -3,6 +3,9 @@
 
 var regorus = require('./pkg/regorusjs');
 
+// Configure the global pattern caches.
+regorus.setCacheConfig({ regex: 256, glob: 128 });
+
 // Create an engine.
 var engine = new regorus.Engine();
 

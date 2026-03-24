@@ -414,6 +414,7 @@ mod tests {
                 result_reg,
                 num_registers: 50, // Increased to accommodate test cases with higher register indices
                 destructuring_blocks,
+                early_exit_on_first_success: false,
             };
 
             program.rule_infos.push(rule_info);

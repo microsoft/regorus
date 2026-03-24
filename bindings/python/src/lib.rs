@@ -622,10 +622,33 @@ impl Rvm {
     }
 }
 
+/// Configure the global pattern caches used by `regex.*` and `glob.*` builtins.
+///
+/// * `regex`: Maximum cached compiled regex patterns (default 256, 0 = disabled).
+/// * `glob`: Maximum cached compiled glob matchers (default 128, 0 = disabled).
+#[cfg(feature = "cache")]
+#[pyfunction]
+#[pyo3(signature = (*, regex = 256, glob = 128))]
+fn set_cache_config(regex: usize, glob: usize) {
+    ::regorus::cache::configure(::regorus::cache::Config { regex, glob });
+}
+
+/// Clear all entries from every pattern cache.
+#[cfg(feature = "cache")]
+#[pyfunction]
+fn clear_cache() {
+    ::regorus::cache::clear();
+}
+
 #[pymodule]
 pub fn regorus(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<crate::Engine>()?;
     m.add_class::<crate::Program>()?;
     m.add_class::<crate::Rvm>()?;
+    #[cfg(feature = "cache")]
+    {
+        m.add_function(wrap_pyfunction!(set_cache_config, m)?)?;
+        m.add_function(wrap_pyfunction!(clear_cache, m)?)?;
+    }
     Ok(())
 }

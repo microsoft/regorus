@@ -5,6 +5,8 @@
 mod collection_literals;
 mod operations;
 
+pub(super) use collection_literals::try_eval_const;
+
 use super::{Compiler, CompilerError, Register, Result};
 use crate::ast::{Expr, ExprRef};
 use crate::compiler::destructuring_planner::plans::BindingPlan;

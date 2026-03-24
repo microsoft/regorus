@@ -25,6 +25,12 @@ bindings/ffi/regorus.ffi.hpp
 
 bindings/*/target
 
+# Temporary commit message files
+.commit-msg.txt
+
+# Local planning docs
+docs/plans/
+
 # C# build folders
 **bin
 **obj

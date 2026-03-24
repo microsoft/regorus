@@ -199,6 +199,40 @@ pub extern "C" fn regorus_clear_fallback_execution_timer_config() -> RegorusResu
     RegorusResult::ok_void()
 }
 
+// ---------------------------------------------------------------------------
+// Cache configuration (global)
+// ---------------------------------------------------------------------------
+
+/// FFI representation of [`regorus::cache::Config`].
+#[cfg(feature = "cache")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct RegorusCacheConfig {
+    /// Maximum compiled regex patterns (default 256, 0 = disabled).
+    pub regex: usize,
+    /// Maximum compiled glob matchers (default 128, 0 = disabled).
+    pub glob: usize,
+}
+
+/// Configure the global pattern caches used by `regex.*` and `glob.*` builtins.
+#[cfg(feature = "cache")]
+#[no_mangle]
+pub extern "C" fn regorus_set_cache_config(config: RegorusCacheConfig) -> RegorusResult {
+    regorus::cache::configure(regorus::cache::Config {
+        regex: config.regex,
+        glob: config.glob,
+    });
+    RegorusResult::ok_void()
+}
+
+/// Clear all entries from every pattern cache.
+#[cfg(feature = "cache")]
+#[no_mangle]
+pub extern "C" fn regorus_clear_cache() -> RegorusResult {
+    regorus::cache::clear();
+    RegorusResult::ok_void()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

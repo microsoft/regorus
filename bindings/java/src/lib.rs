@@ -399,6 +399,37 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClearPolicyLength
     engine.clear_policy_length_config();
 }
 
+#[cfg(feature = "cache")]
+#[no_mangle]
+pub extern "system" fn Java_com_microsoft_regorus_CacheConfig_nativeSetCacheConfig(
+    _env: JNIEnv,
+    _class: JClass,
+    regex: jlong,
+    glob: jlong,
+) {
+    regorus::cache::configure(regorus::cache::Config {
+        regex: if regex < 0 {
+            0
+        } else {
+            usize::try_from(regex).unwrap_or(usize::MAX)
+        },
+        glob: if glob < 0 {
+            0
+        } else {
+            usize::try_from(glob).unwrap_or(usize::MAX)
+        },
+    });
+}
+
+#[cfg(feature = "cache")]
+#[no_mangle]
+pub extern "system" fn Java_com_microsoft_regorus_CacheConfig_nativeClearCache(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    regorus::cache::clear();
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeDestroyEngine(
     _env: JNIEnv,

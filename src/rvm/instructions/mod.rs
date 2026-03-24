@@ -131,6 +131,8 @@ pub enum Instruction {
         left: u8,
         right: u8,
     },
+    /// Rego negation - produces `true` if operand is `false` or undefined,
+    /// `false` for any other defined value (including non-booleans).
     Not {
         dest: u8,
         operand: u8,
@@ -241,6 +243,17 @@ pub enum Instruction {
     Count {
         dest: u8,
         collection: u8,
+    },
+
+    /// Assert that two registers are equal - if either is undefined or they differ, fail the condition
+    AssertEq {
+        left: u8,
+        right: u8,
+    },
+
+    /// Assert negation - succeed if operand is false or undefined, fail if true
+    AssertNot {
+        operand: u8,
     },
 
     /// Assert condition - if register contains false or undefined, return undefined immediately

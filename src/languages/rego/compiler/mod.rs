@@ -23,6 +23,7 @@ pub use error::{CompilerError, Result, SpannedCompilerError};
 use crate::ast::ExprRef;
 use crate::lexer::Span;
 use crate::rvm::program::{Program, RuleType, SpanInfo};
+use crate::value::Value;
 use crate::CompiledPolicy;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
@@ -120,6 +121,10 @@ pub struct Compiler<'a> {
     rule_definitions: Vec<Vec<Vec<u32>>>,
     rule_definition_function_params: Vec<Vec<Option<Vec<String>>>>,
     rule_definition_destructuring_patterns: Vec<Vec<Option<u32>>>,
+    /// Per-rule, per-definition: the static value produced by this definition,
+    /// or `None` if the value is dynamic or differs across else-branches.
+    /// Used to compute `RuleInfo::early_exit_on_first_success`.
+    rule_definition_static_values: Vec<Vec<Option<Value>>>,
     rule_types: Vec<RuleType>,
     rule_function_param_count: Vec<Option<usize>>,
     rule_result_registers: Vec<u8>,
@@ -153,6 +158,7 @@ impl<'a> Compiler<'a> {
             rule_definitions: Vec::new(),
             rule_definition_function_params: Vec::new(),
             rule_definition_destructuring_patterns: Vec::new(),
+            rule_definition_static_values: Vec::new(),
             rule_types: Vec::new(),
             rule_function_param_count: Vec::new(),
             rule_result_registers: Vec::new(),

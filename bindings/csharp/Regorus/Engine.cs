@@ -34,6 +34,17 @@ namespace Regorus
             CheckAndDropResult(Regorus.Internal.API.regorus_clear_fallback_execution_timer_config());
         }
 
+        public static void SetCacheConfig(CacheConfig config)
+        {
+            var nativeConfig = config.ToNative();
+            CheckAndDropResult(Regorus.Internal.API.regorus_set_cache_config(nativeConfig));
+        }
+
+        public static void ClearCache()
+        {
+            CheckAndDropResult(Regorus.Internal.API.regorus_clear_cache());
+        }
+
         private Engine(RegorusEngineHandle handle)
             : base(handle, nameof(Engine))
         {

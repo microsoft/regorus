@@ -106,3 +106,21 @@ cases:
         }
     query: data.test.main
     want_result: {"username": "alice123", "user_age": 25}
+
+  - note: object_membership_checks_values_not_keys
+    data: {}
+    modules:
+      - |
+        package test
+        main := "foo" in {"foo": "bar"}
+    query: data.test.main
+    want_result: false
+
+  - note: object_membership_finds_value
+    data: {}
+    modules:
+      - |
+        package test
+        main := "bar" in {"foo": "bar"}
+    query: data.test.main
+    want_result: true

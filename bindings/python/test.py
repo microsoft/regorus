@@ -6,6 +6,9 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
   sys.stdout.reconfigure(encoding="utf-8")
 
+# Configure the global pattern caches.
+regorus.set_cache_config(regex=256, glob=128)
+
 # Create engine
 engine = regorus.Engine()
 

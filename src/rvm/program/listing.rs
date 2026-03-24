@@ -358,7 +358,10 @@ fn format_instruction_readable(
         }
         Instruction::Not { dest, operand } => {
             let base = format!("{}Not          r{} ← ¬r{}", indent, dest, operand);
-            let comment = format!("Logical NOT: !r{}", operand);
+            let comment = format!(
+                "Rego negation: true if r{} is false/undefined, false otherwise",
+                operand
+            );
             align_comment(&base, &comment, config.comment_column)
         }
         Instruction::BuiltinCall { params_index } => {
@@ -573,6 +576,22 @@ fn format_instruction_readable(
         Instruction::Count { dest, collection } => {
             let base = format!("{}Count        r{} ← count(r{})", indent, dest, collection);
             let comment = format!("Get count/length of collection r{}", collection);
+            align_comment(&base, &comment, config.comment_column)
+        }
+        Instruction::AssertEq { left, right } => {
+            let base = format!("{}AssertEq     assert r{} == r{}", indent, left, right);
+            let comment = format!(
+                "Assert r{} equals r{} (exit if unequal/undefined)",
+                left, right
+            );
+            align_comment(&base, &comment, config.comment_column)
+        }
+        Instruction::AssertNot { operand } => {
+            let base = format!("{}AssertNot    assert !r{}", indent, operand);
+            let comment = format!(
+                "Assert r{} is false/undefined (exit if any defined truthy value)",
+                operand
+            );
             align_comment(&base, &comment, config.comment_column)
         }
         Instruction::AssertCondition { condition } => {
@@ -899,6 +918,8 @@ const fn get_instruction_name(instruction: &Instruction) -> &'static str {
         Instruction::SetCreate { .. } => "SET_CREATE",
         Instruction::Contains { .. } => "CONTAINS",
         Instruction::Count { .. } => "COUNT",
+        Instruction::AssertEq { .. } => "ASSERT_EQ",
+        Instruction::AssertNot { .. } => "ASSERT_NOT",
         Instruction::AssertCondition { .. } => "ASSERT",
         Instruction::AssertNotUndefined { .. } => "ASSERT_NOT_UNDEF",
         Instruction::LoopStart { .. } => "LOOP_START",

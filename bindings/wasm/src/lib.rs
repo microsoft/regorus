@@ -35,6 +35,34 @@ struct PolicyLengthSpec {
     max_lines: usize,
 }
 
+#[cfg(feature = "cache")]
+#[derive(Deserialize)]
+struct CacheConfigSpec {
+    regex: usize,
+    glob: usize,
+}
+
+/// Configure the global pattern caches used by regex and glob builtins.
+///
+/// Accepts a JS object: `{ regex, glob }`.
+#[cfg(feature = "cache")]
+#[wasm_bindgen(js_name = "setCacheConfig")]
+pub fn set_cache_config(config: JsValue) -> Result<(), JsValue> {
+    let spec: CacheConfigSpec = serde_wasm_bindgen::from_value(config).map_err(error_to_jsvalue)?;
+    regorus::cache::configure(regorus::cache::Config {
+        regex: spec.regex,
+        glob: spec.glob,
+    });
+    Ok(())
+}
+
+/// Clear all entries from every pattern cache.
+#[cfg(feature = "cache")]
+#[wasm_bindgen(js_name = "clearCache")]
+pub fn clear_cache() {
+    regorus::cache::clear();
+}
+
 #[wasm_bindgen]
 pub struct Program {
     program: Arc<RvmProgram>,

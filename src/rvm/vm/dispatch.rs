@@ -26,7 +26,6 @@ impl RegoVM {
         program: &Program,
         instruction: Instruction,
     ) -> Result<InstructionOutcome> {
-        self.memory_check()?;
         self.execute_load_and_move(program, instruction)
     }
 
@@ -319,25 +318,32 @@ impl RegoVM {
             Not { dest, operand } => {
                 let operand_value = self.get_register(operand)?;
 
-                if operand_value == &Value::Undefined {
-                    // In Rego, `not expr` succeeds when `expr` has no results.
-                    // When the operand evaluates to undefined we should treat it as
-                    // a successful negation instead of propagating undefined.
-                    self.set_register(dest, Value::Bool(true))?;
-                    return Ok(InstructionOutcome::Continue);
-                }
-
-                if let Some(value) = self.to_bool(operand_value) {
-                    self.set_register(dest, Value::Bool(!value))?;
-                    Ok(InstructionOutcome::Continue)
-                } else {
-                    Err(VmError::ArithmeticError {
-                        message: alloc::format!(
-                            "#undefined: logical NOT expects a boolean (operand={operand_value:?})"
-                        ),
-                        pc: self.pc,
-                    })
-                }
+                // In Rego, `not expr` succeeds when `expr` is undefined or false,
+                // and fails for any other defined value (including non-booleans like 42).
+                let negated = match *operand_value {
+                    Value::Undefined => true,
+                    Value::Bool(b) => !b,
+                    _ => false,
+                };
+                self.set_register(dest, Value::Bool(negated))?;
+                Ok(InstructionOutcome::Continue)
+            }
+            AssertEq { left, right } => {
+                let a = self.get_register(left)?;
+                let b = self.get_register(right)?;
+                let passed = a != &Value::Undefined && b != &Value::Undefined && a == b;
+                self.handle_condition(passed)?;
+                Ok(InstructionOutcome::Continue)
+            }
+            AssertNot { operand } => {
+                let value = self.get_register(operand)?;
+                let passed = match *value {
+                    Value::Undefined => true,
+                    Value::Bool(b) => !b,
+                    _ => false,
+                };
+                self.handle_condition(passed)?;
+                Ok(InstructionOutcome::Continue)
             }
             AssertCondition { condition } => {
                 let value = self.get_register(condition)?;
@@ -696,10 +702,9 @@ impl RegoVM {
                     Value::Array(ref array_items) => {
                         Value::Bool(array_items.contains(value_to_check))
                     }
-                    Value::Object(ref object_fields) => Value::Bool(
-                        object_fields.contains_key(value_to_check)
-                            || object_fields.values().any(|v| v == value_to_check),
-                    ),
+                    Value::Object(ref object_fields) => {
+                        Value::Bool(object_fields.values().any(|v| v == value_to_check))
+                    }
                     _ => Value::Bool(false),
                 };
 

@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+import com.microsoft.regorus.CacheConfig;
 import com.microsoft.regorus.Engine;
 import com.microsoft.regorus.PolicyLengthConfig;
 import com.microsoft.regorus.PolicyModule;
@@ -10,6 +11,9 @@ import com.microsoft.regorus.Rvm;
 public class Test {
 
     public static void main(String[] args) {
+        // Configure the global pattern caches.
+        CacheConfig.configure(new CacheConfig(256, 128));
+
         try (Engine engine = new Engine()) {
             String pkg = engine.addPolicy(
                     "hello.rego",
