@@ -43,7 +43,7 @@ cache = ["dep:lru"]
 rvm = ["dep:postcard", "dep:indexmap"]
 semver = ["dep:semver"]
 allocator-memory-limits = ["std", "mimalloc", "mimalloc/allocator-memory-limits"]
-std = ["rand/std", "rand/std_rng", "serde_json/std", "msvc_spectre_libs", "dep:parking_lot" ]
+std = ["rand/std", "rand/std_rng", "serde_json/std", "indexmap?/std", "msvc_spectre_libs", "dep:parking_lot" ]
 time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
@@ -57,8 +57,6 @@ full-opa = [
     "hex",
     "http",
     "jsonschema",
-    "allocator-memory-limits",
-    "mimalloc",
     "net",
     "opa-runtime",
     "regex",
