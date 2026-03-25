@@ -49,7 +49,7 @@ jobs:
           base_sha="${{ github.event.pull_request.base.sha }}"
           head_sha="${{ github.event.pull_request.head.sha }}"
 
-          mapfile -t changed_files < <(git diff --name-only "$base_sha" "$head_sha" -- '**/Cargo.toml' '**/Cargo.lock')
+          mapfile -t changed_files < <(git diff --name-only "$base_sha" "$head_sha" -- ':(glob)**/Cargo.toml' ':(glob)**/Cargo.lock')
 
           if [ "${#changed_files[@]}" -eq 0 ]; then
             echo "No Cargo manifest or lockfile changes detected."
@@ -109,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          mapfile -t lockfiles < <(git ls-files -m -o --exclude-standard -- '**/Cargo.lock')
+          mapfile -t lockfiles < <(git ls-files -m -o --exclude-standard -- ':(glob)**/Cargo.lock')
 
           for lockfile in "${lockfiles[@]}"; do
             git add "$lockfile"
@@ -120,7 +120,10 @@ jobs:
             exit 0
           fi
 
+          auth_header=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+          trap 'git config --unset-all http.https://github.com/.extraheader' EXIT
+          git config http.https://github.com/.extraheader "AUTHORIZATION: basic ${auth_header}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "build(deps): refresh Cargo lockfiles"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.event.pull_request.head.repo.full_name }}.git" HEAD:${{ github.event.pull_request.head.ref }}
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
