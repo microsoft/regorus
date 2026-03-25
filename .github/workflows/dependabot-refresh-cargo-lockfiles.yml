@@ -111,6 +111,7 @@ jobs:
           bindings/python/Cargo.lock
           bindings/ruby/Cargo.lock
           bindings/wasm/Cargo.lock
+          tests/ensure_no_std/Cargo.lock
         )
 
         for lockfile in "${lockfiles[@]}"; do
