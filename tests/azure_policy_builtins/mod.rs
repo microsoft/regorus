@@ -145,10 +145,8 @@ fn run_yaml_test(path: &str) -> Result<()> {
                     );
                 }
                 Ok(ref v) if matches!(v, Value::Undefined) => {
-                    // Some builtins return Undefined instead of erroring;
-                    // treat as acceptable when an error was expected but
-                    // we got Undefined (conservative).
-                    // However, `want_error` specifically means an error string.
+                    // `want_error` specifically expects an error message string;
+                    // Undefined is not acceptable here — bail.
                     bail!(
                         "[{builtin} / {note}] expected error containing {want_err:?} but got Undefined",
                         builtin = test_file.builtin,

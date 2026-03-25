@@ -18,8 +18,8 @@ use anyhow::Result;
 use super::helpers::try_coerce_to_number;
 
 pub(super) fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
-    m.insert("azure.policy.fn.min", (fn_min, 0));
-    m.insert("azure.policy.fn.max", (fn_max, 0));
+    m.insert("azure.policy.fn.min", (fn_min, super::MAX_VARIADIC_ARGS));
+    m.insert("azure.policy.fn.max", (fn_max, super::MAX_VARIADIC_ARGS));
     m.insert("azure.policy.fn.float", (fn_float, 1));
     m.insert("azure.policy.fn.int_div", (fn_int_div, 2));
     m.insert("azure.policy.fn.int_mod", (fn_int_mod, 2));

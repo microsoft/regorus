@@ -23,8 +23,6 @@
 //! string *values* using .NET's `InvariantCultureIgnoreCase`, which performs
 //! full Unicode case folding.  We use ICU4X's `CaseMapper::fold` / `fold_string`
 //! for this — it is the same ICU backing that .NET 5+ uses internally.
-//!
-//! See `docs/azure-policy/casing.md` for full documentation and references.
 
 pub mod case_fold;
 pub mod keys;

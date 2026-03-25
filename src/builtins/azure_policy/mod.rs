@@ -28,10 +28,24 @@ mod template_functions_string;
 
 use crate::builtins;
 
+/// Upper bound on the number of arguments accepted by variadic builtins.
+///
+/// ARM template expressions can pass many arguments to functions like
+/// `min`, `max`, `union`, `intersection`, `format`, `createObject`, etc.
+/// We register them with this cap instead of 0 so that the compiler/VM
+/// arity checks accept real call sites.
+pub(super) const MAX_VARIADIC_ARGS: u8 = 64;
+
 pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     // Logic functions
-    m.insert("azure.policy.logic_all", (operators::logic_all, 0));
-    m.insert("azure.policy.logic_any", (operators::logic_any, 0));
+    m.insert(
+        "azure.policy.logic_all",
+        (operators::logic_all, MAX_VARIADIC_ARGS),
+    );
+    m.insert(
+        "azure.policy.logic_any",
+        (operators::logic_any, MAX_VARIADIC_ARGS),
+    );
     m.insert("azure.policy.if", (operators::if_fn, 3));
 
     // Field resolution

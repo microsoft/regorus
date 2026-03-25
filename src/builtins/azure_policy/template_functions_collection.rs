@@ -18,14 +18,26 @@ use anyhow::Result;
 use super::helpers::is_undefined;
 
 pub(super) fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
-    m.insert("azure.policy.fn.intersection", (fn_intersection, 0));
-    m.insert("azure.policy.fn.union", (fn_union, 0));
+    m.insert(
+        "azure.policy.fn.intersection",
+        (fn_intersection, super::MAX_VARIADIC_ARGS),
+    );
+    m.insert(
+        "azure.policy.fn.union",
+        (fn_union, super::MAX_VARIADIC_ARGS),
+    );
     m.insert("azure.policy.fn.take", (fn_take, 2));
     m.insert("azure.policy.fn.skip", (fn_skip, 2));
     m.insert("azure.policy.fn.range", (fn_range, 2));
     m.insert("azure.policy.fn.array", (fn_array, 1));
-    m.insert("azure.policy.fn.coalesce", (fn_coalesce, 0));
-    m.insert("azure.policy.fn.create_object", (fn_create_object, 0));
+    m.insert(
+        "azure.policy.fn.coalesce",
+        (fn_coalesce, super::MAX_VARIADIC_ARGS),
+    );
+    m.insert(
+        "azure.policy.fn.create_object",
+        (fn_create_object, super::MAX_VARIADIC_ARGS),
+    );
 }
 
 /// `intersection(arg1, arg2, ...)` → elements common to all arrays, or keys common

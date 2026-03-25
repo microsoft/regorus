@@ -21,7 +21,10 @@ pub(super) fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::Bui
     m.insert("azure.policy.fn.index_of", (fn_index_of, 2));
     m.insert("azure.policy.fn.last_index_of", (fn_last_index_of, 2));
     m.insert("azure.policy.fn.trim", (fn_trim, 1));
-    m.insert("azure.policy.fn.format", (fn_format, 0));
+    m.insert(
+        "azure.policy.fn.format",
+        (fn_format, super::MAX_VARIADIC_ARGS),
+    );
 }
 
 /// `indexOf(stringToSearch, stringToFind)` → zero-based character index, or -1 if not found.
@@ -68,58 +71,64 @@ fn fn_last_index_of(
     )))
 }
 
-/// Case-insensitive first-occurrence search returning a *character* index.
+/// Case-insensitive first-occurrence search returning a *UTF-16 code-unit* index.
+///
+/// Azure/ARM string functions are .NET-based — indices are UTF-16 code units,
+/// not Rust `char` (Unicode scalar) positions.  We track the UTF-16 offset
+/// in `fold_with_char_map` so that surrogate-pair characters are counted
+/// correctly.
 ///
 /// Case-folds both strings using ICU4X and searches in the folded domain.
 /// The haystack is folded in a single pass that simultaneously builds a
-/// byte-to-character-index mapping, avoiding a redundant second fold.
+/// byte-to-UTF-16-offset mapping, avoiding a redundant second fold.
 fn case_insensitive_index_of(haystack: &str, needle: &str) -> i64 {
     let folded_needle = case_fold::fold(needle);
     if folded_needle.is_empty() {
         return 0;
     }
 
-    let (folded_hay, byte_to_char) = fold_with_char_map(haystack);
+    let (folded_hay, byte_to_utf16) = fold_with_char_map(haystack);
     if folded_needle.len() > folded_hay.len() {
         return -1;
     }
 
     folded_hay
         .find(&*folded_needle)
-        .and_then(|byte_pos| byte_to_char.get(byte_pos).copied())
+        .and_then(|byte_pos| byte_to_utf16.get(byte_pos).copied())
         .and_then(|ci| i64::try_from(ci).ok())
         .unwrap_or(-1)
 }
 
-/// Case-insensitive last-occurrence search returning a *character* index.
+/// Case-insensitive last-occurrence search returning a *UTF-16 code-unit* index.
 fn case_insensitive_last_index_of(haystack: &str, needle: &str) -> i64 {
     let folded_needle = case_fold::fold(needle);
     if folded_needle.is_empty() {
-        return i64::try_from(haystack.chars().count()).unwrap_or(-1);
+        return i64::try_from(haystack.encode_utf16().count()).unwrap_or(-1);
     }
 
-    let (folded_hay, byte_to_char) = fold_with_char_map(haystack);
+    let (folded_hay, byte_to_utf16) = fold_with_char_map(haystack);
     if folded_needle.len() > folded_hay.len() {
         return -1;
     }
 
     folded_hay
         .rfind(&*folded_needle)
-        .and_then(|byte_pos| byte_to_char.get(byte_pos).copied())
+        .and_then(|byte_pos| byte_to_utf16.get(byte_pos).copied())
         .and_then(|ci| i64::try_from(ci).ok())
         .unwrap_or(-1)
 }
 
 /// Case-fold a string one character at a time, returning both the folded
-/// string and a byte-to-character-index map in a single pass.
+/// string and a byte-to-UTF-16-offset map in a single pass.
 ///
-/// This replaces the previous approach of folding the full string, then
-/// folding each character again to build the reverse map.
+/// Each source character contributes `ch.len_utf16()` to the running
+/// UTF-16 offset, so non-BMP codepoints (surrogate pairs) are counted
+/// as two units — matching .NET `String.IndexOf` semantics.
 ///
 /// # Performance note
 ///
 /// This function allocates a folded copy of the haystack and a parallel
-/// `Vec<usize>` mapping every folded byte back to a source character index.
+/// `Vec<usize>` mapping every folded byte back to a source UTF-16 offset.
 /// The allocation is inherent to Unicode case folding — you need the folded
 /// string to search in it.  For the string sizes typical in Azure Policy
 /// templates (field names, resource type strings) this is negligible.  If
@@ -130,7 +139,8 @@ fn fold_with_char_map(s: &str) -> (String, Vec<usize>) {
     let mut folded = String::with_capacity(s.len());
     let mut map = Vec::with_capacity(s.len());
 
-    for (char_idx, (byte_idx, ch)) in s.char_indices().enumerate() {
+    let mut utf16_offset: usize = 0;
+    for (byte_idx, ch) in s.char_indices() {
         let ch_len = ch.len_utf8();
         let end = byte_idx.wrapping_add(ch_len);
         let ch_slice = s.get(byte_idx..end).unwrap_or("");
@@ -138,8 +148,9 @@ fn fold_with_char_map(s: &str) -> (String, Vec<usize>) {
 
         folded.push_str(&folded_ch);
         for _ in 0..folded_ch.len() {
-            map.push(char_idx);
+            map.push(utf16_offset);
         }
+        utf16_offset = utf16_offset.wrapping_add(ch.len_utf16());
     }
 
     (folded, map)

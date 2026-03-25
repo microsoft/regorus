@@ -22,7 +22,7 @@ use chrono::{DateTime, Duration, FixedOffset, Utc};
 use super::helpers::as_str;
 
 pub(super) fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
-    m.insert("azure.policy.fn.date_time_add", (fn_date_time_add, 0));
+    m.insert("azure.policy.fn.date_time_add", (fn_date_time_add, 3));
     m.insert(
         "azure.policy.fn.date_time_from_epoch",
         (fn_date_time_from_epoch, 1),
@@ -272,7 +272,7 @@ fn fn_date_time_from_epoch(
     let Some(epoch) = args.first().and_then(extract_i64) else {
         return Ok(Value::Undefined);
     };
-    let Some(dt) = DateTime::from_timestamp(epoch, 0) else {
+    let Some(dt) = DateTime::<Utc>::from_timestamp(epoch, 0) else {
         return Ok(Value::Undefined);
     };
     // Always UTC, so use Z suffix.
