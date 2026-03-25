@@ -12,13 +12,15 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   refresh-cargo-lockfiles:
+    permissions:
+      contents: write
     if: >-
       github.actor == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
@@ -33,6 +35,7 @@ jobs:
 
     - name: Setup Rust toolchain
       run: |
+        rustup toolchain install 1.92.0 --profile minimal
         rustup override set 1.92.0
         cargo --version
         rustc --version
