@@ -1,0 +1,38 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.if (ARM template if() function)
+builtin: azure.policy.if
+
+cases:
+  - note: condition_true_returns_when_true
+    args: [true, "yes", "no"]
+    want: "yes"
+
+  - note: condition_false_returns_when_false
+    args: [false, "yes", "no"]
+    want: "no"
+
+  - note: true_with_numbers
+    args: [true, 1, 0]
+    want: 1
+
+  - note: false_with_numbers
+    args: [false, 1, 0]
+    want: 0
+
+  - note: true_with_arrays
+    args: [true, [1, 2], [3, 4]]
+    want: [1, 2]
+
+  - note: false_with_arrays
+    args: [false, [1, 2], [3, 4]]
+    want: [3, 4]
+
+  - note: true_with_null_branches
+    args: [true, null, "fallback"]
+    want_null: true
+
+  - note: false_with_null_branch
+    args: [false, "value", null]
+    want_null: true

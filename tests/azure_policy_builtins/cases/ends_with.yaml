@@ -1,0 +1,38 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.ends_with
+builtin: azure.policy.fn.ends_with
+
+cases:
+  - note: ends_with_true
+    args: ["hello world", "world"]
+    want: true
+
+  - note: ends_with_false
+    args: ["hello world", "hello"]
+    want: false
+
+  - note: ends_with_case_insensitive
+    args: ["Hello World", "WORLD"]
+    want: true
+
+  - note: ends_with_empty_needle
+    args: ["hello", ""]
+    want: true
+
+  - note: ends_with_empty_haystack
+    args: ["", "hello"]
+    want: false
+
+  - note: ends_with_both_empty
+    args: ["", ""]
+    want: true
+
+  - note: ends_with_exact_match
+    args: ["hello", "hello"]
+    want: true
+
+  - note: ends_with_longer_needle
+    args: ["hi", "hello"]
+    want: false

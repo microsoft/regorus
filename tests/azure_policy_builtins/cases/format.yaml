@@ -1,0 +1,111 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.format
+builtin: azure.policy.fn.format
+
+cases:
+  - note: format_single_placeholder
+    args: ["Hello {0}!", "world"]
+    want: "Hello world!"
+
+  - note: format_multiple_placeholders
+    args: ["{0} is {1}", "sky", "blue"]
+    want: "sky is blue"
+
+  - note: format_repeated_placeholder
+    args: ["{0} and {0}", "hello"]
+    want: "hello and hello"
+
+  - note: format_number_arg
+    args: ["Count: {0}", 42]
+    want: "Count: 42"
+
+  - note: format_bool_arg
+    args: ["Value: {0}", true]
+    want: "Value: True"
+
+  - note: format_no_placeholders
+    args: ["no placeholders"]
+    want: "no placeholders"
+
+  - note: format_three_args
+    args: ["{0}-{1}-{2}", "a", "b", "c"]
+    want: "a-b-c"
+
+  - note: format_missing_placeholder_error
+    args: ["{0} and {1}", "only_first"]
+    want_error: "placeholder {1} references argument index 1"
+
+  - note: format_empty_template
+    args: [""]
+    want: ""
+
+  - note: format_escaped_braces
+    args: ["{{literal braces}}"]
+    want: "{literal braces}"
+
+  - note: format_mixed_escaped_and_placeholder
+    args: ["{{{0}}}", "value"]
+    want: "{value}"
+
+  - note: format_alignment_right
+    args: ["{0,10}", "hi"]
+    want: "        hi"
+
+  - note: format_alignment_left
+    args: ["{0,-10}", "hi"]
+    want: "hi        "
+
+  - note: format_numeric_fixed_point
+    args: ["{0:F2}", 3.14159]
+    want: "3.14"
+
+  - note: format_numeric_with_thousands
+    args: ["{0:N0}", 1234567]
+    want: "1,234,567"
+
+  - note: format_hex_upper
+    args: ["{0:X}", 255]
+    want: "FF"
+
+  - note: format_hex_lower_padded
+    args: ["{0:x4}", 255]
+    want: "00ff"
+
+  - note: format_decimal_padded
+    args: ["{0:D5}", 42]
+    want: "00042"
+
+  - note: format_percent
+    args: ["{0:P1}", 0.1234]
+    want: "12.3 %"
+
+  - note: format_unmatched_closing_brace
+    args: ["hello } world"]
+    want_error: "unmatched closing brace"
+
+  - note: format_invalid_placeholder_no_index
+    args: ["{abc}"]
+    want_error: "invalid placeholder"
+
+  - note: format_unmatched_opening_brace
+    args: ["{0", "value"]
+    want_error: "unmatched opening brace"
+
+  - note: format_alignment_non_ascii
+    args: ["{0,6}", "café"]
+    want: "  café"
+
+  # Invalid alignment clauses (must be rejected)
+  - note: format_alignment_empty
+    args: ["{0,}", "hi"]
+    want_error: "empty alignment value"
+
+  - note: format_alignment_non_numeric
+    args: ["{0,abc}", "hi"]
+    want_error: "invalid alignment"
+
+  - note: format_alignment_trailing_junk
+    args: ["{0, 1x}", "hi"]
+    want_error: "invalid alignment"

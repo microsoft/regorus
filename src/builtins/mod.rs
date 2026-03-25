@@ -16,6 +16,8 @@
 
 mod aggregates;
 mod arrays;
+#[cfg(feature = "azure_policy")]
+pub mod azure_policy;
 mod bitwise;
 pub mod comparison;
 mod conversions;
@@ -104,6 +106,8 @@ lazy_static! {
 	#[cfg(feature = "semver")]
 	semver::register(&mut m);
 	//rego::register(&mut m);
+	#[cfg(feature = "azure_policy")]
+	azure_policy::register(&mut m);
 	#[cfg(feature = "opa-runtime")]
 	opa::register(&mut m);
 	tracing::register(&mut m);

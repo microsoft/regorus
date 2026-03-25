@@ -1,0 +1,40 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.items
+builtin: azure.policy.fn.items
+
+cases:
+  - note: items_simple_object
+    args:
+      - name: "test"
+        value: 42
+    want:
+      - key: "name"
+        value: "test"
+      - key: "value"
+        value: 42
+
+  - note: items_single_key
+    args:
+      - a: 1
+    want:
+      - key: "a"
+        value: 1
+
+  - note: items_nested_value
+    args:
+      - x:
+          inner: true
+    want:
+      - key: "x"
+        value:
+          inner: true
+
+  - note: items_non_object
+    args: ["not_an_object"]
+    want_undefined: true
+
+  - note: items_number_arg
+    args: [42]
+    want_undefined: true

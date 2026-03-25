@@ -1,0 +1,57 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.int
+builtin: azure.policy.fn.int
+
+cases:
+  # ── From numbers ────────────────────────────────────────────────────
+  - note: int_from_integer
+    args: [42]
+    want: 42
+
+  - note: int_from_negative
+    args: [-7]
+    want: -7
+
+  - note: int_from_zero
+    args: [0]
+    want: 0
+
+  - note: int_from_float_truncates
+    args: [3.9]
+    want: 3
+
+  - note: int_from_negative_float
+    args: [-2.7]
+    want: -2
+
+  # ── From strings ────────────────────────────────────────────────────
+  - note: int_from_string_integer
+    args: ["42"]
+    want: 42
+
+  - note: int_from_string_negative
+    args: ["-10"]
+    want: -10
+
+  - note: int_from_string_float
+    args: ["3.14"]
+    want: 3
+
+  - note: int_from_string_invalid
+    args: ["hello"]
+    want_undefined: true
+
+  - note: int_from_string_empty
+    args: [""]
+    want_undefined: true
+
+  # ── Other types ────────────────────────────────────────────────────
+  - note: int_from_bool
+    args: [true]
+    want_undefined: true
+
+  - note: int_from_null
+    args: [null]
+    want_undefined: true

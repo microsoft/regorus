@@ -1,0 +1,38 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.int_div
+builtin: azure.policy.fn.int_div
+
+cases:
+  - note: int_div_basic
+    args: [10, 3]
+    want: 3
+
+  - note: int_div_exact
+    args: [10, 5]
+    want: 2
+
+  - note: int_div_one
+    args: [7, 1]
+    want: 7
+
+  - note: int_div_negative
+    args: [-10, 3]
+    want: -3
+
+  - note: int_div_both_negative
+    args: [-10, -3]
+    want: 3
+
+  - note: int_div_zero_numerator
+    args: [0, 5]
+    want: 0
+
+  - note: int_div_by_zero
+    args: [10, 0]
+    want_undefined: true
+
+  - note: int_div_large
+    args: [1000000, 7]
+    want: 142857

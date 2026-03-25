@@ -1,0 +1,18 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.data_uri and azure.policy.fn.data_uri_to_string
+builtin: azure.policy.fn.data_uri
+
+cases:
+  - note: data_uri_hello
+    args: ["hello"]
+    want: "data:text/plain;charset=utf8;base64,aGVsbG8="
+
+  - note: data_uri_empty
+    args: [""]
+    want: "data:text/plain;charset=utf8;base64,"
+
+  - note: data_uri_json
+    args: ["{\"key\":\"value\"}"]
+    want: "data:text/plain;charset=utf8;base64,eyJrZXkiOiJ2YWx1ZSJ9"

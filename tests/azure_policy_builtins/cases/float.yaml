@@ -1,0 +1,38 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.float
+builtin: azure.policy.fn.float
+
+cases:
+  - note: float_from_int
+    args: [42]
+    want: 42.0
+
+  - note: float_from_float
+    args: [3.14]
+    want: 3.14
+
+  - note: float_from_zero
+    args: [0]
+    want: 0.0
+
+  - note: float_from_negative
+    args: [-5]
+    want: -5.0
+
+  - note: float_from_string
+    args: ["3.14"]
+    want: 3.14
+
+  - note: float_from_string_int
+    args: ["42"]
+    want: 42.0
+
+  - note: float_from_string_invalid
+    args: ["hello"]
+    want_undefined: true
+
+  - note: float_from_null
+    args: [null]
+    want_undefined: true

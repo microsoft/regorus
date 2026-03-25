@@ -1,0 +1,40 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.last
+builtin: azure.policy.fn.last
+
+cases:
+  # ── Arrays ──────────────────────────────────────────────────────────
+  - note: last_array_single
+    args: [[42]]
+    want: 42
+
+  - note: last_array_multiple
+    args: [[10, 20, 30]]
+    want: 30
+
+  - note: last_array_strings
+    args: [["alpha", "beta", "gamma"]]
+    want: "gamma"
+
+  - note: last_array_empty
+    args: [[]]
+    want_null: true
+
+  # ── Strings ─────────────────────────────────────────────────────────
+  - note: last_string
+    args: ["hello"]
+    want: "o"
+
+  - note: last_string_single_char
+    args: ["x"]
+    want: "x"
+
+  - note: last_string_empty
+    args: [""]
+    want: ""
+
+  - note: last_string_unicode
+    args: ["café"]
+    want: "é"

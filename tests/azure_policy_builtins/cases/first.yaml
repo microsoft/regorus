@@ -1,0 +1,44 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.first
+builtin: azure.policy.fn.first
+
+cases:
+  # ── Arrays ──────────────────────────────────────────────────────────
+  - note: first_array_single
+    args: [[42]]
+    want: 42
+
+  - note: first_array_multiple
+    args: [[10, 20, 30]]
+    want: 10
+
+  - note: first_array_strings
+    args: [["alpha", "beta", "gamma"]]
+    want: "alpha"
+
+  - note: first_array_mixed
+    args: [[true, 1, "x"]]
+    want: true
+
+  - note: first_array_empty
+    args: [[]]
+    want_null: true
+
+  # ── Strings ─────────────────────────────────────────────────────────
+  - note: first_string
+    args: ["hello"]
+    want: "h"
+
+  - note: first_string_single_char
+    args: ["x"]
+    want: "x"
+
+  - note: first_string_empty
+    args: [""]
+    want: ""
+
+  - note: first_string_unicode
+    args: ["über"]
+    want: "ü"

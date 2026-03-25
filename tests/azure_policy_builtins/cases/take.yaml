@@ -1,0 +1,48 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.take
+builtin: azure.policy.fn.take
+
+cases:
+  # ── Arrays ──────────────────────────────────────────────────────────
+  - note: take_array_basic
+    args: [[1, 2, 3, 4, 5], 3]
+    want: [1, 2, 3]
+
+  - note: take_array_zero
+    args: [[1, 2, 3], 0]
+    want: []
+
+  - note: take_array_more_than_length
+    args: [[1, 2], 5]
+    want: [1, 2]
+
+  - note: take_array_all
+    args: [[1, 2, 3], 3]
+    want: [1, 2, 3]
+
+  - note: take_array_one
+    args: [[10, 20, 30], 1]
+    want: [10]
+
+  - note: take_array_empty
+    args: [[], 3]
+    want: []
+
+  # ── Strings ─────────────────────────────────────────────────────────
+  - note: take_string_basic
+    args: ["hello world", 5]
+    want: "hello"
+
+  - note: take_string_zero
+    args: ["hello", 0]
+    want: ""
+
+  - note: take_string_more_than_length
+    args: ["hi", 10]
+    want: "hi"
+
+  - note: take_string_one
+    args: ["hello", 1]
+    want: "h"

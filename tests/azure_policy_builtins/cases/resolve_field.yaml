@@ -1,0 +1,49 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.resolve_field
+builtin: azure.policy.resolve_field
+
+cases:
+  - note: simple_field
+    args:
+      - name: "myResource"
+        type: "Microsoft.Compute/virtualMachines"
+      - "name"
+    want: "myResource"
+
+  - note: nested_field_with_dot_path
+    args:
+      - properties:
+          securityRules:
+            enabled: true
+      - "properties.securityRules.enabled"
+    want: true
+
+  - note: missing_field
+    args:
+      - name: "myResource"
+      - "nonExistent"
+    want_undefined: true
+
+  - note: deeply_nested
+    args:
+      - a:
+          b:
+            c:
+              d: "deep"
+      - "a.b.c.d"
+    want: "deep"
+
+  - note: top_level_type
+    args:
+      - type: "Microsoft.Storage/storageAccounts"
+        kind: "StorageV2"
+      - "type"
+    want: "Microsoft.Storage/storageAccounts"
+
+  - note: non_string_path
+    args:
+      - name: "test"
+      - 42
+    want_undefined: true

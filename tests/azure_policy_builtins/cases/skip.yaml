@@ -1,0 +1,48 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.skip
+builtin: azure.policy.fn.skip
+
+cases:
+  # ── Arrays ──────────────────────────────────────────────────────────
+  - note: skip_array_basic
+    args: [[1, 2, 3, 4, 5], 2]
+    want: [3, 4, 5]
+
+  - note: skip_array_zero
+    args: [[1, 2, 3], 0]
+    want: [1, 2, 3]
+
+  - note: skip_array_all
+    args: [[1, 2, 3], 3]
+    want: []
+
+  - note: skip_array_more_than_length
+    args: [[1, 2], 5]
+    want: []
+
+  - note: skip_array_one
+    args: [[10, 20, 30], 1]
+    want: [20, 30]
+
+  - note: skip_array_empty
+    args: [[], 3]
+    want: []
+
+  # ── Strings ─────────────────────────────────────────────────────────
+  - note: skip_string_basic
+    args: ["hello world", 6]
+    want: "world"
+
+  - note: skip_string_zero
+    args: ["hello", 0]
+    want: "hello"
+
+  - note: skip_string_all
+    args: ["hello", 5]
+    want: ""
+
+  - note: skip_string_more_than_length
+    args: ["hi", 10]
+    want: ""

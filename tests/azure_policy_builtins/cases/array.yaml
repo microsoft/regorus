@@ -1,0 +1,34 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.array
+builtin: azure.policy.fn.array
+
+cases:
+  - note: array_from_int
+    args: [42]
+    want: [42]
+
+  - note: array_from_string
+    args: ["hello"]
+    want: ["hello"]
+
+  - note: array_from_bool
+    args: [true]
+    want: [true]
+
+  - note: array_from_null
+    args: [null]
+    want: [null]
+
+  - note: array_from_array
+    args: [[1, 2, 3]]
+    want: [1, 2, 3]
+
+  - note: array_from_empty_array
+    args: [[]]
+    want: []
+
+  - note: array_from_object
+    args: [{"a": 1}]
+    want: [{"a": 1}]

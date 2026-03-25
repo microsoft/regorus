@@ -1,0 +1,46 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.get_parameter
+builtin: azure.policy.get_parameter
+
+cases:
+  - note: param_from_user_params
+    args:
+      - allowedLocations: ["eastus", "westus"]
+      - allowedLocations: ["centralus"]
+      - "allowedLocations"
+    want: ["eastus", "westus"]
+
+  - note: param_falls_back_to_defaults
+    args:
+      - {}
+      - effect: "Deny"
+      - "effect"
+    want: "Deny"
+
+  - note: param_not_in_either
+    args:
+      - {}
+      - {}
+      - "missing"
+    want_undefined: true
+
+  - note: param_override_default
+    args:
+      - maxAge: 90
+      - maxAge: 365
+      - "maxAge"
+    want: 90
+
+  - note: param_with_nested_value
+    args:
+      - config:
+          enabled: true
+          threshold: 50
+      - config:
+          enabled: false
+      - "config"
+    want:
+      enabled: true
+      threshold: 50

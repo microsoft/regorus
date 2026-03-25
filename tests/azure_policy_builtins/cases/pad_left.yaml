@@ -1,0 +1,38 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.pad_left
+builtin: azure.policy.fn.pad_left
+
+cases:
+  - note: pad_left_basic
+    args: ["42", 5, "0"]
+    want: "00042"
+
+  - note: pad_left_no_padding_needed
+    args: ["hello", 3, "x"]
+    want: "hello"
+
+  - note: pad_left_exact_width
+    args: ["abc", 3, "x"]
+    want: "abc"
+
+  - note: pad_left_default_space
+    args: ["42", 5, " "]
+    want: "   42"
+
+  - note: pad_left_single_char
+    args: ["x", 5, "-"]
+    want: "----x"
+
+  - note: pad_left_empty_string
+    args: ["", 3, "0"]
+    want: "000"
+
+  - note: pad_left_width_1
+    args: ["abc", 1, "0"]
+    want: "abc"
+
+  - note: pad_left_width_0
+    args: ["abc", 0, "0"]
+    want: "abc"

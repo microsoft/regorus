@@ -1,0 +1,89 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.union
+builtin: azure.policy.fn.union
+
+cases:
+  # ── Array union ─────────────────────────────────────────────────────
+  - note: union_arrays_basic
+    args: [[1, 2], [2, 3]]
+    want: [1, 2, 3]
+
+  - note: union_arrays_no_overlap
+    args: [[1, 2], [3, 4]]
+    want: [1, 2, 3, 4]
+
+  - note: union_arrays_identical
+    args: [[1, 2], [1, 2]]
+    want: [1, 2]
+
+  - note: union_arrays_empty
+    args: [[], [1, 2]]
+    want: [1, 2]
+
+  - note: union_arrays_both_empty
+    args: [[], []]
+    want: []
+
+  - note: union_arrays_three
+    args: [[1], [2], [3]]
+    want: [1, 2, 3]
+
+  - note: union_arrays_strings
+    args: [["a", "b"], ["b", "c"]]
+    want: ["a", "b", "c"]
+
+  # ── Object union ────────────────────────────────────────────────────
+  - note: union_objects_merge
+    args: [{"a": 1}, {"b": 2}]
+    want: {"a": 1, "b": 2}
+
+  - note: union_objects_overwrite
+    args: [{"a": 1, "b": 2}, {"b": 20, "c": 30}]
+    want: {"a": 1, "b": 20, "c": 30}
+
+  - note: union_objects_empty
+    args: [{}, {"a": 1}]
+    want: {"a": 1}
+
+  - note: union_objects_recursive_merge
+    args:
+      - outer:
+          inner_a: 1
+          inner_b: 2
+      - outer:
+          inner_b: 20
+          inner_c: 30
+    want:
+      outer:
+        inner_a: 1
+        inner_b: 20
+        inner_c: 30
+
+  - note: union_objects_deeply_nested_merge
+    args:
+      - level1:
+          level2:
+            a: 1
+            b: 2
+      - level1:
+          level2:
+            b: 20
+            c: 30
+    want:
+      level1:
+        level2:
+          a: 1
+          b: 20
+          c: 30
+
+  - note: union_objects_array_replaces_not_merges
+    args:
+      - data:
+          items: [1, 2, 3]
+      - data:
+          items: [4, 5]
+    want:
+      data:
+        items: [4, 5]

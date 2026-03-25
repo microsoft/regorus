@@ -1,0 +1,38 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.logic_all (ARM template and() function)
+builtin: azure.policy.logic_all
+
+cases:
+  - note: all_true
+    args: [true, true, true]
+    want: true
+
+  - note: one_false
+    args: [true, false, true]
+    want: false
+
+  - note: all_false
+    args: [false, false, false]
+    want: false
+
+  - note: single_true
+    args: [true]
+    want: true
+
+  - note: single_false
+    args: [false]
+    want: false
+
+  - note: two_args_both_true
+    args: [true, true]
+    want: true
+
+  - note: two_args_one_false
+    args: [true, false]
+    want: false
+
+  - note: empty_args_vacuously_true
+    args: []
+    want: true

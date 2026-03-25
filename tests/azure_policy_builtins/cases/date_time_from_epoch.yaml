@@ -1,0 +1,30 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.date_time_from_epoch
+builtin: azure.policy.fn.date_time_from_epoch
+
+cases:
+  - note: unix_epoch_zero
+    args: [0]
+    want: "1970-01-01T00:00:00Z"
+
+  - note: specific_timestamp
+    args: [1705320000]
+    want: "2024-01-15T12:00:00Z"
+
+  - note: negative_timestamp
+    args: [-86400]
+    want: "1969-12-31T00:00:00Z"
+
+  - note: max_reasonable_timestamp
+    args: [4102444800]
+    want: "2100-01-01T00:00:00Z"
+
+  - note: one_second_after_epoch
+    args: [1]
+    want: "1970-01-01T00:00:01Z"
+
+  - note: non_number_arg
+    args: ["hello"]
+    want_undefined: true

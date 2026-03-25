@@ -1,0 +1,38 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.int_mod
+builtin: azure.policy.fn.int_mod
+
+cases:
+  - note: int_mod_basic
+    args: [10, 3]
+    want: 1
+
+  - note: int_mod_exact
+    args: [10, 5]
+    want: 0
+
+  - note: int_mod_one
+    args: [7, 1]
+    want: 0
+
+  - note: int_mod_negative
+    args: [-10, 3]
+    want: -1
+
+  - note: int_mod_both_negative
+    args: [-10, -3]
+    want: -1
+
+  - note: int_mod_zero_numerator
+    args: [0, 5]
+    want: 0
+
+  - note: int_mod_by_zero
+    args: [10, 0]
+    want_undefined: true
+
+  - note: int_mod_large
+    args: [1000000, 7]
+    want: 1

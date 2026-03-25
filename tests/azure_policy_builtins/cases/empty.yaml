@@ -1,0 +1,55 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.empty
+builtin: azure.policy.fn.empty
+
+cases:
+  # ── Strings ─────────────────────────────────────────────────────────
+  - note: empty_string_true
+    args: [""]
+    want: true
+
+  - note: empty_string_false
+    args: ["hello"]
+    want: false
+
+  - note: empty_string_space
+    args: [" "]
+    want: false
+
+  # ── Arrays ──────────────────────────────────────────────────────────
+  - note: empty_array_true
+    args: [[]]
+    want: true
+
+  - note: empty_array_false
+    args: [[1, 2]]
+    want: false
+
+  # ── Objects ─────────────────────────────────────────────────────────
+  - note: empty_object_true
+    args: [{}]
+    want: true
+
+  - note: empty_object_false
+    args: [{"a": 1}]
+    want: false
+
+  # ── Null / special values ───────────────────────────────────────────
+  - note: empty_null
+    args: [null]
+    want: true
+
+  # ── Numbers and bools (not empty) ──────────────────────────────────
+  - note: empty_number
+    args: [0]
+    want: false
+
+  - note: empty_bool_false
+    args: [false]
+    want: false
+
+  - note: empty_bool_true
+    args: [true]
+    want: false

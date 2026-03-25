@@ -1,0 +1,29 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.guid
+# guid() is deterministic (UUID v5 with Azure's namespace).
+builtin: azure.policy.fn.guid
+
+cases:
+  - note: guid_single_arg
+    args: ["hello"]
+    want: "520f8434-fe3a-5d99-888d-450a827486a1"
+
+  - note: guid_two_args
+    args: ["base1", "base2"]
+    want: "648f2f5f-4d83-5bd7-a2f2-3d27a6d79652"
+
+  - note: guid_deterministic_same_input
+    args: ["hello"]
+    want: "520f8434-fe3a-5d99-888d-450a827486a1"
+
+  - note: guid_different_input
+    args: ["world"]
+    # Different input produces different GUID (just verify it's not the same)
+    # We'll verify this isn't the 'hello' guid via a separate value
+    skip: true
+
+  - note: guid_no_args
+    args: []
+    want_undefined: true

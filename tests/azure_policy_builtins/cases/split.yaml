@@ -1,0 +1,57 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.split
+builtin: azure.policy.fn.split
+
+cases:
+  # ── Basic splitting ─────────────────────────────────────────────────
+  - note: split_simple_comma
+    args: ["hello,world", ","]
+    want: ["hello", "world"]
+
+  - note: split_multiple_segments
+    args: ["a.b.c.d", "."]
+    want: ["a", "b", "c", "d"]
+
+  - note: split_no_match
+    args: ["hello", ","]
+    want: ["hello"]
+
+  - note: split_empty_string
+    args: ["", ","]
+    want: [""]
+
+  - note: split_delimiter_at_edges
+    args: [",hello,", ","]
+    want: ["", "hello", ""]
+
+  - note: split_consecutive_delimiters
+    args: ["a,,b", ","]
+    want: ["a", "", "b"]
+
+  - note: split_multi_char_delimiter
+    args: ["a::b::c", "::"]
+    want: ["a", "b", "c"]
+
+  - note: split_single_char_string
+    args: ["x", "x"]
+    want: ["", ""]
+
+  # ── Array of delimiters ────────────────────────────────────────────
+  - note: split_array_delimiters
+    args: ["a.b/c", [".", "/"]]
+    want: ["a", "b", "c"]
+
+  - note: split_array_single_delimiter
+    args: ["a-b-c", ["-"]]
+    want: ["a", "b", "c"]
+
+  # ── Edge cases ──────────────────────────────────────────────────────
+  - note: split_unicode
+    args: ["café☕bar", "☕"]
+    want: ["café", "bar"]
+
+  - note: split_entire_string_is_delimiter
+    args: ["abc", "abc"]
+    want: ["", ""]

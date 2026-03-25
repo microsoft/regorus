@@ -1,0 +1,26 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.uri_component_to_string
+builtin: azure.policy.fn.uri_component_to_string
+
+cases:
+  - note: uri_decode_simple
+    args: ["hello%20world"]
+    want: "hello world"
+
+  - note: uri_decode_special_chars
+    args: ["a%3Db%26c%3Dd"]
+    want: "a=b&c=d"
+
+  - note: uri_decode_no_encoding
+    args: ["hello"]
+    want: "hello"
+
+  - note: uri_decode_empty
+    args: [""]
+    want: ""
+
+  - note: uri_decode_plus_literal
+    args: ["hello%2Bworld"]
+    want: "hello+world"

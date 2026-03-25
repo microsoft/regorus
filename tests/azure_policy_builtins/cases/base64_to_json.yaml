@@ -1,0 +1,39 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.base64_to_json
+builtin: azure.policy.fn.base64_to_json
+
+cases:
+  - note: base64_to_json_object
+    args: ["eyJrZXkiOiJ2YWx1ZSJ9"]
+    want:
+      key: "value"
+
+  - note: base64_to_json_array
+    args: ["WzEsMiwzXQ=="]
+    want: [1, 2, 3]
+
+  - note: base64_to_json_string
+    args: ["ImhlbGxvIg=="]
+    want: "hello"
+
+  - note: base64_to_json_number
+    args: ["NDI="]
+    want: 42
+
+  - note: base64_to_json_null
+    args: ["bnVsbA=="]
+    want_null: true
+
+  - note: base64_to_json_bool
+    args: ["dHJ1ZQ=="]
+    want: true
+
+  - note: base64_to_json_invalid_base64
+    args: ["!!!"]
+    want_undefined: true
+
+  - note: base64_to_json_invalid_json
+    args: ["bm90LWpzb24="]
+    want_undefined: true
