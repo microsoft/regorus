@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: write
     if: >-
-      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
 
@@ -109,20 +109,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          lockfiles=(
-            Cargo.lock
-            bindings/ffi/Cargo.lock
-            bindings/java/Cargo.lock
-            bindings/python/Cargo.lock
-            bindings/ruby/Cargo.lock
-            bindings/wasm/Cargo.lock
-            tests/ensure_no_std/Cargo.lock
-          )
+          mapfile -t lockfiles < <(git ls-files -m -o --exclude-standard -- '**/Cargo.lock')
 
           for lockfile in "${lockfiles[@]}"; do
-            if [[ -f "$lockfile" ]]; then
-              git add "$lockfile"
-            fi
+            git add "$lockfile"
           done
 
           if git diff --cached --quiet; then
