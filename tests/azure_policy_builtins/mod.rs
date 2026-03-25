@@ -106,9 +106,12 @@ fn run_yaml_test(path: &str) -> Result<()> {
     let filter = std::env::var("TEST_CASE_FILTER").ok();
 
     // Look up the builtin function once for all cases.
-    let builtin_entry = BUILTINS
-        .get(test_file.builtin.as_str())
-        .unwrap_or_else(|| panic!("builtin {:?} not found in BUILTINS registry", test_file.builtin));
+    let builtin_entry = BUILTINS.get(test_file.builtin.as_str()).unwrap_or_else(|| {
+        panic!(
+            "builtin {:?} not found in BUILTINS registry",
+            test_file.builtin
+        )
+    });
 
     let builtin_fn = builtin_entry.0;
     let span = dummy_span();
@@ -186,13 +189,12 @@ fn run_yaml_test(path: &str) -> Result<()> {
         let expected = if case.want_null {
             Value::Null
         } else {
-            let want = case
-                .want
-                .as_ref()
-                .unwrap_or_else(|| panic!(
+            let want = case.want.as_ref().unwrap_or_else(|| {
+                panic!(
                     "[{} / {}] test case must have `want`, `want_null`, or `want_undefined`",
                     test_file.builtin, case.note
-                ));
+                )
+            });
             yaml_to_value(want)
         };
 

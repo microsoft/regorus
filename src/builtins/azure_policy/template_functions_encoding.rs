@@ -170,13 +170,22 @@ fn percent_encode(s: &str) -> String {
         if is_unreserved(b) {
             result.push(char::from(b));
         } else {
+            // b >> 4 is in 0..=15 and b & 0x0F is in 0..=15, so from_digit
+            // always returns Some for radix 16.
             result.push('%');
-            result.push(core::char::from_digit(u32::from(b >> 4), 16).unwrap_or('0'));
-            result.push(core::char::from_digit(u32::from(b & 0x0F), 16).unwrap_or('0'));
+            result.push(
+                core::char::from_digit(u32::from(b >> 4), 16)
+                    .unwrap_or('0')
+                    .to_ascii_uppercase(),
+            );
+            result.push(
+                core::char::from_digit(u32::from(b & 0x0F), 16)
+                    .unwrap_or('0')
+                    .to_ascii_uppercase(),
+            );
         }
     }
-    // ARM template uses uppercase hex
-    result.to_ascii_uppercase()
+    result
 }
 
 fn percent_decode(s: &str) -> Option<String> {
@@ -202,10 +211,9 @@ fn fn_uri(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) ->
     if args.len() != 2 {
         return Ok(Value::Undefined);
     }
-    let (Some(base), Some(relative)) = (
-        args.first().and_then(as_str),
-        args.get(1).and_then(as_str),
-    ) else {
+    let (Some(base), Some(relative)) =
+        (args.first().and_then(as_str), args.get(1).and_then(as_str))
+    else {
         return Ok(Value::Undefined);
     };
 

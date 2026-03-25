@@ -110,10 +110,9 @@ fn fn_union(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) 
                 for (k, v) in obj.iter() {
                     #[allow(clippy::needless_borrowed_reference)]
                     let merged = match (result.get(k), v) {
-                        (
-                            Some(&Value::Object(ref prev)),
-                            &Value::Object(ref next),
-                        ) => merge_objects(prev, next),
+                        (Some(&Value::Object(ref prev)), &Value::Object(ref next)) => {
+                            merge_objects(prev, next)
+                        }
                         _ => v.clone(),
                     };
                     result.insert(k.clone(), merged);
@@ -197,12 +196,10 @@ fn fn_range(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) 
         .checked_add(count)
         .ok_or_else(|| anyhow::anyhow!("range overflow"))?;
     if end > 2_147_483_647 {
-        anyhow::bail!(
-            "range: startIndex + count ({end}) exceeds maximum of 2147483647"
-        );
+        anyhow::bail!("range: startIndex + count ({end}) exceeds maximum of 2147483647");
     }
 
-    let mut result = Vec::new();
+    let mut result = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
     for i in 0..count {
         let val = start
             .checked_add(i)
@@ -263,18 +260,12 @@ fn fn_create_object(
 
 /// Recursively merge two objects.  Nested objects are merged; everything
 /// else (including arrays) uses the value from `incoming`.
-fn merge_objects(
-    base: &BTreeMap<Value, Value>,
-    overlay: &BTreeMap<Value, Value>,
-) -> Value {
+fn merge_objects(base: &BTreeMap<Value, Value>, overlay: &BTreeMap<Value, Value>) -> Value {
     let mut result = base.clone();
     for (k, v) in overlay {
         #[allow(clippy::needless_borrowed_reference)]
         let merged = match (result.get(k), v) {
-            (
-                Some(&Value::Object(ref prev)),
-                &Value::Object(ref next),
-            ) => merge_objects(prev, next),
+            (Some(&Value::Object(ref prev)), &Value::Object(ref next)) => merge_objects(prev, next),
             _ => v.clone(),
         };
         result.insert(k.clone(), merged);

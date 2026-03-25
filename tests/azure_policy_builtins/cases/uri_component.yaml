@@ -7,15 +7,15 @@ builtin: azure.policy.fn.uri_component
 cases:
   - note: uri_encode_simple
     args: ["hello world"]
-    want: "HELLO%20WORLD"
+    want: "hello%20world"
 
   - note: uri_encode_special_chars
     args: ["a=b&c=d"]
-    want: "A%3DB%26C%3DD"
+    want: "a%3Db%26c%3Dd"
 
   - note: uri_encode_already_safe
     args: ["hello"]
-    want: "HELLO"
+    want: "hello"
 
   - note: uri_encode_empty
     args: [""]
@@ -23,8 +23,8 @@ cases:
 
   - note: uri_encode_slash
     args: ["path/to/resource"]
-    want: "PATH%2FTO%2FRESOURCE"
+    want: "path%2Fto%2Fresource"
 
   - note: uri_encode_spaces_and_plus
     args: ["hello+world 2"]
-    want: "HELLO%2BWORLD%202"
+    want: "hello%2Bworld%202"

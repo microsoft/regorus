@@ -94,7 +94,8 @@ fn fn_split(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) 
             while i < bytes.len() {
                 let mut matched = false;
                 for &d in &sorted_delims {
-                    if !d.is_empty() && bytes.get(i..).is_some_and(|b| b.starts_with(d.as_bytes())) {
+                    if !d.is_empty() && bytes.get(i..).is_some_and(|b| b.starts_with(d.as_bytes()))
+                    {
                         parts.push(Value::from(core::mem::take(&mut current)));
                         i = i.wrapping_add(d.len());
                         matched = true;

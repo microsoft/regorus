@@ -63,7 +63,9 @@ fn fn_last_index_of(
     let (Some(haystack), Some(needle)) = (as_str(hay_val), as_str(needle_val)) else {
         return Ok(Value::Undefined);
     };
-    Ok(Value::from(case_insensitive_last_index_of(haystack, needle)))
+    Ok(Value::from(case_insensitive_last_index_of(
+        haystack, needle,
+    )))
 }
 
 /// Case-insensitive first-occurrence search returning a *character* index.
@@ -217,7 +219,13 @@ fn fn_format(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool)
                         i.wrapping_sub(1)
                     );
                 }
-                let idx: usize = index_str.parse().unwrap_or(0);
+                let idx: usize = index_str.parse().map_err(|_| {
+                    anyhow::anyhow!(
+                        "format: invalid placeholder index '{}' at position {}; expected a non-negative integer within range",
+                        index_str,
+                        i.wrapping_sub(index_str.len()).wrapping_sub(1)
+                    )
+                })?;
 
                 // Optional alignment
                 let alignment: i32 = if chars.get(i).copied() == Some(',') {
@@ -238,10 +246,12 @@ fn fn_format(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool)
                             i.wrapping_sub(align_str.len()).wrapping_sub(1)
                         );
                     }
-                    trimmed.parse().map_err(|_| anyhow::anyhow!(
-                        "format: invalid alignment '{}' in placeholder; expected an integer",
-                        trimmed
-                    ))?
+                    trimmed.parse().map_err(|_| {
+                        anyhow::anyhow!(
+                            "format: invalid alignment '{}' in placeholder; expected an integer",
+                            trimmed
+                        )
+                    })?
                 } else {
                     0
                 };
@@ -378,9 +388,7 @@ fn apply_format_spec(raw: &str, spec: &str, value: Option<&Value>) -> String {
 /// Format a number with thousands separators and fixed decimal places.
 fn format_with_thousands(value: f64, precision: usize) -> String {
     let formatted = alloc::format!("{value:.precision$}");
-    let (int_part, dec_part) = formatted
-        .split_once('.')
-        .unwrap_or((&formatted, ""));
+    let (int_part, dec_part) = formatted.split_once('.').unwrap_or((&formatted, ""));
 
     let negative = int_part.starts_with('-');
     let digits = if negative {

@@ -75,8 +75,7 @@ fn parse_datetime_styled(s: &str) -> Option<(DateTime<FixedOffset>, DateTimeStyl
         }
         // Space separator with Z suffix (e.g. "2020-04-07 14:55:59Z").
         if let Some(stripped) = s.strip_suffix('Z').or_else(|| s.strip_suffix('z')) {
-            if let Ok(naive) =
-                chrono::NaiveDateTime::parse_from_str(stripped, "%Y-%m-%d %H:%M:%S")
+            if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(stripped, "%Y-%m-%d %H:%M:%S")
             {
                 let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
                 return Some((utc.fixed_offset(), DateTimeStyle::SpaceZ));
@@ -270,9 +269,7 @@ fn fn_date_time_from_epoch(
         return Ok(Value::Undefined);
     };
     // Always UTC, so use Z suffix.
-    Ok(Value::from(
-        dt.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-    ))
+    Ok(Value::from(dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()))
 }
 
 /// `dateTimeToEpoch(dateTime)` → Unix epoch seconds from ISO 8601 string.

@@ -34,7 +34,9 @@
 use alloc::borrow::Cow;
 use core::cmp::Ordering;
 
-use icu_casemap::CaseMapper;
+use icu_casemap::CaseMapperBorrowed;
+
+static CASE_MAPPER: CaseMapperBorrowed<'static> = CaseMapperBorrowed::new();
 
 /// Return the full-case-folded form of `s`.
 ///
@@ -43,7 +45,7 @@ use icu_casemap::CaseMapper;
 ///
 /// This is the canonical form for case-insensitive hashing and indexing.
 pub fn fold(s: &str) -> Cow<'_, str> {
-    CaseMapper::new().fold_string(s)
+    CASE_MAPPER.fold_string(s)
 }
 
 /// Case-insensitive equality using full Unicode case folding.
@@ -60,8 +62,7 @@ pub fn eq(a: &str, b: &str) -> bool {
         return a.eq_ignore_ascii_case(b);
     }
 
-    let cm = CaseMapper::new();
-    cm.fold_string(a) == cm.fold_string(b)
+    CASE_MAPPER.fold_string(a) == CASE_MAPPER.fold_string(b)
 }
 
 /// Case-insensitive ordering using full Unicode case folding.
@@ -85,9 +86,8 @@ pub fn cmp(a: &str, second: &str) -> Ordering {
         return ord;
     }
 
-    let cm = CaseMapper::new();
-    let fa = cm.fold_string(a);
-    let fb = cm.fold_string(second);
+    let fa = CASE_MAPPER.fold_string(a);
+    let fb = CASE_MAPPER.fold_string(second);
     fa.cmp(&fb)
 }
 
@@ -113,9 +113,8 @@ pub fn contains(haystack: &str, needle: &str) -> bool {
         return h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n));
     }
 
-    let cm = CaseMapper::new();
-    let fh = cm.fold_string(haystack);
-    let fn_ = cm.fold_string(needle);
+    let fh = CASE_MAPPER.fold_string(haystack);
+    let fn_ = CASE_MAPPER.fold_string(needle);
     fh.contains(&*fn_)
 }
 
