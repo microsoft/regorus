@@ -1,0 +1,38 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.try_index_from_end
+builtin: azure.policy.fn.try_index_from_end
+
+cases:
+  - note: last_element
+    args: [["a", "b", "c", "d"], 1]
+    want: "d"
+
+  - note: second_from_end
+    args: [["a", "b", "c", "d"], 2]
+    want: "c"
+
+  - note: first_element_via_end
+    args: [["a", "b", "c", "d"], 4]
+    want: "a"
+
+  - note: index_zero_returns_null
+    args: [["a", "b"], 0]
+    want_null: true
+
+  - note: index_exceeds_length_returns_null
+    args: [["a", "b"], 5]
+    want_null: true
+
+  - note: non_array_returns_null
+    args: ["not_an_array", 1]
+    want_null: true
+
+  - note: single_element
+    args: [["only"], 1]
+    want: "only"
+
+  - note: numeric_array
+    args: [[10, 20, 30], 2]
+    want: 20

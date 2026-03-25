@@ -1,0 +1,58 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.intersection
+builtin: azure.policy.fn.intersection
+
+cases:
+  # ── Array intersection ──────────────────────────────────────────────
+  - note: intersection_arrays_overlap
+    args: [[1, 2, 3], [2, 3, 4]]
+    want: [2, 3]
+
+  - note: intersection_arrays_no_overlap
+    args: [[1, 2], [3, 4]]
+    want: []
+
+  - note: intersection_arrays_identical
+    args: [[1, 2, 3], [1, 2, 3]]
+    want: [1, 2, 3]
+
+  - note: intersection_arrays_empty_first
+    args: [[], [1, 2]]
+    want: []
+
+  - note: intersection_arrays_empty_second
+    args: [[1, 2], []]
+    want: []
+
+  - note: intersection_arrays_three
+    args: [[1, 2, 3, 4], [2, 3, 4, 5], [3, 4, 5, 6]]
+    want: [3, 4]
+
+  - note: intersection_arrays_strings
+    args: [["a", "b", "c"], ["b", "c", "d"]]
+    want: ["b", "c"]
+
+  # ── Object intersection ─────────────────────────────────────────────
+  # Azure semantics: a key is kept only when it exists in ALL objects
+  # AND the value is the same across all of them.
+  - note: intersection_objects_same_values
+    args: [{"a": 1, "b": 2, "c": 3}, {"b": 2, "c": 3, "d": 4}]
+    want: {"b": 2, "c": 3}
+
+  - note: intersection_objects_different_values
+    args: [{"a": 1, "b": 2, "c": 3}, {"b": 20, "c": 30, "d": 40}]
+    want: {}
+
+  - note: intersection_objects_no_overlap
+    args: [{"a": 1}, {"b": 2}]
+    want: {}
+
+  - note: intersection_objects_identical
+    args: [{"x": 1}, {"x": 1}]
+    want: {"x": 1}
+
+  - note: intersection_objects_partial_value_match
+    args: [{"a": 1, "b": 2}, {"a": 1, "b": 99}]
+    want: {"a": 1}

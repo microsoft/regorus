@@ -1,0 +1,34 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.last_index_of
+builtin: azure.policy.fn.last_index_of
+
+cases:
+  - note: last_index_of_found
+    args: ["hello world hello", "hello"]
+    want: 12
+
+  - note: last_index_of_single_occurrence
+    args: ["hello world", "world"]
+    want: 6
+
+  - note: last_index_of_not_found
+    args: ["hello", "xyz"]
+    want: -1
+
+  - note: last_index_of_empty_needle
+    args: ["hello", ""]
+    want: 5
+
+  - note: last_index_of_repeated
+    args: ["abcabcabc", "abc"]
+    want: 6
+
+  - note: last_index_of_single_char
+    args: ["abcabc", "c"]
+    want: 5
+
+  - note: last_index_of_case_insensitive
+    args: ["Hello HELLO hello", "hello"]
+    want: 12

@@ -1,0 +1,34 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.create_object
+builtin: azure.policy.fn.create_object
+
+cases:
+  - note: create_object_single_pair
+    args: ["name", "Alice"]
+    want: {"name": "Alice"}
+
+  - note: create_object_two_pairs
+    args: ["name", "Alice", "age", 30]
+    want: {"age": 30, "name": "Alice"}
+
+  - note: create_object_mixed_types
+    args: ["flag", true, "count", 5, "label", "test"]
+    want: {"count": 5, "flag": true, "label": "test"}
+
+  - note: create_object_empty
+    args: []
+    want: {}
+
+  - note: create_object_nested_value
+    args: ["data", {"inner": "value"}]
+    want: {"data": {"inner": "value"}}
+
+  - note: create_object_odd_args_error
+    args: ["key1", "val1", "key2"]
+    want_error: "expected an even number of arguments"
+
+  - note: create_object_numeric_key
+    args: [1, "one", 2, "two"]
+    want: {1: "one", 2: "two"}

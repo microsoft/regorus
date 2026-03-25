@@ -1,0 +1,44 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.min
+builtin: azure.policy.fn.min
+
+cases:
+  # ── Multiple arguments ──────────────────────────────────────────────
+  - note: min_two_args
+    args: [3, 1]
+    want: 1
+
+  - note: min_three_args
+    args: [5, 2, 8]
+    want: 2
+
+  - note: min_equal_args
+    args: [3, 3, 3]
+    want: 3
+
+  - note: min_negative
+    args: [-5, 0, 5]
+    want: -5
+
+  - note: min_single_arg
+    args: [42]
+    want: 42
+
+  # ── Array argument ──────────────────────────────────────────────────
+  - note: min_array
+    args: [[3, 1, 4, 1, 5]]
+    want: 1
+
+  - note: min_array_single
+    args: [[99]]
+    want: 99
+
+  - note: min_array_negatives
+    args: [[-10, -20, -5]]
+    want: -20
+
+  - note: min_array_empty
+    args: [[]]
+    want_undefined: true

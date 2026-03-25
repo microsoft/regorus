@@ -1,0 +1,54 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.uri
+builtin: azure.policy.fn.uri
+
+cases:
+  - note: base_with_trailing_slash
+    args: ["https://example.com/", "path/to/resource"]
+    want: "https://example.com/path/to/resource"
+
+  - note: base_without_trailing_slash
+    args: ["https://example.com/base", "relative"]
+    want: "https://example.com/relative"
+
+  - note: relative_is_absolute_url
+    args: ["https://example.com/base", "https://other.com/path"]
+    want: "https://other.com/path"
+
+  - note: relative_with_leading_slash
+    args: ["https://example.com/", "/path"]
+    want: "https://example.com/path"
+
+  - note: base_with_path_components
+    args: ["https://example.com/a/b/c", "d"]
+    want: "https://example.com/a/b/d"
+
+  - note: non_string_base
+    args: [42, "relative"]
+    want_undefined: true
+
+  - note: non_string_relative
+    args: ["https://example.com/", 42]
+    want_undefined: true
+
+  - note: simple_base
+    args: ["https://example.com/", "api/v1"]
+    want: "https://example.com/api/v1"
+
+  - note: authority_only_base
+    args: ["https://example.com", "api/v1"]
+    want: "https://example.com/api/v1"
+
+  - note: authority_only_base_with_leading_slash
+    args: ["https://example.com", "/api/v1"]
+    want: "https://example.com/api/v1"
+
+  - note: uri_relative_with_query_string
+    args: ["https://example.com/api", "v2?key=value"]
+    want: "https://example.com/v2?key=value"
+
+  - note: uri_relative_with_fragment
+    args: ["https://example.com/docs/", "page#section"]
+    want: "https://example.com/docs/page#section"

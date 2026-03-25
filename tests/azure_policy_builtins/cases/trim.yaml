@@ -1,0 +1,38 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.trim
+builtin: azure.policy.fn.trim
+
+cases:
+  - note: trim_whitespace
+    args: ["  hello  "]
+    want: "hello"
+
+  - note: trim_tabs_and_newlines
+    args: ["\thello\n"]
+    want: "hello"
+
+  - note: trim_no_whitespace
+    args: ["hello"]
+    want: "hello"
+
+  - note: trim_empty
+    args: [""]
+    want: ""
+
+  - note: trim_only_whitespace
+    args: ["   "]
+    want: ""
+
+  - note: trim_left_only
+    args: ["  hello"]
+    want: "hello"
+
+  - note: trim_right_only
+    args: ["hello  "]
+    want: "hello"
+
+  - note: trim_inner_whitespace_preserved
+    args: ["  hello world  "]
+    want: "hello world"

@@ -1,0 +1,18 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.data_uri_to_string
+builtin: azure.policy.fn.data_uri_to_string
+
+cases:
+  - note: data_uri_to_string_hello
+    args: ["data:text/plain;charset=utf8;base64,aGVsbG8="]
+    want: "hello"
+
+  - note: data_uri_to_string_json
+    args: ["data:text/plain;charset=utf8;base64,eyJrZXkiOiJ2YWx1ZSJ9"]
+    want: "{\"key\":\"value\"}"
+
+  - note: data_uri_to_string_invalid
+    args: ["not-a-data-uri"]
+    want_undefined: true

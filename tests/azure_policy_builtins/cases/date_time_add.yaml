@@ -1,0 +1,161 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.date_time_add
+builtin: azure.policy.fn.date_time_add
+
+cases:
+  - note: add_one_day
+    args: ["2024-01-15T12:00:00Z", "P1D"]
+    want: "2024-01-16T12:00:00Z"
+
+  - note: add_one_hour
+    args: ["2024-01-15T12:00:00Z", "PT1H"]
+    want: "2024-01-15T13:00:00Z"
+
+  - note: add_thirty_minutes
+    args: ["2024-01-15T12:00:00Z", "PT30M"]
+    want: "2024-01-15T12:30:00Z"
+
+  - note: add_negative_one_day
+    args: ["2024-01-15T12:00:00Z", "-P1D"]
+    want: "2024-01-14T12:00:00Z"
+
+  - note: add_complex_duration
+    args: ["2024-01-15T12:00:00Z", "P1DT2H30M"]
+    want: "2024-01-16T14:30:00Z"
+
+  - note: add_one_year_approx
+    args: ["2024-01-01T00:00:00Z", "P1Y"]
+    want: "2024-12-31T00:00:00Z"
+
+  - note: add_zero_duration
+    args: ["2024-06-15T10:30:00Z", "PT0S"]
+    want: "2024-06-15T10:30:00Z"
+
+  - note: invalid_base_datetime
+    args: ["not-a-date", "P1D"]
+    want_undefined: true
+
+  - note: invalid_duration
+    args: ["2024-01-15T12:00:00Z", "invalid"]
+    want_undefined: true
+
+  - note: datetime_without_timezone
+    args: ["2024-01-15T12:00:00", "P1D"]
+    want: "2024-01-16T12:00:00"
+
+  - note: add_one_week
+    args: ["2024-01-15T00:00:00Z", "P1W"]
+    want: "2024-01-22T00:00:00Z"
+
+  - note: space_separated_datetime
+    args: ["2020-04-07 14:55:59", "P3D"]
+    want: "2020-04-10 14:55:59"
+
+  - note: space_separated_datetime_with_z
+    args: ["2020-04-07 14:55:59Z", "P3D"]
+    want: "2020-04-10 14:55:59Z"
+
+  - note: space_separated_datetime_with_offset
+    args: ["2020-04-07 14:55:59+05:30", "P1D"]
+    want: "2020-04-08 14:55:59+05:30"
+
+  - note: output_format_date_only
+    args: ["2020-04-07T14:55:59Z", "P3Y2M", "yyyy-MM-dd"]
+    want: "2023-06-06"
+
+  - note: output_format_custom
+    args: ["2024-01-15T12:00:00Z", "PT1H", "yyyy-MM-dd HH:mm:ss"]
+    want: "2024-01-15 13:00:00"
+
+  - note: output_format_with_k_utc
+    args: ["2024-01-15T12:00:00Z", "P0D", "yyyy-MM-ddTHH:mm:ssK"]
+    want: "2024-01-15T12:00:00Z"
+
+  # Standard .NET format specifiers
+  - note: output_standard_format_d
+    args: ["2024-01-15T12:30:00Z", "P1D", "d"]
+    want: "01/16/2024"
+
+  - note: output_standard_format_G
+    args: ["2024-01-15T12:30:00Z", "PT1H", "G"]
+    want: "01/15/2024 13:30:00"
+
+  - note: output_standard_format_o
+    args: ["2024-01-15T12:00:00Z", "P0D", "o"]
+    want: "2024-01-15T12:00:00.0000000Z"
+
+  - note: output_standard_format_o_with_nanos
+    args: ["2024-01-15T12:00:00.123456700Z", "P0D", "o"]
+    want: "2024-01-15T12:00:00.1234567Z"
+
+  - note: output_standard_format_u
+    args: ["2024-01-15T12:00:00Z", "P0D", "u"]
+    want: "2024-01-15 12:00:00Z"
+
+  - note: output_standard_format_u_with_offset
+    args: ["2024-01-15T12:00:00+05:30", "P0D", "u"]
+    want: "2024-01-15 06:30:00Z"
+
+  # Fractional seconds preservation (default round-trip, no explicit format)
+  - note: roundtrip_iso_no_tz_with_frac
+    args: ["2024-01-15T12:00:00.123", "P0D"]
+    want: "2024-01-15T12:00:00.123"
+
+  - note: roundtrip_iso_no_tz_with_frac_add
+    args: ["2024-01-15T12:00:00.500", "P1D"]
+    want: "2024-01-16T12:00:00.500"
+
+  - note: roundtrip_space_no_tz_with_frac
+    args: ["2024-01-15 12:00:00.456", "P0D"]
+    want: "2024-01-15 12:00:00.456"
+
+  - note: roundtrip_space_z_with_frac
+    args: ["2024-01-15 12:00:00.789Z", "P0D"]
+    want: "2024-01-15 12:00:00.789Z"
+
+  - note: roundtrip_space_offset_with_frac
+    args: ["2024-01-15 12:00:00.123+05:30", "P0D"]
+    want: "2024-01-15 12:00:00.123+05:30"
+
+  - note: roundtrip_no_frac_stays_clean
+    args: ["2024-01-15T12:00:00", "P0D"]
+    want: "2024-01-15T12:00:00"
+
+  - note: roundtrip_rfc3339_utc_with_frac
+    args: ["2024-01-15T12:00:00.123Z", "P0D"]
+    want: "2024-01-15T12:00:00.123Z"
+
+  - note: roundtrip_rfc3339_offset_with_frac
+    args: ["2024-01-15T12:00:00.456+05:30", "P0D"]
+    want: "2024-01-15T12:00:00.456+05:30"
+
+  - note: roundtrip_rfc3339_utc_no_frac_stays_clean
+    args: ["2024-01-15T12:00:00Z", "P0D"]
+    want: "2024-01-15T12:00:00Z"
+
+  - note: roundtrip_rfc3339_explicit_zero_offset
+    args: ["2024-01-15T12:00:00+00:00", "P0D"]
+    want: "2024-01-15T12:00:00+00:00"
+
+  - note: roundtrip_rfc3339_explicit_zero_offset_with_frac
+    args: ["2024-01-15T12:00:00.500+00:00", "P0D"]
+    want: "2024-01-15T12:00:00.500+00:00"
+
+  # Unknown single-char format specifier is a real error
+  - note: unknown_format_specifier_q
+    args: ["2024-01-15T12:00:00Z", "P0D", "q"]
+    want_error: "unrecognised standard format specifier 'q'"
+
+  - note: output_standard_format_U
+    args: ["2024-01-15T12:00:00+05:30", "P0D", "U"]
+    want: "Monday, 15 January 2024 06:30:00"
+
+  - note: output_standard_format_s
+    args: ["2024-01-15T12:00:00Z", "P0D", "s"]
+    want: "2024-01-15T12:00:00"
+
+  - note: output_standard_format_R
+    args: ["2024-01-15T12:00:00+05:30", "P0D", "R"]
+    want: "Mon, 15 Jan 2024 06:30:00 GMT"

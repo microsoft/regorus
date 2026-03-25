@@ -127,6 +127,9 @@ mod indexchecker;
 mod interpreter;
 
 pub mod languages {
+    #[cfg(feature = "azure_policy")]
+    pub mod azure_policy;
+
     #[cfg(feature = "azure-rbac")]
     pub mod azure_rbac;
 
@@ -601,6 +604,7 @@ pub mod coverage {
 #[doc(hidden)]
 pub mod unstable {
     pub use crate::ast::*;
+    pub use crate::builtins::*;
     pub use crate::lexer::*;
     pub use crate::parser::*;
 }

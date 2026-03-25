@@ -1,0 +1,42 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.max
+builtin: azure.policy.fn.max
+
+cases:
+  - note: max_two_args
+    args: [3, 1]
+    want: 3
+
+  - note: max_three_args
+    args: [5, 2, 8]
+    want: 8
+
+  - note: max_equal_args
+    args: [3, 3, 3]
+    want: 3
+
+  - note: max_negative
+    args: [-5, 0, 5]
+    want: 5
+
+  - note: max_single_arg
+    args: [42]
+    want: 42
+
+  - note: max_array
+    args: [[3, 1, 4, 1, 5]]
+    want: 5
+
+  - note: max_array_single
+    args: [[99]]
+    want: 99
+
+  - note: max_array_negatives
+    args: [[-10, -20, -5]]
+    want: -5
+
+  - note: max_array_empty
+    args: [[]]
+    want_undefined: true

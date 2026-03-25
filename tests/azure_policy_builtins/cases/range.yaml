@@ -1,0 +1,38 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.range
+builtin: azure.policy.fn.range
+
+cases:
+  - note: range_basic
+    args: [0, 5]
+    want: [0, 1, 2, 3, 4]
+
+  - note: range_from_offset
+    args: [3, 4]
+    want: [3, 4, 5, 6]
+
+  - note: range_single
+    args: [0, 1]
+    want: [0]
+
+  - note: range_zero_count
+    args: [5, 0]
+    want: []
+
+  - note: range_negative_start
+    args: [-2, 4]
+    want: [-2, -1, 0, 1]
+
+  - note: range_large_start
+    args: [100, 3]
+    want: [100, 101, 102]
+
+  - note: range_count_exceeds_10000
+    args: [0, 10001]
+    want_error: "exceeds maximum of 10000"
+
+  - note: range_sum_exceeds_i32_max
+    args: [2147483640, 10]
+    want_error: "exceeds maximum of 2147483647"

@@ -1,0 +1,38 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.base64 and azure.policy.fn.base64_to_string
+builtin: azure.policy.fn.base64
+
+cases:
+  - note: base64_encode_hello
+    args: ["hello"]
+    want: "aGVsbG8="
+
+  - note: base64_encode_empty
+    args: [""]
+    want: ""
+
+  - note: base64_encode_single_char
+    args: ["a"]
+    want: "YQ=="
+
+  - note: base64_encode_two_chars
+    args: ["ab"]
+    want: "YWI="
+
+  - note: base64_encode_three_chars
+    args: ["abc"]
+    want: "YWJj"
+
+  - note: base64_encode_json_object
+    args: ["{\"key\":\"value\"}"]
+    want: "eyJrZXkiOiJ2YWx1ZSJ9"
+
+  - note: base64_encode_numbers
+    args: ["12345"]
+    want: "MTIzNDU="
+
+  - note: base64_encode_special_chars
+    args: ["hello world!"]
+    want: "aGVsbG8gd29ybGQh"

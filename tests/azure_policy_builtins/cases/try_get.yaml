@@ -1,0 +1,51 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.try_get
+builtin: azure.policy.fn.try_get
+
+cases:
+  - note: get_existing_key
+    args:
+      - name: "test"
+        value: 42
+      - "name"
+    want: "test"
+
+  - note: get_missing_key
+    args:
+      - name: "test"
+      - "missing"
+    want_null: true
+
+  - note: get_array_index
+    args: [["a", "b", "c"], 1]
+    want: "b"
+
+  - note: get_array_out_of_bounds
+    args: [["a", "b"], 5]
+    want_null: true
+
+  - note: get_from_non_container
+    args: ["not_an_object", "key"]
+    want_null: true
+
+  - note: get_null_item
+    args: [null, "key"]
+    want_null: true
+
+  - note: get_nested_value
+    args:
+      - data:
+          inner: true
+      - "data"
+    want:
+      inner: true
+
+  - note: get_number_item
+    args: [42, "key"]
+    want_null: true
+
+  - note: get_array_first
+    args: [[10, 20, 30], 0]
+    want: 10

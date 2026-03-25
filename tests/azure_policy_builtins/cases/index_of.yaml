@@ -1,0 +1,54 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.index_of
+builtin: azure.policy.fn.index_of
+
+cases:
+  - note: index_of_found
+    args: ["hello world", "world"]
+    want: 6
+
+  - note: index_of_beginning
+    args: ["hello", "hello"]
+    want: 0
+
+  - note: index_of_not_found
+    args: ["hello", "xyz"]
+    want: -1
+
+  - note: index_of_empty_needle
+    args: ["hello", ""]
+    want: 0
+
+  - note: index_of_empty_haystack
+    args: ["", "hello"]
+    want: -1
+
+  - note: index_of_both_empty
+    args: ["", ""]
+    want: 0
+
+  - note: index_of_single_char
+    args: ["abcdef", "d"]
+    want: 3
+
+  - note: index_of_first_occurrence
+    args: ["abcabc", "bc"]
+    want: 1
+
+  - note: index_of_case_insensitive
+    args: ["Hello", "hello"]
+    want: 0
+
+  - note: index_of_case_insensitive_mixed
+    args: ["Hello World", "WORLD"]
+    want: 6
+
+  - note: index_of_unicode_char_index
+    args: ["café latte", "latte"]
+    want: 5
+
+  - note: index_of_unicode_case_fold
+    args: ["Straße", "STRASSE"]
+    want: 0

@@ -1,0 +1,51 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.json
+builtin: azure.policy.fn.json
+
+cases:
+  - note: parse_object
+    args: ['{"name":"test","value":42}']
+    want:
+      name: test
+      value: 42
+
+  - note: parse_array
+    args: ['[1,2,3]']
+    want: [1, 2, 3]
+
+  - note: parse_string
+    args: ['"hello"']
+    want: "hello"
+
+  - note: parse_number
+    args: ["42"]
+    want: 42
+
+  - note: parse_boolean_true
+    args: ["true"]
+    want: true
+
+  - note: parse_boolean_false
+    args: ["false"]
+    want: false
+
+  - note: parse_null
+    args: ["null"]
+    want_null: true
+
+  - note: parse_nested_object
+    args: ['{"a":{"b":{"c":1}}}']
+    want:
+      a:
+        b:
+          c: 1
+
+  - note: invalid_json
+    args: ["{not valid json}"]
+    want_error: "json()"
+
+  - note: non_string_arg
+    args: [42]
+    want_undefined: true

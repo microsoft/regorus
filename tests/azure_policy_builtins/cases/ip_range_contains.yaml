@@ -1,0 +1,65 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.ip_range_contains
+builtin: azure.policy.fn.ip_range_contains
+
+cases:
+  # ── IPv4 ────────────────────────────────────────────────────────────
+  - note: ipv4_contains_ip_true
+    args: ["10.0.0.0/8", "10.1.2.3"]
+    want: true
+
+  - note: ipv4_contains_ip_false
+    args: ["10.0.0.0/8", "192.168.1.1"]
+    want: false
+
+  - note: ipv4_contains_subnet_true
+    args: ["10.0.0.0/8", "10.0.0.0/16"]
+    want: true
+
+  - note: ipv4_contains_subnet_false
+    args: ["10.0.0.0/16", "10.0.0.0/8"]
+    want: false
+
+  - note: ipv4_exact_match
+    args: ["192.168.1.0/24", "192.168.1.100"]
+    want: true
+
+  - note: ipv4_edge_network_address
+    args: ["192.168.1.0/24", "192.168.1.0"]
+    want: true
+
+  - note: ipv4_edge_broadcast
+    args: ["192.168.1.0/24", "192.168.1.255"]
+    want: true
+
+  - note: ipv4_just_outside
+    args: ["192.168.1.0/24", "192.168.2.0"]
+    want: false
+
+  - note: ipv4_slash_32
+    args: ["10.0.0.1/32", "10.0.0.1"]
+    want: true
+
+  - note: ipv4_slash_32_miss
+    args: ["10.0.0.1/32", "10.0.0.2"]
+    want: false
+
+  # ── IPv6 ────────────────────────────────────────────────────────────
+  - note: ipv6_contains_ip_true
+    args: ["fd00::/8", "fd12:3456::1"]
+    want: true
+
+  - note: ipv6_contains_ip_false
+    args: ["fd00::/8", "2001:db8::1"]
+    want: false
+
+  # ── Invalid inputs ──────────────────────────────────────────────────
+  - note: ip_invalid_range
+    args: ["not-a-cidr", "10.0.0.1"]
+    want: false
+
+  - note: ip_invalid_target
+    args: ["10.0.0.0/8", "not-an-ip"]
+    want: false

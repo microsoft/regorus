@@ -1,0 +1,34 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.logic_any (ARM template or() function)
+builtin: azure.policy.logic_any
+
+cases:
+  - note: all_true
+    args: [true, true, true]
+    want: true
+
+  - note: one_true
+    args: [false, true, false]
+    want: true
+
+  - note: all_false
+    args: [false, false, false]
+    want: false
+
+  - note: single_true
+    args: [true]
+    want: true
+
+  - note: single_false
+    args: [false]
+    want: false
+
+  - note: two_args_one_true
+    args: [false, true]
+    want: true
+
+  - note: empty_args_vacuously_false
+    args: []
+    want: false

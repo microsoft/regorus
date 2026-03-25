@@ -1,0 +1,42 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.coalesce
+builtin: azure.policy.fn.coalesce
+
+cases:
+  - note: coalesce_first_non_null
+    args: [null, null, "hello"]
+    want: "hello"
+
+  - note: coalesce_first_is_value
+    args: ["first", "second"]
+    want: "first"
+
+  - note: coalesce_all_null
+    args: [null, null, null]
+    want_null: true
+
+  - note: coalesce_number
+    args: [null, 42]
+    want: 42
+
+  - note: coalesce_false_is_not_null
+    args: [null, false, "hello"]
+    want: false
+
+  - note: coalesce_zero_is_not_null
+    args: [null, 0, "hello"]
+    want: 0
+
+  - note: coalesce_empty_string_is_not_null
+    args: [null, "", "hello"]
+    want: ""
+
+  - note: coalesce_single_value
+    args: [42]
+    want: 42
+
+  - note: coalesce_single_null
+    args: [null]
+    want_null: true

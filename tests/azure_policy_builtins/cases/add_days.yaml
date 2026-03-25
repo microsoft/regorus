@@ -1,0 +1,46 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.add_days
+builtin: azure.policy.fn.add_days
+
+cases:
+  - note: add_one_day
+    args: ["2024-01-15T12:00:00Z", 1]
+    want: "2024-01-16T12:00:00Z"
+
+  - note: add_zero_days
+    args: ["2024-01-15T12:00:00Z", 0]
+    want: "2024-01-15T12:00:00Z"
+
+  - note: subtract_one_day
+    args: ["2024-01-15T12:00:00Z", -1]
+    want: "2024-01-14T12:00:00Z"
+
+  - note: add_thirty_days
+    args: ["2024-01-01T00:00:00Z", 30]
+    want: "2024-01-31T00:00:00Z"
+
+  - note: add_days_across_month
+    args: ["2024-01-31T00:00:00Z", 1]
+    want: "2024-02-01T00:00:00Z"
+
+  - note: add_days_leap_year
+    args: ["2024-02-28T00:00:00Z", 1]
+    want: "2024-02-29T00:00:00Z"
+
+  - note: add_days_non_leap_year
+    args: ["2023-02-28T00:00:00Z", 1]
+    want: "2023-03-01T00:00:00Z"
+
+  - note: invalid_base_datetime
+    args: ["not-a-date", 5]
+    want_undefined: true
+
+  - note: non_integer_days
+    args: ["2024-01-15T12:00:00Z", "abc"]
+    want_undefined: true
+
+  - note: add_365_days
+    args: ["2024-01-01T00:00:00Z", 365]
+    want: "2024-12-31T00:00:00Z"

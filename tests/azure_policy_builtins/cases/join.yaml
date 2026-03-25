@@ -1,0 +1,42 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.join
+builtin: azure.policy.fn.join
+
+cases:
+  - note: join_strings_comma
+    args: [["a", "b", "c"], ","]
+    want: "a,b,c"
+
+  - note: join_strings_space
+    args: [["hello", "world"], " "]
+    want: "hello world"
+
+  - note: join_single_element
+    args: [["only"], ","]
+    want: "only"
+
+  - note: join_empty_array
+    args: [[], ","]
+    want: ""
+
+  - note: join_empty_delimiter
+    args: [["a", "b", "c"], ""]
+    want: "abc"
+
+  - note: join_with_numbers
+    args: [[1, 2, 3], "-"]
+    want: "1-2-3"
+
+  - note: join_with_booleans
+    args: [[true, false], "|"]
+    want: "true|false"
+
+  - note: join_with_null
+    args: [["a", null, "b"], ","]
+    want: "a,null,b"
+
+  - note: join_multichar_delimiter
+    args: [["x", "y", "z"], " :: "]
+    want: "x :: y :: z"

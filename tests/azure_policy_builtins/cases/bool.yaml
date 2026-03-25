@@ -1,0 +1,70 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Tests for azure.policy.fn.bool
+builtin: azure.policy.fn.bool
+
+cases:
+  # ── From booleans ───────────────────────────────────────────────────
+  - note: bool_from_true
+    args: [true]
+    want: true
+
+  - note: bool_from_false
+    args: [false]
+    want: false
+
+  # ── From strings ────────────────────────────────────────────────────
+  - note: bool_from_string_true
+    args: ["true"]
+    want: true
+
+  - note: bool_from_string_false
+    args: ["false"]
+    want: false
+
+  - note: bool_from_string_TRUE
+    args: ["TRUE"]
+    want: true
+
+  - note: bool_from_string_False
+    args: ["False"]
+    want: false
+
+  - note: bool_from_string_1
+    args: ["1"]
+    want: true
+
+  - note: bool_from_string_0
+    args: ["0"]
+    want: false
+
+  - note: bool_from_string_invalid
+    args: ["yes"]
+    want_undefined: true
+
+  - note: bool_from_string_empty
+    args: [""]
+    want_undefined: true
+
+  # ── From numbers ────────────────────────────────────────────────────
+  - note: bool_from_number_1
+    args: [1]
+    want: true
+
+  - note: bool_from_number_0
+    args: [0]
+    want: false
+
+  - note: bool_from_number_negative
+    args: [-1]
+    want: true
+
+  - note: bool_from_number_42
+    args: [42]
+    want: true
+
+  # ── Other types ─────────────────────────────────────────────────────
+  - note: bool_from_null
+    args: [null]
+    want_undefined: true
