@@ -7,6 +7,10 @@ on:
     types: [opened, synchronize, reopened]
     branches: ["main"]
 
+concurrency:
+  group: dependabot-refresh-cargo-lockfiles-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -21,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       with:
         repository: ${{ github.event.pull_request.head.repo.full_name }}
         ref: ${{ github.event.pull_request.head.ref }}
@@ -74,12 +78,20 @@ jobs:
 
         for manifest in "${!manifests[@]}"; do
           echo "Refreshing lockfile for $manifest"
-          cargo metadata --format-version 1 --all-features --manifest-path "$manifest" > /dev/null
+          cargo metadata \
+            --config build.rustc-wrapper="" \
+            --config build.rustc-workspace-wrapper="" \
+            --format-version 1 \
+            --all-features \
+            --manifest-path "$manifest" > /dev/null
         done
 
         if [[ -n "${manifests[Cargo.toml]+x}" ]]; then
           echo "Refreshing lockfile for tests/ensure_no_std/Cargo.toml (thumbv7m-none-eabi)"
-          cargo metadata --format-version 1 \
+          cargo metadata \
+            --config build.rustc-wrapper="" \
+            --config build.rustc-workspace-wrapper="" \
+            --format-version 1 \
             --manifest-path tests/ensure_no_std/Cargo.toml \
             --filter-platform thumbv7m-none-eabi > /dev/null
         fi
@@ -89,12 +101,20 @@ jobs:
       run: |
         set -euo pipefail
 
-        git add Cargo.lock \
-          bindings/ffi/Cargo.lock \
-          bindings/java/Cargo.lock \
-          bindings/python/Cargo.lock \
-          bindings/ruby/Cargo.lock \
+        lockfiles=(
+          Cargo.lock
+          bindings/ffi/Cargo.lock
+          bindings/java/Cargo.lock
+          bindings/python/Cargo.lock
+          bindings/ruby/Cargo.lock
           bindings/wasm/Cargo.lock
+        )
+
+        for lockfile in "${lockfiles[@]}"; do
+          if [[ -f "$lockfile" ]]; then
+            git add "$lockfile"
+          fi
+        done
 
         if git diff --cached --quiet; then
           echo "No Cargo lockfile changes required."
