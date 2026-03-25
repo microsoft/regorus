@@ -193,7 +193,8 @@ fn percent_decode(s: &str) -> Option<String> {
     let mut result = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if *bytes.get(i)? == b'%' && i.checked_add(2)? < bytes.len() {
+        if *bytes.get(i)? == b'%' {
+            // Require exactly two hex digits after '%'; reject incomplete escapes.
             let hi = char::from(*bytes.get(i.checked_add(1)?)?).to_digit(16)?;
             let lo = char::from(*bytes.get(i.checked_add(2)?)?).to_digit(16)?;
             result.push(u8::try_from(hi.checked_mul(16)?.checked_add(lo)?).ok()?);

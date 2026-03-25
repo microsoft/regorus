@@ -62,7 +62,7 @@ fn yaml_to_value(v: &serde_yaml::Value) -> Value {
             } else if let Some(f) = n.as_f64() {
                 Value::from(f)
             } else {
-                Value::Null
+                panic!("unsupported YAML numeric representation: {n:?}")
             }
         }
         serde_yaml::Value::String(s) => Value::String(s.as_str().into()),

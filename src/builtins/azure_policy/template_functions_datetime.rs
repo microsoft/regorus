@@ -163,6 +163,9 @@ fn parse_iso8601_duration(s: &str) -> Option<Duration> {
     for ch in s.chars() {
         match ch {
             'T' => {
+                if !num_buf.is_empty() {
+                    return None;
+                }
                 in_time = true;
             }
             '0'..='9' | '.' => {
@@ -207,6 +210,10 @@ fn parse_iso8601_duration(s: &str) -> Option<Duration> {
             }
             _ => return None,
         }
+    }
+
+    if !num_buf.is_empty() {
+        return None;
     }
 
     let dur = Duration::seconds(if negative {
