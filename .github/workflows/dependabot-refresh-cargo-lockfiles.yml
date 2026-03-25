@@ -27,105 +27,110 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-      with:
-        repository: ${{ github.event.pull_request.head.repo.full_name }}
-        ref: ${{ github.event.pull_request.head.ref }}
-        fetch-depth: 0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          persist-credentials: false
 
-    - name: Setup Rust toolchain
-      run: |
-        rustup toolchain install 1.92.0 --profile minimal
-        rustup override set 1.92.0
-        cargo --version
-        rustc --version
+      - name: Setup Rust toolchain
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup override set 1.92.0
+          cargo --version
+          rustc --version
 
-    - name: Refresh affected Cargo lockfiles
-      shell: bash
-      run: |
-        set -euo pipefail
+      - name: Refresh affected Cargo lockfiles
+        shell: bash
+        run: |
+          set -euo pipefail
 
-        base_sha="${{ github.event.pull_request.base.sha }}"
-        head_sha="${{ github.event.pull_request.head.sha }}"
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          head_sha="${{ github.event.pull_request.head.sha }}"
 
-        mapfile -t changed_files < <(git diff --name-only "$base_sha" "$head_sha" -- '**/Cargo.toml' '**/Cargo.lock')
+          mapfile -t changed_files < <(git diff --name-only "$base_sha" "$head_sha" -- '**/Cargo.toml' '**/Cargo.lock')
 
-        if [ "${#changed_files[@]}" -eq 0 ]; then
-          echo "No Cargo manifest or lockfile changes detected."
-          exit 0
-        fi
-
-        declare -A manifests=()
-        for path in "${changed_files[@]}"; do
-          case "$path" in
-            bindings/ffi/*)
-              manifests["bindings/ffi/Cargo.toml"]=1
-              ;;
-            bindings/java/*)
-              manifests["bindings/java/Cargo.toml"]=1
-              ;;
-            bindings/python/*)
-              manifests["bindings/python/Cargo.toml"]=1
-              ;;
-            bindings/ruby/*)
-              manifests["bindings/ruby/Cargo.toml"]=1
-              ;;
-            bindings/wasm/*)
-              manifests["bindings/wasm/Cargo.toml"]=1
-              ;;
-            *)
-              manifests["Cargo.toml"]=1
-              ;;
-          esac
-        done
-
-        for manifest in "${!manifests[@]}"; do
-          echo "Refreshing lockfile for $manifest"
-          cargo metadata \
-            --config build.rustc-wrapper="" \
-            --config build.rustc-workspace-wrapper="" \
-            --format-version 1 \
-            --all-features \
-            --manifest-path "$manifest" > /dev/null
-        done
-
-        if [[ -n "${manifests[Cargo.toml]+x}" ]]; then
-          echo "Refreshing lockfile for tests/ensure_no_std/Cargo.toml (thumbv7m-none-eabi)"
-          cargo metadata \
-            --config build.rustc-wrapper="" \
-            --config build.rustc-workspace-wrapper="" \
-            --format-version 1 \
-            --manifest-path tests/ensure_no_std/Cargo.toml \
-            --filter-platform thumbv7m-none-eabi > /dev/null
-        fi
-
-    - name: Commit lockfile refresh
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        lockfiles=(
-          Cargo.lock
-          bindings/ffi/Cargo.lock
-          bindings/java/Cargo.lock
-          bindings/python/Cargo.lock
-          bindings/ruby/Cargo.lock
-          bindings/wasm/Cargo.lock
-          tests/ensure_no_std/Cargo.lock
-        )
-
-        for lockfile in "${lockfiles[@]}"; do
-          if [[ -f "$lockfile" ]]; then
-            git add "$lockfile"
+          if [ "${#changed_files[@]}" -eq 0 ]; then
+            echo "No Cargo manifest or lockfile changes detected."
+            exit 0
           fi
-        done
 
-        if git diff --cached --quiet; then
-          echo "No Cargo lockfile changes required."
-          exit 0
-        fi
+          declare -A manifests=()
+          for path in "${changed_files[@]}"; do
+            case "$path" in
+              bindings/ffi/*)
+                manifests["bindings/ffi/Cargo.toml"]=1
+                ;;
+              bindings/java/*)
+                manifests["bindings/java/Cargo.toml"]=1
+                ;;
+              bindings/python/*)
+                manifests["bindings/python/Cargo.toml"]=1
+                ;;
+              bindings/ruby/*)
+                manifests["bindings/ruby/Cargo.toml"]=1
+                ;;
+              bindings/wasm/*)
+                manifests["bindings/wasm/Cargo.toml"]=1
+                ;;
+              *)
+                manifests["Cargo.toml"]=1
+                ;;
+            esac
+          done
 
-        git config user.name "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git commit -m "build(deps): refresh Cargo lockfiles"
-        git push
+          for manifest in "${!manifests[@]}"; do
+            echo "Refreshing lockfile for $manifest"
+            cargo metadata \
+              --config build.rustc="rustc" \
+              --config build.rustc-wrapper="" \
+              --config build.rustc-workspace-wrapper="" \
+              --format-version 1 \
+              --all-features \
+              --manifest-path "$manifest" > /dev/null
+          done
+
+          if [[ -n "${manifests[Cargo.toml]+x}" ]]; then
+            echo "Refreshing lockfile for tests/ensure_no_std/Cargo.toml (thumbv7m-none-eabi)"
+            cargo metadata \
+              --config build.rustc="rustc" \
+              --config build.rustc-wrapper="" \
+              --config build.rustc-workspace-wrapper="" \
+              --format-version 1 \
+              --manifest-path tests/ensure_no_std/Cargo.toml \
+              --filter-platform thumbv7m-none-eabi > /dev/null
+          fi
+
+      - name: Commit lockfile refresh
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          lockfiles=(
+            Cargo.lock
+            bindings/ffi/Cargo.lock
+            bindings/java/Cargo.lock
+            bindings/python/Cargo.lock
+            bindings/ruby/Cargo.lock
+            bindings/wasm/Cargo.lock
+            tests/ensure_no_std/Cargo.lock
+          )
+
+          for lockfile in "${lockfiles[@]}"; do
+            if [[ -f "$lockfile" ]]; then
+              git add "$lockfile"
+            fi
+          done
+
+          if git diff --cached --quiet; then
+            echo "No Cargo lockfile changes required."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "build(deps): refresh Cargo lockfiles"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.event.pull_request.head.repo.full_name }}.git" HEAD:${{ github.event.pull_request.head.ref }}
