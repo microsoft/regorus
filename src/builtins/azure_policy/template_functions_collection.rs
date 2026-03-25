@@ -244,6 +244,14 @@ fn fn_create_object(
     args: &[Value],
     _strict: bool,
 ) -> Result<Value> {
+    if !args.len().is_multiple_of(2) {
+        anyhow::bail!(
+            "createObject: expected an even number of arguments (key-value pairs), \
+             but received {}",
+            args.len()
+        );
+    }
+
     let mut map = BTreeMap::<Value, Value>::new();
 
     for pair in args.chunks(2) {

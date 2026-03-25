@@ -99,9 +99,7 @@ fn fn_float(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) 
         return Ok(Value::Undefined);
     };
     match *arg {
-        Value::Number(ref n) => n
-            .as_f64()
-            .map_or_else(|| Ok(arg.clone()), |f| Ok(Value::from(f))),
+        Value::Number(ref n) => Ok(n.as_f64().map_or(Value::Undefined, Value::from)),
         Value::String(ref s) => Ok(try_coerce_to_number(s)
             .and_then(|n| n.as_f64())
             .map_or(Value::Undefined, Value::from)),

@@ -289,11 +289,11 @@ fn fn_format(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool)
                 let formatted = if fmt_spec.is_empty() {
                     raw
                 } else {
-                    apply_format_spec(&raw, &fmt_spec, format_args_values.get(idx))
+                    apply_format_spec(&raw, &fmt_spec, format_args_values.get(idx))?
                 };
 
                 // Apply alignment
-                apply_alignment(&mut result, &formatted, alignment);
+                apply_alignment(&mut result, &formatted, alignment)?;
             }
             '}' => {
                 // Escaped }} → literal '}'
@@ -315,7 +315,7 @@ fn fn_format(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool)
 }
 
 /// Apply a .NET-style format specifier to a value string.
-fn apply_format_spec(raw: &str, spec: &str, value: Option<&Value>) -> String {
+fn apply_format_spec(raw: &str, spec: &str, value: Option<&Value>) -> Result<String> {
     let spec_char = spec.chars().next().unwrap_or('G');
     let precision: Option<usize> = spec.get(1..).and_then(|s| s.parse().ok());
 
@@ -329,7 +329,7 @@ fn apply_format_spec(raw: &str, spec: &str, value: Option<&Value>) -> String {
         _ => None,
     });
 
-    match spec_char {
+    Ok(match spec_char {
         // Fixed-point
         'F' | 'f' => {
             let prec = precision.unwrap_or(2);
@@ -380,9 +380,15 @@ fn apply_format_spec(raw: &str, spec: &str, value: Option<&Value>) -> String {
                 },
             )
         }
-        // General / unknown → pass through
-        _ => raw.to_string(),
-    }
+        // Unknown specifier: error for numeric values (.NET throws FormatException),
+        // pass through for non-numeric.
+        _ => {
+            if int_val.is_some() || float_val.is_some() {
+                anyhow::bail!("format: invalid numeric format specifier '{spec_char}'");
+            }
+            raw.to_string()
+        }
+    })
 }
 
 /// Format a number with thousands separators and fixed decimal places.
@@ -418,12 +424,21 @@ fn format_with_thousands(value: f64, precision: usize) -> String {
     result
 }
 
+/// Maximum alignment width to prevent excessive memory allocation from
+/// user-controlled format strings (e.g. `{0,1000000000}`).
+const MAX_ALIGNMENT_WIDTH: usize = 10_000;
+
 /// Apply alignment (padding) to a formatted value.
-fn apply_alignment(result: &mut String, formatted: &str, alignment: i32) {
+fn apply_alignment(result: &mut String, formatted: &str, alignment: i32) -> Result<()> {
     if alignment == 0 {
         result.push_str(formatted);
     } else {
         let width = usize::try_from(alignment.unsigned_abs()).unwrap_or(usize::MAX);
+        if width > MAX_ALIGNMENT_WIDTH {
+            anyhow::bail!(
+                "format: alignment width {width} exceeds maximum allowed ({MAX_ALIGNMENT_WIDTH})"
+            );
+        }
         let char_len = formatted.chars().count();
         if char_len >= width {
             result.push_str(formatted);
@@ -444,4 +459,5 @@ fn apply_alignment(result: &mut String, formatted: &str, alignment: i32) {
             }
         }
     }
+    Ok(())
 }

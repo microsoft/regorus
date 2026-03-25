@@ -109,3 +109,11 @@ cases:
   - note: format_alignment_trailing_junk
     args: ["{0, 1x}", "hi"]
     want_error: "invalid alignment"
+
+  - note: format_unknown_numeric_specifier_error
+    args: ["{0:Z}", 42]
+    want_error: "invalid numeric format specifier"
+
+  - note: format_alignment_width_exceeds_max
+    args: ["{0,1000000000}", "hi"]
+    want_error: "exceeds maximum allowed"
