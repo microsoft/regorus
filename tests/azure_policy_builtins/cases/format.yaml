@@ -65,6 +65,10 @@ cases:
     args: ["{0:N0}", 1234567]
     want: "1,234,567"
 
+  - note: format_float_with_thousands
+    args: ["{0:N2}", 1234.5678]
+    want: "1,234.57"
+
   - note: format_hex_upper
     args: ["{0:X}", 255]
     want: "FF"
@@ -117,3 +121,11 @@ cases:
   - note: format_alignment_width_exceeds_max
     args: ["{0,1000000000}", "hi"]
     want_error: "exceeds maximum allowed"
+
+  - note: format_fixed_point_higher_precision
+    args: ["{0:F3}", 1.23456]
+    want: "1.235"
+
+  - note: format_negative_index_error
+    args: ["{-1}", "value"]
+    want_error: "invalid placeholder"

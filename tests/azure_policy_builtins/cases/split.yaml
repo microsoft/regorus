@@ -55,3 +55,7 @@ cases:
   - note: split_entire_string_is_delimiter
     args: ["abc", "abc"]
     want: ["", ""]
+
+  - note: split_empty_delimiter
+    args: ["abc", ""]
+    want: ["abc"]

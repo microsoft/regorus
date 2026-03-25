@@ -28,3 +28,7 @@ cases:
   - note: create_object_odd_args_error
     args: ["key1", "val1", "key2"]
     want_error: "expected an even number of arguments"
+
+  - note: create_object_numeric_key
+    args: [1, "one", 2, "two"]
+    want: {1: "one", 2: "two"}

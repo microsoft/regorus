@@ -44,3 +44,11 @@ cases:
   - note: authority_only_base_with_leading_slash
     args: ["https://example.com", "/api/v1"]
     want: "https://example.com/api/v1"
+
+  - note: uri_relative_with_query_string
+    args: ["https://example.com/api", "v2?key=value"]
+    want: "https://example.com/v2?key=value"
+
+  - note: uri_relative_with_fragment
+    args: ["https://example.com/docs/", "page#section"]
+    want: "https://example.com/docs/page#section"

@@ -62,6 +62,10 @@ fn fn_split(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) 
     // When an array is provided, the input is split on ANY of the delimiters.
     match *delim_val {
         Value::String(ref delimiter) => {
+            if delimiter.is_empty() {
+                // Empty delimiter → no split; return input as single-element array.
+                return Ok(Value::from(alloc::vec![Value::from(input)]));
+            }
             let parts: alloc::vec::Vec<Value> = input
                 .split(delimiter.as_ref())
                 .map(|s| Value::from(s.to_string()))
