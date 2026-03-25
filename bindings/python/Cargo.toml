@@ -22,8 +22,8 @@ coverage = ["regorus/coverage"]
 
 [dependencies]
 anyhow = "1.0"
-ordered-float = "5.0.0"
-pyo3 = { version = "0.24.1", features = ["abi3-py310", "anyhow", "extension-module"] }
+ordered-float = "5.2.0"
+pyo3 = { version = "0.28.2", features = ["abi3-py310", "anyhow", "extension-module"] }
 regorus = { path  = "../..", default-features = false, features = ["arc", "rvm"] }
 serde_json = "1.0.140"
 
