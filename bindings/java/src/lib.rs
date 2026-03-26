@@ -579,7 +579,11 @@ pub unsafe extern "system" fn Java_com_microsoft_regorus_Program_nativeDeseriali
             let is_partial = unsafe { JBooleanArray::from_raw(env, is_partial) };
             let len = is_partial.len(env)?;
             if len > 0 {
-                let value: [jboolean; 1] = [partial];
+                let value: [jboolean; 1] = [if partial {
+                    jni::sys::JNI_TRUE
+                } else {
+                    jni::sys::JNI_FALSE
+                }];
                 is_partial.set_region(env, 0, &value)?;
             }
         }
@@ -777,10 +781,14 @@ fn throw_err<T>(mut env: EnvUnowned, f: impl FnOnce(&mut Env) -> Result<T>) -> R
         match f(env) {
             Ok(val) => Ok(val),
             Err(err) => {
-                let _ = env.throw_new(
+                if let Err(throw_err) = env.throw_new(
                     jni_str!("java/lang/RuntimeException"),
                     JNIString::new(err.to_string()),
-                );
+                ) {
+                    return Err(anyhow::anyhow!(
+                        "Failed to throw Java RuntimeException for error '{err}': {throw_err}"
+                    ));
+                }
                 Err(err)
             }
         }
@@ -788,7 +796,23 @@ fn throw_err<T>(mut env: EnvUnowned, f: impl FnOnce(&mut Env) -> Result<T>) -> R
     match outcome.into_outcome() {
         Outcome::Ok(val) => Ok(val),
         Outcome::Err(err) => Err(err),
-        Outcome::Panic(payload) => std::panic::resume_unwind(payload),
+        Outcome::Panic(payload) => {
+            let msg = payload
+                .downcast_ref::<String>()
+                .map(|s| s.as_str())
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("unknown panic");
+            let err = anyhow::anyhow!("panic: {msg}");
+            // Try to surface the panic as a Java exception.
+            let _ = env.with_env(|env| -> Result<()> {
+                env.throw_new(
+                    jni_str!("java/lang/RuntimeException"),
+                    JNIString::new(format!("Rust panic: {msg}")),
+                )?;
+                Ok(())
+            });
+            Err(err)
+        }
     }
 }
 

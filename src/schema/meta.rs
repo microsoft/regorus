@@ -38,14 +38,12 @@ pub fn validate_schema(schema: &serde_json::Value) -> bool {
 /// Validates a schema definition against the Regorus meta-schema.
 /// Returns Ok(()) if valid, or Err with validation errors if invalid.
 pub fn validate_schema_detailed(schema: &serde_json::Value) -> Result<(), Vec<String>> {
-    let errors: Vec<_> = META_SCHEMA_VALIDATOR.iter_errors(schema).collect();
-    if !errors.is_empty() {
-        let msgs: alloc::collections::BTreeSet<String> = errors
-            .iter()
-            .map(|e| format!("{}: {}", e.instance_path(), e))
-            .collect();
-        let msgs: Vec<String> = msgs.into_iter().collect();
-        return Err(msgs);
+    let msgs: alloc::collections::BTreeSet<String> = META_SCHEMA_VALIDATOR
+        .iter_errors(schema)
+        .map(|e| format!("{}: {}", e.instance_path(), e))
+        .collect();
+    if !msgs.is_empty() {
+        return Err(msgs.into_iter().collect());
     }
 
     Ok(())
