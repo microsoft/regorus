@@ -83,9 +83,9 @@ jobs:
           for manifest in "${!manifests[@]}"; do
             echo "Refreshing lockfile for $manifest"
             cargo metadata \
-              --config build.rustc="rustc" \
-              --config build.rustc-wrapper="" \
-              --config build.rustc-workspace-wrapper="" \
+              --config 'build.rustc="rustc"' \
+              --config 'build.rustc-wrapper=""' \
+              --config 'build.rustc-workspace-wrapper=""' \
               --format-version 1 \
               --all-features \
               --manifest-path "$manifest" > /dev/null
@@ -94,9 +94,9 @@ jobs:
           if [[ -n "${manifests[Cargo.toml]+x}" ]]; then
             echo "Refreshing lockfile for tests/ensure_no_std/Cargo.toml (thumbv7m-none-eabi)"
             cargo metadata \
-              --config build.rustc="rustc" \
-              --config build.rustc-wrapper="" \
-              --config build.rustc-workspace-wrapper="" \
+              --config 'build.rustc="rustc"' \
+              --config 'build.rustc-wrapper=""' \
+              --config 'build.rustc-workspace-wrapper=""' \
               --format-version 1 \
               --manifest-path tests/ensure_no_std/Cargo.toml \
               --filter-platform thumbv7m-none-eabi > /dev/null
