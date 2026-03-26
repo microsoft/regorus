@@ -19,7 +19,7 @@ use crate::*;
 use anyhow::{bail, Result};
 
 #[cfg(feature = "std")]
-use rand::Rng;
+use rand::RngExt;
 
 pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("abs", (abs, 1));

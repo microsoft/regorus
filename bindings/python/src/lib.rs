@@ -44,7 +44,7 @@ impl Default for Engine {
 
 fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
     // dicts
-    Ok(if let Ok(dict) = ob.downcast::<PyDict>() {
+    Ok(if let Ok(dict) = ob.cast::<PyDict>() {
         let mut map = BTreeMap::new();
         for (k, v) in dict {
             map.insert(from(&k)?, from(&v)?);
@@ -52,7 +52,7 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
         map.into()
     }
     // set
-    else if let Ok(pset) = ob.downcast::<PySet>() {
+    else if let Ok(pset) = ob.cast::<PySet>() {
         let mut set = BTreeSet::new();
         for v in pset {
             set.insert(from(&v)?);
@@ -60,7 +60,7 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
         set.into()
     }
     // frozen set
-    else if let Ok(pfset) = ob.downcast::<PyFrozenSet>() {
+    else if let Ok(pfset) = ob.cast::<PyFrozenSet>() {
         //
         let mut set = BTreeSet::new();
         for v in pfset {
@@ -69,13 +69,13 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
         set.into()
     }
     // lists and tuples
-    else if let Ok(plist) = ob.downcast::<PyList>() {
+    else if let Ok(plist) = ob.cast::<PyList>() {
         let mut array = Vec::new();
         for v in plist {
             array.push(from(&v)?);
         }
         array.into()
-    } else if let Ok(ptuple) = ob.downcast::<PyTuple>() {
+    } else if let Ok(ptuple) = ob.cast::<PyTuple>() {
         let mut array = Vec::new();
         for v in ptuple {
             array.push(from(&v)?);
@@ -99,11 +99,11 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
         v.into()
     }
     // None
-    else if ob.downcast::<PyNone>().is_ok() {
+    else if ob.cast::<PyNone>().is_ok() {
         Value::Null
     }
     // Anything that is a sequence
-    else if let Ok(pseq) = ob.downcast::<PySequence>() {
+    else if let Ok(pseq) = ob.cast::<PySequence>() {
         let mut array = Vec::new();
         for i in 0..pseq.len()? {
             array.push(from(&pseq.get_item(i)?)?);
@@ -111,7 +111,7 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
         array.into()
     }
     // Anything that is a map
-    else if let Ok(pmap) = ob.downcast::<PyMapping>() {
+    else if let Ok(pmap) = ob.cast::<PyMapping>() {
         let mut map = BTreeMap::new();
         let keys = pmap.keys()?;
         let values = pmap.values()?;
@@ -128,7 +128,7 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
     })
 }
 
-fn to(mut v: Value, py: Python<'_>) -> Result<PyObject> {
+fn to(mut v: Value, py: Python<'_>) -> Result<Py<PyAny>> {
     let obj = match v {
         Value::Null => None::<u64>.into_bound_py_any(py),
 
@@ -297,7 +297,7 @@ impl Engine {
     /// Evaluate query.
     ///
     /// * `query`: Rego expression to be evaluate.
-    pub fn eval_query(&mut self, query: String, py: Python<'_>) -> Result<PyObject> {
+    pub fn eval_query(&mut self, query: String, py: Python<'_>) -> Result<Py<PyAny>> {
         let results = self.engine.eval_query(query, false)?;
 
         let rlist = PyList::empty(py);
@@ -338,7 +338,7 @@ impl Engine {
     /// Evaluate rule.
     ///
     /// * `rule`: Full path to the rule.
-    pub fn eval_rule(&mut self, rule: String, py: Python<'_>) -> Result<PyObject> {
+    pub fn eval_rule(&mut self, rule: String, py: Python<'_>) -> Result<Py<PyAny>> {
         to(self.engine.eval_rule(rule)?, py)
     }
 
@@ -366,7 +366,7 @@ impl Engine {
     /// Note: When the engine is cloned, extensions share the same Python callable reference
     /// rather than being deep-copied. Stateful callables will share state across clones.
     pub fn add_extension(&mut self, path: String, nargs: u8, extension: Py<PyAny>) -> Result<()> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             if !extension.bind(py).is_callable() {
                 return Err(anyhow!("extension '{}' must be callable", path));
             }
@@ -377,8 +377,8 @@ impl Engine {
         let path_clone = path.clone();
 
         let extension_impl = move |args: Vec<Value>| -> Result<Value, anyhow::Error> {
-            Python::with_gil(|py| {
-                let py_args_vec: Result<Vec<PyObject>> =
+            Python::attach(|py| {
+                let py_args_vec: Result<Vec<Py<PyAny>>> =
                     args.into_iter().map(|arg| to(arg, py)).collect();
                 let py_args = PyTuple::new(py, py_args_vec?)?;
                 let py_result = func_ref.call1(py, py_args).map_err(|e| {
