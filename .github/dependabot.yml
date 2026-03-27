@@ -22,6 +22,13 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "build(deps)"
+    groups:
+      # Bundle all Cargo dependency updates into a single PR. Without this,
+      # dependabot creates a separate PR per directory for the same dependency,
+      # and each individual PR fails to build due to version skew.
+      rust-dependencies:
+        patterns:
+          - "*"
     # Ignore vendored mimalloc crates; updates are managed manually.
     ignore:
       - dependency-name: "regorus-mimalloc"
