@@ -4,8 +4,9 @@
 use anyhow::Result;
 use core::num::{NonZeroU32, NonZeroUsize};
 use jni::objects::{JBooleanArray, JByteArray, JClass, JObject, JObjectArray, JString};
+use jni::strings::JNIString;
 use jni::sys::{jboolean, jbooleanArray, jbyteArray, jlong, jobjectArray, jstring};
-use jni::JNIEnv;
+use jni::{jni_str, Env, EnvUnowned, Outcome};
 
 use regorus::languages::rego::compiler::Compiler;
 use regorus::rvm::program::{
@@ -17,7 +18,7 @@ use std::sync::Arc;
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeNewEngine(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
 ) -> jlong {
     let engine = Engine::new();
@@ -26,7 +27,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeNewEngine(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClone(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
 ) -> jlong {
@@ -37,7 +38,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClone(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetRegoV0(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
     enable: bool,
@@ -51,7 +52,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetRegoV0(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddPolicy(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
     path: JString,
@@ -59,9 +60,9 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddPolicy(
 ) -> jstring {
     let res = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
-        let path: String = env.get_string(&path)?.into();
-        let rego: String = env.get_string(&rego)?.into();
-        let pkg = env.new_string(engine.add_policy(path, rego)?)?;
+        let path: String = path.try_to_string(env)?;
+        let rego: String = rego.try_to_string(env)?;
+        let pkg = JString::new(env, engine.add_policy(path, rego)?)?;
         Ok(pkg.into_raw())
     });
 
@@ -73,15 +74,15 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddPolicy(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddPolicyFromFile(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
     path: JString,
 ) -> jstring {
     let res = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
-        let path: String = env.get_string(&path)?.into();
-        let pkg = env.new_string(engine.add_policy_from_file(path)?)?;
+        let path: String = path.try_to_string(env)?;
+        let pkg = JString::new(env, engine.add_policy_from_file(path)?)?;
         Ok(pkg.into_raw())
     });
 
@@ -93,14 +94,14 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddPolicyFromFile
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetPackages(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
 ) -> jstring {
     let res = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
         let packages = engine.get_packages()?;
-        let packages_json = env.new_string(serde_json::to_string_pretty(&packages)?)?;
+        let packages_json = JString::new(env, serde_json::to_string_pretty(&packages)?)?;
         Ok(packages_json.into_raw())
     });
 
@@ -112,14 +113,14 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetPackages(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetPolicies(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
 ) -> jstring {
     let res = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
         let policies = engine.get_policies_as_json()?;
-        let policies_json = env.new_string(&policies)?;
+        let policies_json = JString::new(env, &policies)?;
         Ok(policies_json.into_raw())
     });
 
@@ -131,7 +132,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetPolicies(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClearData(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
 ) {
@@ -144,14 +145,14 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClearData(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddDataJson(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
     data: JString,
 ) {
     let _ = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
-        let data: String = env.get_string(&data)?.into();
+        let data: String = data.try_to_string(env)?;
         engine.add_data_json(&data)?;
         Ok(())
     });
@@ -159,14 +160,14 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddDataJson(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddDataJsonFromFile(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
     path: JString,
 ) {
     let _ = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
-        let path: String = env.get_string(&path)?.into();
+        let path: String = path.try_to_string(env)?;
         engine.add_data(Value::from_json_file(path)?)?;
         Ok(())
     });
@@ -174,14 +175,14 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeAddDataJsonFromFi
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetInputJson(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
     input: JString,
 ) {
     let _ = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
-        let input: String = env.get_string(&input)?.into();
+        let input: String = input.try_to_string(env)?;
         engine.set_input_json(&input)?;
         Ok(())
     });
@@ -189,14 +190,14 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetInputJson(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetInputJsonFromFile(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
     path: JString,
 ) {
     let _ = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
-        let path: String = env.get_string(&path)?.into();
+        let path: String = path.try_to_string(env)?;
         engine.set_input(Value::from_json_file(path)?);
         Ok(())
     });
@@ -204,16 +205,16 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetInputJsonFromF
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeEvalQuery(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
     query: JString,
 ) -> jstring {
     let res = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
-        let query: String = env.get_string(&query)?.into();
+        let query: String = query.try_to_string(env)?;
         let results = engine.eval_query(query, false)?;
-        let output = env.new_string(serde_json::to_string(&results)?)?;
+        let output = JString::new(env, serde_json::to_string(&results)?)?;
         Ok(output.into_raw())
     });
 
@@ -225,16 +226,16 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeEvalQuery(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeEvalRule(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
     rule: JString,
 ) -> jstring {
     let res = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
-        let rule: String = env.get_string(&rule)?.into();
+        let rule: String = rule.try_to_string(env)?;
         let value = engine.eval_rule(rule)?;
-        let output = env.new_string(value.to_json_str()?)?;
+        let output = JString::new(env, value.to_json_str()?)?;
         Ok(output.into_raw())
     });
 
@@ -247,7 +248,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeEvalRule(
 #[no_mangle]
 #[cfg(feature = "coverage")]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetEnableCoverage(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
     enable: bool,
@@ -262,14 +263,14 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetEnableCoverage
 #[no_mangle]
 #[cfg(feature = "coverage")]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetCoverageReport(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
 ) -> jstring {
     let res = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
         let report = engine.get_coverage_report()?;
-        let output = env.new_string(serde_json::to_string_pretty(&report)?)?;
+        let output = JString::new(env, serde_json::to_string_pretty(&report)?)?;
         Ok(output.into_raw())
     });
 
@@ -282,14 +283,14 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetCoverageReport
 #[no_mangle]
 #[cfg(feature = "coverage")]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetCoverageReportPretty(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
 ) -> jstring {
     let res = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
         let report = engine.get_coverage_report()?.to_string_pretty()?;
-        let output = env.new_string(&report)?;
+        let output = JString::new(env, &report)?;
         Ok(output.into_raw())
     });
 
@@ -302,7 +303,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeGetCoverageReport
 #[no_mangle]
 #[cfg(feature = "coverage")]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClearCoverageData(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
 ) {
@@ -315,7 +316,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClearCoverageData
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetGatherPrints(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
     b: bool,
@@ -329,14 +330,14 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetGatherPrints(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeTakePrints(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
 ) -> jstring {
     let res = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
         let prints = engine.take_prints()?;
-        let output = env.new_string(serde_json::to_string_pretty(&prints)?)?;
+        let output = JString::new(env, serde_json::to_string_pretty(&prints)?)?;
         Ok(output.into_raw())
     });
 
@@ -349,14 +350,14 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeTakePrints(
 #[no_mangle]
 #[cfg(feature = "ast")]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_getAstAsJson(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
 ) -> jstring {
     let res = throw_err(env, |env| {
         let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
         let ast = engine.get_ast_as_json()?;
-        let output = env.new_string(&ast)?;
+        let output = JString::new(env, &ast)?;
         Ok(output.into_raw())
     });
 
@@ -368,7 +369,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_getAstAsJson(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetPolicyLengthConfig(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
     max_col: u32,
@@ -391,7 +392,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeSetPolicyLengthCo
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClearPolicyLengthConfig(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
 ) {
@@ -402,7 +403,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClearPolicyLength
 #[cfg(feature = "cache")]
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_CacheConfig_nativeSetCacheConfig(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     regex: jlong,
     glob: jlong,
@@ -424,7 +425,7 @@ pub extern "system" fn Java_com_microsoft_regorus_CacheConfig_nativeSetCacheConf
 #[cfg(feature = "cache")]
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_CacheConfig_nativeClearCache(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
 ) {
     regorus::cache::clear();
@@ -432,7 +433,7 @@ pub extern "system" fn Java_com_microsoft_regorus_CacheConfig_nativeClearCache(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeDestroyEngine(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
 ) {
@@ -443,7 +444,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeDestroyEngine(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Program_nativeCompileFromModules(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     data_json: JString,
     module_ids: jobjectArray,
@@ -451,7 +452,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Program_nativeCompileFromModul
     entry_points: jobjectArray,
 ) -> jlong {
     let res = throw_err(env, |env| {
-        let data_json: String = env.get_string(&data_json)?.into();
+        let data_json: String = data_json.try_to_string(env)?;
         let data = Value::from_json_str(&data_json)?;
 
         let ids = get_string_array(env, module_ids)?;
@@ -487,7 +488,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Program_nativeCompileFromModul
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Program_nativeCompileFromEngine(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
     entry_points: jobjectArray,
@@ -512,7 +513,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Program_nativeCompileFromEngin
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Program_nativeGenerateListing(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     program_ptr: jlong,
 ) -> jstring {
@@ -520,7 +521,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Program_nativeGenerateListing(
         let program = unsafe { &*(program_ptr as *mut Arc<RvmProgram>) };
         let listing =
             generate_assembly_listing(program.as_ref(), &AssemblyListingConfig::default());
-        let output = env.new_string(&listing)?;
+        let output = JString::new(env, &listing)?;
         Ok(output.into_raw())
     });
 
@@ -532,7 +533,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Program_nativeGenerateListing(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Program_nativeSerializeBinary(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     program_ptr: jlong,
 ) -> jbyteArray {
@@ -556,7 +557,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Program_nativeSerializeBinary(
 /// for the duration of the call. They must come from the JVM for the current
 /// thread and not be used after this function returns.
 pub unsafe extern "system" fn Java_com_microsoft_regorus_Program_nativeDeserializeBinary(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     data: jbyteArray,
     is_partial: jbooleanArray,
@@ -566,7 +567,7 @@ pub unsafe extern "system" fn Java_com_microsoft_regorus_Program_nativeDeseriali
             return Err(anyhow::anyhow!("data must not be null"));
         }
 
-        let data = unsafe { JByteArray::from_raw(data) };
+        let data = unsafe { JByteArray::from_raw(env, data) };
         let bytes = env.convert_byte_array(&data)?;
         let (program, partial) =
             match RvmProgram::deserialize_binary(&bytes).map_err(|e| anyhow::anyhow!(e))? {
@@ -575,11 +576,15 @@ pub unsafe extern "system" fn Java_com_microsoft_regorus_Program_nativeDeseriali
             };
 
         if !is_partial.is_null() {
-            let is_partial = unsafe { JBooleanArray::from_raw(is_partial) };
-            let len = env.get_array_length(&is_partial)?;
+            let is_partial = unsafe { JBooleanArray::from_raw(env, is_partial) };
+            let len = is_partial.len(env)?;
             if len > 0 {
-                let value: [jboolean; 1] = [if partial { 1 } else { 0 }];
-                env.set_boolean_array_region(&is_partial, 0, &value)?;
+                let value: [jboolean; 1] = [if partial {
+                    jni::sys::JNI_TRUE
+                } else {
+                    jni::sys::JNI_FALSE
+                }];
+                is_partial.set_region(env, 0, &value)?;
             }
         }
 
@@ -591,7 +596,7 @@ pub unsafe extern "system" fn Java_com_microsoft_regorus_Program_nativeDeseriali
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Program_nativeDrop(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     program_ptr: jlong,
 ) {
@@ -602,7 +607,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Program_nativeDrop(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeNew(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
 ) -> jlong {
     let vm = RegoVM::new();
@@ -611,7 +616,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeNew(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeLoadProgram(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     vm_ptr: jlong,
     program_ptr: jlong,
@@ -626,14 +631,14 @@ pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeLoadProgram(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeSetDataJson(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     vm_ptr: jlong,
     data_json: JString,
 ) {
     let _ = throw_err(env, |env| {
         let vm = unsafe { &mut *(vm_ptr as *mut RegoVM) };
-        let data_json: String = env.get_string(&data_json)?.into();
+        let data_json: String = data_json.try_to_string(env)?;
         let data = Value::from_json_str(&data_json)?;
         vm.set_data(data)?;
         Ok(())
@@ -642,14 +647,14 @@ pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeSetDataJson(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeSetInputJson(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     vm_ptr: jlong,
     input_json: JString,
 ) {
     let _ = throw_err(env, |env| {
         let vm = unsafe { &mut *(vm_ptr as *mut RegoVM) };
-        let input_json: String = env.get_string(&input_json)?.into();
+        let input_json: String = input_json.try_to_string(env)?;
         let input = Value::from_json_str(&input_json)?;
         vm.set_input(input);
         Ok(())
@@ -658,7 +663,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeSetInputJson(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeSetExecutionMode(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     vm_ptr: jlong,
     mode: u8,
@@ -677,14 +682,14 @@ pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeSetExecutionMode(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeExecute(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     vm_ptr: jlong,
 ) -> jstring {
     let res = throw_err(env, |env| {
         let vm = unsafe { &mut *(vm_ptr as *mut RegoVM) };
         let result = vm.execute()?;
-        let output = env.new_string(result.to_json_str()?)?;
+        let output = JString::new(env, result.to_json_str()?)?;
         Ok(output.into_raw())
     });
 
@@ -696,16 +701,16 @@ pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeExecute(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeExecuteEntryPoint(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     vm_ptr: jlong,
     entry_point: JString,
 ) -> jstring {
     let res = throw_err(env, |env| {
         let vm = unsafe { &mut *(vm_ptr as *mut RegoVM) };
-        let entry_point: String = env.get_string(&entry_point)?.into();
+        let entry_point: String = entry_point.try_to_string(env)?;
         let result = vm.execute_entry_point_by_name(&entry_point)?;
-        let output = env.new_string(result.to_json_str()?)?;
+        let output = JString::new(env, result.to_json_str()?)?;
         Ok(output.into_raw())
     });
 
@@ -717,7 +722,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeExecuteEntryPoint(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeResume(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     vm_ptr: jlong,
     resume_json: JString,
@@ -726,13 +731,13 @@ pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeResume(
     let res = throw_err(env, |env| {
         let vm = unsafe { &mut *(vm_ptr as *mut RegoVM) };
         let value = if has_value {
-            let resume_json: String = env.get_string(&resume_json)?.into();
+            let resume_json: String = resume_json.try_to_string(env)?;
             Some(Value::from_json_str(&resume_json)?)
         } else {
             None
         };
         let result = vm.resume(value)?;
-        let output = env.new_string(result.to_json_str()?)?;
+        let output = JString::new(env, result.to_json_str()?)?;
         Ok(output.into_raw())
     });
 
@@ -744,13 +749,13 @@ pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeResume(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeGetExecutionState(
-    env: JNIEnv,
+    env: EnvUnowned,
     _class: JClass,
     vm_ptr: jlong,
 ) -> jstring {
     let res = throw_err(env, |env| {
         let vm = unsafe { &mut *(vm_ptr as *mut RegoVM) };
-        let output = env.new_string(format!("{:?}", vm.execution_state()))?;
+        let output = JString::new(env, format!("{:?}", vm.execution_state()))?;
         Ok(output.into_raw())
     });
 
@@ -762,7 +767,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeGetExecutionState(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeDrop(
-    _env: JNIEnv,
+    _env: EnvUnowned,
     _class: JClass,
     vm_ptr: jlong,
 ) {
@@ -771,27 +776,57 @@ pub extern "system" fn Java_com_microsoft_regorus_Rvm_nativeDrop(
     }
 }
 
-fn throw_err<T>(mut env: JNIEnv, mut f: impl FnMut(&mut JNIEnv) -> Result<T>) -> Result<T> {
-    match f(&mut env) {
-        Ok(val) => Ok(val),
-        Err(err) => {
-            env.throw(err.to_string())?;
+fn throw_err<T>(mut env: EnvUnowned, f: impl FnOnce(&mut Env) -> Result<T>) -> Result<T> {
+    let outcome = env.with_env(|env| -> Result<T> {
+        match f(env) {
+            Ok(val) => Ok(val),
+            Err(err) => {
+                if let Err(throw_err) = env.throw_new(
+                    jni_str!("java/lang/RuntimeException"),
+                    JNIString::new(err.to_string()),
+                ) {
+                    return Err(anyhow::anyhow!(
+                        "Failed to throw Java RuntimeException for error '{err}': {throw_err}"
+                    ));
+                }
+                Err(err)
+            }
+        }
+    });
+    match outcome.into_outcome() {
+        Outcome::Ok(val) => Ok(val),
+        Outcome::Err(err) => Err(err),
+        Outcome::Panic(payload) => {
+            let msg = payload
+                .downcast_ref::<String>()
+                .map(|s| s.as_str())
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("unknown panic");
+            let err = anyhow::anyhow!("panic: {msg}");
+            // Try to surface the panic as a Java exception.
+            let _ = env.with_env(|env| -> Result<()> {
+                env.throw_new(
+                    jni_str!("java/lang/RuntimeException"),
+                    JNIString::new(format!("Rust panic: {msg}")),
+                )?;
+                Ok(())
+            });
             Err(err)
         }
     }
 }
 
-fn get_string_array(env: &mut JNIEnv, array: jobjectArray) -> Result<Vec<String>> {
+fn get_string_array(env: &mut Env, array: jobjectArray) -> Result<Vec<String>> {
     if array.is_null() {
         return Ok(Vec::new());
     }
-    let array = unsafe { JObjectArray::from_raw(array) };
-    let len = env.get_array_length(&array)?;
-    let mut values = Vec::with_capacity(len as usize);
+    let array = unsafe { JObjectArray::<JObject>::from_raw(env, array) };
+    let len = array.len(env)?;
+    let mut values = Vec::with_capacity(len);
     for i in 0..len {
-        let obj = env.get_object_array_element(&array, i)?;
-        let jstr = JString::from(obj);
-        let value: String = env.get_string(&jstr)?.into();
+        let obj = array.get_element(env, i)?;
+        let jstr = unsafe { JString::from_raw(env, obj.into_raw()) };
+        let value: String = jstr.try_to_string(env)?;
         values.push(value);
     }
     Ok(values)

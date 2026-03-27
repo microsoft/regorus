@@ -8,8 +8,8 @@
 version: 2
 updates:
   # All Rust/Cargo directories are grouped into a single entry so that
-  # when a dependency is updated, Dependabot creates ONE PR that bumps it
-  # across the root workspace AND every binding, preventing version skew.
+  # when a dependency is updated, Dependabot bumps it across the root
+  # workspace AND every binding, preventing version skew.
   - package-ecosystem: "cargo"
     directories:
       - "/"
@@ -22,10 +22,6 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "build(deps)"
-    groups:
-      rust-dependencies:
-        patterns:
-          - "*"
     # Ignore vendored mimalloc crates; updates are managed manually.
     ignore:
       - dependency-name: "regorus-mimalloc"
