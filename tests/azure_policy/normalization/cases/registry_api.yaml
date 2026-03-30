@@ -1,0 +1,127 @@
+# Tests that exercise the public AliasRegistry API (normalize, denormalize,
+# normalize_and_wrap) rather than the low-level *_with_aliases functions.
+# This ensures the registry lookup path and public entry points are covered.
+
+aliases_json: |
+  [
+    {
+      "namespace": "Microsoft.Storage",
+      "resourceTypes": [
+        {
+          "resourceType": "storageAccounts",
+          "aliases": [
+            {
+              "name": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+              "defaultPath": "properties.supportsHttpsTrafficOnly",
+              "paths": []
+            },
+            {
+              "name": "Microsoft.Storage/storageAccounts/isHnsEnabled",
+              "defaultPath": "properties.isHnsEnabled",
+              "paths": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "namespace": "Microsoft.Network",
+      "resourceTypes": [
+        {
+          "resourceType": "networkSecurityGroups",
+          "aliases": [
+            {
+              "name": "Microsoft.Network/networkSecurityGroups/securityRules[*].protocol",
+              "defaultPath": "properties.securityRules[*].properties.protocol",
+              "paths": []
+            },
+            {
+              "name": "Microsoft.Network/networkSecurityGroups/securityRules[*].name",
+              "defaultPath": "properties.securityRules[*].name",
+              "paths": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+
+cases:
+  - note: registry API normalize
+    use_registry_api: true
+    input:
+      name: myStorage
+      type: "Microsoft.Storage/storageAccounts"
+      location: westus2
+      properties:
+        supportsHttpsTrafficOnly: true
+        isHnsEnabled: false
+    expected_normalized:
+      name: myStorage
+      type: "Microsoft.Storage/storageAccounts"
+      location: westus2
+      supportshttpstrafficonly: true
+      ishnsenabled: false
+    round_trip: true
+
+  - note: registry API denormalize
+    use_registry_api: true
+    input:
+      name: myStorage
+      type: "Microsoft.Storage/storageAccounts"
+      location: westus2
+      supportshttpstrafficonly: true
+      ishnsenabled: false
+    expected_denormalized:
+      name: myStorage
+      type: "Microsoft.Storage/storageAccounts"
+      location: westus2
+      properties:
+        supportsHttpsTrafficOnly: true
+        isHnsEnabled: false
+    reverse_round_trip: true
+
+  - note: registry API normalize_and_wrap (envelope)
+    use_registry_api: true
+    input:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: rule1
+            properties:
+              protocol: Tcp
+    context:
+      resourceGroup:
+        name: rg1
+    expected_envelope:
+      resource:
+        name: myNsg
+        type: "Microsoft.Network/networkSecurityGroups"
+        securityrules:
+          - name: rule1
+            protocol: Tcp
+      context:
+        resourceGroup:
+          name: rg1
+      parameters: {}
+
+  - note: registry API round-trip sub-resource
+    use_registry_api: true
+    input:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: rule1
+            properties:
+              protocol: Tcp
+    round_trip: true
+    expected_round_trip:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: rule1
+            properties:
+              protocol: Tcp

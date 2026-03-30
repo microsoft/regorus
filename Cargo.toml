@@ -24,7 +24,7 @@ default = ["full-opa", "arc", "rvm"]
 
 arc = []
 ast = []
-azure_policy = ["dep:jsonschema", "dep:chrono", "dep:ipnet", "dep:icu_casemap", "arc", "dashmap"]
+azure_policy = ["dep:jsonschema", "dep:chrono", "dep:ipnet", "dep:icu_casemap", "dep:hashbrown", "arc", "dashmap"]
 azure-rbac = ["regex", "time", "net"]
 base64 = ["dep:data-encoding"]
 base64url = ["dep:data-encoding"]
@@ -99,6 +99,7 @@ rand = ["dep:rand"]
 anyhow = { version = "1.0.102", default-features = false }
 serde = {version = "1.0.150", default-features = false, features = ["derive", "rc", "alloc"] }
 serde_json = { version = "1.0.89", default-features = false, features = ["alloc"] }
+hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"], optional = true }
 lazy_static =  { version = "1.4.0", default-features = false }
 thiserror = { version = "2.0", default-features = false }
 
@@ -196,6 +197,11 @@ harness = false
 name = "rvm_benchmark"
 harness = false
 required-features = ["rvm"]
+
+[[bench]]
+name = "normalization_benchmark"
+harness = false
+required-features = ["azure_policy"]
 
 [[example]]
 name="regorus"

@@ -5,6 +5,7 @@
 
 extern crate alloc;
 
+mod alias_registry;
 mod allocator;
 mod common;
 mod compile;

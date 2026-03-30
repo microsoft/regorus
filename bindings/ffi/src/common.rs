@@ -11,6 +11,7 @@ use core::ffi::{c_char, c_longlong, c_void, CStr};
 use core::{mem, ptr};
 
 /// Status of a call on `RegorusEngine`.
+#[derive(Debug, PartialEq)]
 #[repr(C)]
 pub enum RegorusStatus {
     /// The operation was successful.

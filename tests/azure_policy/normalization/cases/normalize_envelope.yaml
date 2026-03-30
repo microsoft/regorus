@@ -1,0 +1,26 @@
+cases:
+  - note: envelope defaults
+    input:
+      name: x
+    expected_envelope:
+      resource:
+        name: x
+      context: {}
+      parameters: {}
+
+  - note: envelope with context and parameters
+    input:
+      name: x
+    context:
+      resourceGroup:
+        name: rg1
+    parameters:
+      env: prod
+    expected_envelope:
+      resource:
+        name: x
+      context:
+        resourceGroup:
+          name: rg1
+      parameters:
+        env: prod

@@ -1,0 +1,230 @@
+[
+  {
+    "namespace": "Microsoft.Test",
+    "resourceTypes": [
+      {
+        "resourceType": "versionedResources",
+        "aliases": [
+          {
+            "name": "Microsoft.Test/versionedResources/simpleProp",
+            "defaultPath": "properties.simpleProp",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/versionedResources/accountType",
+            "defaultPath": "properties.accountType",
+            "paths": [
+              {
+                "path": "properties.accountType",
+                "apiVersions": ["2015-06-15", "2015-01-01"]
+              },
+              {
+                "path": "sku.name",
+                "apiVersions": ["2020-01-01", "2019-06-01"]
+              }
+            ]
+          },
+          {
+            "name": "Microsoft.Test/versionedResources/config.threshold",
+            "defaultPath": "properties.config.threshold",
+            "paths": [
+              {
+                "path": "properties.config.properties.threshold",
+                "apiVersions": ["2015-06-15", "2015-01-01"]
+              },
+              {
+                "path": "properties.config.threshold",
+                "apiVersions": ["2020-01-01", "2019-06-01"]
+              }
+            ]
+          },
+          {
+            "name": "Microsoft.Test/versionedResources/tier",
+            "defaultPath": "sku.tier",
+            "paths": [
+              {
+                "path": "properties.pricingTier",
+                "apiVersions": ["2015-06-15", "2015-01-01"]
+              },
+              {
+                "path": "sku.tier",
+                "apiVersions": ["2020-01-01", "2019-06-01"]
+              }
+            ]
+          },
+          {
+            "name": "Microsoft.Test/versionedResources/operationMode",
+            "defaultPath": "properties.mode",
+            "paths": [
+              {
+                "path": "properties.legacyMode",
+                "apiVersions": ["2015-01-01"]
+              },
+              {
+                "path": "properties.settings.mode",
+                "apiVersions": ["2017-06-01"]
+              },
+              {
+                "path": "properties.mode",
+                "apiVersions": ["2020-01-01"]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "resourceType": "complexResources",
+        "aliases": [
+          {
+            "name": "Microsoft.Test/complexResources/enabled",
+            "defaultPath": "properties.enabled",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/complexResources/tags",
+            "defaultPath": "tags",
+            "paths": []
+          },
+
+          {
+            "name": "Microsoft.Test/complexResources/rules",
+            "defaultPath": "properties.rules",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/complexResources/rules[*]",
+            "defaultPath": "properties.rules[*]",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/complexResources/rules[*].name",
+            "defaultPath": "properties.rules[*].name",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/complexResources/rules[*].priority",
+            "defaultPath": "properties.rules[*].properties.priority",
+            "paths": [
+              {
+                "path": "properties.rules[*].properties.priority",
+                "apiVersions": ["2015-01-01"]
+              },
+              {
+                "path": "properties.rules[*].properties.prio",
+                "apiVersions": ["2020-01-01"]
+              }
+            ]
+          },
+          {
+            "name": "Microsoft.Test/complexResources/rules[*].action",
+            "defaultPath": "properties.rules[*].properties.action",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/complexResources/rules[*].protocol",
+            "defaultPath": "properties.rules[*].properties.protocol",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/complexResources/rules[*].sourcePort",
+            "defaultPath": "properties.rules[*].properties.sourcePort",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/complexResources/rules[*].destPort",
+            "defaultPath": "properties.rules[*].properties.destPort",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/complexResources/rules[*].direction",
+            "defaultPath": "properties.rules[*].properties.direction",
+            "paths": []
+          },
+
+          {
+            "name": "Microsoft.Test/complexResources/rules[*].targets",
+            "defaultPath": "properties.rules[*].properties.targets",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/complexResources/rules[*].targets[*]",
+            "defaultPath": "properties.rules[*].properties.targets[*]",
+            "paths": []
+          },
+
+          {
+            "name": "Microsoft.Test/complexResources/rules[*].filters",
+            "defaultPath": "properties.rules[*].properties.filters",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/complexResources/rules[*].filters[*]",
+            "defaultPath": "properties.rules[*].properties.filters[*]",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/complexResources/rules[*].filters[*].name",
+            "defaultPath": "properties.rules[*].properties.filters[*].properties.name",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/complexResources/rules[*].filters[*].value",
+            "defaultPath": "properties.rules[*].properties.filters[*].properties.value",
+            "paths": []
+          },
+
+          {
+            "name": "Microsoft.Test/complexResources/allowedIPs",
+            "defaultPath": "properties.allowedIPs",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/complexResources/allowedIPs[*]",
+            "defaultPath": "properties.allowedIPs[*]",
+            "paths": []
+          },
+
+          {
+            "name": "Microsoft.Test/complexResources/config.retryCount",
+            "defaultPath": "properties.config.retryCount",
+            "paths": [
+              {
+                "path": "properties.config.properties.retryCount",
+                "apiVersions": ["2015-01-01"]
+              },
+              {
+                "path": "properties.config.retryCount",
+                "apiVersions": ["2020-01-01"]
+              }
+            ]
+          },
+          {
+            "name": "Microsoft.Test/complexResources/config.timeout",
+            "defaultPath": "properties.config.timeout",
+            "paths": []
+          },
+
+          {
+            "name": "Microsoft.Test/complexResources/settings.encryption.enabled",
+            "defaultPath": "properties.settings.encryption.enabled",
+            "paths": [
+              {
+                "path": "properties.settings.encryption.enabled",
+                "apiVersions": ["2020-01-01"]
+              },
+              {
+                "path": "properties.encryptionEnabled",
+                "apiVersions": ["2015-01-01"]
+              }
+            ]
+          },
+          {
+            "name": "Microsoft.Test/complexResources/settings.encryption.keyVaultId",
+            "defaultPath": "properties.settings.encryption.keyVaultId",
+            "paths": []
+          }
+        ]
+      }
+    ]
+  }
+]
