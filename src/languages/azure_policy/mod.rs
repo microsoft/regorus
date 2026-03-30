@@ -3,4 +3,6 @@
 
 //! Azure Policy language support.
 
+#[allow(clippy::pattern_type_mismatch)]
+pub mod aliases;
 pub mod strings;

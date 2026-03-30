@@ -1,0 +1,449 @@
+aliases_json: |
+  [
+    {
+      "namespace": "Microsoft.Storage",
+      "resourceTypes": [
+        {
+          "resourceType": "storageAccounts",
+          "aliases": [
+            {
+              "name": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+              "defaultPath": "properties.supportsHttpsTrafficOnly",
+              "paths": []
+            },
+            {
+              "name": "Microsoft.Storage/storageAccounts/isHnsEnabled",
+              "defaultPath": "properties.isHnsEnabled",
+              "paths": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "namespace": "Microsoft.Network",
+      "resourceTypes": [
+        {
+          "resourceType": "networkSecurityGroups",
+          "aliases": [
+            {
+              "name": "Microsoft.Network/networkSecurityGroups/securityRules[*].protocol",
+              "defaultPath": "properties.securityRules[*].properties.protocol",
+              "paths": []
+            },
+            {
+              "name": "Microsoft.Network/networkSecurityGroups/securityRules[*].access",
+              "defaultPath": "properties.securityRules[*].properties.access",
+              "paths": []
+            },
+            {
+              "name": "Microsoft.Network/networkSecurityGroups/securityRules[*].name",
+              "defaultPath": "properties.securityRules[*].name",
+              "paths": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+
+cases:
+  - note: round-trip simple resource
+    input:
+      name: myStorage
+      type: "Microsoft.Storage/storageAccounts"
+      location: westus2
+      sku:
+        name: Standard_LRS
+      properties:
+        supportsHttpsTrafficOnly: true
+        isHnsEnabled: false
+    round_trip: true
+    expected_round_trip:
+      name: myStorage
+      type: "Microsoft.Storage/storageAccounts"
+      location: westus2
+      sku:
+        name: Standard_LRS
+      properties:
+        supportsHttpsTrafficOnly: true
+        isHnsEnabled: false
+
+  - note: round-trip sub-resource
+    input:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: rule1
+            properties:
+              protocol: Tcp
+              access: Allow
+    round_trip: true
+    expected_round_trip:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: rule1
+            properties:
+              protocol: Tcp
+              access: Allow
+
+  - note: round-trip versioned array alias (element field remap)
+    aliases_json: |
+      [
+        {
+          "namespace": "Microsoft.Network",
+          "resourceTypes": [
+            {
+              "resourceType": "firewallPolicies",
+              "aliases": [
+                {
+                  "name": "Microsoft.Network/firewallPolicies/rules[*].priority",
+                  "defaultPath": "properties.rules[*].properties.priority",
+                  "paths": [
+                    {
+                      "path": "properties.rules[*].properties.prio",
+                      "apiVersions": ["2021-01-01"]
+                    }
+                  ]
+                },
+                {
+                  "name": "Microsoft.Network/firewallPolicies/rules[*].name",
+                  "defaultPath": "properties.rules[*].name",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      name: myPolicy
+      type: "Microsoft.Network/firewallPolicies"
+      properties:
+        rules:
+          - name: rule1
+            properties:
+              prio: 100
+    api_version: "2021-01-01"
+    round_trip: true
+    expected_round_trip:
+      name: myPolicy
+      type: "Microsoft.Network/firewallPolicies"
+      properties:
+        rules:
+          - name: rule1
+            properties:
+              prio: 100
+
+  # Regression: default and versioned paths both produce exactly one element
+  # remap (same count), but the source field differs.  A length-only comparison
+  # would silently reuse the default aggregate, producing incorrect results for
+  # the versioned API version.
+  - note: round-trip versioned remap with same count but different source field
+    aliases_json: |
+      [
+        {
+          "namespace": "Microsoft.Network",
+          "resourceTypes": [
+            {
+              "resourceType": "firewallPolicies",
+              "aliases": [
+                {
+                  "name": "Microsoft.Network/firewallPolicies/rules[*].priority",
+                  "defaultPath": "properties.rules[*].properties.oldA",
+                  "paths": [
+                    {
+                      "path": "properties.rules[*].properties.oldB",
+                      "apiVersions": ["2023-06-01"]
+                    }
+                  ]
+                },
+                {
+                  "name": "Microsoft.Network/firewallPolicies/rules[*].name",
+                  "defaultPath": "properties.rules[*].name",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      name: myPolicy
+      type: "Microsoft.Network/firewallPolicies"
+      properties:
+        rules:
+          - name: rule1
+            properties:
+              oldB: 100
+    api_version: "2023-06-01"
+    round_trip: true
+    expected_round_trip:
+      name: myPolicy
+      type: "Microsoft.Network/firewallPolicies"
+      properties:
+        rules:
+          - name: rule1
+            properties:
+              oldB: 100
+
+  - note: round-trip systemData and extendedLocation
+    input:
+      name: myStorage
+      type: "Microsoft.Storage/storageAccounts"
+      location: westus2
+      identity:
+        type: SystemAssigned
+        principalId: pid-123
+        userAssignedIdentities:
+          /subscriptions/Sub/resourceGroups/Rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/Uai1: {}
+      systemData:
+        createdBy: user@example.com
+        createdByType: User
+        createdAt: "2023-01-01T00:00:00Z"
+      extendedLocation:
+        name: edge-site-1
+        type: EdgeZone
+      properties:
+        supportsHttpsTrafficOnly: true
+    expected_normalized:
+      name: myStorage
+      type: "Microsoft.Storage/storageAccounts"
+      location: westus2
+      identity:
+        type: SystemAssigned
+        principalid: pid-123
+        userassignedidentities:
+          /subscriptions/Sub/resourceGroups/Rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/Uai1: {}
+      systemdata:
+        createdby: user@example.com
+        createdbytype: User
+        createdat: "2023-01-01T00:00:00Z"
+      extendedlocation:
+        name: edge-site-1
+        type: EdgeZone
+      supportshttpstrafficonly: true
+    round_trip: true
+    expected_round_trip:
+      name: myStorage
+      type: "Microsoft.Storage/storageAccounts"
+      location: westus2
+      identity:
+        type: SystemAssigned
+        principalId: pid-123
+        userAssignedIdentities:
+          /subscriptions/Sub/resourceGroups/Rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/Uai1: {}
+      systemData:
+        createdBy: user@example.com
+        createdByType: User
+        createdAt: "2023-01-01T00:00:00Z"
+      extendedLocation:
+        name: edge-site-1
+        type: EdgeZone
+      properties:
+        supportsHttpsTrafficOnly: true
+
+  # Regression: element remap must remove the stale ARM source field from the
+  # normalized output.  Without cleanup, both the alias short name AND the
+  # original ARM leaf key survive; casing restoration during denormalization
+  # then produces a duplicate key (e.g. both "prio" and "priority").
+  - note: element remap removes stale ARM source field
+    aliases_json: |
+      [
+        {
+          "namespace": "Microsoft.Network",
+          "resourceTypes": [
+            {
+              "resourceType": "firewallPolicies",
+              "aliases": [
+                {
+                  "name": "Microsoft.Network/firewallPolicies/rules[*].priority",
+                  "defaultPath": "properties.rules[*].properties.prio",
+                  "paths": []
+                },
+                {
+                  "name": "Microsoft.Network/firewallPolicies/rules[*].name",
+                  "defaultPath": "properties.rules[*].name",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      name: myPolicy
+      type: "Microsoft.Network/firewallPolicies"
+      properties:
+        rules:
+          - name: rule1
+            properties:
+              prio: 42
+    # Normalize: "prio" (ARM leaf) → "priority" (alias short name).
+    # The stale "prio" key must be removed from the normalized element.
+    expected_normalized:
+      name: myPolicy
+      type: "Microsoft.Network/firewallPolicies"
+      rules:
+        - name: rule1
+          priority: 42
+    # Round-trip: normalize → denormalize should restore ARM structure.
+    round_trip: true
+    expected_round_trip:
+      name: myPolicy
+      type: "Microsoft.Network/firewallPolicies"
+      properties:
+        rules:
+          - name: rule1
+            properties:
+              prio: 42
+
+  # Regression: same stale-field-cleanup scenario but with a dotted ARM leaf
+  # path (e.g. "config.value" rather than a single segment "prio").
+  # The remove_element_field helper must navigate to the parent object and
+  # remove the leaf key via remove_at_dotted_path.
+  - note: element remap removes stale dotted ARM source field
+    aliases_json: |
+      [
+        {
+          "namespace": "Microsoft.Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Microsoft.Test/widgets/items[*].rating",
+                  "defaultPath": "properties.items[*].properties.config.score",
+                  "paths": []
+                },
+                {
+                  "name": "Microsoft.Test/widgets/items[*].name",
+                  "defaultPath": "properties.items[*].name",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Microsoft.Test/widgets"
+      properties:
+        items:
+          - name: w1
+            properties:
+              config:
+                score: 5
+    # Normalize: "config.score" (dotted ARM leaf) → "rating" (alias short name).
+    # The stale "config.score" path must be removed; only "rating" should remain.
+    expected_normalized:
+      type: "Microsoft.Test/widgets"
+      items:
+        - name: w1
+          config: {}
+          rating: 5
+    # Round-trip: normalize → denormalize should restore ARM structure.
+    round_trip: true
+    expected_round_trip:
+      type: "Microsoft.Test/widgets"
+      properties:
+        items:
+          - name: w1
+            properties:
+              config:
+                score: 5
+
+  # Regression: array base rename must move (not clone) the value so that
+  # the stale ARM base key does not survive in the normalized output.
+  # Without the removal, denormalization produces a duplicate key.
+  - note: array base rename removes stale ARM base key
+    aliases_json: |
+      [
+        {
+          "namespace": "Microsoft.Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Microsoft.Test/widgets/items[*].label",
+                  "defaultPath": "properties.entries[*].label",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Microsoft.Test/widgets"
+      properties:
+        entries:
+          - label: hello
+    # Normalize: ARM base "entries" → alias base "items".
+    # The stale "entries" key must be removed; only "items" should remain.
+    expected_normalized:
+      type: "Microsoft.Test/widgets"
+      items:
+        - label: hello
+    # Round-trip: normalize → denormalize should restore ARM structure.
+    round_trip: true
+    expected_round_trip:
+      type: "Microsoft.Test/widgets"
+      properties:
+        entries:
+          - label: hello
+
+  # Regression: denormalize reverse element remap with a dotted ARM target
+  # must preserve restored casing (e.g. "Config.Score") rather than
+  # re-lowercasing it.
+  - note: round-trip dotted element remap preserves ARM casing
+    aliases_json: |
+      [
+        {
+          "namespace": "Microsoft.Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Microsoft.Test/widgets/items[*].rating",
+                  "defaultPath": "properties.items[*].properties.Config.Score",
+                  "paths": []
+                },
+                {
+                  "name": "Microsoft.Test/widgets/items[*].name",
+                  "defaultPath": "properties.items[*].name",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Microsoft.Test/widgets"
+      properties:
+        items:
+          - name: w1
+            properties:
+              Config:
+                Score: 9
+    expected_normalized:
+      type: "Microsoft.Test/widgets"
+      items:
+        - name: w1
+          config: {}
+          rating: 9
+    round_trip: true
+    expected_round_trip:
+      type: "Microsoft.Test/widgets"
+      properties:
+        items:
+          - name: w1
+            properties:
+              Config:
+                Score: 9

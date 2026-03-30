@@ -1,0 +1,233 @@
+# Tests for malformed or unexpected *normalized* input fed to the
+# denormalizer.  These pin the current behavior when the denormalizer
+# receives externally-produced JSON that violates the normalizer's
+# implicit contract (e.g., keys not lowercased, wrong value types,
+# missing type field, non-object input).
+#
+# These are NOT correctness assertions -- they document what the
+# denormalizer actually produces so regressions are caught.
+
+aliases_json: |
+  [
+    {
+      "namespace": "Microsoft.Storage",
+      "resourceTypes": [
+        {
+          "resourceType": "storageAccounts",
+          "aliases": [
+            {
+              "name": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+              "defaultPath": "properties.supportsHttpsTrafficOnly",
+              "paths": []
+            },
+            {
+              "name": "Microsoft.Storage/storageAccounts/accessTier",
+              "defaultPath": "properties.accessTier",
+              "paths": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "namespace": "Microsoft.Network",
+      "resourceTypes": [
+        {
+          "resourceType": "networkSecurityGroups",
+          "aliases": [
+            {
+              "name": "Microsoft.Network/networkSecurityGroups/securityRules[*].protocol",
+              "defaultPath": "properties.securityRules[*].properties.protocol",
+              "paths": []
+            },
+            {
+              "name": "Microsoft.Network/networkSecurityGroups/securityRules[*].name",
+              "defaultPath": "properties.securityRules[*].name",
+              "paths": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+
+cases:
+  # ── Non-object input ──
+  # The denormalizer should return the value as-is when it's not an object.
+
+  - note: "denormalize: string input returned as-is"
+    input: "just a string"
+    expected_denormalized: "just a string"
+
+  - note: "denormalize: integer input returned as-is"
+    input: 42
+    expected_denormalized: 42
+
+  - note: "denormalize: array input returned as-is"
+    input: [1, 2, 3]
+    expected_denormalized: [1, 2, 3]
+
+  - note: "denormalize: null input returned as-is"
+    input: null
+    expected_denormalized: null
+
+  - note: "denormalize: boolean input returned as-is"
+    input: true
+    expected_denormalized: true
+
+  # ── Missing type field ──
+  # Without a type, no alias resolution occurs; fields are still placed
+  # under `properties` (control-plane default) but casing is not restored.
+
+  - note: "denormalize: no type field, fields go under properties"
+    input:
+      name: test
+      unknownfield: 42
+    expected_denormalized:
+      name: test
+      properties:
+        unknownfield: 42
+
+  # ── Empty object ──
+
+  - note: "denormalize: empty object produces empty object"
+    input: {}
+    expected_denormalized: {}
+
+  # ── Object with only type field ──
+
+  - note: "denormalize: only type field, empty properties"
+    input:
+      type: "Microsoft.Storage/storageAccounts"
+    expected_denormalized:
+      type: "Microsoft.Storage/storageAccounts"
+
+  # ── Normalize: non-object input ──
+
+  - note: "normalize: string input returned as-is"
+    input: "just a string"
+    expected_normalized: "just a string"
+
+  - note: "normalize: integer input returned as-is"
+    input: 42
+    expected_normalized: 42
+
+  - note: "normalize: null input returned as-is"
+    input: null
+    expected_normalized: null
+
+  # ── Normalize: empty properties object ──
+
+  - note: "normalize: empty properties object"
+    input:
+      name: test
+      type: "Microsoft.Storage/storageAccounts"
+      properties: {}
+    expected_normalized:
+      name: test
+      type: "Microsoft.Storage/storageAccounts"
+
+  # ── Normalize: properties is a non-object value ──
+
+  - note: "normalize: properties is a string (treated as non-object, ignored)"
+    input:
+      name: test
+      type: "Microsoft.Storage/storageAccounts"
+      properties: "not an object"
+    expected_normalized:
+      name: test
+      type: "Microsoft.Storage/storageAccounts"
+
+  - note: "normalize: properties is an array (treated as non-object, ignored)"
+    input:
+      name: test
+      type: "Microsoft.Storage/storageAccounts"
+      properties: [1, 2, 3]
+    expected_normalized:
+      name: test
+      type: "Microsoft.Storage/storageAccounts"
+
+  # ── Denormalize: value types preserved through round trip ──
+
+  - note: "denormalize: numeric value zero"
+    input:
+      type: "Microsoft.Storage/storageAccounts"
+      accesstier: 0
+    expected_denormalized:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        accessTier: 0
+
+  - note: "denormalize: boolean false aliased field"
+    input:
+      type: "Microsoft.Storage/storageAccounts"
+      supportshttpstrafficonly: false
+    expected_denormalized:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: false
+
+  - note: "denormalize: null-valued aliased field"
+    input:
+      type: "Microsoft.Storage/storageAccounts"
+      supportshttpstrafficonly: null
+    expected_denormalized:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: null
+
+  # ── Sub-resource array with non-array value ──
+
+  - note: "denormalize: expected sub-resource array is a string"
+    input:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      securityrules: "not an array"
+    expected_denormalized:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules: "not an array"
+
+  - note: "denormalize: expected sub-resource array is null"
+    input:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      securityrules: null
+    expected_denormalized:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules: null
+
+  # ── Sub-resource array with non-object elements ──
+
+  - note: "denormalize: sub-resource contains scalar elements"
+    input:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      securityrules:
+        - "just a string"
+        - 42
+    expected_denormalized:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - "just a string"
+          - 42
+
+  # ── Deeply nested null in normalize path ──
+
+  - note: "normalize: deeply nested null value preserved"
+    input:
+      name: test
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: null
+        accessTier: null
+    expected_normalized:
+      name: test
+      type: "Microsoft.Storage/storageAccounts"
+      supportshttpstrafficonly: null
+      accesstier: null

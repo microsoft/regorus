@@ -1,0 +1,46 @@
+aliases_json: |
+  [
+    {
+      "namespace": "Microsoft.Network",
+      "resourceTypes": [
+        {
+          "resourceType": "networkSecurityGroups",
+          "aliases": [
+            {
+              "name": "Microsoft.Network/networkSecurityGroups/securityRules[*].protocol",
+              "defaultPath": "properties.securityRules[*].properties.protocol",
+              "paths": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+
+cases:
+  - note: normalize-and-wrap full pipeline
+    input:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: rule1
+            properties:
+              protocol: Tcp
+    context:
+      resourceGroup:
+        name: rg1
+    parameters:
+      env: prod
+    expected_envelope:
+      resource:
+        name: myNsg
+        type: "Microsoft.Network/networkSecurityGroups"
+        securityrules:
+          - name: rule1
+            protocol: Tcp
+      context:
+        resourceGroup:
+          name: rg1
+      parameters:
+        env: prod
