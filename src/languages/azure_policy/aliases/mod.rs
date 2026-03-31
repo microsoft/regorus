@@ -31,8 +31,11 @@ use anyhow::Result;
 
 use types::{
     AliasEntry, AliasPath, DataPolicyManifest, PrecomputedRemap, PrecomputedReverseRemap,
-    ProviderAliases, ResolvedAliases, ResolvedEntry, VersionedAggregates,
+    PrecomputedScalarDenormalize, PrecomputedScalarNormalize, ProviderAliases, ResolvedAliases,
+    ResolvedEntry, VersionedAggregates,
 };
+
+use self::denormalizer::{casing::build_casing_map, sub_resource::precompute_sub_resource_rewraps};
 
 use obj_map::{collision_safe_key, is_root_field_collision};
 
@@ -388,13 +391,30 @@ fn resolve_resource_type(fq_type: &str, aliases: &[types::AliasEntry]) -> Resolv
     // Precompute aggregate fields from entries.
     let (default_aggregates, versioned_aggregates) =
         precompute_aggregates(&entries, &sub_resource_arrays);
+    let casing_map = build_casing_map(&entries);
 
     ResolvedAliases {
         resource_type: fq_type.to_string(),
         entries,
         sub_resource_arrays,
+        casing_map,
         default_aggregates,
         versioned_aggregates,
+    }
+}
+
+impl ResolvedAliases {
+    /// Recompute all precomputed aggregates (and casing map) from the current
+    /// `entries` and `sub_resource_arrays`.
+    ///
+    /// Call this after mutating `entries` or `sub_resource_arrays` on an
+    /// already-constructed `ResolvedAliases` (e.g. in test helpers).
+    pub fn rebuild_aggregates(&mut self) {
+        let (default_agg, versioned_agg) =
+            precompute_aggregates(&self.entries, &self.sub_resource_arrays);
+        self.casing_map = build_casing_map(&self.entries);
+        self.default_aggregates = default_agg;
+        self.versioned_aggregates = versioned_agg;
     }
 }
 
@@ -442,6 +462,11 @@ fn compute_aggregates_for_version(
     sub_resource_arrays: &BTreeSet<String>,
     api_version: Option<&str>,
 ) -> VersionedAggregates {
+    let mut alias_owned_normalized_roots = alloc::collections::BTreeSet::new();
+    let sub_resource_rewraps =
+        precompute_sub_resource_rewraps(sub_resource_arrays, entries, api_version);
+    let mut scalar_aliases_normalize = Vec::new();
+    let mut scalar_aliases_denormalize = Vec::new();
     let mut element_remaps = Vec::new();
     let mut reverse_element_remaps = Vec::new();
     let mut renames_norm: Vec<(String, String)> = Vec::new();
@@ -452,7 +477,27 @@ fn compute_aggregates_for_version(
     let mut seen_denorm = alloc::collections::BTreeSet::new();
 
     for entry in entries.values() {
+        let selected_path = entry.select_path(api_version);
+
         if !entry.is_wildcard {
+            if entry.normalized_output_segments().len() == 1 {
+                let root = entry.normalized_root_key();
+                let stripped = root.strip_prefix("_p_").unwrap_or(root);
+                alias_owned_normalized_roots.insert(stripped.to_string());
+            }
+
+            scalar_aliases_normalize.push(PrecomputedScalarNormalize {
+                arm_path_segments: entry.select_path_segments(api_version).to_vec(),
+                short_name: entry.short_name.clone(),
+                normalized_path: entry.normalized_output_key().to_string(),
+            });
+
+            scalar_aliases_denormalize.push(PrecomputedScalarDenormalize {
+                normalized_path_segments: entry.normalized_output_segments().to_vec(),
+                arm_path: selected_path.to_string(),
+                write_to_properties: selected_path.starts_with("properties."),
+            });
+
             continue;
         }
 
@@ -462,8 +507,6 @@ fn compute_aggregates_for_version(
             continue;
         }
 
-        // Select the ARM path for this version (or default).
-        let selected_path = entry.select_path(api_version);
         let short_parts: Vec<&str> = entry.short_name.split("[*].").collect();
         let arm_raw_parts: Vec<&str> = selected_path.split("[*].").collect();
 
@@ -489,14 +532,14 @@ fn compute_aggregates_for_version(
 
                     element_remaps.push(PrecomputedRemap {
                         array_chain: array_chain.clone(),
-                        source_field: source_lc.clone(),
+                        source_field: source_lc,
                         target_field: target_lc.clone(),
                     });
 
                     reverse_element_remaps.push(PrecomputedReverseRemap {
-                        array_chain: array_chain.clone(),
+                        array_chain,
                         source_field: target_lc.clone(),
-                        target_field: source_lc,
+                        target_field: arm_leaf.to_string(),
                         cleanup_field: target_lc,
                     });
                 }
@@ -532,6 +575,10 @@ fn compute_aggregates_for_version(
     }
 
     VersionedAggregates {
+        alias_owned_normalized_roots,
+        sub_resource_rewraps,
+        scalar_aliases_normalize,
+        scalar_aliases_denormalize,
         element_remaps,
         reverse_element_remaps,
         array_renames_normalize: renames_norm,

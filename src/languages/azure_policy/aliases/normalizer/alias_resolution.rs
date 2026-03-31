@@ -4,14 +4,11 @@
 //! Per-alias path resolution: reads values from versioned ARM paths and places
 //! them at alias short name paths in the normalized output.
 
-use alloc::string::String;
-
 use crate::Value;
 
 use super::super::obj_map::remove_element_field;
 use super::super::obj_map::{
-    collision_safe_key, is_root_field_collision, obj_contains, obj_insert, obj_remove,
-    set_nested_lowercased, ObjMap,
+    get_value_path_segments, obj_contains, obj_insert, obj_remove, set_nested, ObjMap,
 };
 use super::super::types::ResolvedAliases;
 use super::element_remap::apply_element_remap_precomputed;
@@ -28,43 +25,16 @@ pub fn apply_alias_entries(
     aliases: &ResolvedAliases,
     api_version: Option<&str>,
 ) {
-    let entries = &aliases.entries;
-    let sub_resource_set = &aliases.sub_resource_arrays;
+    let agg = aliases.select_aggregates(api_version);
 
-    for (lc_key, entry) in entries {
-        if entry.is_wildcard {
-            continue;
-        }
-
-        // Skip sub-resource array root entries.
-        if sub_resource_set.contains(lc_key.as_str()) {
-            continue;
-        }
-
-        // Use precomputed segments for all paths (default and versioned).
-        let segments = entry.select_path_segments(api_version);
-        let value = navigate_arm_path_segments(raw, segments);
+    for op in &agg.scalar_aliases_normalize {
+        let value = get_value_path_segments(raw, &op.arm_path_segments).cloned();
 
         if let Some(value) = value {
-            let value = normalize_value(&value, &entry.short_name, None);
-
-            let target = if is_root_field_collision(&entry.short_name, &entry.default_path) {
-                collision_safe_key(&entry.short_name)
-            } else {
-                entry.short_name.clone()
-            };
-            set_nested_lowercased(result, &target, value);
+            let value = normalize_value(&value, &op.short_name, None);
+            set_nested(result, &op.normalized_path, value, true);
         }
     }
-
-    // Look up precomputed aggregates: default or per-version.
-    let agg = api_version.map_or(&aliases.default_aggregates, |ver| {
-        let ver_lc = ver.to_ascii_lowercase();
-        aliases
-            .versioned_aggregates
-            .get(&ver_lc)
-            .unwrap_or(&aliases.default_aggregates)
-    });
 
     for remap in &agg.element_remaps {
         apply_element_remap_precomputed(result, remap);
@@ -81,16 +51,4 @@ pub fn apply_alias_entries(
             }
         }
     }
-}
-
-/// Navigate an ARM path using precomputed segments (avoids per-call split).
-fn navigate_arm_path_segments(value: &Value, segments: &[String]) -> Option<Value> {
-    let mut current = value;
-    for segment in segments {
-        current = current
-            .as_object()
-            .ok()?
-            .get(&Value::from(segment.as_str()))?;
-    }
-    Some(current.clone())
 }
