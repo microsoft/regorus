@@ -11,6 +11,7 @@ use super::{Compiler, CompilerError, Register, Result};
 use crate::ast::{Expr, ExprRef};
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
+use crate::rvm::instructions::GuardMode;
 use crate::rvm::Instruction;
 use crate::Value;
 use alloc::{format, string::ToString};
@@ -32,8 +33,9 @@ impl<'a> Compiler<'a> {
             let result_reg = reg;
             if assert_condition {
                 self.emit_instruction(
-                    Instruction::AssertCondition {
-                        condition: result_reg,
+                    Instruction::Guard {
+                        register: result_reg,
+                        mode: GuardMode::Condition,
                     },
                     span,
                 );
@@ -113,8 +115,9 @@ impl<'a> Compiler<'a> {
 
         if assert_condition {
             self.emit_instruction(
-                Instruction::AssertCondition {
-                    condition: result_reg,
+                Instruction::Guard {
+                    register: result_reg,
+                    mode: GuardMode::Condition,
                 },
                 span,
             );

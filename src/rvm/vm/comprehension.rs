@@ -435,6 +435,8 @@ impl RegoVM {
             }
         }
 
+        self.set_register(result_reg_idx, current_result)?;
+
         let (iteration_state_snapshot, body_start, comprehension_end) = {
             let frame = self.execution_stack.get_mut(comprehension_index).ok_or(
                 VmError::InvalidIteration {
@@ -484,8 +486,6 @@ impl RegoVM {
                 });
             }
         };
-
-        self.set_register(result_reg_idx, current_result)?;
 
         if let Some(state) = iteration_state_snapshot.as_ref() {
             let has_next = self.setup_next_iteration(state, key_reg_idx, value_reg_idx)?;

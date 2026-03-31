@@ -543,14 +543,12 @@ impl<'a> Compiler<'a> {
                     // A definition has a known static value if every body (including
                     // else-branches) would produce the same literal.
                     let def_static_value = if bodies.is_empty() {
-                        // No bodies — value comes from the head's value_expr.
                         let head_value = self
                             .context_stack
                             .last()
                             .and_then(|ctx| ctx.value_expr.clone());
                         Self::static_value_of_expr(&head_value)
                     } else {
-                        // Replay the same value_expr resolution as the body loop.
                         let head_value = self
                             .context_stack
                             .last()

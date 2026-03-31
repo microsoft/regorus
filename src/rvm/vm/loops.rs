@@ -9,6 +9,16 @@ use super::errors::{Result, VmError};
 use super::execution_model::{ExecutionFrame, ExecutionMode, FrameKind};
 use super::machine::RegoVM;
 
+/// Result for a loop over a non-iterable value (null, string, number, bool, Undefined).
+/// `Every` over empty is vacuously `true`.
+#[inline]
+const fn non_collection_result(mode: &LoopMode) -> Value {
+    match *mode {
+        LoopMode::Every => Value::Bool(true),
+        LoopMode::Any | LoopMode::ForEach => Value::Bool(false),
+    }
+}
+
 fn compute_body_resume_pc(loop_start_pc: usize, body_start: u16) -> usize {
     if body_start == 0 {
         return 0;
@@ -72,49 +82,11 @@ impl RegoVM {
         mode: &LoopMode,
         params: LoopParams,
     ) -> Result<()> {
-        let initial_result = match *mode {
-            LoopMode::Any | LoopMode::Every | LoopMode::ForEach => Value::Bool(false),
-        };
-        self.set_register(params.result_reg, initial_result.clone())?;
-        let collection_value = self.get_register(params.collection)?.clone();
+        self.set_register(params.result_reg, Value::Bool(false))?;
 
-        let iteration_state = match collection_value {
-            Value::Array(ref items) => {
-                if items.is_empty() {
-                    self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
-                    return Ok(());
-                }
-                IterationState::Array {
-                    items: items.clone(),
-                    index: 0,
-                }
-            }
-            Value::Object(ref obj) => {
-                if obj.is_empty() {
-                    self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
-                    return Ok(());
-                }
-                IterationState::Object {
-                    obj: obj.clone(),
-                    current_key: None,
-                    first_iteration: true,
-                }
-            }
-            Value::Set(ref set) => {
-                if set.is_empty() {
-                    self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
-                    return Ok(());
-                }
-                IterationState::Set {
-                    items: set.clone(),
-                    current_item: None,
-                    first_iteration: true,
-                }
-            }
-            _ => {
-                self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
-                return Ok(());
-            }
+        let iteration_state = match self.resolve_iteration_state(mode, &params)? {
+            Some(state) => state,
+            None => return Ok(()),
         };
 
         let has_next =
@@ -169,13 +141,9 @@ impl RegoVM {
             let action = Self::determine_loop_action(&loop_ctx.mode, iteration_succeeded);
 
             match action {
-                LoopAction::ExitWithSuccess => {
-                    self.set_register(loop_ctx.result_reg, Value::Bool(true))?;
-                    self.pc = usize::from(loop_end_local.saturating_sub(1));
-                    return Ok(());
-                }
-                LoopAction::ExitWithFailure => {
-                    self.set_register(loop_ctx.result_reg, Value::Bool(false))?;
+                LoopAction::ExitWithSuccess | LoopAction::ExitWithFailure => {
+                    let result_value = matches!(action, LoopAction::ExitWithSuccess);
+                    self.set_register(loop_ctx.result_reg, Value::Bool(result_value))?;
                     self.pc = usize::from(loop_end_local.saturating_sub(1));
                     return Ok(());
                 }
@@ -236,50 +204,11 @@ impl RegoVM {
         mode: &LoopMode,
         params: LoopParams,
     ) -> Result<()> {
-        let initial_result = match *mode {
-            LoopMode::Any | LoopMode::Every | LoopMode::ForEach => Value::Bool(false),
-        };
-        self.set_register(params.result_reg, initial_result.clone())?;
+        self.set_register(params.result_reg, Value::Bool(false))?;
 
-        let collection_value = self.get_register(params.collection)?.clone();
-
-        let iteration_state = match collection_value {
-            Value::Array(ref items) => {
-                if items.is_empty() {
-                    self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
-                    return Ok(());
-                }
-                IterationState::Array {
-                    items: items.clone(),
-                    index: 0,
-                }
-            }
-            Value::Object(ref obj) => {
-                if obj.is_empty() {
-                    self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
-                    return Ok(());
-                }
-                IterationState::Object {
-                    obj: obj.clone(),
-                    current_key: None,
-                    first_iteration: true,
-                }
-            }
-            Value::Set(ref set) => {
-                if set.is_empty() {
-                    self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
-                    return Ok(());
-                }
-                IterationState::Set {
-                    items: set.clone(),
-                    current_item: None,
-                    first_iteration: true,
-                }
-            }
-            _ => {
-                self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
-                return Ok(());
-            }
+        let iteration_state = match self.resolve_iteration_state(mode, &params)? {
+            Some(state) => state,
+            None => return Ok(()),
         };
 
         let has_next =
@@ -367,21 +296,9 @@ impl RegoVM {
         let action = Self::determine_loop_action(&loop_mode, iteration_succeeded);
 
         match action {
-            LoopAction::ExitWithSuccess => {
-                self.set_register(result_reg, Value::Bool(true))?;
-                let completed_frame = self
-                    .execution_stack
-                    .pop()
-                    .ok_or(VmError::AssertionFailed { pc: self.pc })?;
-                if let Some(parent) = self.execution_stack.last_mut() {
-                    parent.pc = resume_pc;
-                    self.frame_pc_overridden = true;
-                }
-                drop(completed_frame);
-                Ok(())
-            }
-            LoopAction::ExitWithFailure => {
-                self.set_register(result_reg, Value::Bool(false))?;
+            LoopAction::ExitWithSuccess | LoopAction::ExitWithFailure => {
+                let result_value = matches!(action, LoopAction::ExitWithSuccess);
+                self.set_register(result_reg, Value::Bool(result_value))?;
                 let completed_frame = self
                     .execution_stack
                     .pop()
@@ -492,6 +409,60 @@ impl RegoVM {
 
                     Ok(())
                 }
+            }
+        }
+    }
+
+    /// Resolve the collection value into an `IterationState`, handling empty
+    /// collections and non-iterable values.
+    ///
+    /// Returns `Some(state)` when iteration should proceed, or `None` when the
+    /// loop was short-circuited (registers and PC already adjusted).
+    fn resolve_iteration_state(
+        &mut self,
+        mode: &LoopMode,
+        params: &LoopParams,
+    ) -> Result<Option<IterationState>> {
+        let collection_value = self.get_register(params.collection)?.clone();
+
+        match collection_value {
+            Value::Array(ref items) => {
+                if items.is_empty() {
+                    self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
+                    return Ok(None);
+                }
+                Ok(Some(IterationState::Array {
+                    items: items.clone(),
+                    index: 0,
+                }))
+            }
+            Value::Object(ref obj) => {
+                if obj.is_empty() {
+                    self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
+                    return Ok(None);
+                }
+                Ok(Some(IterationState::Object {
+                    obj: obj.clone(),
+                    current_key: None,
+                    first_iteration: true,
+                }))
+            }
+            Value::Set(ref set) => {
+                if set.is_empty() {
+                    self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
+                    return Ok(None);
+                }
+                Ok(Some(IterationState::Set {
+                    items: set.clone(),
+                    current_item: None,
+                    first_iteration: true,
+                }))
+            }
+            _ => {
+                let result = non_collection_result(mode);
+                self.set_register(params.result_reg, result)?;
+                self.pc = usize::from(params.loop_end).saturating_sub(1);
+                Ok(None)
             }
         }
     }

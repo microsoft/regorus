@@ -158,17 +158,16 @@ impl RegoVM {
             });
         }
 
-        // Clone the Arc (cheap atomic increment) so we can borrow &RuleInfo
-        // without holding an immutable borrow on self.
-        let program = self.program.clone();
-        let rule_info = program
+        let rule_info = self
+            .program
             .rule_infos
             .get(rule_idx)
             .ok_or(VmError::RuleInfoMissing {
                 index: rule_index,
                 pc: self.pc,
-                available: program.rule_infos.len(),
-            })?;
+                available: self.program.rule_infos.len(),
+            })?
+            .clone();
 
         let is_function_rule = rule_info.function_info.is_some();
 
@@ -220,7 +219,7 @@ impl RegoVM {
         });
 
         let (final_result, rule_failed_due_to_inconsistency) = self
-            .execute_rule_definitions_common(&rule_definitions, rule_info, function_call_params)?;
+            .execute_rule_definitions_common(&rule_definitions, &rule_info, function_call_params)?;
 
         self.set_register(dest, Value::Undefined)?;
 
@@ -236,7 +235,7 @@ impl RegoVM {
             Value::Undefined
         };
 
-        self.set_register(dest, result_from_rule)?;
+        self.set_register(dest, result_from_rule.clone())?;
 
         if self.get_register(dest)? == &Value::Undefined && !rule_failed_due_to_inconsistency {
             match call_context.rule_type {
@@ -278,7 +277,7 @@ impl RegoVM {
                     pc: self.pc,
                     available,
                 })?;
-            *entry = (true, final_value);
+            *entry = (true, final_value.clone());
         }
         Ok(())
     }
@@ -307,15 +306,16 @@ impl RegoVM {
             });
         }
 
-        let program = self.program.clone();
-        let rule_info = program
+        let rule_info = self
+            .program
             .rule_infos
             .get(rule_idx)
             .ok_or(VmError::RuleInfoMissing {
                 index: rule_index,
                 pc: self.pc,
-                available: program.rule_infos.len(),
-            })?;
+                available: self.program.rule_infos.len(),
+            })?
+            .clone();
 
         let is_function_rule = rule_info.function_info.is_some();
 
@@ -430,7 +430,7 @@ impl RegoVM {
         };
 
         let initial_pc = self
-            .prepare_rule_frame_initial_pc(&mut frame_data, rule_info)?
+            .prepare_rule_frame_initial_pc(&mut frame_data, &rule_info)?
             .ok_or(VmError::RuleFrameMissingInitialPc { pc: self.pc })?;
 
         let frame = ExecutionFrame::new(initial_pc, FrameKind::Rule(frame_data));
@@ -651,15 +651,16 @@ impl RegoVM {
         } = frame_data;
 
         let rule_idx = usize::from(rule_index);
-        let program = self.program.clone();
-        let rule_info = program
+        let rule_info = self
+            .program
             .rule_infos
             .get(rule_idx)
             .ok_or(VmError::RuleInfoMissing {
                 index: rule_index,
                 pc: self.pc,
-                available: program.rule_infos.len(),
-            })?;
+                available: self.program.rule_infos.len(),
+            })?
+            .clone();
 
         let result_from_rule = if rule_failed_due_to_inconsistency {
             Value::Undefined
@@ -771,7 +772,6 @@ impl RegoVM {
                     pc: self.pc,
                     available,
                 })?;
-            // Clone into cache; return the original below.
             *entry = (true, final_value.clone());
         }
 
@@ -790,20 +790,12 @@ impl RegoVM {
         &mut self,
         frame_data: &mut RuleFrameData,
     ) -> Result<Option<usize>> {
-        let program = self.program.clone();
-        let rule_info = program
-            .rule_infos
-            .get(usize::from(frame_data.rule_index))
-            .ok_or(VmError::RuleInfoMissing {
-                index: frame_data.rule_index,
-                pc: self.pc,
-                available: program.rule_infos.len(),
-            })?;
+        let rule_info = self.get_rule_info(frame_data.rule_index)?;
         match frame_data.phase {
             RuleFramePhase::ExecutingDestructuring => {
-                self.rule_frame_after_destructuring_success(frame_data, rule_info)
+                self.rule_frame_after_destructuring_success(frame_data, &rule_info)
             }
-            RuleFramePhase::ExecutingBody => self.rule_frame_after_success(frame_data, rule_info),
+            RuleFramePhase::ExecutingBody => self.rule_frame_after_success(frame_data, &rule_info),
             RuleFramePhase::Initializing | RuleFramePhase::Finalizing => Ok(None),
         }
     }
@@ -812,16 +804,21 @@ impl RegoVM {
         &mut self,
         frame_data: &mut RuleFrameData,
     ) -> Result<Option<usize>> {
-        let program = self.program.clone();
-        let rule_info = program
+        let rule_info = self.get_rule_info(frame_data.rule_index)?;
+        self.rule_frame_after_failure(frame_data, &rule_info)
+    }
+
+    fn get_rule_info(&self, rule_index: u16) -> Result<RuleInfo> {
+        let idx = usize::from(rule_index);
+        self.program
             .rule_infos
-            .get(usize::from(frame_data.rule_index))
+            .get(idx)
+            .cloned()
             .ok_or(VmError::RuleInfoMissing {
-                index: frame_data.rule_index,
+                index: rule_index,
                 pc: self.pc,
-                available: program.rule_infos.len(),
-            })?;
-        self.rule_frame_after_failure(frame_data, rule_info)
+                available: self.program.rule_infos.len(),
+            })
     }
 
     pub(super) fn checked_add_one(&self, value: usize, context: &'static str) -> Result<usize> {

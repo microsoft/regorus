@@ -5,6 +5,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use super::types::GuardMode;
 use super::{Instruction, InstructionData, LiteralOrRegister};
 
 impl Instruction {
@@ -65,32 +66,25 @@ impl Instruction {
                         )
                     },
                 ),
-            Instruction::ObjectCreate { params_index } => {
-                instruction_data
-                    .get_object_create_params(params_index)
-                    .map_or_else(
-                        || format!("OBJECT_CREATE P({}) [INVALID INDEX]", params_index),
-                        |params| {
-                            let mut field_parts = Vec::new();
-
-                            // Add literal key fields
-                            for &(literal_idx, value_reg) in params.literal_key_field_pairs() {
-                                field_parts.push(format!("L({}):R({})", literal_idx, value_reg));
-                            }
-
-                            // Add non-literal key fields
-                            for &(key_reg, value_reg) in params.field_pairs() {
-                                field_parts.push(format!("R({}):R({})", key_reg, value_reg));
-                            }
-
-                            let fields_str = field_parts.join(" ");
-                            format!(
-                                "OBJECT_CREATE R({}) L({}) [{}]",
-                                params.dest, params.template_literal_idx, fields_str
-                            )
-                        },
-                    )
-            }
+            Instruction::ObjectCreate { params_index } => instruction_data
+                .get_object_create_params(params_index)
+                .map_or_else(
+                    || format!("OBJECT_CREATE P({}) [INVALID INDEX]", params_index),
+                    |params| {
+                        let mut field_parts = Vec::new();
+                        for &(literal_idx, value_reg) in params.literal_key_field_pairs() {
+                            field_parts.push(format!("L({}):R({})", literal_idx, value_reg));
+                        }
+                        for &(key_reg, value_reg) in params.field_pairs() {
+                            field_parts.push(format!("R({}):R({})", key_reg, value_reg));
+                        }
+                        let fields_str = field_parts.join(" ");
+                        format!(
+                            "OBJECT_CREATE R({}) L({}) [{}]",
+                            params.dest, params.template_literal_idx, fields_str
+                        )
+                    },
+                ),
             Instruction::VirtualDataDocumentLookup { params_index } => instruction_data
                 .get_virtual_data_document_lookup_params(params_index)
                 .map_or_else(
@@ -245,14 +239,13 @@ impl core::fmt::Display for Instruction {
             Instruction::AssertEq { left, right } => {
                 format!("ASSERT_EQ R({}) R({})", left, right)
             }
-            Instruction::AssertNot { operand } => {
-                format!("ASSERT_NOT R({})", operand)
-            }
-            Instruction::AssertCondition { condition } => {
-                format!("ASSERT_CONDITION R({})", condition)
-            }
-            Instruction::AssertNotUndefined { register } => {
-                format!("ASSERT_NOT_UNDEFINED R({})", register)
+            Instruction::Guard { register, mode } => {
+                let name = match mode {
+                    GuardMode::Not => "ASSERT_NOT",
+                    GuardMode::Condition => "ASSERT_CONDITION",
+                    GuardMode::NotUndefined => "ASSERT_NOT_UNDEFINED",
+                };
+                format!("{} R({})", name, register)
             }
             Instruction::LoopStart { params_index } => {
                 format!("LOOP_START P({})", params_index)

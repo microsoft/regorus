@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::rvm::instructions::{Instruction, LiteralOrRegister};
+use crate::rvm::instructions::{GuardMode, Instruction, LiteralOrRegister};
 use crate::rvm::program::Program;
 use crate::value::Value;
 use alloc::collections::BTreeSet;
@@ -26,6 +26,7 @@ impl RegoVM {
         program: &Program,
         instruction: Instruction,
     ) -> Result<InstructionOutcome> {
+        self.memory_check()?;
         self.execute_load_and_move(program, instruction)
     }
 
@@ -317,9 +318,6 @@ impl RegoVM {
             }
             Not { dest, operand } => {
                 let operand_value = self.get_register(operand)?;
-
-                // In Rego, `not expr` succeeds when `expr` is undefined or false,
-                // and fails for any other defined value (including non-booleans like 42).
                 let negated = match *operand_value {
                     Value::Undefined => true,
                     Value::Bool(b) => !b,
@@ -335,33 +333,22 @@ impl RegoVM {
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)
             }
-            AssertNot { operand } => {
-                let value = self.get_register(operand)?;
-                let passed = match *value {
-                    Value::Undefined => true,
-                    Value::Bool(b) => !b,
-                    _ => false,
+            Guard { register, mode } => {
+                let value = self.get_register(register)?;
+                let passed = match mode {
+                    GuardMode::Not => match *value {
+                        Value::Undefined => true,
+                        Value::Bool(b) => !b,
+                        _ => false,
+                    },
+                    GuardMode::Condition => match *value {
+                        Value::Bool(b) => b,
+                        Value::Undefined => false,
+                        _ => true,
+                    },
+                    GuardMode::NotUndefined => !matches!(value, Value::Undefined),
                 };
                 self.handle_condition(passed)?;
-                Ok(InstructionOutcome::Continue)
-            }
-            AssertCondition { condition } => {
-                let value = self.get_register(condition)?;
-
-                let condition_result = match *value {
-                    Value::Bool(b) => b,
-                    Value::Undefined => false,
-                    _ => true,
-                };
-
-                self.handle_condition(condition_result)?;
-                Ok(InstructionOutcome::Continue)
-            }
-            AssertNotUndefined { register } => {
-                let value = self.get_register(register)?;
-
-                let is_undefined = matches!(value, Value::Undefined);
-                self.handle_condition(!is_undefined)?;
                 Ok(InstructionOutcome::Continue)
             }
             other => self.execute_call_instruction(program, other),
@@ -747,6 +734,7 @@ impl RegoVM {
                         available: loop_params_len,
                     })?;
                 let mode = loop_params.mode;
+
                 let params = LoopParams {
                     collection: loop_params.collection,
                     key_reg: loop_params.key_reg,

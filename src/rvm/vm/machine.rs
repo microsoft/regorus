@@ -524,18 +524,8 @@ impl RegoVM {
         limits::check_memory_limit_if_needed().map_err(|err| self.map_limit_error(err))
     }
 
-    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    pub(super) fn enforce_memory_check(&mut self) -> Result<()> {
-        limits::enforce_memory_limit().map_err(|err| self.map_limit_error(err))
-    }
-
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     pub(super) fn memory_check(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
-    pub(super) fn enforce_memory_check(&mut self) -> Result<()> {
         Ok(())
     }
 
