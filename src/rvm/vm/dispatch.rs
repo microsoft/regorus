@@ -72,6 +72,14 @@ impl RegoVM {
                 self.set_register(dest, self.input.clone())?;
                 Ok(InstructionOutcome::Continue)
             }
+            LoadContext { dest } => {
+                self.set_register(dest, self.context.clone())?;
+                Ok(InstructionOutcome::Continue)
+            }
+            LoadMetadata { dest } => {
+                self.set_register(dest, self.metadata_value.clone())?;
+                Ok(InstructionOutcome::Continue)
+            }
             Move { dest, src } => {
                 let value = self.get_register(src)?.clone();
                 self.set_register(dest, value)?;
@@ -351,6 +359,21 @@ impl RegoVM {
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)
             }
+            ReturnUndefinedIfNotTrue { condition } => {
+                let value = self.get_register(condition)?;
+                if matches!(value, Value::Bool(true)) {
+                    Ok(InstructionOutcome::Continue)
+                } else {
+                    Ok(InstructionOutcome::Return(Value::Undefined))
+                }
+            }
+            CoalesceUndefinedToNull { register } => {
+                let value = self.get_register(register)?;
+                if matches!(value, Value::Undefined) {
+                    self.set_register(register, Value::Null)?;
+                }
+                Ok(InstructionOutcome::Continue)
+            }
             other => self.execute_call_instruction(program, other),
         }
     }
@@ -569,6 +592,33 @@ impl RegoVM {
                 let value_to_push = self.get_register(value)?.clone();
 
                 // Take ownership so Rc refcount stays at 1 and make_mut is a no-op.
+                let mut arr_value = self.take_register(arr)?;
+
+                if let Ok(arr_mut) = arr_value.as_array_mut() {
+                    arr_mut.push(value_to_push);
+                    self.set_register(arr, arr_value)?;
+                } else {
+                    let offending = arr_value.clone();
+                    self.set_register(arr, arr_value)?;
+                    return Err(VmError::RegisterNotArray {
+                        register: arr,
+                        value: offending,
+                        pc: self.pc,
+                    });
+                }
+                Ok(InstructionOutcome::Continue)
+            }
+            ArrayPushDefined { arr, value } => {
+                // Skip undefined values — matches Azure Policy's
+                // `field('alias[*].property')` collection semantics where
+                // absent nested properties are excluded from the collected
+                // array.
+                if self.get_register(value)? == &Value::Undefined {
+                    return Ok(InstructionOutcome::Continue);
+                }
+
+                let value_to_push = self.get_register(value)?.clone();
+
                 let mut arr_value = self.take_register(arr)?;
 
                 if let Ok(arr_mut) = arr_value.as_array_mut() {
