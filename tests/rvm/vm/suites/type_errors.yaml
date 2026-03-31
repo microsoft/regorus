@@ -96,7 +96,7 @@ cases:
     want_error: "#undefined"
 
   - note: logical_not_int
-    description: NOT with non-boolean defined operand should yield false
+    description: NOT with int operand treats non-boolean as truthy (result false)
     example_rego: "not 42"
     literals:
       - 42

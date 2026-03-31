@@ -1,0 +1,92 @@
+# ArrayPushDefined instruction test suite
+#
+# Like ArrayPush but silently skips Undefined values.  Used by the Azure Policy
+# compiler when collecting `field('alias[*].property')` results: absent nested
+# properties produce Undefined and should be excluded from the collected array.
+#
+# Semantics:
+#   - If value register is Undefined → no-op (skip).
+#   - If value register is any other value (including Null) → push to array.
+#   - If arr register is not an array → error.
+
+cases:
+  # =========================================================================
+  # Undefined values are skipped
+  # =========================================================================
+
+  - note: push_undefined_is_skipped
+    description: Pushing an undefined value leaves the array unchanged
+    literals: []
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      # Register 1 is implicitly Undefined
+      - "ArrayPushDefined { arr: 0, value: 1 }"
+      - "Return { value: 0 }"
+    want_result: []
+
+  - note: push_undefined_among_defined
+    description: Only defined values are collected; undefined ones are silently dropped
+    literals:
+      - 10
+      - 20
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPushDefined { arr: 0, value: 1 }"
+      # Register 2 is Undefined — should be skipped
+      - "ArrayPushDefined { arr: 0, value: 2 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "ArrayPushDefined { arr: 0, value: 3 }"
+      - "Return { value: 0 }"
+    want_result: [10, 20]
+
+  # =========================================================================
+  # Null and other values are kept
+  # =========================================================================
+
+  - note: push_null_is_kept
+    description: Null is not undefined — it is pushed to the array
+    literals: []
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "LoadNull { dest: 1 }"
+      - "ArrayPushDefined { arr: 0, value: 1 }"
+      - "Return { value: 0 }"
+    want_result: [null]
+
+  - note: push_bool_is_kept
+    description: Boolean value is pushed normally
+    literals:
+      - true
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPushDefined { arr: 0, value: 1 }"
+      - "Return { value: 0 }"
+    want_result: [true]
+
+  - note: push_string_is_kept
+    description: String value is pushed normally
+    literals:
+      - "hello"
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ArrayPushDefined { arr: 0, value: 1 }"
+      - "Return { value: 0 }"
+    want_result: ["hello"]
+
+  # =========================================================================
+  # Non-array target is an error
+  # =========================================================================
+
+  - note: push_to_non_array_errors
+    description: ArrayPushDefined on a non-array register produces an error
+    literals:
+      - 42
+      - 1
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "ArrayPushDefined { arr: 0, value: 1 }"
+    want_error: "Register 0 does not contain an array"

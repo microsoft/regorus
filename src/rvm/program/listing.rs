@@ -307,6 +307,14 @@ fn format_instruction_readable(
             let base = format!("{}LoadInput    r{} ← input", indent, dest);
             align_comment(&base, "Load global input document", config.comment_column)
         }
+        Instruction::LoadContext { dest } => {
+            let base = format!("{}LoadContext  r{} ← context", indent, dest);
+            align_comment(&base, "Load evaluation context", config.comment_column)
+        }
+        Instruction::LoadMetadata { dest } => {
+            let base = format!("{}LoadMetadata r{} ← metadata", indent, dest);
+            align_comment(&base, "Load program metadata", config.comment_column)
+        }
         Instruction::Move { dest, src } => {
             let base = format!("{}Move         r{} ← r{}", indent, dest, src);
             let comment = format!("Copy value from r{} to r{}", src, dest);
@@ -565,6 +573,11 @@ fn format_instruction_readable(
             let comment = format!("Append r{} to array r{}", value, arr);
             align_comment(&base, &comment, config.comment_column)
         }
+        Instruction::ArrayPushDefined { arr, value } => {
+            let base = format!("{}ArrayPushDef r{}.push(r{})", indent, arr, value);
+            let comment = format!("Append r{} to array r{} (skip if undefined)", value, arr);
+            align_comment(&base, &comment, config.comment_column)
+        }
         Instruction::ArrayCreate { params_index } => instruction_data
             .get_array_create_params(params_index)
             .map_or_else(
@@ -657,6 +670,25 @@ fn format_instruction_readable(
                 ),
             };
             align_comment(&keyword, &comment, config.comment_column)
+        }
+        Instruction::ReturnUndefinedIfNotTrue { condition } => {
+            let base = format!(
+                "{}ReturnUndefinedIfNotTrue if r{} != true return undefined",
+                indent, condition
+            );
+            let comment = format!(
+                "Return undefined unless r{} is exactly boolean true",
+                condition
+            );
+            align_comment(&base, &comment, config.comment_column)
+        }
+        Instruction::CoalesceUndefinedToNull { register } => {
+            let base = format!(
+                "{}CoalesceUndefinedToNull r{} = null if undefined",
+                indent, register
+            );
+            let comment = format!("Azure Policy: absent field → null (r{})", register);
+            align_comment(&base, &comment, config.comment_column)
         }
         Instruction::LoopStart { params_index } => {
             instruction_data.get_loop_params(params_index).map_or_else(
@@ -959,6 +991,8 @@ const fn get_instruction_name(instruction: &Instruction) -> &'static str {
         Instruction::LoadBool { .. } => "LOAD_BOOL",
         Instruction::LoadData { .. } => "LOAD_DATA",
         Instruction::LoadInput { .. } => "LOAD_INPUT",
+        Instruction::LoadContext { .. } => "LOAD_CONTEXT",
+        Instruction::LoadMetadata { .. } => "LOAD_METADATA",
         Instruction::Move { .. } => "MOVE",
         Instruction::Add { .. } => "ADD",
         Instruction::Sub { .. } => "SUB",
@@ -984,6 +1018,7 @@ const fn get_instruction_name(instruction: &Instruction) -> &'static str {
         Instruction::IndexLiteral { .. } => "INDEX_LIT",
         Instruction::ArrayNew { .. } => "ARRAY_NEW",
         Instruction::ArrayPush { .. } => "ARRAY_PUSH",
+        Instruction::ArrayPushDefined { .. } => "ARRAY_PUSH_DEF",
         Instruction::ArrayCreate { .. } => "ARRAY_CREATE",
         Instruction::SetNew { .. } => "SET_NEW",
         Instruction::SetAdd { .. } => "SET_ADD",
@@ -996,6 +1031,8 @@ const fn get_instruction_name(instruction: &Instruction) -> &'static str {
             crate::rvm::instructions::GuardMode::Condition => "ASSERT",
             crate::rvm::instructions::GuardMode::NotUndefined => "ASSERT_NOT_UNDEF",
         },
+        Instruction::ReturnUndefinedIfNotTrue { .. } => "RET_UNDEF_IF_NOT_TRUE",
+        Instruction::CoalesceUndefinedToNull { .. } => "COALESCE_NULL",
         Instruction::LoopStart { .. } => "LOOP_START",
         Instruction::LoopNext { .. } => "LOOP_NEXT",
         Instruction::CallRule { .. } => "CALL_RULE",
@@ -1023,6 +1060,12 @@ fn format_operation_compact(
         }
         Instruction::LoadInput { dest } => {
             format!("{}r{} ← input", indent, dest)
+        }
+        Instruction::LoadContext { dest } => {
+            format!("{}r{} ← context", indent, dest)
+        }
+        Instruction::LoadMetadata { dest } => {
+            format!("{}r{} ← metadata", indent, dest)
         }
         Instruction::LoadData { dest } => {
             format!("{}r{} ← data", indent, dest)

@@ -1,0 +1,379 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# LoadContext and LoadMetadata Test Suite
+# Tests LoadContext and LoadMetadata instructions
+# Covers: no context, populated context, context indexing, metadata fields,
+#         annotations, metadata round-trip, and interaction with other loads
+
+cases:
+  # ── LoadContext ────────────────────────────────────────────────────────────
+
+  - note: load_context_undefined
+    description: LoadContext returns Undefined when no context is set
+    literals: []
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result: "#undefined"
+
+  - note: load_context_empty_object
+    description: LoadContext returns empty object
+    context: {}
+    literals: []
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result: {}
+
+  - note: load_context_string
+    description: LoadContext returns a string value
+    context: "hello world"
+    literals: []
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result: "hello world"
+
+  - note: load_context_number
+    description: LoadContext returns a numeric value
+    context: 42
+    literals: []
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result: 42
+
+  - note: load_context_boolean
+    description: LoadContext returns a boolean value
+    context: true
+    literals: []
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: load_context_with_values
+    description: LoadContext returns a populated object
+    context:
+      api_version: "2021-06-01"
+      tenant_id: "abc-123"
+    literals: []
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result:
+      api_version: "2021-06-01"
+      tenant_id: "abc-123"
+
+  - note: load_context_nested
+    description: LoadContext returns deeply nested data
+    context:
+      level1:
+        level2:
+          value: "deep"
+    literals: []
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Return { value: 0 }"
+    want_result:
+      level1:
+        level2:
+          value: "deep"
+
+  - note: load_context_and_index
+    description: LoadContext followed by indexing into context data
+    context:
+      api_version: "2021-06-01"
+      tenant_id: "abc-123"
+    literals:
+      - "api_version"
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "2021-06-01"
+
+  - note: load_context_index_missing_key
+    description: Loading context and indexing a missing key yields Undefined
+    context:
+      api_version: "2021-06-01"
+    literals:
+      - "nonexistent"
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: load_context_deep_index
+    description: LoadContext with chained indexing into nested object
+    context:
+      request:
+        headers:
+          content_type: "application/json"
+    literals:
+      - "request"
+      - "headers"
+      - "content_type"
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "Index { dest: 4, container: 2, key: 3 }"
+      - "Load { dest: 5, literal_idx: 2 }"
+      - "Index { dest: 6, container: 4, key: 5 }"
+      - "Return { value: 6 }"
+    want_result: "application/json"
+
+  - note: load_context_with_array
+    description: LoadContext with an array value
+    context:
+      tags:
+        - "production"
+        - "east-us"
+    literals:
+      - "tags"
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Count { dest: 3, collection: 2 }"
+      - "Return { value: 3 }"
+    want_result: 2
+
+  - note: load_context_multiple_times
+    description: Loading context multiple times returns the same value
+    context:
+      value: 42
+    literals:
+      - "value"
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "LoadContext { dest: 1 }"
+      - "Eq { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_result: true
+
+  - note: load_context_independent_of_input
+    description: Context and Input are independent
+    input:
+      input_key: "from_input"
+    context:
+      context_key: "from_context"
+    literals:
+      - "context_key"
+      - "input_key"
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "LoadInput { dest: 3 }"
+      - "Load { dest: 4, literal_idx: 1 }"
+      - "Index { dest: 5, container: 3, key: 4 }"
+      # Check context value
+      - "Load { dest: 6, literal_idx: 0 }"  # reuse the "context_key" literal for comparison
+      - "Return { value: 2 }"
+    want_result: "from_context"
+
+  - note: load_context_independent_of_data
+    description: Context and Data are independent
+    data:
+      data_key: "from_data"
+    context:
+      context_key: "from_context"
+    literals:
+      - "context_key"
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "from_context"
+
+  # ── LoadMetadata ────────────────────────────────────────────────────────────
+
+  - note: load_metadata_default
+    description: LoadMetadata returns object with metadata fields - check by indexing language
+    literals:
+      - "language"
+    instructions:
+      - "LoadMetadata { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    # Default language is empty string
+    want_result: ""
+
+  - note: load_metadata_language
+    description: LoadMetadata returns language field when set
+    metadata_language: "azure_policy"
+    literals:
+      - "language"
+    instructions:
+      - "LoadMetadata { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "azure_policy"
+
+  - note: load_metadata_annotations_string
+    description: LoadMetadata includes string annotations
+    metadata_language: "azure_policy"
+    metadata_annotations:
+      policy_mode: "indexed"
+      policy_category: "Security"
+    literals:
+      - "annotations"
+      - "policy_mode"
+    instructions:
+      - "LoadMetadata { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "Index { dest: 4, container: 2, key: 3 }"
+      - "Return { value: 4 }"
+    want_result: "indexed"
+
+  - note: load_metadata_annotations_number
+    description: LoadMetadata includes numeric annotations
+    metadata_annotations:
+      max_retries: 3
+    literals:
+      - "annotations"
+      - "max_retries"
+    instructions:
+      - "LoadMetadata { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "Index { dest: 4, container: 2, key: 3 }"
+      - "Return { value: 4 }"
+    want_result: 3
+
+  - note: load_metadata_annotations_boolean
+    description: LoadMetadata includes boolean annotations
+    metadata_annotations:
+      is_audit: true
+    literals:
+      - "annotations"
+      - "is_audit"
+    instructions:
+      - "LoadMetadata { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "Index { dest: 4, container: 2, key: 3 }"
+      - "Return { value: 4 }"
+    want_result: true
+
+  - note: load_metadata_annotations_nested
+    description: LoadMetadata includes nested annotations (object)
+    metadata_annotations:
+      compliance:
+        framework: "nist"
+        controls:
+          - "AC-1"
+          - "AC-2"
+    literals:
+      - "annotations"
+      - "compliance"
+      - "framework"
+    instructions:
+      - "LoadMetadata { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Load { dest: 3, literal_idx: 1 }"
+      - "Index { dest: 4, container: 2, key: 3 }"
+      - "Load { dest: 5, literal_idx: 2 }"
+      - "Index { dest: 6, container: 4, key: 5 }"
+      - "Return { value: 6 }"
+    want_result: "nist"
+
+  - note: load_metadata_annotations_absent
+    description: LoadMetadata without annotations - indexing annotations gives Undefined
+    literals:
+      - "annotations"
+    instructions:
+      - "LoadMetadata { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: load_metadata_multiple_times
+    description: Loading metadata multiple times returns same value
+    metadata_language: "rego"
+    literals:
+      - "language"
+    instructions:
+      - "LoadMetadata { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "LoadMetadata { dest: 3 }"
+      - "Load { dest: 4, literal_idx: 0 }"
+      - "Index { dest: 5, container: 3, key: 4 }"
+      - "Eq { dest: 6, left: 2, right: 5 }"
+      - "Return { value: 6 }"
+    want_result: true
+
+  # ── Combined LoadContext + LoadMetadata ──────────────────────────────────
+
+  - note: context_and_metadata_independent
+    description: Context and metadata are independent values
+    context:
+      env: "production"
+    metadata_language: "rego"
+    literals:
+      - "env"
+      - "language"
+    instructions:
+      - "LoadContext { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      # r2 = "production"
+      - "LoadMetadata { dest: 3 }"
+      - "Load { dest: 4, literal_idx: 1 }"
+      - "Index { dest: 5, container: 3, key: 4 }"
+      # r5 = "rego"
+      - "Ne { dest: 6, left: 2, right: 5 }"
+      - "Return { value: 6 }"
+    want_result: true
+
+  - note: all_four_loads
+    description: LoadData, LoadInput, LoadContext, LoadMetadata all coexist
+    data:
+      role: "admin"
+    input:
+      action: "read"
+    context:
+      region: "us-east"
+    metadata_language: "test"
+    literals:
+      - "role"
+      - "action"
+      - "region"
+      - "language"
+    instructions:
+      - "LoadData { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      # r2 = "admin"
+      - "LoadInput { dest: 3 }"
+      - "Load { dest: 4, literal_idx: 1 }"
+      - "Index { dest: 5, container: 3, key: 4 }"
+      # r5 = "read"
+      - "LoadContext { dest: 6 }"
+      - "Load { dest: 7, literal_idx: 2 }"
+      - "Index { dest: 8, container: 6, key: 7 }"
+      # r8 = "us-east"
+      - "LoadMetadata { dest: 9 }"
+      - "Load { dest: 10, literal_idx: 3 }"
+      - "Index { dest: 11, container: 9, key: 10 }"
+      # r11 = "test"
+      # Return context region as witness
+      - "Return { value: 8 }"
+    want_result: "us-east"
