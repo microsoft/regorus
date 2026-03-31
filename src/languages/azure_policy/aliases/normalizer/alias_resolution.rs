@@ -16,9 +16,10 @@ use super::flatten::normalize_value;
 
 /// Apply per-alias path resolution to the normalized result.
 ///
-/// Uses precomputed element remaps and array renames from [`ResolvedAliases`]
-/// when `api_version` is `None` (the common case). Falls back to dynamic
-/// computation when a specific `api_version` is provided.
+/// Uses precomputed aggregates from [`ResolvedAliases`], selecting the
+/// version-specific set when `api_version` is `Some` or the default
+/// aggregates otherwise.  All work is driven by pre-built operation
+/// lists; no per-call dynamic computation is required.
 pub fn apply_alias_entries(
     result: &mut ObjMap,
     raw: &Value,

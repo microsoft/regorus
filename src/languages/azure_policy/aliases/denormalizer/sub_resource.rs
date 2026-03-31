@@ -56,9 +56,7 @@ pub fn rewrap_precomputed_sub_resource_arrays(
     ops: &[PrecomputedSubResourceRewrap],
 ) {
     for op in ops {
-        let parent_parts: Vec<&str> = op.parent_path.iter().map(|part| part.as_str()).collect();
-
-        for_each_array_object_in_path_ci(properties, &parent_parts, &mut |parent| {
+        for_each_array_object_in_path_ci(properties, &op.parent_path, &mut |parent| {
             if let Some(Value::Array(arr)) = obj_get_mut_ci(parent, &op.array_name) {
                 let inner = crate::Rc::make_mut(arr);
                 for elem in inner.iter_mut() {

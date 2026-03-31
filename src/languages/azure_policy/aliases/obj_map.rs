@@ -117,7 +117,7 @@ pub fn get_path<'a>(obj: &'a ObjMap, segments: &[&str]) -> Option<&'a Value> {
 
 /// Read a value at a dot-separated path using exact key lookup first and
 /// case-insensitive fallback for each path segment.
-pub fn get_path_exact_or_ci<'a>(obj: &'a ObjMap, segments: &[&str]) -> Option<&'a Value> {
+pub fn get_path_exact_or_ci<'a>(obj: &'a ObjMap, segments: &[String]) -> Option<&'a Value> {
     let (first, rest) = segments.split_first()?;
     let value = obj_get_exact_or_ci(obj, first)?;
     if rest.is_empty() {
@@ -149,6 +149,17 @@ pub fn get_path_mut_owned<'a>(obj: &'a mut ObjMap, segments: &[String]) -> Optio
     }
     let inner = value.as_object_mut().ok()?;
     get_path_mut_owned(inner, rest)
+}
+
+/// Case-insensitive variant of [`get_path_mut_owned`].
+fn get_path_mut_owned_ci<'a>(obj: &'a mut ObjMap, segments: &[String]) -> Option<&'a mut Value> {
+    let (first, rest) = segments.split_first()?;
+    let value = obj_get_mut_ci(obj, first)?;
+    if rest.is_empty() {
+        return Some(value);
+    }
+    let inner = value.as_object_mut().ok()?;
+    get_path_mut_owned_ci(inner, rest)
 }
 
 /// Visit each object element located by a nested exact-case array chain.
@@ -195,6 +206,47 @@ fn for_each_array_object_in_chain_at_depth(
     }
 }
 
+/// Case-insensitive variant of [`for_each_array_object_in_chain`].
+pub fn for_each_array_object_in_chain_ci(
+    obj: &mut ObjMap,
+    array_chain: &[Vec<String>],
+    visit: &mut dyn FnMut(&mut ObjMap),
+) {
+    for_each_array_object_in_chain_ci_at_depth(obj, array_chain, 0, visit);
+}
+
+fn for_each_array_object_in_chain_ci_at_depth(
+    obj: &mut ObjMap,
+    array_chain: &[Vec<String>],
+    depth: usize,
+    visit: &mut dyn FnMut(&mut ObjMap),
+) {
+    let Some(nav) = array_chain.get(depth) else {
+        visit(obj);
+        return;
+    };
+
+    let Some(arr_val) = get_path_mut_owned_ci(obj, nav) else {
+        return;
+    };
+
+    let Value::Array(elements) = arr_val else {
+        return;
+    };
+
+    for element in Rc::make_mut(elements).iter_mut() {
+        if let Value::Object(obj_rc) = element {
+            let inner = Rc::make_mut(obj_rc);
+            for_each_array_object_in_chain_ci_at_depth(
+                inner,
+                array_chain,
+                depth.saturating_add(1),
+                visit,
+            );
+        }
+    }
+}
+
 /// Visit each object element located by a case-insensitive chain of array names.
 ///
 /// Each segment in `array_path` names an array under the current object. The
@@ -202,7 +254,7 @@ fn for_each_array_object_in_chain_at_depth(
 /// or with the current object when the chain is empty.
 pub fn for_each_array_object_in_path_ci(
     obj: &mut ObjMap,
-    array_path: &[&str],
+    array_path: &[String],
     visit: &mut dyn FnMut(&mut ObjMap),
 ) {
     let Some((first, rest)) = array_path.split_first() else {
@@ -336,6 +388,22 @@ pub fn remove_element_field(obj: &mut ObjMap, array_chain: &[Vec<String>], field
     });
 }
 
+/// Case-insensitive variant of [`remove_element_field`].
+pub fn remove_element_field_ci(obj: &mut ObjMap, array_chain: &[Vec<String>], field: &str) {
+    for_each_array_object_in_chain_ci(obj, array_chain, &mut |element| {
+        let segments: Vec<&str> = field.split('.').collect();
+        if segments.len() == 1 {
+            if let Some(&seg) = segments.first() {
+                if let Some(key) = find_key_ci(element, seg) {
+                    element.remove(&key);
+                }
+            }
+        } else if segments.len() > 1 {
+            remove_at_dotted_path_ci(element, &segments);
+        }
+    });
+}
+
 /// Remove the leaf segment at a dotted path.
 fn remove_at_dotted_path(obj: &mut ObjMap, segments: &[&str]) {
     let Some((&leaf, parent_segs)) = segments.split_last() else {
@@ -374,6 +442,53 @@ fn remove_at_dotted_path(obj: &mut ObjMap, segments: &[&str]) {
         if let Value::Object(inner_rc) = cur {
             let inner = Rc::make_mut(inner_rc);
             inner.remove(&Value::from(leaf));
+        }
+    }
+}
+
+/// Case-insensitive variant of [`remove_at_dotted_path`].
+fn remove_at_dotted_path_ci(obj: &mut ObjMap, segments: &[&str]) {
+    let Some((&leaf, parent_segs)) = segments.split_last() else {
+        return;
+    };
+    if parent_segs.is_empty() {
+        if let Some(key) = find_key_ci(obj, leaf) {
+            obj.remove(&key);
+        }
+        return;
+    }
+
+    let Some(&first) = parent_segs.first() else {
+        return;
+    };
+    let parent_val = match obj_get_mut_ci(obj, first) {
+        Some(v) => v,
+        None => return,
+    };
+
+    if parent_segs.len() == 1 {
+        if let Value::Object(inner_rc) = parent_val {
+            let inner = Rc::make_mut(inner_rc);
+            if let Some(key) = find_key_ci(inner, leaf) {
+                inner.remove(&key);
+            }
+        }
+    } else {
+        let mut cur = parent_val;
+        for &seg in parent_segs.iter().skip(1) {
+            cur = match cur.as_object_mut() {
+                Ok(inner) => match obj_get_mut_ci(inner, seg) {
+                    Some(v) => v,
+                    None => return,
+                },
+                Err(_) => return,
+            };
+        }
+        if let Value::Object(inner_rc) = cur {
+            let inner = Rc::make_mut(inner_rc);
+            if let Some(key) = find_key_ci(inner, leaf) {
+                inner.remove(&key);
+            }
         }
     }
 }

@@ -9,18 +9,20 @@ pub(crate) mod sub_resource;
 #[cfg(test)]
 mod tests;
 
+use alloc::vec::Vec;
+
 use crate::Value;
 
 use crate::Rc;
 
 use super::obj_map::{
     extract_type_field, find_key_ci, get_path_exact_or_ci, make_value, new_map,
-    obj_get_exact_or_ci, obj_insert, remove_element_field, set_nested, val_str, ROOT_FIELDS,
+    obj_get_exact_or_ci, obj_insert, remove_element_field_ci, set_nested, val_str, ROOT_FIELDS,
 };
 use super::types::ResolvedAliases;
 use super::AliasRegistry;
 
-use super::normalizer::{apply_element_remap, ElementRemap};
+use super::normalizer::apply_element_remap_reverse;
 
 use casing::{default_casing_map, denormalize_value, restore_casing};
 
@@ -46,8 +48,11 @@ pub fn denormalize_with_aliases(
     };
 
     let selected_agg = aliases.map(|a| a.select_aggregates(api_version));
-    let default_cm = default_casing_map();
-    let casing_map = aliases.map_or(&default_cm, |a| &a.casing_map);
+    let mut default_cm = None;
+    let casing_map = aliases.map_or_else(
+        || &*default_cm.insert(default_casing_map()),
+        |a| &a.casing_map,
+    );
     let is_data_plane =
         extract_type_field(normalized).is_some_and(|t| t.to_ascii_lowercase().contains(".data/"));
 
@@ -101,12 +106,7 @@ pub fn denormalize_with_aliases(
     // Phase 2b: Aliased scalar fields → versioned ARM paths.
     if let Some(agg) = selected_agg {
         for op in &agg.scalar_aliases_denormalize {
-            let segments: alloc::vec::Vec<&str> = op
-                .normalized_path_segments
-                .iter()
-                .map(|segment| segment.as_str())
-                .collect();
-            let val = get_path_exact_or_ci(obj, &segments);
+            let val = get_path_exact_or_ci(obj, &op.normalized_path_segments);
             let val = match val {
                 Some(v) => v,
                 None => continue,
@@ -126,6 +126,28 @@ pub fn denormalize_with_aliases(
         }
 
         // Phase 2c + 2d: Use precomputed renames/remaps.
+        //
+        // For data-plane resources, non-root fields live in `result` (no
+        // "properties" wrapper) but Phases 2c/2d/3 all operate on
+        // `properties`.  Stage data-plane fields into `properties` so the
+        // subsequent phases can process them uniformly; Phase 4 merges
+        // them back into `result` at the top level.
+        if is_data_plane {
+            let keys_to_move: Vec<Value> = result
+                .keys()
+                .filter(|k| {
+                    val_str(k)
+                        .is_some_and(|s| !ROOT_FIELDS.iter().any(|f| f.eq_ignore_ascii_case(s)))
+                })
+                .cloned()
+                .collect();
+            for k in keys_to_move {
+                if let Some(v) = result.remove(&k) {
+                    properties.entry(k).or_insert(v);
+                }
+            }
+        }
+
         // Phase 2c: Precomputed array base renames.
         for (alias_base_lc, arm_base) in &agg.array_renames_denormalize {
             if let Some(key) = find_key_ci(&properties, alias_base_lc) {
@@ -137,14 +159,16 @@ pub fn denormalize_with_aliases(
 
         // Phase 2d: Precomputed reverse element-level field remaps.
         // target_field is already stored with original ARM casing.
+        // Uses case-insensitive lookups because Phase 2a restored key casing
+        // but array_chain/source_field are lowercased.
         for rev in &agg.reverse_element_remaps {
-            let remap = ElementRemap {
-                array_chain: rev.array_chain.clone(),
-                source_field: rev.source_field.clone(),
-                target_field: rev.target_field.clone(),
-            };
-            apply_element_remap(&mut properties, &remap, false);
-            remove_element_field(&mut properties, &rev.array_chain, &rev.cleanup_field);
+            apply_element_remap_reverse(
+                &mut properties,
+                &rev.array_chain,
+                &rev.source_field_segments,
+                &rev.target_field,
+            );
+            remove_element_field_ci(&mut properties, &rev.array_chain, &rev.cleanup_field);
         }
     }
 
@@ -160,14 +184,22 @@ pub fn denormalize_with_aliases(
 
     // Phase 4: Attach properties to result.
     if !properties.is_empty() {
-        let props_key = Value::from("properties");
-        if let Some(Value::Object(existing_rc)) = result.get_mut(&props_key) {
-            let existing = Rc::make_mut(existing_rc);
+        if is_data_plane {
+            // Data-plane resources have no "properties" wrapper; merge
+            // directly into the top-level result.
             for (k, v) in properties {
-                existing.entry(k).or_insert(v);
+                result.entry(k).or_insert(v);
             }
         } else {
-            obj_insert(&mut result, "properties", make_value(properties));
+            let props_key = Value::from("properties");
+            if let Some(Value::Object(existing_rc)) = result.get_mut(&props_key) {
+                let existing = Rc::make_mut(existing_rc);
+                for (k, v) in properties {
+                    existing.entry(k).or_insert(v);
+                }
+            } else {
+                obj_insert(&mut result, "properties", make_value(properties));
+            }
         }
     }
 

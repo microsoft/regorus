@@ -225,11 +225,8 @@ impl AliasRegistry {
             // so that overwritten aliases that no longer indicate sub-resource
             // wrapping cause stale classifications to be removed.
             existing.sub_resource_arrays = redetect_sub_resource_arrays(&existing.entries);
-            // Recompute aggregates after merge.
-            let (default_agg, versioned_agg) =
-                precompute_aggregates(&existing.entries, &existing.sub_resource_arrays);
-            existing.default_aggregates = default_agg;
-            existing.versioned_aggregates = versioned_agg;
+            // Recompute casing map and aggregates after merge.
+            existing.rebuild_aggregates();
         } else {
             self.types.insert(lc_type, resolved);
         }
@@ -480,6 +477,17 @@ fn compute_aggregates_for_version(
         let selected_path = entry.select_path(api_version);
 
         if !entry.is_wildcard {
+            // Skip non-wildcard entries whose short name matches a detected
+            // sub-resource array.  These are handled by the sub-resource
+            // rewrap path; including them here would overwrite the properly
+            // flattened array with a non-flattened copy.
+            if sub_resource_arrays.contains(&entry.short_name.to_ascii_lowercase()) {
+                continue;
+            }
+
+            // Only mark root as alias-owned when the alias IS the root
+            // (single-segment path).  Multi-segment aliases share a root key
+            // that may contain non-alias siblings which Phase 2a must preserve.
             if entry.normalized_output_segments().len() == 1 {
                 let root = entry.normalized_root_key();
                 let stripped = root.strip_prefix("_p_").unwrap_or(root);
@@ -536,9 +544,12 @@ fn compute_aggregates_for_version(
                         target_field: target_lc.clone(),
                     });
 
+                    let source_field_segments: Vec<String> =
+                        target_lc.split('.').map(String::from).collect();
                     reverse_element_remaps.push(PrecomputedReverseRemap {
                         array_chain,
                         source_field: target_lc.clone(),
+                        source_field_segments,
                         target_field: arm_leaf.to_string(),
                         cleanup_field: target_lc,
                     });

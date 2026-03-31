@@ -425,6 +425,8 @@ pub struct PrecomputedReverseRemap {
     pub array_chain: Vec<Vec<String>>,
     /// Field to read within each element (was the forward target).
     pub source_field: String,
+    /// Pre-split segments of `source_field` for zero-allocation CI lookup.
+    pub source_field_segments: Vec<String>,
     /// Field to write within each element (was the forward source),
     /// stored with original ARM casing so no runtime casing restoration is needed.
     pub target_field: String,

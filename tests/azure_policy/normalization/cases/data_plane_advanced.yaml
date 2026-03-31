@@ -80,6 +80,29 @@ data_manifest_json: |
             ]
           }
         ]
+      },
+      {
+        "resourceType": "factories/linkedServices",
+        "aliases": [
+          {
+            "name": "Microsoft.DataFactory.Data/factories/linkedServices/parameters[*].paramType",
+            "paths": [
+              {
+                "path": "parameters[*].type",
+                "apiVersions": ["2018-06-01"]
+              }
+            ]
+          },
+          {
+            "name": "Microsoft.DataFactory.Data/factories/linkedServices/parameters[*].defaultValue",
+            "paths": [
+              {
+                "path": "parameters[*].defaultValue",
+                "apiVersions": ["2018-06-01"]
+              }
+            ]
+          }
+        ]
       }
     ]
   }
@@ -168,3 +191,28 @@ cases:
       linkedServiceName:
         referenceName: "AzureBlobStorage1"
     reverse_round_trip: true
+
+  - note: element remap round-trip (alias leaf differs from ARM leaf)
+    use_registry_api: true
+    input:
+      type: "Microsoft.DataFactory.Data/factories/linkedServices"
+      parameters:
+        - type: String
+          defaultValue: "foo"
+        - type: Int
+          defaultValue: 42
+    expected_normalized:
+      type: "Microsoft.DataFactory.Data/factories/linkedServices"
+      parameters:
+        - paramtype: String
+          defaultvalue: "foo"
+        - paramtype: Int
+          defaultvalue: 42
+    round_trip: true
+    expected_round_trip:
+      type: "Microsoft.DataFactory.Data/factories/linkedServices"
+      parameters:
+        - type: String
+          defaultValue: "foo"
+        - type: Int
+          defaultValue: 42
