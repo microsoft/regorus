@@ -3,6 +3,7 @@
 #![cfg(feature = "rvm")]
 
 use regorus::languages::rego::compiler::Compiler;
+use regorus::rvm::instructions::GuardMode;
 use regorus::rvm::Instruction;
 use regorus::{Engine, Rc, Value};
 use std::collections::BTreeSet;
@@ -128,7 +129,11 @@ fn non_constant_array_is_not_hoisted() {
     );
 }
 
-// --- AssertEq fusion tests ---
+// --- Eq + Guard(Condition) tests ---
+//
+// The compiler emits `Eq { dest, left, right }` followed by
+// `Guard { register: dest, mode: Condition }` for equality checks,
+// rather than a fused `AssertEq`.
 
 /// Count occurrences of a specific instruction pattern in the program.
 fn count_instructions(
@@ -138,56 +143,76 @@ fn count_instructions(
     program.instructions.iter().filter(|i| pred(i)).count()
 }
 
+/// Helper: check that the program contains an Eq followed by Guard(Condition).
+fn has_eq_guard_condition(program: &regorus::rvm::program::Program) -> bool {
+    program.instructions.windows(2).any(|w| {
+        matches!(w[0], Instruction::Eq { .. })
+            && matches!(
+                w[1],
+                Instruction::Guard {
+                    mode: GuardMode::Condition,
+                    ..
+                }
+            )
+    })
+}
+
 #[test]
-fn equality_check_emits_assert_eq() {
-    // Assignment `x = 1` followed by `x = 1` triggers EqualityCheck in destructuring.
+fn equality_check_emits_eq_guard() {
+    // Assignment `x = 1` followed by `x = 1` triggers Eq + Guard(Condition).
     let program = compile_rule(
         r#"
         package test
         p if { x = 1; x = 1 }
     "#,
     );
-    let assert_eq_count =
-        count_instructions(&program, |i| matches!(i, Instruction::AssertEq { .. }));
     assert!(
-        assert_eq_count > 0,
-        "expected AssertEq instruction for equality check"
+        has_eq_guard_condition(&program),
+        "expected Eq + Guard(Condition) pair for equality check"
     );
 }
 
 #[test]
-fn destructuring_equality_emits_assert_eq() {
+fn destructuring_equality_emits_eq_guard() {
     let program = compile_rule(
         r#"
         package test
         p if { [1, x] := [1, 2] }
     "#,
     );
-    let assert_eq_count =
-        count_instructions(&program, |i| matches!(i, Instruction::AssertEq { .. }));
     assert!(
-        assert_eq_count > 0,
-        "expected AssertEq for destructuring equality"
+        has_eq_guard_condition(&program),
+        "expected Eq + Guard(Condition) for destructuring equality"
     );
 }
 
 #[test]
-fn not_expr_emits_assert_not() {
+fn not_expr_emits_not_plus_guard_condition() {
     let program = compile_rule(
         r#"
         package test
         p if { not false }
     "#,
     );
-    let assert_not_count =
-        count_instructions(&program, |i| matches!(i, Instruction::AssertNot { .. }));
-    assert!(
-        assert_not_count > 0,
-        "expected AssertNot for `not` expression"
-    );
-    // The Not+AssertCondition pair should be fused — no separate Not instruction.
+    // The compiler emits Not { dest, operand } + Guard { register: dest, mode: Condition }.
     let not_count = count_instructions(&program, |i| matches!(i, Instruction::Not { .. }));
-    assert_eq!(not_count, 0, "Not should be fused into AssertNot");
+    assert!(
+        not_count > 0,
+        "expected Not instruction for `not` expression"
+    );
+    let guard_cond_count = count_instructions(&program, |i| {
+        matches!(
+            i,
+            Instruction::Guard {
+                mode: GuardMode::Condition,
+                ..
+            }
+        )
+    });
+    assert!(
+        guard_cond_count > 0,
+        "expected Guard(Condition) after Not instruction"
+    );
 }
 
 // --- B-11: early_exit_on_first_success flag tests ---

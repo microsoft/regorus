@@ -10,12 +10,11 @@ pub use params::{
     FunctionCallParams, InstructionData, LoopStartParams, ObjectCreateParams, SetCreateParams,
     VirtualDataDocumentLookupParams,
 };
-pub use types::{ComprehensionMode, LiteralOrRegister, LoopMode};
+pub use types::{ComprehensionMode, GuardMode, LiteralOrRegister, LoopMode};
 
 use serde::{Deserialize, Serialize};
 
 /// RVM Instructions - simplified enum-based design
-#[repr(C)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Instruction {
     /// Load literal value from literal table into register
@@ -131,8 +130,6 @@ pub enum Instruction {
         left: u8,
         right: u8,
     },
-    /// Rego negation - produces `true` if operand is `false` or undefined,
-    /// `false` for any other defined value (including non-booleans).
     Not {
         dest: u8,
         operand: u8,
@@ -251,19 +248,10 @@ pub enum Instruction {
         right: u8,
     },
 
-    /// Assert negation - succeed if operand is false or undefined, fail if true
-    AssertNot {
-        operand: u8,
-    },
-
-    /// Assert condition - if register contains false or undefined, return undefined immediately
-    AssertCondition {
-        condition: u8,
-    },
-
-    /// Assert not undefined - if register contains undefined, return undefined immediately
-    AssertNotUndefined {
+    /// Consolidated guard instruction — replaces AssertNot, AssertCondition, AssertNotUndefined.
+    Guard {
         register: u8,
+        mode: GuardMode,
     },
 
     /// Start a loop over a collection with specified semantics - uses parameter table
@@ -390,5 +378,28 @@ impl Instruction {
     /// Create a new ComprehensionEnd instruction
     pub const fn comprehension_end() -> Self {
         Self::ComprehensionEnd {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::mem::size_of;
+
+    #[test]
+    fn instruction_size() {
+        // Lock the instruction size to detect unintended growth.
+        // Without repr(C), Rust picks a 1-byte discriminant (< 256 variants)
+        // plus 4 bytes for the largest payload variant + 1 byte alignment
+        // padding for u16 fields = 6 bytes total.
+        //
+        // TODO: Reduce to 4 bytes by making LoopNext zero-payload (both fields
+        // are redundant with LoopStart params) and moving IndexLiteral to a
+        // params table.
+        let size = size_of::<Instruction>();
+        assert_eq!(
+            size, 6,
+            "Instruction size changed from 6 to {size} — review new variants for bloat"
+        );
     }
 }

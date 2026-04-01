@@ -8,6 +8,7 @@
 
 use super::{Compiler, CompilerError, ComprehensionType, ContextType, Result};
 use crate::ast::{self, LiteralStmt, Query};
+use crate::rvm::instructions::GuardMode;
 use crate::rvm::program::RuleType;
 use crate::rvm::Instruction;
 use alloc::format;
@@ -242,7 +243,22 @@ impl<'a> Compiler<'a> {
                     compiler.compile_rego_expr_with_span(expr, expr.span(), false)
                 })?;
 
-                self.emit_instruction(Instruction::AssertNot { operand: expr_reg }, &stmt.span);
+                let negated_reg = self.alloc_register();
+                self.emit_instruction(
+                    Instruction::Not {
+                        dest: negated_reg,
+                        operand: expr_reg,
+                    },
+                    &stmt.span,
+                );
+
+                self.emit_instruction(
+                    Instruction::Guard {
+                        register: negated_reg,
+                        mode: GuardMode::Condition,
+                    },
+                    &stmt.span,
+                );
             }
         }
         Ok(())

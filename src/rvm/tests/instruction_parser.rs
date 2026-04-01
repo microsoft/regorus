@@ -9,7 +9,7 @@
     clippy::pattern_type_mismatch
 )] // tests unwrap conversions and slice math for brevity
 
-use crate::rvm::instructions::{Instruction, LoopMode};
+use crate::rvm::instructions::{GuardMode, Instruction, LoopMode};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use anyhow::{anyhow, bail, Result};
@@ -63,8 +63,10 @@ pub fn parse_instruction(text: &str) -> Result<Instruction> {
             "SetAdd" => parse_set_add(params_text),
             "Contains" => parse_contains(params_text),
             "Count" => parse_count(params_text),
-            "AssertCondition" => parse_assert_condition(params_text),
-            "AssertNotUndefined" => parse_assert_not_undefined(params_text),
+            "AssertEq" => parse_assert_eq(params_text),
+            "AssertNot" => parse_guard(params_text, GuardMode::Not),
+            "AssertCondition" => parse_guard(params_text, GuardMode::Condition),
+            "AssertNotUndefined" => parse_guard(params_text, GuardMode::NotUndefined),
             "BuiltinCall" => parse_builtin_call(params_text),
             "FunctionCall" => parse_function_call(params_text),
             "CallRule" => parse_call_rule(params_text),
@@ -464,20 +466,24 @@ fn parse_count(params_text: &str) -> Result<Instruction> {
     })
 }
 
-fn parse_assert_condition(params_text: &str) -> Result<Instruction> {
+fn parse_assert_eq(params_text: &str) -> Result<Instruction> {
     let params = parse_params(params_text)?;
-    let condition = get_param_u16(&params, "condition")?;
-    Ok(Instruction::AssertCondition {
-        condition: condition.try_into().unwrap(),
-    })
+    let left: u8 = get_param_u16(&params, "left")?.try_into().unwrap();
+    let right: u8 = get_param_u16(&params, "right")?.try_into().unwrap();
+    Ok(Instruction::AssertEq { left, right })
 }
 
-fn parse_assert_not_undefined(params_text: &str) -> Result<Instruction> {
+fn parse_guard(params_text: &str, mode: GuardMode) -> Result<Instruction> {
     let params = parse_params(params_text)?;
-    let register = get_param_u16(&params, "register")?;
-    Ok(Instruction::AssertNotUndefined {
-        register: register.try_into().unwrap(),
-    })
+    // Accept the original field name for each mode so YAML tests don't change.
+    let register: u8 = match mode {
+        GuardMode::Not => get_param_u16(&params, "operand")?,
+        GuardMode::Condition => get_param_u16(&params, "condition")?,
+        GuardMode::NotUndefined => get_param_u16(&params, "register")?,
+    }
+    .try_into()
+    .unwrap();
+    Ok(Instruction::Guard { register, mode })
 }
 
 fn parse_loop_start(params_text: &str) -> Result<Instruction> {

@@ -15,7 +15,7 @@ pub enum LiteralOrRegister {
 
 /// Loop execution modes for different Rego iteration constructs
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LoopMode {
     /// Any quantification: some x in arr, x := arr[_], etc.
     /// Succeeds if ANY iteration succeeds, exits early on first success
@@ -44,4 +44,16 @@ pub enum ComprehensionMode {
     /// Object comprehension: {key: value | condition}
     /// Collects successful key-value pairs into an object
     Object,
+}
+
+/// Guard sub-modes for the consolidated `Guard` instruction.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GuardMode {
+    /// Assert negation — succeed if operand is false/undefined, fail if true.
+    Not,
+    /// Assert condition — fail (return undefined) if register is false/undefined.
+    Condition,
+    /// Assert not undefined — fail (return undefined) if register is undefined.
+    NotUndefined,
 }
