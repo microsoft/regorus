@@ -259,6 +259,9 @@ impl<'a> Compiler<'a> {
     }
 
     pub fn emit_instruction(&mut self, instruction: Instruction, span: &Span) {
+        if matches!(instruction, Instruction::HostAwait { .. }) {
+            self.program.has_host_await = true;
+        }
         self.program.instructions.push(instruction);
 
         let source_path = span.source.get_path().to_string();

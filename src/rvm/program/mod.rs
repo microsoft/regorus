@@ -3,6 +3,7 @@
 
 mod core;
 mod listing;
+mod metadata;
 mod recompile;
 mod rule_tree;
 mod serialization;
@@ -14,6 +15,6 @@ pub use listing::{
 };
 pub(crate) use serialization::value::{binaries_to_values, BinaryValue};
 pub use serialization::{DeserializationResult, VersionedProgram};
-pub use types::{
-    BuiltinInfo, FunctionInfo, ProgramMetadata, RuleInfo, RuleType, SourceFile, SpanInfo,
-};
+pub use types::{BuiltinInfo, FunctionInfo, RuleInfo, RuleType, SourceFile, SpanInfo};
+
+pub use metadata::ProgramMetadata;

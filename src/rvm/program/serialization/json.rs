@@ -5,8 +5,8 @@ use alloc::format;
 use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 
-use super::super::types::SourceFile;
-use super::super::types::{BuiltinInfo, ProgramMetadata, RuleInfo, SpanInfo};
+use super::super::metadata::ProgramMetadata;
+use super::super::types::{BuiltinInfo, RuleInfo, SourceFile, SpanInfo};
 use super::Program;
 use crate::rvm::instructions::InstructionData;
 use crate::rvm::Instruction;
@@ -24,7 +24,10 @@ impl Program {
                 "optimization_level": self.metadata.optimization_level,
                 "rego_v0": self.rego_v0,
                 "needs_runtime_recursion_check": self.needs_runtime_recursion_check,
-                "needs_recompilation": self.needs_recompilation
+                "has_host_await": self.has_host_await,
+                "needs_recompilation": self.needs_recompilation,
+                "language": self.metadata.language,
+                "annotations": self.metadata.annotations
             },
             "program_structure": {
                 "main_entry_point": self.main_entry_point,
@@ -84,12 +87,36 @@ impl Program {
             .and_then(|v| v.as_u64())
             .and_then(|v| u8::try_from(v).ok())
             .unwrap_or(0);
+        let language = metadata
+            .get("language")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        #[allow(clippy::needless_borrowed_reference)]
+        let annotations: alloc::collections::BTreeMap<String, Value> = match metadata
+            .get("annotations")
+        {
+            Some(&serde_json::Value::Object(ref map)) => {
+                let mut result = alloc::collections::BTreeMap::new();
+                for (k, json_val) in map {
+                    let val = serde_json::from_value::<Value>(json_val.clone())
+                        .map_err(|e| format!("Annotation '{}' deserialization failed: {}", k, e))?;
+                    result.insert(k.clone(), val);
+                }
+                result
+            }
+            _ => alloc::collections::BTreeMap::new(),
+        };
         let rego_v0 = metadata
             .get("rego_v0")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let needs_runtime_recursion_check = metadata
             .get("needs_runtime_recursion_check")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let has_host_await = metadata
+            .get("has_host_await")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let needs_recompilation = metadata
@@ -183,13 +210,26 @@ impl Program {
                 compiled_at,
                 source_info,
                 optimization_level,
+                language,
+                annotations,
             },
             rule_tree,
             resolved_builtins: Vec::new(),
             needs_runtime_recursion_check,
+            has_host_await,
             needs_recompilation,
             rego_v0,
         };
+
+        // Recompute has_host_await when it was not provided in the JSON input
+        // or when the provided value is not a valid boolean.
+        if json_data
+            .get("metadata")
+            .and_then(|m| m.get("has_host_await").and_then(|v| v.as_bool()))
+            .is_none()
+        {
+            program.recompute_host_await_presence();
+        }
 
         if !program.builtin_info_table.is_empty() {
             let _ = program.initialize_resolved_builtins();
