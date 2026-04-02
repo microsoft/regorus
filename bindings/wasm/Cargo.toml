@@ -55,7 +55,7 @@ getrandom03 = { package = "getrandom", version = "0.3.1", features = ["std", "wa
 getrandom = { version = "0.4.2", features = ["wasm_js"] }
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3.66"
+wasm-bindgen-test = "0.3.67"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(wasm_bindgen_unstable_test_coverage)'] }
