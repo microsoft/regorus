@@ -6,4 +6,6 @@
 #[allow(clippy::pattern_type_mismatch)]
 pub mod aliases;
 pub mod ast;
+pub mod expr;
+pub mod parser;
 pub mod strings;
