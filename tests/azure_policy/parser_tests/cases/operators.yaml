@@ -1,0 +1,453 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Operators Test Suite
+# Tests all 19 Azure Policy condition operators with field-based conditions.
+
+cases:
+  # =========================================================================
+  # equals / notEquals
+  # =========================================================================
+
+  - note: equals_string
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "deny"
+
+  - note: equals_string_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+    want_undefined: true
+
+  - note: equals_number
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.count",
+          "equals": 5
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        count: 5
+    want_effect: "audit"
+
+  - note: equals_boolean
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.enabled",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        enabled: true
+    want_effect: "audit"
+
+  - note: equals_null
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.optionalField",
+          "equals": null
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties: {}
+    want_effect: "audit"
+
+  - note: notEquals_string
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "notEquals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+    want_effect: "deny"
+
+  - note: notEquals_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "notEquals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_undefined: true
+
+  # =========================================================================
+  # contains / notContains
+  # =========================================================================
+
+  - note: contains_string
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "contains": "prod"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "my-prod-vm"
+    want_effect: "audit"
+
+  - note: contains_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "contains": "staging"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "my-prod-vm"
+    want_undefined: true
+
+  - note: notContains_string
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "notContains": "staging"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "my-prod-vm"
+    want_effect: "audit"
+
+  # =========================================================================
+  # containsKey / notContainsKey
+  # =========================================================================
+
+  - note: containsKey_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags",
+          "containsKey": "environment"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_effect: "audit"
+
+  - note: notContainsKey_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags",
+          "notContainsKey": "costCenter"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_effect: "deny"
+
+  # =========================================================================
+  # greater / greaterOrEquals / less / lessOrEquals
+  # =========================================================================
+
+  - note: greater_number
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.maxRetries",
+          "greater": 5
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        maxRetries: 10
+    want_effect: "deny"
+
+  - note: greater_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.maxRetries",
+          "greater": 5
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        maxRetries: 3
+    want_undefined: true
+
+  - note: greaterOrEquals_equal
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.minInstances",
+          "greaterOrEquals": 3
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        minInstances: 3
+    want_effect: "audit"
+
+  - note: less_number
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.retentionDays",
+          "less": 30
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        retentionDays: 7
+    want_effect: "deny"
+
+  - note: lessOrEquals_number
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.maxConnections",
+          "lessOrEquals": 100
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        maxConnections: 50
+    want_effect: "audit"
+
+  # =========================================================================
+  # in / notIn
+  # =========================================================================
+
+  - note: in_string_array
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "in": ["eastus", "westus", "centralus"]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "eastus"
+    want_effect: "deny"
+
+  - note: in_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "in": ["eastus", "westus"]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "northeurope"
+    want_undefined: true
+
+  - note: notIn_string_array
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "notIn": ["eastus", "westus"]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "northeurope"
+    want_effect: "deny"
+
+  - note: in_number_array
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.port",
+          "in": [80, 443, 8080]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        port: 443
+    want_effect: "deny"
+
+  # =========================================================================
+  # like / notLike
+  # =========================================================================
+
+  - note: like_wildcard
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "like": "prod-*"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "prod-server-01"
+    want_effect: "audit"
+
+  - note: like_question_mark
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "like": "vm-?"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "vm-1"
+    want_effect: "audit"
+
+  - note: notLike_wildcard
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "notLike": "test-*"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "prod-server-01"
+    want_effect: "audit"
+
+  # =========================================================================
+  # match / matchInsensitively
+  # =========================================================================
+
+  - note: match_pattern
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "match": "vm-##"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "vm-01"
+    want_effect: "audit"
+
+  - note: matchInsensitively_pattern
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "matchInsensitively": "VM-##"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "vm-01"
+    want_effect: "audit"
+
+  - note: notMatch_pattern
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "notMatch": "test-*"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "prod-server-01"
+    want_effect: "audit"
+
+  - note: notMatchInsensitively_pattern
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "notMatchInsensitively": "TEST-##"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "prod-01"
+    want_effect: "audit"
+
+  # =========================================================================
+  # exists
+  # =========================================================================
+
+  - note: exists_true
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.optionalSetting",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        optionalSetting: "value"
+    want_effect: "audit"
+
+  - note: exists_false
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.optionalSetting",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties: {}
+    want_effect: "audit"
+
+  - note: exists_string_true
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.optionalSetting",
+          "exists": "true"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        optionalSetting: "value"
+    want_effect: "audit"

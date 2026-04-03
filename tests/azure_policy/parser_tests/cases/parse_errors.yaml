@@ -1,0 +1,273 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Parse Error Test Suite
+# Tests that malformed policy JSON and invalid constructs are properly rejected.
+# These test cases are expected to fail parsing.
+
+cases:
+  # =========================================================================
+  # Missing required keys
+  # =========================================================================
+
+  - note: missing_if_key
+    skip: true  # Tests policy_rule-level error; needs parse_policy_rule
+    policy_rule: |
+      {
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  - note: missing_then_key
+    skip: true  # Tests policy_rule-level error; needs parse_policy_rule
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        }
+      }
+    want_parse_error: true
+
+  - note: missing_effect_in_then
+    skip: true  # Tests policy_rule-level error; needs parse_policy_rule
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {}
+      }
+    want_parse_error: true
+
+  # =========================================================================
+  # Missing operator in condition
+  # =========================================================================
+
+  - note: field_without_operator
+    policy_rule: |
+      {
+        "if": {
+          "field": "type"
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  - note: value_without_operator
+    policy_rule: |
+      {
+        "if": {
+          "value": "[parameters('x')]"
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  # =========================================================================
+  # Invalid JSON structure
+  # =========================================================================
+
+  - note: allOf_not_array
+    policy_rule: |
+      {
+        "if": {
+          "allOf": "not-an-array"
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  - note: anyOf_not_array
+    policy_rule: |
+      {
+        "if": {
+          "anyOf": 42
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  - note: not_not_object
+    policy_rule: |
+      {
+        "if": {
+          "not": [1, 2, 3]
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  # =========================================================================
+  # Unknown keys in condition objects
+  # =========================================================================
+
+  - note: unknown_key_in_condition
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines",
+          "unknownKey": "value"
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  # =========================================================================
+  # Count structure issues
+  # =========================================================================
+
+  - note: count_missing_field_and_value
+    policy_rule: |
+      {
+        "if": {
+          "count": {},
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  - note: count_with_both_field_and_value
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "some.alias[*]",
+            "value": ["a", "b"]
+          },
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  # =========================================================================
+  # Invalid ARM template expressions
+  # =========================================================================
+
+  - note: malformed_expression_unclosed_paren
+    policy_rule: |
+      {
+        "if": {
+          "value": "[parameters('x']",
+          "equals": "something"
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  # =========================================================================
+  # Both field and value LHS
+  # =========================================================================
+
+  - note: both_field_and_value_lhs
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "value": "something",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  # =========================================================================
+  # Empty input
+  # =========================================================================
+
+  - note: empty_object
+    policy_rule: |
+      {}
+    want_parse_error: true
+
+  - note: not_an_object
+    policy_rule: |
+      "just a string"
+    want_parse_error: true
+
+  # =========================================================================
+  # Extra keys in logical operators
+  # =========================================================================
+
+  - note: extra_key_in_allOf
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "X" }
+          ],
+          "field": "name",
+          "equals": "Y"
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  - note: extra_key_in_not
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "field": "type",
+            "equals": "Microsoft.Compute/virtualMachines"
+          },
+          "field": "name",
+          "equals": "something"
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  # =========================================================================
+  # count.name errors
+  # =========================================================================
+
+  - note: count_name_with_field_not_value
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "name": "item"
+          },
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  - note: count_name_not_string
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": ["a", "b"],
+            "name": 42
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+  # =========================================================================
+  # Multiple operators in a single condition
+  # =========================================================================
+
+  - note: multiple_operators
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines",
+          "in": ["Microsoft.Compute/virtualMachines"]
+        },
+        "then": { "effect": "deny" }
+      }
+    want_parse_error: true
+
+
