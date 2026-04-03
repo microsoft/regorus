@@ -133,6 +133,19 @@ pub fn generate_assembly_listing(program: &Program, config: &AssemblyListingConf
                 program.metadata.optimization_level
             ),
         );
+        if !program.metadata.language.is_empty() {
+            push_line(
+                &mut output,
+                format_args!(";   language: {}", program.metadata.language),
+            );
+        }
+        if !program.metadata.annotations.is_empty() {
+            push_line(&mut output, format_args!(";   annotations:"));
+            for (key, value) in &program.metadata.annotations {
+                let json = serde_json::to_string(value).unwrap_or_else(|_| "<invalid>".to_string());
+                push_line(&mut output, format_args!(";     {}: {}", key, json));
+            }
+        }
     }
 
     push_line(&mut output, format_args!(";"));

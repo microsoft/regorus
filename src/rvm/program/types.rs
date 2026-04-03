@@ -173,16 +173,3 @@ impl SourceFile {
         Self { name, content }
     }
 }
-
-/// Program compilation metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProgramMetadata {
-    /// Compiler version that generated this program
-    pub compiler_version: String,
-    /// Compilation timestamp
-    pub compiled_at: String,
-    /// Source policy information
-    pub source_info: String,
-    /// Optimization level used
-    pub optimization_level: u8,
-}
