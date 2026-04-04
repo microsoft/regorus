@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#[cfg(feature = "explanations")]
+use crate::evaluation_trace::{EvaluationTrace, ExplanationSettings};
 use crate::rvm::program::Program;
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 use crate::utils::limits;
@@ -179,6 +181,14 @@ pub struct RegoVM {
     /// Cached `Value` representation of `program.metadata`, computed once in
     /// `load_program()` and reused by `LoadMetadata` instructions.
     pub(super) metadata_value: Value,
+
+    /// Explanation settings controlling what is captured.
+    #[cfg(feature = "explanations")]
+    pub(super) explanation_settings: ExplanationSettings,
+
+    /// Runtime evaluation trace (append-only log of outcomes).
+    #[cfg(feature = "explanations")]
+    pub(super) trace: EvaluationTrace,
 }
 
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
@@ -255,6 +265,10 @@ impl RegoVM {
             cached_builtin_args: Vec::new(),
             virtual_element_on_non_collection: false,
             metadata_value: Value::Undefined,
+            #[cfg(feature = "explanations")]
+            explanation_settings: ExplanationSettings::default(),
+            #[cfg(feature = "explanations")]
+            trace: EvaluationTrace::new(),
         }
     }
 
@@ -679,6 +693,30 @@ impl RegoVM {
     #[allow(clippy::unused_self)]
     pub(super) fn apply_memory_budget_precedence(&mut self, err: VmError) -> VmError {
         err
+    }
+
+    /// Configure explanation/causality capture settings.
+    #[cfg(feature = "explanations")]
+    pub const fn set_explanation_settings(&mut self, settings: ExplanationSettings) {
+        self.explanation_settings = settings;
+    }
+
+    /// Take the causality report for the most recent evaluation.
+    ///
+    /// Returns a JSON string. Clears the internal trace.
+    #[cfg(feature = "explanations")]
+    pub fn take_causality_report(
+        &mut self,
+        query_result: Value,
+    ) -> core::result::Result<String, alloc::string::String> {
+        let report = crate::causality_report::materialize(
+            &self.program,
+            &self.trace,
+            &self.explanation_settings,
+            query_result,
+        );
+        self.trace.clear();
+        serde_json::to_string_pretty(&report).map_err(|e| alloc::format!("{e}"))
     }
 
     pub(super) fn reset_execution_timer_state(&mut self) {

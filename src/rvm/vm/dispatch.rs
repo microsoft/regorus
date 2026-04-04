@@ -333,27 +333,98 @@ impl RegoVM {
                 Ok(InstructionOutcome::Continue)
             }
             AssertEq { left, right } => {
-                let a = self.get_register(left)?;
-                let b = self.get_register(right)?;
-                let passed = a != &Value::Undefined && b != &Value::Undefined && a == b;
+                let a_val = self.get_register(left)?.clone();
+                let b_val = self.get_register(right)?.clone();
+                #[allow(unused_mut)]
+                let mut passed =
+                    a_val != Value::Undefined && b_val != Value::Undefined && a_val == b_val;
+                #[cfg(feature = "explanations")]
+                let mut assumed = false;
+                #[cfg(feature = "explanations")]
+                if !passed && self.explanation_settings.assume_unknown_input {
+                    let a_undef = a_val == Value::Undefined;
+                    let b_undef = b_val == Value::Undefined;
+                    if a_undef || b_undef {
+                        let pc_u32 = u32::try_from(self.pc).unwrap_or(u32::MAX);
+                        let info = program
+                            .condition_infos
+                            .get(self.pc)
+                            .and_then(Option::as_ref);
+                        if info.is_some_and(|i| i.involves_input()) {
+                            let input_path = info
+                                .and_then(|i| i.checked_provenance.as_ref())
+                                .map(|p| alloc::format!("{p}"))
+                                .unwrap_or_default();
+                            let cond_text = info.map(|i| i.text.clone()).unwrap_or_default();
+                            self.trace.record_assumption(
+                                crate::evaluation_trace::AssumptionKind::ConditionHolds,
+                                input_path,
+                                cond_text,
+                                pc_u32,
+                            );
+                            passed = true;
+                            assumed = true;
+                        }
+                    }
+                }
+                #[cfg(feature = "explanations")]
+                if self.explanation_settings.enabled {
+                    let pc = u32::try_from(self.pc).unwrap_or(u32::MAX);
+                    self.trace
+                        .record_condition(pc, passed, assumed, Some(a_val), Some(b_val));
+                }
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)
             }
             Guard { register, mode } => {
-                let value = self.get_register(register)?;
-                let passed = match mode {
-                    GuardMode::Not => match *value {
+                let value = self.get_register(register)?.clone();
+                #[allow(unused_mut)]
+                let mut passed = match mode {
+                    GuardMode::Not => match value {
                         Value::Undefined => true,
                         Value::Bool(b) => !b,
                         _ => false,
                     },
-                    GuardMode::Condition => match *value {
+                    GuardMode::Condition => match value {
                         Value::Bool(b) => b,
                         Value::Undefined => false,
                         _ => true,
                     },
                     GuardMode::NotUndefined => !matches!(value, Value::Undefined),
                 };
+                #[cfg(feature = "explanations")]
+                let mut assumed = false;
+                #[cfg(feature = "explanations")]
+                if !passed && self.explanation_settings.assume_unknown_input {
+                    let pc_u32 = u32::try_from(self.pc).unwrap_or(u32::MAX);
+                    let info = program
+                        .condition_infos
+                        .get(self.pc)
+                        .and_then(Option::as_ref);
+                    if info.is_some_and(|i| i.involves_input()) && value == Value::Undefined {
+                        let input_path = info
+                            .and_then(|i| i.checked_provenance.as_ref())
+                            .map(|p| alloc::format!("{p}"))
+                            .unwrap_or_default();
+                        let cond_text = info.map(|i| i.text.clone()).unwrap_or_default();
+                        let kind = match mode {
+                            GuardMode::NotUndefined => {
+                                crate::evaluation_trace::AssumptionKind::Exists
+                            }
+                            _ => crate::evaluation_trace::AssumptionKind::ConditionHolds,
+                        };
+                        self.trace
+                            .record_assumption(kind, input_path, cond_text, pc_u32);
+                        passed = true;
+                        assumed = true;
+                    }
+                }
+                #[cfg(feature = "explanations")]
+                if self.explanation_settings.enabled {
+                    let pc = u32::try_from(self.pc).unwrap_or(u32::MAX);
+                    self.trace
+                        .record_condition(pc, passed, assumed, Some(value), None);
+                }
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)
             }

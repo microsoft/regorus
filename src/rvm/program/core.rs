@@ -13,6 +13,8 @@ use super::types::{BuiltinInfo, RuleInfo, SourceFile, SpanInfo};
 use crate::builtins::BuiltinFcn;
 use crate::rvm::instructions::InstructionData;
 use crate::rvm::Instruction;
+#[cfg(feature = "explanations")]
+use crate::static_provenance::StaticConditionInfo;
 use crate::value::Value;
 
 /// Complete compiled program containing all execution artifacts
@@ -87,6 +89,19 @@ pub struct Program {
     /// Serialized separately in the artifact section for guaranteed availability
     #[serde(skip, default)]
     pub rego_v0: bool,
+
+    /// Static condition info for each instruction (parallel to `instructions`).
+    /// Only populated when `explanations` feature is enabled.
+    #[cfg(feature = "explanations")]
+    #[serde(skip, default)]
+    pub condition_infos: Vec<Option<StaticConditionInfo>>,
+
+    /// Register provenances per rule definition.
+    /// Outer index: flat definition index (ordered by rule, then definition within rule).
+    /// Inner index: register number.
+    #[cfg(feature = "explanations")]
+    #[serde(skip, default)]
+    pub register_provenances: Vec<Vec<Option<crate::static_provenance::Provenance>>>,
 }
 
 impl Program {
@@ -137,6 +152,10 @@ impl Program {
             has_host_await: false,
             needs_recompilation: false,
             rego_v0: false, // Default to Rego v1
+            #[cfg(feature = "explanations")]
+            condition_infos: Vec::new(),
+            #[cfg(feature = "explanations")]
+            register_provenances: Vec::new(),
         }
     }
 

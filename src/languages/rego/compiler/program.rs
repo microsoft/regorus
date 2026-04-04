@@ -188,6 +188,10 @@ impl<'a> Compiler<'a> {
             .validate_limits()
             .map_err(|e| CompilerError::from(anyhow!(e)))?;
 
+        // Run static provenance analysis to populate condition_infos and register_provenances.
+        #[cfg(feature = "explanations")]
+        crate::static_provenance::analyze(&mut self.program);
+
         Ok(self.program)
     }
 

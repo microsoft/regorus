@@ -219,6 +219,10 @@ impl Program {
             has_host_await,
             needs_recompilation,
             rego_v0,
+            #[cfg(feature = "explanations")]
+            condition_infos: Vec::new(),
+            #[cfg(feature = "explanations")]
+            register_provenances: Vec::new(),
         };
 
         // Recompute has_host_await when it was not provided in the JSON input

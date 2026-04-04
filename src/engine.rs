@@ -2004,4 +2004,37 @@ impl Engine {
         engine.apply_effective_execution_timer_config();
         engine
     }
+
+    /// Configure explanation/causality settings.
+    ///
+    /// When `enabled` is true, the engine captures condition evaluation
+    /// outcomes during policy evaluation. The report can be retrieved
+    /// with [`take_causality_report`](Self::take_causality_report).
+    #[cfg(feature = "explanations")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "explanations")))]
+    pub const fn set_explanation_settings(
+        &mut self,
+        enabled: bool,
+        value_mode: crate::evaluation_trace::ValueMode,
+        condition_mode: crate::evaluation_trace::ConditionMode,
+    ) {
+        let _ = (enabled, value_mode, condition_mode);
+        // TODO: Wire to interpreter when interpreter support is added.
+    }
+
+    /// Take the causality report for the most recent evaluation.
+    ///
+    /// Returns a JSON string. Calling this clears the internal trace so
+    /// a subsequent call returns an empty report.
+    #[cfg(feature = "explanations")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "explanations")))]
+    pub fn take_causality_report(&mut self) -> Result<String> {
+        // TODO: Wire to interpreter when interpreter support is added.
+        let empty = crate::causality_report::CausalityReport {
+            query_result: Value::Undefined,
+            rules: Vec::new(),
+            assumptions: Vec::new(),
+        };
+        serde_json::to_string_pretty(&empty).map_err(|e| anyhow!("{e}"))
+    }
 }
