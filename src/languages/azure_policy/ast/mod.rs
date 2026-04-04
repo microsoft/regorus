@@ -87,7 +87,7 @@ pub enum EffectKind {
     DenyAction,
     Manual,
     /// An effect value that wasn't recognized (may be a parameterized expression).
-    /// Use [`EffectNode::raw`] to get the original text.
+    /// The original text can be retrieved from [`EffectNode::raw`].
     Other,
 }
 
@@ -283,13 +283,18 @@ pub struct PolicyDefinition {
     /// Optional `metadata` (kept as raw JSON).
     pub metadata: Option<JsonValue>,
 
-    /// Parameter definitions as an ordered list; lookups should match `ParameterDefinition::name`.
+    /// Parameter definitions as an ordered list; each entry includes its parameter name.
     pub parameters: Vec<ParameterDefinition>,
 
     /// The parsed `policyRule`.
     pub policy_rule: PolicyRule,
 
-    /// Any other top-level fields not handled above (e.g., `id`, `name`, `type`, `policyType`).
+    /// Any unrecognized fields collected during parsing.
+    ///
+    /// In the **wrapped** form this includes both envelope-level keys
+    /// (e.g., `id`, `name`, `type`) and unrecognized keys inside the
+    /// inner `properties` object. In the **unwrapped** form it contains
+    /// only unrecognized top-level keys.
     pub extra: Vec<ObjectEntry>,
 }
 

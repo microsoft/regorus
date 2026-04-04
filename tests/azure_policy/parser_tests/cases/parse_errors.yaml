@@ -11,7 +11,7 @@ cases:
   # =========================================================================
 
   - note: missing_if_key
-    skip: true  # Tests policy_rule-level error; needs parse_policy_rule
+    parse_level: policy_rule
     policy_rule: |
       {
         "then": { "effect": "deny" }
@@ -19,7 +19,7 @@ cases:
     want_parse_error: true
 
   - note: missing_then_key
-    skip: true  # Tests policy_rule-level error; needs parse_policy_rule
+    parse_level: policy_rule
     policy_rule: |
       {
         "if": {
@@ -30,7 +30,7 @@ cases:
     want_parse_error: true
 
   - note: missing_effect_in_then
-    skip: true  # Tests policy_rule-level error; needs parse_policy_rule
+    parse_level: policy_rule
     policy_rule: |
       {
         "if": {

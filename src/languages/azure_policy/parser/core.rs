@@ -347,6 +347,27 @@ impl<'source> Parser<'source> {
     }
 
     // ========================================================================
+    // Duplicate-key guard
+    // ========================================================================
+
+    /// Set `slot` to `val`, returning [`ParseError::DuplicateKey`] if already set.
+    pub(super) fn set_once<T>(
+        slot: &mut Option<T>,
+        val: T,
+        key: &str,
+        span: &Span,
+    ) -> Result<(), ParseError> {
+        if slot.is_some() {
+            return Err(ParseError::DuplicateKey {
+                span: span.clone(),
+                key: String::from(key),
+            });
+        }
+        *slot = Some(val);
+        Ok(())
+    }
+
+    // ========================================================================
     // Conversion helpers
     // ========================================================================
 

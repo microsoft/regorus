@@ -32,6 +32,13 @@ struct TestCase {
     /// If true, skip this test case.
     #[serde(default)]
     pub skip: Option<bool>,
+
+    /// Parsing level: `"constraint"` (default) extracts the `"if"` block and
+    /// calls `parse_constraint`; `"policy_rule"` calls `parse_policy_rule` on
+    /// the full JSON; `"policy_definition"` calls `parse_policy_definition`
+    /// on the full JSON.
+    #[serde(default)]
+    pub parse_level: Option<String>,
 }
 
 /// Top-level YAML test file structure.
@@ -95,7 +102,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
 
         let expects_parse_error = case.want_parse_error == Some(true);
 
-        let policy_rule_json = if let Some(ref rule) = case.policy_rule {
+        let input_json = if let Some(ref rule) = case.policy_rule {
             rule.clone()
         } else if let Some(ref rule) = test.policy_rule {
             rule.clone()
@@ -103,15 +110,35 @@ fn yaml_test_impl(file: &str) -> Result<()> {
             panic!("case '{}': must specify 'policy_rule'", case.note);
         };
 
-        // Extract the "if" constraint JSON. If extraction fails (malformed
-        // JSON or missing "if" key), feed the raw policy_rule to
-        // parse_constraint — it should fail, matching want_parse_error.
-        let constraint_json =
-            extract_if_json(&policy_rule_json).unwrap_or_else(|| policy_rule_json.clone());
+        let parse_level = case.parse_level.as_deref().unwrap_or("constraint");
 
-        let source = Source::from_contents(format!("test:{}", case.note), constraint_json)?;
-
-        let parse_result = parser::parse_constraint(&source).map(|_| ());
+        let parse_result = match parse_level {
+            "policy_rule" => {
+                // Parse the full policy_rule JSON with parse_policy_rule.
+                let source = Source::from_contents(format!("test:{}", case.note), input_json)?;
+                parser::parse_policy_rule(&source).map(|_| ())
+            }
+            "policy_definition" => {
+                // Parse the full policy definition JSON with parse_policy_definition.
+                let source = Source::from_contents(format!("test:{}", case.note), input_json)?;
+                parser::parse_policy_definition(&source).map(|_| ())
+            }
+            "constraint" => {
+                // Extract the "if" constraint JSON. If extraction fails
+                // (malformed JSON or missing "if" key), feed the raw
+                // input to parse_constraint — it should fail,
+                // matching want_parse_error.
+                let constraint_json = match extract_if_json(&input_json) {
+                    Some(json) => json,
+                    None => input_json,
+                };
+                let source = Source::from_contents(format!("test:{}", case.note), constraint_json)?;
+                parser::parse_constraint(&source).map(|_| ())
+            }
+            other => {
+                panic!("case '{}': unknown parse_level '{}'", case.note, other);
+            }
+        };
 
         match parse_result {
             Ok(()) => {
