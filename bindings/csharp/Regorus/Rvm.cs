@@ -336,6 +336,29 @@ namespace Regorus
             });
         }
 
+        /// <summary>
+        /// Set explanation settings for causality tracking.
+        /// </summary>
+        public void SetExplanationSettings(bool enabled, ExplanationValueMode valueMode = ExplanationValueMode.Redacted, ExplanationConditionMode conditionMode = ExplanationConditionMode.PrimaryOnly, bool assumeUnknownInput = false)
+        {
+            UseHandle(vmPtr =>
+            {
+                CheckAndDropResult(API.regorus_rvm_set_explanation_settings((RegorusRvm*)vmPtr, enabled, (byte)valueMode, (byte)conditionMode, assumeUnknownInput));
+                return 0;
+            });
+        }
+
+        /// <summary>
+        /// Take the causality report from the most recent evaluation as JSON.
+        /// </summary>
+        public string? TakeCausalityReport()
+        {
+            return UseHandle(vmPtr =>
+            {
+                return CheckAndDropResult(API.regorus_rvm_take_causality_report((RegorusRvm*)vmPtr));
+            });
+        }
+
         private static Rvm GetRvmResult(RegorusResult result)
         {
             try

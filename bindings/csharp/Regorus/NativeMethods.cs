@@ -217,6 +217,18 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_rvm_get_execution_state(RegorusRvm* vm);
 
         /// <summary>
+        /// Set explanation settings for causality tracking on the RVM.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_explanation_settings", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_rvm_set_explanation_settings(RegorusRvm* vm, [MarshalAs(UnmanagedType.U1)] bool enabled, byte value_mode, byte condition_mode, [MarshalAs(UnmanagedType.U1)] bool assume_unknown_input);
+
+        /// <summary>
+        /// Take the causality report from the most recent RVM evaluation as JSON.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_rvm_take_causality_report", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_rvm_take_causality_report(RegorusRvm* vm);
+
+        /// <summary>
         /// Set the maximum instruction limit.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_max_instructions", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -391,6 +403,20 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_engine_clear_coverage_data", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_engine_clear_coverage_data(RegorusEngine* engine);
+
+        /// <summary>
+        /// Set explanation settings for causality tracking.
+        /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.set_explanation_settings
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_set_explanation_settings", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_set_explanation_settings(RegorusEngine* engine, [MarshalAs(UnmanagedType.U1)] bool enabled, byte value_mode, byte condition_mode, [MarshalAs(UnmanagedType.U1)] bool assume_unknown_input);
+
+        /// <summary>
+        /// Take the causality report from the most recent evaluation as JSON.
+        /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.take_causality_report
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_take_causality_report", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_take_causality_report(RegorusEngine* engine);
 
         /// <summary>
         /// Whether to gather output of print statements.

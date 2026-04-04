@@ -11,6 +11,24 @@ using Regorus.Internal;
 namespace Regorus
 {
     /// <summary>
+    /// Controls whether explanation bindings keep or redact secret-looking values.
+    /// </summary>
+    public enum ExplanationValueMode : byte
+    {
+        Redacted = 0,
+        Full = 1,
+    }
+
+    /// <summary>
+    /// Controls whether reasons include only the primary condition or all contributing conditions.
+    /// </summary>
+    public enum ExplanationConditionMode : byte
+    {
+        PrimaryOnly = 0,
+        AllContributing = 1,
+    }
+
+    /// <summary>
     /// C# Wrapper for the Regorus engine.
     /// This class is not thread-safe. For multithreaded use, prefer cloning after adding policies and data to an instance.
     /// Cloning is cheap and involves only incrementing reference counts for shared immutable objects like parsed policies,
@@ -287,6 +305,22 @@ namespace Regorus
             return UseHandle(enginePtr =>
             {
                 return CheckAndDropResult(Regorus.Internal.API.regorus_engine_get_coverage_report_pretty((Regorus.Internal.RegorusEngine*)enginePtr));
+            });
+        }
+
+        public void SetExplanationSettings(bool enabled, ExplanationValueMode valueMode = ExplanationValueMode.Redacted, ExplanationConditionMode conditionMode = ExplanationConditionMode.PrimaryOnly, bool assumeUnknownInput = false)
+        {
+            UseHandle(enginePtr =>
+            {
+                CheckAndDropResult(Regorus.Internal.API.regorus_engine_set_explanation_settings((Regorus.Internal.RegorusEngine*)enginePtr, enabled, (byte)valueMode, (byte)conditionMode, assumeUnknownInput));
+            });
+        }
+
+        public string? TakeCausalityReport()
+        {
+            return UseHandle(enginePtr =>
+            {
+                return CheckAndDropResult(Regorus.Internal.API.regorus_engine_take_causality_report((Regorus.Internal.RegorusEngine*)enginePtr));
             });
         }
 

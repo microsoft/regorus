@@ -37,6 +37,7 @@ default = [
 	"regorus/full-opa",
 	"cache",
 	"contention_checks",
+	"explanations",
 ]
 ast = ["regorus/ast"]
 azure_policy = ["regorus/azure_policy"]
@@ -47,6 +48,7 @@ contention_checks = ["parking_lot"]
 rvm = ["regorus/rvm"]
 rbac = ["regorus/azure-rbac"]
 cache = ["regorus/cache"]
+explanations = ["regorus/explanations"]
 custom_allocator = []
 
 [build-dependencies]

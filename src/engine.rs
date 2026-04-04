@@ -2017,8 +2017,9 @@ impl Engine {
         enabled: bool,
         value_mode: crate::evaluation_trace::ValueMode,
         condition_mode: crate::evaluation_trace::ConditionMode,
+        assume_unknown_input: bool,
     ) {
-        let _ = (enabled, value_mode, condition_mode);
+        let _ = (enabled, value_mode, condition_mode, assume_unknown_input);
         // TODO: Wire to interpreter when interpreter support is added.
     }
 
