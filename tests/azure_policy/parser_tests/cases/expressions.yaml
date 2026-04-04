@@ -1,0 +1,554 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# ARM Template Expressions Test Suite
+# Tests [parameters(...)], [concat(...)], [field(...)], [if(...)], and other
+# ARM template expression patterns in field, value, and effect positions.
+
+cases:
+  # =========================================================================
+  # parameters() references
+  # =========================================================================
+
+  - note: expr_parameters_in_value
+    policy_rule: |
+      {
+        "if": {
+          "value": "[parameters('environment')]",
+          "equals": "production"
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      environment: "production"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: expr_parameters_in_rhs
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "in": "[parameters('allowedLocations')]"
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      allowedLocations:
+        - "eastus"
+        - "westus"
+    resource:
+      location: "eastus"
+    want_effect: "deny"
+
+  - note: expr_parameters_in_effect
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    parameters:
+      effect: "deny"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "deny"
+
+  # =========================================================================
+  # concat()
+  # =========================================================================
+
+  - note: expr_concat_strings
+    policy_rule: |
+      {
+        "if": {
+          "value": "[concat('Microsoft.Compute/', 'virtualMachines')]",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: expr_concat_with_parameters
+    policy_rule: |
+      {
+        "if": {
+          "value": "[concat(parameters('prefix'), '-vm')]",
+          "equals": "prod-vm"
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      prefix: "prod"
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: expr_concat_nested
+    policy_rule: |
+      {
+        "if": {
+          "value": "[concat(concat('a', 'b'), 'c')]",
+          "equals": "abc"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # =========================================================================
+  # field() function
+  # =========================================================================
+
+  - note: expr_field_function
+    policy_rule: |
+      {
+        "if": {
+          "value": "[field('name')]",
+          "contains": "prod"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "my-prod-vm"
+    want_effect: "audit"
+
+  - note: expr_field_in_concat
+    policy_rule: |
+      {
+        "if": {
+          "value": "[concat(field('type'), '/', field('name'))]",
+          "contains": "Microsoft.Compute"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm1"
+    want_effect: "audit"
+
+  # =========================================================================
+  # if() conditional
+  # =========================================================================
+
+  - note: expr_if_conditional
+    policy_rule: |
+      {
+        "if": {
+          "value": "[if(equals(parameters('env'), 'prod'), 'deny', 'audit')]",
+          "equals": "deny"
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      env: "prod"
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # =========================================================================
+  # String functions
+  # =========================================================================
+
+  - note: expr_toLower
+    policy_rule: |
+      {
+        "if": {
+          "value": "[toLower(field('name'))]",
+          "equals": "my-vm"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "My-VM"
+    want_effect: "audit"
+
+  - note: expr_toUpper
+    policy_rule: |
+      {
+        "if": {
+          "value": "[toUpper(parameters('prefix'))]",
+          "equals": "PROD"
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      prefix: "prod"
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: expr_replace
+    policy_rule: |
+      {
+        "if": {
+          "value": "[replace(field('name'), '-', '_')]",
+          "equals": "my_prod_vm"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "my-prod-vm"
+    want_effect: "audit"
+
+  - note: expr_substring
+    policy_rule: |
+      {
+        "if": {
+          "value": "[substring(field('name'), 0, 4)]",
+          "equals": "prod"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "prod-vm-01"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Numeric functions
+  # =========================================================================
+
+  - note: expr_length
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(parameters('allowedLocations'))]",
+          "greater": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      allowedLocations:
+        - "eastus"
+        - "westus"
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: expr_add
+    policy_rule: |
+      {
+        "if": {
+          "value": "[add(parameters('base'), 1)]",
+          "greater": 5
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      base: 10
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Context functions
+  # =========================================================================
+
+  - note: expr_resourceGroup
+    policy_rule: |
+      {
+        "if": {
+          "value": "[resourceGroup().location]",
+          "notIn": "[parameters('allowedLocations')]"
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      allowedLocations:
+        - "westus2"
+        - "centralus"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: expr_subscription
+    policy_rule: |
+      {
+        "if": {
+          "value": "[subscription().subscriptionId]",
+          "equals": "00000000-0000-0000-0000-000000000000"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: expr_requestContext_apiVersion
+    policy_rule: |
+      {
+        "if": {
+          "value": "[requestContext().apiVersion]",
+          "greaterOrEquals": "2021-04-01"
+        },
+        "then": { "effect": "deny" }
+      }
+    context:
+      resourceGroup:
+        name: "myResourceGroup"
+        location: "eastus"
+      subscription:
+        subscriptionId: "00000000-0000-0000-0000-000000000000"
+      requestContext:
+        apiVersion: "2023-01-01"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: expr_requestContext_apiVersion_older
+    policy_rule: |
+      {
+        "if": {
+          "value": "[requestContext().apiVersion]",
+          "greaterOrEquals": "2024-06-01"
+        },
+        "then": { "effect": "deny" }
+      }
+    context:
+      resourceGroup:
+        name: "myResourceGroup"
+        location: "eastus"
+      subscription:
+        subscriptionId: "00000000-0000-0000-0000-000000000000"
+      requestContext:
+        apiVersion: "2023-01-01"
+    resource:
+      type: "any"
+    want_undefined: true
+
+  - note: expr_policy_assignmentId
+    policy_rule: |
+      {
+        "if": {
+          "value": "[policy().assignmentId]",
+          "equals": "/subscriptions/sub1/providers/Microsoft.Authorization/policyAssignments/myAssignment"
+        },
+        "then": { "effect": "audit" }
+      }
+    context:
+      resourceGroup:
+        name: "myResourceGroup"
+        location: "eastus"
+      subscription:
+        subscriptionId: "00000000-0000-0000-0000-000000000000"
+      policy:
+        assignmentId: "/subscriptions/sub1/providers/Microsoft.Authorization/policyAssignments/myAssignment"
+        definitionId: "/providers/Microsoft.Authorization/policyDefinitions/myDefinition"
+        setDefinitionId: ""
+        definitionReferenceId: ""
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: expr_policy_definitionId
+    policy_rule: |
+      {
+        "if": {
+          "value": "[policy().definitionId]",
+          "contains": "myDefinition"
+        },
+        "then": { "effect": "deny" }
+      }
+    context:
+      resourceGroup:
+        name: "myResourceGroup"
+        location: "eastus"
+      subscription:
+        subscriptionId: "00000000-0000-0000-0000-000000000000"
+      policy:
+        assignmentId: "/subscriptions/sub1/providers/Microsoft.Authorization/policyAssignments/myAssignment"
+        definitionId: "/providers/Microsoft.Authorization/policyDefinitions/myDefinition"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  # =========================================================================
+  # current() in count contexts
+  # =========================================================================
+
+  - note: expr_current_in_value_count
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('requiredTags')]",
+            "name": "tagName",
+            "where": {
+              "value": "[current('tagName')]",
+              "notEquals": ""
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      requiredTags:
+        - "environment"
+        - "costCenter"
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Dot and index access in expressions
+  # =========================================================================
+
+  - note: expr_dot_access
+    policy_rule: |
+      {
+        "if": {
+          "value": "[resourceGroup().name]",
+          "equals": "myResourceGroup"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: expr_index_access
+    policy_rule: |
+      {
+        "if": {
+          "value": "[parameters('allowedLocations')[0]]",
+          "equals": "eastus"
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      allowedLocations:
+        - "eastus"
+        - "westus"
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Escaped bracket literals (not expressions)
+  # =========================================================================
+
+  - note: escaped_bracket_literal
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "equals": "[[not-an-expression]"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "[not-an-expression]"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Complex nested expressions
+  # =========================================================================
+
+  - note: expr_complex_nested
+    policy_rule: |
+      {
+        "if": {
+          "value": "[if(contains(toLower(field('location')), 'us'), 'allowed', 'blocked')]",
+          "equals": "blocked"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "northeurope"
+    want_effect: "deny"
+
+  - note: expr_multiple_expression_fields
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "value": "[parameters('environment')]",
+              "equals": "production"
+            },
+            {
+              "value": "[concat(parameters('prefix'), '-', parameters('suffix'))]",
+              "notEquals": ""
+            },
+            {
+              "value": "[length(parameters('allowedLocations'))]",
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      environment: "production"
+      prefix: "prod"
+      suffix: "01"
+      allowedLocations:
+        - "eastus"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Unary minus for negative number literals
+  # =========================================================================
+
+  - note: expr_unary_minus_literal
+    policy_rule: |
+      {
+        "if": {
+          "value": "[add(-1, 5)]",
+          "equals": 4
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: expr_unary_minus_float
+    policy_rule: |
+      {
+        "if": {
+          "value": "[add(-2.5, 3.5)]",
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: expr_unary_minus_sub_expression
+    policy_rule: |
+      {
+        "if": {
+          "value": "[sub(10, -3)]",
+          "equals": 13
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: expr_zero_arg_function_call
+    policy_rule: |
+      {
+        "if": {
+          "value": "[concat()]",
+          "equals": ""
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"

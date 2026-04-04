@@ -39,6 +39,10 @@ pub enum ParseError {
     InvalidCountName { span: Span },
     /// `name` used without `value` in count.
     MisplacedCountName { span: Span },
+    /// Multiple operator keys in a single condition.
+    MultipleOperators { span: Span },
+    /// A duplicate key was found in a JSON object.
+    DuplicateKey { span: Span, key: String },
     /// A custom error message (e.g., from sub-parsing).
     Custom { span: Span, message: String },
 }
@@ -136,6 +140,16 @@ impl core::fmt::Display for ParseError {
                     "{}",
                     span.error("'name' can only be used with count-value")
                 )
+            }
+            ParseError::MultipleOperators { ref span } => {
+                write!(
+                    f,
+                    "{}",
+                    span.error("only one operator key allowed in a condition")
+                )
+            }
+            ParseError::DuplicateKey { ref span, ref key } => {
+                write!(f, "{}", span.error(&format!("duplicate key \"{}\"", key)))
             }
             ParseError::Custom {
                 ref span,

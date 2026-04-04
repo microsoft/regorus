@@ -1,19 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Core recursive-descent JSON parser for Azure Policy.
+//! Recursive-descent JSON parser for Azure Policy rule constraints.
 //!
-//! Provides the low-level token-driven parser (`core::Parser`) that reads JSON from
-//! [`Lexer`] tokens, building span-annotated AST values in a single pass.
-//! No intermediate `serde_json::Value` is created.
+//! Parses Azure Policy JSON directly from [`Lexer`] tokens, building span-annotated
+//! AST nodes in a single pass. No intermediate `serde_json::Value` is created.
 //!
-//! Higher-level policy-aware parsing (constraints, policy rules, policy
-//! definitions) is layered on top by sibling modules.
+//! The parser is policy-aware: when parsing JSON objects, it dispatches on key names
+//! (`allOf`, `anyOf`, `not`, `field`, `value`, `count`, operator names) to build
+//! the appropriate AST nodes.
 
-// Parser internals are consumed by constraint/policy_rule/policy_definition
-// modules added in a subsequent PR.
-#[allow(dead_code)]
-pub(crate) mod core;
+mod constraint;
+mod core;
 mod error;
 
 pub(super) use self::core::json_unescape;
@@ -21,15 +19,42 @@ pub use error::ParseError;
 
 use alloc::string::ToString as _;
 
-use super::ast::{FieldKind, OperatorKind};
+use crate::lexer::{Source, TokenKind};
+
+use super::ast::{Constraint, FieldKind, OperatorKind};
 use super::expr::ExprParser;
 
+use self::core::Parser;
+
 // ============================================================================
-// Helper functions (used by constraint/policy_rule/policy_definition modules)
+// Public API
+// ============================================================================
+
+/// Parse a standalone constraint from a JSON source.
+///
+/// A constraint is one of:
+/// - Logical combinator: `{ "allOf": [...] }`, `{ "anyOf": [...] }`, `{ "not": {...} }`
+/// - Leaf condition: `{ "field": "...", "equals": "..." }`
+/// - Count condition: `{ "count": { "field": "..." }, "greater": 0 }`
+pub fn parse_constraint(source: &Source) -> Result<Constraint, ParseError> {
+    let mut parser = Parser::new(source)?;
+    let constraint = parser.parse_constraint()?;
+
+    if parser.tok.0 != TokenKind::Eof {
+        return Err(ParseError::UnexpectedToken {
+            span: parser.tok.1.clone(),
+            expected: "end of input",
+        });
+    }
+
+    Ok(constraint)
+}
+
+// ============================================================================
+// Helper functions (used across submodules)
 // ============================================================================
 
 /// Check if a string is an ARM template expression (`[...]` but not `[[...`).
-#[allow(dead_code)]
 pub(super) fn is_template_expr(s: &str) -> bool {
     s.starts_with('[') && s.ends_with(']') && !s.starts_with("[[")
 }
@@ -51,7 +76,6 @@ fn unwrap(s: &str, prefix_len: usize, suffix_len: usize) -> &str {
 }
 
 /// Classify a field string into a [`FieldKind`].
-#[allow(dead_code)]
 pub(super) fn classify_field(
     text: &str,
     span: &crate::lexer::Span,
@@ -96,7 +120,6 @@ pub(super) fn classify_field(
 }
 
 /// Try to parse a lowercase key as an operator kind.
-#[allow(dead_code)]
 pub(super) fn parse_operator_kind(key: &str) -> Option<OperatorKind> {
     match key {
         "contains" => Some(OperatorKind::Contains),
