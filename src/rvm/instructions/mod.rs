@@ -54,6 +54,16 @@ pub enum Instruction {
         dest: u8,
     },
 
+    /// Load evaluation context object into register
+    LoadContext {
+        dest: u8,
+    },
+
+    /// Load program metadata object into register
+    LoadMetadata {
+        dest: u8,
+    },
+
     /// Move value from one register to another
     Move {
         dest: u8,
@@ -206,6 +216,16 @@ pub enum Instruction {
         value: u8,
     },
 
+    /// Push element to array, but skip if the value is undefined.
+    ///
+    /// Used by Azure Policy's `field('alias[*].property')` wildcard collection
+    /// so that absent nested properties are excluded from the collected array
+    /// rather than producing undefined entries.
+    ArrayPushDefined {
+        arr: u8,
+        value: u8,
+    },
+
     /// Create array from registers - returns undefined if any element is undefined
     ArrayCreate {
         /// Index into program's instruction_data.array_create_params table
@@ -252,6 +272,25 @@ pub enum Instruction {
     Guard {
         register: u8,
         mode: GuardMode,
+    },
+
+    /// Return undefined immediately when the condition register is not exactly
+    /// `Bool(true)`.  Any other value — including `false`, `Undefined`, `Null`,
+    /// numbers, strings, etc. — causes an immediate return of `Undefined`.
+    ///
+    /// This is used by Azure Policy compilation to model "condition does not match"
+    /// without treating it as a VM assertion failure.
+    ReturnUndefinedIfNotTrue {
+        condition: u8,
+    },
+
+    /// Replace Undefined with Null in a register.
+    ///
+    /// Azure Policy treats missing fields as null rather than undefined.
+    /// This instruction prevents the RVM's undefined-propagation from
+    /// short-circuiting subsequent builtin calls.
+    CoalesceUndefinedToNull {
+        register: u8,
     },
 
     /// Start a loop over a collection with specified semantics - uses parameter table

@@ -10,7 +10,12 @@ use super::execution_model::{ExecutionFrame, ExecutionMode, FrameKind};
 use super::machine::RegoVM;
 
 /// Result for a loop over a non-iterable value (null, string, number, bool, Undefined).
-/// `Every` over empty is vacuously `true`.
+/// In standard Rego mode, this helper is used for all loop modes when the
+/// collection operand is not iterable: `Every` over empty is vacuously `true`,
+/// and `Any`/`ForEach` over empty are `false`.
+/// In Azure Policy mode, this helper is still used for `Any`/`ForEach` when an
+/// object or other non-collection is encountered and short-circuits to `false`;
+/// `Every` with virtual elements is handled via a different code path.
 #[inline]
 const fn non_collection_result(mode: &LoopMode) -> Value {
     match *mode {
@@ -437,15 +442,29 @@ impl RegoVM {
                 }))
             }
             Value::Object(ref obj) => {
-                if obj.is_empty() {
-                    self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
-                    return Ok(None);
+                if self.virtual_element_on_non_collection {
+                    // Azure Policy: `[*]` expects an array.  Objects are
+                    // treated as non-collections — virtual element for Every
+                    // mode, immediate false for Any/ForEach.
+                    if *mode == LoopMode::Every {
+                        Ok(Some(IterationState::Single { consumed: false }))
+                    } else {
+                        let result = non_collection_result(mode);
+                        self.set_register(params.result_reg, result)?;
+                        self.pc = usize::from(params.loop_end).saturating_sub(1);
+                        Ok(None)
+                    }
+                } else {
+                    if obj.is_empty() {
+                        self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
+                        return Ok(None);
+                    }
+                    Ok(Some(IterationState::Object {
+                        obj: obj.clone(),
+                        current_key: None,
+                        first_iteration: true,
+                    }))
                 }
-                Ok(Some(IterationState::Object {
-                    obj: obj.clone(),
-                    current_key: None,
-                    first_iteration: true,
-                }))
             }
             Value::Set(ref set) => {
                 if set.is_empty() {
@@ -459,10 +478,17 @@ impl RegoVM {
                 }))
             }
             _ => {
-                let result = non_collection_result(mode);
-                self.set_register(params.result_reg, result)?;
-                self.pc = usize::from(params.loop_end).saturating_sub(1);
-                Ok(None)
+                if self.virtual_element_on_non_collection && *mode == LoopMode::Every {
+                    // Azure Policy: allOf [*] on non-collection iterates once
+                    // over a virtual null element.
+                    Ok(Some(IterationState::Single { consumed: false }))
+                } else {
+                    // Standard Rego or count/forEach: non-collection → immediate result.
+                    let result = non_collection_result(mode);
+                    self.set_register(params.result_reg, result)?;
+                    self.pc = usize::from(params.loop_end).saturating_sub(1);
+                    Ok(None)
+                }
             }
         }
     }
@@ -574,6 +600,20 @@ impl RegoVM {
                     }
                 } else {
                     Ok(false)
+                }
+            }
+            IterationState::Single { ref consumed } => {
+                if *consumed {
+                    Ok(false)
+                } else {
+                    // Virtual single element: key=0, value=Null.
+                    // Sub-field accesses on Null produce Undefined, which is
+                    // what Azure Policy expects for missing/non-array [*].
+                    if key_reg != value_reg {
+                        self.set_register(key_reg, Value::from(0))?;
+                    }
+                    self.set_register(value_reg, Value::Null)?;
+                    Ok(true)
                 }
             }
         }

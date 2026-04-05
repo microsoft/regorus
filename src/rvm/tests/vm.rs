@@ -83,6 +83,12 @@ mod tests {
         data: Option<crate::Value>,
         #[serde(default)]
         input: Option<crate::Value>,
+        #[serde(default)]
+        context: Option<crate::Value>,
+        #[serde(default)]
+        metadata_language: Option<String>,
+        #[serde(default)]
+        metadata_annotations: Option<BTreeMap<String, crate::Value>>,
         literals: Vec<crate::Value>,
         #[serde(default)]
         rule_infos: Vec<RuleInfoSpec>,
@@ -266,6 +272,9 @@ mod tests {
         instruction_params: Option<InstructionParamsSpec>,
         data: Option<Value>,
         input: Option<Value>,
+        context: Option<Value>,
+        metadata_language: Option<String>,
+        metadata_annotations: Option<BTreeMap<String, Value>>,
         max_instructions: Option<usize>,
         host_await_responses: Option<Vec<HostAwaitResponseSpec>>,
         host_await_responses_run_to_completion: Option<Vec<HostAwaitResponseSpec>>,
@@ -281,6 +290,12 @@ mod tests {
 
         let processed_input = if let Some(ref input_value) = input {
             Some(process_value(input_value)?)
+        } else {
+            None
+        };
+
+        let processed_context = if let Some(ref context_value) = context {
+            Some(process_value(context_value)?)
         } else {
             None
         };
@@ -631,6 +646,18 @@ mod tests {
         program.max_rule_window_size = 255;
         program.dispatch_window_size = 50;
 
+        // Recompute derived flags since instructions were assigned directly
+        // (bypassing add_instruction which normally tracks has_host_await)
+        program.recompute_host_await_presence();
+
+        // Set metadata if provided
+        if let Some(lang) = metadata_language {
+            program.metadata.language = lang;
+        }
+        if let Some(annotations) = metadata_annotations {
+            program.metadata.annotations = annotations;
+        }
+
         // Initialize resolved builtins if we have builtin info
         if !program.builtin_info_table.is_empty() {
             if let Err(e) = program.initialize_resolved_builtins() {
@@ -662,6 +689,10 @@ mod tests {
             }
             if let Some(input_value) = processed_input.clone() {
                 vm.set_input(input_value);
+            }
+
+            if let Some(context_value) = processed_context.clone() {
+                vm.set_context(context_value);
             }
 
             if let Some(limit) = max_instructions {
@@ -931,6 +962,9 @@ mod tests {
                     test_case.instruction_params.clone(),
                     test_case.data.clone(),
                     test_case.input.clone(),
+                    test_case.context.clone(),
+                    test_case.metadata_language.clone(),
+                    test_case.metadata_annotations.clone(),
                     test_case.max_instructions,
                     test_case.host_await_responses.clone(),
                     test_case.host_await_responses_run_to_completion.clone(),

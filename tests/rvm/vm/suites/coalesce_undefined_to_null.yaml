@@ -1,0 +1,194 @@
+# CoalesceUndefinedToNull instruction test suite
+#
+# Used by the Azure Policy compiler to convert undefined (missing) field values
+# to null before passing them to comparison operators. This prevents undefined
+# propagation from short-circuiting subsequent builtins.
+#
+# Semantics:
+#   - If register == Undefined → replaces it with Null (in-place).
+#   - For any other value (null, bool, number, string, array, object) → no-op.
+
+cases:
+  # =========================================================================
+  # Basic coalescing behavior
+  # =========================================================================
+
+  - note: undefined_becomes_null
+    description: Undefined register value is replaced with null
+    literals: []
+    instructions:
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "Return { value: 0 }"
+    want_result: null
+
+  - note: null_unchanged
+    description: Null value is not modified
+    literals: []
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "Return { value: 0 }"
+    want_result: null
+
+  - note: true_unchanged
+    description: Boolean true is not modified
+    literals: []
+    instructions:
+      - "LoadTrue { dest: 0 }"
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: false_unchanged
+    description: Boolean false is not modified
+    literals: []
+    instructions:
+      - "LoadFalse { dest: 0 }"
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: number_unchanged
+    description: Number value is not modified
+    literals:
+      - 42
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "Return { value: 0 }"
+    want_result: 42
+
+  - note: string_unchanged
+    description: String value is not modified
+    literals:
+      - "hello"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "Return { value: 0 }"
+    want_result: "hello"
+
+  - note: empty_string_unchanged
+    description: Empty string is not modified (not confused with undefined)
+    literals:
+      - ""
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "Return { value: 0 }"
+    want_result: ""
+
+  - note: array_unchanged
+    description: Array value is not modified
+    literals: []
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "Return { value: 0 }"
+    want_result: []
+
+  # =========================================================================
+  # Multiple coalesces — only undefined registers are affected
+  # =========================================================================
+
+  - note: selective_coalescing
+    description: Only undefined registers are coalesced; others remain unchanged
+    literals:
+      - 99
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "CoalesceUndefinedToNull { register: 1 }"
+      - "ArrayNew { dest: 2 }"
+      - "ArrayPush { arr: 2, value: 0 }"
+      - "ArrayPush { arr: 2, value: 1 }"
+      - "Return { value: 2 }"
+    want_result: [99, null]
+
+  # =========================================================================
+  # Interaction with ReturnUndefinedIfNotTrue
+  # =========================================================================
+
+  - note: coalesce_then_guard_null_returns_undefined
+    description: >
+      Coalescing undefined to null, then passing to ReturnUndefinedIfNotTrue
+      returns undefined (null is not true)
+    literals:
+      - "should not reach"
+    instructions:
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Return { value: 1 }"
+    want_result: "#undefined"
+
+  - note: coalesce_preserves_true_for_guard
+    description: >
+      Coalescing a true value is a no-op, so ReturnUndefinedIfNotTrue
+      continues execution
+    literals:
+      - "reached"
+    instructions:
+      - "LoadTrue { dest: 0 }"
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Return { value: 1 }"
+    want_result: "reached"
+
+  # =========================================================================
+  # Interaction with HostAwait (suspendable mode)
+  # =========================================================================
+
+  - note: coalesce_after_host_await_undefined_response
+    description: >
+      HostAwait returns undefined, CoalesceUndefinedToNull converts it to null
+    literals:
+      - "await-id"
+      - "arg"
+    instructions:
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "HostAwait { dest: 0, arg: 1, id: 2 }"
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "Return { value: 0 }"
+    host_await_responses:
+      - id: "await-id"
+        value: "#undefined"
+    want_result: null
+
+  - note: coalesce_after_host_await_value_response
+    description: >
+      HostAwait returns a real value, CoalesceUndefinedToNull is a no-op
+    literals:
+      - "await-id"
+      - "arg"
+    instructions:
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "HostAwait { dest: 0, arg: 1, id: 2 }"
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "Return { value: 0 }"
+    host_await_responses:
+      - id: "await-id"
+        value: "real-value"
+    want_result: "real-value"
+
+  - note: suspendable_coalesce_after_host_await
+    description: >
+      In suspendable mode: HostAwait suspends and resumes with value,
+      CoalesceUndefinedToNull is a no-op
+    literals:
+      - "await-id"
+      - "arg"
+    instructions:
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "HostAwait { dest: 0, arg: 1, id: 2 }"
+      - "CoalesceUndefinedToNull { register: 0 }"
+      - "Return { value: 0 }"
+    host_await_responses_suspendable:
+      - id: "await-id"
+        value: 42
+    ignore_run_to_completion_hostawait_failure: true
+    want_result: 42

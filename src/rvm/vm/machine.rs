@@ -49,6 +49,9 @@ pub struct RegoVM {
     /// Global input object
     pub(super) input: Value,
 
+    /// Evaluation context: host-supplied ambient data available via LoadContext
+    pub(super) context: Value,
+
     /// Loop execution stack
     /// Note: Loops are either at the outermost level (rule body) or within the topmost comprehension.
     /// Loops never contain comprehensions - it's always the other way around.
@@ -136,6 +139,18 @@ pub struct RegoVM {
 
     /// Cached args Vec for builtin calls (avoids Vec allocation per call)
     pub(super) cached_builtin_args: Vec<Value>,
+
+    /// When `true`, an `Every` loop over a non-collection value (null, string,
+    /// number, etc.) behaves as if iterating over a single virtual element whose
+    /// value is `Null`, instead of being vacuously `true` over an empty collection.
+    /// This matches Azure Policy semantics where `field[*]` on a non-array produces
+    /// a single `Null` element (which typically causes the condition to evaluate to
+    /// `false`).  Automatically set from `program.metadata.language`.
+    pub(super) virtual_element_on_non_collection: bool,
+
+    /// Cached `Value` representation of `program.metadata`, computed once in
+    /// `load_program()` and reused by `LoadMetadata` instructions.
+    pub(super) metadata_value: Value,
 }
 
 impl Default for RegoVM {
@@ -157,6 +172,7 @@ impl RegoVM {
             rule_cache: Vec::new(),
             data: Value::Null,
             input: Value::Null,
+            context: Value::Undefined,
             loop_stack: Vec::new(),
             call_rule_stack: Vec::new(),
             register_stack: Vec::new(),
@@ -182,6 +198,8 @@ impl RegoVM {
             dummy_span: None,
             dummy_exprs: Vec::new(),
             cached_builtin_args: Vec::new(),
+            virtual_element_on_non_collection: false,
+            metadata_value: Value::Undefined,
         }
     }
 
@@ -210,6 +228,12 @@ impl RegoVM {
         // Set PC to main entry point
         self.pc = usize::try_from(program.main_entry_point).unwrap_or(0);
         self.executed_instructions = 0; // Reset instruction counter
+
+        // Azure Policy: `Every` over non-collection → false (not vacuous true)
+        self.virtual_element_on_non_collection = program.metadata.language == "azure_policy";
+
+        // Cache the metadata as a Value for LoadMetadata instructions
+        self.metadata_value = program.metadata.to_value();
     }
 
     /// Set the compiled policy for default rule evaluation
@@ -244,6 +268,11 @@ impl RegoVM {
     /// Set the global input object
     pub fn set_input(&mut self, input: Value) {
         self.input = input;
+    }
+
+    /// Set the evaluation context (host-supplied ambient data)
+    pub fn set_context(&mut self, context: Value) {
+        self.context = context;
     }
 
     /// Get the number of entry points available
@@ -390,7 +419,7 @@ impl RegoVM {
     }
 
     pub(super) fn execution_timer_tick(&mut self, work_units: u32) -> Result<()> {
-        if !self.execution_timer.accumulate(work_units) {
+        if self.execution_timer.limit().is_none() {
             return Ok(());
         }
 
@@ -399,7 +428,7 @@ impl RegoVM {
         };
 
         self.execution_timer
-            .check_now(now)
+            .tick(work_units, now)
             .map_err(|err| match err {
                 LimitError::TimeLimitExceeded { elapsed, limit } => VmError::TimeLimitExceeded {
                     elapsed,
@@ -505,8 +534,8 @@ impl RegoVM {
     }
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    fn map_limit_error(&self, err: LimitError) -> VmError {
-        match err {
+    pub(super) fn memory_check(&mut self) -> Result<()> {
+        limits::check_memory_limit_if_needed().map_err(|err| match err {
             LimitError::MemoryLimitExceeded { usage, limit } => VmError::MemoryLimitExceeded {
                 usage,
                 limit,
@@ -516,12 +545,7 @@ impl RegoVM {
                 message: format!("unexpected limit error: {other}"),
                 pc: self.pc,
             },
-        }
-    }
-
-    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    pub(super) fn memory_check(&mut self) -> Result<()> {
-        limits::check_memory_limit_if_needed().map_err(|err| self.map_limit_error(err))
+        })
     }
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
