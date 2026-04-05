@@ -339,12 +339,26 @@ namespace Regorus
         /// <summary>
         /// Set explanation settings for causality tracking.
         /// </summary>
-        public void SetExplanationSettings(bool enabled, ExplanationValueMode valueMode = ExplanationValueMode.Redacted, ExplanationConditionMode conditionMode = ExplanationConditionMode.PrimaryOnly, bool assumeUnknownInput = false)
+        public void SetExplanationSettings(bool enabled, ExplanationValueMode valueMode = ExplanationValueMode.Redacted, ExplanationConditionMode conditionMode = ExplanationConditionMode.PrimaryOnly, ExplanationScope scope = ExplanationScope.AllEmissions, ExplanationDetail detail = ExplanationDetail.Standard, uint? emissionIndex = null, string? emissionValueJson = null, bool assumeUnknownInput = false)
         {
-            UseHandle(vmPtr =>
+            if (emissionValueJson is null)
             {
-                CheckAndDropResult(API.regorus_rvm_set_explanation_settings((RegorusRvm*)vmPtr, enabled, (byte)valueMode, (byte)conditionMode, assumeUnknownInput));
-                return 0;
+                UseHandle(vmPtr =>
+                {
+                    CheckAndDropResult(API.regorus_rvm_set_explanation_settings((RegorusRvm*)vmPtr, enabled, (byte)valueMode, (byte)conditionMode, (byte)scope, (byte)detail, emissionIndex.HasValue, emissionIndex.GetValueOrDefault(), false, null, assumeUnknownInput));
+                    return 0;
+                });
+
+                return;
+            }
+
+            Utf8Marshaller.WithUtf8(emissionValueJson, emissionValuePtr =>
+            {
+                UseHandle(vmPtr =>
+                {
+                    CheckAndDropResult(API.regorus_rvm_set_explanation_settings((RegorusRvm*)vmPtr, enabled, (byte)valueMode, (byte)conditionMode, (byte)scope, (byte)detail, emissionIndex.HasValue, emissionIndex.GetValueOrDefault(), true, (byte*)emissionValuePtr, assumeUnknownInput));
+                    return 0;
+                });
             });
         }
 

@@ -2012,14 +2012,11 @@ impl Engine {
     /// with [`take_causality_report`](Self::take_causality_report).
     #[cfg(feature = "explanations")]
     #[cfg_attr(docsrs, doc(cfg(feature = "explanations")))]
-    pub const fn set_explanation_settings(
+    pub fn set_explanation_settings(
         &mut self,
-        enabled: bool,
-        value_mode: crate::evaluation_trace::ValueMode,
-        condition_mode: crate::evaluation_trace::ConditionMode,
-        assume_unknown_input: bool,
+        settings: crate::evaluation_trace::ExplanationSettings,
     ) {
-        let _ = (enabled, value_mode, condition_mode, assume_unknown_input);
+        let _ = settings;
         // TODO: Wire to interpreter when interpreter support is added.
     }
 

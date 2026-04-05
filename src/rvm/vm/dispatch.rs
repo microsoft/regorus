@@ -4,6 +4,8 @@
 use crate::rvm::instructions::{GuardMode, Instruction, LiteralOrRegister};
 use crate::rvm::program::Program;
 use crate::value::Value;
+use alloc::collections::BTreeSet;
+use alloc::string::ToString as _;
 use alloc::vec::Vec;
 use core::mem;
 
@@ -20,6 +22,139 @@ pub(super) enum InstructionOutcome {
 }
 
 impl RegoVM {
+    #[cfg(feature = "explanations")]
+    fn is_input_runtime_path(path: &str) -> bool {
+        path == "input" || path.starts_with("input.") || path.starts_with("input[")
+    }
+
+    #[cfg(feature = "explanations")]
+    fn runtime_path_for_register(&self, register: u8) -> Option<alloc::string::String> {
+        self.provenance.get(register).and_then(|path| {
+            Self::is_input_runtime_path(path.as_ref()).then(|| path.as_ref().to_string())
+        })
+    }
+
+    #[cfg(feature = "explanations")]
+    fn record_runtime_comparison_assumption(
+        &mut self,
+        left: u8,
+        right: u8,
+        operator: &str,
+        condition_text: alloc::string::String,
+    ) -> bool {
+        let left_path = self.runtime_path_for_register(left);
+        let right_path = self.runtime_path_for_register(right);
+
+        let (input_path, assumed_value) = if let Some(path) = left_path {
+            let value = self
+                .get_register(right)
+                .ok()
+                .and_then(|value| (!matches!(value, Value::Undefined)).then(|| value.clone()));
+            (path, value)
+        } else if let Some(path) = right_path {
+            let value = self
+                .get_register(left)
+                .ok()
+                .and_then(|value| (!matches!(value, Value::Undefined)).then(|| value.clone()));
+            (path, value)
+        } else {
+            return false;
+        };
+
+        self.trace.record_assumption(
+            crate::evaluation_trace::AssumptionKind::ConditionHolds,
+            input_path,
+            condition_text,
+            u32::try_from(self.pc).unwrap_or(u32::MAX),
+            Some(operator.to_string()),
+            assumed_value,
+        );
+        true
+    }
+
+    #[cfg(feature = "explanations")]
+    fn maybe_assume_guard_condition(&mut self, register: u8, mode: GuardMode) -> bool {
+        if !self.explanation_settings.assume_unknown_input {
+            return false;
+        }
+
+        let pc = u32::try_from(self.pc).unwrap_or(u32::MAX);
+        let static_info = self
+            .program
+            .condition_infos
+            .get(self.pc)
+            .and_then(Option::as_ref);
+        let condition_text = static_info
+            .map(|info| info.text.clone())
+            .unwrap_or_default();
+
+        match mode {
+            GuardMode::NotUndefined => {
+                let Some(input_path) = self.runtime_path_for_register(register).or_else(|| {
+                    static_info.and_then(|info| {
+                        info.checked_provenance.as_ref().and_then(|prov| {
+                            let rendered = prov.to_string();
+                            Self::is_input_runtime_path(&rendered).then_some(rendered)
+                        })
+                    })
+                }) else {
+                    return false;
+                };
+
+                self.trace.record_assumption(
+                    crate::evaluation_trace::AssumptionKind::Exists,
+                    input_path,
+                    condition_text,
+                    pc,
+                    None,
+                    None,
+                );
+                true
+            }
+            GuardMode::Condition => {
+                let Some(prev_pc) = self.pc.checked_sub(1) else {
+                    return false;
+                };
+                let Some(prev_instr) = self.program.instructions.get(prev_pc) else {
+                    return false;
+                };
+
+                match *prev_instr {
+                    Instruction::Eq { dest, left, right } if dest == register => {
+                        self.record_runtime_comparison_assumption(left, right, "==", condition_text)
+                    }
+                    Instruction::Ne { dest, left, right } if dest == register => {
+                        self.record_runtime_comparison_assumption(left, right, "!=", condition_text)
+                    }
+                    Instruction::Lt { dest, left, right } if dest == register => {
+                        self.record_runtime_comparison_assumption(left, right, "<", condition_text)
+                    }
+                    Instruction::Le { dest, left, right } if dest == register => {
+                        self.record_runtime_comparison_assumption(left, right, "<=", condition_text)
+                    }
+                    Instruction::Gt { dest, left, right } if dest == register => {
+                        self.record_runtime_comparison_assumption(left, right, ">", condition_text)
+                    }
+                    Instruction::Ge { dest, left, right } if dest == register => {
+                        self.record_runtime_comparison_assumption(left, right, ">=", condition_text)
+                    }
+                    Instruction::Contains {
+                        dest,
+                        collection,
+                        value,
+                    } if dest == register => self.record_runtime_comparison_assumption(
+                        collection,
+                        value,
+                        "in",
+                        condition_text,
+                    ),
+                    _ => false,
+                }
+            }
+            GuardMode::Not => false,
+        }
+    }
+
     pub(super) fn execute_instruction(
         &mut self,
         program: &Program,
@@ -64,10 +199,14 @@ impl RegoVM {
             }
             LoadData { dest } => {
                 self.set_register(dest, self.data.clone())?;
+                #[cfg(feature = "explanations")]
+                self.provenance.set_root(dest, "data");
                 Ok(InstructionOutcome::Continue)
             }
             LoadInput { dest } => {
                 self.set_register(dest, self.input.clone())?;
+                #[cfg(feature = "explanations")]
+                self.provenance.set_root(dest, "input");
                 Ok(InstructionOutcome::Continue)
             }
             LoadContext { dest } => {
@@ -81,6 +220,8 @@ impl RegoVM {
             Move { dest, src } => {
                 let value = self.get_register(src)?.clone();
                 self.set_register(dest, value)?;
+                #[cfg(feature = "explanations")]
+                self.provenance.copy(dest, src);
                 Ok(InstructionOutcome::Continue)
             }
             other => self.execute_arithmetic_instruction(program, other),
@@ -342,49 +483,33 @@ impl RegoVM {
                 let mut assumed = false;
                 #[cfg(feature = "explanations")]
                 if !passed && self.explanation_settings.assume_unknown_input {
-                    let a_undef = a_val == Value::Undefined;
-                    let b_undef = b_val == Value::Undefined;
-                    if a_undef || b_undef {
-                        let pc_u32 = u32::try_from(self.pc).unwrap_or(u32::MAX);
-                        let info = program
-                            .condition_infos
-                            .get(self.pc)
-                            .and_then(Option::as_ref);
-                        if info.is_some_and(|i| i.involves_input()) {
-                            let input_path = info
-                                .and_then(|i| i.checked_provenance.as_ref())
-                                .map(|p| alloc::format!("{p}"))
-                                .unwrap_or_default();
-                            let cond_text = info.map(|i| i.text.clone()).unwrap_or_default();
-                            let (op_str, non_input_val) = {
-                                let op = info.and_then(|i| {
-                                    i.operator.as_ref().map(|o| alloc::format!("{o}"))
-                                });
-                                let val = if a_undef {
-                                    Some(b_val.clone())
-                                } else {
-                                    Some(a_val.clone())
-                                };
-                                (op, val)
-                            };
-                            self.trace.record_assumption(
-                                crate::evaluation_trace::AssumptionKind::ConditionHolds,
-                                input_path,
-                                cond_text,
-                                pc_u32,
-                                op_str,
-                                non_input_val,
-                            );
-                            passed = true;
-                            assumed = true;
-                        }
+                    let cond_text = program
+                        .condition_infos
+                        .get(self.pc)
+                        .and_then(Option::as_ref)
+                        .map(|info| info.text.clone())
+                        .unwrap_or_default();
+                    if self.record_runtime_comparison_assumption(left, right, "==", cond_text) {
+                        passed = true;
+                        assumed = true;
                     }
                 }
                 #[cfg(feature = "explanations")]
                 if self.explanation_settings.enabled {
                     let pc = u32::try_from(self.pc).unwrap_or(u32::MAX);
-                    self.trace
-                        .record_condition(pc, passed, assumed, Some(a_val), Some(b_val));
+                    self.trace.record_condition(
+                        pc,
+                        passed,
+                        assumed,
+                        Some(a_val),
+                        self.provenance
+                            .get(left)
+                            .map(|path| path.as_ref().to_string()),
+                        Some(b_val),
+                        self.provenance
+                            .get(right)
+                            .map(|path| path.as_ref().to_string()),
+                    );
                 }
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)
@@ -406,59 +531,29 @@ impl RegoVM {
                     GuardMode::NotUndefined => !matches!(value, Value::Undefined),
                 };
                 #[cfg(feature = "explanations")]
-                let mut assumed = false;
-                #[cfg(feature = "explanations")]
-                if !passed && self.explanation_settings.assume_unknown_input {
-                    let pc_u32 = u32::try_from(self.pc).unwrap_or(u32::MAX);
-                    let info = program
-                        .condition_infos
-                        .get(self.pc)
-                        .and_then(Option::as_ref);
-                    if info.is_some_and(|i| i.involves_input()) && value == Value::Undefined {
-                        let input_path = info
-                            .and_then(|i| i.checked_provenance.as_ref())
-                            .map(|p| alloc::format!("{p}"))
-                            .unwrap_or_default();
-                        let cond_text = info.map(|i| i.text.clone()).unwrap_or_default();
-                        let kind = match mode {
-                            GuardMode::NotUndefined => {
-                                crate::evaluation_trace::AssumptionKind::Exists
-                            }
-                            _ => crate::evaluation_trace::AssumptionKind::ConditionHolds,
-                        };
-                        let (op_str, non_input_val) = info.map_or((None, None), |ci| {
-                            let op = ci.operator.as_ref().map(|o| alloc::format!("{o}"));
-                            let val = ci.operands.as_ref().and_then(|ops| {
-                                let left_is_input = ops
-                                    .left_provenance
-                                    .as_ref()
-                                    .is_some_and(|p| p.is_input_rooted());
-                                let non_input_reg = if left_is_input {
-                                    ops.right_reg
-                                } else {
-                                    ops.left_reg
-                                };
-                                self.get_register(non_input_reg).ok().cloned()
-                            });
-                            (op, val)
-                        });
-                        self.trace.record_assumption(
-                            kind,
-                            input_path,
-                            cond_text,
-                            pc_u32,
-                            op_str,
-                            non_input_val,
-                        );
-                        passed = true;
-                        assumed = true;
-                    }
-                }
+                let assumed = if !passed
+                    && self.explanation_settings.assume_unknown_input
+                    && self.maybe_assume_guard_condition(register, mode)
+                {
+                    passed = true;
+                    true
+                } else {
+                    false
+                };
                 #[cfg(feature = "explanations")]
                 if self.explanation_settings.enabled {
                     let pc = u32::try_from(self.pc).unwrap_or(u32::MAX);
-                    self.trace
-                        .record_condition(pc, passed, assumed, Some(value), None);
+                    self.trace.record_condition(
+                        pc,
+                        passed,
+                        assumed,
+                        Some(value),
+                        self.provenance
+                            .get(register)
+                            .map(|path| path.as_ref().to_string()),
+                        None,
+                        None,
+                    );
                 }
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)
@@ -571,6 +666,36 @@ impl RegoVM {
                 }
                 Ok(InstructionOutcome::Continue)
             }
+            ObjectDeepSet { params_index } => {
+                let params = program
+                    .instruction_data
+                    .get_object_deep_set_params(params_index)
+                    .ok_or(VmError::InvalidObjectCreateParams {
+                        index: params_index,
+                        pc: self.pc,
+                        available: program.instruction_data.object_deep_set_params.len(),
+                    })?
+                    .clone();
+
+                // Read all key values and the leaf value upfront
+                let key_values: alloc::vec::Vec<Value> = params
+                    .keys
+                    .iter()
+                    .map(|&k| self.get_register(k).cloned())
+                    .collect::<core::result::Result<_, _>>()?;
+                let leaf_value = self.get_register(params.value)?.clone();
+
+                let mut root = self.take_register(params.obj)?;
+                self.object_deep_set(
+                    &mut root,
+                    &key_values,
+                    leaf_value,
+                    params.multi_value,
+                    params.obj,
+                )?;
+                self.set_register(params.obj, root)?;
+                Ok(InstructionOutcome::Continue)
+            }
             ObjectCreate { params_index } => {
                 let params = program
                     .instruction_data
@@ -666,7 +791,11 @@ impl RegoVM {
                 let key_value = self.get_register(key)?;
                 let container_value = self.get_register(container)?;
                 let result = container_value[key_value].clone();
+                #[cfg(feature = "explanations")]
+                let key_clone = key_value.clone();
                 self.set_register(dest, result)?;
+                #[cfg(feature = "explanations")]
+                self.provenance.append_index(dest, container, &key_clone);
                 Ok(InstructionOutcome::Continue)
             }
             IndexLiteral {
@@ -679,6 +808,15 @@ impl RegoVM {
                 if let Some(key_value) = program.literals.get(usize::from(literal_idx)) {
                     let result = container_value[key_value].clone();
                     self.set_register(dest, result)?;
+                    #[cfg(feature = "explanations")]
+                    {
+                        if let Ok(field) = key_value.as_string() {
+                            self.provenance
+                                .append_field(dest, container, field.as_ref());
+                        } else {
+                            self.provenance.append_index(dest, container, key_value);
+                        }
+                    }
                     Ok(InstructionOutcome::Continue)
                 } else {
                     Err(VmError::LiteralIndexOutOfBounds {
@@ -785,7 +923,29 @@ impl RegoVM {
                 let mut set_value = self.take_register(set)?;
 
                 if let Ok(set_mut) = set_value.as_set_mut() {
-                    set_mut.insert(value_to_add);
+                    set_mut.insert(value_to_add.clone());
+                    #[cfg(feature = "explanations")]
+                    if self.explanation_settings.enabled {
+                        if let Some(ctx) = self.call_rule_stack.last() {
+                            if ctx.rule_type == crate::rvm::program::RuleType::PartialSet
+                                && set == ctx.result_reg
+                            {
+                                let condition_end_index =
+                                    u32::try_from(self.trace.condition_outcomes.len())
+                                        .unwrap_or(u32::MAX);
+                                let condition_start_index =
+                                    u32::try_from(ctx.current_body_condition_start)
+                                        .unwrap_or(u32::MAX);
+                                self.trace.record_emission(
+                                    ctx.rule_index,
+                                    u16::try_from(ctx.current_definition_index).unwrap_or(u16::MAX),
+                                    condition_start_index,
+                                    condition_end_index,
+                                    value_to_add.clone(),
+                                );
+                            }
+                        }
+                    }
                     self.set_register(set, set_value)?;
                 } else {
                     let offending = set_value.clone();
@@ -1224,6 +1384,11 @@ impl RegoVM {
                     })?;
 
                 let mut current_value = self.get_register(params.root)?.clone();
+                #[cfg(feature = "explanations")]
+                let mut current_path = self
+                    .provenance
+                    .get(params.root)
+                    .map(|path| path.as_ref().to_string());
 
                 for component in &params.path_components {
                     let key_value = match *component {
@@ -1238,6 +1403,13 @@ impl RegoVM {
                         LiteralOrRegister::Register(reg) => self.get_register(reg)?.clone(),
                     };
 
+                    #[cfg(feature = "explanations")]
+                    {
+                        current_path = current_path
+                            .as_deref()
+                            .map(|base| Self::append_path_component(base, &key_value));
+                    }
+
                     current_value = current_value[&key_value].clone();
 
                     if current_value == Value::Undefined {
@@ -1246,6 +1418,9 @@ impl RegoVM {
                 }
 
                 self.set_register(params.dest, current_value)?;
+                #[cfg(feature = "explanations")]
+                self.provenance
+                    .set_path(params.dest, current_path.map(|path| path.into()));
                 Ok(InstructionOutcome::Continue)
             }
             VirtualDataDocumentLookup { params_index } => {
@@ -1278,5 +1453,67 @@ impl RegoVM {
                 pc: self.pc,
             }),
         }
+    }
+
+    fn object_deep_set(
+        &self,
+        current: &mut Value,
+        key_values: &[Value],
+        leaf_value: Value,
+        multi_value: bool,
+        obj_register: u8,
+    ) -> Result<()> {
+        let Some((first_key, remaining_keys)) = key_values.split_first() else {
+            return Ok(());
+        };
+
+        let offending = current.clone();
+        let object = current
+            .as_object_mut()
+            .map_err(|_| VmError::RegisterNotObject {
+                register: obj_register,
+                value: offending,
+                pc: self.pc,
+            })?;
+
+        if remaining_keys.is_empty() {
+            if multi_value {
+                let leaf = match object.entry(first_key.clone()) {
+                    alloc::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    alloc::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert(Value::new_set())
+                    }
+                };
+
+                let leaf_snapshot = leaf.clone();
+                let set = leaf.as_set_mut().map_err(|_| VmError::RegisterNotSet {
+                    register: obj_register,
+                    value: leaf_snapshot,
+                    pc: self.pc,
+                })?;
+                set.insert(leaf_value);
+            } else {
+                object.insert(first_key.clone(), leaf_value);
+            }
+
+            return Ok(());
+        }
+
+        let child = match object.entry(first_key.clone()) {
+            alloc::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            alloc::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(Value::new_object())
+            }
+        };
+
+        if !matches!(child, Value::Object(_)) {
+            return Err(VmError::RegisterNotObject {
+                register: obj_register,
+                value: child.clone(),
+                pc: self.pc,
+            });
+        }
+
+        self.object_deep_set(child, remaining_keys, leaf_value, multi_value, obj_register)
     }
 }

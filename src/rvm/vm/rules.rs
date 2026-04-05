@@ -53,7 +53,7 @@ impl RegoVM {
         rule_definitions: &[Vec<u32>],
         rule_info: &RuleInfo,
         function_call_params: Option<&FunctionCallParams>,
-    ) -> Result<(Value, bool)> {
+    ) -> Result<(Value, bool, Option<crate::Rc<str>>)> {
         let mut first_successful_result: Option<Value> = None;
         let mut rule_failed_due_to_inconsistency = false;
         let is_function_call = rule_info.function_info.is_some();
@@ -79,8 +79,21 @@ impl RegoVM {
             },
         };
 
+        #[cfg(feature = "explanations")]
+        let arg_provenance: Vec<Option<crate::Rc<str>>> =
+            function_call_params.map_or_else(Vec::new, |params| {
+                params
+                    .arg_registers()
+                    .iter()
+                    .map(|&arg| self.provenance.get(arg).cloned())
+                    .collect()
+            });
+
         let mut previous_registers = Vec::default();
         mem::swap(&mut previous_registers, &mut self.registers);
+
+        #[cfg(feature = "explanations")]
+        let previous_provenance = self.provenance.take_paths();
 
         let mut previous_loop_stack = Vec::default();
         mem::swap(&mut previous_loop_stack, &mut self.loop_stack);
@@ -92,13 +105,27 @@ impl RegoVM {
         );
 
         self.register_stack.push(previous_registers);
+        #[cfg(feature = "explanations")]
+        self.provenance_stack.push(previous_provenance);
         self.registers = register_window;
+        #[cfg(feature = "explanations")]
+        {
+            self.provenance.resize(self.registers.len());
+            for (i, prov) in arg_provenance.into_iter().enumerate() {
+                let callee_reg = u8::try_from(i.saturating_add(1)).unwrap_or(u8::MAX);
+                self.provenance.set_path(callee_reg, prov);
+            }
+        }
 
         'outer: for (def_idx, definition_bodies) in rule_definitions.iter().enumerate() {
             for (body_entry_point_idx, body_entry_point) in definition_bodies.iter().enumerate() {
                 if let Some(ctx) = self.call_rule_stack.last_mut() {
                     ctx.current_body_index = body_entry_point_idx;
                     ctx.current_definition_index = def_idx;
+                    #[cfg(feature = "explanations")]
+                    {
+                        ctx.current_body_condition_start = self.trace.condition_outcomes.len();
+                    }
                 }
 
                 self.registers
@@ -190,18 +217,35 @@ impl RegoVM {
             self.get_register(result_reg)?.clone()
         };
 
+        #[cfg(feature = "explanations")]
+        let return_provenance = self.provenance.get(result_reg).cloned();
+
         if let Some(restored_registers) = self.register_stack.pop() {
             let mut current_register_window = Vec::default();
             mem::swap(&mut current_register_window, &mut self.registers);
             self.return_register_window(current_register_window);
 
             self.registers = restored_registers;
+
+            #[cfg(feature = "explanations")]
+            if let Some(restored_provenance) = self.provenance_stack.pop() {
+                self.provenance.restore_paths(restored_provenance);
+            }
         }
 
         self.loop_stack = previous_loop_stack;
         self.comprehension_stack = previous_comprehension_stack;
 
-        Ok((final_result, rule_failed_due_to_inconsistency))
+        Ok((final_result, rule_failed_due_to_inconsistency, {
+            #[cfg(feature = "explanations")]
+            {
+                return_provenance
+            }
+            #[cfg(not(feature = "explanations"))]
+            {
+                None
+            }
+        }))
     }
 
     pub(super) fn execute_call_rule_common(
@@ -244,8 +288,20 @@ impl RegoVM {
                         available: self.rule_cache.len(),
                     })?;
             if *computed {
-                self.set_register(dest, cached_result.clone())?;
-                return Ok(());
+                #[cfg(feature = "explanations")]
+                if self.explanation_settings.enabled {
+                    // Re-evaluate when explanations are enabled so live runtime
+                    // provenance is preserved for downstream causality and
+                    // assumption reporting.
+                } else {
+                    self.set_register(dest, cached_result.clone())?;
+                    return Ok(());
+                }
+                #[cfg(not(feature = "explanations"))]
+                {
+                    self.set_register(dest, cached_result.clone())?;
+                    return Ok(());
+                }
             }
         }
 
@@ -284,9 +340,10 @@ impl RegoVM {
             rule_type: rule_type.clone(),
             current_definition_index: 0,
             current_body_index: 0,
+            current_body_condition_start: 0,
         });
 
-        let (final_result, rule_failed_due_to_inconsistency) = self
+        let (final_result, rule_failed_due_to_inconsistency, return_provenance) = self
             .execute_rule_definitions_common(&rule_definitions, &rule_info, function_call_params)?;
 
         self.set_register(dest, Value::Undefined)?;
@@ -317,6 +374,8 @@ impl RegoVM {
         };
 
         self.set_register(dest, result_from_rule.clone())?;
+        #[cfg(feature = "explanations")]
+        self.provenance.set_path(dest, return_provenance);
 
         #[cfg(feature = "explanations")]
         if self.explanation_settings.enabled {
@@ -502,6 +561,7 @@ impl RegoVM {
             rule_type: rule_info.rule_type.clone(),
             current_definition_index: 0,
             current_body_index: 0,
+            current_body_condition_start: 0,
         });
 
         let mut frame_data = RuleFrameData {
@@ -603,6 +663,10 @@ impl RegoVM {
                 if let Some(ctx) = self.call_rule_stack.last_mut() {
                     ctx.current_definition_index = frame_data.current_definition_index;
                     ctx.current_body_index = frame_data.current_body_index;
+                    #[cfg(feature = "explanations")]
+                    {
+                        ctx.current_body_condition_start = self.trace.condition_outcomes.len();
+                    }
                 }
 
                 self.registers

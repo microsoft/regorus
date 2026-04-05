@@ -6,6 +6,92 @@ use anyhow::{anyhow, bail, Result};
 #[cfg(feature = "azure_policy")]
 mod azure_policy;
 
+#[cfg(feature = "explanations")]
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
+enum WhyScopeArg {
+    AllEmissions,
+    RuleSummary,
+}
+
+#[cfg(feature = "explanations")]
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
+enum WhyDetailArg {
+    Compact,
+    Standard,
+    Full,
+}
+
+#[cfg(feature = "explanations")]
+fn build_explanation_settings(
+    why_detail: Option<WhyDetailArg>,
+    why_scope: Option<WhyScopeArg>,
+    why_emission: Option<usize>,
+    why_emission_value: Option<String>,
+    why_full_values: bool,
+    why_all_conditions: bool,
+    assume_unknown_input: bool,
+) -> Result<regorus::evaluation_trace::ExplanationSettings> {
+    let detail = why_detail.map_or_else(
+        || {
+            if why_full_values || why_all_conditions {
+                regorus::evaluation_trace::ExplanationDetail::Full
+            } else {
+                regorus::evaluation_trace::ExplanationDetail::Standard
+            }
+        },
+        |detail| match detail {
+            WhyDetailArg::Compact => regorus::evaluation_trace::ExplanationDetail::Compact,
+            WhyDetailArg::Standard => regorus::evaluation_trace::ExplanationDetail::Standard,
+            WhyDetailArg::Full => regorus::evaluation_trace::ExplanationDetail::Full,
+        },
+    );
+
+    let emission_value = why_emission_value.map(|raw| {
+        regorus::Value::from_json_str(&raw).unwrap_or_else(|_| regorus::Value::from(raw))
+    });
+
+    let scope = if why_emission.is_some() || emission_value.is_some() {
+        regorus::evaluation_trace::ExplanationScope::SingleEmission
+    } else {
+        why_scope.map_or(
+            regorus::evaluation_trace::ExplanationScope::AllEmissions,
+            |scope| match scope {
+                WhyScopeArg::AllEmissions => {
+                    regorus::evaluation_trace::ExplanationScope::AllEmissions
+                }
+                WhyScopeArg::RuleSummary => {
+                    regorus::evaluation_trace::ExplanationScope::RuleSummary
+                }
+            },
+        )
+    };
+
+    let value_mode =
+        if why_full_values || detail == regorus::evaluation_trace::ExplanationDetail::Full {
+            regorus::evaluation_trace::ValueMode::Full
+        } else {
+            regorus::evaluation_trace::ValueMode::Redacted
+        };
+
+    let condition_mode =
+        if why_all_conditions || detail == regorus::evaluation_trace::ExplanationDetail::Full {
+            regorus::evaluation_trace::ConditionMode::AllContributing
+        } else {
+            regorus::evaluation_trace::ConditionMode::PrimaryOnly
+        };
+
+    Ok(regorus::evaluation_trace::ExplanationSettings {
+        enabled: true,
+        value_mode,
+        condition_mode,
+        scope,
+        detail,
+        emission_index: why_emission,
+        emission_value,
+        assume_unknown_input,
+    })
+}
+
 #[allow(dead_code)]
 fn read_file(path: &String) -> Result<String> {
     std::fs::read_to_string(path).map_err(|_| anyhow!("could not read {path}"))
@@ -46,6 +132,10 @@ fn rego_eval(
     enable_tracing: bool,
     non_strict: bool,
     #[cfg(feature = "explanations")] why: bool,
+    #[cfg(feature = "explanations")] why_scope: Option<WhyScopeArg>,
+    #[cfg(feature = "explanations")] why_detail: Option<WhyDetailArg>,
+    #[cfg(feature = "explanations")] why_emission: Option<usize>,
+    #[cfg(feature = "explanations")] why_emission_value: Option<String>,
     #[cfg(feature = "explanations")] why_full_values: bool,
     #[cfg(feature = "explanations")] why_all_conditions: bool,
     #[cfg(feature = "explanations")] assume_unknown_input: bool,
@@ -67,22 +157,15 @@ fn rego_eval(
 
     #[cfg(feature = "explanations")]
     if why_enabled {
-        let value_mode = if why_full_values {
-            regorus::evaluation_trace::ValueMode::Full
-        } else {
-            regorus::evaluation_trace::ValueMode::Redacted
-        };
-        let condition_mode = if why_all_conditions {
-            regorus::evaluation_trace::ConditionMode::AllContributing
-        } else {
-            regorus::evaluation_trace::ConditionMode::PrimaryOnly
-        };
-        policy_engine.set_explanation_settings(
-            true,
-            value_mode,
-            condition_mode,
+        policy_engine.set_explanation_settings(build_explanation_settings(
+            why_detail,
+            why_scope,
+            why_emission,
+            why_emission_value.clone(),
+            why_full_values,
+            why_all_conditions,
             assume_unknown_input,
-        );
+        )?);
     }
 
     // Load files from given bundles.
@@ -184,22 +267,15 @@ fn rego_eval(
 
                 #[cfg(feature = "explanations")]
                 if why_enabled {
-                    let value_mode = if why_full_values {
-                        regorus::evaluation_trace::ValueMode::Full
-                    } else {
-                        regorus::evaluation_trace::ValueMode::Redacted
-                    };
-                    let condition_mode = if why_all_conditions {
-                        regorus::evaluation_trace::ConditionMode::AllContributing
-                    } else {
-                        regorus::evaluation_trace::ConditionMode::PrimaryOnly
-                    };
-                    vm.set_explanation_settings(regorus::evaluation_trace::ExplanationSettings {
-                        enabled: true,
-                        value_mode,
-                        condition_mode,
+                    vm.set_explanation_settings(build_explanation_settings(
+                        why_detail,
+                        why_scope,
+                        why_emission,
+                        why_emission_value.clone(),
+                        why_full_values,
+                        why_all_conditions,
                         assume_unknown_input,
-                    });
+                    )?);
                 }
 
                 if let Some(input) = input_value {
@@ -384,6 +460,34 @@ enum RegorusCommand {
         #[arg(long = "why")]
         why: bool,
 
+        /// Limit the causality report to a specific scope.
+        #[cfg(feature = "explanations")]
+        #[arg(long = "why-scope", value_enum, requires = "why")]
+        why_scope: Option<WhyScopeArg>,
+
+        /// Control the amount of explanation detail.
+        #[cfg(feature = "explanations")]
+        #[arg(long = "why-detail", value_enum, requires = "why")]
+        why_detail: Option<WhyDetailArg>,
+
+        /// Explain only the selected emitted result by 0-based index.
+        #[cfg(feature = "explanations")]
+        #[arg(
+            long = "why-emission",
+            requires = "why",
+            conflicts_with = "why_emission_value"
+        )]
+        why_emission: Option<usize>,
+
+        /// Explain only the emitted result whose value exactly matches this JSON literal or string.
+        #[cfg(feature = "explanations")]
+        #[arg(
+            long = "why-emission-value",
+            requires = "why",
+            conflicts_with = "why_emission"
+        )]
+        why_emission_value: Option<String>,
+
         /// Preserve secret-looking values in the causality report.
         #[cfg(feature = "explanations")]
         #[arg(long = "why-full-values", requires = "why")]
@@ -490,6 +594,14 @@ fn main() -> Result<()> {
             #[cfg(feature = "explanations")]
             why,
             #[cfg(feature = "explanations")]
+            why_scope,
+            #[cfg(feature = "explanations")]
+            why_detail,
+            #[cfg(feature = "explanations")]
+            why_emission,
+            #[cfg(feature = "explanations")]
+            why_emission_value,
+            #[cfg(feature = "explanations")]
             why_full_values,
             #[cfg(feature = "explanations")]
             why_all_conditions,
@@ -508,6 +620,14 @@ fn main() -> Result<()> {
             non_strict,
             #[cfg(feature = "explanations")]
             why,
+            #[cfg(feature = "explanations")]
+            why_scope,
+            #[cfg(feature = "explanations")]
+            why_detail,
+            #[cfg(feature = "explanations")]
+            why_emission,
+            #[cfg(feature = "explanations")]
+            why_emission_value,
             #[cfg(feature = "explanations")]
             why_full_values,
             #[cfg(feature = "explanations")]

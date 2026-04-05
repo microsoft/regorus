@@ -20,6 +20,12 @@ pub struct LoopContext {
     pub success_count: usize,
     pub total_iterations: usize,
     pub current_iteration_failed: bool, // Track if current iteration had condition failures
+    /// Sample key from the first successful iteration (for causality witness).
+    #[cfg(feature = "explanations")]
+    pub sample_key: Option<Value>,
+    /// Sample value from the first successful iteration (for causality witness).
+    #[cfg(feature = "explanations")]
+    pub sample_value: Option<Value>,
 }
 
 /// Iterator state for different collection types.
@@ -98,6 +104,7 @@ pub struct CallRuleContext {
     pub rule_type: crate::rvm::program::RuleType,
     pub current_definition_index: usize,
     pub current_body_index: usize,
+    pub current_body_condition_start: usize,
 }
 
 /// Context for tracking active comprehensions

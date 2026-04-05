@@ -29,6 +29,10 @@ allow if { input.role == "admin" }
         enabled: true,
         value_mode: evaluation_trace::ValueMode::Full,
         condition_mode: evaluation_trace::ConditionMode::AllContributing,
+        scope: evaluation_trace::ExplanationScope::AllEmissions,
+        detail: evaluation_trace::ExplanationDetail::Full,
+        emission_index: None,
+        emission_value: None,
         assume_unknown_input: true,
     });
     vm.set_input(Value::new_object());
@@ -54,4 +58,220 @@ allow if { input.role == "admin" }
     assert_eq!(assumptions[0]["input_path"], "input.role");
     assert_eq!(assumptions[0]["operator"], "==");
     assert_eq!(assumptions[0]["assumed_value"], "admin");
+}
+
+#[test]
+fn assumptions_follow_local_aliases() {
+    use regorus::*;
+
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "test.rego".into(),
+            r#"
+package test
+default allow = false
+
+role := input.identity.role
+expected_role := "release-admin"
+
+allow if {
+    er := expected_role
+    role == er
+}
+"#
+            .into(),
+        )
+        .unwrap();
+
+    let entrypoint: Rc<str> = "data.test.allow".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint).unwrap();
+    let program =
+        languages::rego::compiler::Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()])
+            .unwrap();
+
+    let mut vm = rvm::RegoVM::new_with_policy(compiled);
+    vm.load_program(program);
+    vm.set_explanation_settings(evaluation_trace::ExplanationSettings {
+        enabled: true,
+        value_mode: evaluation_trace::ValueMode::Full,
+        condition_mode: evaluation_trace::ConditionMode::AllContributing,
+        scope: evaluation_trace::ExplanationScope::AllEmissions,
+        detail: evaluation_trace::ExplanationDetail::Full,
+        emission_index: None,
+        emission_value: None,
+        assume_unknown_input: true,
+    });
+    vm.set_input(serde_json::from_str(r#"{"identity": {"name": "alex"}}"#).unwrap());
+
+    let value = vm.execute_entry_point_by_name("data.test.allow").unwrap();
+    assert_eq!(value, Value::Bool(true));
+
+    let report_json = vm.take_causality_report(value).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&report_json).unwrap();
+
+    let assumptions = report["assumptions"].as_array().unwrap();
+    assert!(!assumptions.is_empty(), "assumptions should not be empty");
+    assert_eq!(assumptions[0]["input_path"], "input.identity.role");
+    assert_eq!(assumptions[0]["operator"], "==");
+    assert_eq!(assumptions[0]["assumed_value"], "release-admin");
+
+    let rules = report["rules"].as_array().unwrap();
+    let allow_rule = rules
+        .iter()
+        .find(|rule| rule["name"] == "data.test.allow")
+        .unwrap();
+    let left = &allow_rule["definitions"][0]["conditions"][0]["left"];
+    assert_eq!(left["provenance"], "input.identity.role");
+}
+
+#[test]
+fn assumptions_follow_function_argument_aliases() {
+    use regorus::*;
+
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "test.rego".into(),
+            r#"
+package test
+default allow = false
+
+normalize_role(role) := normalized if {
+    normalized := role
+}
+
+allow if {
+    role := normalize_role(input.identity.role)
+    role == "release-admin"
+}
+"#
+            .into(),
+        )
+        .unwrap();
+
+    let entrypoint: Rc<str> = "data.test.allow".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint).unwrap();
+    let program =
+        languages::rego::compiler::Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()])
+            .unwrap();
+
+    let mut vm = rvm::RegoVM::new_with_policy(compiled);
+    vm.load_program(program);
+    vm.set_explanation_settings(evaluation_trace::ExplanationSettings {
+        enabled: true,
+        value_mode: evaluation_trace::ValueMode::Full,
+        condition_mode: evaluation_trace::ConditionMode::AllContributing,
+        scope: evaluation_trace::ExplanationScope::AllEmissions,
+        detail: evaluation_trace::ExplanationDetail::Full,
+        emission_index: None,
+        emission_value: None,
+        assume_unknown_input: true,
+    });
+    vm.set_input(Value::new_object());
+
+    let value = vm.execute_entry_point_by_name("data.test.allow").unwrap();
+    assert_eq!(value, Value::Bool(true));
+
+    let report_json = vm.take_causality_report(value).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&report_json).unwrap();
+
+    let assumptions = report["assumptions"].as_array().unwrap();
+    assert!(!assumptions.is_empty(), "assumptions should not be empty");
+    assert_eq!(assumptions[0]["kind"], "exists");
+    assert_eq!(assumptions[0]["input_path"], "input.identity");
+    assert!(assumptions[0]["operator"].is_null());
+    assert!(assumptions[0]["assumed_value"].is_null());
+}
+
+#[test]
+fn causality_report_includes_loop_witness() {
+    use regorus::*;
+
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "test.rego".into(),
+            r#"
+package test
+default allow = false
+
+allow if {
+    n := input.values[_]
+    n > 1
+    n < 3
+}
+"#
+            .into(),
+        )
+        .unwrap();
+
+    let entrypoint: Rc<str> = "data.test.allow".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint).unwrap();
+    let program =
+        languages::rego::compiler::Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()])
+            .unwrap();
+
+    let mut vm = rvm::RegoVM::new_with_policy(compiled);
+    vm.load_program(program);
+    vm.set_explanation_settings(evaluation_trace::ExplanationSettings {
+        enabled: true,
+        value_mode: evaluation_trace::ValueMode::Full,
+        condition_mode: evaluation_trace::ConditionMode::AllContributing,
+        scope: evaluation_trace::ExplanationScope::AllEmissions,
+        detail: evaluation_trace::ExplanationDetail::Standard,
+        emission_index: None,
+        emission_value: None,
+        assume_unknown_input: false,
+    });
+
+    let mut input_obj = Value::new_object();
+    let values = Value::from_json_str("[0, 2, 4]").unwrap();
+    input_obj
+        .as_object_mut()
+        .unwrap()
+        .insert("values".into(), values);
+    vm.set_input(input_obj);
+
+    let value = vm.execute_entry_point_by_name("data.test.allow").unwrap();
+    assert_eq!(value, Value::Bool(true));
+
+    let report_json = vm.take_causality_report(value).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&report_json).unwrap();
+
+    // The report should contain rules with conditions that have loop witness data
+    let rules = report["rules"].as_array().expect("rules should be present");
+    assert!(!rules.is_empty(), "rules should not be empty");
+
+    // Find a condition with a witness in any definition's conditions
+    let mut found_witness = false;
+    for rule in rules {
+        if let Some(definitions) = rule["definitions"].as_array() {
+            for def in definitions {
+                if let Some(conditions) = def["conditions"].as_array() {
+                    for cond in conditions {
+                        if !cond["witness"].is_null() {
+                            found_witness = true;
+                            let witness = &cond["witness"];
+                            // Verify witness structure has the expected fields
+                            assert!(
+                                witness["total_iterations"].is_number(),
+                                "witness should have total_iterations, got: {witness}"
+                            );
+                            assert!(
+                                witness["success_count"].is_number(),
+                                "witness should have success_count, got: {witness}"
+                            );
+                            // With input [0, 2, 4], the loop iterates 3 times,
+                            // and value 2 passes both n > 1 and n < 3.
+                            let total = witness["total_iterations"].as_u64().unwrap();
+                            assert!(total > 0, "total_iterations should be > 0, got {total}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(found_witness, "expected at least one condition with a loop witness in the report.\nFull report:\n{report_json}");
 }

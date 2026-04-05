@@ -29,6 +29,26 @@ namespace Regorus
     }
 
     /// <summary>
+    /// Controls which portion of the explanation is materialized.
+    /// </summary>
+    public enum ExplanationScope : byte
+    {
+        AllEmissions = 0,
+        SingleEmission = 1,
+        RuleSummary = 2,
+    }
+
+    /// <summary>
+    /// Controls the amount of explanation detail to include.
+    /// </summary>
+    public enum ExplanationDetail : byte
+    {
+        Compact = 0,
+        Standard = 1,
+        Full = 2,
+    }
+
+    /// <summary>
     /// C# Wrapper for the Regorus engine.
     /// This class is not thread-safe. For multithreaded use, prefer cloning after adding policies and data to an instance.
     /// Cloning is cheap and involves only incrementing reference counts for shared immutable objects like parsed policies,
@@ -308,11 +328,24 @@ namespace Regorus
             });
         }
 
-        public void SetExplanationSettings(bool enabled, ExplanationValueMode valueMode = ExplanationValueMode.Redacted, ExplanationConditionMode conditionMode = ExplanationConditionMode.PrimaryOnly, bool assumeUnknownInput = false)
+        public void SetExplanationSettings(bool enabled, ExplanationValueMode valueMode = ExplanationValueMode.Redacted, ExplanationConditionMode conditionMode = ExplanationConditionMode.PrimaryOnly, ExplanationScope scope = ExplanationScope.AllEmissions, ExplanationDetail detail = ExplanationDetail.Standard, uint? emissionIndex = null, string? emissionValueJson = null, bool assumeUnknownInput = false)
         {
-            UseHandle(enginePtr =>
+            if (emissionValueJson is null)
             {
-                CheckAndDropResult(Regorus.Internal.API.regorus_engine_set_explanation_settings((Regorus.Internal.RegorusEngine*)enginePtr, enabled, (byte)valueMode, (byte)conditionMode, assumeUnknownInput));
+                UseHandle(enginePtr =>
+                {
+                    CheckAndDropResult(Regorus.Internal.API.regorus_engine_set_explanation_settings((Regorus.Internal.RegorusEngine*)enginePtr, enabled, (byte)valueMode, (byte)conditionMode, (byte)scope, (byte)detail, emissionIndex.HasValue, emissionIndex.GetValueOrDefault(), false, null, assumeUnknownInput));
+                });
+
+                return;
+            }
+
+            Utf8Marshaller.WithUtf8(emissionValueJson, emissionValuePtr =>
+            {
+                UseHandle(enginePtr =>
+                {
+                    CheckAndDropResult(Regorus.Internal.API.regorus_engine_set_explanation_settings((Regorus.Internal.RegorusEngine*)enginePtr, enabled, (byte)valueMode, (byte)conditionMode, (byte)scope, (byte)detail, emissionIndex.HasValue, emissionIndex.GetValueOrDefault(), true, (byte*)emissionValuePtr, assumeUnknownInput));
+                });
             });
         }
 

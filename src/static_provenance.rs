@@ -540,6 +540,7 @@ fn analyze_instruction(
 
         // Mutation / control-flow — no dest register to clear.
         ObjectSet { .. }
+        | ObjectDeepSet { .. }
         | ArrayPush { .. }
         | SetAdd { .. }
         | LoopNext { .. }
@@ -606,30 +607,12 @@ fn get_condition_text(pc: usize, program: &Program) -> String {
         None => return String::new(),
     };
 
-    // Extract the text at the span location.
-    let mut current_line: usize = 1;
-    let mut line_start: usize = 0;
-    for (i, ch) in source.char_indices() {
-        if current_line == span_info.line {
-            // Found the line. Column is 1-based.
-            let col_offset = span_info.column.saturating_sub(1);
-            let start = line_start.saturating_add(col_offset);
-            let end = start.saturating_add(span_info.length).min(source.len());
-            return String::from(source.get(start..end).unwrap_or(""));
-        }
-        if ch == '\n' {
-            current_line = current_line.saturating_add(1);
-            line_start = i.saturating_add(1_usize);
-        }
-    }
-    // If the span is on the last line (no trailing newline).
-    if current_line == span_info.line {
-        let col_offset = span_info.column.saturating_sub(1);
-        let start = line_start.saturating_add(col_offset);
-        let end = start.saturating_add(span_info.length).min(source.len());
-        return String::from(source.get(start..end).unwrap_or(""));
-    }
-    String::new()
+    source
+        .lines()
+        .nth(span_info.line.saturating_sub(1))
+        .map(str::trim)
+        .map(String::from)
+        .unwrap_or_default()
 }
 
 /// Peek at the instruction before `pc` to identify comparison operands.
@@ -838,5 +821,27 @@ fn build_assert_eq_condition_info(
         kind: ConditionKind::EqualityAssertion,
         operator: Some(Operator::Eq),
         has_input_operand: has_input,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_condition_text;
+    use crate::rvm::program::{Program, SourceFile, SpanInfo};
+
+    #[test]
+    fn get_condition_text_returns_full_trimmed_line() {
+        let mut program = Program::new();
+        program.sources.push(SourceFile::new(
+            "test.rego".into(),
+            "package test\n        some link in input.links\n".into(),
+        ));
+        program
+            .instruction_spans
+            .push(Some(SpanInfo::new(0, 2, 23, 4)));
+
+        let text = get_condition_text(0, &program);
+
+        assert_eq!(text, "some link in input.links");
     }
 }

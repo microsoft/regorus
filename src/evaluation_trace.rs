@@ -44,12 +44,40 @@ pub enum ConditionMode {
     AllContributing,
 }
 
+/// Controls which portion of the rule report is materialized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExplanationScope {
+    /// Include explanations for every emitted result.
+    #[default]
+    AllEmissions,
+    /// Include explanations for a single emitted result.
+    SingleEmission,
+    /// Suppress per-emission details and keep only the rule-level summary.
+    RuleSummary,
+}
+
+/// Controls the amount of explanation detail materialized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExplanationDetail {
+    /// Reserve only the shortest useful causal set.
+    Compact,
+    /// Keep the current end-user default output.
+    #[default]
+    Standard,
+    /// Include the fullest available explanation detail.
+    Full,
+}
+
 /// Settings governing explanation capture and reporting.
 #[derive(Debug, Clone, Default)]
 pub struct ExplanationSettings {
     pub enabled: bool,
     pub value_mode: ValueMode,
     pub condition_mode: ConditionMode,
+    pub scope: ExplanationScope,
+    pub detail: ExplanationDetail,
+    pub emission_index: Option<usize>,
+    pub emission_value: Option<Value>,
     pub assume_unknown_input: bool,
 }
 
@@ -71,8 +99,14 @@ pub struct ConditionOutcome {
     pub assumed: bool,
     /// Index of the actual (LHS) value in `captured_values`, if captured.
     pub actual_value_idx: Option<ValueIdx>,
+    /// Runtime provenance path for the actual value, if available.
+    pub actual_path: Option<String>,
     /// Index of the expected (RHS) value in `captured_values`, if captured.
     pub expected_value_idx: Option<ValueIdx>,
+    /// Runtime provenance path for the expected value, if available.
+    pub expected_path: Option<String>,
+    /// Index of the loop summary in `loop_stats`, if this condition has one.
+    pub loop_stat_idx: Option<ValueIdx>,
 }
 
 /// Statistics for a completed loop.
@@ -80,6 +114,8 @@ pub struct ConditionOutcome {
 pub struct LoopStat {
     /// PC of the `LoopStart` instruction.
     pub pc: u32,
+    /// Condition outcome index this loop summary should be attached to, when known.
+    pub anchor_condition_idx: Option<u32>,
     /// Total iterations executed.
     pub total_iterations: u32,
     /// Iterations that succeeded (body completed without failure).
@@ -101,6 +137,21 @@ pub struct RuleOutcome {
     pub succeeded: bool,
     /// Index of the result value in `captured_values`, if captured.
     pub result_value_idx: Option<ValueIdx>,
+}
+
+/// A single emitted result value for a partial-set rule.
+#[derive(Debug, Clone)]
+pub struct EmissionOutcome {
+    /// Rule index in `Program::rule_infos`.
+    pub rule_index: u16,
+    /// Definition that produced this emission.
+    pub definition_index: u16,
+    /// Start index into `condition_outcomes` for the active body window.
+    pub condition_start_index: u32,
+    /// End index into `condition_outcomes` for the active body window.
+    pub condition_end_index: u32,
+    /// Index of the emitted value in `captured_values`.
+    pub value_idx: Option<ValueIdx>,
 }
 
 /// An assumption recorded when unknown input handling skips an assertion.
@@ -152,6 +203,8 @@ pub struct EvaluationTrace {
     pub loop_stats: Vec<LoopStat>,
     /// Rule definition outcomes.
     pub rule_outcomes: Vec<RuleOutcome>,
+    /// Emitted values for partial-set rules.
+    pub emission_outcomes: Vec<EmissionOutcome>,
     /// Assumptions from unknown input handling.
     pub assumptions: Vec<Assumption>,
 }
@@ -167,6 +220,7 @@ impl EvaluationTrace {
         self.captured_values.clear();
         self.loop_stats.clear();
         self.rule_outcomes.clear();
+        self.emission_outcomes.clear();
         self.assumptions.clear();
     }
 
@@ -187,13 +241,16 @@ impl EvaluationTrace {
     }
 
     /// Record a condition outcome.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_condition(
         &mut self,
         pc: u32,
         passed: bool,
         assumed: bool,
         actual: Option<Value>,
+        actual_path: Option<String>,
         expected: Option<Value>,
+        expected_path: Option<String>,
     ) {
         let actual_idx = actual.and_then(|v| self.capture_value(v));
         let expected_idx = expected.and_then(|v| self.capture_value(v));
@@ -202,12 +259,15 @@ impl EvaluationTrace {
             passed,
             assumed,
             actual_value_idx: actual_idx,
+            actual_path,
             expected_value_idx: expected_idx,
+            expected_path,
+            loop_stat_idx: None,
         });
     }
 
-    /// Record a loop completion.
-    pub fn record_loop(
+    /// Attach a loop summary to the most recently recorded condition outcome.
+    pub fn attach_loop_stat_to_last_condition(
         &mut self,
         pc: u32,
         total_iterations: u32,
@@ -217,8 +277,44 @@ impl EvaluationTrace {
     ) {
         let key_idx = sample_key.and_then(|v| self.capture_value(v));
         let val_idx = sample_value.and_then(|v| self.capture_value(v));
+        let loop_idx = self.loop_stats.len();
+        let Some(loop_idx_u16) = u16::try_from(loop_idx).ok() else {
+            return;
+        };
+
         self.loop_stats.push(LoopStat {
             pc,
+            anchor_condition_idx: self
+                .condition_outcomes
+                .len()
+                .checked_sub(1)
+                .and_then(|idx| u32::try_from(idx).ok()),
+            total_iterations,
+            success_count,
+            sample_key: key_idx,
+            sample_value: val_idx,
+        });
+
+        if let Some(outcome) = self.condition_outcomes.last_mut() {
+            outcome.loop_stat_idx = Some(loop_idx_u16);
+        }
+    }
+
+    /// Record a loop completion.
+    pub fn record_loop(
+        &mut self,
+        pc: u32,
+        anchor_condition_idx: Option<u32>,
+        total_iterations: u32,
+        success_count: u32,
+        sample_key: Option<Value>,
+        sample_value: Option<Value>,
+    ) {
+        let key_idx = sample_key.and_then(|v| self.capture_value(v));
+        let val_idx = sample_value.and_then(|v| self.capture_value(v));
+        self.loop_stats.push(LoopStat {
+            pc,
+            anchor_condition_idx,
             total_iterations,
             success_count,
             sample_key: key_idx,
@@ -240,6 +336,25 @@ impl EvaluationTrace {
             definition_index,
             succeeded,
             result_value_idx: result_idx,
+        });
+    }
+
+    /// Record a partial-set emission and the body-window conditions active at the time.
+    pub fn record_emission(
+        &mut self,
+        rule_index: u16,
+        definition_index: u16,
+        condition_start_index: u32,
+        condition_end_index: u32,
+        value: Value,
+    ) {
+        let value_idx = self.capture_value(value);
+        self.emission_outcomes.push(EmissionOutcome {
+            rule_index,
+            definition_index,
+            condition_start_index,
+            condition_end_index,
+            value_idx,
         });
     }
 
