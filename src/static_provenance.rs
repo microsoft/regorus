@@ -742,9 +742,24 @@ fn build_guard_condition_info(
                         .right_provenance
                         .as_ref()
                         .is_some_and(Provenance::is_input_rooted);
+                // Use the input-rooted operand's provenance as checked_provenance
+                // (the guard register itself holds a boolean, not the input path).
+                let effective_provenance = if has_input {
+                    operands
+                        .left_provenance
+                        .as_ref()
+                        .filter(|p| p.is_input_rooted())
+                        .or(operands
+                            .right_provenance
+                            .as_ref()
+                            .filter(|p| p.is_input_rooted()))
+                        .cloned()
+                } else {
+                    checked_provenance
+                };
                 StaticConditionInfo {
                     checked_register: register,
-                    checked_provenance,
+                    checked_provenance: effective_provenance,
                     operands: Some(operands),
                     text,
                     kind: ConditionKind::Comparison,

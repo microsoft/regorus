@@ -356,11 +356,24 @@ impl RegoVM {
                                 .map(|p| alloc::format!("{p}"))
                                 .unwrap_or_default();
                             let cond_text = info.map(|i| i.text.clone()).unwrap_or_default();
+                            let (op_str, non_input_val) = {
+                                let op = info.and_then(|i| {
+                                    i.operator.as_ref().map(|o| alloc::format!("{o}"))
+                                });
+                                let val = if a_undef {
+                                    Some(b_val.clone())
+                                } else {
+                                    Some(a_val.clone())
+                                };
+                                (op, val)
+                            };
                             self.trace.record_assumption(
                                 crate::evaluation_trace::AssumptionKind::ConditionHolds,
                                 input_path,
                                 cond_text,
                                 pc_u32,
+                                op_str,
+                                non_input_val,
                             );
                             passed = true;
                             assumed = true;
@@ -413,8 +426,30 @@ impl RegoVM {
                             }
                             _ => crate::evaluation_trace::AssumptionKind::ConditionHolds,
                         };
-                        self.trace
-                            .record_assumption(kind, input_path, cond_text, pc_u32);
+                        let (op_str, non_input_val) = info.map_or((None, None), |ci| {
+                            let op = ci.operator.as_ref().map(|o| alloc::format!("{o}"));
+                            let val = ci.operands.as_ref().and_then(|ops| {
+                                let left_is_input = ops
+                                    .left_provenance
+                                    .as_ref()
+                                    .is_some_and(|p| p.is_input_rooted());
+                                let non_input_reg = if left_is_input {
+                                    ops.right_reg
+                                } else {
+                                    ops.left_reg
+                                };
+                                self.get_register(non_input_reg).ok().cloned()
+                            });
+                            (op, val)
+                        });
+                        self.trace.record_assumption(
+                            kind,
+                            input_path,
+                            cond_text,
+                            pc_u32,
+                            op_str,
+                            non_input_val,
+                        );
                         passed = true;
                         assumed = true;
                     }

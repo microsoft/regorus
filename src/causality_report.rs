@@ -152,6 +152,12 @@ pub struct AssumptionRecord {
     pub input_path: String,
     /// Condition text that was assumed to hold.
     pub assumed_holds: String,
+    /// The comparison operator (e.g. "==", "!="), if applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operator: Option<String>,
+    /// The non-input value that was compared against.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assumed_value: Option<Value>,
     /// Source location.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<SourceLocation>,
@@ -405,6 +411,8 @@ fn materialize_assumptions(program: &Program, trace: &EvaluationTrace) -> Vec<As
                 kind: kind_str.to_string(),
                 input_path: a.input_path.clone(),
                 assumed_holds: a.condition_text.clone(),
+                operator: a.operator.clone(),
+                assumed_value: a.assumed_value.clone(),
                 location,
             }
         })

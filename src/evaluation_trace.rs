@@ -114,6 +114,12 @@ pub struct Assumption {
     pub condition_text: String,
     /// PC of the assertion that was skipped.
     pub pc: u32,
+    /// The comparison operator, e.g. `"=="`, `"!="`, `"<"`.
+    /// `None` for existence checks.
+    pub operator: Option<String>,
+    /// The non-input value that was compared against, e.g. `"admin"`.
+    /// `None` for existence checks or when the value is not available.
+    pub assumed_value: Option<Value>,
 }
 
 /// Kinds of assumptions that can be recorded.
@@ -244,12 +250,16 @@ impl EvaluationTrace {
         input_path: String,
         condition_text: String,
         pc: u32,
+        operator: Option<String>,
+        assumed_value: Option<Value>,
     ) {
         self.assumptions.push(Assumption {
             kind,
             input_path,
             condition_text,
             pc,
+            operator,
+            assumed_value,
         });
     }
 

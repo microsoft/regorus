@@ -318,6 +318,17 @@ impl RegoVM {
 
         self.set_register(dest, result_from_rule.clone())?;
 
+        #[cfg(feature = "explanations")]
+        if self.explanation_settings.enabled {
+            let succeeded = result_from_rule != Value::Undefined;
+            self.trace.record_rule_outcome(
+                rule_index,
+                0, // overall rule outcome
+                succeeded,
+                Some(result_from_rule.clone()),
+            );
+        }
+
         if self.get_register(dest)? == &Value::Undefined && !rule_failed_due_to_inconsistency {
             match call_context.rule_type {
                 RuleType::PartialSet => {
@@ -757,6 +768,17 @@ impl RegoVM {
                 .cloned()
                 .unwrap_or(Value::Undefined)
         };
+
+        #[cfg(feature = "explanations")]
+        if self.explanation_settings.enabled {
+            let succeeded = result_from_rule != Value::Undefined;
+            self.trace.record_rule_outcome(
+                rule_index,
+                0, // overall rule outcome
+                succeeded,
+                Some(result_from_rule.clone()),
+            );
+        }
 
         let mut current_window = Vec::default();
         mem::swap(&mut current_window, &mut self.registers);
