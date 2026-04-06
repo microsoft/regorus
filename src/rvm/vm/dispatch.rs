@@ -807,6 +807,297 @@ impl RegoVM {
                 let result = self.get_register(0)?.clone();
                 Ok(InstructionOutcome::Return(result))
             }
+            other => self.execute_policy_instruction(program, other),
+        }
+    }
+
+    #[cfg(not(feature = "azure_policy"))]
+    fn execute_policy_instruction(
+        &mut self,
+        program: &Program,
+        instruction: Instruction,
+    ) -> Result<InstructionOutcome> {
+        match instruction {
+            instruction @ (Instruction::PolicyCondition { .. }
+            | Instruction::LogicalBlockStart { .. }
+            | Instruction::LogicalBlockEnd { .. }
+            | Instruction::AllOfNext { .. }
+            | Instruction::AnyOfNext { .. }) => Err(VmError::UnhandledInstruction {
+                instruction: alloc::format!("{:?} requires the azure_policy feature", instruction),
+                pc: self.pc,
+            }),
+            other => self.execute_virtual_instruction(program, other),
+        }
+    }
+
+    /// Check whether `l` "contains" `r` using Azure Policy semantics.
+    ///
+    /// Works on strings (case-insensitive substring), arrays/sets (element
+    /// membership), and objects (key membership). For string haystacks,
+    /// non-string scalar RHS values are coerced to strings before the
+    /// substring check. For non-string scalar LHS values, coercion to string
+    /// only happens when the RHS is already a string.
+    #[cfg(feature = "azure_policy")]
+    #[inline]
+    fn policy_contains_check(l: &Value, r: &Value) -> bool {
+        use crate::builtins::azure_policy::helpers::{case_insensitive_equals, coerce_to_string};
+        use crate::languages::azure_policy::strings;
+
+        match *l {
+            Value::String(ref haystack) => match *r {
+                Value::String(ref needle) => strings::case_fold::contains(haystack, needle),
+                _ => coerce_to_string(r)
+                    .is_some_and(|needle| strings::case_fold::contains(haystack, &needle)),
+            },
+            Value::Array(ref items) => items.iter().any(|item| case_insensitive_equals(item, r)),
+            Value::Set(ref items) => items.iter().any(|item| case_insensitive_equals(item, r)),
+            // ARM template contains(object, key) checks key membership.
+            Value::Object(ref map) => map.keys().any(|key| case_insensitive_equals(key, r)),
+            // Coerce non-string scalar LHS (e.g., count result)
+            // to a string only when the RHS is already a string.
+            _ => {
+                if let Value::String(ref needle) = *r {
+                    coerce_to_string(l)
+                        .is_some_and(|haystack| strings::case_fold::contains(&haystack, needle))
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /// Evaluate a Policy comparison operator.  Undefined LHS → false.
+    #[cfg(feature = "azure_policy")]
+    fn policy_compare(
+        &mut self,
+        dest: u8,
+        left: u8,
+        right: u8,
+        cmp: fn(i8) -> bool,
+    ) -> Result<InstructionOutcome> {
+        use crate::builtins::azure_policy::helpers::{compare_values, is_undefined};
+
+        let l = self.get_register(left)?;
+        if is_undefined(l) {
+            self.set_register(dest, Value::Bool(false))?;
+        } else {
+            let r = self.get_register(right)?;
+            let result = compare_values(l, r).is_some_and(cmp);
+            self.set_register(dest, Value::Bool(result))?;
+        }
+        Ok(InstructionOutcome::Continue)
+    }
+
+    #[cfg(feature = "azure_policy")]
+    fn execute_policy_instruction(
+        &mut self,
+        program: &Program,
+        instruction: Instruction,
+    ) -> Result<InstructionOutcome> {
+        use crate::builtins::azure_policy::helpers::{
+            as_boolish, case_insensitive_equals, coerce_to_string_ci,
+            collection_any_ci_eq_excluding_null, collection_has_null, is_true, is_undefined,
+            match_like_pattern_ci, match_pattern,
+        };
+        use crate::rvm::instructions::{LogicalBlockMode, PolicyOp};
+
+        use Instruction::*;
+        match instruction {
+            PolicyCondition {
+                dest,
+                left,
+                right,
+                op,
+            } => {
+                let l = self.get_register(left)?;
+                let result = match op {
+                    PolicyOp::Equals => {
+                        let r = self.get_register(right)?;
+                        if is_undefined(l) {
+                            matches!(r, Value::Null)
+                        } else {
+                            case_insensitive_equals(l, r)
+                        }
+                    }
+                    PolicyOp::NotEquals => {
+                        let r = self.get_register(right)?;
+                        if is_undefined(l) {
+                            !matches!(r, Value::Null)
+                        } else {
+                            !case_insensitive_equals(l, r)
+                        }
+                    }
+                    PolicyOp::Greater => {
+                        return self.policy_compare(dest, left, right, |c| c > 0);
+                    }
+                    PolicyOp::GreaterOrEquals => {
+                        return self.policy_compare(dest, left, right, |c| c >= 0);
+                    }
+                    PolicyOp::Less => {
+                        return self.policy_compare(dest, left, right, |c| c < 0);
+                    }
+                    PolicyOp::LessOrEquals => {
+                        return self.policy_compare(dest, left, right, |c| c <= 0);
+                    }
+                    PolicyOp::In => {
+                        let r = self.get_register(right)?;
+                        if is_undefined(l) {
+                            collection_has_null(r)
+                        } else if matches!(*l, Value::Null) || is_undefined(r) {
+                            false
+                        } else {
+                            collection_any_ci_eq_excluding_null(r, l)
+                        }
+                    }
+                    PolicyOp::NotIn => {
+                        let r = self.get_register(right)?;
+                        if is_undefined(l) {
+                            !collection_has_null(r)
+                        } else if matches!(*l, Value::Null) || is_undefined(r) {
+                            true
+                        } else {
+                            !collection_any_ci_eq_excluding_null(r, l)
+                        }
+                    }
+                    PolicyOp::Contains | PolicyOp::NotContains => {
+                        let negated = op.is_negated();
+                        if is_undefined(l) {
+                            negated
+                        } else {
+                            let r = self.get_register(right)?;
+                            if is_undefined(r) {
+                                // undefined RHS: positive → false, negated → false
+                                false
+                            } else {
+                                negated ^ Self::policy_contains_check(l, r)
+                            }
+                        }
+                    }
+                    PolicyOp::ContainsKey | PolicyOp::NotContainsKey => {
+                        let negated = op.is_negated();
+                        if is_undefined(l) {
+                            negated
+                        } else {
+                            let r = self.get_register(right)?;
+                            if is_undefined(r) {
+                                false
+                            } else {
+                                let found = match *l {
+                                    Value::Object(ref map) => {
+                                        map.keys().any(|key| case_insensitive_equals(key, r))
+                                    }
+                                    _ => false,
+                                };
+                                negated ^ found
+                            }
+                        }
+                    }
+                    PolicyOp::Like | PolicyOp::NotLike => {
+                        let negated = op.is_negated();
+                        if is_undefined(l) {
+                            negated
+                        } else {
+                            let r = self.get_register(right)?;
+                            let positive = match (coerce_to_string_ci(l), coerce_to_string_ci(r)) {
+                                (Some(input), Some(pattern)) => {
+                                    match_like_pattern_ci(&input, &pattern)
+                                }
+                                _ => false,
+                            };
+                            negated ^ positive
+                        }
+                    }
+                    PolicyOp::Match
+                    | PolicyOp::NotMatch
+                    | PolicyOp::MatchInsensitively
+                    | PolicyOp::NotMatchInsensitively => {
+                        let negated = op.is_negated();
+                        let case_insensitive = matches!(
+                            op,
+                            PolicyOp::MatchInsensitively | PolicyOp::NotMatchInsensitively
+                        );
+                        if is_undefined(l) {
+                            negated
+                        } else {
+                            let r = self.get_register(right)?;
+                            negated ^ match_pattern(l, r, case_insensitive)
+                        }
+                    }
+                    PolicyOp::Exists => {
+                        let r = self.get_register(right)?;
+                        let expected = as_boolish(r).unwrap_or(false);
+                        let is_defined = !is_undefined(l) && !matches!(l, Value::Null);
+                        is_defined == expected
+                    }
+                    PolicyOp::ValueConditionGuard => {
+                        // left = value register, right = condition register
+                        if is_undefined(l) {
+                            self.set_register(dest, Value::Bool(false))?;
+                            return Ok(InstructionOutcome::Continue);
+                        } else {
+                            let c = self.get_register(right)?.clone();
+                            self.set_register(dest, c)?;
+                            return Ok(InstructionOutcome::Continue);
+                        }
+                    }
+                    PolicyOp::Not => {
+                        // left = operand, right unused
+                        !is_true(l)
+                    }
+                };
+                self.set_register(dest, Value::Bool(result))?;
+                Ok(InstructionOutcome::Continue)
+            }
+
+            // AllOf / AnyOf structured instructions
+            LogicalBlockStart {
+                mode: _,
+                result,
+                end_pc: _,
+            } => {
+                // Initialize result to false (pessimistic).
+                self.set_register(result, Value::Bool(false))?;
+                Ok(InstructionOutcome::Continue)
+            }
+            AllOfNext {
+                check,
+                result,
+                end_pc,
+            } => {
+                let val = self.get_register(check)?;
+                if !matches!(val, Value::Bool(true)) {
+                    // Child failed — short-circuit. Ensure the block result is false.
+                    self.set_register(result, Value::Bool(false))?;
+                    self.pc = usize::from(end_pc);
+                }
+                Ok(InstructionOutcome::Continue)
+            }
+            AnyOfNext {
+                check,
+                result,
+                end_pc,
+            } => {
+                let val = self.get_register(check)?;
+                if matches!(val, Value::Bool(true)) {
+                    // Child succeeded — short-circuit.
+                    self.set_register(result, Value::Bool(true))?;
+                    self.pc = usize::from(end_pc);
+                }
+                Ok(InstructionOutcome::Continue)
+            }
+            LogicalBlockEnd { mode, result } => {
+                match mode {
+                    LogicalBlockMode::AllOf => {
+                        // All children passed — set result to true.
+                        self.set_register(result, Value::Bool(true))?;
+                    }
+                    LogicalBlockMode::AnyOf => {
+                        // No child matched — result stays false (set by LogicalBlockStart).
+                    }
+                }
+                Ok(InstructionOutcome::Continue)
+            }
+
             other => self.execute_virtual_instruction(program, other),
         }
     }

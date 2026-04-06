@@ -9,7 +9,7 @@
     clippy::pattern_type_mismatch
 )] // tests unwrap conversions and slice math for brevity
 
-use crate::rvm::instructions::{GuardMode, Instruction, LoopMode};
+use crate::rvm::instructions::{GuardMode, Instruction, LogicalBlockMode, LoopMode, PolicyOp};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use anyhow::{anyhow, bail, Result};
@@ -83,6 +83,41 @@ pub fn parse_instruction(text: &str) -> Result<Instruction> {
             "ComprehensionYield" => parse_comprehension_add(params_text),
             "ReturnUndefinedIfNotTrue" => parse_return_undefined_if_not_true(params_text),
             "CoalesceUndefinedToNull" => parse_coalesce_undefined_to_null(params_text),
+            // Azure Policy condition operators
+            "PolicyEquals" => parse_policy_condition(params_text, PolicyOp::Equals),
+            "PolicyNotEquals" => parse_policy_condition(params_text, PolicyOp::NotEquals),
+            "PolicyGreater" => parse_policy_condition(params_text, PolicyOp::Greater),
+            "PolicyGreaterOrEquals" => {
+                parse_policy_condition(params_text, PolicyOp::GreaterOrEquals)
+            }
+            "PolicyLess" => parse_policy_condition(params_text, PolicyOp::Less),
+            "PolicyLessOrEquals" => parse_policy_condition(params_text, PolicyOp::LessOrEquals),
+            "PolicyIn" => parse_policy_condition(params_text, PolicyOp::In),
+            "PolicyNotIn" => parse_policy_condition(params_text, PolicyOp::NotIn),
+            "PolicyContains" => parse_policy_condition(params_text, PolicyOp::Contains),
+            "PolicyNotContains" => parse_policy_condition(params_text, PolicyOp::NotContains),
+            "PolicyContainsKey" => parse_policy_condition(params_text, PolicyOp::ContainsKey),
+            "PolicyNotContainsKey" => parse_policy_condition(params_text, PolicyOp::NotContainsKey),
+            "PolicyLike" => parse_policy_condition(params_text, PolicyOp::Like),
+            "PolicyNotLike" => parse_policy_condition(params_text, PolicyOp::NotLike),
+            "PolicyMatch" => parse_policy_condition(params_text, PolicyOp::Match),
+            "PolicyNotMatch" => parse_policy_condition(params_text, PolicyOp::NotMatch),
+            "PolicyMatchInsensitively" => {
+                parse_policy_condition(params_text, PolicyOp::MatchInsensitively)
+            }
+            "PolicyNotMatchInsensitively" => {
+                parse_policy_condition(params_text, PolicyOp::NotMatchInsensitively)
+            }
+            "PolicyExists" => parse_policy_condition(params_text, PolicyOp::Exists),
+            "ValueConditionGuard" => parse_value_condition_guard(params_text),
+            "PolicyNot" => parse_policy_not(params_text),
+            // AllOf / AnyOf
+            "AllOfStart" => parse_logical_block_start(params_text, LogicalBlockMode::AllOf),
+            "AllOfNext" => parse_allof_next(params_text),
+            "AllOfEnd" => parse_logical_block_end(params_text, LogicalBlockMode::AllOf),
+            "AnyOfStart" => parse_logical_block_start(params_text, LogicalBlockMode::AnyOf),
+            "AnyOfNext" => parse_anyof_next(params_text),
+            "AnyOfEnd" => parse_logical_block_end(params_text, LogicalBlockMode::AnyOf),
             _ => bail!("Unknown instruction: {}", name),
         }
     } else {
@@ -705,5 +740,85 @@ fn parse_coalesce_undefined_to_null(params_text: &str) -> Result<Instruction> {
     let register = get_param_u16(&params, "register")?;
     Ok(Instruction::CoalesceUndefinedToNull {
         register: register.try_into().unwrap(),
+    })
+}
+
+/// Generic parser for PolicyCondition instructions with { dest, left, right } fields.
+fn parse_policy_condition(params_text: &str, op: PolicyOp) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let dest: u8 = get_param_u16(&params, "dest")?.try_into().unwrap();
+    let left: u8 = get_param_u16(&params, "left")?.try_into().unwrap();
+    let right: u8 = get_param_u16(&params, "right")?.try_into().unwrap();
+    Ok(Instruction::PolicyCondition {
+        dest,
+        left,
+        right,
+        op,
+    })
+}
+
+fn parse_value_condition_guard(params_text: &str) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let dest: u8 = get_param_u16(&params, "dest")?.try_into().unwrap();
+    let value: u8 = get_param_u16(&params, "value")?.try_into().unwrap();
+    let condition: u8 = get_param_u16(&params, "condition")?.try_into().unwrap();
+    Ok(Instruction::PolicyCondition {
+        dest,
+        left: value,
+        right: condition,
+        op: PolicyOp::ValueConditionGuard,
+    })
+}
+
+fn parse_policy_not(params_text: &str) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let dest: u8 = get_param_u16(&params, "dest")?.try_into().unwrap();
+    let operand: u8 = get_param_u16(&params, "operand")?.try_into().unwrap();
+    Ok(Instruction::PolicyCondition {
+        dest,
+        left: operand,
+        right: 0,
+        op: PolicyOp::Not,
+    })
+}
+
+fn parse_logical_block_start(params_text: &str, mode: LogicalBlockMode) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let result: u8 = get_param_u16(&params, "result")?.try_into().unwrap();
+    let end_pc = get_param_u16(&params, "end_pc")?;
+    Ok(Instruction::LogicalBlockStart {
+        mode,
+        result,
+        end_pc,
+    })
+}
+
+fn parse_allof_next(params_text: &str) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let check: u8 = get_param_u16(&params, "check")?.try_into().unwrap();
+    let result: u8 = get_param_u16(&params, "result")?.try_into().unwrap();
+    let end_pc = get_param_u16(&params, "end_pc")?;
+    Ok(Instruction::AllOfNext {
+        check,
+        result,
+        end_pc,
+    })
+}
+
+fn parse_logical_block_end(params_text: &str, mode: LogicalBlockMode) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let result: u8 = get_param_u16(&params, "result")?.try_into().unwrap();
+    Ok(Instruction::LogicalBlockEnd { mode, result })
+}
+
+fn parse_anyof_next(params_text: &str) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let check: u8 = get_param_u16(&params, "check")?.try_into().unwrap();
+    let result: u8 = get_param_u16(&params, "result")?.try_into().unwrap();
+    let end_pc = get_param_u16(&params, "end_pc")?;
+    Ok(Instruction::AnyOfNext {
+        check,
+        result,
+        end_pc,
     })
 }

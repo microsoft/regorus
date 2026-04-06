@@ -10,7 +10,9 @@ pub use params::{
     FunctionCallParams, InstructionData, LoopStartParams, ObjectCreateParams, SetCreateParams,
     VirtualDataDocumentLookupParams,
 };
-pub use types::{ComprehensionMode, GuardMode, LiteralOrRegister, LoopMode};
+pub use types::{
+    ComprehensionMode, GuardMode, LiteralOrRegister, LogicalBlockMode, LoopMode, PolicyOp,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -355,6 +357,65 @@ pub enum Instruction {
 
     /// End a comprehension block
     ComprehensionEnd {},
+
+    // ── Azure Policy condition operators (consolidated) ────────────────
+    /// Consolidated Azure Policy condition instruction.
+    ///
+    /// Replaces 21 separate Policy* variants.  The `op` discriminant selects
+    /// the specific Azure Policy condition semantics.
+    ///
+    /// For most ops: `dest = op(left, right)`.
+    /// For `PolicyOp::Not`: `dest = !is_true(left)`, `right` is unused (0).
+    /// For `PolicyOp::ValueConditionGuard`: `left` = value register,
+    ///   `right` = condition register.
+    PolicyCondition {
+        dest: u8,
+        left: u8,
+        right: u8,
+        op: PolicyOp,
+    },
+
+    // ── AllOf / AnyOf structured short-circuit instructions ───────────
+    /// Initialize allOf/anyOf: set result register to false.
+    LogicalBlockStart {
+        mode: LogicalBlockMode,
+        /// Register that accumulates the result.
+        result: u8,
+        /// PC of the corresponding End instruction.
+        end_pc: u16,
+    },
+
+    /// Check one allOf child: if not true, short-circuit (result stays false),
+    /// jump to end_pc.
+    AllOfNext {
+        /// Register holding the child condition result.
+        check: u8,
+        /// Register that accumulates the allOf result.
+        result: u8,
+        /// PC of the AllOfEnd instruction (jump target on short-circuit).
+        end_pc: u16,
+    },
+
+    /// Check one anyOf child: if true, short-circuit (set result to true),
+    /// jump to end_pc.
+    AnyOfNext {
+        /// Register holding the child condition result.
+        check: u8,
+        /// Register that accumulates the anyOf result.
+        result: u8,
+        /// PC of the AnyOfEnd instruction.
+        end_pc: u16,
+    },
+
+    /// Finalize allOf/anyOf block.
+    ///
+    /// For AllOf: all children passed → set result to true.
+    /// For AnyOf: no child matched → result stays false (no-op).
+    LogicalBlockEnd {
+        mode: LogicalBlockMode,
+        /// Register that accumulates the result.
+        result: u8,
+    },
 }
 
 impl Instruction {

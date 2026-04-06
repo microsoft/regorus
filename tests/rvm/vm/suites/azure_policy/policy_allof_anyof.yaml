@@ -1,0 +1,680 @@
+# AllOf / AnyOf structured short-circuit instruction tests
+#
+# AllOf: conjunction with lazy short-circuit.
+#   AllOfStart  — initialize result=false
+#   AllOfNext   — if child is not true, set pc=end_pc; after the main-loop
+#                 increment, execution resumes past AllOfEnd (result stays false)
+#   AllOfEnd    — all children passed, set result=true
+#
+# AnyOf: disjunction with lazy short-circuit.
+#   AnyOfStart  — initialize result=false
+#   AnyOfNext   — if child is true, set result=true, set pc=end_pc; after the
+#                 main-loop increment, execution resumes past AnyOfEnd
+#   AnyOfEnd    — no child matched, result stays false
+#
+# PC semantics: end_pc points to the AllOfEnd/AnyOfEnd instruction.
+# On short-circuit the VM sets self.pc = end_pc; because the main loop
+# increments pc after Continue, the End instruction itself is skipped.
+
+cases:
+  # =========================================================================
+  # AllOf basic cases
+  # =========================================================================
+
+  - note: allof_all_true
+    description: "allOf with two true children → true"
+    literals: []
+    instructions:
+      # PC 0: AllOfStart — end_pc=5 points to AllOfEnd at PC 5
+      - "AllOfStart { result: 0, end_pc: 5 }"
+      # Child 1: evaluate condition into r1
+      - "LoadTrue { dest: 1 }"
+      - "AllOfNext { check: 1, result: 0, end_pc: 5 }"
+      # Child 2: evaluate condition into r2
+      - "LoadTrue { dest: 2 }"
+      - "AllOfNext { check: 2, result: 0, end_pc: 5 }"
+      # PC 5: AllOfEnd — all passed
+      - "AllOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: allof_first_false
+    description: "allOf with first child false → short-circuits, result false"
+    literals: []
+    instructions:
+      # PC 0: AllOfStart — end_pc=5
+      - "AllOfStart { result: 0, end_pc: 5 }"
+      # Child 1: false
+      - "LoadFalse { dest: 1 }"
+      - "AllOfNext { check: 1, result: 0, end_pc: 5 }"
+      # Child 2: this should be skipped
+      - "LoadTrue { dest: 2 }"
+      - "AllOfNext { check: 2, result: 0, end_pc: 5 }"
+      # PC 5: AllOfEnd
+      - "AllOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: allof_second_false
+    description: "allOf with second child false → result false"
+    literals: []
+    instructions:
+      - "AllOfStart { result: 0, end_pc: 5 }"
+      - "LoadTrue { dest: 1 }"
+      - "AllOfNext { check: 1, result: 0, end_pc: 5 }"
+      - "LoadFalse { dest: 2 }"
+      - "AllOfNext { check: 2, result: 0, end_pc: 5 }"
+      - "AllOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: allof_empty
+    description: "allOf with zero children → AllOfStart immediately followed by AllOfEnd → true"
+    literals: []
+    instructions:
+      # PC 0: AllOfStart — end_pc=1 points to AllOfEnd at PC 1
+      - "AllOfStart { result: 0, end_pc: 1 }"
+      # PC 1: AllOfEnd
+      - "AllOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: allof_single_true
+    description: "allOf with single true child → true"
+    literals: []
+    instructions:
+      - "AllOfStart { result: 0, end_pc: 3 }"
+      - "LoadTrue { dest: 1 }"
+      - "AllOfNext { check: 1, result: 0, end_pc: 3 }"
+      - "AllOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: allof_single_false
+    description: "allOf with single false child → false"
+    literals: []
+    instructions:
+      - "AllOfStart { result: 0, end_pc: 3 }"
+      - "LoadFalse { dest: 1 }"
+      - "AllOfNext { check: 1, result: 0, end_pc: 3 }"
+      - "AllOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: allof_undefined_child
+    description: "allOf: first child undefined (not true), second child true → short-circuits to false"
+    literals: []
+    instructions:
+      # PC 0: AllOfEnd at PC 5
+      - "AllOfStart { result: 0, end_pc: 5 }"
+      # PC 1: r1 is undefined (not initialized) → AllOfNext short-circuits
+      - "AllOfNext { check: 1, result: 0, end_pc: 5 }"
+      # PC 2: Child 2 (skipped)
+      - "LoadTrue { dest: 2 }"
+      # PC 3 (skipped)
+      - "AllOfNext { check: 2, result: 0, end_pc: 5 }"
+      # PC 4: should not happen
+      - "LoadTrue { dest: 3 }"
+      # PC 5: AllOfEnd (skipped on short-circuit)
+      - "AllOfEnd { result: 0 }"
+      # PC 6
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # AnyOf basic cases
+  # =========================================================================
+
+  - note: anyof_first_true
+    description: "anyOf with first child true → short-circuits, result true"
+    literals: []
+    instructions:
+      # PC 0: AnyOfStart — end_pc=5
+      - "AnyOfStart { result: 0, end_pc: 5 }"
+      # Child 1: true
+      - "LoadTrue { dest: 1 }"
+      - "AnyOfNext { check: 1, result: 0, end_pc: 5 }"
+      # Child 2: should be skipped
+      - "LoadFalse { dest: 2 }"
+      - "AnyOfNext { check: 2, result: 0, end_pc: 5 }"
+      # PC 5: AnyOfEnd
+      - "AnyOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: anyof_second_true
+    description: "anyOf with second child true → result true"
+    literals: []
+    instructions:
+      - "AnyOfStart { result: 0, end_pc: 5 }"
+      - "LoadFalse { dest: 1 }"
+      - "AnyOfNext { check: 1, result: 0, end_pc: 5 }"
+      - "LoadTrue { dest: 2 }"
+      - "AnyOfNext { check: 2, result: 0, end_pc: 5 }"
+      - "AnyOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: anyof_all_false
+    description: "anyOf with all children false → result false"
+    literals: []
+    instructions:
+      - "AnyOfStart { result: 0, end_pc: 5 }"
+      - "LoadFalse { dest: 1 }"
+      - "AnyOfNext { check: 1, result: 0, end_pc: 5 }"
+      - "LoadFalse { dest: 2 }"
+      - "AnyOfNext { check: 2, result: 0, end_pc: 5 }"
+      - "AnyOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: anyof_empty
+    description: "anyOf with zero children → false"
+    literals: []
+    instructions:
+      - "AnyOfStart { result: 0, end_pc: 1 }"
+      - "AnyOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: anyof_single_true
+    literals: []
+    instructions:
+      - "AnyOfStart { result: 0, end_pc: 3 }"
+      - "LoadTrue { dest: 1 }"
+      - "AnyOfNext { check: 1, result: 0, end_pc: 3 }"
+      - "AnyOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: anyof_single_false
+    literals: []
+    instructions:
+      - "AnyOfStart { result: 0, end_pc: 3 }"
+      - "LoadFalse { dest: 1 }"
+      - "AnyOfNext { check: 1, result: 0, end_pc: 3 }"
+      - "AnyOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # Nested allOf inside anyOf
+  # =========================================================================
+
+  - note: nested_allof_in_anyof
+    description: |
+      anyOf [
+        allOf [false, true],   -- fails
+        allOf [true, true]     -- passes → anyOf result is true
+      ]
+    literals: []
+    instructions:
+      # Outer anyOf: AnyOfEnd at PC 15
+      # PC 0
+      - "AnyOfStart { result: 0, end_pc: 15 }"
+
+      # --- anyOf child 1: allOf [false, true] ---
+      # Inner allOf #1: AllOfEnd at PC 6
+      # PC 1
+      - "AllOfStart { result: 3, end_pc: 6 }"
+      # PC 2
+      - "LoadFalse { dest: 1 }"
+      # PC 3: short-circuits → pc=6, +1→7 (skips AllOfEnd)
+      - "AllOfNext { check: 1, result: 3, end_pc: 6 }"
+      # PC 4 (skipped)
+      - "LoadTrue { dest: 2 }"
+      # PC 5 (skipped)
+      - "AllOfNext { check: 2, result: 3, end_pc: 6 }"
+      # PC 6
+      - "AllOfEnd { result: 3 }"
+      # PC 7: AnyOfNext — r3=false → no short-circuit, continue
+      - "AnyOfNext { check: 3, result: 0, end_pc: 15 }"
+
+      # --- anyOf child 2: allOf [true, true] ---
+      # Inner allOf #2: AllOfEnd at PC 13
+      # PC 8
+      - "AllOfStart { result: 3, end_pc: 13 }"
+      # PC 9
+      - "LoadTrue { dest: 1 }"
+      # PC 10
+      - "AllOfNext { check: 1, result: 3, end_pc: 13 }"
+      # PC 11
+      - "LoadTrue { dest: 2 }"
+      # PC 12
+      - "AllOfNext { check: 2, result: 3, end_pc: 13 }"
+      # PC 13
+      - "AllOfEnd { result: 3 }"
+      # PC 14: AnyOfNext — r3=true → short-circuit! r0=true, skip AnyOfEnd
+      - "AnyOfNext { check: 3, result: 0, end_pc: 15 }"
+      # PC 15
+      - "AnyOfEnd { result: 0 }"
+      # PC 16
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # Nested anyOf inside allOf
+  # =========================================================================
+
+  - note: nested_anyof_in_allof
+    description: |
+      allOf [
+        anyOf [false, true],   -- passes (second child true)
+        anyOf [false, false]   -- fails
+      ] → false
+    literals: []
+    instructions:
+      # Outer allOf: AllOfEnd at PC 15
+      # PC 0
+      - "AllOfStart { result: 0, end_pc: 15 }"
+
+      # --- allOf child 1: anyOf [false, true] ---
+      # Inner anyOf #1: AnyOfEnd at PC 6
+      # PC 1
+      - "AnyOfStart { result: 3, end_pc: 6 }"
+      # PC 2
+      - "LoadFalse { dest: 1 }"
+      # PC 3
+      - "AnyOfNext { check: 1, result: 3, end_pc: 6 }"
+      # PC 4
+      - "LoadTrue { dest: 2 }"
+      # PC 5: r2=true → short-circuit! r3=true, skip AnyOfEnd
+      - "AnyOfNext { check: 2, result: 3, end_pc: 6 }"
+      # PC 6
+      - "AnyOfEnd { result: 3 }"
+      # PC 7: AllOfNext — r3=true → no short-circuit, continue
+      - "AllOfNext { check: 3, result: 0, end_pc: 15 }"
+
+      # --- allOf child 2: anyOf [false, false] ---
+      # Inner anyOf #2: AnyOfEnd at PC 13
+      # PC 8
+      - "AnyOfStart { result: 3, end_pc: 13 }"
+      # PC 9
+      - "LoadFalse { dest: 1 }"
+      # PC 10
+      - "AnyOfNext { check: 1, result: 3, end_pc: 13 }"
+      # PC 11
+      - "LoadFalse { dest: 2 }"
+      # PC 12
+      - "AnyOfNext { check: 2, result: 3, end_pc: 13 }"
+      # PC 13
+      - "AnyOfEnd { result: 3 }"
+      # PC 14: AllOfNext — r3=false → short-circuit! skip AllOfEnd
+      - "AllOfNext { check: 3, result: 0, end_pc: 15 }"
+      # PC 15
+      - "AllOfEnd { result: 0 }"
+      # PC 16
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # AllOf/AnyOf with policy operators
+  # =========================================================================
+
+  - note: allof_with_policy_equals
+    description: "allOf [ PolicyEquals(a,a), PolicyEquals(b,B) ] → true"
+    literals: ["hello", "hello", "World", "WORLD"]
+    instructions:
+      # PC 0: AllOfEnd at PC 9
+      - "AllOfStart { result: 0, end_pc: 9 }"
+      # Child 1: PolicyEquals("hello", "hello") → r3=true
+      # PC 1
+      - "Load { dest: 1, literal_idx: 0 }"
+      # PC 2
+      - "Load { dest: 2, literal_idx: 1 }"
+      # PC 3
+      - "PolicyEquals { dest: 3, left: 1, right: 2 }"
+      # PC 4
+      - "AllOfNext { check: 3, result: 0, end_pc: 9 }"
+      # Child 2: PolicyEquals("World", "WORLD") → r3=true
+      # PC 5
+      - "Load { dest: 1, literal_idx: 2 }"
+      # PC 6
+      - "Load { dest: 2, literal_idx: 3 }"
+      # PC 7
+      - "PolicyEquals { dest: 3, left: 1, right: 2 }"
+      # PC 8
+      - "AllOfNext { check: 3, result: 0, end_pc: 9 }"
+      # PC 9
+      - "AllOfEnd { result: 0 }"
+      # PC 10
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: anyof_with_policy_operators
+    description: "anyOf [ PolicyEquals(a,b), PolicyContains(str,sub) ] → true via second child"
+    literals: ["hello", "world", "Hello World", "world"]
+    instructions:
+      # PC 0
+      - "AnyOfStart { result: 0, end_pc: 9 }"
+      # Child 1: PolicyEquals("hello", "world") → false
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyEquals { dest: 3, left: 1, right: 2 }"
+      - "AnyOfNext { check: 3, result: 0, end_pc: 9 }"
+      # Child 2: PolicyContains("Hello World", "world") → true
+      - "Load { dest: 1, literal_idx: 2 }"
+      - "Load { dest: 2, literal_idx: 3 }"
+      - "PolicyContains { dest: 3, left: 1, right: 2 }"
+      - "AnyOfNext { check: 3, result: 0, end_pc: 9 }"
+      # PC 9
+      - "AnyOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # Three children
+  # =========================================================================
+
+  - note: allof_three_children
+    description: "allOf with three true children"
+    literals: []
+    instructions:
+      - "AllOfStart { result: 0, end_pc: 7 }"
+      - "LoadTrue { dest: 1 }"
+      - "AllOfNext { check: 1, result: 0, end_pc: 7 }"
+      - "LoadTrue { dest: 2 }"
+      - "AllOfNext { check: 2, result: 0, end_pc: 7 }"
+      - "LoadTrue { dest: 3 }"
+      - "AllOfNext { check: 3, result: 0, end_pc: 7 }"
+      - "AllOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: allof_third_false
+    description: "allOf with third child false"
+    literals: []
+    instructions:
+      - "AllOfStart { result: 0, end_pc: 7 }"
+      - "LoadTrue { dest: 1 }"
+      - "AllOfNext { check: 1, result: 0, end_pc: 7 }"
+      - "LoadTrue { dest: 2 }"
+      - "AllOfNext { check: 2, result: 0, end_pc: 7 }"
+      - "LoadFalse { dest: 3 }"
+      - "AllOfNext { check: 3, result: 0, end_pc: 7 }"
+      - "AllOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: anyof_third_true
+    description: "anyOf where only third child is true"
+    literals: []
+    instructions:
+      - "AnyOfStart { result: 0, end_pc: 7 }"
+      - "LoadFalse { dest: 1 }"
+      - "AnyOfNext { check: 1, result: 0, end_pc: 7 }"
+      - "LoadFalse { dest: 2 }"
+      - "AnyOfNext { check: 2, result: 0, end_pc: 7 }"
+      - "LoadTrue { dest: 3 }"
+      - "AnyOfNext { check: 3, result: 0, end_pc: 7 }"
+      - "AnyOfEnd { result: 0 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # Additional corner cases
+  # =========================================================================
+
+  - note: anyof_undefined_child
+    description: "anyOf with undefined child (not true) — continues evaluation"
+    literals: []
+    instructions:
+      # PC 0: AnyOfEnd at PC 5
+      - "AnyOfStart { result: 0, end_pc: 5 }"
+      # PC 1: r1 is undefined → AnyOfNext does not short-circuit
+      - "AnyOfNext { check: 1, result: 0, end_pc: 5 }"
+      # PC 2: Child 2 = true → short-circuit
+      - "LoadTrue { dest: 2 }"
+      # PC 3
+      - "AnyOfNext { check: 2, result: 0, end_pc: 5 }"
+      # PC 4: (skipped)
+      - "LoadFalse { dest: 3 }"
+      # PC 5
+      - "AnyOfEnd { result: 0 }"
+      # PC 6
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: anyof_all_undefined
+    description: "anyOf with all children undefined → false"
+    literals: []
+    instructions:
+      # PC 0: AnyOfEnd at PC 3
+      - "AnyOfStart { result: 0, end_pc: 3 }"
+      # PC 1: r1 undefined
+      - "AnyOfNext { check: 1, result: 0, end_pc: 3 }"
+      # PC 2: r2 undefined
+      - "AnyOfNext { check: 2, result: 0, end_pc: 3 }"
+      # PC 3
+      - "AnyOfEnd { result: 0 }"
+      # PC 4
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: allof_all_undefined
+    description: "allOf with all children undefined → false (short-circuits on first)"
+    literals: []
+    instructions:
+      # PC 0: AllOfEnd at PC 3
+      - "AllOfStart { result: 0, end_pc: 3 }"
+      # PC 1: r1 undefined → short-circuit
+      - "AllOfNext { check: 1, result: 0, end_pc: 3 }"
+      # PC 2: r2 undefined (skipped)
+      - "AllOfNext { check: 2, result: 0, end_pc: 3 }"
+      # PC 3
+      - "AllOfEnd { result: 0 }"
+      # PC 4
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: allof_middle_false
+    description: "allOf with 3 children, only middle fails → false"
+    literals: []
+    instructions:
+      # PC 0: AllOfEnd at PC 7
+      - "AllOfStart { result: 0, end_pc: 7 }"
+      # PC 1
+      - "LoadTrue { dest: 1 }"
+      # PC 2
+      - "AllOfNext { check: 1, result: 0, end_pc: 7 }"
+      # PC 3: middle child = false
+      - "LoadFalse { dest: 2 }"
+      # PC 4: short-circuits
+      - "AllOfNext { check: 2, result: 0, end_pc: 7 }"
+      # PC 5 (skipped)
+      - "LoadTrue { dest: 3 }"
+      # PC 6 (skipped)
+      - "AllOfNext { check: 3, result: 0, end_pc: 7 }"
+      # PC 7 (skipped)
+      - "AllOfEnd { result: 0 }"
+      # PC 8
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: anyof_middle_true
+    description: "anyOf with 3 children, only middle is true → true"
+    literals: []
+    instructions:
+      # PC 0: AnyOfEnd at PC 7
+      - "AnyOfStart { result: 0, end_pc: 7 }"
+      # PC 1
+      - "LoadFalse { dest: 1 }"
+      # PC 2
+      - "AnyOfNext { check: 1, result: 0, end_pc: 7 }"
+      # PC 3: middle child = true → short-circuit
+      - "LoadTrue { dest: 2 }"
+      # PC 4
+      - "AnyOfNext { check: 2, result: 0, end_pc: 7 }"
+      # PC 5 (skipped)
+      - "LoadFalse { dest: 3 }"
+      # PC 6 (skipped)
+      - "AnyOfNext { check: 3, result: 0, end_pc: 7 }"
+      # PC 7 (skipped)
+      - "AnyOfEnd { result: 0 }"
+      # PC 8
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: nested_allof_both_inner_pass
+    description: |
+      anyOf [
+        allOf [true, true],   -- passes → anyOf short-circuits
+        allOf [true, true]    -- skipped
+      ] → true (verify short-circuit on first passing inner)
+    literals: []
+    instructions:
+      # Outer anyOf: AnyOfEnd at PC 15
+      # PC 0
+      - "AnyOfStart { result: 0, end_pc: 15 }"
+      # Inner allOf #1: AllOfEnd at PC 6
+      # PC 1
+      - "AllOfStart { result: 3, end_pc: 6 }"
+      # PC 2
+      - "LoadTrue { dest: 1 }"
+      # PC 3
+      - "AllOfNext { check: 1, result: 3, end_pc: 6 }"
+      # PC 4
+      - "LoadTrue { dest: 2 }"
+      # PC 5
+      - "AllOfNext { check: 2, result: 3, end_pc: 6 }"
+      # PC 6
+      - "AllOfEnd { result: 3 }"
+      # PC 7: r3=true → short-circuit! → skip to PC 16
+      - "AnyOfNext { check: 3, result: 0, end_pc: 15 }"
+      # Inner allOf #2 (ALL SKIPPED)
+      # PC 8
+      - "AllOfStart { result: 3, end_pc: 13 }"
+      # PC 9
+      - "LoadTrue { dest: 1 }"
+      # PC 10
+      - "AllOfNext { check: 1, result: 3, end_pc: 13 }"
+      # PC 11
+      - "LoadTrue { dest: 2 }"
+      # PC 12
+      - "AllOfNext { check: 2, result: 3, end_pc: 13 }"
+      # PC 13
+      - "AllOfEnd { result: 3 }"
+      # PC 14
+      - "AnyOfNext { check: 3, result: 0, end_pc: 15 }"
+      # PC 15
+      - "AnyOfEnd { result: 0 }"
+      # PC 16
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: register_isolation
+    description: |
+      allOf(r0) [ anyOf(r3) [true] ] → true.
+      Inner anyOf uses r3, outer allOf uses r0.
+      Verifies different result registers don't interfere.
+    literals: []
+    instructions:
+      # Outer allOf: r0, AllOfEnd at PC 6
+      # PC 0
+      - "AllOfStart { result: 0, end_pc: 6 }"
+      # Inner anyOf: r3, AnyOfEnd at PC 4
+      # PC 1
+      - "AnyOfStart { result: 3, end_pc: 4 }"
+      # PC 2
+      - "LoadTrue { dest: 1 }"
+      # PC 3: r1=true → r3=true, pc=4, +1→5 (skip AnyOfEnd)
+      - "AnyOfNext { check: 1, result: 3, end_pc: 4 }"
+      # PC 4
+      - "AnyOfEnd { result: 3 }"
+      # PC 5: AllOfNext — r3=true → continue
+      - "AllOfNext { check: 3, result: 0, end_pc: 6 }"
+      # PC 6
+      - "AllOfEnd { result: 0 }"
+      # PC 7
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: allof_with_policy_eq_first_fails
+    description: "allOf [ PolicyEquals(a,b), PolicyEquals(c,c) ] → false (first child fails)"
+    literals: ["hello", "world", "same", "SAME"]
+    instructions:
+      # PC 0: AllOfEnd at PC 9
+      - "AllOfStart { result: 0, end_pc: 9 }"
+      # Child 1: PolicyEquals("hello", "world") → r3=false
+      # PC 1
+      - "Load { dest: 1, literal_idx: 0 }"
+      # PC 2
+      - "Load { dest: 2, literal_idx: 1 }"
+      # PC 3
+      - "PolicyEquals { dest: 3, left: 1, right: 2 }"
+      # PC 4: short-circuits → skip AllOfEnd
+      - "AllOfNext { check: 3, result: 0, end_pc: 9 }"
+      # Child 2 (skipped)
+      # PC 5
+      - "Load { dest: 1, literal_idx: 2 }"
+      # PC 6
+      - "Load { dest: 2, literal_idx: 3 }"
+      # PC 7
+      - "PolicyEquals { dest: 3, left: 1, right: 2 }"
+      # PC 8
+      - "AllOfNext { check: 3, result: 0, end_pc: 9 }"
+      # PC 9
+      - "AllOfEnd { result: 0 }"
+      # PC 10
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: nested_3_deep
+    description: |
+      allOf [
+        anyOf [
+          allOf [true, false],  -- inner allOf fails
+          allOf [true, true]    -- inner allOf passes → anyOf passes
+        ]
+      ] → true
+    literals: []
+    instructions:
+      # Outer allOf: AllOfEnd at PC 18
+      # PC 0
+      - "AllOfStart { result: 0, end_pc: 18 }"
+
+      # Middle anyOf: AnyOfEnd at PC 16
+      # PC 1
+      - "AnyOfStart { result: 4, end_pc: 16 }"
+
+      # Inner allOf #1: [true, false] — AllOfEnd at PC 7
+      # PC 2
+      - "AllOfStart { result: 3, end_pc: 7 }"
+      # PC 3
+      - "LoadTrue { dest: 1 }"
+      # PC 4
+      - "AllOfNext { check: 1, result: 3, end_pc: 7 }"
+      # PC 5
+      - "LoadFalse { dest: 2 }"
+      # PC 6: r2=false → short-circuit → pc=7, +1→8
+      - "AllOfNext { check: 2, result: 3, end_pc: 7 }"
+      # PC 7: AllOfEnd (skipped when short-circuit, r3 stays false)
+      - "AllOfEnd { result: 3 }"
+      # PC 8: AnyOfNext — r3=false → no short-circuit, continue
+      - "AnyOfNext { check: 3, result: 4, end_pc: 16 }"
+
+      # Inner allOf #2: [true, true] — AllOfEnd at PC 14
+      # PC 9
+      - "AllOfStart { result: 3, end_pc: 14 }"
+      # PC 10
+      - "LoadTrue { dest: 1 }"
+      # PC 11
+      - "AllOfNext { check: 1, result: 3, end_pc: 14 }"
+      # PC 12
+      - "LoadTrue { dest: 2 }"
+      # PC 13
+      - "AllOfNext { check: 2, result: 3, end_pc: 14 }"
+      # PC 14: AllOfEnd — r3=true
+      - "AllOfEnd { result: 3 }"
+      # PC 15: AnyOfNext — r3=true → r4=true, pc=16, +1→17
+      - "AnyOfNext { check: 3, result: 4, end_pc: 16 }"
+
+      # PC 16: AnyOfEnd (skipped on short-circuit)
+      - "AnyOfEnd { result: 4 }"
+      # PC 17: AllOfNext — r4=true → continue
+      - "AllOfNext { check: 4, result: 0, end_pc: 18 }"
+      # PC 18: AllOfEnd — r0=true
+      - "AllOfEnd { result: 0 }"
+      # PC 19
+      - "Return { value: 0 }"
+    want_result: true

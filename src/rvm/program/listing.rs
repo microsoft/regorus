@@ -911,6 +911,15 @@ fn format_instruction_readable(
             let base = format!("{}}} CompEnd", indent);
             align_comment(&base, "End comprehension block", config.comment_column)
         }
+
+        // Azure Policy & allOf/anyOf instructions — use Display impl
+        instruction @ Instruction::PolicyCondition { .. }
+        | instruction @ Instruction::LogicalBlockStart { .. }
+        | instruction @ Instruction::AllOfNext { .. }
+        | instruction @ Instruction::AnyOfNext { .. }
+        | instruction @ Instruction::LogicalBlockEnd { .. } => {
+            format!("{}{}", indent, instruction)
+        }
     }
 }
 
@@ -1045,6 +1054,19 @@ const fn get_instruction_name(instruction: &Instruction) -> &'static str {
         Instruction::ComprehensionBegin { .. } => "COMP_BEGIN",
         Instruction::ComprehensionYield { .. } => "COMP_YIELD",
         Instruction::ComprehensionEnd {} => "COMP_END",
+        // Azure Policy instructions
+        Instruction::PolicyCondition { op, .. } => op.compact_name(),
+        // AllOf / AnyOf
+        Instruction::LogicalBlockStart { mode, .. } => match mode {
+            crate::rvm::instructions::LogicalBlockMode::AllOf => "ALL_OF_START",
+            crate::rvm::instructions::LogicalBlockMode::AnyOf => "ANY_OF_START",
+        },
+        Instruction::AllOfNext { .. } => "ALL_OF_NEXT",
+        Instruction::AnyOfNext { .. } => "ANY_OF_NEXT",
+        Instruction::LogicalBlockEnd { mode, .. } => match mode {
+            crate::rvm::instructions::LogicalBlockMode::AllOf => "ALL_OF_END",
+            crate::rvm::instructions::LogicalBlockMode::AnyOf => "ANY_OF_END",
+        },
     }
 }
 

@@ -1,0 +1,1583 @@
+# Azure Policy condition operator instruction tests
+#
+# Tests for all 20 condition operators + PolicyNot, including
+# ValueConditionGuard short-circuit behavior.
+# Each operator implements Azure Policy semantics (case-insensitive,
+# type coercion, undefined-as-missing-field behavior).
+
+cases:
+  # =========================================================================
+  # ValueConditionGuard — short-circuit on undefined value
+  # =========================================================================
+
+  - note: value_condition_guard_undefined_value
+    description: "undefined value register → dest=false (short-circuit)"
+    literals: []
+    instructions:
+      - "LoadTrue { dest: 2 }"
+      - "ValueConditionGuard { dest: 0, value: 1, condition: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: value_condition_guard_defined_value
+    description: "defined value register → dest copies condition register"
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "LoadTrue { dest: 2 }"
+      - "ValueConditionGuard { dest: 0, value: 1, condition: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: value_condition_guard_defined_value_false_condition
+    description: "defined value register, false condition → dest=false"
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "LoadFalse { dest: 2 }"
+      - "ValueConditionGuard { dest: 0, value: 1, condition: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # PolicyEquals — case-insensitive equality with type coercion
+  # =========================================================================
+
+  - note: policy_equals_same_strings
+    literals: ["hello", "hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_equals_case_insensitive
+    literals: ["Hello", "hELLO"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_equals_different_strings
+    literals: ["hello", "world"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_equals_numbers
+    literals: [42, 42]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_equals_string_number_coercion
+    description: String "42" should equal number 42 via type coercion
+    literals: ["42", 42]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_equals_booleans
+    literals: [true, true]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_equals_undefined_left
+    description: undefined left operand returns false
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_equals_null_values
+    literals: []
+    instructions:
+      - "LoadNull { dest: 1 }"
+      - "LoadNull { dest: 2 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_equals_undefined_vs_null
+    description: "undefined LHS + null RHS → true (missing field sentinel)"
+    literals: []
+    instructions:
+      - "LoadNull { dest: 2 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # PolicyNotEquals — undefined field → true, else negated CI equality
+  # =========================================================================
+
+  - note: policy_not_equals_same_strings
+    literals: ["hello", "hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_equals_different_strings
+    literals: ["hello", "world"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_equals_undefined_left
+    description: "undefined field → true (field doesn't exist, so not equal)"
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyNotEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_equals_undefined_vs_null
+    description: "undefined LHS + null RHS → false (missing field sentinel)"
+    literals: []
+    instructions:
+      - "LoadNull { dest: 2 }"
+      - "PolicyNotEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_equals_case_insensitive
+    literals: ["Hello", "hELLO"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # PolicyGreater / PolicyGreaterOrEquals / PolicyLess / PolicyLessOrEquals
+  # =========================================================================
+
+  - note: policy_greater_numbers
+    literals: [10, 5]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyGreater { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_greater_strict_equal_numbers
+    description: "strict greater with equal numbers → false"
+    literals: [5, 5]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyGreater { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_greater_strings_ci
+    description: "CI string comparison: 'banana' > 'Apple'"
+    literals: ["banana", "Apple"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyGreater { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_greater_undefined
+    description: "undefined operand returns false"
+    literals: [10]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyGreater { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_greater_or_equals_true
+    literals: [5, 5]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyGreaterOrEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_greater_or_equals_less
+    literals: [3, 5]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyGreaterOrEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_less_true
+    literals: [3, 10]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLess { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_less_false
+    literals: [10, 3]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLess { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_less_or_equals_equal
+    literals: [5, 5]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLessOrEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_less_or_equals_greater
+    literals: [10, 5]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLessOrEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_greater_string_number_coercion
+    description: "String '10' > number 5 via coercion"
+    literals: ["10", 5]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyGreater { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # PolicyIn / PolicyNotIn — CI array/set membership
+  # =========================================================================
+
+  - note: policy_in_array_match
+    literals: ["hello", ["Hello", "World"]]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_in_array_no_match
+    literals: ["foo", ["Hello", "World"]]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_in_undefined_left
+    literals: [["Hello"]]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_in_not_array
+    description: "scalar right operand is treated as singleton; non-matching value → false"
+    literals: ["hello", "world"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_in_match
+    description: "value IS in array → false"
+    literals: ["hello", ["Hello", "World"]]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_in_no_match
+    description: "value NOT in array → true"
+    literals: ["foo", ["Hello", "World"]]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_in_undefined_left
+    description: "undefined field → true"
+    literals: [["Hello"]]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyNotIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # PolicyContains / PolicyNotContains
+  # =========================================================================
+
+  - note: policy_contains_substring
+    literals: ["Hello World", "world"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_contains_substring_no_match
+    literals: ["Hello World", "foo"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_contains_array_element
+    literals: [["Hello", "World"], "hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_contains_undefined
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_contains_substring
+    literals: ["Hello World", "foo"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_contains_undefined_left
+    description: "undefined field → true"
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyNotContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # PolicyContainsKey / PolicyNotContainsKey
+  # =========================================================================
+
+  - note: policy_contains_key_match
+    literals:
+      - {"Name": "test", "Value": 42}
+      - "name"
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContainsKey { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_contains_key_no_match
+    literals:
+      - {"Name": "test"}
+      - "missing"
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContainsKey { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_contains_key_undefined
+    literals: ["name"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyContainsKey { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_contains_key_missing
+    literals:
+      - {"Name": "test"}
+      - "missing"
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotContainsKey { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_contains_key_undefined
+    description: "undefined field → true"
+    literals: ["name"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyNotContainsKey { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # PolicyLike / PolicyNotLike — wildcard glob (*, ?)
+  # =========================================================================
+
+  - note: policy_like_match
+    literals: ["hello world", "hello*"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_like_question
+    literals: ["cat", "c?t"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_like_no_match
+    literals: ["hello", "world*"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_like_case_insensitive
+    literals: ["HELLO", "hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_like_no_match
+    literals: ["hello", "world*"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_like_undefined
+    description: "undefined field → true"
+    literals: ["hello*"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyNotLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # PolicyMatch / PolicyNotMatch — case-sensitive (?, #)
+  # =========================================================================
+
+  - note: policy_match_exact
+    literals: ["a1b2", "?#?#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatch { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_match_no_match
+    literals: ["1234", "?#?#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatch { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_match_dot_wildcard
+    description: "dot wildcard matches any single character"
+    literals: ["a1", ".#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatch { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_match_insensitively_dot_wildcard
+    description: "dot wildcard with case-insensitive matching"
+    literals: ["A1", ".#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatchInsensitively { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_match_length_mismatch
+    literals: ["ab", "?#?#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatch { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_match_true
+    literals: ["1234", "?#?#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotMatch { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_match_undefined
+    description: "undefined field → true"
+    literals: ["?#"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyNotMatch { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # PolicyMatchInsensitively / PolicyNotMatchInsensitively
+  # =========================================================================
+
+  - note: policy_match_insensitively_true
+    description: "Case-insensitive ?, # match"
+    literals: ["A1", "?#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatchInsensitively { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_match_insensitively_case
+    description: "Case-insensitive match: 'Ab' matches '??' (lowercased)"
+    literals: ["Ab", "??"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatchInsensitively { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_match_insensitively_undefined
+    description: "undefined field → true"
+    literals: ["?#"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyNotMatchInsensitively { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_match_insensitively_match
+    description: "matching pattern → false"
+    literals: ["a1", "?#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotMatchInsensitively { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # PolicyExists
+  # =========================================================================
+
+  - note: policy_exists_true_defined
+    description: "Defined non-null value, expected=true → true"
+    literals: ["hello", "true"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyExists { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_exists_false_undefined
+    description: "Undefined value, expected=true → false"
+    literals: ["true"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyExists { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_exists_false_null
+    description: "Null value, expected=true → false (null treated as not-exists)"
+    literals: ["true"]
+    instructions:
+      - "LoadNull { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyExists { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_exists_not_expected_undefined
+    description: "Undefined value, expected=false → true (field doesn't exist, as expected)"
+    literals: ["false"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyExists { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_exists_not_expected_defined
+    description: "Defined value, expected=false → false (field exists, but we expected it not to)"
+    literals: ["hello", "false"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyExists { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_exists_bool_true
+    description: "expected as bool true"
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "LoadTrue { dest: 2 }"
+      - "PolicyExists { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # PolicyNot — !is_true(operand)
+  # =========================================================================
+
+  - note: policy_not_true
+    literals: []
+    instructions:
+      - "LoadTrue { dest: 1 }"
+      - "PolicyNot { dest: 0, operand: 1 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_false
+    literals: []
+    instructions:
+      - "LoadFalse { dest: 1 }"
+      - "PolicyNot { dest: 0, operand: 1 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_undefined
+    description: "undefined is not true → PolicyNot returns true"
+    literals: []
+    instructions:
+      - "PolicyNot { dest: 0, operand: 1 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_null
+    description: "null is not true → PolicyNot returns true"
+    literals: []
+    instructions:
+      - "LoadNull { dest: 1 }"
+      - "PolicyNot { dest: 0, operand: 1 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_number
+    description: "number is not true → PolicyNot returns true"
+    literals: [42]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "PolicyNot { dest: 0, operand: 1 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_string_true
+    description: "string 'true' is not bool true → PolicyNot returns true"
+    literals: ["true"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "PolicyNot { dest: 0, operand: 1 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # Additional corner cases — PolicyEquals
+  # =========================================================================
+
+  - note: policy_equals_both_undefined
+    description: "both operands undefined → case_insensitive_equals returns false (any undefined → false)"
+    literals: []
+    instructions:
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_equals_undefined_right
+    description: "defined left, undefined right"
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_equals_bool_vs_string
+    description: "bool true vs string 'true' — equal (String↔Bool coercion)"
+    literals: ["true"]
+    instructions:
+      - "LoadTrue { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_equals_empty_strings
+    literals: ["", ""]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_equals_number_string_reversed
+    description: "number 42 vs string '42' — reversed order from policy_equals_string_number_coercion"
+    literals: [42, "42"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_equals_different_numbers
+    literals: [42, 99]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_equals_null_vs_undefined
+    description: "null vs undefined → false (any undefined → false)"
+    literals: []
+    instructions:
+      - "LoadNull { dest: 1 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_equals_false_vs_false
+    literals: []
+    instructions:
+      - "LoadFalse { dest: 1 }"
+      - "LoadFalse { dest: 2 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_equals_true_vs_false
+    literals: []
+    instructions:
+      - "LoadTrue { dest: 1 }"
+      - "LoadFalse { dest: 2 }"
+      - "PolicyEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # Additional corner cases — PolicyNotEquals
+  # =========================================================================
+
+  - note: policy_not_equals_both_undefined
+    description: "both undefined → left is undefined so returns !matches!(r, Value::Null); right is also undefined (not Null) → true"
+    literals: []
+    instructions:
+      - "PolicyNotEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_equals_undefined_right
+    description: "defined left, undefined right"
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "PolicyNotEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_equals_null_null
+    description: "null vs null → equal → false"
+    literals: []
+    instructions:
+      - "LoadNull { dest: 1 }"
+      - "LoadNull { dest: 2 }"
+      - "PolicyNotEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # Additional corner cases — Comparison operators
+  # =========================================================================
+
+  - note: policy_greater_negative_numbers
+    literals: [-5, -10]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyGreater { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_greater_undefined_right
+    description: "undefined right operand → compare_values returns None → false"
+    literals: [10]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "PolicyGreater { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_greater_both_undefined
+    literals: []
+    instructions:
+      - "PolicyGreater { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_less_strings_ci
+    description: "CI string comparison: 'Apple' < 'banana'"
+    literals: ["Apple", "banana"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLess { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_less_equal_strings
+    description: "same string CI → equal → not less"
+    literals: ["Hello", "hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLess { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_less_or_equals_strings_equal_ci
+    description: "same string CI → ≤ is true"
+    literals: ["Hello", "hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLessOrEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_greater_or_equals_strings_equal_ci
+    description: "same string CI → ≥ is true"
+    literals: ["Hello", "hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyGreaterOrEquals { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_less_mixed_types
+    description: "string vs bool → compare_values returns None → false"
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "LoadTrue { dest: 2 }"
+      - "PolicyLess { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # Additional corner cases — PolicyIn / PolicyNotIn
+  # =========================================================================
+
+  - note: policy_in_empty_array
+    description: "value in empty array → false"
+    literals: ["hello", []]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_in_number_coercion
+    description: "number 42 in array ['42'] — CI equality coerces"
+    literals: [42, ["42"]]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_in_undefined_right
+    description: "defined left, undefined right → false"
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_in_both_undefined
+    literals: []
+    instructions:
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_in_undefined_right
+    description: "defined left, undefined right → true (not in missing collection)"
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "PolicyNotIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_in_empty_array
+    description: "value not in empty array → true"
+    literals: ["hello", []]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_in_not_array
+    description: "right operand is not array → treated as single-element collection; non-matching value → true"
+    literals: ["hello", "world"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # Additional corner cases — PolicyContains / PolicyNotContains
+  # =========================================================================
+
+  - note: policy_contains_empty_substring
+    description: "empty substring is always contained"
+    literals: ["hello", ""]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_contains_empty_haystack
+    description: "non-empty needle in empty haystack"
+    literals: ["", "hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_contains_array_no_match
+    description: "array does not contain the element"
+    literals: [["Hello", "World"], "foo"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_contains_undefined_right
+    description: "defined left, undefined right → false"
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_contains_both_undefined
+    literals: []
+    instructions:
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_contains_number_not_string
+    description: "left is number, not string/array → false"
+    literals: [42, 4]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_contains_undefined_right
+    description: "defined left, undefined right → false"
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "PolicyNotContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_contains_match
+    description: "substring found → false"
+    literals: ["Hello World", "world"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # Additional corner cases — PolicyContainsKey / PolicyNotContainsKey
+  # =========================================================================
+
+  - note: policy_contains_key_multiple_keys
+    description: "object with multiple keys, one matches CI"
+    literals:
+      - {"Alpha": 1, "Beta": 2, "Gamma": 3}
+      - "beta"
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContainsKey { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_contains_key_not_object
+    description: "left is not an object → false"
+    literals: ["not an object", "key"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContainsKey { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_contains_key_undefined_right
+    description: "defined object, undefined right → false"
+    literals:
+      - {"Name": "test"}
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "PolicyContainsKey { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_contains_key_present
+    description: "key IS present → false"
+    literals:
+      - {"Name": "test"}
+      - "name"
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotContainsKey { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_contains_key_undefined_right
+    description: "defined object, undefined right → false"
+    literals:
+      - {"Name": "test"}
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "PolicyNotContainsKey { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # Additional corner cases — PolicyLike / PolicyNotLike
+  # =========================================================================
+
+  - note: policy_like_multiple_wildcards
+    description: "pattern with multiple * wildcards"
+    literals: ["hello beautiful world", "*beautiful*"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_like_star_only
+    description: "pattern '*' matches everything"
+    literals: ["anything at all", "*"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_like_empty_vs_empty
+    description: "empty input, empty pattern"
+    literals: ["", ""]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_like_undefined_left
+    description: "undefined left → as_string_ci returns None → false"
+    literals: ["hello*"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_like_exact_match
+    description: "no wildcard, must match exactly (CI)"
+    literals: ["Hello", "hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_like_question_at_end
+    description: "? at end requires exactly one char"
+    literals: ["ab", "a?"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_like_question_length_mismatch
+    description: "? requires exactly one char — too long"
+    literals: ["abc", "a?"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_like_match
+    description: "pattern matches → false"
+    literals: ["hello world", "hello*"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # Additional corner cases — PolicyLike with multi-byte UTF-8
+  # =========================================================================
+
+  - note: policy_like_utf8_question
+    description: "? matches a single multi-byte char — 'café' matches 'caf?'"
+    literals: ["café", "caf?"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_like_utf8_star
+    description: "* matches multi-byte prefix — 'über' matches '*ber'"
+    literals: ["über", "*ber"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyLike { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # Additional corner cases — PolicyMatch case sensitivity
+  # =========================================================================
+
+  - note: policy_match_case_insensitive_letter
+    description: "? matches any letter regardless of case — 'A1' matches '?#'"
+    literals: ["A1", "?#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatch { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_match_literal_chars
+    description: "literal chars in pattern must match exactly"
+    literals: ["abc", "abc"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatch { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_match_undefined_left
+    description: "undefined → match_pattern returns false"
+    literals: ["?#"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyMatch { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_match_hash_only
+    description: "# matches digit only"
+    literals: ["5", "#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatch { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_match_hash_letter_fail
+    description: "# does NOT match a letter"
+    literals: ["a", "#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatch { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_match_question_digit
+    description: "? matches only letters, NOT digits — so '5' vs '?' → false"
+    literals: ["5", "?"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatch { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_match_false
+    description: "pattern matches → false"
+    literals: ["a1", "?#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotMatch { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # Additional corner cases — PolicyMatchInsensitively
+  # =========================================================================
+
+  - note: policy_match_insensitively_hash_digit
+    description: "# matches digit, case-insensitive mode"
+    literals: ["3", "#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatchInsensitively { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_match_insensitively_no_match
+    description: "pattern fails even case-insensitively"
+    literals: ["abc", "?#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyMatchInsensitively { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_match_insensitively_undefined
+    description: "undefined left → false"
+    literals: ["?#"]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyMatchInsensitively { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_match_insensitively_no_match
+    description: "pattern doesn't match → true"
+    literals: ["abc", "?#"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyNotMatchInsensitively { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  # =========================================================================
+  # Additional corner cases — PolicyExists
+  # =========================================================================
+
+  - note: policy_exists_undefined_right
+    description: "undefined right → as_boolish returns None → expected=false → is_defined!=false"
+    literals: ["hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "PolicyExists { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_exists_both_undefined
+    description: "both undefined: is_defined=false, expected=false → true"
+    literals: []
+    instructions:
+      - "PolicyExists { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_exists_string_false_defined
+    description: "defined value, expected='false' → is_defined=true != expected=false → false"
+    literals: ["hello", "false"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyExists { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_exists_bool_false_undefined
+    description: "undefined value, expected=false → is_defined=false == expected=false → true"
+    literals: []
+    instructions:
+      - "LoadFalse { dest: 2 }"
+      - "PolicyExists { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_exists_non_bool_right
+    description: "right is number → as_boolish returns None → expected=false"
+    literals: [42, "hello"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyExists { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # Edge cases — PolicyIn/PolicyNotIn with scalar RHS, null LHS, null sentinel
+  # =========================================================================
+
+  - note: policy_in_scalar_rhs_match
+    description: "scalar RHS is treated as single-element collection — matching value → true"
+    literals: ["hello", "HELLO"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_in_null_lhs
+    description: "explicit null LHS always returns false (null is a sentinel, not a matchable value)"
+    literals: [["hello", null]]
+    instructions:
+      - "LoadNull { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_in_null_lhs
+    description: "explicit null LHS — notIn always returns true"
+    literals: [["hello", null]]
+    instructions:
+      - "LoadNull { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyNotIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_in_null_lhs_null_only_array
+    description: "null LHS against [null] — null-as-defined doesn't match null-as-sentinel"
+    literals: [[null]]
+    instructions:
+      - "LoadNull { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_not_in_null_lhs_null_only_array
+    description: "null LHS against [null] — notIn always true for null-as-defined"
+    literals: [[null]]
+    instructions:
+      - "LoadNull { dest: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyNotIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_in_rhs_array_with_null_sentinel
+    description: "non-null LHS, RHS array has null sentinel — null is skipped, no match"
+    literals: ["hello", [null, "world"]]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_in_undefined_lhs_null_sentinel
+    description: "undefined LHS, RHS array has null sentinel → true (null means 'match missing')"
+    literals: [[null, "world"]]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_not_in_undefined_lhs_null_sentinel
+    description: "undefined LHS, RHS array has null sentinel → false (null matches missing)"
+    literals: [[null, "world"]]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyNotIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_in_undefined_lhs_no_null_sentinel
+    description: "undefined LHS, RHS array has no null → false (no sentinel match)"
+    literals: [["hello", "world"]]
+    instructions:
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyIn { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  # =========================================================================
+  # Edge cases — PolicyContains with object LHS, set LHS, scalar coercion
+  # =========================================================================
+
+  - note: policy_contains_object_key_match
+    description: "object LHS — contains checks keys only, CI match"
+    literals: [{"Alpha": 1, "beta": 2}, "ALPHA"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_contains_object_key_no_match
+    description: "object LHS — key not present"
+    literals: [{"Alpha": 1, "beta": 2}, "gamma"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_contains_object_value_not_checked
+    description: "object LHS — value exists but is not a key, so no match"
+    literals: [{"Alpha": "target"}, "target"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
+
+  - note: policy_contains_set_element_match
+    description: "set LHS — element match, case insensitive"
+    literals: ["HELLO"]
+    instruction_params:
+      set_create_params:
+        - dest: 1
+          elements: [3]
+    instructions:
+      - "Load { dest: 3, literal_idx: 0 }"
+      - "SetCreate { params_index: 0 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_contains_number_lhs_string_rhs
+    description: "number LHS coerced to string when RHS is string — 42 contains '4'"
+    literals: [42, "4"]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: true
+
+  - note: policy_contains_number_lhs_number_rhs
+    description: "number LHS, number RHS (not string) — no coercion path → false"
+    literals: [42, 4]
+    instructions:
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "PolicyContains { dest: 0, left: 1, right: 2 }"
+      - "Return { value: 0 }"
+    want_result: false
