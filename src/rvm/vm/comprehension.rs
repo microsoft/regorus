@@ -312,7 +312,7 @@ impl RegoVM {
                     *current_item =
                         Some(self.get_register(comprehension_context.value_reg)?.clone());
                 }
-                IterationState::Array { .. } => {}
+                IterationState::Array { .. } | IterationState::Single { .. } => {}
             }
 
             iter_state.advance();
@@ -468,7 +468,7 @@ impl RegoVM {
                         } => {
                             *current_item = Some(iteration_value.clone());
                         }
-                        IterationState::Array { .. } => {}
+                        IterationState::Array { .. } | IterationState::Single { .. } => {}
                     }
 
                     iter_state.advance();
@@ -599,7 +599,7 @@ impl RegoVM {
             } => {
                 *current_item = Some(self.get_register(value_reg)?.clone());
             }
-            IterationState::Array { .. } => {}
+            IterationState::Array { .. } | IterationState::Single { .. } => {}
         }
 
         Ok(())

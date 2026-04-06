@@ -31,6 +31,8 @@ pub fn parse_instruction(text: &str) -> Result<Instruction> {
             "LoadBool" => parse_load_bool(params_text),
             "LoadData" => parse_load_data(params_text),
             "LoadInput" => parse_load_input(params_text),
+            "LoadContext" => parse_load_context(params_text),
+            "LoadMetadata" => parse_load_metadata(params_text),
             "Move" => parse_move(params_text),
             "Add" => parse_add(params_text),
             "Sub" => parse_sub(params_text),
@@ -59,6 +61,7 @@ pub fn parse_instruction(text: &str) -> Result<Instruction> {
             "ArrayCreate" => parse_array_create(params_text),
             "SetCreate" => parse_set_create(params_text),
             "ArrayPush" => parse_array_push(params_text),
+            "ArrayPushDefined" => parse_array_push_defined(params_text),
             "SetNew" => parse_set_new(params_text),
             "SetAdd" => parse_set_add(params_text),
             "Contains" => parse_contains(params_text),
@@ -78,6 +81,8 @@ pub fn parse_instruction(text: &str) -> Result<Instruction> {
             "ComprehensionAdd" => parse_comprehension_add(params_text),
             "ComprehensionBegin" => parse_comprehension_start(params_text),
             "ComprehensionYield" => parse_comprehension_add(params_text),
+            "ReturnUndefinedIfNotTrue" => parse_return_undefined_if_not_true(params_text),
+            "CoalesceUndefinedToNull" => parse_coalesce_undefined_to_null(params_text),
             _ => bail!("Unknown instruction: {}", name),
         }
     } else {
@@ -414,6 +419,16 @@ fn parse_array_push(params_text: &str) -> Result<Instruction> {
     })
 }
 
+fn parse_array_push_defined(params_text: &str) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let arr = get_param_u16(&params, "arr")?;
+    let value = get_param_u16(&params, "value")?;
+    Ok(Instruction::ArrayPushDefined {
+        arr: arr.try_into().unwrap(),
+        value: value.try_into().unwrap(),
+    })
+}
+
 fn parse_array_create(params_text: &str) -> Result<Instruction> {
     let params = parse_params(params_text)?;
     let params_index = get_param_u16(&params, "params_index")?;
@@ -555,6 +570,22 @@ fn parse_load_input(params_text: &str) -> Result<Instruction> {
     })
 }
 
+fn parse_load_context(params_text: &str) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let dest = get_param_u16(&params, "dest")?;
+    Ok(Instruction::LoadContext {
+        dest: dest.try_into().unwrap(),
+    })
+}
+
+fn parse_load_metadata(params_text: &str) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let dest = get_param_u16(&params, "dest")?;
+    Ok(Instruction::LoadMetadata {
+        dest: dest.try_into().unwrap(),
+    })
+}
+
 fn parse_mod(params_text: &str) -> Result<Instruction> {
     let params = parse_params(params_text)?;
     let dest = get_param_u16(&params, "dest")?;
@@ -658,5 +689,21 @@ fn parse_comprehension_add(params_text: &str) -> Result<Instruction> {
     Ok(Instruction::ComprehensionYield {
         value_reg: value_reg.try_into().unwrap(),
         key_reg,
+    })
+}
+
+fn parse_return_undefined_if_not_true(params_text: &str) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let condition = get_param_u16(&params, "condition")?;
+    Ok(Instruction::ReturnUndefinedIfNotTrue {
+        condition: condition.try_into().unwrap(),
+    })
+}
+
+fn parse_coalesce_undefined_to_null(params_text: &str) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let register = get_param_u16(&params, "register")?;
+    Ok(Instruction::CoalesceUndefinedToNull {
+        register: register.try_into().unwrap(),
     })
 }

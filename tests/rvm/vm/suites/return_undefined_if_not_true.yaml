@@ -1,0 +1,209 @@
+# ReturnUndefinedIfNotTrue instruction test suite
+#
+# This instruction is used by the Azure Policy compiler to short-circuit
+# evaluation when a policy condition does not match.
+#
+# Semantics:
+#   - If condition register == true (Bool), execution continues to the next instruction.
+#   - For ANY other value (false, null, undefined, numbers, strings, arrays, objects),
+#     the instruction immediately returns Value::Undefined.
+
+cases:
+  # =========================================================================
+  # Basic behavior — true continues, everything else returns undefined
+  # =========================================================================
+
+  - note: true_continues
+    description: When condition is true, execution continues and the next value is returned
+    literals:
+      - "success"
+    instructions:
+      - "LoadTrue { dest: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "Return { value: 1 }"
+    want_result: "success"
+
+  - note: false_returns_undefined
+    description: When condition is false, returns undefined immediately
+    literals: []
+    instructions:
+      - "LoadFalse { dest: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 0 }"
+      - "LoadTrue { dest: 1 }"
+      - "Return { value: 1 }"
+    want_result: "#undefined"
+
+  - note: null_returns_undefined
+    description: When condition is null, returns undefined
+    literals: []
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 0 }"
+      - "LoadTrue { dest: 1 }"
+      - "Return { value: 1 }"
+    want_result: "#undefined"
+
+  - note: undefined_returns_undefined
+    description: When condition is undefined (uninitialized register), returns undefined
+    literals: []
+    instructions:
+      - "ReturnUndefinedIfNotTrue { condition: 0 }"
+      - "LoadTrue { dest: 1 }"
+      - "Return { value: 1 }"
+    want_result: "#undefined"
+
+  - note: number_returns_undefined
+    description: Numbers are not boolean true — returns undefined
+    literals:
+      - 1
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 0 }"
+      - "LoadTrue { dest: 1 }"
+      - "Return { value: 1 }"
+    want_result: "#undefined"
+
+  - note: string_returns_undefined
+    description: Non-empty strings are not boolean true — returns undefined
+    literals:
+      - "truthy"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 0 }"
+      - "LoadTrue { dest: 1 }"
+      - "Return { value: 1 }"
+    want_result: "#undefined"
+
+  # =========================================================================
+  # Multiple guards in sequence
+  # =========================================================================
+
+  - note: two_guards_both_true
+    description: Two consecutive guards — both true, execution reaches the end
+    literals:
+      - "final"
+    instructions:
+      - "LoadTrue { dest: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 0 }"
+      - "LoadTrue { dest: 1 }"
+      - "ReturnUndefinedIfNotTrue { condition: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "Return { value: 2 }"
+    want_result: "final"
+
+  - note: two_guards_first_false
+    description: First guard fails — immediately returns undefined, second guard not reached
+    literals:
+      - "final"
+    instructions:
+      - "LoadFalse { dest: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 0 }"
+      - "LoadTrue { dest: 1 }"
+      - "ReturnUndefinedIfNotTrue { condition: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  - note: two_guards_second_false
+    description: First guard passes, second fails — returns undefined
+    literals:
+      - "final"
+    instructions:
+      - "LoadTrue { dest: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 0 }"
+      - "LoadFalse { dest: 1 }"
+      - "ReturnUndefinedIfNotTrue { condition: 1 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "Return { value: 2 }"
+    want_result: "#undefined"
+
+  # =========================================================================
+  # Combined with HostAwait (the auditIfNotExists pattern)
+  # =========================================================================
+
+  - note: host_await_then_guard_true
+    description: >
+      Simulates auditIfNotExists: HostAwait returns true (non-compliant),
+      guard passes, effect string is returned
+    literals:
+      - "auditIfNotExists"
+      - "azure.policy.audit_if_not_exists"
+      - "request"
+    instructions:
+      - "Load { dest: 1, literal_idx: 2 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "HostAwait { dest: 3, arg: 1, id: 2 }"
+      - "Load { dest: 4, literal_idx: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 3 }"
+      - "Return { value: 4 }"
+    host_await_responses:
+      - id: "azure.policy.audit_if_not_exists"
+        value: true
+    want_result: "auditIfNotExists"
+
+  - note: host_await_then_guard_false
+    description: >
+      Simulates auditIfNotExists: HostAwait returns false (compliant),
+      guard fails, returns undefined (no policy violation)
+    literals:
+      - "auditIfNotExists"
+      - "azure.policy.audit_if_not_exists"
+      - "request"
+    instructions:
+      - "Load { dest: 1, literal_idx: 2 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "HostAwait { dest: 3, arg: 1, id: 2 }"
+      - "Load { dest: 4, literal_idx: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 3 }"
+      - "Return { value: 4 }"
+    host_await_responses:
+      - id: "azure.policy.audit_if_not_exists"
+        value: false
+    want_result: "#undefined"
+
+  # =========================================================================
+  # Suspendable mode — HostAwait + ReturnUndefinedIfNotTrue
+  # =========================================================================
+
+  - note: suspendable_host_await_guard_true
+    description: >
+      In suspendable mode: HostAwait suspends, resumes with true,
+      ReturnUndefinedIfNotTrue continues, returns effect
+    literals:
+      - "deny"
+      - "await-id"
+      - "arg"
+    instructions:
+      - "Load { dest: 1, literal_idx: 2 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "HostAwait { dest: 3, arg: 1, id: 2 }"
+      - "Load { dest: 4, literal_idx: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 3 }"
+      - "Return { value: 4 }"
+    host_await_responses_suspendable:
+      - id: "await-id"
+        value: true
+    ignore_run_to_completion_hostawait_failure: true
+    want_result: "deny"
+
+  - note: suspendable_host_await_guard_false
+    description: >
+      In suspendable mode: HostAwait suspends, resumes with false,
+      ReturnUndefinedIfNotTrue returns undefined
+    literals:
+      - "deny"
+      - "await-id"
+      - "arg"
+    instructions:
+      - "Load { dest: 1, literal_idx: 2 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "HostAwait { dest: 3, arg: 1, id: 2 }"
+      - "Load { dest: 4, literal_idx: 0 }"
+      - "ReturnUndefinedIfNotTrue { condition: 3 }"
+      - "Return { value: 4 }"
+    host_await_responses_suspendable:
+      - id: "await-id"
+        value: false
+    ignore_run_to_completion_hostawait_failure: true
+    want_result: "#undefined"

@@ -143,6 +143,8 @@ impl core::fmt::Display for Instruction {
             Instruction::LoadBool { dest, value } => format!("LOAD_BOOL R({}) {}", dest, value),
             Instruction::LoadData { dest } => format!("LOAD_DATA R({})", dest),
             Instruction::LoadInput { dest } => format!("LOAD_INPUT R({})", dest),
+            Instruction::LoadContext { dest } => format!("LOAD_CONTEXT R({})", dest),
+            Instruction::LoadMetadata { dest } => format!("LOAD_METADATA R({})", dest),
             Instruction::Move { dest, src } => format!("MOVE R({}) R({})", dest, src),
             Instruction::Add { dest, left, right } => {
                 format!("ADD R({}) R({}) R({})", dest, left, right)
@@ -220,6 +222,9 @@ impl core::fmt::Display for Instruction {
             }
             Instruction::ArrayNew { dest } => format!("ARRAY_NEW R({})", dest),
             Instruction::ArrayPush { arr, value } => format!("ARRAY_PUSH R({}) R({})", arr, value),
+            Instruction::ArrayPushDefined { arr, value } => {
+                format!("ARRAY_PUSH_DEFINED R({}) R({})", arr, value)
+            }
             Instruction::ArrayCreate { params_index } => {
                 format!("ARRAY_CREATE P({})", params_index)
             }
@@ -246,6 +251,12 @@ impl core::fmt::Display for Instruction {
                     GuardMode::NotUndefined => "ASSERT_NOT_UNDEFINED",
                 };
                 format!("{} R({})", name, register)
+            }
+            Instruction::ReturnUndefinedIfNotTrue { condition } => {
+                format!("RETURN_UNDEFINED_IF_NOT_TRUE R({})", condition)
+            }
+            Instruction::CoalesceUndefinedToNull { register } => {
+                format!("COALESCE_UNDEF_TO_NULL R({})", register)
             }
             Instruction::LoopStart { params_index } => {
                 format!("LOOP_START P({})", params_index)
