@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Recursive-descent JSON parser for Azure Policy rule constraints.
+//! Custom recursive-descent JSON parser for Azure Policy rules.
 //!
 //! Parses Azure Policy JSON directly from [`Lexer`] tokens, building span-annotated
 //! AST nodes in a single pass. No intermediate `serde_json::Value` is created.
@@ -9,19 +9,34 @@
 //! The parser is policy-aware: when parsing JSON objects, it dispatches on key names
 //! (`allOf`, `anyOf`, `not`, `field`, `value`, `count`, operator names) to build
 //! the appropriate AST nodes.
+//!
+//! ## Usage
+//!
+//! ```ignore
+//! use regorus::Source;
+//! use regorus::languages::azure_policy::parser;
+//!
+//! let json = r#"{ "if": { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+//!                 "then": { "effect": "deny" } }"#;
+//! let source = Source::from_contents("policy.json".into(), json.into())?;
+//! let rule = parser::parse_policy_rule(&source)?;
+//! ```
 
 mod constraint;
 mod core;
 mod error;
+mod policy_definition;
+mod policy_rule;
 
 pub(super) use self::core::json_unescape;
+
 pub use error::ParseError;
 
 use alloc::string::ToString as _;
 
 use crate::lexer::{Source, TokenKind};
 
-use super::ast::{Constraint, FieldKind, OperatorKind};
+use super::ast::{Constraint, FieldKind, OperatorKind, PolicyDefinition, PolicyRule};
 use super::expr::ExprParser;
 
 use self::core::Parser;
@@ -30,12 +45,56 @@ use self::core::Parser;
 // Public API
 // ============================================================================
 
+/// Parse an Azure Policy rule from a JSON source.
+///
+/// The source should contain a complete `policyRule` JSON object:
+/// ```json
+/// {
+///   "if": { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+///   "then": { "effect": "deny" }
+/// }
+/// ```
+///
+/// Returns a span-annotated [`PolicyRule`] AST.
+pub fn parse_policy_rule(source: &Source) -> Result<PolicyRule, ParseError> {
+    let mut parser = Parser::new(source)?;
+    let rule = parser.parse_policy_rule()?;
+
+    if parser.tok.0 != TokenKind::Eof {
+        return Err(ParseError::UnexpectedToken {
+            span: parser.tok.1.clone(),
+            expected: "end of input",
+        });
+    }
+
+    Ok(rule)
+}
+
+/// Parse a full Azure Policy definition from a JSON source.
+///
+/// Accepts two forms:
+/// 1. **Wrapped**: `{ "properties": { "policyRule": ..., ... }, "id": ..., ... }`
+/// 2. **Unwrapped**: `{ "displayName": ..., "policyRule": ..., ... }`
+///
+/// Returns a [`PolicyDefinition`] with typed fields for known properties
+/// and a catch-all list of `extra` entries for everything else.
+pub fn parse_policy_definition(source: &Source) -> Result<PolicyDefinition, ParseError> {
+    let mut parser = Parser::new(source)?;
+    let defn = parser.parse_policy_definition()?;
+
+    if parser.tok.0 != TokenKind::Eof {
+        return Err(ParseError::UnexpectedToken {
+            span: parser.tok.1.clone(),
+            expected: "end of input",
+        });
+    }
+
+    Ok(defn)
+}
+
 /// Parse a standalone constraint from a JSON source.
 ///
-/// A constraint is one of:
-/// - Logical combinator: `{ "allOf": [...] }`, `{ "anyOf": [...] }`, `{ "not": {...} }`
-/// - Leaf condition: `{ "field": "...", "equals": "..." }`
-/// - Count condition: `{ "count": { "field": "..." }, "greater": 0 }`
+/// Useful for parsing just the `"if"` part of a policy rule.
 pub fn parse_constraint(source: &Source) -> Result<Constraint, ParseError> {
     let mut parser = Parser::new(source)?;
     let constraint = parser.parse_constraint()?;

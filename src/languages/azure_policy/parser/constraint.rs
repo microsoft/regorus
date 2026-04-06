@@ -18,18 +18,6 @@ use super::core::{CountInner, EntryValue, Parser};
 use super::error::ParseError;
 use super::parse_operator_kind;
 
-/// Set `slot` to `val`, returning a [`ParseError::DuplicateKey`] if it was already set.
-fn set_once<T>(slot: &mut Option<T>, val: T, key: &str, span: &Span) -> Result<(), ParseError> {
-    if slot.is_some() {
-        return Err(ParseError::DuplicateKey {
-            span: span.clone(),
-            key: String::from(key),
-        });
-    }
-    *slot = Some(val);
-    Ok(())
-}
-
 impl<'source> Parser<'source> {
     /// Parse a constraint (a JSON object: logical combinator or leaf condition).
     pub fn parse_constraint(&mut self) -> Result<Constraint, ParseError> {
@@ -191,7 +179,7 @@ impl<'source> Parser<'source> {
                             expected: "JSON value for 'field'",
                         });
                     };
-                    set_once(&mut field, (key_span.clone(), jv), &key, &key_span)?;
+                    Self::set_once(&mut field, (key_span.clone(), jv), &key, &key_span)?;
                 }
                 "value" => {
                     let EntryValue::Json(jv) = entry_value else {
@@ -200,7 +188,7 @@ impl<'source> Parser<'source> {
                             expected: "JSON value for 'value'",
                         });
                     };
-                    set_once(&mut value, (key_span.clone(), jv), &key, &key_span)?;
+                    Self::set_once(&mut value, (key_span.clone(), jv), &key, &key_span)?;
                 }
                 "count" => {
                     let EntryValue::CountInner(ci) = entry_value else {
@@ -209,7 +197,7 @@ impl<'source> Parser<'source> {
                             expected: "object for 'count'",
                         });
                     };
-                    set_once(&mut count, (key_span.clone(), ci), &key, &key_span)?;
+                    Self::set_once(&mut count, (key_span.clone(), ci), &key, &key_span)?;
                 }
                 _ => {
                     if let Some(op_kind) = parse_operator_kind(&key.to_lowercase()) {
@@ -288,19 +276,19 @@ impl<'source> Parser<'source> {
                 match key_lower.as_str() {
                     "field" => {
                         let jv = self.parse_json_value()?;
-                        set_once(&mut field, (key_span.clone(), jv), &key_lower, &key_span)?;
+                        Self::set_once(&mut field, (key_span.clone(), jv), &key_lower, &key_span)?;
                     }
                     "value" => {
                         let jv = self.parse_json_value()?;
-                        set_once(&mut value, (key_span.clone(), jv), &key_lower, &key_span)?;
+                        Self::set_once(&mut value, (key_span.clone(), jv), &key_lower, &key_span)?;
                     }
                     "name" => {
                         let jv = self.parse_json_value()?;
-                        set_once(&mut name, (key_span.clone(), jv), &key_lower, &key_span)?;
+                        Self::set_once(&mut name, (key_span.clone(), jv), &key_lower, &key_span)?;
                     }
                     "where" => {
                         let c = self.parse_constraint()?;
-                        set_once(&mut where_, c, &key_lower, &key_span)?;
+                        Self::set_once(&mut where_, c, &key_lower, &key_span)?;
                     }
                     _ => {
                         return Err(ParseError::UnrecognizedKey {

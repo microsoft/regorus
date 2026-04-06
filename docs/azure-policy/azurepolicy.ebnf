@@ -1,0 +1,77 @@
+(* Azure Policy grammar.
+ *
+ * All key matching is case-insensitive.  JSON object keys are unordered,
+ * so the ordering shown below is for readability only.
+ *)
+
+(* ================================================================
+ * Policy rule & then block
+ * NOTE: Keys may appear in any order; extra keys may appear between
+ *       the recognized ones.  The ordering below is illustrative.
+ * ================================================================ *)
+
+policy-rule    ::= '{' '"if"' ':' constraint ',' '"then"' ':' then-block
+                       (',' STRING ':' json-value)* '}'
+
+then-block     ::= '{' '"effect"' ':' STRING
+                       (',' '"details"' ':' json-value)? '}'
+
+(* ================================================================
+ * Constraints
+ * ================================================================ *)
+
+constraint     ::= allOf | anyOf | not | condition
+
+allOf          ::= '{' '"allOf"' ':' '[' (constraint (',' constraint)*)? ']' '}'
+anyOf          ::= '{' '"anyOf"' ':' '[' (constraint (',' constraint)*)? ']' '}'
+not            ::= '{' '"not"' ':' constraint '}'
+
+(* Keys within a condition are unordered; exactly one lhs-entry and one
+ * op-entry are required. *)
+condition      ::= '{' lhs-entry ',' op-entry '}'
+
+lhs-entry      ::= field | value-lhs | count
+field          ::= '"field"' ':' string-value
+value-lhs      ::= '"value"' ':' json-value
+op-entry       ::= operator ':' json-value
+
+operator       ::= '"contains"' | '"containsKey"' | '"equals"' | '"notEquals"'
+                 | '"greater"' | '"greaterOrEquals"' | '"less"' | '"lessOrEquals"'
+                 | '"exists"' | '"in"' | '"notIn"'
+                 | '"like"' | '"notLike"'
+                 | '"match"' | '"matchInsensitively"'
+                 | '"notMatch"' | '"notMatchInsensitively"'
+                 | '"notContains"' | '"notContainsKey"'
+
+(* ================================================================
+ * Count expressions
+ * ================================================================ *)
+
+count          ::= '"count"' ':' count-inner
+count-inner    ::= count-field | count-value
+count-field    ::= '{' field (',' where)? '}'
+count-value    ::= '{' value-lhs (',' '"name"' ':' STRING)? (',' where)? '}'
+where          ::= '"where"' ':' constraint
+
+(* ================================================================
+ * JSON values & template expressions
+ * ================================================================ *)
+
+string-value   ::= STRING | '"[' string-expr ']"'
+
+json-value     ::= STRING | NUMBER | BOOL | NULL
+                 | array | object
+                 | '"[' string-expr ']"'
+array          ::= '[' (json-value (',' json-value)*)? ']'
+object         ::= '{' (STRING ':' json-value (',' STRING ':' json-value)*)? '}'
+
+(* ================================================================
+ * ARM template expression sub-grammar
+ * ================================================================ *)
+
+string-expr    ::= NUMBER | STRING | '-' string-expr | complex-expr
+
+complex-expr   ::= IDENT
+                 | complex-expr '.' IDENT
+                 | complex-expr '(' (string-expr (',' string-expr)*)? ')'
+                 | complex-expr '[' string-expr ']'
