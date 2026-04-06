@@ -46,12 +46,22 @@ impl RegoVM {
         let right_path = self.runtime_path_for_register(right);
 
         let (input_path, assumed_value) = if let Some(path) = left_path {
+            // Only assume if the input-path register is actually undefined.
+            // If the value exists but doesn't match, it's a genuine failure.
+            match self.get_register(left) {
+                Ok(v) if *v == Value::Undefined => {}
+                _ => return false,
+            }
             let value = self
                 .get_register(right)
                 .ok()
                 .and_then(|value| (!matches!(value, Value::Undefined)).then(|| value.clone()));
             (path, value)
         } else if let Some(path) = right_path {
+            match self.get_register(right) {
+                Ok(v) if *v == Value::Undefined => {}
+                _ => return false,
+            }
             let value = self
                 .get_register(left)
                 .ok()

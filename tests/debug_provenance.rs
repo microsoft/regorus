@@ -407,3 +407,87 @@ allow if {
         "expected binding_name 'role' in causality report.\nReport:\n{report_json}"
     );
 }
+
+/// When `assume_unknown_input` is true but the input value IS provided and
+/// simply doesn't match (e.g. "dev-rg" != "prod-rg"), the engine should NOT
+/// assume the condition holds. Only truly missing/undefined input should be
+/// assumed.
+#[test]
+fn no_assumption_when_input_present_but_mismatched() {
+    use regorus::*;
+
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "test.rego".into(),
+            r#"
+package test
+
+deny contains msg if {
+    input.deployment.resourceGroupName == "prod-rg"
+    some resource in input.resources
+    resource.type == "Microsoft.Storage/storageAccounts"
+    resource.properties.allowBlobPublicAccess == true
+    msg := sprintf("Storage account '%s' must not allow public blob access", [resource.name])
+}
+"#
+            .into(),
+        )
+        .unwrap();
+
+    let entrypoint: Rc<str> = "data.test.deny".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint).unwrap();
+    let program =
+        languages::rego::compiler::Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()])
+            .unwrap();
+
+    let mut vm = rvm::RegoVM::new_with_policy(compiled);
+    vm.load_program(program);
+    vm.set_explanation_settings(evaluation_trace::ExplanationSettings {
+        enabled: true,
+        value_mode: evaluation_trace::ValueMode::Full,
+        condition_mode: evaluation_trace::ConditionMode::AllContributing,
+        scope: evaluation_trace::ExplanationScope::AllEmissions,
+        detail: evaluation_trace::ExplanationDetail::Full,
+        emission_index: None,
+        emission_value: None,
+        assume_unknown_input: true,
+    });
+
+    // Input provides resourceGroupName = "dev-rg", NOT "prod-rg".
+    // The comparison should genuinely fail, not be assumed.
+    let input_json = r#"{
+        "deployment": { "resourceGroupName": "dev-rg" },
+        "resources": [{
+            "type": "Microsoft.Storage/storageAccounts",
+            "name": "teststorage",
+            "properties": { "allowBlobPublicAccess": true }
+        }]
+    }"#;
+    vm.set_input(Value::from_json_str(input_json).unwrap());
+
+    let value = vm.execute_entry_point_by_name("data.test.deny").unwrap();
+
+    // deny should produce an empty set — the condition fails because
+    // "dev-rg" != "prod-rg", not assumed away.
+    let set = value.as_set().expect("deny should be a set");
+    assert!(
+        set.is_empty(),
+        "deny should be empty when resourceGroupName is 'dev-rg', got: {value}"
+    );
+
+    let report_json = vm.take_causality_report(value).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&report_json).unwrap();
+
+    // There should be NO assumptions about resourceGroupName since the value
+    // was provided (just didn't match).
+    let empty = vec![];
+    let assumptions = report["assumptions"].as_array().unwrap_or(&empty);
+    for assumption in assumptions {
+        let path = assumption["input_path"].as_str().unwrap_or("");
+        assert!(
+            !path.contains("resourceGroupName"),
+            "should not assume resourceGroupName when it is provided in input.\nAssumptions: {assumptions:?}"
+        );
+    }
+}
