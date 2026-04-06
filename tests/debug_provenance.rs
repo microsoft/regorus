@@ -275,3 +275,63 @@ allow if {
 
     assert!(found_witness, "expected at least one condition with a loop witness in the report.\nFull report:\n{report_json}");
 }
+
+#[test]
+fn causality_report_array_iteration_has_concrete_index() {
+    use regorus::*;
+
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "test.rego".into(),
+            r#"
+package test
+default allow = false
+
+allow if {
+    container := input.containers[_]
+    container.privileged == true
+}
+"#
+            .into(),
+        )
+        .unwrap();
+
+    let entrypoint: Rc<str> = "data.test.allow".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint).unwrap();
+    let program =
+        languages::rego::compiler::Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()])
+            .unwrap();
+
+    let mut vm = rvm::RegoVM::new_with_policy(compiled);
+    vm.load_program(program);
+    vm.set_explanation_settings(evaluation_trace::ExplanationSettings {
+        enabled: true,
+        value_mode: evaluation_trace::ValueMode::Full,
+        condition_mode: evaluation_trace::ConditionMode::AllContributing,
+        scope: evaluation_trace::ExplanationScope::AllEmissions,
+        detail: evaluation_trace::ExplanationDetail::Standard,
+        emission_index: None,
+        emission_value: None,
+        assume_unknown_input: false,
+    });
+
+    let input_json = r#"{"containers": [{"name": "safe", "privileged": false}, {"name": "evil", "privileged": true}]}"#;
+    vm.set_input(Value::from_json_str(input_json).unwrap());
+
+    let value = vm.execute_entry_point_by_name("data.test.allow").unwrap();
+    assert_eq!(value, Value::Bool(true));
+
+    let report_json = vm.take_causality_report(value).unwrap();
+
+    // The provenance paths should contain concrete indices like input.containers[1],
+    // NOT wildcard paths like input.containers[_].
+    assert!(
+        report_json.contains("input.containers[1]"),
+        "expected concrete index input.containers[1] in provenance paths.\nReport:\n{report_json}"
+    );
+    assert!(
+        !report_json.contains("input.containers[_]"),
+        "should not have wildcard input.containers[_] when concrete index is available.\nReport:\n{report_json}"
+    );
+}

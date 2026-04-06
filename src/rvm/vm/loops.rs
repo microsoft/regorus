@@ -84,6 +84,44 @@ impl RegoVM {
         );
     }
 
+    /// Update provenance paths for the loop iteration variable register.
+    #[cfg(feature = "explanations")]
+    fn update_loop_iteration_provenance(
+        &mut self,
+        state: &IterationState,
+        key_reg: u8,
+        value_reg: u8,
+        collection_provenance: &Option<crate::Rc<str>>,
+    ) {
+        if !self.explanation_settings.enabled {
+            return;
+        }
+        let Some(base) = collection_provenance.as_deref() else {
+            return;
+        };
+        let key = if key_reg != value_reg {
+            if let Ok(k) = self.get_register(key_reg) {
+                k.clone()
+            } else {
+                return;
+            }
+        } else {
+            match *state {
+                IterationState::Array { index, .. } => Value::from(index),
+                IterationState::Set { .. } => {
+                    if let Ok(v) = self.get_register(value_reg) {
+                        v.clone()
+                    } else {
+                        return;
+                    }
+                }
+                IterationState::Object { .. } => return,
+            }
+        };
+        self.provenance
+            .append_index_with_base(value_reg, base, &key);
+    }
+
     pub(super) fn execute_loop_start(&mut self, mode: &LoopMode, params: LoopParams) -> Result<()> {
         match self.execution_mode {
             ExecutionMode::RunToCompletion => {
@@ -130,6 +168,17 @@ impl RegoVM {
             return Ok(());
         }
 
+        #[cfg(feature = "explanations")]
+        let collection_provenance = self.provenance.get(params.collection).cloned();
+
+        #[cfg(feature = "explanations")]
+        self.update_loop_iteration_provenance(
+            &iteration_state,
+            params.key_reg,
+            params.value_reg,
+            &collection_provenance,
+        );
+
         let loop_next_pc = params.loop_end.saturating_sub(1);
         let body_resume_pc = compute_body_resume_pc(self.pc, params.body_start);
 
@@ -150,6 +199,8 @@ impl RegoVM {
             sample_key: None,
             #[cfg(feature = "explanations")]
             sample_value: None,
+            #[cfg(feature = "explanations")]
+            collection_provenance,
         };
 
         self.loop_stack.push(loop_context);
@@ -210,6 +261,14 @@ impl RegoVM {
             if has_next {
                 loop_ctx.current_iteration_failed = false;
 
+                #[cfg(feature = "explanations")]
+                self.update_loop_iteration_provenance(
+                    &loop_ctx.iteration_state,
+                    loop_ctx.key_reg,
+                    loop_ctx.value_reg,
+                    &loop_ctx.collection_provenance,
+                );
+
                 self.loop_stack.push(loop_ctx);
                 self.pc = usize::from(body_start.saturating_sub(1));
             } else {
@@ -260,6 +319,17 @@ impl RegoVM {
             return Ok(());
         }
 
+        #[cfg(feature = "explanations")]
+        let collection_provenance = self.provenance.get(params.collection).cloned();
+
+        #[cfg(feature = "explanations")]
+        self.update_loop_iteration_provenance(
+            &iteration_state,
+            params.key_reg,
+            params.value_reg,
+            &collection_provenance,
+        );
+
         let loop_next_pc = params.loop_end.saturating_sub(1);
         let body_resume_pc = compute_body_resume_pc(self.pc, params.body_start);
 
@@ -280,6 +350,8 @@ impl RegoVM {
             sample_key: None,
             #[cfg(feature = "explanations")]
             sample_value: None,
+            #[cfg(feature = "explanations")]
+            collection_provenance,
         };
 
         let frame = ExecutionFrame::new(
@@ -465,6 +537,22 @@ impl RegoVM {
                 }
 
                 if has_next {
+                    #[cfg(feature = "explanations")]
+                    {
+                        let cp = self.execution_stack.last().and_then(|frame| {
+                            if let FrameKind::Loop { ref context, .. } = frame.kind {
+                                context.collection_provenance.clone()
+                            } else {
+                                None
+                            }
+                        });
+                        self.update_loop_iteration_provenance(
+                            &iteration_state,
+                            key_reg,
+                            value_reg,
+                            &cp,
+                        );
+                    }
                     if let Some(frame) = self.execution_stack.last_mut() {
                         if let FrameKind::Loop { ref context, .. } = frame.kind {
                             frame.pc = context.body_resume_pc;

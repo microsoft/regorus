@@ -89,6 +89,11 @@ impl RuntimeProvenanceTracker {
         self.set_path(dest, path);
     }
 
+    pub(super) fn append_index_with_base(&mut self, dest: u8, base: &str, key: &Value) {
+        let path = Rc::from(Self::append_path_component(base, key));
+        self.set_path(dest, Some(path));
+    }
+
     pub(super) fn append_field(&mut self, dest: u8, container: u8, field: &str) {
         let path = self.get(container).map(|base| {
             let mut value = String::from(base.as_ref());
@@ -96,6 +101,12 @@ impl RuntimeProvenanceTracker {
             value.push_str(field);
             Rc::from(value.as_str())
         });
+        self.set_path(dest, path);
+    }
+
+    /// Copy provenance from the first register that has one, or from the second.
+    pub(super) fn copy_first_available(&mut self, dest: u8, first: u8, second: u8) {
+        let path = self.get(first).or_else(|| self.get(second)).cloned();
         self.set_path(dest, path);
     }
 
@@ -397,6 +408,9 @@ impl RegoVM {
     /// Create a new virtual machine with compiled policy for default rule support
     pub fn new_with_policy(compiled_policy: CompiledPolicy) -> Self {
         let mut vm = Self::new();
+        if let Some(data) = compiled_policy.inner.data.clone() {
+            vm.data = data;
+        }
         vm.compiled_policy = Some(compiled_policy);
         vm
     }
@@ -438,6 +452,9 @@ impl RegoVM {
 
     /// Set the compiled policy for default rule evaluation
     pub fn set_compiled_policy(&mut self, compiled_policy: CompiledPolicy) {
+        if let Some(data) = compiled_policy.inner.data.clone() {
+            self.data = data;
+        }
         self.compiled_policy = Some(compiled_policy);
     }
 

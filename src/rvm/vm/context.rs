@@ -26,6 +26,9 @@ pub struct LoopContext {
     /// Sample value from the first successful iteration (for causality witness).
     #[cfg(feature = "explanations")]
     pub sample_value: Option<Value>,
+    /// Runtime provenance path for the collection being iterated.
+    #[cfg(feature = "explanations")]
+    pub collection_provenance: Option<crate::Rc<str>>,
 }
 
 /// Iterator state for different collection types.

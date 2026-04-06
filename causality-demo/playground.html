@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Causality Playground</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell playground-shell">
+      <aside class="rail">
+        <div class="brand-block">
+          <p class="eyebrow">Regorus</p>
+          <h1>Why Playground</h1>
+          <p class="rail-copy">
+            Enter your own policy and input, pick the entry point, and inspect causal explanations entirely in the browser.
+          </p>
+        </div>
+
+        <div class="rail-links">
+          <a class="rail-link" href="./index.html">Scenario Tour</a>
+          <a class="rail-link active" href="./playground.html">Playground</a>
+        </div>
+
+        <div class="rail-section rail-note">
+          <p class="rail-label">Notes</p>
+          <p>
+            The playground compiles and evaluates your policy in wasm. A static file server is only needed locally because browsers do not load wasm modules over `file://`.
+          </p>
+        </div>
+      </aside>
+
+      <main class="content">
+        <section class="hero-card compact-hero">
+          <div>
+            <p class="eyebrow">Custom Evaluation</p>
+            <h2>Run your own policy</h2>
+            <p class="hero-summary">
+              Use this page to try new policies, change input payloads, toggle why modes, and inspect the result and causal explanation together.
+            </p>
+          </div>
+        </section>
+
+        <section class="panel playground-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Editor</p>
+              <h3>Policy and request</h3>
+            </div>
+            <div class="button-row">
+              <button id="load-sample" class="ghost-button" type="button">Load sample</button>
+                <button id="run-playground" class="ghost-button strong-button" type="button">Evaluate and explain</button>
+            </div>
+          </div>
+
+          <div class="source-grid playground-source-grid">
+            <article class="source-card">
+              <div class="source-card-header">
+                <p class="eyebrow">Policy</p>
+                <span class="runtime-chip">rego</span>
+              </div>
+              <textarea id="policy-text" class="editor source-editor source-view" spellcheck="false"></textarea>
+            </article>
+
+            <article class="source-card">
+              <div class="source-card-header request-header">
+                <div>
+                  <p class="eyebrow">Request Context</p>
+                  <h4 id="playground-request-heading">Input</h4>
+                </div>
+                <div class="tabs" id="playground-request-tabs"></div>
+              </div>
+              <textarea id="request-text" class="editor source-editor source-view" spellcheck="false"></textarea>
+            </article>
+          </div>
+
+          <div class="playground-controls">
+            <div class="field-row field-wide">
+              <label class="field-group">
+                <span>Entry point</span>
+                <input id="query-text" class="text-input" type="text" value="data.demo.allow" />
+              </label>
+
+
+            </div>
+
+            <div class="toggle-row field-wide">
+              <label class="toggle-pill"><input id="flag-why-bindings" type="checkbox" /> Include bindings</label>
+              <label class="toggle-pill"><input id="flag-why-full-values" type="checkbox" /> Full values</label>
+              <label class="toggle-pill"><input id="flag-why-all-conditions" type="checkbox" checked /> All contributing conditions</label>
+              <label class="toggle-pill"><input id="flag-assume-unknown" type="checkbox" /> Assume unknown input</label>
+              <label class="toggle-pill">
+                Detail
+                <select id="detail-select" class="inline-select">
+                  <option value="compact">compact</option>
+                  <option value="standard" selected>standard</option>
+                  <option value="full">full</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-grid playground-results-grid" id="playground-analysis-panel">
+          <article class="panel panel-primary">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Result</p>
+                <h3>Execution output</h3>
+              </div>
+              <span id="playground-runtime" class="runtime-chip"></span>
+            </div>
+            <pre class="code-view"><code id="playground-result"></code></pre>
+          </article>
+
+          <article class="panel panel-primary">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Reasons</p>
+                <h3>Why output</h3>
+              </div>
+            </div>
+            <pre class="code-view"><code id="playground-why"></code></pre>
+          </article>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Condition Cards</p>
+              <h3>Parsed from live reasons</h3>
+            </div>
+          </div>
+          <div id="playground-conditions" class="condition-list"></div>
+        </section>
+
+        <section class="panel" id="playground-assumption-panel" style="display: none">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Input Discovery</p>
+              <h3>Assumptions</h3>
+            </div>
+          </div>
+          <div id="playground-assumptions" class="condition-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="./playground.js"></script>
+  </body>
+</html>

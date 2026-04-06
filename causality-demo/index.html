@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Causality Demo</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="rail">
+        <div class="brand-block">
+          <p class="eyebrow">Regorus</p>
+          <h1>Causality Demo</h1>
+          <p class="rail-copy">
+            A browser-only tour of causal explanations, evaluated locally in wasm and ready to publish as a static site.
+          </p>
+        </div>
+
+        <div class="rail-links">
+          <a class="rail-link active" href="./index.html">Scenario Tour</a>
+          <a class="rail-link" href="./playground.html">Playground</a>
+        </div>
+
+        <div class="rail-section">
+          <p class="rail-label">Scenarios</p>
+          <nav id="example-nav" class="example-nav" aria-label="Example navigation"></nav>
+        </div>
+
+        <div class="rail-section rail-note">
+          <p class="rail-label">Runtime</p>
+          <p id="server-status">Initializing wasm runtime…</p>
+        </div>
+      </aside>
+
+      <main class="content">
+        <section class="hero-card">
+          <div>
+            <p class="eyebrow">Scenario Walkthrough</p>
+            <h2 id="hero-title">Loading example</h2>
+            <p id="hero-summary" class="hero-summary"></p>
+          </div>
+          <div class="hero-stats">
+            <div class="stat-card">
+              <span class="stat-label">Decision</span>
+              <strong id="hero-result"></strong>
+            </div>
+
+            <div class="stat-card">
+              <span class="stat-label">Why Focus</span>
+              <strong id="hero-focus"></strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="feature-strip" id="feature-strip"></section>
+
+        <section class="panel-grid">
+          <article class="panel panel-primary">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Scenario Source</p>
+                <h3>Policy and request</h3>
+              </div>
+              <button id="run-analysis" class="ghost-button strong-button" type="button">Evaluate and explain</button>
+            </div>
+            <div class="source-grid">
+              <article class="source-card">
+                <div class="source-card-header">
+                  <p class="eyebrow">Policy</p>
+                  <span class="runtime-chip" id="policy-label">rego</span>
+                </div>
+                <textarea
+                  id="policy-content"
+                  class="editor source-editor source-view"
+                  spellcheck="false"
+                  aria-label="Scenario policy"
+                ></textarea>
+              </article>
+
+              <article class="source-card">
+                <div class="source-card-header request-header">
+                  <div>
+                    <p class="eyebrow">Request Context</p>
+                    <h4 id="request-heading">Input</h4>
+                  </div>
+                  <div class="tabs" id="request-tabs"></div>
+                </div>
+                <textarea
+                  id="request-content"
+                  class="editor source-editor source-view"
+                  spellcheck="false"
+                  aria-label="Scenario request context"
+                ></textarea>
+              </article>
+            </div>
+          </article>
+
+          <article class="panel panel-secondary">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Execution</p>
+                <h3>Scenario settings</h3>
+              </div>
+            </div>
+            <div class="settings-stack">
+              <div class="stat-card">
+                <span class="stat-label">Entry point</span>
+                <strong id="entry-point"></strong>
+              </div>
+
+              <div class="stat-card">
+                <span class="stat-label">Value mode</span>
+                <strong id="value-mode"></strong>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Condition mode</span>
+                <strong id="condition-mode"></strong>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Detail</span>
+                <select id="detail-level" class="inline-select">
+                  <option value="compact">compact</option>
+                  <option value="standard" selected>standard</option>
+                  <option value="full">full</option>
+                </select>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Assume unknown input</span>
+                <label class="toggle-inline"><input id="assume-unknown" type="checkbox" /></label>
+              </div>
+              <div class="button-row">
+                <span id="example-runtime" class="runtime-chip"></span>
+                <span id="analysis-status" class="runtime-chip"></span>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="panel" id="analysis-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Causal Story</p>
+              <h3>Observed conditions</h3>
+            </div>
+          </div>
+          <div id="condition-list" class="condition-list">
+            <div class="loading-card">Select a scenario and run the analysis to inspect the causal chain.</div>
+          </div>
+        </section>
+
+        <section class="panel" id="assumption-panel" style="display: none">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Input Discovery</p>
+              <h3>Assumptions</h3>
+            </div>
+          </div>
+          <div id="assumption-list" class="condition-list"></div>
+        </section>
+
+        <section class="tabs-panel panel">
+          <div class="tabs-header">
+            <div>
+              <p class="eyebrow">Execution Output</p>
+              <h3>Result and explanation payloads</h3>
+            </div>
+            <div class="tabs" id="tabs"></div>
+          </div>
+          <pre class="code-view"><code id="tab-content"></code></pre>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
