@@ -187,6 +187,8 @@ pub enum ConditionKind {
     EqualityAssertion,
     /// A negation guard (`not expr`).
     Negation,
+    /// A variable binding (`:=` assignment).
+    Binding,
 }
 
 /// Comparison/logical operator.
@@ -243,6 +245,8 @@ pub struct StaticConditionInfo {
     pub operator: Option<Operator>,
     /// Whether any operand has input-rooted provenance.
     pub has_input_operand: bool,
+    /// For binding conditions: the variable name being bound (e.g. `"container"`).
+    pub binding_name: Option<String>,
 }
 
 impl StaticConditionInfo {
@@ -387,6 +391,27 @@ fn analyze_instruction(
         Move { dest, src } => {
             let prov = get_provenance(reg_prov, src).cloned();
             set_provenance(reg_prov, dest, prov);
+
+            // If this Move is a binding (`:=`), create a condition info entry.
+            if let Some(binding_name) = program.binding_infos.get(pc).and_then(|b| b.clone()) {
+                let checked_provenance = get_provenance(reg_prov, dest).cloned();
+                let has_input = checked_provenance
+                    .as_ref()
+                    .is_some_and(Provenance::is_input_rooted);
+                let text = get_condition_text(pc, program);
+                if let Some(slot) = condition_infos.get_mut(pc) {
+                    *slot = Some(StaticConditionInfo {
+                        checked_register: dest,
+                        checked_provenance,
+                        operands: None,
+                        text,
+                        kind: ConditionKind::Binding,
+                        operator: None,
+                        has_input_operand: has_input,
+                        binding_name: Some(binding_name),
+                    });
+                }
+            }
         }
 
         // -- Loops --
@@ -748,6 +773,7 @@ fn build_guard_condition_info(
                     kind: ConditionKind::Comparison,
                     operator: Some(op),
                     has_input_operand: has_input,
+                    binding_name: None,
                 }
             } else {
                 // Generic truthiness guard.
@@ -762,6 +788,7 @@ fn build_guard_condition_info(
                     kind: ConditionKind::Truthiness,
                     operator: None,
                     has_input_operand: has_input,
+                    binding_name: None,
                 }
             }
         }
@@ -777,6 +804,7 @@ fn build_guard_condition_info(
                 kind: ConditionKind::Existence,
                 operator: None,
                 has_input_operand: has_input,
+                binding_name: None,
             }
         }
         GuardMode::Not => {
@@ -791,6 +819,7 @@ fn build_guard_condition_info(
                 kind: ConditionKind::Negation,
                 operator: None,
                 has_input_operand: has_input,
+                binding_name: None,
             }
         }
     }
@@ -821,6 +850,7 @@ fn build_assert_eq_condition_info(
         kind: ConditionKind::EqualityAssertion,
         operator: Some(Operator::Eq),
         has_input_operand: has_input,
+        binding_name: None,
     }
 }
 

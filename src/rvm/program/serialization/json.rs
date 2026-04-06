@@ -223,6 +223,8 @@ impl Program {
             condition_infos: Vec::new(),
             #[cfg(feature = "explanations")]
             register_provenances: Vec::new(),
+            #[cfg(feature = "explanations")]
+            binding_infos: Vec::new(),
         };
 
         // Recompute has_host_await when it was not provided in the JSON input

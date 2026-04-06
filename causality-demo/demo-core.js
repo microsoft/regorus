@@ -379,25 +379,49 @@ async function evaluateRvm(options) {
   const result = JSON.parse(vm.executeEntryPoint(options.query));
   const report = JSON.parse(vm.takeCausalityReport());
 
+  // Helper: transform a list of raw conditions into the UI format.
+  function mapConditions(conds) {
+    return (conds || []).map((cond) => ({
+      text: cond.text,
+      outcome: cond.outcome,
+      location: cond.location,
+      evaluation: {
+        kind: cond.kind,
+        operator: cond.operator,
+        ...(cond.left ? { actual_value: cond.left.value, actual_path: cond.left.provenance } : {}),
+        ...(cond.right ? { expected_value: cond.right.value, expected_path: cond.right.provenance } : {}),
+        witness: cond.witness
+      },
+      bindings: cond.binding_name && cond.left
+        ? [{ name: cond.binding_name, value: cond.left.value, source_path: cond.left.provenance }]
+        : []
+    }));
+  }
+
   // Transform causality report into the reasons format expected by the UI.
-  const reasons = (report.rules || []).map((rule) => ({
-    result: rule.result,
-    conditions: (rule.definitions || []).flatMap((def) =>
-      (def.conditions || []).map((cond) => ({
-        text: cond.text,
-        outcome: cond.outcome,
-        location: cond.location,
-        evaluation: {
-          kind: cond.kind,
-          operator: cond.operator,
-          ...(cond.left ? { actual_value: cond.left.value, actual_path: cond.left.provenance } : {}),
-          ...(cond.right ? { expected_value: cond.right.value, expected_path: cond.right.provenance } : {}),
-          witness: cond.witness
-        },
-        bindings: []
-      }))
-    )
-  }));
+  // For partial rules (set/object), use emissions so each emitted value has
+  // its own causal trace.  For complete/boolean rules, use definitions.
+  // Filter to just the queried entry point rule to exclude helper rules.
+  const queriedRules = (report.rules || []).filter(
+    (rule) => rule.name === options.query
+  );
+  const reasons = (queriedRules.length > 0 ? queriedRules : report.rules || []).flatMap((rule) => {
+    if (rule.emissions && rule.emissions.length > 0) {
+      // Partial rule: one reason per emission (skip undefined results)
+      return rule.emissions
+        .filter((em) => em.result !== "<undefined>" && em.result !== undefined)
+        .map((em) => ({
+        result: em.result,
+        definitionIndex: em.definition_index,
+        conditions: mapConditions(em.conditions)
+      }));
+    }
+    // Complete/boolean rule: one reason per rule, definitions flat-mapped
+    return [{
+      result: rule.result,
+      conditions: (rule.definitions || []).flatMap((def) => mapConditions(def.conditions))
+    }];
+  });
 
   return {
     result,

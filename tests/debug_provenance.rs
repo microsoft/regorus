@@ -121,7 +121,15 @@ allow if {
         .iter()
         .find(|rule| rule["name"] == "data.test.allow")
         .unwrap();
-    let left = &allow_rule["definitions"][0]["conditions"][0]["left"];
+    // Find the comparison condition (not the binding condition)
+    let conditions = allow_rule["definitions"][0]["conditions"]
+        .as_array()
+        .unwrap();
+    let comparison_cond = conditions
+        .iter()
+        .find(|c| c["kind"] == "comparison")
+        .expect("should have a comparison condition");
+    let left = &comparison_cond["left"];
     assert_eq!(left["provenance"], "input.identity.role");
 }
 
@@ -326,12 +334,76 @@ allow if {
 
     // The provenance paths should contain concrete indices like input.containers[1],
     // NOT wildcard paths like input.containers[_].
+    // Note: source text like "container := input.containers[_]" naturally contains [_];
+    // we only assert that provenance paths (in "provenance" fields) use concrete indices.
     assert!(
         report_json.contains("input.containers[1]"),
         "expected concrete index input.containers[1] in provenance paths.\nReport:\n{report_json}"
     );
+
+    let report: serde_json::Value = serde_json::from_str(&report_json).unwrap();
+    let conditions = report["rules"][0]["definitions"][0]["conditions"]
+        .as_array()
+        .unwrap();
+    for cond in conditions {
+        if let Some(prov) = cond["left"]["provenance"].as_str() {
+            assert!(
+                !prov.contains("[_]"),
+                "provenance path should not have wildcard [_]: {prov}"
+            );
+        }
+    }
+}
+
+#[test]
+fn causality_report_includes_binding_names() {
+    use regorus::*;
+
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "test.rego".into(),
+            r#"
+package test
+allow if {
+    role := input.role
+    role == "admin"
+}
+"#
+            .into(),
+        )
+        .unwrap();
+
+    let entrypoint: Rc<str> = "data.test.allow".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint).unwrap();
+    let program =
+        languages::rego::compiler::Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()])
+            .unwrap();
+
+    let mut vm = rvm::RegoVM::new_with_policy(compiled);
+    vm.load_program(program);
+    vm.set_explanation_settings(evaluation_trace::ExplanationSettings {
+        enabled: true,
+        value_mode: evaluation_trace::ValueMode::Full,
+        condition_mode: evaluation_trace::ConditionMode::AllContributing,
+        scope: evaluation_trace::ExplanationScope::AllEmissions,
+        detail: evaluation_trace::ExplanationDetail::Standard,
+        emission_index: None,
+        emission_value: None,
+        assume_unknown_input: false,
+    });
+
+    let input_json = r#"{"role": "admin"}"#;
+    vm.set_input(Value::from_json_str(input_json).unwrap());
+
+    let value = vm.execute_entry_point_by_name("data.test.allow").unwrap();
+    assert_eq!(value, Value::Bool(true));
+
+    let report_json = vm.take_causality_report(value).unwrap();
+
+    // The report should include the binding name "role"
     assert!(
-        !report_json.contains("input.containers[_]"),
-        "should not have wildcard input.containers[_] when concrete index is available.\nReport:\n{report_json}"
+        report_json.contains("\"binding_name\": \"role\""),
+        "expected binding_name 'role' in causality report.\nReport:\n{report_json}"
     );
 }

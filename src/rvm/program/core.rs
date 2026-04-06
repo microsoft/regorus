@@ -102,6 +102,13 @@ pub struct Program {
     #[cfg(feature = "explanations")]
     #[serde(skip, default)]
     pub register_provenances: Vec<Vec<Option<crate::static_provenance::Provenance>>>,
+
+    /// Binding variable names per instruction (parallel to `instructions`).
+    /// When an instruction is a Guard emitted for a `:=` binding, this
+    /// contains the variable name being bound.  Otherwise `None`.
+    #[cfg(feature = "explanations")]
+    #[serde(skip, default)]
+    pub binding_infos: Vec<Option<String>>,
 }
 
 impl Program {
@@ -156,6 +163,8 @@ impl Program {
             condition_infos: Vec::new(),
             #[cfg(feature = "explanations")]
             register_provenances: Vec::new(),
+            #[cfg(feature = "explanations")]
+            binding_infos: Vec::new(),
         }
     }
 

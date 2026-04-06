@@ -219,9 +219,31 @@ impl RegoVM {
             }
             Move { dest, src } => {
                 let value = self.get_register(src)?.clone();
-                self.set_register(dest, value)?;
+                self.set_register(dest, value.clone())?;
                 #[cfg(feature = "explanations")]
                 self.provenance.copy(dest, src);
+                #[cfg(feature = "explanations")]
+                if self.explanation_settings.enabled
+                    && program
+                        .binding_infos
+                        .get(self.pc)
+                        .and_then(|b| b.as_ref())
+                        .is_some()
+                {
+                    let pc = u32::try_from(self.pc).unwrap_or(u32::MAX);
+                    let passed = !matches!(value, Value::Undefined);
+                    self.trace.record_condition(
+                        pc,
+                        passed,
+                        false,
+                        Some(value),
+                        self.provenance
+                            .get(dest)
+                            .map(|path| path.as_ref().to_string()),
+                        None,
+                        None,
+                    );
+                }
                 Ok(InstructionOutcome::Continue)
             }
             other => self.execute_arithmetic_instruction(program, other),
@@ -922,6 +944,11 @@ impl RegoVM {
             }
             SetAdd { set, value } => {
                 let value_to_add = self.get_register(value)?.clone();
+
+                // Never add undefined values to a set.
+                if matches!(value_to_add, Value::Undefined) {
+                    return Ok(InstructionOutcome::Continue);
+                }
 
                 // Take ownership so Rc refcount stays at 1 and make_mut is a no-op.
                 let mut set_value = self.take_register(set)?;
