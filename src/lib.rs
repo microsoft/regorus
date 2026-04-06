@@ -3,7 +3,9 @@
 
 // Unsafe code should not be used.
 // Hard to reason about correctness, and maintainability.
-#![forbid(unsafe_code)]
+#![cfg_attr(not(verus_keep_ghost), forbid(unsafe_code))]
+#![cfg_attr(verus_keep_ghost, feature(proc_macro_hygiene))]
+#![cfg_attr(verus_keep_ghost, feature(stmt_expr_attributes))]
 // Ensure that all lint names are valid.
 #![deny(unknown_lints)]
 // Fail-fast lints: correctness, safety, and API surface
@@ -125,6 +127,7 @@ mod compiler;
 mod engine;
 mod indexchecker;
 mod interpreter;
+mod verusspec;
 
 pub mod languages {
     #[cfg(feature = "azure_policy")]
