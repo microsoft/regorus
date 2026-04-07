@@ -36,6 +36,15 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Check if a ref expression contains any `RefBrack` node (bracket indexing).
+    fn ref_contains_bracket(expr: &Expr) -> bool {
+        match expr {
+            Expr::RefBrack { .. } => true,
+            Expr::RefDot { refr, .. } => Self::ref_contains_bracket(refr.as_ref()),
+            _ => false,
+        }
+    }
+
     pub(super) fn compute_rule_type(&self, rule_path: &str) -> Result<RuleType> {
         let Some(definitions) = self.policy.inner.rules.get(rule_path) else {
             // Default-only rules (e.g., `default deny := true`) have no regular definitions
@@ -345,6 +354,23 @@ impl<'a> Compiler<'a> {
 
                     let (key_expr, value_expr) = match head {
                         RuleHead::Compr { refr, assign, .. } => {
+                            // Detect multi-key ref heads: p[q][r] or p[q].r
+                            // The outermost may be RefBrack (p[q][r]) or RefDot (p[q].r).
+                            // In either case, if stripping the outermost layer reveals
+                            // a bracket underneath, it's a multi-key ref head.
+                            let has_inner_bracket = match refr.as_ref() {
+                                Expr::RefBrack { refr: inner, .. } => {
+                                    Self::ref_contains_bracket(inner.as_ref())
+                                }
+                                Expr::RefDot { refr: inner, .. } => {
+                                    Self::ref_contains_bracket(inner.as_ref())
+                                }
+                                _ => false,
+                            };
+                            if has_inner_bracket {
+                                return Err(CompilerError::MultiValueRefHeadUnsupported.at(span));
+                            }
+
                             self.rule_definition_function_params[rule_index as usize].push(None);
                             self.rule_definition_destructuring_patterns[rule_index as usize]
                                 .push(None);
@@ -356,7 +382,12 @@ impl<'a> Compiler<'a> {
                             };
                             (key_expr, output_expr)
                         }
-                        RuleHead::Set { key, .. } => {
+                        RuleHead::Set { refr, key, .. } => {
+                            // Detect ref head sets with bracket indexing: p[q] contains r
+                            if Self::ref_contains_bracket(refr.as_ref()) {
+                                return Err(CompilerError::MultiValueRefHeadUnsupported.at(span));
+                            }
+
                             self.rule_definition_function_params[rule_index as usize].push(None);
                             self.rule_definition_destructuring_patterns[rule_index as usize]
                                 .push(None);

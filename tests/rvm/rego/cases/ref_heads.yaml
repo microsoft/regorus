@@ -1,0 +1,126 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Ref Heads (Multi-Key Rule Heads) Test Suite
+# Tests rules with chained bracket references in the head, e.g. foo[x][y] := value
+# These patterns are a known compiler limitation: multi-value ref heads are
+# rejected at compile time with MultiValueRefHeadUnsupported.
+
+cases:
+  # Double-bracket partial object: foo[row][col] := value
+  # RVM currently flattens the result, losing the intermediate 'row' key.
+  - note: ref_heads/double_bracket_partial_object
+    data: {}
+    input:
+      rows: {"a": 1, "b": 2}
+      cols: {"x": 10, "y": 20}
+    modules:
+      - |
+        package test
+        matrix[row][col] := value if {
+          some row, rv in input.rows
+          some col, cv in input.cols
+          value := rv + cv
+        }
+    query: data.test.matrix
+    want_error: "not a valid rule path"
+
+  # Triple-bracket partial object: foo[a][b][c] := value
+  # Same issue compounded — RVM loses both a and b.
+  - note: ref_heads/triple_bracket_partial_object
+    data: {}
+    input:
+      xs: ["p", "q"]
+      ys: ["r", "s"]
+      zs: ["t", "u"]
+    modules:
+      - |
+        package test
+        cube[a][b][c] := true if {
+          some a in input.xs
+          some b in input.ys
+          some c in input.zs
+        }
+    query: data.test.cube
+    want_error: "not a valid rule path"
+
+  # Single dynamic bracket with static dot prefix: foo.bar[x] := val
+  # This should work since there's only one RefBrack level.
+  - note: ref_heads/mixed_static_dynamic
+    data:
+      items:
+        apple: {price: 1}
+        banana: {price: 2}
+    modules:
+      - |
+        package test
+        prices[name] := price if {
+          some name
+          price := data.items[name].price
+        }
+    query: data.test.prices
+    want_result:
+      apple: 1
+      banana: 2
+
+  # Partial set with single bracket — should work.
+  - note: ref_heads/partial_set_single_bracket
+    data:
+      users:
+        - {name: "alice", role: "admin"}
+        - {name: "bob", role: "viewer"}
+        - {name: "carol", role: "admin"}
+    modules:
+      - |
+        package test
+        admins contains name if {
+          some user in data.users
+          user.role == "admin"
+          name := user.name
+        }
+    query: data.test.admins
+    want_result:
+      set!:
+        - "alice"
+        - "carol"
+
+  # Single-bracket partial object with comprehension value — should work.
+  - note: ref_heads/partial_object_with_comprehension_value
+    data:
+      teams:
+        eng:
+          - "alice"
+          - "bob"
+        sales:
+          - "carol"
+    modules:
+      - |
+        package test
+        team_sizes[name] := count(members) if {
+          some name
+          members := data.teams[name]
+        }
+    query: data.test.team_sizes
+    want_result:
+      eng: 2
+      sales: 1
+
+  # Double-bracket partial set (no assignment): multi-key set membership
+  # RVM loses the first bracket dimension.
+  - note: ref_heads/double_bracket_partial_set
+    data: {}
+    input:
+      grants:
+        - {user: "alice", resource: "db"}
+        - {user: "alice", resource: "cache"}
+        - {user: "bob", resource: "db"}
+    modules:
+      - |
+        package test
+        allowed[user][resource] if {
+          some grant in input.grants
+          user := grant.user
+          resource := grant.resource
+        }
+    query: data.test.allowed
+    want_error: "not a valid rule path"

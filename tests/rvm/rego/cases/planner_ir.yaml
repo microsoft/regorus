@@ -1,0 +1,73 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Planner-IR and Fix1863 Edge Cases Test Suite
+# Tests IR generation edge cases and specific OPA regression fixes.
+# Covers known RVM runtime mismatches for IR generation edge cases.
+
+cases:
+  # Disjunction (;) with data lookup
+  - note: planner_ir/disjunction_with_data
+    data:
+      primary: {"status": "down"}
+      fallback: {"status": "up"}
+    modules:
+      - |
+        package test
+        available := "primary" if {
+          data.primary.status == "up"
+        }
+        available := "fallback" if {
+          data.fallback.status == "up"
+        }
+    query: data.test.available
+    want_result: "fallback"
+
+  # Complex negation with data path
+  - note: planner_ir/negation_with_data
+    data:
+      deny_list:
+        - "mallory"
+        - "eve"
+    input:
+      user: "alice"
+    modules:
+      - |
+        package test
+        denied if {
+          data.deny_list[_] == input.user
+        }
+        allow if {
+          not denied
+        }
+    query: data.test.allow
+    want_result: true
+
+  # Multiple complete rules with same name, different conditions (OPA #1863 related)
+  - note: fix1863/complete_rule_multiple_definitions
+    data: {}
+    input:
+      x: 5
+    modules:
+      - |
+        package test
+        result := "low" if { input.x < 3 }
+        result := "mid" if { input.x >= 3; input.x < 7 }
+        result := "high" if { input.x >= 7 }
+    query: data.test.result
+    want_result: "mid"
+
+  # Rule with else chain (related IR pattern)
+  - note: planner_ir/else_chain
+    data: {}
+    input:
+      score: 75
+    modules:
+      - |
+        package test
+        grade := "A" if { input.score >= 90 }
+        else := "B" if { input.score >= 80 }
+        else := "C" if { input.score >= 70 }
+        else := "F"
+    query: data.test.grade
+    want_result: "C"

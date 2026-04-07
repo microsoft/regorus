@@ -1,0 +1,87 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Walk Builtin Test Suite
+# Tests the walk() builtin for recursive tree traversal.
+# Covers a known compiler limitation: walk loops are not yet supported.
+# The RVM compiler does not support walk loops:
+#   "walk loops are not yet supported in the RVM compiler"
+# All cases expect compilation errors. The interpreter supports walk.
+
+cases:
+  # Simple walk over an object
+  - note: walk/simple_walk
+    data:
+      tree:
+        a: 1
+        b:
+          c: 2
+    modules:
+      - |
+        package test
+        leaves contains leaf if {
+          walk(data.tree, [_, leaf])
+          is_number(leaf)
+        }
+    query: data.test.leaves
+    want_error: "walk loops are not yet supported"
+    allow_interpreter_success: true
+
+  # Walk with path filtering
+  - note: walk/walk_with_filter
+    data: {}
+    input:
+      doc:
+        level1:
+          level2:
+            target: "found"
+          other: "skip"
+    modules:
+      - |
+        package test
+        result contains value if {
+          walk(input.doc, [path, value])
+          value == "found"
+        }
+    query: data.test.result
+    want_error: "walk loops are not yet supported"
+    allow_interpreter_success: true
+
+  # Walk in a comprehension
+  - note: walk/walk_in_comprehension
+    data: {}
+    input:
+      obj:
+        x: 1
+        y:
+          z: 2
+    modules:
+      - |
+        package test
+        all_paths := [path | walk(input.obj, [path, _])]
+    query: data.test.all_paths
+    want_error: "walk loops are not yet supported"
+    allow_interpreter_success: true
+
+  # Nested walk
+  - note: walk/nested_walk
+    data:
+      deep:
+        a:
+          inner:
+            val: 10
+        b:
+          inner:
+            val: 20
+    modules:
+      - |
+        package test
+        values contains val if {
+          walk(data.deep, [_, obj])
+          is_object(obj)
+          walk(obj, [_, val])
+          is_number(val)
+        }
+    query: data.test.values
+    want_error: "walk loops are not yet supported"
+    allow_interpreter_success: true

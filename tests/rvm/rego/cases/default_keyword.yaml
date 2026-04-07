@@ -1,0 +1,65 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Default Keyword Advanced Test Suite
+# Tests default values with variable references and complex expressions.
+# Covers known RVM runtime mismatches for default value handling.
+# Basic defaults are already tested in default_rules.yaml;
+# these cover the gaps where RVM diverges.
+
+cases:
+  # Rule default referencing a data path
+  - note: defaults/rule_default_with_data_path
+    data:
+      fallback_config:
+        timeout: 60
+    input: {}
+    modules:
+      - |
+        package test
+        default config := data.fallback_config
+        config := input.override if {
+          input.override
+        }
+    query: data.test.config
+    want_result:
+      timeout: 60
+    skip: true
+
+  # Default with negation in body
+  - note: defaults/default_with_negation
+    data:
+      blocked_users:
+        - "mallory"
+    input:
+      user: "alice"
+    modules:
+      - |
+        package test
+        default allow := false
+        deny if {
+          input.user == data.blocked_users[_]
+        }
+        allow if {
+          not deny
+        }
+    query: data.test.allow
+    want_result: true
+
+  # Indexed default: default for a specific key
+  - note: defaults/indexed_default
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        default users["guest"] := {"role": "viewer"}
+        users[name] := info if {
+          some user in input.user_list
+          name := user.name
+          info := {"role": user.role}
+        }
+    query: data.test.users.guest
+    want_result:
+      role: "viewer"
+    skip: true
