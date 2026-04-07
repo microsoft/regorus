@@ -8,10 +8,14 @@
 )]
 
 use super::{Compiler, CompilerError, Result};
+use crate::ast::{Expr, Literal, Query, Rule};
+use crate::builtins;
+use crate::compiler::context::ScopeContext;
 use crate::interpreter::Interpreter;
 use crate::lexer::Source;
 use crate::rvm::program::{Program, RuleType, SpanInfo};
 use crate::rvm::Instruction;
+use crate::utils::get_path_string;
 use crate::Rc;
 use crate::Value;
 use alloc::collections::BTreeMap;
@@ -146,6 +150,15 @@ impl<'a> Compiler<'a> {
             rule_infos_map.insert(rule_index as usize, rule_info);
         }
 
+        for rule_path in self.rule_index_map.keys() {
+            if let Some(span) = self.default_function_span(
+                rule_path,
+                self.policy.inner.rule_paths.contains(rule_path),
+            )? {
+                return Err(CompilerError::FunctionDefaultsUnsupported.at(span));
+            }
+        }
+
         let rule_paths_to_evaluate: Vec<(String, usize)> = self
             .rule_index_map
             .iter()
@@ -160,7 +173,7 @@ impl<'a> Compiler<'a> {
             .collect();
 
         for (rule_path, rule_index) in rule_paths_to_evaluate {
-            if let Some(default_literal_index) = self.evaluate_default_rule(&rule_path) {
+            if let Some(default_literal_index) = self.evaluate_default_rule(&rule_path)? {
                 if let Some(rule_info) = rule_infos_map.get_mut(&rule_index) {
                     rule_info.set_default_literal_index(default_literal_index);
                 }
@@ -213,24 +226,199 @@ impl<'a> Compiler<'a> {
         Ok(self.program)
     }
 
-    fn evaluate_default_rule(&mut self, rule_path: &str) -> Option<u16> {
-        if !self.policy.inner.default_rules.contains_key(rule_path) {
-            return None;
+    fn evaluate_default_rule(&mut self, rule_path: &str) -> Result<Option<u16>> {
+        let Some(defaults) = self.policy.inner.default_rules.get(rule_path) else {
+            return Ok(None);
+        };
+        let mut selected_defaults = Vec::new();
+        for (rule, index) in defaults {
+            if let Rule::Default { refr, value, .. } = rule.as_ref() {
+                let (module_index, module) = self.default_rule_module(rule)?;
+                let package = get_path_string(&module.package.refr, Some("data"))
+                    .map_err(CompilerError::from)?;
+                let registered_head = match (refr.as_ref(), index) {
+                    (Expr::RefBrack { refr, .. }, Some(_)) => refr,
+                    _ => refr,
+                };
+                if self.policy.inner.rule_paths.contains(rule_path)
+                    && get_path_string(registered_head, Some(&package))
+                        .map_err(CompilerError::from)?
+                        != rule_path
+                {
+                    continue;
+                }
+                self.validate_default_value(value, module_index, &package, None)?;
+                selected_defaults.push(rule.clone());
+            }
+        }
+        if selected_defaults.is_empty() {
+            return Ok(None);
         }
 
         let mut interpreter = Interpreter::new_from_compiled_policy(self.policy.inner.clone());
+        let computed_value = interpreter
+            .eval_default_rule_for_compiler(rule_path, &selected_defaults)
+            .map_err(CompilerError::from)?;
+        Ok((computed_value != Value::Undefined).then(|| self.add_literal(computed_value)))
+    }
 
-        match interpreter.eval_default_rule_for_compiler(rule_path) {
-            Ok(computed_value) => {
-                if computed_value != Value::Undefined {
-                    let literal_index = self.add_literal(computed_value);
-                    return Some(literal_index);
+    fn validate_default_value(
+        &self,
+        expr: &Expr,
+        module_index: u32,
+        package: &str,
+        scope: Option<&ScopeContext>,
+    ) -> Result<()> {
+        let validate =
+            |child: &Expr| self.validate_default_value(child, module_index, package, scope);
+        match expr {
+            Expr::String { .. }
+            | Expr::RawString { .. }
+            | Expr::Number { .. }
+            | Expr::Bool { .. }
+            | Expr::Null { .. } => {}
+            Expr::Var { value, .. } => {
+                let name = value.as_string().map_err(CompilerError::from)?;
+                if matches!(name.as_ref(), "input" | "data")
+                    || !scope.is_some_and(|scope| {
+                        name.as_ref() == "_"
+                            || scope.bound_vars.contains(name.as_ref())
+                            || scope.local_vars.contains(name.as_ref())
+                            || scope.unbound_vars.contains(name.as_ref())
+                    })
+                {
+                    return Err(CompilerError::RuntimeDependentDefaultUnsupported.at(expr.span()));
                 }
             }
-            Err(_e) => {}
+            Expr::Array { items, .. } | Expr::Set { items, .. } => {
+                for item in items {
+                    validate(item)?;
+                }
+            }
+            Expr::Object { fields, .. } => {
+                for (_, key, value) in fields {
+                    validate(key)?;
+                    validate(value)?;
+                }
+            }
+            Expr::ArrayCompr { term, query, .. } | Expr::SetCompr { term, query, .. } => {
+                let query_scope = self.validate_default_query(query, module_index, package)?;
+                self.validate_default_value(term, module_index, package, Some(query_scope))?;
+            }
+            Expr::ObjectCompr {
+                key, value, query, ..
+            } => {
+                let query_scope = self.validate_default_query(query, module_index, package)?;
+                self.validate_default_value(key, module_index, package, Some(query_scope))?;
+                self.validate_default_value(value, module_index, package, Some(query_scope))?;
+            }
+            Expr::Call { fcn, params, .. } => {
+                let name = get_path_string(fcn, None).map_err(CompilerError::from)?;
+                let local_name =
+                    get_path_string(fcn, Some(package)).map_err(CompilerError::from)?;
+                let imported = self
+                    .resolve_fcn_path_through_imports(&name, package)?
+                    .is_some();
+                if !builtins::BUILTINS.contains_key(name.as_str())
+                    || builtins::must_cache(&name).is_some()
+                    || self.policy.inner.functions.contains_key(&local_name)
+                    || self.default_function_span(&local_name, true)?.is_some()
+                    || imported
+                    || self.host_await_builtins.contains_key(&name)
+                    || self.policy.inner.extensions.contains_key(&name)
+                {
+                    return Err(CompilerError::RuntimeDependentDefaultUnsupported.at(expr.span()));
+                }
+                for param in params {
+                    validate(param)?;
+                }
+            }
+            Expr::RefDot { refr, .. } => validate(refr)?,
+            Expr::RefBrack { refr, index, .. } => {
+                validate(refr)?;
+                validate(index)?;
+            }
+            Expr::UnaryExpr { expr, .. } => validate(expr)?,
+            Expr::BinExpr { lhs, rhs, .. }
+            | Expr::BoolExpr { lhs, rhs, .. }
+            | Expr::ArithExpr { lhs, rhs, .. }
+            | Expr::AssignExpr { lhs, rhs, .. } => {
+                validate(lhs)?;
+                validate(rhs)?;
+            }
+            Expr::Membership {
+                key,
+                value,
+                collection,
+                ..
+            } => {
+                if let Some(key) = key {
+                    validate(key)?;
+                }
+                validate(value)?;
+                validate(collection)?;
+            }
+            #[cfg(feature = "rego-extensions")]
+            Expr::OrExpr { lhs, rhs, .. } => {
+                validate(lhs)?;
+                validate(rhs)?;
+            }
         }
+        Ok(())
+    }
 
-        None
+    fn validate_default_query(
+        &self,
+        query: &Query,
+        module_index: u32,
+        package: &str,
+    ) -> Result<&ScopeContext> {
+        let scope = self
+            .policy
+            .inner
+            .loop_hoisting_table
+            .get_query_context(module_index, query.qidx)
+            .map_err(|error| CompilerError::General {
+                message: format!("default query context lookup failed: {error}"),
+            })?
+            .ok_or_else(|| {
+                CompilerError::General {
+                    message: "missing default query context".to_string(),
+                }
+                .at(&query.span)
+            })?;
+        let validate =
+            |expr: &Expr| self.validate_default_value(expr, module_index, package, Some(scope));
+        for stmt in &query.stmts {
+            if let Some(modifier) = stmt.with_mods.first() {
+                return Err(CompilerError::WithKeywordUnsupported.at(&modifier.span));
+            }
+            match &stmt.literal {
+                Literal::SomeVars { .. } => {}
+                Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => validate(expr)?,
+                Literal::SomeIn {
+                    key,
+                    value,
+                    collection,
+                    ..
+                } => {
+                    if let Some(key) = key {
+                        validate(key)?;
+                    }
+                    validate(value)?;
+                    validate(collection)?;
+                }
+                Literal::Every {
+                    domain,
+                    query: body,
+                    ..
+                } => {
+                    validate(domain)?;
+                    self.validate_default_query(body, module_index, package)?;
+                }
+            }
+        }
+        Ok(scope)
     }
 
     fn extract_destructuring_blocks(&self, rule_index: u16) -> Vec<Option<u32>> {

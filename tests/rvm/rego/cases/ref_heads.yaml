@@ -1,0 +1,215 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Ref Heads (Multi-Key Rule Heads) Test Suite
+# Tests rules with chained bracket references in the head, e.g. foo[x][y] := value
+
+cases:
+  # Double-bracket partial object: foo[row][col] := value
+  - note: ref_heads/double_bracket_partial_object
+    data: {}
+    input:
+      rows: {"a": 1, "b": 2}
+      cols: {"x": 10, "y": 20}
+    modules:
+      - |
+        package test
+        matrix[row][col] := value if {
+          some row, rv in input.rows
+          some col, cv in input.cols
+          value := rv + cv
+        }
+        result := matrix
+    query: data.test.result
+    want_error: "partial object rules with nested bracket keys are not yet supported"
+    allow_interpreter_success: true
+
+  # Triple-bracket partial object: foo[a][b][c] := value
+  - note: ref_heads/triple_bracket_partial_object
+    data: {}
+    input:
+      xs: ["p", "q"]
+      ys: ["r", "s"]
+      zs: ["t", "u"]
+    modules:
+      - |
+        package test
+        cube[a][b][c] := true if {
+          some a in input.xs
+          some b in input.ys
+          some c in input.zs
+        }
+        result := cube
+    query: data.test.result
+    want_error: "partial object rules with nested bracket keys are not yet supported"
+    allow_interpreter_success: true
+
+  # Single dynamic bracket with static dot prefix: foo.bar[x] := val
+  # This should work since there's only one RefBrack level.
+  - note: ref_heads/mixed_static_dynamic
+    data:
+      items:
+        apple: {price: 1}
+        banana: {price: 2}
+    modules:
+      - |
+        package test
+        catalog.prices[name] := price if {
+          some name
+          price := data.items[name].price
+        }
+    query: data.test.catalog.prices
+    want_result:
+      apple: 1
+      banana: 2
+
+  # A partial-set head without a dynamic prefix remains supported.
+  - note: ref_heads/partial_set_without_dynamic_prefix
+    data:
+      users:
+        - {name: "alice", role: "admin"}
+        - {name: "bob", role: "viewer"}
+        - {name: "carol", role: "admin"}
+    modules:
+      - |
+        package test
+        admins contains name if {
+          some user in data.users
+          user.role == "admin"
+          name := user.name
+        }
+    query: data.test.admins
+    want_result:
+      set!:
+        - "alice"
+        - "carol"
+
+  # Single-bracket partial object with an aggregate value.
+  - note: ref_heads/partial_object_with_aggregate_value
+    data:
+      teams:
+        eng:
+          - "alice"
+          - "bob"
+        sales:
+          - "carol"
+    modules:
+      - |
+        package test
+        team_sizes[name] := count(members) if {
+          some name
+          members := data.teams[name]
+        }
+    query: data.test.team_sizes
+    want_result:
+      eng: 2
+      sales: 1
+
+  # Double-bracket partial set (no assignment): multi-key set membership
+  - note: ref_heads/double_bracket_partial_set
+    data: {}
+    input:
+      grants:
+        - {user: "alice", resource: "db"}
+        - {user: "alice", resource: "cache"}
+        - {user: "bob", resource: "db"}
+    modules:
+      - |
+        package test
+        allowed[user][resource] if {
+          some grant in input.grants
+          user := grant.user
+          resource := grant.resource
+        }
+        result := allowed
+    query: data.test.result
+    want_error: "partial object rules with nested bracket keys are not yet supported"
+    allow_interpreter_success: true
+
+  - note: ref_heads/dynamic_bracket_contains_is_rejected
+    data: {}
+    input: {items: [{key: x, value: 1}, {key: x, value: 2}]}
+    modules:
+      - |
+        package test
+        items[row.key] contains row.value if {
+          some row in input.items
+        }
+    query: data.test.items
+    want_error: "multi-value ref head rules are not yet supported"
+    allow_interpreter_success: true
+
+  - note: ref_heads/dynamic_bracket_dotted_leaf_is_rejected
+    data: {}
+    modules:
+      - |
+        package test
+        items[k].leaf := 1 if { k := "x" }
+        result := items
+    query: data.test.result
+    want_error: "partial object rules with nested bracket keys are not yet supported"
+    allow_interpreter_success: true
+
+  - note: ref_heads/static_bracket_contains_remains_supported
+    data: {}
+    input: {values: [1, 2]}
+    modules:
+      - |
+        package test
+        items["named"] contains v if {
+          some v in input.values
+        }
+    query: data.test.items.named
+    want_result: {set!: [1, 2]}
+
+  - note: ref_heads/static_bracket_contains_parent_lookup_is_rejected
+    data: {}
+    input: {values: [1, 2]}
+    modules:
+      - |
+        package test
+        items["named"] contains v if {
+          some v in input.values
+        }
+        result := items
+    query: data.test.result
+    want_error: "multi-value ref head rules are not yet supported"
+    allow_interpreter_success: true
+
+  - note: ref_heads/static_dotted_contains_parent_lookup_is_rejected
+    data: {}
+    input: {values: [1, 2]}
+    modules:
+      - |
+        package test
+        items.named contains v if {
+          some v in input.values
+        }
+        result := items
+    query: data.test.result
+    want_error: "multi-value ref head rules are not yet supported"
+    allow_interpreter_success: true
+
+  - note: ref_heads/static_contains_package_parent_lookup_remains_supported
+    data: {}
+    modules:
+      - |
+        package test.items
+        named contains 1
+      - |
+        package test
+        result := data.test.items
+    query: data.test.result
+    want_result: {named: {set!: [1]}}
+
+  - note: ref_heads/static_leaf_from_different_declaring_packages
+    data: {}
+    modules:
+      - |
+        package test
+        items["named"] contains 1
+      - |
+        package test.items
+        named contains 2
+    query: data.test.items.named
+    want_result: {set!: [1, 2]}

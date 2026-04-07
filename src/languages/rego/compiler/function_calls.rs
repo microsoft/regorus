@@ -10,7 +10,7 @@
 )]
 
 use super::{Compiler, CompilerError, Register, Result};
-use crate::ast::ExprRef;
+use crate::ast::{ExprRef, Module, Ref, Rule};
 use crate::builtins;
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
@@ -64,9 +64,14 @@ impl<'a> Compiler<'a> {
             .map_err(|_| CompilerError::InvalidFunctionExpression.at(&span))?;
 
         let original_fcn_path = fcn_path.clone();
-        let full_fcn_path = if self.policy.inner.rules.contains_key(&fcn_path) {
+        let full_fcn_path = if split_canonical_path_root(&fcn_path)
+            .is_some_and(|(root, _)| root == "data")
+            || self.policy.inner.rules.contains_key(&fcn_path)
+        {
             fcn_path
-        } else if let Some(resolved) = self.resolve_fcn_path_through_imports(&original_fcn_path) {
+        } else if let Some(resolved) =
+            self.resolve_fcn_path_through_imports(&original_fcn_path, &self.current_package)?
+        {
             // Resolve a leading import alias before module-prefixing and builtins.
             resolved
         } else {
@@ -399,30 +404,84 @@ impl<'a> Compiler<'a> {
 
     /// Rewrite an import-aliased call path to its target, e.g. `b.f(1)` to
     /// `data.a.b.f` after `import data.a.b`. Resolves only when the target is
-    /// a known function (the `rules` map cannot be used here: it also indexes
+    /// a known function or default function (the `rules` map also indexes
     /// value rules and every rule-path prefix, which must not become callable
     /// through an alias), so an alias whose target defines the called
     /// function shadows a like-named builtin namespace, while other spellings
     /// keep their prior meaning (e.g. a builtin call). OPA instead rewrites
     /// aliases unconditionally and rejects calls to a missing target at
     /// compile time.
-    fn resolve_fcn_path_through_imports(&self, path: &str) -> Option<String> {
+    pub(super) fn resolve_fcn_path_through_imports(
+        &self,
+        path: &str,
+        package: &str,
+    ) -> Result<Option<String>> {
         if self.policy.inner.imports.is_empty() {
-            return None;
+            return Ok(None);
         }
-        let (alias, suffix) = split_canonical_path_root(path)?;
+        let Some((alias, suffix)) = split_canonical_path_root(path) else {
+            return Ok(None);
+        };
         if alias == "data" {
-            return None;
+            return Ok(None);
         }
-        let import_key = append_path_component(&self.current_package, alias).ok()?;
-        let import_expr = self.policy.inner.imports.get(&import_key)?;
-        let mut candidate = get_path_string(import_expr.as_ref(), None).ok()?;
+        let import_key = append_path_component(package, alias).map_err(CompilerError::from)?;
+        let Some(import_expr) = self.policy.inner.imports.get(&import_key) else {
+            return Ok(None);
+        };
+        let mut candidate =
+            get_path_string(import_expr.as_ref(), None).map_err(CompilerError::from)?;
         candidate.push_str(suffix);
+        Ok((self.policy.inner.functions.contains_key(&candidate)
+            || self.default_function_span(&candidate, true)?.is_some())
+        .then_some(candidate))
+    }
+
+    pub(super) fn default_rule_module(&self, rule: &Ref<Rule>) -> Result<(u32, &Module)> {
         self.policy
-            .inner
-            .functions
-            .contains_key(&candidate)
-            .then_some(candidate)
+            .get_modules()
+            .iter()
+            .enumerate()
+            .find(|(_, module)| module.policy.contains(rule))
+            .map(|(index, module)| (index as u32, module.as_ref()))
+            .ok_or_else(|| {
+                CompilerError::General {
+                    message: "missing declaring module for default rule".to_string(),
+                }
+                .at(rule.span())
+            })
+    }
+
+    pub(super) fn default_function_span(
+        &self,
+        path: &str,
+        exact_path: bool,
+    ) -> Result<Option<&Span>> {
+        let Some(defaults) = self.policy.inner.default_rules.get(path) else {
+            return Ok(None);
+        };
+        for (rule, _) in defaults {
+            if let Rule::Default {
+                args, refr, span, ..
+            } = rule.as_ref()
+            {
+                if args.is_empty() {
+                    continue;
+                }
+                if exact_path {
+                    let (_, module) = self.default_rule_module(rule)?;
+                    let package = get_path_string(&module.package.refr, Some("data"))
+                        .map_err(CompilerError::from)?;
+                    let head_path =
+                        get_path_string(refr, Some(&package)).map_err(CompilerError::from)?;
+                    if head_path != path {
+                        continue;
+                    }
+                }
+                return Ok(Some(span));
+            }
+        }
+        Ok(None)
     }
 
     fn lookup_builtin_arity(&self, name: &str) -> Option<usize> {
@@ -483,6 +542,8 @@ impl<'a> Compiler<'a> {
                 rule_index,
                 expected_args,
             })
+        } else if self.default_function_span(full_fcn_path, true)?.is_some() {
+            Err(CompilerError::FunctionDefaultsUnsupported.at(span))
         } else if self.is_builtin(original_fcn_path) {
             let builtin_index = self.get_builtin_index(original_fcn_path)?;
             let expected_args = self.lookup_builtin_arity(original_fcn_path);

@@ -52,6 +52,30 @@ values. For containers other than arrays and objects, the key expression is not
 evaluated, matching the interpreter. Unkeyed membership continues to search
 collection values.
 
+Parameterized function defaults are rejected with a typed compiler error when
+reachable through calls or namespace lookups. Absolute `data` call paths are
+never prefixed with the caller's package, and unrelated descendant defaults do
+not become defaults of an ordinary function.
+
+Default folding evaluates only the selected registered heads in their declaring
+packages. Indexed defaults are matched to their containing rule and accumulated
+before its value is read; descendant defaults cannot replace a function's fallback.
+
+Default comprehensions can be folded only when they use local bindings and
+deterministic builtins. Defaults that read `input`, `data`, imports, other policy
+rules, user-defined functions, or runtime-dependent builtins are rejected with
+`RuntimeDependentDefaultUnsupported`, rather than freezing a result computed
+without runtime input or data. Constant and nested constant comprehensions remain
+supported. Assignment lowering preserves these typed compiler errors.
+
+Value rules and imports of non-callable targets do not shadow deterministic
+builtin calls during this validation, matching interpreter call resolution.
+
+Statically prefixed set heads support exact leaf lookups, such as
+`data.test.items.named` for `items["named"] contains value`. Parent-prefix
+lookups are rejected with `MultiValueRefHeadUnsupported` until the compiler can
+materialize the containing object instead of returning the leaf set.
+
 A successful compilation produces a `Program` (`src/rvm/program/core.rs`). The
 layout is deliberately split:
 

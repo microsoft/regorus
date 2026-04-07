@@ -62,6 +62,15 @@ pub enum CompilerError {
     #[error("SomeIn should have been hoisted as a loop")]
     SomeInNotHoisted,
 
+    #[error("function default values are not yet supported in the RVM compiler")]
+    FunctionDefaultsUnsupported,
+
+    #[error("runtime-dependent default values are not yet supported in the RVM compiler")]
+    RuntimeDependentDefaultUnsupported,
+
+    #[error("multi-value ref head rules are not yet supported in the RVM compiler")]
+    MultiValueRefHeadUnsupported,
+
     #[error("Invalid function expression")]
     InvalidFunctionExpression,
 

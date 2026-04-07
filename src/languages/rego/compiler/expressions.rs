@@ -7,7 +7,7 @@ mod operations;
 
 pub(super) use collection_literals::try_eval_const;
 
-use super::{Compiler, CompilerError, Register, Result};
+use super::{Compiler, CompilerError, Register, Result, SpannedCompilerError};
 use crate::ast::{Expr, ExprRef};
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
@@ -71,7 +71,10 @@ impl<'a> Compiler<'a> {
                 let result: Result<Register> = match binding_plan {
                     BindingPlan::Assignment { plan } => self
                         .compile_assignment_plan_using_hoisted_destructuring(&plan, span)
-                        .map_err(|e| CompilerError::from(e).at(span)),
+                        .map_err(|error| match error.downcast::<SpannedCompilerError>() {
+                            Ok(error) => error.with_span(span),
+                            Err(error) => CompilerError::from(error).at(span),
+                        }),
                     other => Err(CompilerError::UnexpectedBindingPlan {
                         context: "assignment expression".to_string(),
                         found: format!("{other:?}"),
