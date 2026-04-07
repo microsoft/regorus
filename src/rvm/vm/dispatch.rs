@@ -467,6 +467,36 @@ impl RegoVM {
                 }
                 Ok(InstructionOutcome::Continue)
             }
+            ObjectDeepSet { params_index } => {
+                let params = program
+                    .instruction_data
+                    .get_object_deep_set_params(params_index)
+                    .ok_or(VmError::InvalidObjectCreateParams {
+                        index: params_index,
+                        pc: self.pc,
+                        available: program.instruction_data.object_deep_set_params.len(),
+                    })?
+                    .clone();
+
+                // Read all key values and the leaf value upfront
+                let key_values: alloc::vec::Vec<Value> = params
+                    .keys
+                    .iter()
+                    .map(|&k| self.get_register(k).cloned())
+                    .collect::<core::result::Result<_, _>>()?;
+                let leaf_value = self.get_register(params.value)?.clone();
+
+                let mut root = self.take_register(params.obj)?;
+                self.object_deep_set(
+                    &mut root,
+                    &key_values,
+                    leaf_value,
+                    params.multi_value,
+                    params.obj,
+                )?;
+                self.set_register(params.obj, root)?;
+                Ok(InstructionOutcome::Continue)
+            }
             ObjectCreate { params_index } => {
                 let params = program
                     .instruction_data
@@ -1174,5 +1204,67 @@ impl RegoVM {
                 pc: self.pc,
             }),
         }
+    }
+
+    fn object_deep_set(
+        &self,
+        current: &mut Value,
+        key_values: &[Value],
+        leaf_value: Value,
+        multi_value: bool,
+        obj_register: u8,
+    ) -> Result<()> {
+        let Some((first_key, remaining_keys)) = key_values.split_first() else {
+            return Ok(());
+        };
+
+        let offending = current.clone();
+        let object = current
+            .as_object_mut()
+            .map_err(|_| VmError::RegisterNotObject {
+                register: obj_register,
+                value: offending,
+                pc: self.pc,
+            })?;
+
+        if remaining_keys.is_empty() {
+            if multi_value {
+                let leaf = match object.entry(first_key.clone()) {
+                    alloc::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    alloc::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert(Value::new_set())
+                    }
+                };
+
+                let leaf_snapshot = leaf.clone();
+                let set = leaf.as_set_mut().map_err(|_| VmError::RegisterNotSet {
+                    register: obj_register,
+                    value: leaf_snapshot,
+                    pc: self.pc,
+                })?;
+                set.insert(leaf_value);
+            } else {
+                object.insert(first_key.clone(), leaf_value);
+            }
+
+            return Ok(());
+        }
+
+        let child = match object.entry(first_key.clone()) {
+            alloc::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            alloc::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(Value::new_object())
+            }
+        };
+
+        if !matches!(child, Value::Object(_)) {
+            return Err(VmError::RegisterNotObject {
+                register: obj_register,
+                value: child.clone(),
+                pc: self.pc,
+            });
+        }
+
+        self.object_deep_set(child, remaining_keys, leaf_value, multi_value, obj_register)
     }
 }

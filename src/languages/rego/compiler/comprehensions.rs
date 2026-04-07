@@ -7,6 +7,7 @@ use crate::ast::{ExprRef, Query};
 use crate::lexer::Span;
 use crate::rvm::instructions::{ComprehensionBeginParams, ComprehensionMode};
 use crate::rvm::Instruction;
+use alloc::vec::Vec;
 
 impl<'a> Compiler<'a> {
     fn compile_comprehension(
@@ -42,6 +43,8 @@ impl<'a> Compiler<'a> {
             context_type: ContextType::Comprehension(context_type),
             dest_register: result_reg,
             key_expr: key_expr.cloned(),
+            extra_key_exprs: Vec::new(),
+            multi_value: false,
             value_expr: value_expr.cloned(),
             span: span.clone(),
             key_value_loops_hoisted: false,
