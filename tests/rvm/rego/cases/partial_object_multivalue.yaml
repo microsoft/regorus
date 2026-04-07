@@ -100,25 +100,24 @@ cases:
       - |
         package test
 
-        tags[category] contains tag if {
-          some category, tag in {
-            "colors": "red",
-            "colors": "blue",
-          }
-        }
+        tag_pairs := [
+          ["colors", "red"],
+          ["colors", "blue"],
+          ["sizes", "small"],
+          ["sizes", "large"],
+        ]
 
         tags[category] contains tag if {
-          some category, tag in {
-            "sizes": "small",
-            "sizes": "large",
-          }
+          some pair in tag_pairs
+          category := pair[0]
+          tag := pair[1]
         }
     query: data.test.tags
     want_result:
       colors:
-        set!: ["blue"]
+        set!: ["red", "blue"]
       sizes:
-        set!: ["large"]
+        set!: ["small", "large"]
 
   - note: regular_partial_object_still_works
     data: {}
@@ -497,3 +496,125 @@ cases:
     query: data.test.first_group
     want_result:
       set!: ["x", "y"]
+
+  # ── Multi-bracket rule heads (tested via wrapper rules) ──
+
+  - note: multi_bracket_two_key_assign
+    data: {}
+    modules:
+      - |
+        package test
+
+        settings[svc][field] := v if {
+          some svc, fields in {"web": {"port": 80, "tls": true}, "ssh": {"port": 22}}
+          some field, v in fields
+        }
+
+        result := settings
+    query: data.test.result
+    want_result:
+      web:
+        port: 80
+        tls: true
+      ssh:
+        port: 22
+
+  - note: multi_bracket_two_key_contains
+    data: {}
+    modules:
+      - |
+        package test
+
+        perms[role] contains action if {
+          some role, actions in {"admin": ["read", "write"], "viewer": ["read"]}
+          some action in actions
+        }
+
+        result := perms
+    query: data.test.result
+    want_result:
+      admin:
+        set!: ["read", "write"]
+      viewer:
+        set!: ["read"]
+
+  - note: multi_bracket_three_key_nesting
+    data: {}
+    modules:
+      - |
+        package test
+
+        config[env][svc][key] := val if {
+          entries := [
+            {"env": "prod", "svc": "web", "key": "port", "val": 443},
+            {"env": "prod", "svc": "api", "key": "port", "val": 8080},
+            {"env": "dev", "svc": "web", "key": "port", "val": 8000}
+          ]
+          some entry in entries
+          env := entry.env
+          svc := entry.svc
+          key := entry.key
+          val := entry.val
+        }
+
+        result := config
+    query: data.test.result
+    want_result:
+      prod:
+        web:
+          port: 443
+        api:
+          port: 8080
+      dev:
+        web:
+          port: 8000
+
+  - note: multi_bracket_merge_across_definitions
+    data: {}
+    modules:
+      - |
+        package test
+
+        access[group][perm] := true if {
+          some group in ["admin", "ops"]
+          perm := "read"
+        }
+
+        access[group][perm] := true if {
+          group := "admin"
+          perm := "write"
+        }
+
+        result := access
+    query: data.test.result
+    want_result:
+      admin:
+        read: true
+        write: true
+      ops:
+        read: true
+
+  - note: multi_bracket_contains_accumulation
+    data: {}
+    modules:
+      - |
+        package test
+
+        tags[category] contains item if {
+          pairs := [
+            ["color", "red"],
+            ["color", "blue"],
+            ["size", "large"]
+          ]
+          some pair in pairs
+          category := pair[0]
+          item := pair[1]
+        }
+
+        result := tags
+    query: data.test.result
+    want_result:
+      color:
+        set!: ["blue", "red"]
+      size:
+        set!: ["large"]

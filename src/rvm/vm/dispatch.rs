@@ -471,12 +471,11 @@ impl RegoVM {
                 let params = program
                     .instruction_data
                     .get_object_deep_set_params(params_index)
-                    .ok_or(VmError::InvalidObjectCreateParams {
+                    .ok_or(VmError::InvalidObjectDeepSetParams {
                         index: params_index,
                         pc: self.pc,
                         available: program.instruction_data.object_deep_set_params.len(),
-                    })?
-                    .clone();
+                    })?;
 
                 // Read all key values and the leaf value upfront
                 let key_values: alloc::vec::Vec<Value> = params
@@ -485,16 +484,12 @@ impl RegoVM {
                     .map(|&k| self.get_register(k).cloned())
                     .collect::<core::result::Result<_, _>>()?;
                 let leaf_value = self.get_register(params.value)?.clone();
+                let multi_value = params.multi_value;
+                let obj = params.obj;
 
-                let mut root = self.take_register(params.obj)?;
-                self.object_deep_set(
-                    &mut root,
-                    &key_values,
-                    leaf_value,
-                    params.multi_value,
-                    params.obj,
-                )?;
-                self.set_register(params.obj, root)?;
+                let mut root = self.take_register(obj)?;
+                self.object_deep_set(&mut root, &key_values, leaf_value, multi_value, obj)?;
+                self.set_register(obj, root)?;
                 Ok(InstructionOutcome::Continue)
             }
             ObjectCreate { params_index } => {
@@ -1215,17 +1210,22 @@ impl RegoVM {
         obj_register: u8,
     ) -> Result<()> {
         let Some((first_key, remaining_keys)) = key_values.split_first() else {
-            return Ok(());
+            return Err(VmError::Internal {
+                message: alloc::string::String::from("ObjectDeepSet requires a non-empty key path"),
+                pc: self.pc,
+            });
         };
 
-        let offending = current.clone();
-        let object = current
-            .as_object_mut()
-            .map_err(|_| VmError::RegisterNotObject {
-                register: obj_register,
-                value: offending,
-                pc: self.pc,
-            })?;
+        let object = match current.as_object_mut() {
+            Ok(obj) => obj,
+            Err(_) => {
+                return Err(VmError::RegisterNotObject {
+                    register: obj_register,
+                    value: current.clone(),
+                    pc: self.pc,
+                });
+            }
+        };
 
         if remaining_keys.is_empty() {
             if multi_value {

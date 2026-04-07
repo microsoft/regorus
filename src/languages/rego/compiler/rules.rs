@@ -58,8 +58,8 @@ impl<'a> Compiler<'a> {
                 Expr::RefDot {
                     refr: inner, field, ..
                 } => {
-                    // RefDot field is (Span, Value) — wrap as a literal Expr
-                    let field_expr = ExprRef::new(Expr::Var {
+                    // RefDot field is (Span, Value) — wrap as a string literal Expr
+                    let field_expr = ExprRef::new(Expr::String {
                         span: field.0.clone(),
                         value: field.1.clone(),
                         eidx: 0,
