@@ -94,6 +94,37 @@ pub enum VmError {
         available: usize,
     },
 
+    #[error("Invalid object deep set params index: {index} (pc={pc}, available={available})")]
+    InvalidObjectDeepSetParams {
+        index: u16,
+        pc: usize,
+        available: usize,
+    },
+
+    #[error("Object deep set path depth must be between 1 and {max_depth} (got {depth}, pc={pc})")]
+    InvalidObjectDeepSetPath {
+        depth: usize,
+        max_depth: usize,
+        pc: usize,
+    },
+
+    #[error(
+        "ObjectDeepSet root register {register} must contain an object (value={value}, pc={pc})"
+    )]
+    InvalidObjectDeepSetRoot {
+        register: u8,
+        value: Value,
+        pc: usize,
+    },
+
+    #[error("conflict: object key {key} must not produce multiple outputs (pc={pc})")]
+    ObjectKeyConflict { key: Value, pc: usize },
+
+    #[error(
+        "Invalid partial-object fallback literal {index}: expected object or Undefined (pc={pc})"
+    )]
+    InvalidPartialObjectDefault { index: u16, pc: usize },
+
     #[error("Invalid template literal index: {index} (pc={pc}, available={available})")]
     InvalidTemplateLiteralIndex {
         index: u16,

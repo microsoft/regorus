@@ -507,6 +507,29 @@ fn format_instruction_readable(
             let comment = format!("Set field r{}[r{}] = r{}", obj, key, value);
             align_comment(&base, &comment, config.comment_column)
         }
+        Instruction::ObjectDeepSet { params_index } => {
+            let params = program
+                .instruction_data
+                .get_object_deep_set_params(params_index);
+            params.map_or_else(
+                || format!("{}ObjDeepSet   P({})", indent, params_index),
+                |p| {
+                    let keys_str: alloc::string::String =
+                        p.keys.iter().map(|k| alloc::format!("[r{}]", k)).collect();
+                    let mode = if p.multi_value { "∪=" } else { "←" };
+                    let base = format!(
+                        "{}ObjDeepSet   r{}{} {} r{}",
+                        indent, p.obj, keys_str, mode, p.value
+                    );
+                    let comment = if p.multi_value {
+                        alloc::format!("Deep set-add r{}{}.insert(r{})", p.obj, keys_str, p.value)
+                    } else {
+                        alloc::format!("Deep set r{}{} = r{}", p.obj, keys_str, p.value)
+                    };
+                    align_comment(&base, &comment, config.comment_column)
+                },
+            )
+        }
         Instruction::ObjectCreate { params_index } => {
             let params = program
                 .instruction_data
@@ -1022,6 +1045,7 @@ const fn get_instruction_name(instruction: &Instruction) -> &'static str {
         Instruction::HostAwait { .. } => "HOST_AWAIT",
         Instruction::Return { .. } => "RETURN",
         Instruction::ObjectSet { .. } => "OBJ_SET",
+        Instruction::ObjectDeepSet { .. } => "OBJ_DEEP_SET",
         Instruction::ObjectCreate { .. } => "OBJ_CREATE",
         Instruction::Index { .. } => "INDEX",
         Instruction::IndexLiteral { .. } => "INDEX_LIT",
@@ -1112,6 +1136,23 @@ fn format_operation_compact(
         } => {
             format!("{}r{} ← r{}[L{}]", indent, dest, container, literal_idx)
         }
+        Instruction::ObjectDeepSet { params_index } => instruction_data
+            .get_object_deep_set_params(params_index)
+            .map_or_else(
+                || format!("{}OBJECT_DEEP_SET P({})", indent, params_index),
+                |params| {
+                    let keys: String = params
+                        .keys
+                        .iter()
+                        .map(|key| format!("[r{}]", key))
+                        .collect();
+                    let mode = if params.multi_value { "∪=" } else { "←" };
+                    format!(
+                        "{}r{}{} {} r{}",
+                        indent, params.obj, keys, mode, params.value
+                    )
+                },
+            ),
         Instruction::LoopStart { params_index } => {
             instruction_data.get_loop_params(params_index).map_or_else(
                 || format!("{}loop P({}) {{", indent, params_index),

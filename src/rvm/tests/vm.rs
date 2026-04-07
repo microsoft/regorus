@@ -151,6 +151,8 @@ mod tests {
         chained_index_params: Vec<ChainedIndexParamsSpec>,
         #[serde(default, alias = "comprehension_start_params")]
         comprehension_begin_params: Vec<ComprehensionBeginParamsSpec>,
+        #[serde(default)]
+        object_deep_set_params: Vec<crate::rvm::instructions::ObjectDeepSetParams>,
     }
 
     #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -536,6 +538,10 @@ mod tests {
                 program
                     .instruction_data
                     .add_object_create_params(object_create_params);
+            }
+
+            for params in params_spec.object_deep_set_params {
+                program.instruction_data.add_object_deep_set_params(params);
             }
 
             // Convert array create params

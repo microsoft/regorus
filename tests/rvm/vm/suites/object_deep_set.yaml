@@ -1,0 +1,68 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: object_deep_set_nested_value_round_trip
+    literals: [{}, group, leaf, false]
+    instruction_params:
+      object_deep_set_params:
+        - {obj: 0, keys: [1, 2], value: 3, multi_value: false}
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 2 }"
+      - "Load { dest: 3, literal_idx: 3 }"
+      - "ObjectDeepSet { params_index: 0 }"
+      - "Return { value: 0 }"
+    want_result: {group: {leaf: false}}
+
+  - note: object_deep_set_multivalue_accumulates_without_mutating_literal
+    literals: [{group: {set!: [1]}}, group, 2]
+    instruction_params:
+      object_deep_set_params:
+        - {obj: 0, keys: [1], value: 2, multi_value: true}
+      array_create_params:
+        - {dest: 4, elements: [0, 3]}
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 2 }"
+      - "ObjectDeepSet { params_index: 0 }"
+      - "Load { dest: 3, literal_idx: 0 }"
+      - "ArrayCreate { params_index: 0 }"
+      - "Return { value: 4 }"
+    want_result:
+      - {group: {set!: [1, 2]}}
+      - {group: {set!: [1]}}
+
+  - note: object_deep_set_leaf_conflict_is_an_error
+    literals: [{group: {leaf: 1}}, group, leaf, 2]
+    instruction_params:
+      object_deep_set_params:
+        - {obj: 0, keys: [1, 2], value: 3, multi_value: false}
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 2 }"
+      - "Load { dest: 3, literal_idx: 3 }"
+      - "ObjectDeepSet { params_index: 0 }"
+      - "Return { value: 0 }"
+    want_error: "conflict"
+
+  - note: object_deep_set_invalid_parameter_index
+    literals: []
+    instructions:
+      - "ObjectDeepSet { params_index: 0 }"
+    want_error: "Invalid object deep set params index"
+
+  - note: object_deep_set_undefined_key_contributes_nothing
+    literals: [{}, 1]
+    instruction_params:
+      object_deep_set_params:
+        - {obj: 0, keys: [1], value: 2, multi_value: false}
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "ObjectDeepSet { params_index: 0 }"
+      - "Return { value: 0 }"
+    want_result: {}

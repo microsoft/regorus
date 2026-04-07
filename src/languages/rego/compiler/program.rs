@@ -167,6 +167,25 @@ impl<'a> Compiler<'a> {
             }
         }
 
+        let partial_object_paths: Vec<(String, usize)> = self
+            .rule_index_map
+            .iter()
+            .filter(|(_, index)| self.rule_types[**index as usize] == RuleType::PartialObject)
+            .map(|(path, index)| (path.clone(), *index as usize))
+            .collect();
+        for (path, index) in partial_object_paths {
+            let empty = self.partial_object_empty_result(&path)?;
+            if empty != Value::new_object() {
+                let literal_index = self.add_literal(empty);
+                rule_infos_map
+                    .get_mut(&index)
+                    .ok_or_else(|| CompilerError::General {
+                        message: format!("missing metadata for partial object '{path}'"),
+                    })?
+                    .set_default_literal_index(literal_index);
+            }
+        }
+
         self.program.rule_infos = rule_infos_map.into_values().collect();
 
         // Spans refer to sources by the index assigned on first use, so the

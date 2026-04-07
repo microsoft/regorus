@@ -68,6 +68,7 @@ comprehension contexts. Outside loops it aborts the current rule.
 | Mnemonic                   | Operands / Params             | Behaviour                                                   |
 | :------------------------- | :---------------------------- | :---------------------------------------------------------- |
 | `ObjectSet`                | `obj, key, value`             | Mutates object in `obj` with key/value from registers.      |
+| `ObjectDeepSet`            | `params_index=pN`             | Inserts a partial-object contribution along a key path, rejecting conflicting values. |
 | `ObjectCreate`             | `params_index=pN`             | Builds object from literal template and register entries.   |
 | `ArrayNew`                 | `dest`                        | Creates empty array.                                        |
 | `ArrayPush`                | `arr, value`                  | Appends to array.                                           |
@@ -84,6 +85,22 @@ comprehension contexts. Outside loops it aborts the current rule.
 
 Parameter structures:
 
+- `ObjectDeepSetParams` stores the root object register, ordered key registers,
+  leaf value register, and `multi_value` flag. Paths contain 1 through
+  `Program::MAX_PATH_DEPTH` keys. Missing intermediate objects are created;
+  `contains` contributions accumulate in set-valued leaves. Undefined keys or
+  values contribute nothing. Equal repeated assignments are allowed, but
+  conflicting assignments and incompatible intermediate types fail evaluation.
+  Empty-result semantics are preserved: single-key partial objects evaluate
+  to `{}`, while dynamic nested or set-valued rule references with no
+  contributions are Undefined. Statically named branches retain their
+  empty objects or sets.
+  Head planning shares named indices across all key levels and the value,
+  while independent `_` indices remain independent. Plans are scoped to
+  their module and enclosing body, including nested queries in shared heads.
+  Independent partial-object bodies accumulate
+  in both execution modes; `else` bodies keep first-success semantics.
+  Missing, scalar, or empty head-loop collections make no contribution.
 - `ObjectCreateParams` reuses arrays of literal key/value pairs and register
   pairs. Literal keys must be sorted to match template order.
 - `ArrayCreateParams` and `SetCreateParams` store register lists. The VM checks

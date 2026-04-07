@@ -28,6 +28,13 @@ impl RegoVM {
                 | VmError::RegexSizeLimitExceeded { .. }
                 | VmError::InstructionLimitExceeded { .. }
                 | VmError::NumericOverflow { .. }
+                | VmError::InvalidObjectDeepSetParams { .. }
+                | VmError::InvalidObjectDeepSetPath { .. }
+                | VmError::InvalidObjectDeepSetRoot { .. }
+                | VmError::ObjectKeyConflict { .. }
+                | VmError::RegisterIndexOutOfBounds { .. }
+                | VmError::LiteralIndexOutOfBounds { .. }
+                | VmError::InvalidPartialObjectDefault { .. }
         )
     }
 
@@ -312,7 +319,7 @@ impl RegoVM {
         self.pc = call_context.return_pc;
 
         let result_from_rule = if !rule_failed_due_to_inconsistency {
-            final_result
+            self.partial_object_empty_result(&rule_info, final_result)?
         } else {
             Value::Undefined
         };
@@ -324,9 +331,7 @@ impl RegoVM {
                 RuleType::PartialSet => {
                     self.set_register(dest, Value::new_set())?;
                 }
-                RuleType::PartialObject => {
-                    self.set_register(dest, Value::new_object())?;
-                }
+                RuleType::PartialObject => {}
                 RuleType::Complete => {
                     if let Some(rule_metadata) = self
                         .program
@@ -363,6 +368,34 @@ impl RegoVM {
         }
         Ok(())
     }
+
+    fn partial_object_empty_result(&self, rule_info: &RuleInfo, result: Value) -> Result<Value> {
+        if rule_info.rule_type == RuleType::PartialObject
+            && (result == Value::Undefined
+                || matches!(&result, Value::Object(object) if object.is_empty()))
+        {
+            self.partial_object_fallback(rule_info)
+        } else {
+            Ok(result)
+        }
+    }
+
+    fn partial_object_fallback(&self, rule_info: &RuleInfo) -> Result<Value> {
+        let Some(index) = rule_info.default_literal_index else {
+            return Ok(Value::new_object());
+        };
+        let fallback = self
+            .program
+            .literals
+            .get(usize::from(index))
+            .cloned()
+            .ok_or(VmError::LiteralIndexOutOfBounds { index, pc: self.pc })?;
+        if !matches!(fallback, Value::Object(_) | Value::Undefined) {
+            return Err(VmError::InvalidPartialObjectDefault { index, pc: self.pc });
+        }
+        Ok(fallback)
+    }
+
     pub(super) fn execute_call_rule(&mut self, dest: u8, rule_index: u16) -> Result<()> {
         match self.execution_mode {
             ExecutionMode::RunToCompletion => self.execute_call_rule_common(dest, rule_index, None),
@@ -544,7 +577,23 @@ impl RegoVM {
             RuleType::PartialObject => {
                 if current_ctx.current_definition_index == 0 && current_ctx.current_body_index == 0
                 {
-                    self.set_register(result_reg, Value::new_object())?;
+                    let rule_index = current_ctx.rule_index;
+                    let rule_info = self.program.rule_infos.get(usize::from(rule_index)).ok_or(
+                        VmError::RuleInfoMissing {
+                            index: rule_index,
+                            pc: self.pc,
+                            available: self.program.rule_infos.len(),
+                        },
+                    )?;
+                    let initial = self.partial_object_fallback(rule_info)?;
+                    self.set_register(
+                        result_reg,
+                        if initial == Value::Undefined {
+                            Value::new_object()
+                        } else {
+                            initial
+                        },
+                    )?;
                 }
             }
         }
@@ -709,11 +758,30 @@ impl RegoVM {
             }
         }
 
-        if let Some(definition_bodies) = rule_info
-            .definitions
+        let next_is_else = rule_info
+            .else_bodies
             .get(frame_data.current_definition_index)
+            .and_then(|bodies| {
+                frame_data
+                    .current_body_index
+                    .checked_add(1)
+                    .and_then(|next| bodies.get(next))
+            })
+            .copied()
+            .unwrap_or(false);
+        if !matches!(
+            frame_data.rule_type,
+            RuleType::PartialSet | RuleType::PartialObject
+        ) || next_is_else
         {
-            frame_data.current_body_index = definition_bodies.len();
+            if let Some(definition_bodies) = rule_info
+                .definitions
+                .get(frame_data.current_definition_index)
+            {
+                frame_data.current_body_index = definition_bodies.len();
+            } else {
+                self.increment_counter(&mut frame_data.current_body_index, "rule body index")?;
+            }
         } else {
             self.increment_counter(&mut frame_data.current_body_index, "rule body index")?;
         }
@@ -757,6 +825,12 @@ impl RegoVM {
                 .get(usize::from(result_reg))
                 .cloned()
                 .unwrap_or(Value::Undefined)
+        };
+
+        let result_from_rule = if !rule_failed_due_to_inconsistency {
+            self.partial_object_empty_result(&rule_info, result_from_rule)?
+        } else {
+            Value::Undefined
         };
 
         let mut current_window = Vec::default();
@@ -803,17 +877,7 @@ impl RegoVM {
                     )?;
                     *slot = Value::new_set();
                 }
-                RuleType::PartialObject => {
-                    let register_count = parent_registers.len();
-                    let slot = parent_registers.get_mut(dest_idx).ok_or(
-                        VmError::RegisterIndexOutOfBounds {
-                            index: dest_reg,
-                            pc: self.pc,
-                            register_count,
-                        },
-                    )?;
-                    *slot = Value::new_object();
-                }
+                RuleType::PartialObject => {}
                 RuleType::Complete => {
                     if let Some(default_literal_index) = rule_info.default_literal_index {
                         if let Some(default_value) = self

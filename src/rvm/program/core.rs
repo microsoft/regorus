@@ -89,7 +89,7 @@ pub struct Program {
 
 impl Program {
     /// Current serialization format version
-    pub const SERIALIZATION_VERSION: u32 = 6;
+    pub const SERIALIZATION_VERSION: u32 = 7;
     /// Magic bytes to identify Regorus program files
     pub const MAGIC: [u8; 4] = *b"REGO";
     /// Maximum instructions supported (matches u16 jump targets)
@@ -199,6 +199,16 @@ impl Program {
             let body_end = core::cmp::max(params.body_start, params.comprehension_end);
             if usize::from(body_end) > Self::MAX_INSTRUCTIONS {
                 return Err("Comprehension offsets exceed supported instruction range".to_string());
+            }
+        }
+
+        for params in &self.instruction_data.object_deep_set_params {
+            if params.keys.is_empty() || params.depth() > Self::MAX_PATH_DEPTH {
+                return Err(format!(
+                    "Object deep set path depth must be between 1 and {} (got {})",
+                    Self::MAX_PATH_DEPTH,
+                    params.depth()
+                ));
             }
         }
 

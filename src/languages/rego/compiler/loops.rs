@@ -26,7 +26,13 @@ impl<'a> Compiler<'a> {
             .policy
             .inner
             .loop_hoisting_table
-            .get_statement_loops(self.current_module_index, stmt.sidx)
+            .get_output_statement_loops(
+                self.current_module_index,
+                self.context_stack
+                    .last()
+                    .and_then(|context| context.output_query),
+                stmt.sidx,
+            )
             .map_err(|err| {
                 CompilerError::General {
                     message: format!("loop hoisting table out of bounds: {err}"),
@@ -52,7 +58,13 @@ impl<'a> Compiler<'a> {
             .policy
             .inner
             .loop_hoisting_table
-            .get_expr_loops(module_idx, expr_idx)
+            .get_output_loops(
+                module_idx,
+                self.context_stack
+                    .last()
+                    .and_then(|context| context.output_query),
+                expr_idx,
+            )
             .map_err(|err| {
                 CompilerError::General {
                     message: format!("loop hoisting table out of bounds: {err}"),
@@ -156,9 +168,16 @@ impl<'a> Compiler<'a> {
             context_type: ContextType::Every,
             dest_register: result_reg,
             key_expr: None,
+            extra_key_exprs: Vec::new(),
+            multi_value: false,
             value_expr: None,
             span: span.clone(),
             key_value_loops_hoisted: false,
+            output_query: self
+                .context_stack
+                .last()
+                .and_then(|context| context.output_query)
+                .or(Some(query.qidx)),
         };
         self.push_context(every_context);
 

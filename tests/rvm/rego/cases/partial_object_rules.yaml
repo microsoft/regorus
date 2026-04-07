@@ -67,9 +67,6 @@ cases:
       alias-foo: 1
 
   - note: partial_object_undefined_key_skipped
-    # TODO(#719): RVM incorrectly materializes undefined keys instead of
-    # skipping iterations where the key is undefined.
-    skip: true
     data: {}
     input:
       items:
@@ -88,10 +85,7 @@ cases:
     want_result:
       alias-foo: 1
 
-  - note: partial_object_duplicate_key_last_wins
-    # TODO(#719): regorus silently overwrites conflicting keys instead of
-    # erroring when the same key is produced with different values.
-    skip: true
+  - note: partial_object_duplicate_key_conflicts
     data: {}
     input: {}
     modules:
@@ -106,7 +100,7 @@ cases:
           some k, v in {"a": 2}
         }
     query: data.test.p
-    want_error: "conflict"
+    want_error: "multiple outputs"
 
   - note: partial_object_duplicate_key_same_value_ok
     data: {}
@@ -335,7 +329,7 @@ cases:
     want_result:
       set!: ["BAR", "BAZ", "FOO"]
 
-  - note: partial_object_multilevel_key_unsupported_in_rvm
+  - note: partial_object_multilevel_key_collects_all_bindings
     data: {}
     input:
       nested:
@@ -355,10 +349,11 @@ cases:
 
         main := p
     query: data.test.main
-    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
-    allow_interpreter_success: true
+    want_result:
+      app: {read: true, write: true}
+      ops: {deploy: true}
 
-  - note: partial_object_multilevel_key_explicit_value_unsupported_in_rvm
+  - note: partial_object_multilevel_key_explicit_value_collects_all_bindings
     data: {}
     input:
       nested:
@@ -378,10 +373,11 @@ cases:
 
         main := p
     query: data.test.main
-    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
-    allow_interpreter_success: true
+    want_result:
+      app: {read: 1, write: 2}
+      ops: {deploy: 3}
 
-  - note: partial_object_hidden_dynamic_prefix_unsupported_in_rvm
+  - note: partial_object_dynamic_prefix_with_literal_field
     data: {}
     input:
       nested:
@@ -403,8 +399,9 @@ cases:
 
         main := p
     query: data.test.main
-    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
-    allow_interpreter_success: true
+    want_result:
+      app: {q: {read: true, write: true}}
+      ops: {q: {deploy: true}}
 
   - note: partial_object_array_iteration_collects_all_bindings
     data: {}
@@ -460,9 +457,6 @@ cases:
       shared: 1
 
   - note: partial_object_duplicate_paths_same_key_different_values_conflict
-    # TODO(#719): regorus silently overwrites conflicting keys instead of
-    # erroring when the same key is produced with different values.
-    skip: true
     data: {}
     input:
       pairs:
@@ -478,12 +472,9 @@ cases:
           some entry in input.pairs
         }
     query: data.test.p
-    want_error: "conflict"
+    want_error: "multiple outputs"
 
   - note: partial_object_undefined_key_skips_iteration
-    # TODO(#719): RVM incorrectly materializes undefined keys instead of
-    # skipping iterations where the key is undefined.
-    skip: true
     data: {}
     input:
       items:
@@ -506,9 +497,6 @@ cases:
       alias-foo: 1
 
   - note: partial_object_undefined_value_skips_iteration
-    # TODO(#719): RVM incorrectly materializes undefined values instead of
-    # skipping iterations where the value is undefined.
-    skip: true
     data: {}
     input:
       keys: ["FOO", "BAR", "BAZ"]
@@ -528,9 +516,6 @@ cases:
       FOO: 1
 
   - note: partial_object_mixed_undefined_key_value_cases_skip_bad_iterations
-    # TODO(#719): RVM incorrectly materializes undefined keys/values instead of
-    # skipping iterations where the key or value is undefined.
-    skip: true
     data: {}
     input:
       rows:
@@ -830,7 +815,7 @@ cases:
       b:
         nested: 2
 
-  - note: partial_object_dynamic_prefix_static_suffix_unsupported_in_rvm
+  - note: partial_object_dynamic_prefix_static_suffix
     data: {}
     input:
       items:
@@ -846,10 +831,11 @@ cases:
 
         main := p
     query: data.test.main
-    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
-    allow_interpreter_success: true
+    want_result:
+      a: {fixed: A}
+      b: {fixed: B}
 
-  - note: partial_object_literal_prefix_nested_unsupported_in_rvm
+  - note: partial_object_literal_prefix_nested
     data: {}
     input:
       items:
@@ -865,10 +851,10 @@ cases:
 
         main := p
     query: data.test.main
-    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
-    allow_interpreter_success: true
+    want_result:
+      1: {a: 1, b: 2}
 
-  - note: partial_object_three_level_nested_dynamic_unsupported_in_rvm
+  - note: partial_object_three_level_nested_dynamic
     data: {}
     input:
       nested:
@@ -888,8 +874,10 @@ cases:
 
         main := p
     query: data.test.main
-    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
-    allow_interpreter_success: true
+    want_result:
+      root:
+        app: {read: 1, write: 2}
+        ops: {deploy: 3}
 
   - note: partial_object_with_body_unsupported_in_rvm
     data: {}

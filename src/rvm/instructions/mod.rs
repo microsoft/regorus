@@ -7,8 +7,8 @@ mod types;
 
 pub use params::{
     ArrayCreateParams, BuiltinCallParams, ChainedIndexParams, ComprehensionBeginParams,
-    FunctionCallParams, InstructionData, LoopStartParams, ObjectCreateParams, SetCreateParams,
-    VirtualDataDocumentLookupParams,
+    FunctionCallParams, InstructionData, LoopStartParams, ObjectCreateParams, ObjectDeepSetParams,
+    SetCreateParams, VirtualDataDocumentLookupParams,
 };
 pub use types::{
     ComprehensionMode, GuardMode, LiteralOrRegister, LogicalBlockMode, LoopMode, PolicyOp,
@@ -415,6 +415,12 @@ pub enum Instruction {
         mode: LogicalBlockMode,
         /// Register that accumulates the result.
         result: u8,
+    },
+
+    /// Insert a partial-object contribution along a key path, checking conflicts.
+    ObjectDeepSet {
+        /// Index into the object deep set parameter table.
+        params_index: u16,
     },
 }
 
