@@ -191,7 +191,13 @@ impl RegoVM {
         let rule_definitions = rule_info.definitions.clone();
 
         if rule_definitions.is_empty() {
-            let result = Value::Undefined;
+            // No compiled definitions — check for a default value before returning Undefined.
+            // Default-only rules (e.g., `default deny := true`) have no body definitions
+            // but their default value was evaluated at compile time and stored as a literal.
+            let result = rule_info
+                .default_literal_index
+                .and_then(|idx| self.program.literals.get(usize::from(idx)).cloned())
+                .unwrap_or(Value::Undefined);
             if !is_function_rule {
                 let available = self.rule_cache.len();
                 let entry =
@@ -336,7 +342,11 @@ impl RegoVM {
         }
 
         if rule_info.definitions.is_empty() {
-            let result = Value::Undefined;
+            // No compiled definitions — check for a default value before returning Undefined.
+            let result = rule_info
+                .default_literal_index
+                .and_then(|idx| self.program.literals.get(usize::from(idx)).cloned())
+                .unwrap_or(Value::Undefined);
             if !is_function_rule {
                 let available = self.rule_cache.len();
                 let entry =

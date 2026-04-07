@@ -38,6 +38,11 @@ impl<'a> Compiler<'a> {
 
     pub(super) fn compute_rule_type(&self, rule_path: &str) -> Result<RuleType> {
         let Some(definitions) = self.policy.inner.rules.get(rule_path) else {
+            // Default-only rules (e.g., `default deny := true`) have no regular definitions
+            // in the `rules` map — they only exist in `default_rules`. Treat them as Complete.
+            if self.policy.inner.default_rules.contains_key(rule_path) {
+                return Ok(RuleType::Complete);
+            }
             return Err(CompilerError::General {
                 message: format!("no definitions found for rule path '{}'", rule_path),
             }
@@ -601,6 +606,31 @@ impl<'a> Compiler<'a> {
             self.rule_function_param_count[rule_index as usize] = rule_param_count;
 
             if rule_param_count.is_none() {
+                let rule_path_parts: Vec<&str> = rule_path.split('.').collect();
+                if let Some((rule_name, package_parts)) = rule_path_parts.split_last() {
+                    let package_path: Vec<String> =
+                        package_parts.iter().map(|s| s.to_string()).collect();
+
+                    let _ = self.program.add_rule_to_tree(
+                        &package_path,
+                        rule_name,
+                        rule_index as usize,
+                    );
+                }
+            }
+
+            self.register_counter = saved_register_counter;
+            self.current_package = saved_package;
+            self.current_module_index = saved_module_index;
+        } else {
+            // Default-only rule — no body definitions to compile.
+            // Ensure rule_num_registers is sized so finish() won't panic.
+            if let Some(&rule_index) = self.rule_index_map.get(rule_path) {
+                while self.rule_num_registers.len() <= rule_index as usize {
+                    self.rule_num_registers.push(0);
+                }
+
+                // Add the rule to the data tree so it is discoverable.
                 let rule_path_parts: Vec<&str> = rule_path.split('.').collect();
                 if let Some((rule_name, package_parts)) = rule_path_parts.split_last() {
                     let package_path: Vec<String> =

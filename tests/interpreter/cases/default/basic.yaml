@@ -321,6 +321,37 @@ cases:
     skip: true
     want_result: [5]
 
+  - note: default_only_rule_bool
+    data: {}
+    modules:
+      - |
+        package test
+        default deny := true
+    query: data.test.deny
+    want_result: true
+
+  - note: default_only_rule_object
+    data: {}
+    modules:
+      - |
+        package test
+        default deny := {"result": false, "reasons": []}
+    query: data.test.deny
+    want_result:
+      result: false
+      reasons: []
+
+  - note: default_only_rule_with_package_query
+    data: {}
+    modules:
+      - |
+        package graph.mypolicy
+        default deny := {"result": false, "reasons": []}
+    query: data.graph.mypolicy.deny
+    want_result:
+      result: false
+      reasons: []
+
   - note: valid-var-in-some-in-value
     data: {}
     modules:
