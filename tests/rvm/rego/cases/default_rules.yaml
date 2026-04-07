@@ -154,6 +154,39 @@ cases:
     query: data.test.auth.allow
     want_result: false
 
+  - note: default_only_rule_bool
+    data: {}
+    modules:
+      - |
+        package test
+        default deny := true
+    query: data.test.deny
+    want_result: true
+
+  - note: default_only_rule_object
+    data: {}
+    modules:
+      - |
+        package test
+        default deny := {"result": false, "reasons": []}
+    query: data.test.deny
+    want_result:
+      result: false
+      reasons: []
+
+  - note: default_only_rule_with_entry_point
+    data: {}
+    modules:
+      - |
+        package graph.mypolicy
+        default deny := {"result": false, "reasons": []}
+    entry_points:
+      - data.graph.mypolicy.deny
+    query: data.graph.mypolicy.deny
+    want_result:
+      result: false
+      reasons: []
+
   - note: multiple_default_rules_different_names
     skip: true
     data: {}
