@@ -5,7 +5,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::types::GuardMode;
+use super::types::{GuardMode, LogicalBlockMode, PolicyOp};
 use super::{Instruction, InstructionData, LiteralOrRegister};
 
 impl Instruction {
@@ -291,6 +291,51 @@ impl core::fmt::Display for Instruction {
                 |k| format!("COMPREHENSION_YIELD R({}) R({})", k, value_reg),
             ),
             Instruction::ComprehensionEnd {} => String::from("COMPREHENSION_END"),
+
+            // Azure Policy consolidated instruction
+            Instruction::PolicyCondition {
+                dest,
+                left,
+                right,
+                op,
+            } => match op {
+                PolicyOp::Not => format!("{} R({}) R({})", op.display_name(), dest, left),
+                _ => format!("{} R({}) R({}) R({})", op.display_name(), dest, left, right),
+            },
+
+            // AllOf / AnyOf structured instructions
+            Instruction::LogicalBlockStart {
+                mode,
+                result,
+                end_pc,
+            } => {
+                let name = match mode {
+                    LogicalBlockMode::AllOf => "ALL_OF_START",
+                    LogicalBlockMode::AnyOf => "ANY_OF_START",
+                };
+                format!("{} R({}) {}", name, result, end_pc)
+            }
+            Instruction::AllOfNext {
+                check,
+                result,
+                end_pc,
+            } => {
+                format!("ALL_OF_NEXT R({}) R({}) {}", check, result, end_pc)
+            }
+            Instruction::AnyOfNext {
+                check,
+                result,
+                end_pc,
+            } => {
+                format!("ANY_OF_NEXT R({}) R({}) {}", check, result, end_pc)
+            }
+            Instruction::LogicalBlockEnd { mode, result } => {
+                let name = match mode {
+                    LogicalBlockMode::AllOf => "ALL_OF_END",
+                    LogicalBlockMode::AnyOf => "ANY_OF_END",
+                };
+                format!("{} R({})", name, result)
+            }
         };
         write!(f, "{}", text)
     }

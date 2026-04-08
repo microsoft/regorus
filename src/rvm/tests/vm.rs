@@ -1059,4 +1059,10 @@ mod tests {
     fn run_loop_test_file(file: &str) {
         run_vm_test_suite(file).unwrap()
     }
+
+    #[cfg(feature = "azure_policy")]
+    #[test_resources("tests/rvm/vm/suites/azure_policy/*.yaml")]
+    fn run_azure_policy_test_file(file: &str) {
+        run_vm_test_suite(file).unwrap()
+    }
 }
