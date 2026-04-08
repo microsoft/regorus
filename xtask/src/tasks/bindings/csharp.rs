@@ -400,14 +400,14 @@ impl TestCsharpCommand {
             if let Some(version) = package
                 .file_stem()
                 .and_then(|stem| stem.to_str())
-                .and_then(|stem| stem.strip_prefix("Regorus."))
+                .and_then(|stem| stem.strip_prefix("Microsoft.Regorus."))
             {
                 package_versions.insert(version.to_owned());
             }
         }
 
         for version in &package_versions {
-            let cache_entry = package_cache.join("regorus").join(version);
+            let cache_entry = package_cache.join("microsoft.regorus").join(version);
             if cache_entry.exists() {
                 fs::remove_dir_all(&cache_entry).with_context(|| {
                     format!(
@@ -443,15 +443,104 @@ fn run_regorus_tests(
     skip_apps: bool,
     console_logger: bool,
 ) -> Result<()> {
-    let nuget_source = package_dir
-        .to_str()
-        .ok_or_else(|| anyhow!("NuGet directory path contains invalid UTF-8"))?;
+    // Copy .nupkg files into the local-packages directory declared in nuget.config
+    // so that Microsoft.Regorus resolves from the mapped "local" source.
+    let local_packages = workspace.join("bindings/csharp/local-packages");
+    if local_packages.exists() {
+        fs::remove_dir_all(&local_packages).with_context(|| {
+            format!(
+                "failed to clean local-packages directory at {}",
+                local_packages.display()
+            )
+        })?;
+    }
+    fs::create_dir_all(&local_packages).with_context(|| {
+        format!(
+            "failed to create local-packages directory at {}",
+            local_packages.display()
+        )
+    })?;
+
+    let nuget_config = workspace.join("bindings/csharp/nuget.config");
+
+    // Verify that package source mapping blocks Microsoft.Regorus from resolving
+    // via nuget.org. With local-packages empty, restore must fail with NU1101.
+    println!("Verifying package source mapping blocks external resolution...");
+    {
+        let verify_cache = package_cache.join("_verify");
+        let _ = fs::remove_dir_all(&verify_cache);
+        fs::create_dir_all(&verify_cache)?;
+        let verify_cache_str = verify_cache
+            .to_str()
+            .ok_or_else(|| anyhow!("verify cache path contains invalid UTF-8"))?;
+
+        let regorus_tests = workspace.join("bindings/csharp/Regorus.Tests");
+        let mut verify = Command::new("dotnet");
+        verify.current_dir(&regorus_tests);
+        verify.arg("restore");
+        verify.arg("--configfile");
+        verify.arg(&nuget_config);
+        verify.arg("--arch");
+        verify.arg(dotnet_host_arch());
+        verify.arg(format!("/p:RestorePackagesPath={}", verify_cache_str));
+        verify.arg("/p:UsePackageReference=true");
+        verify.env("NUGET_PACKAGES", &verify_cache);
+
+        let output = verify
+            .output()
+            .context("failed to run dotnet restore for source mapping verification")?;
+        let _ = fs::remove_dir_all(&verify_cache);
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{stdout}\n{stderr}");
+
+        if output.status.success() {
+            return Err(anyhow!(
+                "Source mapping verification failed: dotnet restore succeeded when it should \
+                 have failed. Microsoft.Regorus must not be resolvable from nuget.org. \
+                 Check that bindings/csharp/nuget.config has correct packageSourceMapping."
+            ));
+        }
+
+        // Ensure the failure is specifically NU1101 for Microsoft.Regorus, not an
+        // unrelated error (e.g. network outage).
+        if !combined.contains("NU1101") || !combined.contains("Microsoft.Regorus") {
+            return Err(anyhow!(
+                "Source mapping verification failed: dotnet restore failed, but not for the \
+                 expected reason. Expected NU1101 for Microsoft.Regorus to confirm external \
+                 resolution is blocked.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            ));
+        }
+
+        println!("Verified: Microsoft.Regorus is not resolvable from external sources.");
+    }
+
+    for entry in fs::read_dir(package_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map_or(false, |ext| ext.eq_ignore_ascii_case("nupkg"))
+        {
+            let dest = local_packages.join(entry.file_name());
+            fs::copy(&path, &dest).with_context(|| {
+                format!("failed to copy {} to {}", path.display(), dest.display())
+            })?;
+            println!(
+                "Copied {} to local-packages/",
+                entry.file_name().to_string_lossy()
+            );
+        }
+    }
+
     let cache_path = package_cache
         .to_str()
         .ok_or_else(|| anyhow!("NuGet cache path contains invalid UTF-8"))?;
     let properties = vec![
-        format!("/p:RestoreAdditionalProjectSources={}", nuget_source),
         format!("/p:RestorePackagesPath={}", cache_path),
+        "/p:UsePackageReference=true".to_string(),
     ];
     let property_args: Vec<&str> = properties.iter().map(|value| value.as_str()).collect();
 
@@ -465,6 +554,7 @@ fn run_regorus_tests(
         &property_args,
         "Regorus.Tests",
         package_cache,
+        &nuget_config,
     )?;
 
     let mut test = Command::new("dotnet");
@@ -475,6 +565,9 @@ fn run_regorus_tests(
     test.arg(configuration);
     test.arg("--arch");
     test.arg(dotnet_host_arch());
+    for p in &property_args {
+        test.arg(p);
+    }
     if console_logger {
         test.arg("--logger");
         test.arg("console;verbosity=detailed");
@@ -495,7 +588,13 @@ fn run_regorus_tests(
     if clean {
         clean_msbuild_project(&test_app)?;
     }
-    restore_with_source(&test_app, &property_args, "TestApp", package_cache)?;
+    restore_with_source(
+        &test_app,
+        &property_args,
+        "TestApp",
+        package_cache,
+        &nuget_config,
+    )?;
     let mut build = Command::new("dotnet");
     build.current_dir(&test_app);
     build.arg("build");
@@ -504,6 +603,9 @@ fn run_regorus_tests(
     build.arg(configuration);
     build.arg("--arch");
     build.arg(dotnet_host_arch());
+    for p in &property_args {
+        build.arg(p);
+    }
     build.env("NUGET_PACKAGES", package_cache);
     run_command(build, "dotnet build (TestApp)")?;
 
@@ -517,6 +619,9 @@ fn run_regorus_tests(
     run.arg(configuration);
     run.arg("--arch");
     run.arg(dotnet_host_arch());
+    for p in &property_args {
+        run.arg(p);
+    }
     run.env("NUGET_PACKAGES", package_cache);
     run_command(run, "dotnet run (TestApp)")?;
 
@@ -529,6 +634,7 @@ fn run_regorus_tests(
         &property_args,
         "TargetExampleApp",
         package_cache,
+        &nuget_config,
     )?;
     let mut build_example = Command::new("dotnet");
     build_example.current_dir(&target_example);
@@ -538,6 +644,9 @@ fn run_regorus_tests(
     build_example.arg(configuration);
     build_example.arg("--arch");
     build_example.arg(dotnet_host_arch());
+    for p in &property_args {
+        build_example.arg(p);
+    }
     build_example.env("NUGET_PACKAGES", package_cache);
     run_command(build_example, "dotnet build (TargetExampleApp)")?;
 
@@ -551,6 +660,9 @@ fn run_regorus_tests(
     run_example.arg(configuration);
     run_example.arg("--arch");
     run_example.arg(dotnet_host_arch());
+    for p in &property_args {
+        run_example.arg(p);
+    }
     run_example.env("NUGET_PACKAGES", package_cache);
     run_command(run_example, "dotnet run (TargetExampleApp)")?;
 
@@ -562,10 +674,13 @@ fn restore_with_source(
     properties: &[&str],
     label: &str,
     package_cache: &Path,
+    nuget_config: &Path,
 ) -> Result<()> {
     let mut restore = Command::new("dotnet");
     restore.current_dir(project_dir);
     restore.arg("restore");
+    restore.arg("--configfile");
+    restore.arg(nuget_config);
     restore.arg("--arch");
     restore.arg(dotnet_host_arch());
     for property in properties {
