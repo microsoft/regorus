@@ -552,7 +552,7 @@ impl RegoVM {
     }
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
-    pub(super) fn memory_check(&mut self) -> Result<()> {
+    pub(super) const fn memory_check(&self) -> Result<()> {
         Ok(())
     }
 

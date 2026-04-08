@@ -96,7 +96,7 @@ cases:
       - |
         package test
 
-        # Create set using set comprehension - use a comprehension that doesn't export the variable
+        # Create set using a set literal
         set_items := strings.render_template("{{range $v := .set}}{{$v}} {{end}}", {
           "set": {10, 20, 30}
         })

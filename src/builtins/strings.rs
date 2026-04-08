@@ -722,10 +722,15 @@ fn render_template(
             if seg.is_empty() {
                 continue;
             }
-            let next = if let Ok(idx) = seg.parse::<u64>() {
-                cur[Value::from(idx)].clone()
-            } else {
-                cur[Value::from(seg)].clone()
+            let next = match &cur {
+                Value::Array(_) => {
+                    if let Ok(idx) = seg.parse::<u64>() {
+                        cur[Value::from(idx)].clone()
+                    } else {
+                        cur[Value::from(seg)].clone()
+                    }
+                }
+                _ => cur[Value::from(seg)].clone(),
             };
             cur = next;
         }
@@ -760,6 +765,22 @@ fn render_template(
 
     // Render with recursion to support nested blocks.
     const MAX_RECURSION_DEPTH: u32 = 100;
+    const MAX_RANGE_ITERATIONS: usize = 1000;
+    const MAX_OUTPUT_SIZE: usize = 4 * 1024 * 1024; // 4 MB
+
+    fn check_output_size(out: &str, err_span: &Span) -> Result<()> {
+        if out.len() > MAX_OUTPUT_SIZE {
+            bail!(err_span.error(
+                format!(
+                    "`strings.render_template` output exceeds maximum size of {} bytes",
+                    MAX_OUTPUT_SIZE
+                )
+                .as_str()
+            ));
+        }
+        Ok(())
+    }
+
     fn render_inner(
         t: &str,
         root: &Value,
@@ -791,7 +812,14 @@ fn render_template(
 
             // Block: range / if / end
             if action == "end" {
-                // Signal to caller that block ended (should not occur at top level)
+                if depth == 0 {
+                    if strict {
+                        bail!(err_span.error("unexpected `{{end}}`"));
+                    } else {
+                        return Ok(String::new());
+                    }
+                }
+                // Signal to caller that block ended
                 i = end + 2; // move past, though we return immediately in block handlers
                 break;
             } else if let Some(rest) = action.strip_prefix("range ") {
@@ -810,9 +838,14 @@ fn render_template(
                     .map(|s| s.trim())
                     .filter(|s| !s.is_empty())
                     .collect();
-                if names.is_empty() || !names.iter().all(|n| n.starts_with('$')) {
+                if names.is_empty()
+                    || names.len() > 2
+                    || !names.iter().all(|n| n.starts_with('$') && n.len() > 1)
+                {
                     if strict {
-                        bail!(err_span.error("`range` expects variables starting with `$`"));
+                        bail!(
+                            err_span.error("`range` expects 1 or 2 variables of the form `$name`")
+                        );
                     } else {
                         return Ok(String::new());
                     }
@@ -831,6 +864,16 @@ fn render_template(
                 let iter_val = eval_expr(expr_part, root, locals);
                 match iter_val {
                     Value::Array(arr) => {
+                        if arr.len() > MAX_RANGE_ITERATIONS {
+                            bail!(err_span.error(
+                                format!(
+                                    "`range` iteration count {} exceeds maximum of {}",
+                                    arr.len(),
+                                    MAX_RANGE_ITERATIONS
+                                )
+                                .as_str()
+                            ));
+                        }
                         for (idx, item) in arr.iter().enumerate() {
                             // Assign loop variables
                             if names.len() == 1 {
@@ -841,6 +884,7 @@ fn render_template(
                                     locals.insert(var1_name.clone(), item.clone());
                                 }
                             }
+                            check_output_size(&out, err_span)?;
                             out.push_str(&render_inner(
                                 body,
                                 root,
@@ -852,6 +896,16 @@ fn render_template(
                         }
                     }
                     Value::Object(map) => {
+                        if map.len() > MAX_RANGE_ITERATIONS {
+                            bail!(err_span.error(
+                                format!(
+                                    "`range` iteration count {} exceeds maximum of {}",
+                                    map.len(),
+                                    MAX_RANGE_ITERATIONS
+                                )
+                                .as_str()
+                            ));
+                        }
                         for (k, v) in map.iter() {
                             if names.len() == 1 {
                                 locals.insert(var0_name.clone(), v.clone());
@@ -861,6 +915,7 @@ fn render_template(
                                     locals.insert(var1_name.clone(), v.clone());
                                 }
                             }
+                            check_output_size(&out, err_span)?;
                             out.push_str(&render_inner(
                                 body,
                                 root,
@@ -872,6 +927,16 @@ fn render_template(
                         }
                     }
                     Value::Set(set) => {
+                        if set.len() > MAX_RANGE_ITERATIONS {
+                            bail!(err_span.error(
+                                format!(
+                                    "`range` iteration count {} exceeds maximum of {}",
+                                    set.len(),
+                                    MAX_RANGE_ITERATIONS
+                                )
+                                .as_str()
+                            ));
+                        }
                         for (idx, v) in set.iter().enumerate() {
                             if names.len() == 1 {
                                 locals.insert(var0_name.clone(), v.clone());
@@ -881,6 +946,7 @@ fn render_template(
                                     locals.insert(var1_name.clone(), v.clone());
                                 }
                             }
+                            check_output_size(&out, err_span)?;
                             out.push_str(&render_inner(
                                 body,
                                 root,
