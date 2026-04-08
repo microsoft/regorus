@@ -13,14 +13,14 @@
   <PropertyGroup>
     <!-- Allow CI to append the version suffix for locally built packages -->
     <RegorusPackageVersionSuffix Condition="'$(VersionSuffix)' != ''">-$(VersionSuffix)</RegorusPackageVersionSuffix>
-    <UseLocalRegorus Condition="'$(UseLocalRegorus)' == ''">false</UseLocalRegorus>
+    <UsePackageReference Condition="'$(UsePackageReference)' == ''">false</UsePackageReference>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(UseLocalRegorus)' == 'true'">
+  <ItemGroup Condition="'$(UsePackageReference)' != 'true'">
     <ProjectReference Include="../Regorus/Regorus.csproj" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(UseLocalRegorus)' != 'true'">
-    <PackageReference Include="Regorus" />
+  <ItemGroup Condition="'$(UsePackageReference)' == 'true'">
+    <PackageReference Include="Microsoft.Regorus" />
   </ItemGroup>
 </Project>
