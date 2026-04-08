@@ -109,8 +109,8 @@ jobs:
         with:
           name: regorus-nuget
           path: |
-            bindings/csharp/Regorus/bin/Release/Regorus*.nupkg
-            bindings/csharp/Regorus/bin/Release/Regorus*.snupkg
+            bindings/csharp/Regorus/bin/Release/Microsoft.Regorus*.nupkg
+            bindings/csharp/Regorus/bin/Release/Microsoft.Regorus*.snupkg
           if-no-files-found: error
           retention-days: 1
 
