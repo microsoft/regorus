@@ -182,7 +182,19 @@ impl<'a> Compiler<'a> {
         policy: &CompiledPolicy,
         entry_points: &[&str],
     ) -> Result<Arc<Program>> {
+        Self::compile_from_policy_with_host_await(policy, entry_points, &[])
+    }
+
+    /// Compile from a CompiledPolicy to RVM Program with registered host-awaitable builtins.
+    pub fn compile_from_policy_with_host_await(
+        policy: &CompiledPolicy,
+        entry_points: &[&str],
+        host_await_builtins: &[(&str, usize)],
+    ) -> Result<Arc<Program>> {
         let mut compiler = Compiler::with_policy(policy);
+        for &(name, arg_count) in host_await_builtins {
+            compiler.register_host_await_builtin(name, arg_count)?;
+        }
         compiler.current_rule_path = "".to_string();
         let rules = policy.get_rules();
 

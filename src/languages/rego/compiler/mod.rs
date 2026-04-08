@@ -26,7 +26,9 @@ use crate::rvm::program::{Program, RuleType, SpanInfo};
 use crate::value::Value;
 use crate::CompiledPolicy;
 use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::format;
 use alloc::string::String;
+use alloc::string::ToString as _;
 use alloc::vec;
 use alloc::vec::Vec;
 use indexmap::IndexMap;
@@ -139,6 +141,10 @@ pub struct Compiler<'a> {
     current_call_stack: Vec<u16>,
     entry_points: IndexMap<String, usize>,
     soft_assert_mode: bool,
+    /// Registered host-awaitable builtins: name → expected arg count.
+    /// When the compiler encounters a call to one of these names, it emits a
+    /// `HostAwait` instruction instead of a regular function or builtin call.
+    host_await_builtins: BTreeMap<String, usize>,
 }
 
 impl<'a> Compiler<'a> {
@@ -173,7 +179,38 @@ impl<'a> Compiler<'a> {
             current_call_stack: Vec::new(),
             entry_points: IndexMap::new(),
             soft_assert_mode: false,
+            host_await_builtins: BTreeMap::new(),
         }
+    }
+
+    /// Register a function name as a host-awaitable builtin.
+    ///
+    /// When the compiler encounters a call to `name(arg)`, it will emit a
+    /// `HostAwait` instruction with the argument and `name` as the identifier,
+    /// instead of treating it as a user-defined or standard builtin function.
+    ///
+    /// `arg_count` must be exactly 1. The `HostAwait` instruction carries a
+    /// single argument register; use object packing to pass multiple values
+    /// (e.g. `name({"key1": v1, "key2": v2})`).
+    pub fn register_host_await_builtin(&mut self, name: &str, arg_count: usize) -> Result<()> {
+        if name == "__builtin_host_await" {
+            return Err(CompilerError::General {
+                message: "__builtin_host_await is a reserved name and cannot be registered as a host-await builtin"
+                    .to_string(),
+            }
+            .into());
+        }
+        if arg_count != 1 {
+            return Err(CompilerError::General {
+                message: format!(
+                    "registered host-await builtin '{name}' must have arg_count == 1, got {arg_count}. \
+                     Use object packing to pass multiple values."
+                ),
+            }
+            .into());
+        }
+        self.host_await_builtins.insert(name.to_string(), arg_count);
+        Ok(())
     }
 
     pub(super) fn with_soft_assert_mode<F, R>(&mut self, enabled: bool, f: F) -> R
