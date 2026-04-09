@@ -53,6 +53,12 @@ fields to responsibilities.
   `VmError::ArithmeticError` and returning `Value::Undefined`.
 - Accessors (`get_pc`, `get_registers`, `get_loop_stack`, etc.) aid debugging
   and visualisation tooling.
+- `get_host_await_argument`: when the VM is suspended on a `HostAwait`, returns
+  the argument value passed by the policy. Returns `None` if not suspended or
+  suspended for a different reason.
+- `get_host_await_identifier`: when the VM is suspended on a `HostAwait`, returns
+  the identifier (function name) that triggered the suspension. Returns `None`
+  if not applicable.
 
 ---
 

@@ -105,6 +105,84 @@ var result = vm.Execute();
 Console.WriteLine($"allow: {result}");
 ```
 
+## RVM with Registered Host-Await Builtins
+
+Host-await builtins let you register custom function names at compile time.
+When the VM encounters a call to one of these functions, it suspends execution
+so the host can resolve the call externally and resume with a value.
+
+### Suspendable mode (resolve one call at a time)
+
+```csharp
+using Regorus;
+
+const string Policy = """
+package demo
+import rego.v1
+
+default allow := false
+
+allow if {
+  account := get_account({"id": input.account_id})
+  account.status == "active"
+}
+""";
+
+var modules = new[] { new PolicyModule("demo.rego", Policy) };
+var entryPoints = new[] { "data.demo.allow" };
+var builtins = new[] { new HostAwaitBuiltin("get_account", 1) };
+
+using var program = Program.CompileFromModules("{}", modules, entryPoints, builtins);
+using var vm = new Rvm();
+vm.SetExecutionMode(ExecutionMode.Suspendable);
+vm.LoadProgram(program);
+vm.SetInputJson("""{"account_id": "acct-42"}""");
+
+// First Execute suspends when get_account() is called
+vm.Execute();
+
+// Inspect which builtin suspended and what argument was passed
+var identifier = vm.GetHostAwaitIdentifier();  // "get_account"
+var argument = vm.GetHostAwaitArgument();       // {"id":"acct-42"}
+
+// Resolve externally, then resume
+var result = vm.Resume("""{"status": "active", "name": "Alice"}""");
+Console.WriteLine($"allow: {result}");  // true
+```
+
+### Run-to-completion mode (pre-load responses)
+
+```csharp
+using Regorus;
+
+const string Policy = """
+package demo
+import rego.v1
+
+default greeting := "unknown"
+
+greeting := msg if {
+  msg := translate(input.lang)
+}
+""";
+
+var modules = new[] { new PolicyModule("demo.rego", Policy) };
+var entryPoints = new[] { "data.demo.greeting" };
+var builtins = new[] { new HostAwaitBuiltin("translate", 1) };
+
+using var program = Program.CompileFromModules("{}", modules, entryPoints, builtins);
+using var vm = new Rvm();
+vm.SetExecutionMode(ExecutionMode.RunToCompletion);
+vm.LoadProgram(program);
+vm.SetInputJson("""{"lang": "es"}""");
+
+// Queue responses before execution
+vm.SetHostAwaitResponses("translate", new[] { "\"hola\"" });
+
+var result = vm.Execute();
+Console.WriteLine($"greeting: {result}");  // "hola"
+```
+
 ## Azure RBAC Condition Evaluation
 
 Evaluate Azure RBAC condition expressions directly with a JSON evaluation context:
