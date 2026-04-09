@@ -195,6 +195,63 @@ namespace Regorus
             });
         }
 
+        /// <summary>
+        /// Get the HostAwait argument as a JSON string.
+        /// Returns null if the VM is not in a HostAwait-suspended state.
+        /// </summary>
+        public string? GetHostAwaitArgument()
+        {
+            return UseHandle(vmPtr =>
+            {
+                return CheckAndDropResult(API.regorus_rvm_get_host_await_argument((RegorusRvm*)vmPtr));
+            });
+        }
+
+        /// <summary>
+        /// Get the HostAwait identifier as a JSON string.
+        /// Returns null if the VM is not in a HostAwait-suspended state.
+        /// </summary>
+        public string? GetHostAwaitIdentifier()
+        {
+            return UseHandle(vmPtr =>
+            {
+                return CheckAndDropResult(API.regorus_rvm_get_host_await_identifier((RegorusRvm*)vmPtr));
+            });
+        }
+
+        /// <summary>
+        /// Pre-load HostAwait responses for run-to-completion mode.
+        /// Clears any previously configured responses, then queues the
+        /// provided values for the given identifier.
+        /// </summary>
+        /// <param name="identifier">The builtin identifier.</param>
+        /// <param name="valuesJson">Array of JSON strings to queue as responses.</param>
+        public void SetHostAwaitResponses(string identifier, string[] valuesJson)
+        {
+            if (valuesJson is null)
+            {
+                throw new ArgumentNullException(nameof(valuesJson));
+            }
+
+            using var pinnedValues = ModuleMarshalling.PinUtf8Strings(valuesJson);
+
+            Utf8Marshaller.WithUtf8(identifier, idPtr =>
+            {
+                UseHandle(vmPtr =>
+                {
+                    fixed (IntPtr* arrPtr = pinnedValues.Buffer)
+                    {
+                        CheckAndDropResult(API.regorus_rvm_set_host_await_responses(
+                            (RegorusRvm*)vmPtr,
+                            (byte*)idPtr,
+                            (byte**)arrPtr,
+                            (UIntPtr)pinnedValues.Length));
+                    }
+                    return 0;
+                });
+            });
+        }
+
         private static Rvm GetRvmResult(RegorusResult result)
         {
             try
