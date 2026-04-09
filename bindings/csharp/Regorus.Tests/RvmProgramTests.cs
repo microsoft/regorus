@@ -116,4 +116,78 @@ allow if {
         var resumed = vm.Resume("{\"tier\":\"gold\"}");
         Assert.AreEqual("true", resumed, "expected allow=true after resume");
     }
+
+    private const string GetAccountPolicy = """
+package demo
+import rego.v1
+
+default allow := false
+
+allow if {
+  account := get_account({"id": input.account_id})
+  account.status == "active"
+}
+""";
+
+    [TestMethod]
+    public void RegisteredHostAwait_Suspendable_SuspendAndResume()
+    {
+        var modules = new[] { new PolicyModule("account.rego", GetAccountPolicy) };
+        var entryPoints = new[] { "data.demo.allow" };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("get_account", 1) };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"account_id\": \"acct-42\"}");
+
+        // Execute — should suspend on get_account()
+        vm.Execute();
+
+        // Verify we're suspended due to HostAwait with identifier "get_account"
+        var identifier = vm.GetHostAwaitIdentifier();
+        Assert.AreEqual("\"get_account\"", identifier, "expected identifier to be get_account");
+
+        var argument = vm.GetHostAwaitArgument();
+        Assert.IsNotNull(argument, "expected non-null argument");
+        StringAssert.Contains(argument!, "acct-42", "expected account_id in argument");
+
+        // Resume with an account response
+        var result = vm.Resume("{\"status\": \"active\", \"name\": \"Alice\"}");
+        Assert.AreEqual("true", result, "expected allow=true after resume");
+    }
+
+    private const string TranslatePolicy = """
+package demo
+import rego.v1
+
+default greeting := "unknown"
+
+greeting := msg if {
+  msg := translate(input.lang)
+}
+""";
+
+    [TestMethod]
+    public void RegisteredHostAwait_RunToCompletion_WithPreloadedResponses()
+    {
+        var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
+        var entryPoints = new[] { "data.demo.greeting" };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate", 1) };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.RunToCompletion);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"lang\": \"es\"}");
+
+        // Pre-load a response for translate
+        vm.SetHostAwaitResponses("translate", new[] { "\"hola\"" });
+
+        // Execute — translate returns "hola"
+        var result = vm.Execute();
+        Assert.AreEqual("\"hola\"", result, "expected greeting=hola");
+    }
+
 }
