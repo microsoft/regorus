@@ -12,6 +12,7 @@
   <PropertyGroup>
     <!-- If the environment variable is set (such as in a Github Action run), append the suffix to the version number -->
     <RegorusPackageVersionSuffix Condition="'$(VersionSuffix)' != ''">-$(VersionSuffix)</RegorusPackageVersionSuffix>
+    <UsePackageReference Condition="'$(UsePackageReference)' == ''">false</UsePackageReference>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,8 +24,12 @@
     <PackageReference Include="YamlDotNet" />
   </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Regorus" />
+  <ItemGroup Condition="'$(UsePackageReference)' != 'true'">
+    <ProjectReference Include="../Regorus/Regorus.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UsePackageReference)' == 'true'">
+    <PackageReference Include="Microsoft.Regorus" />
   </ItemGroup>
 
   <ItemGroup>

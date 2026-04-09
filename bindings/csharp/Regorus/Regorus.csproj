@@ -2,6 +2,7 @@
 
     <PropertyGroup>
         <OutputType>Library</OutputType>
+        <PackageId>Microsoft.Regorus</PackageId>
         <RootNamespace>Microsoft.Regorus</RootNamespace>
         <TargetFrameworks>netstandard2.0;netstandard2.1</TargetFrameworks>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

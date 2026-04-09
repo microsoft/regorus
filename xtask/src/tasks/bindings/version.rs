@@ -186,6 +186,7 @@ const BINDINGS: &[Binding] = &[
         pom_xml: None,
         csharp_project: Some("bindings/csharp/Regorus/Regorus.csproj"),
         csharp_dependents: &[
+            "bindings/csharp/Directory.Packages.props",
             "bindings/csharp/Regorus.Tests/Regorus.Tests.csproj",
             "bindings/csharp/Benchmarks/Benchmarks.csproj",
             "bindings/csharp/TargetExampleApp/TargetExampleApp.csproj",
@@ -513,7 +514,7 @@ fn update_csharp_projects(
         r#"(?s)(?P<prefix><VersionPrefix>)(?P<value>[^<]+)(?P<suffix></VersionPrefix>)"#,
     )?;
     let pkg_ref = Regex::new(
-        r#"(?i)(?P<prefix><PackageReference[^>]*Include="regorus"[^>]*Version=")(?P<value>\d+\.\d+\.\d+)(?P<suffix>[^\"]*")"#,
+        r#"(?i)(?P<prefix><Package(?:Reference|Version)[^>]*Include="microsoft\.regorus"[^>]*Version=")(?P<value>\d+\.\d+\.\d+)(?P<suffix>[^\"]*")"#,
     )?;
 
     let package_path = root.join(package_project);
