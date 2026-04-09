@@ -142,11 +142,12 @@ impl<'a> Compiler<'a> {
                     (arg_regs[0], arg_regs[1])
                 } else {
                     // Registered host-awaitable builtin — identifier is the function name
-                    if arg_regs.is_empty() {
+                    if arg_regs.len() != 1 {
                         return Err(CompilerError::General {
                             message: format!(
-                                "host-awaitable builtin '{}' expects at least 1 argument, got 0",
-                                original_fcn_path
+                                "host-awaitable builtin '{}' expects exactly 1 argument, got {}",
+                                original_fcn_path,
+                                arg_regs.len()
                             ),
                         }
                         .at(&span));
