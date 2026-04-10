@@ -148,8 +148,21 @@ pub(super) struct Parser<'source> {
 impl<'source> Parser<'source> {
     /// Create a new parser for the given source.
     pub fn new(source: &'source Source) -> Result<Self, ParseError> {
+        Self::new_with_max_col(source, None)
+    }
+
+    /// Create a new parser with an optional column-width override.
+    ///
+    /// When `max_col` is `None`, the lexer's default limit applies.
+    pub fn new_with_max_col(
+        source: &'source Source,
+        max_col: Option<core::num::NonZeroU32>,
+    ) -> Result<Self, ParseError> {
         let mut lexer = Lexer::new(source);
         lexer.set_unknown_char_is_symbol(true);
+        if let Some(mc) = max_col {
+            lexer.set_max_col(mc);
+        }
 
         let tok = lexer
             .next_token()
