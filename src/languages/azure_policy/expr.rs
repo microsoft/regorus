@@ -70,6 +70,13 @@ impl<'source> ExprParser<'source> {
     fn new(source: &'source Source) -> Self {
         let mut lexer = Lexer::new(source);
         lexer.set_unknown_char_is_symbol(true);
+        // ARM template expressions inside Azure Policy JSON values can be
+        // very long (e.g. deeply nested `if(...)` / `concat(...)` spanning
+        // thousands of characters on a single line).  Use a generous column
+        // limit so these expressions parse successfully.
+        if let Some(limit) = core::num::NonZeroU32::new(65536) {
+            lexer.set_max_col(limit);
+        }
         let tok = Token(
             TokenKind::Eof,
             Span {

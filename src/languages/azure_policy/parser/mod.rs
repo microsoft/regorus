@@ -34,6 +34,8 @@ pub use error::ParseError;
 
 use alloc::string::ToString as _;
 
+use ::core::num::NonZeroU32;
+
 use crate::lexer::{Source, TokenKind};
 
 use super::ast::{Constraint, FieldKind, OperatorKind, PolicyDefinition, PolicyRule};
@@ -57,7 +59,15 @@ use self::core::Parser;
 ///
 /// Returns a span-annotated [`PolicyRule`] AST.
 pub fn parse_policy_rule(source: &Source) -> Result<PolicyRule, ParseError> {
-    let mut parser = Parser::new(source)?;
+    parse_policy_rule_with_max_col(source, None)
+}
+
+/// Like [`parse_policy_rule`] but with an optional column-width override.
+pub fn parse_policy_rule_with_max_col(
+    source: &Source,
+    max_col: Option<NonZeroU32>,
+) -> Result<PolicyRule, ParseError> {
+    let mut parser = Parser::new_with_max_col(source, max_col)?;
     let rule = parser.parse_policy_rule()?;
 
     if parser.tok.0 != TokenKind::Eof {
@@ -79,7 +89,15 @@ pub fn parse_policy_rule(source: &Source) -> Result<PolicyRule, ParseError> {
 /// Returns a [`PolicyDefinition`] with typed fields for known properties
 /// and a catch-all list of `extra` entries for everything else.
 pub fn parse_policy_definition(source: &Source) -> Result<PolicyDefinition, ParseError> {
-    let mut parser = Parser::new(source)?;
+    parse_policy_definition_with_max_col(source, None)
+}
+
+/// Like [`parse_policy_definition`] but with an optional column-width override.
+pub fn parse_policy_definition_with_max_col(
+    source: &Source,
+    max_col: Option<NonZeroU32>,
+) -> Result<PolicyDefinition, ParseError> {
+    let mut parser = Parser::new_with_max_col(source, max_col)?;
     let defn = parser.parse_policy_definition()?;
 
     if parser.tok.0 != TokenKind::Eof {
