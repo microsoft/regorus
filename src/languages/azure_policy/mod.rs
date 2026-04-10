@@ -6,6 +6,8 @@
 #[allow(clippy::pattern_type_mismatch)]
 pub mod aliases;
 pub mod ast;
+#[cfg(feature = "rvm")]
+pub mod compiler;
 pub mod expr;
 pub mod parser;
 pub mod strings;
