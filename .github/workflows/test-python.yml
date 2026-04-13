@@ -18,7 +18,7 @@ jobs:
         host:
           - name: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-          - name: windows-latest
+          - name: windows-2022
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.host.name }}
     steps:
@@ -32,7 +32,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          shared-key: ${{ runner.os }}-regorus
+          shared-key: ${{ runner.os }}-${{ matrix.host.name }}-regorus
       - name: Fetch dependencies
         run: cargo fetch --locked
 
@@ -60,9 +60,12 @@ jobs:
     needs: build
     strategy:
       matrix:
-        host: [ubuntu-24.04, ubuntu-22.04, windows-latest]
+        host:
+          - name: ubuntu-24.04
+          - name: ubuntu-22.04
+          - name: windows-2022
         python-version: ["3.10", "3.11", "3.12", "3.13"]
-    runs-on: ${{ matrix.host }}
+    runs-on: ${{ matrix.host.name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -72,7 +75,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          shared-key: ${{ runner.os }}-regorus
+          shared-key: ${{ runner.os }}-${{ matrix.host.name }}-regorus
       - name: Fetch dependencies
         run: cargo fetch --locked
 
