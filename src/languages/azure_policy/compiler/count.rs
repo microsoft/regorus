@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![allow(dead_code)]
+#![allow(dead_code, clippy::pattern_type_mismatch)]
 
 //! `count` / `count.where` loop compilation.
 //!
@@ -13,9 +13,12 @@ use crate::languages::azure_policy::ast::{Condition, CountNode};
 use super::core::Compiler;
 
 impl Compiler {
-    pub(super) fn compile_count(&mut self, _count_node: &CountNode) -> Result<u8> {
+    pub(super) fn compile_count(&mut self, count_node: &CountNode) -> Result<u8> {
         let _ = self;
-        bail!("count compilation not yet implemented")
+        let span = match count_node {
+            CountNode::Field { span, .. } | CountNode::Value { span, .. } => span,
+        };
+        bail!(span.error("count compilation not yet implemented"))
     }
 
     pub(super) const fn try_compile_count_as_any(

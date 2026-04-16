@@ -552,6 +552,7 @@ impl RegoVM {
     }
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
+    #[allow(clippy::unused_self, clippy::missing_const_for_fn)]
     pub(super) fn memory_check(&mut self) -> Result<()> {
         Ok(())
     }
