@@ -27,7 +27,7 @@ impl BuildAllBindingsCommand {
         let release = self.release;
 
         let targets = ffi::resolve_targets(Vec::new())?;
-        ffi::build_targets(&workspace, &targets, release)?;
+        ffi::build_targets(&workspace, &targets, release, false)?;
 
         let ffi_dir = workspace.join("bindings/ffi/target");
         let nuget_result = build_nuget_package(&BuildNugetConfig {
@@ -53,7 +53,9 @@ impl BuildAllBindingsCommand {
             release,
             target: None,
             target_dir: None,
+            out: None,
             frozen: false,
+            strip: false,
         }
         .run()?;
         BuildWasmCommand {
@@ -114,6 +116,7 @@ impl TestAllBindingsCommand {
             release: self.release,
             target: None,
             python: self.python.clone(),
+            frozen: false,
         }
         .run()?;
 

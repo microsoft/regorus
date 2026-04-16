@@ -20,6 +20,10 @@ pub struct BuildFfiCommand {
     /// Build in release mode instead of debug.
     #[arg(long)]
     release: bool,
+
+    /// Pass --frozen to all cargo invocations.
+    #[arg(long)]
+    frozen: bool,
 }
 
 impl BuildFfiCommand {
@@ -28,7 +32,7 @@ impl BuildFfiCommand {
         let targets = resolve_targets(self.targets.clone())?;
         let profile = profile_dir(self.release);
 
-        build_targets(&workspace_root, &targets, self.release)?;
+        build_targets(&workspace_root, &targets, self.release, self.frozen)?;
 
         let base = workspace_root.join("bindings/ffi/target");
         if targets.len() == 1 {
@@ -62,9 +66,9 @@ pub fn resolve_targets(mut targets: Vec<String>) -> Result<Vec<String>> {
 }
 
 /// Compiles the FFI crate for the supplied target triples.
-pub fn build_targets(root: &Path, targets: &[String], release: bool) -> Result<()> {
+pub fn build_targets(root: &Path, targets: &[String], release: bool, frozen: bool) -> Result<()> {
     for target in targets {
-        cargo_build(root, target, release)?;
+        cargo_build(root, target, release, frozen)?;
     }
     Ok(())
 }
@@ -101,7 +105,7 @@ pub fn detect_host_triple() -> Result<String> {
     Err(anyhow!("failed to detect host target triple"))
 }
 
-fn cargo_build(root: &Path, target: &str, release: bool) -> Result<()> {
+fn cargo_build(root: &Path, target: &str, release: bool, frozen: bool) -> Result<()> {
     let dir = root.join("bindings/ffi");
     let mut args = vec![
         OsString::from("build"),
@@ -111,6 +115,9 @@ fn cargo_build(root: &Path, target: &str, release: bool) -> Result<()> {
     ];
     if release {
         args.push(OsString::from("--release"));
+    }
+    if frozen {
+        args.push(OsString::from("--frozen"));
     }
 
     let title = format!("cargo build (ffi:{target})");
