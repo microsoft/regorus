@@ -36,6 +36,44 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Check whether a ref expression contains any RefBrack or RefDot nesting
+    /// (i.e., it's a partial rule reference like `foo[a]` or `foo[a].b`).
+    fn refr_has_bracket_or_dot(refr: &Expr) -> bool {
+        matches!(refr, Expr::RefBrack { .. } | Expr::RefDot { .. })
+    }
+
+    /// Extract key expressions from a nested ref chain (e.g., `foo[a][b].c`)
+    /// Returns them in order: [a, b, "c"]
+    fn extract_ref_key_exprs(refr: &Expr) -> Vec<ExprRef> {
+        let mut keys = Vec::new();
+        let mut current = refr;
+        loop {
+            match current {
+                Expr::RefBrack {
+                    refr: inner, index, ..
+                } => {
+                    keys.push(index.clone());
+                    current = inner.as_ref();
+                }
+                Expr::RefDot {
+                    refr: inner, field, ..
+                } => {
+                    // RefDot field is (Span, Value) — wrap as a string literal Expr
+                    let field_expr = ExprRef::new(Expr::String {
+                        span: field.0.clone(),
+                        value: field.1.clone(),
+                        eidx: 0,
+                    });
+                    keys.push(field_expr);
+                    current = inner.as_ref();
+                }
+                _ => break,
+            }
+        }
+        keys.reverse(); // We collected innermost-first, reverse to get outermost-first
+        keys
+    }
+
     pub(super) fn compute_rule_type(&self, rule_path: &str) -> Result<RuleType> {
         let Some(definitions) = self.policy.inner.rules.get(rule_path) else {
             // Default-only rules (e.g., `default deny := true`) have no regular definitions
@@ -54,7 +92,15 @@ impl<'a> Compiler<'a> {
             .map(|def| {
                 if let Rule::Spec { head, .. } = def.as_ref() {
                     match head {
-                        RuleHead::Set { .. } => RuleType::PartialSet,
+                        RuleHead::Set { refr, .. } => {
+                            // `foo[a] contains v` or `foo[a][b] contains v` → PartialObject
+                            // `foo contains v` → PartialSet
+                            if Self::refr_has_bracket_or_dot(refr.as_ref()) {
+                                RuleType::PartialObject
+                            } else {
+                                RuleType::PartialSet
+                            }
+                        }
                         RuleHead::Compr { refr, assign, .. } => match refr.as_ref() {
                             crate::ast::Expr::RefBrack { .. } if assign.is_some() => {
                                 RuleType::PartialObject
@@ -343,25 +389,38 @@ impl<'a> Compiler<'a> {
 
                     self.current_module_index = self.find_module_index_for_rule(rule_ref)?;
 
-                    let (key_expr, value_expr) = match head {
+                    let (key_expr, extra_key_exprs, multi_value, value_expr) = match head {
                         RuleHead::Compr { refr, assign, .. } => {
                             self.rule_definition_function_params[rule_index as usize].push(None);
                             self.rule_definition_destructuring_patterns[rule_index as usize]
                                 .push(None);
 
                             let output_expr = assign.as_ref().map(|assign| assign.value.clone());
-                            let key_expr = match refr.as_ref() {
-                                Expr::RefBrack { index, .. } => Some(index.clone()),
-                                _ => None,
+                            let all_keys = Self::extract_ref_key_exprs(refr.as_ref());
+                            let (first_key, rest_keys) = if all_keys.is_empty() {
+                                (None, Vec::new())
+                            } else {
+                                let mut keys = all_keys;
+                                let first = keys.remove(0);
+                                (Some(first), keys)
                             };
-                            (key_expr, output_expr)
+                            (first_key, rest_keys, false, output_expr)
                         }
-                        RuleHead::Set { key, .. } => {
+                        RuleHead::Set { refr, key, .. } => {
                             self.rule_definition_function_params[rule_index as usize].push(None);
                             self.rule_definition_destructuring_patterns[rule_index as usize]
                                 .push(None);
 
-                            (None, key.clone())
+                            let all_keys = Self::extract_ref_key_exprs(refr.as_ref());
+                            if all_keys.is_empty() {
+                                // Simple set: `foo contains v`
+                                (None, Vec::new(), false, key.clone())
+                            } else {
+                                // Multi-value partial object: `foo[a] contains v`
+                                let mut keys = all_keys;
+                                let first = keys.remove(0);
+                                (Some(first), keys, true, key.clone())
+                            }
                         }
                         RuleHead::Func { assign, args, .. } => {
                             let mut param_names = Vec::new();
@@ -442,8 +501,10 @@ impl<'a> Compiler<'a> {
                             }
 
                             match assign {
-                                Some(assignment) => (None, Some(assignment.value.clone())),
-                                None => (None, None),
+                                Some(assignment) => {
+                                    (None, Vec::new(), false, Some(assignment.value.clone()))
+                                }
+                                None => (None, Vec::new(), false, None),
                             }
                         }
                     };
@@ -458,6 +519,8 @@ impl<'a> Compiler<'a> {
                         dest_register: result_register,
                         context_type: ContextType::Rule(rule_type.clone()),
                         key_expr,
+                        extra_key_exprs,
+                        multi_value,
                         value_expr,
                         span,
                         key_value_loops_hoisted: false,

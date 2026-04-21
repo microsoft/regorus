@@ -83,6 +83,13 @@ pub enum VmError {
         available: usize,
     },
 
+    #[error("Invalid object deep set params index: {index} (pc={pc}, available={available})")]
+    InvalidObjectDeepSetParams {
+        index: u16,
+        pc: usize,
+        available: usize,
+    },
+
     #[error("Invalid template literal index: {index} (pc={pc}, available={available})")]
     InvalidTemplateLiteralIndex {
         index: u16,
