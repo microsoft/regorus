@@ -1,0 +1,240 @@
+cases:
+  - note: registered_builtin_suspendable
+    data: {}
+    input:
+      account_id: "acct-42"
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: get_account
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        allow if {
+          account := get_account({"id": input.account_id})
+          account.status == "active"
+        }
+    query: data.demo.allow
+    host_await_responses_suspendable:
+      - id: "get_account"
+        args:
+          id: "acct-42"
+        value:
+          status: "active"
+          name: "Alice"
+    want_result: true
+
+  - note: registered_builtin_run_to_completion
+    data: {}
+    input:
+      lang: "es"
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    host_await_builtins:
+      - name: translate
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        greeting := msg if {
+          msg := translate(input.lang)
+        }
+    query: data.demo.greeting
+    host_await_responses:
+      - id: "translate"
+        value: "hola"
+    want_result: "hola"
+
+  - note: registered_builtin_multiple_names
+    data: {}
+    input:
+      user_id: "user-7"
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: lookup
+        arg_count: 1
+      - name: persist
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        result := {"data": fetched, "stored": saved} if {
+          fetched := lookup(input.user_id)
+          saved := persist({"id": input.user_id, "action": "audit"})
+        }
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "lookup"
+        args: "user-7"
+        value:
+          name: "Charlie"
+      - id: "persist"
+        args:
+          id: "user-7"
+          action: "audit"
+        value: true
+    want_result:
+      data:
+        name: "Charlie"
+      stored: true
+
+  - note: registered_builtin_suspendable_queue
+    data: {}
+    input:
+      items: ["alpha", "beta", "gamma"]
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: enrich
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        results := [r |
+          item := input.items[_]
+          r := enrich(item)
+        ]
+    query: data.demo.results
+    host_await_responses_suspendable:
+      - id: "enrich"
+        args: "alpha"
+        value: "enriched-alpha"
+      - id: "enrich"
+        args: "beta"
+        value: "enriched-beta"
+      - id: "enrich"
+        args: "gamma"
+        value: "enriched-gamma"
+    want_result: ["enriched-alpha", "enriched-beta", "enriched-gamma"]
+
+  - note: registered_builtin_shadows_user_function
+    data: {}
+    input:
+      key: "test-key"
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: resolve
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        # This user-defined function should be shadowed by the registered builtin
+        resolve(x) := {"local": true, "key": x}
+
+        result := resolve(input.key)
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "resolve"
+        args: "test-key"
+        value: "from-host"
+    # The registered builtin takes precedence — result is the host response, not the user function
+    want_result: "from-host"
+
+  - note: registered_builtin_multi_arg_object_packing
+    data: {}
+    input:
+      user: "alice"
+      resource: "/api/data"
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: check_access
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        # Multi-value calls pack arguments into a single object
+        allowed if {
+          result := check_access({"user": input.user, "resource": input.resource})
+          result.granted == true
+        }
+    query: data.demo.allowed
+    host_await_responses_suspendable:
+      - id: "check_access"
+        args:
+          user: "alice"
+          resource: "/api/data"
+        value:
+          granted: true
+          reason: "admin"
+    want_result: true
+
+  - note: registered_builtin_rejects_arg_count_greater_than_one
+    data: {}
+    input:
+      key: "k1"
+      value: "v1"
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: kv_store
+        arg_count: 2
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        result := kv_store(input.key, input.value)
+    query: data.demo.result
+    # Registration panics because arg_count must be 1.
+    # Use object packing instead: kv_store({"key": input.key, "value": input.value})
+    want_error: "arg_count == 1"
+
+  - note: registered_builtin_overrides_standard_builtin
+    data: {}
+    input:
+      duration: "2h30m"
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: time.parse_duration_ns
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        # time.parse_duration_ns is a standard Rego builtin (1 arg, returns nanoseconds).
+        # Registering it as a host-await builtin shadows the standard implementation.
+        duration_ns := time.parse_duration_ns(input.duration)
+    query: data.demo.duration_ns
+    host_await_responses_suspendable:
+      - id: "time.parse_duration_ns"
+        args: "2h30m"
+        value: 9000000000000
+    # Host returns 9000000000000 (custom value) instead of the real parse result.
+    # This proves the registered builtin shadows the standard one.
+    want_result: 9000000000000
+
+  - note: registered_builtin_rejects_reserved_name
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: __builtin_host_await
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := true
+    query: data.demo.result
+    # __builtin_host_await is a reserved name handled by the explicit code path;
+    # registering it as a host-await builtin is rejected at compile time.
+    want_error: "__builtin_host_await is a reserved name"

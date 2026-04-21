@@ -237,6 +237,31 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_execution_timer_config", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_rvm_set_execution_timer_config(RegorusRvm* vm, [MarshalAs(UnmanagedType.I1)] bool has_config, RegorusExecutionTimerConfig config);
+
+        /// <summary>
+        /// Pre-load HostAwait responses for run-to-completion mode.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_host_await_responses", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_rvm_set_host_await_responses(RegorusRvm* vm, byte* identifier, byte** values_json, UIntPtr values_len);
+
+        /// <summary>
+        /// Get the HostAwait argument as a JSON string.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_rvm_get_host_await_argument", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_rvm_get_host_await_argument(RegorusRvm* vm);
+
+        /// <summary>
+        /// Get the HostAwait identifier as a JSON string.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_rvm_get_host_await_identifier", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_rvm_get_host_await_identifier(RegorusRvm* vm);
+
+        /// <summary>
+        /// Compile an RVM program from data/modules/entry-points with registered host-awaitable builtins.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_program_compile_from_modules_with_host_await", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_program_compile_from_modules_with_host_await(byte* data_json, RegorusPolicyModule* modules, UIntPtr modules_len, byte** entry_points, UIntPtr entry_points_len, RegorusHostAwaitBuiltin* host_await_builtins, UIntPtr host_await_builtins_len);
+
         /// Add a policy.
         /// The policy is parsed into AST.
         /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.add_policy
@@ -929,6 +954,16 @@ namespace Regorus.Internal
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct RegorusAliasRegistry
     {
+    }
+
+    /// <summary>
+    /// FFI wrapper for HostAwaitBuiltin struct.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct RegorusHostAwaitBuiltin
+    {
+        public byte* name;
+        public UIntPtr arg_count;
     }
 
     #endregion

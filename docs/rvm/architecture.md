@@ -254,7 +254,13 @@ include formatted state snapshots where possible.
 7. **Host await**: In run-to-completion mode, `HostAwait` consumes a response
    from `host_await_responses`. Suspendable mode yields control with a
    `SuspendReason::HostAwait { dest, argument, identifier }` that the host must
-   service.
+   service. The compiler supports two ways to emit `HostAwait`:
+   - **Explicit**: `__builtin_host_await(payload, identifier)` — raw 2-argument
+     form.
+   - **Registered**: `compile_from_policy_with_host_await` accepts a list of
+     `(name, arg_count)` pairs. Calls to registered names are compiled as
+     `HostAwait` with the function name as the identifier literal. Registered
+     names take precedence over user-defined functions and standard builtins.
 8. **Completion**: `Return` wraps the selected register value into
    `InstructionOutcome::Return`, unwinding frames until the entry frame is
    cleared. `RuleReturn` is a specialised variant used by rule execution

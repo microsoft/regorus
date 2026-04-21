@@ -37,6 +37,39 @@ namespace Regorus
     }
 
     /// <summary>
+    /// Represents a host-awaitable builtin registration for RVM compilation.
+    /// When registered, calls to the named function compile to HostAwait instructions
+    /// rather than regular function calls.
+    /// </summary>
+    /// <remarks>
+    /// Host-await builtins are only supported via the <c>CompileFromModules</c> path.
+    /// The <c>CompileFromEngine</c> path does not support host-await registration.
+    /// </remarks>
+    public readonly struct HostAwaitBuiltin
+    {
+        /// <summary>
+        /// Gets the function name.
+        /// </summary>
+        public string Name { get; }
+
+        /// <summary>
+        /// Gets the expected argument count.
+        /// </summary>
+        public int ArgCount { get; }
+
+        /// <summary>
+        /// Initializes a new instance of the HostAwaitBuiltin struct.
+        /// </summary>
+        /// <param name="name">The function name to register as host-awaitable.</param>
+        /// <param name="argCount">The expected number of arguments.</param>
+        public HostAwaitBuiltin(string name, int argCount)
+        {
+            Name = name;
+            ArgCount = argCount;
+        }
+    }
+
+    /// <summary>
     /// Provides static methods for compiling policies into efficient compiled representations.
     /// These are convenience methods that create an engine internally and perform compilation.
     /// </summary>

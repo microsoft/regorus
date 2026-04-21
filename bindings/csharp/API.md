@@ -343,6 +343,106 @@ var tasks = Enumerable.Range(0, 100).Select(i =>
 var results = await Task.WhenAll(tasks);
 ```
 
+## RVM Classes
+
+### Program
+
+`Program` represents a compiled RVM bytecode artifact. It can be created from
+modules+entrypoints or from an `Engine`, serialized to binary, and loaded into
+an `Rvm` for execution.
+
+```csharp
+public sealed class Program : IDisposable
+{
+    // Compile from modules with entry points
+    public static Program CompileFromModules(
+        string dataJson,
+        IReadOnlyList<PolicyModule> modules,
+        IReadOnlyList<string> entryPoints);
+
+    // Compile with registered host-await builtins
+    public static Program CompileFromModules(
+        string dataJson,
+        IReadOnlyList<PolicyModule> modules,
+        IReadOnlyList<string> entryPoints,
+        IReadOnlyList<HostAwaitBuiltin> hostAwaitBuiltins);
+
+    // Compile from an Engine instance
+    public static Program CompileFromEngine(Engine engine, IReadOnlyList<string> entryPoints);
+
+    // Serialize/deserialize
+    public byte[] SerializeBinary();
+    public static Program DeserializeBinary(byte[] data, out bool isPartial);
+
+    // Debug listing
+    public string GenerateListing();
+
+    public void Dispose();
+}
+```
+
+### Rvm
+
+`Rvm` is the virtual machine that executes a loaded `Program`.
+
+```csharp
+public sealed class Rvm : IDisposable
+{
+    // Load a compiled program
+    public void LoadProgram(Program program);
+
+    // Set data and input documents
+    public void SetDataJson(string dataJson);
+    public void SetInputJson(string inputJson);
+
+    // Configure execution
+    public void SetExecutionMode(ExecutionMode mode);
+
+    // Run
+    public string? Execute();
+    public string? ExecuteEntryPoint(string entryPoint);
+
+    // Suspendable-mode host-await interaction
+    public string? Resume(string valueJson);
+    public string? GetExecutionState();
+    public string? GetHostAwaitIdentifier();
+    public string? GetHostAwaitArgument();
+
+    // Run-to-completion-mode host-await pre-loading
+    public void SetHostAwaitResponses(string identifier, string[] valuesJson);
+
+    public void Dispose();
+}
+```
+
+### HostAwaitBuiltin
+
+Declares a function name that the compiler should treat as a host-await call.
+When the VM encounters a call to this function, it suspends (suspendable mode)
+or consumes a pre-loaded response (run-to-completion mode).
+
+```csharp
+public readonly struct HostAwaitBuiltin
+{
+    public string Name { get; }
+    public int ArgCount { get; }
+
+    public HostAwaitBuiltin(string name, int argCount);
+}
+```
+
+### ExecutionMode
+
+Controls how the VM handles host-await instructions.
+
+```csharp
+public enum ExecutionMode
+{
+    RunToCompletion = 0,
+    Suspendable = 1,
+}
+```
+
 ## Performance Considerations
 
 ### Compilation Overhead

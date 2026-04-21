@@ -490,6 +490,30 @@ impl RegoVM {
         }
     }
 
+    /// Get the HostAwait argument if the VM is suspended due to a HostAwait instruction.
+    /// Returns `None` if the VM is not in a HostAwait-suspended state.
+    pub const fn get_host_await_argument(&self) -> Option<&Value> {
+        match self.execution_state {
+            ExecutionState::Suspended {
+                reason: SuspendReason::HostAwait { ref argument, .. },
+                ..
+            } => Some(argument),
+            _ => None,
+        }
+    }
+
+    /// Get the HostAwait identifier if the VM is suspended due to a HostAwait instruction.
+    /// Returns `None` if the VM is not in a HostAwait-suspended state.
+    pub const fn get_host_await_identifier(&self) -> Option<&Value> {
+        match self.execution_state {
+            ExecutionState::Suspended {
+                reason: SuspendReason::HostAwait { ref identifier, .. },
+                ..
+            } => Some(identifier),
+            _ => None,
+        }
+    }
+
     #[inline]
     #[allow(dead_code)]
     pub(super) fn get_register(&self, index: u8) -> Result<&Value> {
