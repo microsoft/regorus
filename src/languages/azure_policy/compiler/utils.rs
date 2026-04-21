@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![allow(dead_code, clippy::pattern_type_mismatch, clippy::redundant_pub_crate)]
+#![allow(dead_code, clippy::pattern_type_mismatch)]
 
 //! Free helper functions used by the Azure Policy compiler.
 
@@ -27,17 +27,22 @@ pub(super) fn extract_string_literal(expr: &Expr) -> Result<String> {
 pub(super) fn split_count_wildcard_path(path: &str) -> Result<(String, Option<String>)> {
     let wildcard_index = path
         .find("[*]")
-        .ok_or_else(|| anyhow!("count.field must contain [*]: {}", path))?;
+        .ok_or_else(|| anyhow!("wildcard path must contain [*]: {}", path))?;
 
     let (prefix_str, rest) = path.split_at(wildcard_index);
     let prefix = prefix_str.trim_end_matches('.');
     if prefix.is_empty() {
         bail!(
-            "count.field must have a non-empty prefix before [*]: {}",
+            "wildcard path must have a non-empty prefix before [*]: {}",
             path
         );
     }
-    let after_wildcard = &rest[3..];
+    let after_wildcard = rest.strip_prefix("[*]").ok_or_else(|| {
+        anyhow!(
+            "wildcard path could not be parsed after [*] split: {}",
+            path
+        )
+    })?;
     if after_wildcard.contains("[*]") {
         bail!("nested [*] wildcards are not supported: {}", path);
     }
@@ -145,14 +150,20 @@ pub(super) fn split_path_without_wildcards(path: &str) -> Result<Vec<String>> {
 }
 
 /// Convert a parsed JSON value from the Azure Policy AST into a runtime [`Value`].
-pub(crate) fn json_value_to_runtime(value: &JsonValue) -> Result<Value> {
+pub(super) fn json_value_to_runtime(value: &JsonValue) -> Result<Value> {
     match value {
         JsonValue::Null(_) => Ok(Value::Null),
         JsonValue::Bool(_, b) => Ok(Value::Bool(*b)),
         JsonValue::Number(_, raw) => {
             Value::from_numeric_string(raw).map_err(|_| anyhow!("invalid number literal: {}", raw))
         }
-        JsonValue::Str(_, s) => Ok(Value::from(s.clone())),
+        JsonValue::Str(_, s) => {
+            // Handle ARM template escape: `[[...` → `[...`
+            s.strip_prefix("[[").map_or_else(
+                || Ok(Value::from(s.clone())),
+                |unescaped| Ok(Value::from(alloc::format!("[{unescaped}"))),
+            )
+        }
         JsonValue::Array(_, items) => {
             let mut out = Vec::with_capacity(items.len());
             for item in items {
@@ -267,6 +278,12 @@ mod tests {
     fn json_string() {
         let v = json_value_to_runtime(&JsonValue::Str(dummy_span(), "hello".into())).unwrap();
         assert_eq!(v, Value::from("hello".to_string()));
+    }
+
+    #[test]
+    fn json_string_double_bracket_escape() {
+        let v = json_value_to_runtime(&JsonValue::Str(dummy_span(), "[[escaped]".into())).unwrap();
+        assert_eq!(v, Value::from("[escaped]".to_string()));
     }
 
     #[test]

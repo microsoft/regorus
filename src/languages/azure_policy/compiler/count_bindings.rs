@@ -21,20 +21,20 @@ impl Compiler {
 
     pub(super) fn compile_from_binding(
         &mut self,
-        _binding: CountBinding,
+        _binding: &CountBinding,
         _field_path: &str,
-        _span: &crate::lexer::Span,
+        span: &crate::lexer::Span,
     ) -> Result<u8> {
         let _ = self;
-        bail!("count binding compilation not yet implemented")
+        bail!(span.error("count binding compilation not yet implemented"))
     }
 
     pub(super) fn compile_current_reference(
         &mut self,
         _key: &str,
-        _span: &crate::lexer::Span,
+        span: &crate::lexer::Span,
     ) -> Result<u8> {
         let _ = self;
-        bail!("current() reference not yet implemented")
+        bail!(span.error("current() reference not yet implemented"))
     }
 }

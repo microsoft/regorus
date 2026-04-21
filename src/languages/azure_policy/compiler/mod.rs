@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![allow(dead_code)]
 
 //! Azure Policy AST → RVM compiler.
 //!
