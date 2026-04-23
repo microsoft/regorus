@@ -4,6 +4,7 @@
 
 //! Implicit allOf for unbound `[*]` wildcard fields.
 
+use alloc::format;
 use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 
@@ -67,12 +68,12 @@ impl Compiler {
         };
 
         if let Some(prefix) = &binding.field_wildcard_prefix {
-            let bound_len = prefix.len().saturating_add(4); // len("prefix") + len("[*].")
-            if path.len() > bound_len {
-                if let Some(remainder) = path.get(bound_len..) {
-                    if remainder.contains("[*]") {
-                        return Ok(Some((binding, remainder.to_string())));
-                    }
+            let lc_prefix = prefix.to_ascii_lowercase();
+            let bound_prefix = format!("{}[*].", lc_prefix);
+            if let Some(remainder) = path.to_ascii_lowercase().strip_prefix(&bound_prefix) {
+                let remainder = remainder.to_string();
+                if remainder.contains("[*]") {
+                    return Ok(Some((binding, remainder)));
                 }
             }
         }
