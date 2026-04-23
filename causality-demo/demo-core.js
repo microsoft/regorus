@@ -344,6 +344,138 @@ export function renderAssumptionCards(container, assumptions) {
   container.appendChild(group);
 }
 
+export function renderResidualQueries(container, pe) {
+  container.innerHTML = "";
+
+  if (!pe) {
+    container.innerHTML = '<div class="loading-card">Run in partial evaluation mode to see residual queries.</div>';
+    return;
+  }
+
+  const queries = pe.residual_queries || [];
+  const warnings = pe.warnings || [];
+
+  if (warnings.length) {
+    const warningBox = document.createElement("div");
+    warningBox.className = "pe-warnings";
+    warnings.forEach((w) => {
+      const p = document.createElement("p");
+      p.className = "pe-warning-text";
+      p.textContent = `⚠ ${w}`;
+      warningBox.appendChild(p);
+    });
+    container.appendChild(warningBox);
+  }
+
+  if (!queries.length) {
+    container.innerHTML += '<div class="loading-card">No residual queries — the policy was fully resolved.</div>';
+    return;
+  }
+
+  const summary = document.createElement("div");
+  summary.className = "pe-summary";
+  summary.innerHTML = `
+    <div class="pe-summary-header">
+      <strong>Result: ${JSON.stringify(pe.result)}</strong>
+      <span class="result-count">${queries.length} disjunct${queries.length === 1 ? "" : "s"} (OR branches)</span>
+    </div>
+    <p class="pe-summary-text">Each disjunct is a conjunction of conditions on unknown inputs that would make the policy produce this result.</p>
+  `;
+  container.appendChild(summary);
+
+  queries.forEach((conjunction, qIndex) => {
+    const group = document.createElement("article");
+    group.className = "reason-group pe-disjunct";
+
+    const header = document.createElement("div");
+    header.className = "reason-header";
+    header.innerHTML = `
+      <div>
+        <p class="reason-label">Disjunct ${qIndex + 1}</p>
+        <h4 class="reason-result">${conjunction.length} condition${conjunction.length === 1 ? "" : "s"}</h4>
+      </div>
+      <span class="result-count">AND</span>
+    `;
+
+    const list = document.createElement("div");
+    list.className = "reason-condition-list";
+
+    conjunction.forEach((cond, cIndex) => {
+      const item = document.createElement("section");
+      item.className = "condition-card nested-condition-card";
+
+      const kindBadge = cond.kind === "negation_holds" ? "negation" : cond.kind.replace(/_/g, " ");
+
+      const top = document.createElement("div");
+      top.className = "condition-topline";
+      top.innerHTML = `
+        <div class="condition-heading">
+          <span class="condition-index">${cIndex + 1}</span>
+          <span class="badge pe-condition">${kindBadge}</span>
+        </div>
+      `;
+
+      const text = document.createElement("p");
+      text.className = "condition-text";
+      text.textContent = cond.condition || `${cond.input_path} must be defined`;
+
+      const meta = document.createElement("div");
+      meta.className = "condition-meta";
+
+      if (cond.input_path) {
+        const pathChip = document.createElement("span");
+        pathChip.className = "meta-chip";
+        pathChip.innerHTML = `<span>path: <strong>${cond.input_path}</strong></span>`;
+        meta.appendChild(pathChip);
+      }
+
+      if (cond.operator) {
+        const opChip = document.createElement("span");
+        opChip.className = "meta-chip";
+        opChip.textContent = `operator: ${cond.operator}`;
+        meta.appendChild(opChip);
+      }
+
+      if (cond.value !== undefined && cond.value !== null) {
+        const valChip = document.createElement("span");
+        valChip.className = "meta-chip";
+        valChip.textContent = `value: ${JSON.stringify(cond.value)}`;
+        meta.appendChild(valChip);
+      }
+
+      item.appendChild(top);
+      item.appendChild(text);
+      if (meta.childElementCount) {
+        item.appendChild(meta);
+      }
+
+      // Render negated inner conditions
+      if (cond.negated_conditions?.length) {
+        const negBox = document.createElement("div");
+        negBox.className = "pe-negation-box";
+        const negLabel = document.createElement("p");
+        negLabel.className = "pe-negation-label";
+        negLabel.textContent = "NOT all of:";
+        negBox.appendChild(negLabel);
+
+        cond.negated_conditions.forEach((inner) => {
+          const innerItem = document.createElement("div");
+          innerItem.className = "pe-negation-inner";
+          innerItem.textContent = inner.condition || `${inner.input_path} exists`;
+          negBox.appendChild(innerItem);
+        });
+        item.appendChild(negBox);
+      }
+
+      list.appendChild(item);
+    });
+
+    group.appendChild(header);
+    group.appendChild(list);
+    container.appendChild(group);
+  });
+}
+
 function summarizeQueryResults(result) {
   const expressions = result?.result?.[0]?.expressions ?? [];
   if (!expressions.length) {
@@ -368,7 +500,10 @@ function summarizeValue(value) {
 async function evaluateRvm(options) {
   const vm = new Rvm();
   const mode = explanationMode(options);
-  vm.setExplanationOptions(mode.enabled, mode.valueMode, mode.conditionMode, mode.assumeUnknownInput, mode.detail);
+  const isPartialEval = options.evalMode === "partial";
+  const evalModeStr = isPartialEval ? "partial" : "causality";
+  const unknowns = options.unknowns ? options.unknowns.split(",").map(s => s.trim()).filter(Boolean) : null;
+  vm.setExplanationOptions(mode.enabled, mode.valueMode, mode.conditionMode, mode.assumeUnknownInput, mode.detail, evalModeStr, unknowns);
   vm.loadModules(
     parseJsonText("Data", options.data),
     JSON.stringify([{ id: "demo.rego", content: options.policy }]),
@@ -377,6 +512,18 @@ async function evaluateRvm(options) {
   vm.setInputJson(parseJsonText("Input", options.input));
 
   const result = JSON.parse(vm.executeEntryPoint(options.query));
+
+  if (isPartialEval) {
+    const pe = JSON.parse(vm.takePartialEvalResult(JSON.stringify(result)));
+    return {
+      result,
+      why: { reasons: [] },
+      pe,
+      assumptions: [],
+      resultSummary: summarizeValue(pe.result)
+    };
+  }
+
   const report = JSON.parse(vm.takeCausalityReport());
 
   // Helper: transform a list of raw conditions into the UI format.

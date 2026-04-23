@@ -512,6 +512,7 @@ impl Rvm {
 
     /// Configure explanation capture for subsequent evaluations.
     #[cfg(feature = "explanations")]
+    #[allow(clippy::too_many_arguments)]
     pub fn setExplanationOptions(
         &mut self,
         enabled: bool,
@@ -519,19 +520,30 @@ impl Rvm {
         condition_mode: String,
         assume_unknown_input: Option<bool>,
         detail: Option<String>,
+        eval_mode: Option<String>,
+        unknowns: Option<Vec<String>>,
     ) -> Result<(), JsValue> {
         let detail_level = match detail {
             Some(d) => parse_explanation_detail(&d)?,
             None => regorus::evaluation_trace::ExplanationDetail::default(),
         };
+        let mode = match eval_mode.as_deref() {
+            Some("partial") => regorus::evaluation_trace::EvaluationMode::PartialEval,
+            _ => regorus::evaluation_trace::EvaluationMode::Causality,
+        };
+        let unknown_paths = unknowns.unwrap_or_else(|| vec![String::from("input")]);
         self.vm
             .set_explanation_settings(regorus::evaluation_trace::ExplanationSettings {
                 enabled,
                 value_mode: parse_explanation_value_mode(&value_mode)?,
                 condition_mode: parse_explanation_condition_mode(&condition_mode)?,
+                scope: regorus::evaluation_trace::ExplanationScope::default(),
                 assume_unknown_input: assume_unknown_input.unwrap_or(false),
                 detail: detail_level,
-                ..Default::default()
+                emission_index: None,
+                emission_value: None,
+                eval_mode: mode,
+                unknowns: unknown_paths,
             });
         Ok(())
     }
@@ -541,6 +553,23 @@ impl Rvm {
     pub fn takeCausalityReport(&mut self) -> Result<String, JsValue> {
         self.vm
             .take_causality_report(Value::Undefined)
+            .map_err(error_to_jsvalue)
+    }
+
+    /// Take the partial evaluation result as pretty JSON.
+    ///
+    /// Returns DNF residual queries with conditions on unknown inputs.
+    #[cfg(feature = "explanations")]
+    pub fn takePartialEvalResult(
+        &mut self,
+        result_json: Option<String>,
+    ) -> Result<String, JsValue> {
+        let query_result = match result_json {
+            Some(json) => Value::from_json_str(&json).unwrap_or(Value::Undefined),
+            None => Value::Undefined,
+        };
+        self.vm
+            .take_partial_eval_result(query_result)
             .map_err(error_to_jsvalue)
     }
 

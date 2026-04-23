@@ -1,4 +1,4 @@
-import { evaluateCustom, formatJson, initRuntime, renderConditionCards, renderAssumptionCards } from "./demo-core.js";
+import { evaluateCustom, formatJson, initRuntime, renderConditionCards, renderAssumptionCards, renderResidualQueries } from "./demo-core.js";
 import { createCodeEditor } from "./code-editor.js";
 
 const samplePolicy = `package demo
@@ -45,6 +45,11 @@ const runtimeChip = document.querySelector("#playground-runtime");
 const runButton = document.querySelector("#run-playground");
 const loadSampleButton = document.querySelector("#load-sample");
 const analysisPanel = document.querySelector("#playground-analysis-panel");
+const evalModeSelect = document.querySelector("#eval-mode-select");
+const unknownsRow = document.querySelector("#pg-unknowns-row");
+const unknownsText = document.querySelector("#unknowns-text");
+const pePanel = document.querySelector("#playground-pe-panel");
+const peResults = document.querySelector("#playground-pe-results");
 const policyEditor = createCodeEditor(policyText, { language: "rego" });
 const requestEditor = createCodeEditor(requestText, { language: "json" });
 const requestState = {
@@ -101,19 +106,34 @@ async function runPlayground() {
       whyFullValues: whyFullValues.checked,
       whyAllConditions: whyAllConditions.checked,
       assumeUnknownInput: whyAssumeUnknown?.checked ?? false,
-      detail: detailSelect?.value ?? "standard"
+      detail: detailSelect?.value ?? "standard",
+      evalMode: evalModeSelect?.value ?? "causality",
+      unknowns: unknownsText?.value ?? "input"
     });
 
     runtimeChip.textContent = payload.runtimeMs ? `${payload.runtimeMs} ms` : "";
     resultView.textContent = formatJson(payload.result);
-    whyView.textContent = formatJson(payload.why);
-    renderConditionCards(conditionsView, payload.why.reasons || []);
-    const assumptions = payload.assumptions || [];
-    if (assumptionPanel) {
-      assumptionPanel.style.display = assumptions.length ? "" : "none";
-    }
-    if (assumptionsView) {
-      renderAssumptionCards(assumptionsView, assumptions);
+    whyView.textContent = payload.pe ? formatJson(payload.pe) : formatJson(payload.why);
+
+    if (payload.pe) {
+      // PE mode: show residual queries panel, hide causality condition cards
+      conditionsView.innerHTML = '<div class="loading-card">Partial evaluation mode — see residual queries below.</div>';
+      if (assumptionPanel) assumptionPanel.style.display = "none";
+      if (pePanel) {
+        pePanel.style.display = "";
+        renderResidualQueries(peResults, payload.pe);
+      }
+    } else {
+      // Causality mode
+      if (pePanel) pePanel.style.display = "none";
+      renderConditionCards(conditionsView, payload.why.reasons || []);
+      const assumptions = payload.assumptions || [];
+      if (assumptionPanel) {
+        assumptionPanel.style.display = assumptions.length ? "" : "none";
+      }
+      if (assumptionsView) {
+        renderAssumptionCards(assumptionsView, assumptions);
+      }
     }
     requestAnimationFrame(focusAnalysis);
   } catch (error) {
@@ -141,6 +161,16 @@ loadSampleButton.addEventListener("click", () => {
 
 requestText.addEventListener("input", syncRequestDraft);
 runButton.addEventListener("click", runPlayground);
+evalModeSelect?.addEventListener("change", () => {
+  const isPartial = evalModeSelect.value === "partial";
+  unknownsRow.style.display = isPartial ? "" : "none";
+  if (isPartial) {
+    whyAssumeUnknown.checked = true;
+    whyAssumeUnknown.disabled = true;
+  } else {
+    whyAssumeUnknown.disabled = false;
+  }
+});
 
 async function bootstrap() {
   loadSampleButton.click();

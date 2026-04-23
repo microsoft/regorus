@@ -129,6 +129,17 @@
                 <span class="stat-label">Assume unknown input</span>
                 <label class="toggle-inline"><input id="assume-unknown" type="checkbox" /></label>
               </div>
+              <div class="stat-card">
+                <span class="stat-label">Eval mode</span>
+                <select id="eval-mode" class="inline-select">
+                  <option value="causality" selected>causality</option>
+                  <option value="partial">partial evaluation</option>
+                </select>
+              </div>
+              <div class="stat-card" id="unknowns-row" style="display: none">
+                <span class="stat-label">Unknowns</span>
+                <input id="unknowns-input" type="text" class="inline-input" value="input" placeholder="input" />
+              </div>
               <div class="button-row">
                 <span id="example-runtime" class="runtime-chip"></span>
                 <span id="analysis-status" class="runtime-chip"></span>
@@ -157,6 +168,16 @@
             </div>
           </div>
           <div id="assumption-list" class="condition-list"></div>
+        </section>
+
+        <section class="panel" id="pe-panel" style="display: none">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Partial Evaluation</p>
+              <h3>Residual queries</h3>
+            </div>
+          </div>
+          <div id="pe-results" class="condition-list"></div>
         </section>
 
         <section class="tabs-panel panel">

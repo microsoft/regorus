@@ -1,4 +1,4 @@
-import { evaluateScenario, formatJson, renderConditionCards, renderAssumptionCards, initRuntime } from "./demo-core.js";
+import { evaluateScenario, formatJson, renderConditionCards, renderAssumptionCards, renderResidualQueries, initRuntime } from "./demo-core.js";
 import { createCodeEditor } from "./code-editor.js";
 import { scenarios } from "./scenarios.js";
 
@@ -36,6 +36,11 @@ const valueMode = document.querySelector("#value-mode");
 const conditionMode = document.querySelector("#condition-mode");
 const detailLevel = document.querySelector("#detail-level");
 const assumeUnknown = document.querySelector("#assume-unknown");
+const evalModeSelect = document.querySelector("#eval-mode");
+const unknownsRow = document.querySelector("#unknowns-row");
+const unknownsInput = document.querySelector("#unknowns-input");
+const pePanel = document.querySelector("#pe-panel");
+const peResults = document.querySelector("#pe-results");
 const policyEditor = createCodeEditor(policyContent, { language: "rego" });
 const requestEditor = createCodeEditor(requestContent, { language: "json" });
 
@@ -140,10 +145,14 @@ function outputTabPayload() {
     };
   }
 
-  return {
+  const tabs = {
     result: formatJson(state.lastRun.result),
-    why: formatJson(state.lastRun.why)
+    why: state.lastRun.pe ? formatJson(state.lastRun.pe) : formatJson(state.lastRun.why)
   };
+  if (state.lastRun.pe) {
+    tabs.pe = formatJson(state.lastRun.pe);
+  }
+  return tabs;
 }
 
 function renderOutputTabs() {
@@ -179,24 +188,53 @@ function renderScenario() {
   conditionMode.textContent = scenario.whyAllConditions ? "all contributing" : "primary only";
   detailLevel.value = scenario.detail || "standard";
   assumeUnknown.checked = !!scenario.assumeUnknownInput;
+  const isPartial = scenario.evalMode === "partial";
+  evalModeSelect.value = isPartial ? "partial" : "causality";
+  unknownsRow.style.display = isPartial ? "" : "none";
+  unknownsInput.value = scenario.unknowns || "input";
+  if (isPartial) {
+    assumeUnknown.checked = true;
+    assumeUnknown.disabled = true;
+  } else {
+    assumeUnknown.disabled = false;
+  }
   analysisStatus.textContent = state.lastRun ? "completed" : "ready";
   exampleRuntime.textContent = state.lastRun?.runtimeMs ? `${state.lastRun.runtimeMs} ms` : "";
   renderRequestTabs(scenario);
   renderOutputTabs();
 
+  const isPartialRun = state.lastRun?.pe;
+
   if (state.lastRun) {
-    renderConditionCards(conditionList, state.lastRun.why.reasons || []);
-    const assumptions = state.lastRun.assumptions || [];
-    if (assumptionPanel) {
-      assumptionPanel.style.display = assumptions.length ? "" : "none";
-    }
-    if (assumptionList) {
-      renderAssumptionCards(assumptionList, assumptions);
+    if (isPartialRun) {
+      // PE mode: show residual queries, hide causality panels
+      analysisPanel.style.display = "none";
+      if (assumptionPanel) assumptionPanel.style.display = "none";
+      if (pePanel) {
+        pePanel.style.display = "";
+        renderResidualQueries(peResults, state.lastRun.pe);
+      }
+    } else {
+      // Causality mode: show conditions and assumptions, hide PE panel
+      analysisPanel.style.display = "";
+      if (pePanel) pePanel.style.display = "none";
+      renderConditionCards(conditionList, state.lastRun.why.reasons || []);
+      const assumptions = state.lastRun.assumptions || [];
+      if (assumptionPanel) {
+        assumptionPanel.style.display = assumptions.length ? "" : "none";
+      }
+      if (assumptionList) {
+        renderAssumptionCards(assumptionList, assumptions);
+      }
     }
   } else {
     conditionList.innerHTML = '<div class="loading-card">Policy and request are shown first. Run the analysis to inspect the decision and explanation chain.</div>';
+    analysisPanel.style.display = "";
     if (assumptionPanel) {
       assumptionPanel.style.display = "none";
+    }
+    if (pePanel) {
+      pePanel.style.display = "none";
     }
   }
 }
@@ -218,7 +256,9 @@ async function runCurrentScenario() {
       input: draft.input,
       data: draft.data,
       detail: detailLevel.value,
-      assumeUnknownInput: assumeUnknown.checked
+      assumeUnknownInput: assumeUnknown.checked,
+      evalMode: evalModeSelect.value,
+      unknowns: unknownsInput.value
     });
     analysisStatus.textContent = "completed";
     renderScenario();
@@ -238,6 +278,16 @@ async function runCurrentScenario() {
 policyContent.addEventListener("input", syncPolicyDraft);
 requestContent.addEventListener("input", syncRequestDraft);
 runAnalysis.addEventListener("click", runCurrentScenario);
+evalModeSelect.addEventListener("change", () => {
+  const isPartial = evalModeSelect.value === "partial";
+  unknownsRow.style.display = isPartial ? "" : "none";
+  if (isPartial) {
+    assumeUnknown.checked = true;
+    assumeUnknown.disabled = true;
+  } else {
+    assumeUnknown.disabled = false;
+  }
+});
 
 async function bootstrap() {
   renderScenario();

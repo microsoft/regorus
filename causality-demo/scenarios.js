@@ -857,5 +857,115 @@ allow if {
     "service": "api-gateway"
   }
 }`
+  },
+
+  /* ── Partial Evaluation scenarios ── */
+  {
+    id: "pe-rbac",
+    navTitle: "PE: RBAC",
+    navSubtitle: "Which inputs grant access?",
+    title: "Partial evaluation — role-based access",
+    summary: "With input treated as unknown, partial evaluation produces residual queries showing exactly which input conditions would satisfy the policy. No concrete input is needed.",
+    focus: "Residual query extraction",
+    features: ["partial evaluation", "unknowns", "RBAC", "residual queries"],
+    engine: "rvm",
+    query: "data.rbac.allow",
+    whyBindings: false,
+    whyFullValues: false,
+    whyAllConditions: true,
+    assumeUnknownInput: true,
+    evalMode: "partial",
+    unknowns: "input",
+    detail: "standard",
+    policy: `package rbac
+import rego.v1
+
+default allow := false
+
+allow if {
+  input.user.role == "admin"
+}
+
+allow if {
+  input.user.role == "editor"
+  input.action == "read"
+}
+
+allow if {
+  input.user.role == "viewer"
+  input.action == "read"
+  input.resource.public
+}`,
+    data: "{}",
+    input: "{}"
+  },
+
+  {
+    id: "pe-deny-negation",
+    navTitle: "PE: Deny with negation",
+    navSubtitle: "What blocks access?",
+    title: "Partial evaluation — deny rules with negation",
+    summary: "A deny-based policy uses negation to check that required fields exist. Partial evaluation surfaces the negated conditions as residual queries, showing exactly what an input must (or must not) contain.",
+    focus: "Negation in residual queries",
+    features: ["partial evaluation", "negation", "deny rules", "data-dependent"],
+    engine: "rvm",
+    query: "data.authz.deny",
+    whyBindings: false,
+    whyFullValues: false,
+    whyAllConditions: true,
+    assumeUnknownInput: true,
+    evalMode: "partial",
+    unknowns: "input",
+    detail: "standard",
+    policy: `package authz
+import rego.v1
+
+deny contains msg if {
+  input.request.method == "DELETE"
+  not input.user.admin
+  msg := "only admins can delete"
+}
+
+deny contains msg if {
+  input.request.path[0] == "internal"
+  not input.user.internal
+  msg := "internal paths require internal users"
+}`,
+    data: "{}",
+    input: "{}"
+  },
+
+  {
+    id: "pe-data-driven",
+    navTitle: "PE: Data-driven",
+    navSubtitle: "Concrete data + unknown input",
+    title: "Partial evaluation — data-driven policy",
+    summary: "When data is concrete but input is unknown, partial evaluation resolves data lookups eagerly and returns residual conditions that depend only on the unknown input.",
+    focus: "Data resolved, input residual",
+    features: ["partial evaluation", "concrete data", "iteration", "set comprehension"],
+    engine: "rvm",
+    query: "data.perms.allowed_actions",
+    whyBindings: false,
+    whyFullValues: false,
+    whyAllConditions: true,
+    assumeUnknownInput: true,
+    evalMode: "partial",
+    unknowns: "input",
+    detail: "standard",
+    policy: `package perms
+import rego.v1
+
+allowed_actions contains action if {
+  role := data.role_grants[input.user.role]
+  action := role[_]
+}`,
+    data: `{
+  "role_grants": {
+    "admin": ["read", "write", "delete"],
+    "editor": ["read", "write"],
+    "viewer": ["read"]
+  }
+}`,
+    input: "{}"
   }
 ];

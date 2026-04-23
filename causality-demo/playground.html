@@ -97,6 +97,17 @@
                   <option value="full">full</option>
                 </select>
               </label>
+              <label class="toggle-pill">
+                Eval mode
+                <select id="eval-mode-select" class="inline-select">
+                  <option value="causality" selected>causality</option>
+                  <option value="partial">partial eval</option>
+                </select>
+              </label>
+              <label class="toggle-pill" id="pg-unknowns-row" style="display: none">
+                Unknowns
+                <input id="unknowns-text" class="text-input" type="text" value="input" style="width: 120px" />
+              </label>
             </div>
           </div>
         </section>
@@ -142,6 +153,16 @@
             </div>
           </div>
           <div id="playground-assumptions" class="condition-list"></div>
+        </section>
+
+        <section class="panel" id="playground-pe-panel" style="display: none">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Partial Evaluation</p>
+              <h3>Residual queries</h3>
+            </div>
+          </div>
+          <div id="playground-pe-results" class="condition-list"></div>
         </section>
       </main>
     </div>

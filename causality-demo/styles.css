@@ -890,3 +890,96 @@ select.text-input {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Partial Evaluation ── */
+.pe-summary {
+  padding: 14px 18px;
+  background: var(--card);
+  border-radius: 10px;
+  margin-bottom: 12px;
+}
+.pe-summary-header {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.pe-summary-text {
+  font-size: 13px;
+  color: var(--muted);
+}
+.pe-warnings {
+  background: #fef3cd;
+  border: 1px solid #ffc107;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+.pe-warning-text {
+  font-size: 13px;
+  color: #856404;
+  margin: 2px 0;
+}
+.pe-disjunct {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 10px;
+  background: var(--card);
+}
+.pe-disjunct-header {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 8px;
+  color: var(--muted);
+}
+.pe-condition {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--bg);
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.pe-condition .kind-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--accent);
+  color: #fff;
+  margin-right: 6px;
+}
+.pe-condition .value-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--mono);
+  background: #e8f0fe;
+  color: #1a73e8;
+  margin-left: 4px;
+}
+.pe-negation-box {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 6px 0 6px 16px;
+  background: #fdf0f0;
+}
+.pe-negation-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #c0392b;
+  margin-bottom: 4px;
+}
+.pe-negation-inner .pe-condition {
+  background: #fff5f5;
+}
+.inline-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  color: var(--fg);
+  width: 140px;
+}
