@@ -1,0 +1,82 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Partial Object Document Test Suite
+# Tests partial object rules with single-bracket heads.
+# Covers known RVM runtime mismatches for partial object document evaluation.
+# Multi-key ref heads are tested separately in ref_heads.yaml.
+
+cases:
+  # Basic partial object from iteration
+  - note: partial_obj/basic_partial_object
+    data:
+      people:
+        - {name: "alice", age: 30}
+        - {name: "bob", age: 25}
+    modules:
+      - |
+        package test
+        ages[name] := age if {
+          some person in data.people
+          name := person.name
+          age := person.age
+        }
+    query: data.test.ages
+    want_result:
+      alice: 30
+      bob: 25
+
+  # Multiple bodies producing different constant keys for same partial object
+  # RVM fails: "not a valid rule path" for bracket-notation constant keys.
+  - note: partial_obj/multiple_bodies_different_keys
+    data: {}
+    modules:
+      - |
+        package test
+        config["mode"] := "production" if { true }
+        config["debug"] := false if { true }
+    query: data.test.config
+    want_error: "not a valid rule path"
+    allow_interpreter_success: true
+
+  # Partial object with nested value construction
+  - note: partial_obj/nested_value
+    data:
+      repos:
+        frontend: {lang: "typescript", stars: 100}
+        backend: {lang: "rust", stars: 200}
+    modules:
+      - |
+        package test
+        summaries[name] := {"language": repo.lang, "popular": repo.stars > 150} if {
+          some name
+          repo := data.repos[name]
+        }
+    query: data.test.summaries
+    want_result:
+      frontend:
+        language: "typescript"
+        popular: false
+      backend:
+        language: "rust"
+        popular: true
+
+  # Partial object with conditional inclusion
+  - note: partial_obj/conditional_inclusion
+    data:
+      items:
+        a: {value: 10, enabled: true}
+        b: {value: 20, enabled: false}
+        c: {value: 30, enabled: true}
+    modules:
+      - |
+        package test
+        active[name] := item.value if {
+          some name
+          item := data.items[name]
+          item.enabled == true
+        }
+    query: data.test.active
+    want_result:
+      a: 10
+      c: 30

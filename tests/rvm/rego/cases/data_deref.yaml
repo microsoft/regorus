@@ -1,0 +1,83 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Data Dereferencing Test Suite
+# Tests complex data path dereferencing with dynamic/computed keys.
+# Covers known RVM runtime mismatches for dynamic data dereferencing.
+
+cases:
+  # Chained variable-indexed access on data
+  - note: data_deref/variable_key_chain
+    data:
+      config:
+        prod:
+          timeout: 30
+          retries: 3
+        dev:
+          timeout: 5
+          retries: 1
+    input:
+      env: "prod"
+      key: "timeout"
+    modules:
+      - |
+        package test
+        result := data.config[input.env][input.key]
+    query: data.test.result
+    want_result: 30
+
+  # Computed key using sprintf then used to index data
+  - note: data_deref/computed_key
+    data:
+      values:
+        user_alice: 100
+        user_bob: 200
+    input:
+      prefix: "user"
+      name: "alice"
+    modules:
+      - |
+        package test
+        result := data.values[key] if {
+          key := sprintf("%s_%s", [input.prefix, input.name])
+        }
+    query: data.test.result
+    want_result: 100
+
+  # Three-level dynamic path indexing
+  - note: data_deref/three_level_dynamic
+    data:
+      store:
+        us:
+          west:
+            items: ["a", "b"]
+          east:
+            items: ["c"]
+    input:
+      region: "us"
+      zone: "west"
+    modules:
+      - |
+        package test
+        result := data.store[input.region][input.zone].items
+    query: data.test.result
+    want_result: ["a", "b"]
+
+  # Mixed static and dynamic path: dynamic bracket then static dot
+  - note: data_deref/mixed_static_dynamic
+    data:
+      services:
+        api:
+          settings:
+            port: 8080
+        web:
+          settings:
+            port: 3000
+    input:
+      service: "api"
+    modules:
+      - |
+        package test
+        result := data.services[input.service].settings.port
+    query: data.test.result
+    want_result: 8080

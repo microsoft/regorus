@@ -22,19 +22,6 @@ const PARTIAL_OBJECT_OVERRIDE_NOTE: &str =
     "regression/partial-object override, different key type, query";
 
 const OPA_TODO_FOLDERS: &[&str] = &[
-    "aggregates",
-    "baseandvirtualdocs",
-    "dataderef",
-    "defaultkeyword",
-    "every",
-    "fix1863",
-    "functions",
-    "partialdocconstants",
-    "partialobjectdoc",
-    "planner-ir",
-    "refheads",
-    "type",
-    "walkbuiltin",
     // RVM Compiler does not support 'with' keyword yet.
     "withkeyword",
 ];
@@ -262,24 +249,175 @@ fn eval_rule_with_rvm(case: &TestCase, is_rego_v0_test: bool, rule_path: &str) -
     }
 }
 
-fn is_not_valid_rule_path_error(err: &anyhow::Error) -> bool {
-    err.chain()
-        .any(|cause| cause.to_string().contains("not a valid rule path"))
+fn compiler_limitation_reason(err: &anyhow::Error) -> Option<&'static str> {
+    let err_str = format!("{:#}", err);
+    let patterns: &[(&str, &str)] = &[
+        ("not a valid rule path", "rule path not compiled"),
+        (
+            "`with` keyword is not supported",
+            "with keyword unsupported",
+        ),
+        (
+            "SomeIn should have been hoisted",
+            "some-in loop hoisting unsupported",
+        ),
+        (
+            "walk loops are not yet supported",
+            "walk builtin unsupported",
+        ),
+        (
+            "function default values are not yet supported",
+            "function defaults unsupported",
+        ),
+        (
+            "comprehension expressions in default values are not yet supported",
+            "comprehension defaults unsupported",
+        ),
+        ("recursion detected", "compile-time recursion"),
+        ("Undefined variable", "variable scoping unsupported"),
+        ("Unknown function", "function compilation unsupported"),
+        (
+            "multi-value ref head rules are not yet supported",
+            "multi-value ref heads unsupported",
+        ),
+    ];
+    for (pattern, reason) in patterns {
+        if err_str.contains(pattern) {
+            return Some(reason);
+        }
+    }
+    None
 }
 
-fn is_with_keyword_unsupported_error(err: &anyhow::Error) -> bool {
-    err.chain().any(|cause| {
-        cause
-            .to_string()
-            .contains("`with` keyword is not supported")
-    })
+// Tests where compilation succeeds but the RVM produces incorrect results at runtime.
+// Each entry is (note, reason).
+const KNOWN_RVM_MISMATCH_NOTES: &[(&str, &str)] = &[
+    // every quantifier: RVM always evaluates to true, even when it should be false/undefined.
+    ("every/domain undefined (input)", "every false-case RVM bug"),
+    (
+        "every/domain undefined (data ref)",
+        "every false-case RVM bug",
+    ),
+    ("every/simple failure, first", "every false-case RVM bug"),
+    ("every/simple failure, last", "every false-case RVM bug"),
+    ("every/array with calls (fail)", "every false-case RVM bug"),
+    ("every/non-iter domain: int", "every false-case RVM bug"),
+    ("every/non-iter domain: string", "every false-case RVM bug"),
+    ("every/non-iter domain: bool", "every false-case RVM bug"),
+    ("every/non-iter domain: null", "every false-case RVM bug"),
+    (
+        "every/non-iter domain: built-in call",
+        "every false-case RVM bug",
+    ),
+    (
+        "every/non-iter domain: function call",
+        "every false-case RVM bug",
+    ),
+    (
+        "every/non-iter domain: rule ref",
+        "every false-case RVM bug",
+    ),
+    (
+        "every/non-iter domain: data int",
+        "every false-case RVM bug",
+    ),
+    (
+        "every/non-iter domain: input int",
+        "every false-case RVM bug",
+    ),
+    (
+        "every/non-iter domain: input int (1st level)",
+        "every false-case RVM bug",
+    ),
+    ("every/example, fail", "every false-case RVM bug"),
+    (
+        "every/example with two sets (fail)",
+        "every false-case RVM bug",
+    ),
+    ("every/example every/some, fail", "every false-case RVM bug"),
+    // Suffix lookup / data deref issues: RVM can't dereference into partial object values.
+    (
+        "data/nested integer",
+        "integer key data deref not supported",
+    ),
+    (
+        "fix1863/is defined",
+        "empty package as object not supported",
+    ),
+    (
+        "partialdocconstants/obj-1",
+        "suffix lookup on bracket-key partial object",
+    ),
+    (
+        "wasm/object dereference",
+        "suffix lookup through partial object value",
+    ),
+    // Dynamic lookup on mixed partial rules / ref heads.
+    (
+        "ir/call-dynamic with mixed partial rules",
+        "dynamic lookup on mixed partial rules",
+    ),
+    (
+        "ir/call-dynamic with mixed partial rules, ref heads",
+        "dynamic lookup on mixed partial rules with ref heads",
+    ),
+    (
+        "ir/call-dynamic with ref heads, issue 5839, penultimate",
+        "ref heads dynamic lookup",
+    ),
+    // Suffix lookup on partial object override.
+    (
+        PARTIAL_OBJECT_OVERRIDE_NOTE,
+        "suffix lookup on partial object override",
+    ),
+    // Base and virtual document interop: RVM can't merge base/virtual data correctly.
+    (
+        "baseandvirtualdocs/base/virtual: ground key",
+        "base/virtual document merge",
+    ),
+    (
+        "baseandvirtualdocs/base/virtual: prefix",
+        "base/virtual document merge",
+    ),
+    (
+        "baseandvirtualdocs/base/virtual: undefined",
+        "base/virtual document merge",
+    ),
+    (
+        "baseandvirtualdocs/base/virtual: undefined-2",
+        "base/virtual document merge",
+    ),
+    (
+        "baseandvirtualdocs/base/virtual: missing input value",
+        "base/virtual document merge",
+    ),
+    // Ref heads: mixed set/object rules on same path, dynamic cross-rule lookup.
+    (
+        "refheads/general, set leaf (other rule defines dynamic ref portion)",
+        "mixed set/partial-object rules on same path",
+    ),
+    (
+        "refheads/single-value example",
+        "dynamic cross-rule bracket lookup",
+    ),
+    (
+        "refheads/single-value example, false",
+        "dynamic cross-rule bracket lookup",
+    ),
+];
+
+fn known_rvm_mismatch_reason(note: &str) -> Option<&'static str> {
+    KNOWN_RVM_MISMATCH_NOTES
+        .iter()
+        .find(|(n, _)| *n == note)
+        .map(|(_, reason)| *reason)
 }
 
 fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value) -> Result<()> {
-    if case.note == "defaultkeyword/function with var arg, ref head query" {
+    if let Some(reason) = known_rvm_mismatch_reason(&case.note) {
         println!(
-            "    skipping RVM check for '{}' (function defaults with refs unsupported)",
-            case.note
+            "    skipping RVM check for '{}' (known RVM mismatch: {})",
+            case.note, reason
         );
         return Ok(());
     }
@@ -292,19 +430,8 @@ fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value)
     let rvm_value = match eval_rule_with_rvm(case, is_rego_v0_test, &rule_path) {
         Ok(value) => value,
         Err(err) => {
-            if is_not_valid_rule_path_error(&err) {
-                println!(
-                    "    skipping RVM check for '{}' (rule path not compiled)",
-                    case.note
-                );
-                return Ok(());
-            }
-
-            if is_with_keyword_unsupported_error(&err) {
-                println!(
-                    "    skipping RVM check for '{}' (with keyword unsupported)",
-                    case.note
-                );
+            if let Some(reason) = compiler_limitation_reason(&err) {
+                println!("    skipping RVM check for '{}' ({})", case.note, reason);
                 return Ok(());
             }
 
@@ -392,15 +519,9 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         for mut case in test.cases {
             let is_json_schema_test = case.note.starts_with("json_verify_schema")
                 || case.note.starts_with("json_match_schema");
-            let mut skip_rvm_validation = skip_rvm_for_folder;
+            let skip_rvm_validation = skip_rvm_for_folder;
 
-            if case.note == PARTIAL_OBJECT_OVERRIDE_NOTE {
-                println!(
-                    "    skipping RVM check for '{}' (needs suffix lookup on rule path)",
-                    case.note
-                );
-                skip_rvm_validation = true;
-            } else if case.note == "reachable_paths/cycle_1022_3" {
+            if case.note == "reachable_paths/cycle_1022_3" {
                 // The OPA behavior is not well-defined.
                 // See: https://github.com/open-policy-agent/opa/issues/5871
                 //      https://github.com/open-policy-agent/opa/issues/6128

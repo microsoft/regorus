@@ -8,6 +8,7 @@
 )]
 
 use super::{Compiler, CompilerError, Result};
+use crate::ast::{Expr, Rule};
 use crate::interpreter::Interpreter;
 use crate::rvm::program::{Program, RuleType, SpanInfo};
 use crate::rvm::Instruction;
@@ -132,6 +133,34 @@ impl<'a> Compiler<'a> {
             }
 
             rule_infos_map.insert(rule_index as usize, rule_info);
+        }
+
+        // Validate unsupported default rule patterns before evaluation.
+        // Only check rules in rule_index_map — rules outside the current
+        // compilation scope (e.g., unreachable packages) should not cause
+        // spurious errors for valid policies.
+        for (rule_path, default_infos) in self.policy.inner.default_rules.iter() {
+            if !self.rule_index_map.contains_key(rule_path) {
+                continue;
+            }
+            for (rule_ref, _) in default_infos {
+                if let Rule::Default {
+                    args, value, span, ..
+                } = rule_ref.as_ref()
+                {
+                    if !args.is_empty() {
+                        return Err(CompilerError::FunctionDefaultsUnsupported.at(span));
+                    }
+                    match value.as_ref() {
+                        Expr::ArrayCompr { .. }
+                        | Expr::SetCompr { .. }
+                        | Expr::ObjectCompr { .. } => {
+                            return Err(CompilerError::ComprehensionInDefaultUnsupported.at(span));
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
 
         let rule_paths_to_evaluate: Vec<(String, usize)> = self

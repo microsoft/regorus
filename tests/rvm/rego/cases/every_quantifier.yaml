@@ -1,0 +1,127 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Every Quantifier Test Suite
+# Tests the `every` universal quantifier.
+# Covers known RVM runtime mismatches for the every quantifier.
+
+cases:
+  # Simple every over an array
+  - note: every/simple_every_true
+    data: {}
+    input:
+      items: [1, 2, 3, 4, 5]
+    modules:
+      - |
+        package test
+        result := true if {
+          every x in input.items { x > 0 }
+        }
+    query: data.test.result
+    want_result: true
+
+  # Simple every that should produce undefined (not all items satisfy)
+  # RVM BUG: Returns true instead of undefined when every fails.
+  - note: every/simple_every_false
+    data: {}
+    input:
+      items: [1, -2, 3]
+    modules:
+      - |
+        package test
+        result := true if {
+          every x in input.items { x > 0 }
+        }
+    query: data.test.result
+    want_result: "#undefined"
+    skip: true
+
+  # Every with data lookup in the body
+  - note: every/every_with_data_lookup
+    data:
+      allowed:
+        read: true
+        write: true
+    input:
+      requested: ["read", "write"]
+    modules:
+      - |
+        package test
+        result := true if {
+          every action in input.requested {
+            data.allowed[action]
+          }
+        }
+    query: data.test.result
+    want_result: true
+
+  # Every with multiple conditions in body
+  - note: every/every_multiple_conditions
+    data: {}
+    input:
+      values: [10, 20, 50, 80]
+    modules:
+      - |
+        package test
+        result := true if {
+          every x in input.values {
+            x > 0
+            x < 100
+          }
+        }
+    query: data.test.result
+    want_result: true
+
+  # Every with key-value iteration
+  - note: every/every_with_key_value
+    data: {}
+    input:
+      config:
+        timeout: 30
+        retries: 3
+        port: 8080
+    modules:
+      - |
+        package test
+        result := true if {
+          every k, v in input.config {
+            v > 0
+          }
+        }
+    query: data.test.result
+    want_result: true
+
+  # Nested every
+  - note: every/nested_every
+    data: {}
+    input:
+      matrix: [[1, 2], [3, 4], [5, 6]]
+    modules:
+      - |
+        package test
+        result := true if {
+          every row in input.matrix {
+            every cell in row {
+              cell > 0
+            }
+          }
+        }
+    query: data.test.result
+    want_result: true
+
+  # Every over a partial set rule result
+  - note: every/every_over_rule_result
+    data:
+      scores: [85, 92, 78, 95]
+    modules:
+      - |
+        package test
+        passing contains score if {
+          some score in data.scores
+          score >= 70
+        }
+        all_high := true if {
+          every s in passing { s >= 75 }
+        }
+    query: data.test.all_high
+    want_result: true
