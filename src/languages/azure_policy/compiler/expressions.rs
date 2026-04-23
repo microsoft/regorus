@@ -4,6 +4,7 @@
 
 //! Template-expression and call-expression compilation.
 
+use alloc::format;
 use alloc::vec::Vec;
 
 use anyhow::{anyhow, bail, Result};
@@ -14,6 +15,9 @@ use crate::Value;
 
 use super::core::Compiler;
 use super::utils::{extract_string_literal, json_value_to_runtime};
+
+/// Maximum nesting depth for recursive JSON value compilation.
+const MAX_JSON_DEPTH: usize = 32;
 
 impl Compiler {
     pub(super) fn compile_value_or_expr(
@@ -32,50 +36,82 @@ impl Compiler {
         value: &crate::languages::azure_policy::ast::JsonValue,
         span: &crate::lexer::Span,
     ) -> Result<u8> {
-        // Arrays may contain ARM template expression strings that need
-        // runtime evaluation.
+        self.compile_json_value_inner(value, span, 0)
+    }
+
+    fn compile_json_value_inner(
+        &mut self,
+        value: &crate::languages::azure_policy::ast::JsonValue,
+        span: &crate::lexer::Span,
+        depth: usize,
+    ) -> Result<u8> {
+        if depth > MAX_JSON_DEPTH {
+            bail!(span.error(&format!(
+                "JSON value nesting exceeds maximum depth of {MAX_JSON_DEPTH}"
+            )));
+        }
+
+        use crate::languages::azure_policy::expr::ExprParser;
+        use crate::languages::azure_policy::parser::is_template_expr;
+
+        // Standalone string template expressions like `"[concat(...)]"`
+        // must be compiled so they evaluate at runtime.
+        if let JsonValue::Str(str_span, s) = value {
+            if is_template_expr(s) {
+                let inner = s
+                    .strip_prefix('[')
+                    .and_then(|inner| inner.strip_suffix(']'))
+                    .ok_or_else(|| {
+                        str_span.error("invalid template expression: missing brackets")
+                    })?;
+                let expr = ExprParser::parse_from_brackets(inner, str_span)
+                    .map_err(|e| anyhow!("{}", e))?;
+                return self.compile_expr(&expr);
+            }
+        }
+
+        // Arrays: recursively compile elements so nested template expressions
+        // are evaluated at runtime.
         if let JsonValue::Array(_, items) = value {
-            if items.iter().any(|item| {
-                matches!(item, JsonValue::Str(_, s) if crate::languages::azure_policy::parser::is_template_expr(s))
-            }) {
-                return self.compile_dynamic_array(items, span);
+            if contains_template_expr(value) {
+                return self.compile_dynamic_array(items, span, depth.saturating_add(1));
             }
             // Fall through: json_value_to_runtime handles `[[` unescaping for
             // string elements, so static arrays are converted correctly.
         }
+
+        // Objects: recursively compile values so nested template expressions
+        // are evaluated at runtime.
+        if let JsonValue::Object(_, entries) = value {
+            if contains_template_expr(value) {
+                return self.compile_dynamic_object(entries, span, depth.saturating_add(1));
+            }
+        }
+
+        // Static value — convert to runtime literal.
+        // Enforce depth limit on static JSON to prevent stack overflow in
+        // json_value_to_runtime's own recursion.  Use subtree-local depth (0),
+        // not the compiler recursion depth, since the static subtree's nesting
+        // is independent of how deep we are in dynamic compilation.
+        check_json_depth(value, 0).map_err(|_| {
+            anyhow!(span.error(&alloc::format!(
+                "JSON value nesting exceeds maximum depth of {MAX_JSON_DEPTH}"
+            )))
+        })?;
         let runtime_value = json_value_to_runtime(value)?;
         self.load_literal(runtime_value, span)
     }
 
-    /// Compile a JSON array where some elements are ARM template expressions.
+    /// Compile a JSON array where some elements may contain template expressions.
     fn compile_dynamic_array(
         &mut self,
         items: &[JsonValue],
         span: &crate::lexer::Span,
+        depth: usize,
     ) -> Result<u8> {
-        use crate::languages::azure_policy::expr::ExprParser;
-
         let mut element_regs = Vec::with_capacity(items.len());
         for item in items {
-            let reg = if let JsonValue::Str(item_span, s) = item {
-                if crate::languages::azure_policy::parser::is_template_expr(s) {
-                    let inner = s
-                        .strip_prefix('[')
-                        .and_then(|inner| inner.strip_suffix(']'))
-                        .ok_or_else(|| {
-                            item_span.error("invalid template expression: missing brackets")
-                        })?;
-                    let expr = ExprParser::parse_from_brackets(inner, item_span)
-                        .map_err(|e| anyhow!("{}", e))?;
-                    self.compile_expr(&expr)?
-                } else {
-                    let runtime_value = json_value_to_runtime(item)?;
-                    self.load_literal(runtime_value, item_span)?
-                }
-            } else {
-                let runtime_value = json_value_to_runtime(item)?;
-                self.load_literal(runtime_value, item.span())?
-            };
+            let reg = self.compile_json_value_inner(item, item.span(), depth)?;
             element_regs.push(reg);
         }
 
@@ -93,6 +129,22 @@ impl Compiler {
             span,
         );
         Ok(arr_dest)
+    }
+
+    /// Compile a JSON object where some values may contain template expressions.
+    fn compile_dynamic_object(
+        &mut self,
+        entries: &[crate::languages::azure_policy::ast::ObjectEntry],
+        span: &crate::lexer::Span,
+        depth: usize,
+    ) -> Result<u8> {
+        let mut keys: Vec<(u16, u8)> = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let val_reg = self.compile_json_value_inner(&entry.value, entry.value.span(), depth)?;
+            let key_idx = self.add_literal_u16(Value::from(entry.key.clone()))?;
+            keys.push((key_idx, val_reg));
+        }
+        super::effects::build_object_from_keys(self, keys, span)
     }
 
     pub(super) fn compile_expr(&mut self, expr: &Expr) -> Result<u8> {
@@ -314,4 +366,56 @@ impl Compiler {
         }
         Ok(out)
     }
+}
+
+/// Recursively check whether a JSON value tree contains any template
+/// expression strings (e.g. `"[parameters('x')]"`).
+///
+/// Returns `false` (conservatively safe) if nesting exceeds [`MAX_JSON_DEPTH`].
+fn contains_template_expr(value: &JsonValue) -> bool {
+    contains_template_expr_inner(value, 0)
+}
+
+fn contains_template_expr_inner(value: &JsonValue, depth: usize) -> bool {
+    if depth > MAX_JSON_DEPTH {
+        return false;
+    }
+
+    use crate::languages::azure_policy::parser::is_template_expr;
+
+    match value {
+        JsonValue::Str(_, s) => is_template_expr(s),
+        JsonValue::Array(_, items) => items
+            .iter()
+            .any(|item| contains_template_expr_inner(item, depth.saturating_add(1))),
+        JsonValue::Object(_, entries) => entries
+            .iter()
+            .any(|e| contains_template_expr_inner(&e.value, depth.saturating_add(1))),
+        _ => false,
+    }
+}
+
+/// Verify that a JSON value tree does not exceed the maximum nesting depth.
+///
+/// Called before handing a static value to [`json_value_to_runtime`] so that
+/// its unbounded recursion cannot overflow the stack.  Also used by
+/// `build_parameter_defaults` to guard parameter default values.
+pub(super) fn check_json_depth(value: &JsonValue, current_depth: usize) -> Result<()> {
+    if current_depth > MAX_JSON_DEPTH {
+        bail!("JSON value nesting exceeds maximum depth of {MAX_JSON_DEPTH}");
+    }
+    match value {
+        JsonValue::Array(_, items) => {
+            for item in items {
+                check_json_depth(item, current_depth.saturating_add(1))?;
+            }
+        }
+        JsonValue::Object(_, entries) => {
+            for entry in entries {
+                check_json_depth(&entry.value, current_depth.saturating_add(1))?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
