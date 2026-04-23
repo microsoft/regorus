@@ -573,7 +573,8 @@ fn analyze_instruction(
         | Halt {}
         | DestructuringSuccess {}
         | ComprehensionYield { .. }
-        | ComprehensionEnd {} => {}
+        | ComprehensionEnd {}
+        | NegationBegin {} => {}
     }
 }
 

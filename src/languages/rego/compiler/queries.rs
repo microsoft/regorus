@@ -295,6 +295,10 @@ impl<'a> Compiler<'a> {
                 }
             }
             ast::Literal::NotExpr { expr, .. } => {
+                // Emit a marker so the VM can track which assumptions
+                // belong to the negated body (for PE negation grouping).
+                self.emit_instruction(Instruction::NegationBegin {}, &stmt.span);
+
                 let expr_reg = self.with_soft_assert_mode(true, |compiler| {
                     compiler.compile_rego_expr_with_span(expr, expr.span(), false)
                 })?;

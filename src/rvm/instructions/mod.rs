@@ -423,6 +423,10 @@ pub enum Instruction {
         /// Register that accumulates the result.
         result: u8,
     },
+
+    /// Mark the beginning of a negation body (`not expr`).
+    /// The VM uses this to track which assumptions belong to the inner body.
+    NegationBegin {},
 }
 
 impl Instruction {

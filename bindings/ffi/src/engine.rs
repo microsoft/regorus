@@ -1096,6 +1096,8 @@ pub extern "C" fn regorus_engine_set_explanation_settings(
                 emission_index,
                 emission_value,
                 assume_unknown_input,
+                eval_mode: regorus::evaluation_trace::EvaluationMode::default(),
+                unknowns: alloc::vec![String::from("input")],
             });
             Ok(())
         }())

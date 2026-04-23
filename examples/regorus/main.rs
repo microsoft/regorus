@@ -22,6 +22,14 @@ enum WhyDetailArg {
 }
 
 #[cfg(feature = "explanations")]
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
+enum EvalModeArg {
+    Causality,
+    Partial,
+}
+
+#[cfg(feature = "explanations")]
+#[allow(clippy::too_many_arguments)]
 fn build_explanation_settings(
     why_detail: Option<WhyDetailArg>,
     why_scope: Option<WhyScopeArg>,
@@ -30,6 +38,8 @@ fn build_explanation_settings(
     why_full_values: bool,
     why_all_conditions: bool,
     assume_unknown_input: bool,
+    eval_mode: Option<EvalModeArg>,
+    unknowns: Option<String>,
 ) -> Result<regorus::evaluation_trace::ExplanationSettings> {
     let detail = why_detail.map_or_else(
         || {
@@ -80,6 +90,16 @@ fn build_explanation_settings(
             regorus::evaluation_trace::ConditionMode::PrimaryOnly
         };
 
+    let eval_mode_setting = match eval_mode {
+        Some(EvalModeArg::Partial) => regorus::evaluation_trace::EvaluationMode::PartialEval,
+        _ => regorus::evaluation_trace::EvaluationMode::Causality,
+    };
+
+    let unknowns_list = match unknowns {
+        Some(s) => s.split(',').map(|p| p.trim().to_string()).collect(),
+        None => vec!["input".into()],
+    };
+
     Ok(regorus::evaluation_trace::ExplanationSettings {
         enabled: true,
         value_mode,
@@ -89,6 +109,8 @@ fn build_explanation_settings(
         emission_index: why_emission,
         emission_value,
         assume_unknown_input,
+        eval_mode: eval_mode_setting,
+        unknowns: unknowns_list,
     })
 }
 
@@ -139,11 +161,16 @@ fn rego_eval(
     #[cfg(feature = "explanations")] why_full_values: bool,
     #[cfg(feature = "explanations")] why_all_conditions: bool,
     #[cfg(feature = "explanations")] assume_unknown_input: bool,
+    #[cfg(feature = "explanations")] eval_mode: Option<EvalModeArg>,
+    #[cfg(feature = "explanations")] unknowns: Option<String>,
     #[cfg(feature = "coverage")] coverage: bool,
     v0: bool,
 ) -> Result<()> {
     #[cfg(feature = "explanations")]
     let why_enabled = why;
+
+    #[cfg(feature = "explanations")]
+    let is_pe_mode = matches!(eval_mode, Some(EvalModeArg::Partial));
 
     // Create engine.
     let mut policy_engine = regorus::Engine::new();
@@ -165,6 +192,8 @@ fn rego_eval(
             why_full_values,
             why_all_conditions,
             assume_unknown_input,
+            eval_mode,
+            unknowns.clone(),
         )?);
     }
 
@@ -275,6 +304,8 @@ fn rego_eval(
                         why_full_values,
                         why_all_conditions,
                         assume_unknown_input,
+                        eval_mode,
+                        unknowns.clone(),
                     )?);
                 }
 
@@ -286,10 +317,14 @@ fn rego_eval(
 
                 #[cfg(feature = "explanations")]
                 let _rvm_report = if why_enabled {
-                    Some(
+                    let report = if is_pe_mode {
+                        vm.take_partial_eval_result(value.clone())
+                            .map_err(|e| anyhow!("{e}"))?
+                    } else {
                         vm.take_causality_report(value.clone())
-                            .map_err(|e| anyhow!("{e}"))?,
-                    )
+                            .map_err(|e| anyhow!("{e}"))?
+                    };
+                    Some(report)
                 } else {
                     None
                 };
@@ -503,6 +538,17 @@ enum RegorusCommand {
         #[arg(long = "assume-unknown-input")]
         assume_unknown_input: bool,
 
+        /// Evaluation mode: causality (default) or partial evaluation.
+        #[cfg(feature = "explanations")]
+        #[arg(long = "eval-mode", value_enum, requires = "why")]
+        eval_mode: Option<EvalModeArg>,
+
+        /// Comma-separated list of unknown path prefixes for partial evaluation.
+        /// Default: "input". Example: --unknowns "input.document,input.action"
+        #[cfg(feature = "explanations")]
+        #[arg(long = "unknowns")]
+        unknowns: Option<String>,
+
         /// Display coverage information
         #[cfg(feature = "coverage")]
         #[arg(long, short)]
@@ -607,6 +653,10 @@ fn main() -> Result<()> {
             why_all_conditions,
             #[cfg(feature = "explanations")]
             assume_unknown_input,
+            #[cfg(feature = "explanations")]
+            eval_mode,
+            #[cfg(feature = "explanations")]
+            unknowns,
             #[cfg(feature = "coverage")]
             coverage,
             v0,
@@ -634,6 +684,10 @@ fn main() -> Result<()> {
             why_all_conditions,
             #[cfg(feature = "explanations")]
             assume_unknown_input,
+            #[cfg(feature = "explanations")]
+            eval_mode,
+            #[cfg(feature = "explanations")]
+            unknowns,
             #[cfg(feature = "coverage")]
             coverage,
             v0,

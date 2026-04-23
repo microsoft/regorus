@@ -34,6 +34,7 @@ allow if { input.role == "admin" }
         emission_index: None,
         emission_value: None,
         assume_unknown_input: true,
+        ..Default::default()
     });
     vm.set_input(Value::new_object());
 
@@ -101,6 +102,7 @@ allow if {
         emission_index: None,
         emission_value: None,
         assume_unknown_input: true,
+        ..Default::default()
     });
     vm.set_input(serde_json::from_str(r#"{"identity": {"name": "alex"}}"#).unwrap());
 
@@ -175,6 +177,7 @@ allow if {
         emission_index: None,
         emission_value: None,
         assume_unknown_input: true,
+        ..Default::default()
     });
     vm.set_input(Value::new_object());
 
@@ -187,7 +190,7 @@ allow if {
     let assumptions = report["assumptions"].as_array().unwrap();
     assert!(!assumptions.is_empty(), "assumptions should not be empty");
     assert_eq!(assumptions[0]["kind"], "exists");
-    assert_eq!(assumptions[0]["input_path"], "input.identity");
+    assert_eq!(assumptions[0]["input_path"], "input.identity.role");
     assert!(assumptions[0]["operator"].is_null());
     assert!(assumptions[0]["assumed_value"].is_null());
 }
@@ -231,6 +234,7 @@ allow if {
         emission_index: None,
         emission_value: None,
         assume_unknown_input: false,
+        ..Default::default()
     });
 
     let mut input_obj = Value::new_object();
@@ -322,6 +326,7 @@ allow if {
         emission_index: None,
         emission_value: None,
         assume_unknown_input: false,
+        ..Default::default()
     });
 
     let input_json = r#"{"containers": [{"name": "safe", "privileged": false}, {"name": "evil", "privileged": true}]}"#;
@@ -391,6 +396,7 @@ allow if {
         emission_index: None,
         emission_value: None,
         assume_unknown_input: false,
+        ..Default::default()
     });
 
     let input_json = r#"{"role": "admin"}"#;
@@ -452,6 +458,7 @@ deny contains msg if {
         emission_index: None,
         emission_value: None,
         assume_unknown_input: true,
+        ..Default::default()
     });
 
     // Input provides resourceGroupName = "dev-rg", NOT "prod-rg".

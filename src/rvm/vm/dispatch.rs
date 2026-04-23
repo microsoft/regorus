@@ -5,7 +5,8 @@ use crate::rvm::instructions::{GuardMode, Instruction, LiteralOrRegister};
 use crate::rvm::program::Program;
 use crate::value::Value;
 use alloc::collections::BTreeSet;
-use alloc::string::ToString as _;
+#[cfg(feature = "explanations")]
+use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 use core::mem;
 
@@ -23,15 +24,50 @@ pub(super) enum InstructionOutcome {
 
 impl RegoVM {
     #[cfg(feature = "explanations")]
-    fn is_input_runtime_path(path: &str) -> bool {
-        path == "input" || path.starts_with("input.") || path.starts_with("input[")
+    pub(super) fn runtime_path_for_register(&self, register: u8) -> Option<alloc::string::String> {
+        self.provenance.get(register).and_then(|path| {
+            self.explanation_settings
+                .is_unknown_path(path.as_ref())
+                .then(|| String::from(path.as_ref()))
+        })
     }
 
     #[cfg(feature = "explanations")]
-    fn runtime_path_for_register(&self, register: u8) -> Option<alloc::string::String> {
-        self.provenance.get(register).and_then(|path| {
-            Self::is_input_runtime_path(path.as_ref()).then(|| path.as_ref().to_string())
-        })
+    pub(super) fn current_rule_scope(&self) -> (u16, u16) {
+        self.call_rule_stack
+            .last()
+            .map(|ctx| {
+                (
+                    ctx.rule_index,
+                    u16::try_from(ctx.current_definition_index).unwrap_or(u16::MAX),
+                )
+            })
+            .unwrap_or((0, 0))
+    }
+
+    #[cfg(feature = "explanations")]
+    pub(super) fn current_loop_iteration_index(&self) -> Option<u32> {
+        self.loop_stack.last().map(|l| l.iteration_index)
+    }
+
+    /// Get the current conjunction scope ID.
+    #[cfg(feature = "explanations")]
+    pub(super) fn current_conjunction_id(&self) -> u32 {
+        self.conjunction_id_stack.last().copied().unwrap_or(0)
+    }
+
+    /// Push a new conjunction scope (increments the global counter).
+    #[cfg(feature = "explanations")]
+    pub(super) fn push_conjunction_scope(&mut self) {
+        let id = self.trace.next_conjunction_id;
+        self.trace.next_conjunction_id = id.saturating_add(1);
+        self.conjunction_id_stack.push(id);
+    }
+
+    /// Pop the current conjunction scope.
+    #[cfg(feature = "explanations")]
+    pub(super) fn pop_conjunction_scope(&mut self) {
+        self.conjunction_id_stack.pop();
     }
 
     #[cfg(feature = "explanations")]
@@ -71,13 +107,81 @@ impl RegoVM {
             return false;
         };
 
+        let (rule_index, definition_index) = self.current_rule_scope();
+        let iteration_index = self.current_loop_iteration_index();
         self.trace.record_assumption(
             crate::evaluation_trace::AssumptionKind::ConditionHolds,
             input_path,
             condition_text,
             u32::try_from(self.pc).unwrap_or(u32::MAX),
-            Some(operator.to_string()),
+            Some(String::from(operator)),
             assumed_value,
+            rule_index,
+            definition_index,
+            iteration_index,
+            self.current_conjunction_id(),
+        );
+        // Attach pending data lookup context (from ChainedIndex) if available.
+        if let Some(ctx) = self.pending_data_lookup.take() {
+            if let Some(last) = self.trace.assumptions.last_mut() {
+                last.data_lookup_context = Some(ctx);
+            }
+        }
+        true
+    }
+
+    /// Record an assumption for a builtin call whose result is Undefined
+    /// because one or more arguments trace to unknown input paths.
+    #[cfg(feature = "explanations")]
+    fn record_builtin_assumption(
+        &mut self,
+        params_index: u16,
+        dest_register: u8,
+        condition_text: String,
+    ) -> bool {
+        let params = match self
+            .program
+            .instruction_data
+            .get_builtin_call_params(params_index)
+        {
+            Some(p) => p.clone(),
+            None => return false,
+        };
+
+        // Only proceed if the builtin's dest register matches the guard register.
+        if params.dest != dest_register {
+            return false;
+        }
+
+        // Find the first argument that is Undefined and traces to an input path.
+        let mut input_path = None;
+        for &arg_reg in params.arg_registers() {
+            if matches!(self.get_register(arg_reg), Ok(v) if *v == Value::Undefined) {
+                if let Some(path) = self.runtime_path_for_register(arg_reg) {
+                    input_path = Some(path);
+                    break;
+                }
+            }
+        }
+
+        let input_path = match input_path {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let (rule_index, definition_index) = self.current_rule_scope();
+        let iteration_index = self.current_loop_iteration_index();
+        self.trace.record_assumption(
+            crate::evaluation_trace::AssumptionKind::ConditionHolds,
+            input_path,
+            condition_text,
+            u32::try_from(self.pc).unwrap_or(u32::MAX),
+            None,
+            None,
+            rule_index,
+            definition_index,
+            iteration_index,
+            self.current_conjunction_id(),
         );
         true
     }
@@ -103,14 +207,18 @@ impl RegoVM {
                 let Some(input_path) = self.runtime_path_for_register(register).or_else(|| {
                     static_info.and_then(|info| {
                         info.checked_provenance.as_ref().and_then(|prov| {
-                            let rendered = prov.to_string();
-                            Self::is_input_runtime_path(&rendered).then_some(rendered)
+                            let rendered = alloc::format!("{}", prov);
+                            self.explanation_settings
+                                .is_unknown_path(&rendered)
+                                .then_some(rendered)
                         })
                     })
                 }) else {
                     return false;
                 };
 
+                let (rule_index, definition_index) = self.current_rule_scope();
+                let iteration_index = self.current_loop_iteration_index();
                 self.trace.record_assumption(
                     crate::evaluation_trace::AssumptionKind::Exists,
                     input_path,
@@ -118,6 +226,10 @@ impl RegoVM {
                     pc,
                     None,
                     None,
+                    rule_index,
+                    definition_index,
+                    iteration_index,
+                    self.current_conjunction_id(),
                 );
                 true
             }
@@ -158,10 +270,44 @@ impl RegoVM {
                         "in",
                         condition_text,
                     ),
+                    Instruction::BuiltinCall { params_index } => {
+                        self.record_builtin_assumption(params_index, register, condition_text)
+                    }
                     _ => false,
                 }
             }
-            GuardMode::Not => false,
+            GuardMode::Not => {
+                // In PE mode, if the value is true but was produced by
+                // assumption-dependent evaluation, treat the negation as
+                // assumed to hold rather than unconditionally failing.
+                if self.explanation_settings.eval_mode
+                    == crate::evaluation_trace::EvaluationMode::PartialEval
+                {
+                    let value = self.get_register(register).ok();
+                    let is_assumption_derived_true = matches!(value, Some(v) if *v == Value::Bool(true))
+                        && self.assumption_dependent_depth > 0;
+                    let is_undefined = matches!(value, Some(v) if *v == Value::Undefined);
+
+                    if is_assumption_derived_true || is_undefined {
+                        let (rule_index, definition_index) = self.current_rule_scope();
+                        let iteration_index = self.current_loop_iteration_index();
+                        self.trace.record_assumption(
+                            crate::evaluation_trace::AssumptionKind::NegationHolds,
+                            String::new(),
+                            condition_text,
+                            pc,
+                            None,
+                            None,
+                            rule_index,
+                            definition_index,
+                            iteration_index,
+                            self.current_conjunction_id(),
+                        );
+                        return true;
+                    }
+                }
+                false
+            }
         }
     }
 
@@ -500,13 +646,135 @@ impl RegoVM {
                 }
             }
             Not { dest, operand } => {
-                let operand_value = self.get_register(operand)?;
-                let negated = match *operand_value {
+                // Pop negation scope pushed by NegationBegin.
+                #[cfg(feature = "explanations")]
+                let negation_scope_id = if self.explanation_settings.assume_unknown_input {
+                    // The scope was pushed by NegationBegin before the inner
+                    // body.  Pop it now and remember the id for the
+                    // NegationHolds assumption we may record below.
+                    let stack = &mut self.trace.negation_scope_stack;
+                    let id = stack.last().copied();
+                    stack.pop();
+                    id
+                } else {
+                    None
+                };
+
+                let operand_value = self.get_register(operand)?.clone();
+                #[allow(unused_assignments)]
+                let negated = match operand_value {
                     Value::Undefined => true,
-                    Value::Bool(b) => !b,
+                    Value::Bool(b) => {
+                        // In PE mode, if the operand is true but was produced
+                        // via assumptions, treat it as Undefined (indeterminate)
+                        // so that the negation yields true (unknown negated = assumed to hold).
+                        #[cfg(feature = "explanations")]
+                        if b && self.explanation_settings.eval_mode
+                            == crate::evaluation_trace::EvaluationMode::PartialEval
+                            && self.assumption_dependent_depth > 0
+                        {
+                            self.assumption_dependent_depth =
+                                self.assumption_dependent_depth.saturating_sub(1);
+                            true // treat as Undefined → negation is true
+                        } else {
+                            !b
+                        }
+                        #[cfg(not(feature = "explanations"))]
+                        {
+                            !b
+                        }
+                    }
                     _ => false,
                 };
+
+                // In PE mode, record a NegationHolds assumption when the
+                // negation succeeds because the operand depends on unknown
+                // input (either Undefined directly or true-via-assumptions).
+                #[cfg(feature = "explanations")]
+                if negated
+                    && self.explanation_settings.eval_mode
+                        == crate::evaluation_trace::EvaluationMode::PartialEval
+                    && self.explanation_settings.assume_unknown_input
+                {
+                    let is_assumption_involved = matches!(operand_value, Value::Undefined)
+                        || self.trace.assumptions.iter().any(|a| {
+                            negation_scope_id.is_some_and(|nid| a.negation_scope_id == Some(nid))
+                        });
+
+                    if is_assumption_involved {
+                        // For simple Undefined operands (e.g. `not input.user.blocked`),
+                        // record an inner Exists assumption for the operand path so the
+                        // negation has a meaningful inner condition.
+                        if operand_value == Value::Undefined {
+                            if let Some(input_path) = self.runtime_path_for_register(operand) {
+                                let pc = u32::try_from(self.pc).unwrap_or(u32::MAX);
+                                let (rule_index, definition_index) = self.current_rule_scope();
+                                let iteration_index = self.current_loop_iteration_index();
+                                // Temporarily re-push the negation scope so the inner
+                                // assumption is tagged with it.
+                                if let Some(nid) = negation_scope_id {
+                                    self.trace.negation_scope_stack.push(nid);
+                                }
+                                self.trace.record_assumption(
+                                    crate::evaluation_trace::AssumptionKind::Exists,
+                                    input_path,
+                                    String::new(),
+                                    pc,
+                                    None,
+                                    None,
+                                    rule_index,
+                                    definition_index,
+                                    iteration_index,
+                                    self.current_conjunction_id(),
+                                );
+                                if negation_scope_id.is_some() {
+                                    self.trace.negation_scope_stack.pop();
+                                }
+                            }
+                        }
+
+                        // Record the NegationHolds assumption at the outer scope.
+                        let static_info = self
+                            .program
+                            .condition_infos
+                            .get(self.pc)
+                            .and_then(Option::as_ref);
+                        let condition_text = static_info
+                            .map(|info| info.text.clone())
+                            .unwrap_or_default();
+                        let pc = u32::try_from(self.pc).unwrap_or(u32::MAX);
+                        let (rule_index, definition_index) = self.current_rule_scope();
+                        let iteration_index = self.current_loop_iteration_index();
+                        self.trace.record_assumption(
+                            crate::evaluation_trace::AssumptionKind::NegationHolds,
+                            String::new(),
+                            condition_text,
+                            pc,
+                            None,
+                            None,
+                            rule_index,
+                            definition_index,
+                            iteration_index,
+                            self.current_conjunction_id(),
+                        );
+                        // Tag the NegationHolds with the scope it owns so
+                        // materialize_pe can find the matching inner assumptions.
+                        if let Some(last) = self.trace.assumptions.last_mut() {
+                            last.owned_negation_scope_id = negation_scope_id;
+                        }
+                    }
+                }
+
                 self.set_register(dest, Value::Bool(negated))?;
+                Ok(InstructionOutcome::Continue)
+            }
+            NegationBegin {} => {
+                // Push a negation scope so that assumptions recorded inside
+                // the negated body are tagged with this scope ID.
+                #[cfg(feature = "explanations")]
+                if self.explanation_settings.assume_unknown_input {
+                    self.trace.push_negation_scope();
+                }
                 Ok(InstructionOutcome::Continue)
             }
             AssertEq { left, right } => {
@@ -829,9 +1097,27 @@ impl RegoVM {
                 let result = container_value[key_value].clone();
                 #[cfg(feature = "explanations")]
                 let key_clone = key_value.clone();
-                self.set_register(dest, result)?;
+                self.set_register(dest, result.clone())?;
                 #[cfg(feature = "explanations")]
-                self.provenance.append_index(dest, container, &key_clone);
+                {
+                    // When the result is Undefined because the key is unknown
+                    // (from input), propagate the key's input provenance to the
+                    // dest register so downstream comparisons can fire assumptions.
+                    if result == Value::Undefined && self.explanation_settings.assume_unknown_input
+                    {
+                        if let Some(key_path) = self.provenance.get(key).cloned() {
+                            if self.explanation_settings.is_unknown_path(key_path.as_ref()) {
+                                self.provenance.set_path(dest, Some(key_path));
+                            } else {
+                                self.provenance.append_index(dest, container, &key_clone);
+                            }
+                        } else {
+                            self.provenance.append_index(dest, container, &key_clone);
+                        }
+                    } else {
+                        self.provenance.append_index(dest, container, &key_clone);
+                    }
+                }
                 Ok(InstructionOutcome::Continue)
             }
             IndexLiteral {
@@ -1431,7 +1717,8 @@ impl RegoVM {
                     .get(params.root)
                     .map(|path| path.as_ref().to_string());
 
-                for component in &params.path_components {
+                for (comp_idx, component) in params.path_components.iter().enumerate() {
+                    let _ = comp_idx; // used under #[cfg(feature = "explanations")]
                     let key_value = match *component {
                         LiteralOrRegister::Literal(idx) => program
                             .literals
@@ -1446,6 +1733,31 @@ impl RegoVM {
 
                     #[cfg(feature = "explanations")]
                     {
+                        // In PE mode, when a key register is Undefined and
+                        // traces to an input path, propagate its provenance
+                        // to the dest register so downstream comparisons can
+                        // fire assumptions.
+                        if key_value == Value::Undefined
+                            && self.explanation_settings.assume_unknown_input
+                        {
+                            if let &LiteralOrRegister::Register(reg) = component {
+                                if let Some(path) = self.runtime_path_for_register(reg) {
+                                    // If the base is a concrete object, capture
+                                    // it for data-key inversion in PE reports.
+                                    if matches!(current_value, Value::Object(_)) {
+                                        self.pending_data_lookup =
+                                            Some(crate::evaluation_trace::DataLookupContext {
+                                                data_object: current_value.clone(),
+                                                key_input_path: path.clone(),
+                                            });
+                                    }
+                                    current_value = Value::Undefined;
+                                    current_path = Some(path);
+                                    break;
+                                }
+                            }
+                        }
+
                         current_path = current_path
                             .as_deref()
                             .map(|base| Self::append_path_component(base, &key_value));
@@ -1454,6 +1766,29 @@ impl RegoVM {
                     current_value = current_value[&key_value].clone();
 
                     if current_value == Value::Undefined {
+                        // Value became Undefined, but keep appending remaining
+                        // literal path components to current_path so provenance
+                        // captures the full path (e.g. "input.user.role" not
+                        // just "input.user").
+                        #[cfg(feature = "explanations")]
+                        if let Some(remaining_components) =
+                            params.path_components.get(comp_idx.saturating_add(1)..)
+                        {
+                            for remaining in remaining_components {
+                                if let &LiteralOrRegister::Literal(idx) = remaining {
+                                    if let Some(lit) = program.literals.get(usize::from(idx)) {
+                                        current_path = current_path
+                                            .as_deref()
+                                            .map(|base| Self::append_path_component(base, lit));
+                                    } else {
+                                        break;
+                                    }
+                                } else {
+                                    // Register component — can't know the key statically
+                                    break;
+                                }
+                            }
+                        }
                         break;
                     }
                 }

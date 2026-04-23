@@ -363,6 +363,11 @@ impl Interpreter {
         &mut self.data
     }
 
+    #[allow(dead_code)]
+    pub const fn get_data(&self) -> &Value {
+        &self.data
+    }
+
     pub fn set_init_data(&mut self, data: Value) {
         self.init_data = data;
     }
@@ -392,6 +397,11 @@ impl Interpreter {
         self.compiled_policy_mut().strict_builtin_errors = b;
     }
 
+    #[allow(dead_code)]
+    pub fn get_strict_builtin_errors(&self) -> bool {
+        self.compiled_policy.strict_builtin_errors
+    }
+
     pub fn set_execution_timer_config(&mut self, config: Option<ExecutionTimerConfig>) {
         self.execution_timer = ExecutionTimer::new(config);
         self.reset_execution_timer_state();
@@ -403,6 +413,11 @@ impl Interpreter {
         if let Ok(with_input) = Self::make_or_get_value_mut(&mut self.with_document, &["input"]) {
             *with_input = input;
         }
+    }
+
+    #[allow(dead_code)]
+    pub const fn get_input(&self) -> &Value {
+        &self.input
     }
 
     pub fn init_with_document(&mut self) -> Result<()> {

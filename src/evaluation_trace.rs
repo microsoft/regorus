@@ -15,6 +15,7 @@
 //! - Assumptions recorded when unknown input handling is active.
 
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 use serde::Serialize;
 
@@ -68,8 +69,18 @@ pub enum ExplanationDetail {
     Full,
 }
 
+/// Controls whether the engine runs in causality or partial-evaluation mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EvaluationMode {
+    /// One sufficient explanation, short-circuit after first success.
+    #[default]
+    Causality,
+    /// Explore all branches, collect disjunctive assumption sets.
+    PartialEval,
+}
+
 /// Settings governing explanation capture and reporting.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ExplanationSettings {
     pub enabled: bool,
     pub value_mode: ValueMode,
@@ -79,6 +90,43 @@ pub struct ExplanationSettings {
     pub emission_index: Option<usize>,
     pub emission_value: Option<Value>,
     pub assume_unknown_input: bool,
+    pub eval_mode: EvaluationMode,
+    /// Paths treated as unknown for partial evaluation.
+    /// Default: `["input"]`. A path is considered unknown if it equals
+    /// or is a child of any entry (e.g. `"input"` matches `"input.foo"`).
+    pub unknowns: Vec<String>,
+}
+
+impl Default for ExplanationSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            value_mode: ValueMode::default(),
+            condition_mode: ConditionMode::default(),
+            scope: ExplanationScope::default(),
+            detail: ExplanationDetail::default(),
+            emission_index: None,
+            emission_value: None,
+            assume_unknown_input: false,
+            eval_mode: EvaluationMode::default(),
+            unknowns: vec![String::from("input")],
+        }
+    }
+}
+
+impl ExplanationSettings {
+    /// Check whether `path` falls under one of the configured unknown prefixes.
+    pub fn is_unknown_path(&self, path: &str) -> bool {
+        for prefix in &self.unknowns {
+            if path == prefix.as_str()
+                || path.starts_with(&alloc::format!("{}.", prefix))
+                || path.starts_with(&alloc::format!("{}[", prefix))
+            {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +219,42 @@ pub struct Assumption {
     /// The non-input value that was compared against, e.g. `"admin"`.
     /// `None` for existence checks or when the value is not available.
     pub assumed_value: Option<Value>,
+    /// Rule index when the assumption was recorded (PE mode).
+    pub rule_index: u16,
+    /// Definition index within the rule (PE mode).
+    pub definition_index: u16,
+    /// Loop iteration index when the assumption was recorded (PE mode).
+    /// `None` when not inside a loop or when loop tracking is not active.
+    pub iteration_index: Option<u32>,
+    /// Conjunction scope ID — assumptions with the same conjunction_id belong
+    /// to the same rule body execution (including sub-rule calls).
+    pub conjunction_id: u32,
+    /// If this assumption was recorded inside a `not` body, this holds the
+    /// negation scope ID.  In `materialize_pe`, inner assumptions with the
+    /// same `negation_scope_id` are grouped under their parent
+    /// `NegationHolds` assumption.  Causality mode ignores this field.
+    pub negation_scope_id: Option<u32>,
+    /// For `NegationHolds` assumptions only: the negation scope ID of the
+    /// inner body this negation owns.  Used in `materialize_pe` to find
+    /// which inner assumptions belong to this negation.
+    pub owned_negation_scope_id: Option<u32>,
+    /// When the assumption originates from indexing a known data object with
+    /// an unknown input key (e.g. `data.perms[input.role]`), this captures
+    /// the concrete data object so `materialize_pe` can invert the lookup.
+    pub data_lookup_context: Option<DataLookupContext>,
+}
+
+/// Context for inverting a data lookup during partial evaluation.
+///
+/// When `data.some_object[input.some_key] == value`, the data object is known
+/// but the key is unknown. By storing the object we can later invert: find
+/// which key(s) in the object map to the compared value.
+#[derive(Debug, Clone)]
+pub struct DataLookupContext {
+    /// The concrete data object that was indexed.
+    pub data_object: Value,
+    /// The full input path of the unknown key, e.g. `"input.user.role"`.
+    pub key_input_path: String,
 }
 
 /// Kinds of assumptions that can be recorded.
@@ -182,6 +266,8 @@ pub enum AssumptionKind {
     ConditionHolds,
     /// An input collection was assumed to exist for iteration.
     CollectionExists,
+    /// A negation was assumed to hold (the negated rule depends on unknowns).
+    NegationHolds,
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +293,17 @@ pub struct EvaluationTrace {
     pub emission_outcomes: Vec<EmissionOutcome>,
     /// Assumptions from unknown input handling.
     pub assumptions: Vec<Assumption>,
+    /// Warnings generated during evaluation (e.g. comprehension soundness).
+    pub warnings: Vec<String>,
+    /// Monotonically increasing counter for unique iteration IDs.
+    pub next_iteration_id: u32,
+    /// Monotonically increasing counter for conjunction scope IDs.
+    pub next_conjunction_id: u32,
+    /// Monotonically increasing counter for negation scope IDs.
+    pub next_negation_scope_id: u32,
+    /// Stack of active negation scope IDs.  Assumptions recorded while this
+    /// stack is non-empty get tagged with the top-of-stack ID.
+    pub negation_scope_stack: Vec<u32>,
 }
 
 impl EvaluationTrace {
@@ -222,6 +319,11 @@ impl EvaluationTrace {
         self.rule_outcomes.clear();
         self.emission_outcomes.clear();
         self.assumptions.clear();
+        self.warnings.clear();
+        self.next_iteration_id = 0;
+        self.next_conjunction_id = 0;
+        self.next_negation_scope_id = 0;
+        self.negation_scope_stack.clear();
     }
 
     /// Returns true if the trace is empty (nothing recorded).
@@ -359,6 +461,7 @@ impl EvaluationTrace {
     }
 
     /// Record an assumption from unknown input handling.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_assumption(
         &mut self,
         kind: AssumptionKind,
@@ -367,7 +470,13 @@ impl EvaluationTrace {
         pc: u32,
         operator: Option<String>,
         assumed_value: Option<Value>,
+        rule_index: u16,
+        definition_index: u16,
+        iteration_index: Option<u32>,
+        conjunction_id: u32,
     ) {
+        // Pick up the current negation scope (if any) from the stack.
+        let negation_scope_id = self.negation_scope_stack.last().copied();
         self.assumptions.push(Assumption {
             kind,
             input_path,
@@ -375,7 +484,29 @@ impl EvaluationTrace {
             pc,
             operator,
             assumed_value,
+            rule_index,
+            definition_index,
+            iteration_index,
+            conjunction_id,
+            negation_scope_id,
+            owned_negation_scope_id: None,
+            data_lookup_context: None,
         });
+    }
+
+    /// Push a negation scope — called when entering a `not` body.
+    /// Returns the scope ID so the caller can record it on the
+    /// `NegationHolds` assumption later.
+    pub fn push_negation_scope(&mut self) -> u32 {
+        let id = self.next_negation_scope_id;
+        self.next_negation_scope_id = id.saturating_add(1);
+        self.negation_scope_stack.push(id);
+        id
+    }
+
+    /// Pop the current negation scope.
+    pub fn pop_negation_scope(&mut self) {
+        self.negation_scope_stack.pop();
     }
 
     /// Resolve a captured value by index.

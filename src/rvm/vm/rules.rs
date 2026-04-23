@@ -118,6 +118,11 @@ impl RegoVM {
         }
 
         'outer: for (def_idx, definition_bodies) in rule_definitions.iter().enumerate() {
+            // Each definition gets its own conjunction scope so that assumptions
+            // from different definitions form separate disjuncts in the DNF output.
+            #[cfg(feature = "explanations")]
+            self.push_conjunction_scope();
+
             for (body_entry_point_idx, body_entry_point) in definition_bodies.iter().enumerate() {
                 if let Some(ctx) = self.call_rule_stack.last_mut() {
                     ctx.current_body_index = body_entry_point_idx;
@@ -163,9 +168,15 @@ impl RegoVM {
                                     }
                                 } else {
                                     first_successful_result = Some(current_result.clone());
-                                    // All definitions produce the same static value;
-                                    // no need to verify consistency with the rest.
-                                    if rule_info.early_exit_on_first_success {
+                                    // In PE mode, do NOT short-circuit — explore
+                                    // all definitions to produce complete disjuncts.
+                                    #[cfg(feature = "explanations")]
+                                    let is_pe = self.explanation_settings.eval_mode
+                                        == crate::evaluation_trace::EvaluationMode::PartialEval;
+                                    #[cfg(not(feature = "explanations"))]
+                                    let is_pe = false;
+
+                                    if rule_info.early_exit_on_first_success && !is_pe {
                                         break 'outer;
                                     }
                                 }
@@ -205,8 +216,13 @@ impl RegoVM {
             }
 
             if rule_failed_due_to_inconsistency {
+                #[cfg(feature = "explanations")]
+                self.pop_conjunction_scope();
                 break;
             }
+
+            #[cfg(feature = "explanations")]
+            self.pop_conjunction_scope();
         }
 
         let final_result = if rule_failed_due_to_inconsistency {
@@ -343,8 +359,17 @@ impl RegoVM {
             current_body_condition_start: 0,
         });
 
+        #[cfg(feature = "explanations")]
+        let assumptions_before = self.trace.assumptions.len();
+
+        #[allow(unused)]
         let (final_result, rule_failed_due_to_inconsistency, return_provenance) = self
             .execute_rule_definitions_common(&rule_definitions, &rule_info, function_call_params)?;
+
+        #[cfg(feature = "explanations")]
+        let assumptions_after = self.trace.assumptions.len();
+        #[cfg(feature = "explanations")]
+        let result_is_assumption_dependent = assumptions_after > assumptions_before;
 
         self.set_register(dest, Value::Undefined)?;
 
@@ -380,12 +405,17 @@ impl RegoVM {
         #[cfg(feature = "explanations")]
         if self.explanation_settings.enabled {
             let succeeded = result_from_rule != Value::Undefined;
+            let def_idx = u16::try_from(call_context.current_definition_index).unwrap_or(u16::MAX);
             self.trace.record_rule_outcome(
                 rule_index,
-                0, // overall rule outcome
+                def_idx,
                 succeeded,
                 Some(result_from_rule.clone()),
             );
+            // Track assumption-dependent depth so negation handling can detect it.
+            if succeeded && result_is_assumption_dependent {
+                self.assumption_dependent_depth = self.assumption_dependent_depth.saturating_add(1);
+            }
         }
 
         if self.get_register(dest)? == &Value::Undefined && !rule_failed_due_to_inconsistency {
@@ -772,9 +802,14 @@ impl RegoVM {
                     }
                 } else {
                     frame_data.accumulated_result = Some(current_result);
-                    // All definitions produce the same static value;
-                    // skip remaining definitions.
-                    if rule_info.early_exit_on_first_success {
+                    // In PE mode, do NOT short-circuit — explore all definitions.
+                    #[cfg(feature = "explanations")]
+                    let is_pe = self.explanation_settings.eval_mode
+                        == crate::evaluation_trace::EvaluationMode::PartialEval;
+                    #[cfg(not(feature = "explanations"))]
+                    let is_pe = false;
+
+                    if rule_info.early_exit_on_first_success && !is_pe {
                         frame_data.current_definition_index = frame_data.total_definitions;
                         frame_data.phase = RuleFramePhase::Finalizing;
                         return Ok(None);
@@ -838,7 +873,7 @@ impl RegoVM {
             let succeeded = result_from_rule != Value::Undefined;
             self.trace.record_rule_outcome(
                 rule_index,
-                0, // overall rule outcome
+                u16::try_from(frame_data.current_definition_index).unwrap_or(u16::MAX),
                 succeeded,
                 Some(result_from_rule.clone()),
             );

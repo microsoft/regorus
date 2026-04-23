@@ -339,6 +339,7 @@ impl core::fmt::Display for Instruction {
                 };
                 format!("{} R({})", name, result)
             }
+            Instruction::NegationBegin {} => String::from("NEGATION_BEGIN"),
         };
         write!(f, "{}", text)
     }

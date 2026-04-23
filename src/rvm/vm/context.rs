@@ -29,6 +29,9 @@ pub struct LoopContext {
     /// Runtime provenance path for the collection being iterated.
     #[cfg(feature = "explanations")]
     pub collection_provenance: Option<crate::Rc<str>>,
+    /// Current iteration index (0-based) for PE mode disjunct grouping.
+    #[cfg(feature = "explanations")]
+    pub iteration_index: u32,
 }
 
 /// Iterator state for different collection types.
@@ -129,6 +132,15 @@ pub(super) struct ComprehensionContext {
     pub(super) iteration_state: Option<IterationState>,
     /// Resume location for the parent frame once this comprehension completes
     pub(super) resume_pc: usize,
+    /// Whether any yield during this comprehension depended on assumptions (PE mode).
+    #[cfg(feature = "explanations")]
+    pub(super) has_assumption_dependent_yield: bool,
+    /// Number of assumptions in trace when comprehension started.
+    #[cfg(feature = "explanations")]
+    pub(super) assumptions_count_at_start: usize,
+    /// First input-derived provenance path seen in a yield value (PE mode).
+    #[cfg(feature = "explanations")]
+    pub(super) input_provenance_hint: Option<alloc::string::String>,
 }
 
 #[cfg(test)]

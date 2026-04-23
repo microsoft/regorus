@@ -239,6 +239,252 @@ pub struct AssumptionRecord {
 }
 
 // ---------------------------------------------------------------------------
+// Partial Evaluation Output
+// ---------------------------------------------------------------------------
+
+/// A single condition in a PE residual query.
+#[derive(Debug, Clone, Serialize)]
+pub struct ResidualCondition {
+    /// The condition text, e.g. `"input.document.status == \"public\""`.
+    pub condition: String,
+    /// The comparison operator, e.g. `"=="`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operator: Option<String>,
+    /// The input path that is unknown, e.g. `"input.document.status"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_path: Option<String>,
+    /// The concrete value being compared against.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<Value>,
+    /// Kind of assumption.
+    pub kind: String,
+    /// For `negation_holds` conditions: the inner conditions that the negation
+    /// wraps.  Semantics: "NOT (all of negated_conditions hold simultaneously)".
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub negated_conditions: Vec<ResidualCondition>,
+}
+
+/// Result of partial evaluation.
+#[derive(Debug, Clone, Serialize)]
+pub struct PartialEvalResult {
+    /// The query result: `true`, `false`, or `null` (for undefined).
+    pub result: Value,
+    /// DNF residual queries: outer vec is OR, inner vec is AND.
+    pub residual_queries: Vec<Vec<ResidualCondition>>,
+    /// Warnings or informational messages.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+/// Produce a [`PartialEvalResult`] from a program and its evaluation trace.
+pub fn materialize_pe(
+    _program: &Program,
+    trace: &EvaluationTrace,
+    query_result: Value,
+) -> PartialEvalResult {
+    use alloc::collections::BTreeMap;
+
+    // -----------------------------------------------------------------------
+    // 1. Collect negation-scoped inner assumptions into a side-map.
+    //    Assumptions with `negation_scope_id = Some(id)` are inner conditions
+    //    of a `not` body.  They should NOT appear as top-level disjunct
+    //    conditions; instead they are attached to the parent NegationHolds
+    //    condition that shares the same scope id.
+    // -----------------------------------------------------------------------
+    let mut negation_inner: BTreeMap<u32, Vec<ResidualCondition>> = BTreeMap::new();
+
+    // Group assumptions by (conjunction_id, iteration_index) to form disjuncts.
+    // Each unique combination produces one conjunction (AND) in the DNF output.
+    let mut disjunct_map: BTreeMap<(u32, Option<u32>), Vec<ResidualCondition>> = BTreeMap::new();
+
+    // First pass: collect inner-negation assumptions into negation_inner.
+    for a in &trace.assumptions {
+        if let Some(neg_scope) = a.negation_scope_id {
+            let cond = assumption_to_residual(a);
+            negation_inner.entry(neg_scope).or_default().push(cond);
+        }
+    }
+
+    // Second pass: build disjuncts from top-level (non-negation-inner) assumptions.
+    for a in &trace.assumptions {
+        // Skip assumptions that belong inside a negation body — they will be
+        // attached to the NegationHolds parent below.
+        if a.negation_scope_id.is_some() {
+            continue;
+        }
+
+        let key = (a.conjunction_id, a.iteration_index);
+
+        // For NegationHolds: single condition with inner children.
+        if a.kind == AssumptionKind::NegationHolds {
+            let mut cond = assumption_to_residual(a);
+            if let Some(scope_id) = a.owned_negation_scope_id {
+                if let Some(mut inner) = negation_inner.remove(&scope_id) {
+                    attach_nested_negation_inner(&mut inner, &mut negation_inner);
+                    cond.negated_conditions = inner;
+                }
+            }
+            disjunct_map.entry(key).or_default().push(cond);
+            continue;
+        }
+
+        // Try data-key inversion (may produce multiple conditions).
+        let inverted = assumption_to_residual_conditions(a);
+        if inverted.len() > 1 {
+            // Multiple matching keys → each becomes a separate disjunct
+            // so the overall result is OR(key1, key2, ...).
+            // We tag them with synthetic iteration indices to separate them.
+            for (i, cond) in inverted.into_iter().enumerate() {
+                let offset = u32::try_from(i).unwrap_or(u32::MAX);
+                let split_key = (
+                    key.0,
+                    Some(
+                        key.1
+                            .unwrap_or(0)
+                            .wrapping_add(1000_u32.wrapping_add(offset)),
+                    ),
+                );
+                disjunct_map.entry(split_key).or_default().push(cond);
+            }
+        } else {
+            for cond in inverted {
+                disjunct_map.entry(key).or_default().push(cond);
+            }
+        }
+    }
+
+    // Deduplicate conditions within each disjunct.
+    let residual_queries: Vec<Vec<ResidualCondition>> = disjunct_map
+        .into_values()
+        .map(|mut conds| {
+            conds.dedup_by(|a, b| a.condition == b.condition && a.operator == b.operator);
+            conds
+        })
+        .collect();
+
+    let result = match query_result {
+        Value::Undefined => Value::Null,
+        other => other,
+    };
+
+    PartialEvalResult {
+        result,
+        residual_queries,
+        warnings: trace.warnings.clone(),
+    }
+}
+
+/// Format a `Value` for display in condition text.
+fn format_value(v: &Value) -> alloc::string::String {
+    match v {
+        Value::String(s) => alloc::format!("\"{}\"", s),
+        Value::Null => "null".into(),
+        Value::Bool(b) => alloc::format!("{b}"),
+        Value::Number(n) => alloc::format!("{:?}", n),
+        _ => alloc::format!("{:?}", v),
+    }
+}
+
+/// Convert an `Assumption` to a `ResidualCondition`.
+/// When the assumption has a `data_lookup_context`, inverts the lookup:
+/// instead of `data.perms[input.role] == "write"`, produces one or more
+/// conditions like `input.role == "admin"`.
+fn assumption_to_residual_conditions(
+    a: &crate::evaluation_trace::Assumption,
+) -> Vec<ResidualCondition> {
+    // Check for data-key inversion.
+    if let (Some(ref ctx), Some(ref cmp_value), Some(ref op)) =
+        (&a.data_lookup_context, &a.assumed_value, &a.operator)
+    {
+        if let Value::Object(ref obj) = ctx.data_object {
+            let matching_keys: Vec<&Value> = obj
+                .iter()
+                .filter(|(_, v)| match op.as_str() {
+                    "==" => *v == cmp_value,
+                    "!=" => *v != cmp_value,
+                    _ => false,
+                })
+                .map(|(k, _)| k)
+                .collect();
+
+            if !matching_keys.is_empty() {
+                return matching_keys
+                    .into_iter()
+                    .map(|key| {
+                        let inverted_op = match op.as_str() {
+                            "!=" => "!=", // preserve != semantics
+                            _ => "==",
+                        };
+                        ResidualCondition {
+                            condition: alloc::format!(
+                                "{} {} {}",
+                                ctx.key_input_path,
+                                inverted_op,
+                                format_value(key),
+                            ),
+                            operator: Some(inverted_op.to_string()),
+                            input_path: Some(ctx.key_input_path.clone()),
+                            value: Some(key.clone()),
+                            kind: "condition_holds".to_string(),
+                            negated_conditions: Vec::new(),
+                        }
+                    })
+                    .collect();
+            }
+        }
+    }
+
+    // Default: no inversion, return single condition.
+    alloc::vec![assumption_to_residual(a)]
+}
+
+/// Convert an `Assumption` to a single `ResidualCondition` (no inversion).
+fn assumption_to_residual(a: &crate::evaluation_trace::Assumption) -> ResidualCondition {
+    let kind_str = match a.kind {
+        AssumptionKind::Exists => "exists",
+        AssumptionKind::ConditionHolds => "condition_holds",
+        AssumptionKind::CollectionExists => "collection_exists",
+        AssumptionKind::NegationHolds => "negation_holds",
+    };
+    ResidualCondition {
+        condition: a.condition_text.clone(),
+        operator: a.operator.clone(),
+        input_path: if a.input_path.is_empty() {
+            None
+        } else {
+            Some(a.input_path.clone())
+        },
+        value: a.assumed_value.clone(),
+        kind: kind_str.to_string(),
+        negated_conditions: Vec::new(),
+    }
+}
+
+/// Recursively attach inner negation conditions to any `negation_holds`
+/// entries within `conditions`.
+fn attach_nested_negation_inner(
+    conditions: &mut [ResidualCondition],
+    negation_inner: &mut alloc::collections::BTreeMap<u32, Vec<ResidualCondition>>,
+) {
+    for cond in conditions.iter_mut() {
+        if cond.kind == "negation_holds" {
+            // The inner conditions for this nested NegationHolds were
+            // collected in the first pass.  We need the owned_negation_scope_id
+            // but ResidualCondition doesn't carry it.  However, since we
+            // consume scopes in order (BTreeMap is sorted), the next available
+            // scope is the correct one for the next NegationHolds encountered.
+            if let Some((&scope_id, _)) = negation_inner.iter().next() {
+                if let Some(mut inner) = negation_inner.remove(&scope_id) {
+                    // Recurse for deeper nesting.
+                    attach_nested_negation_inner(&mut inner, negation_inner);
+                    cond.negated_conditions = inner;
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Materialization
 // ---------------------------------------------------------------------------
 
@@ -919,6 +1165,7 @@ fn materialize_assumptions(program: &Program, trace: &EvaluationTrace) -> Vec<As
                 AssumptionKind::Exists => "exists",
                 AssumptionKind::ConditionHolds => "condition_holds",
                 AssumptionKind::CollectionExists => "collection_exists",
+                AssumptionKind::NegationHolds => "negation_holds",
             };
             AssumptionRecord {
                 kind: kind_str.to_string(),
@@ -996,7 +1243,7 @@ mod tests {
     use crate::static_provenance::{ConditionKind, StaticConditionInfo};
     use crate::{value::Value, Rc};
 
-    const fn settings(condition_mode: ConditionMode) -> ExplanationSettings {
+    fn settings(condition_mode: ConditionMode) -> ExplanationSettings {
         ExplanationSettings {
             enabled: true,
             value_mode: ValueMode::Redacted,
@@ -1006,6 +1253,8 @@ mod tests {
             emission_index: None,
             emission_value: None,
             assume_unknown_input: false,
+            eval_mode: crate::evaluation_trace::EvaluationMode::Causality,
+            unknowns: vec![alloc::string::String::from("input")],
         }
     }
 
@@ -1638,6 +1887,10 @@ mod tests {
             1,
             Some("==".into()),
             Some(Value::Bool(true)),
+            0,
+            0,
+            None,
+            0,
         );
 
         let report = materialize(

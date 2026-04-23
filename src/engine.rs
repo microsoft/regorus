@@ -205,6 +205,11 @@ pub struct Engine {
     rego_v1: bool,
     execution_timer_config: Option<ExecutionTimerConfig>,
     policy_length_config: PolicyLengthConfig,
+    #[cfg(feature = "explanations")]
+    explanation_settings: Option<crate::evaluation_trace::ExplanationSettings>,
+    /// Stored PE/causality report JSON from the last RVM evaluation.
+    #[cfg(feature = "explanations")]
+    last_explanation_report: Option<String>,
 }
 
 /// A loaded module's source label and lossless, decoded package components.
@@ -319,6 +324,10 @@ impl Engine {
             rego_v1: true,
             execution_timer_config: None,
             policy_length_config: PolicyLengthConfig::default(),
+            #[cfg(feature = "explanations")]
+            explanation_settings: None,
+            #[cfg(feature = "explanations")]
+            last_explanation_report: None,
         };
         engine.apply_effective_execution_timer_config();
         engine
@@ -1225,10 +1234,62 @@ impl Engine {
     /// # }
     /// ```
     pub fn eval_rule(&mut self, rule: String) -> Result<Value> {
+        #[cfg(all(feature = "explanations", feature = "rvm"))]
+        if let Some(ref settings) = self.explanation_settings {
+            if settings.enabled {
+                return self.eval_rule_via_rvm(rule);
+            }
+        }
+
         self.prepare_for_eval(false, false)?;
         self.apply_effective_execution_timer_config();
         self.interpreter.clean_internal_evaluation_state();
         self.interpreter.eval_rule_in_path(rule)
+    }
+
+    /// Evaluate a rule using the RVM (bytecode VM) path with explanation support.
+    #[cfg(all(feature = "explanations", feature = "rvm"))]
+    fn eval_rule_via_rvm(&mut self, rule: String) -> Result<Value> {
+        use crate::evaluation_trace::EvaluationMode;
+
+        self.prepare_for_eval(false, false)?;
+
+        let entrypoint: Rc<str> = rule.clone().into();
+        let compiled = self.compile_with_entrypoint(&entrypoint)?;
+        let program = crate::languages::rego::compiler::Compiler::compile_from_policy(
+            &compiled,
+            &[entrypoint.as_ref()],
+        )?;
+
+        let mut vm = crate::rvm::RegoVM::new_with_policy(compiled);
+        vm.load_program(program);
+        vm.set_strict_builtin_errors(self.interpreter.get_strict_builtin_errors());
+
+        if let Some(settings) = self.explanation_settings.take() {
+            let is_pe = settings.eval_mode == EvaluationMode::PartialEval;
+            vm.set_explanation_settings(settings);
+
+            let input = self.interpreter.get_input().clone();
+            vm.set_input(input);
+
+            let data = self.interpreter.get_data().clone();
+            let _ = vm.set_data(data);
+
+            let value = vm.execute_entry_point_by_name(entrypoint.as_ref())?;
+
+            let report = if is_pe {
+                vm.take_partial_eval_result(value.clone())
+                    .map_err(|e| anyhow!("{e}"))?
+            } else {
+                vm.take_causality_report(value.clone())
+                    .map_err(|e| anyhow!("{e}"))?
+            };
+            self.last_explanation_report = Some(report);
+
+            Ok(value)
+        } else {
+            bail!("eval_rule_via_rvm called without explanation settings")
+        }
     }
 
     /// Evaluate a Rego query.
@@ -2000,6 +2061,10 @@ impl Engine {
             prepared: true,
             execution_timer_config: None,
             policy_length_config: PolicyLengthConfig::default(), // Compiled policies are already parsed, so these length limits are not used
+            #[cfg(feature = "explanations")]
+            explanation_settings: None,
+            #[cfg(feature = "explanations")]
+            last_explanation_report: None,
         };
         engine.apply_effective_execution_timer_config();
         engine
@@ -2016,23 +2081,29 @@ impl Engine {
         &mut self,
         settings: crate::evaluation_trace::ExplanationSettings,
     ) {
-        let _ = settings;
-        // TODO: Wire to interpreter when interpreter support is added.
+        self.explanation_settings = Some(settings);
     }
 
-    /// Take the causality report for the most recent evaluation.
+    /// Take the explanation report for the most recent evaluation.
     ///
-    /// Returns a JSON string. Calling this clears the internal trace so
-    /// a subsequent call returns an empty report.
+    /// Returns a JSON string containing either a partial evaluation result
+    /// or a causality report, depending on the configured
+    /// [`EvaluationMode`](crate::evaluation_trace::EvaluationMode).
+    /// Calling this clears the stored report so a subsequent call returns
+    /// an empty report.
     #[cfg(feature = "explanations")]
     #[cfg_attr(docsrs, doc(cfg(feature = "explanations")))]
     pub fn take_causality_report(&mut self) -> Result<String> {
-        // TODO: Wire to interpreter when interpreter support is added.
-        let empty = crate::causality_report::CausalityReport {
-            query_result: Value::Undefined,
-            rules: Vec::new(),
-            assumptions: Vec::new(),
-        };
-        serde_json::to_string_pretty(&empty).map_err(|e| anyhow!("{e}"))
+        self.last_explanation_report.take().map_or_else(
+            || {
+                let empty = crate::causality_report::CausalityReport {
+                    query_result: Value::Undefined,
+                    rules: Vec::new(),
+                    assumptions: Vec::new(),
+                };
+                serde_json::to_string_pretty(&empty).map_err(|e| anyhow!("{e}"))
+            },
+            Ok,
+        )
     }
 }

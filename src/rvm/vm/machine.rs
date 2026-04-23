@@ -314,6 +314,22 @@ pub struct RegoVM {
     /// Runtime evaluation trace (append-only log of outcomes).
     #[cfg(feature = "explanations")]
     pub(super) trace: EvaluationTrace,
+
+    /// Tracks nesting depth of rule calls whose success depends on assumptions.
+    /// When > 0, the current execution context is "assumption-dependent".
+    #[cfg(feature = "explanations")]
+    pub(super) assumption_dependent_depth: u32,
+
+    /// Stack of conjunction scope IDs. Sub-rule calls inherit the parent's
+    /// conjunction_id so their assumptions group with the caller's body.
+    #[cfg(feature = "explanations")]
+    pub(super) conjunction_id_stack: Vec<u32>,
+
+    /// Pending data lookup context from the last ChainedIndex that indexed a
+    /// concrete data object with an unknown input key.  Consumed by the next
+    /// assumption recording (in `record_runtime_comparison_assumption`).
+    #[cfg(feature = "explanations")]
+    pub(super) pending_data_lookup: Option<crate::evaluation_trace::DataLookupContext>,
 }
 
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
@@ -402,6 +418,12 @@ impl RegoVM {
             explanation_settings: ExplanationSettings::default(),
             #[cfg(feature = "explanations")]
             trace: EvaluationTrace::new(),
+            #[cfg(feature = "explanations")]
+            assumption_dependent_depth: 0,
+            #[cfg(feature = "explanations")]
+            conjunction_id_stack: Vec::new(),
+            #[cfg(feature = "explanations")]
+            pending_data_lookup: None,
         }
     }
 
@@ -866,6 +888,20 @@ impl RegoVM {
             &self.explanation_settings,
             query_result,
         );
+        self.trace.clear();
+        serde_json::to_string_pretty(&report).map_err(|e| alloc::format!("{e}"))
+    }
+
+    /// Take the partial evaluation result for the most recent evaluation.
+    ///
+    /// Returns a JSON string with DNF residual queries. Clears the internal trace.
+    #[cfg(feature = "explanations")]
+    pub fn take_partial_eval_result(
+        &mut self,
+        query_result: Value,
+    ) -> core::result::Result<String, alloc::string::String> {
+        let report =
+            crate::causality_report::materialize_pe(&self.program, &self.trace, query_result);
         self.trace.clear();
         serde_json::to_string_pretty(&report).map_err(|e| alloc::format!("{e}"))
     }

@@ -201,6 +201,12 @@ impl RegoVM {
             sample_value: None,
             #[cfg(feature = "explanations")]
             collection_provenance,
+            #[cfg(feature = "explanations")]
+            iteration_index: {
+                let id = self.trace.next_iteration_id;
+                self.trace.next_iteration_id = id.saturating_add(1);
+                id
+            },
         };
 
         self.loop_stack.push(loop_context);
@@ -232,7 +238,21 @@ impl RegoVM {
                 }
             }
 
-            let action = Self::determine_loop_action(&loop_ctx.mode, iteration_succeeded);
+            #[allow(unused_mut)]
+            let mut action = Self::determine_loop_action(&loop_ctx.mode, iteration_succeeded);
+
+            // In PE mode, don't short-circuit on first success for LoopMode::Any.
+            // Each iteration that succeeds may produce different assumptions, so we
+            // continue iterating to collect all disjuncts.
+            #[cfg(feature = "explanations")]
+            if matches!(action, LoopAction::ExitWithSuccess)
+                && matches!(loop_ctx.mode, LoopMode::Any)
+                && self.explanation_settings.enabled
+                && self.explanation_settings.eval_mode
+                    == crate::evaluation_trace::EvaluationMode::PartialEval
+            {
+                action = LoopAction::Continue;
+            }
 
             match action {
                 LoopAction::ExitWithSuccess | LoopAction::ExitWithFailure => {
@@ -260,6 +280,15 @@ impl RegoVM {
 
             if has_next {
                 loop_ctx.current_iteration_failed = false;
+
+                #[cfg(feature = "explanations")]
+                {
+                    // Assign a globally unique iteration ID for PE mode disjunct grouping
+                    // so that assumptions recorded during the next body execution
+                    // get a unique iteration index, even across nested loops.
+                    loop_ctx.iteration_index = self.trace.next_iteration_id;
+                    self.trace.next_iteration_id = self.trace.next_iteration_id.saturating_add(1);
+                }
 
                 #[cfg(feature = "explanations")]
                 self.update_loop_iteration_provenance(
@@ -352,6 +381,12 @@ impl RegoVM {
             sample_value: None,
             #[cfg(feature = "explanations")]
             collection_provenance,
+            #[cfg(feature = "explanations")]
+            iteration_index: {
+                let id = self.trace.next_iteration_id;
+                self.trace.next_iteration_id = id.saturating_add(1);
+                id
+            },
         };
 
         let frame = ExecutionFrame::new(
@@ -411,7 +446,19 @@ impl RegoVM {
             }
         };
 
-        let action = Self::determine_loop_action(&loop_mode, iteration_succeeded);
+        #[allow(unused_mut)]
+        let mut action = Self::determine_loop_action(&loop_mode, iteration_succeeded);
+
+        // In PE mode, don't short-circuit on first success for LoopMode::Any.
+        #[cfg(feature = "explanations")]
+        if matches!(action, LoopAction::ExitWithSuccess)
+            && matches!(loop_mode, LoopMode::Any)
+            && self.explanation_settings.enabled
+            && self.explanation_settings.eval_mode
+                == crate::evaluation_trace::EvaluationMode::PartialEval
+        {
+            action = LoopAction::Continue;
+        }
 
         // Capture sample key/value on successful iteration (before borrow ends)
         #[cfg(feature = "explanations")]
@@ -506,6 +553,13 @@ impl RegoVM {
                         } => {
                             context.iteration_state.advance();
                             context.current_iteration_failed = false;
+
+                            #[cfg(feature = "explanations")]
+                            {
+                                context.iteration_index = self.trace.next_iteration_id;
+                                self.trace.next_iteration_id =
+                                    self.trace.next_iteration_id.saturating_add(1);
+                            }
 
                             (
                                 mode,
@@ -669,6 +723,102 @@ impl RegoVM {
                 }))
             }
             _ => {
+                // In PE mode, if the collection register traces to an unknown
+                // input path, record an assumption instead of silently
+                // returning vacuous true (Every) or false (Any/ForEach).
+                #[cfg(feature = "explanations")]
+                if self.explanation_settings.assume_unknown_input {
+                    if let Some(input_path) = self.runtime_path_for_register(params.collection) {
+                        let (rule_index, definition_index) = self.current_rule_scope();
+                        let iteration_index = self.current_loop_iteration_index();
+                        let condition_text =
+                            alloc::format!("collection at {input_path} exists for iteration");
+                        if matches!(mode, LoopMode::Every) {
+                            self.trace.warnings.push(alloc::format!(
+                                "every over unknown collection '{input_path}' at PC {} is vacuously true; result may be unsound",
+                                self.pc
+                            ));
+                        }
+                        self.trace.record_assumption(
+                            crate::evaluation_trace::AssumptionKind::CollectionExists,
+                            input_path,
+                            condition_text,
+                            u32::try_from(self.pc).unwrap_or(u32::MAX),
+                            None,
+                            None,
+                            rule_index,
+                            definition_index,
+                            iteration_index,
+                            self.current_conjunction_id(),
+                        );
+
+                        // For Any/ForEach modes, create a phantom iteration
+                        // with Undefined key/value so the loop body executes
+                        // once and downstream assumptions can fire.
+                        if matches!(mode, LoopMode::Any | LoopMode::ForEach) {
+                            // Set key/value registers to Undefined for the
+                            // phantom iteration.
+                            self.set_register(params.key_reg, Value::Undefined)?;
+                            if params.value_reg != params.key_reg {
+                                self.set_register(params.value_reg, Value::Undefined)?;
+                            }
+
+                            // Set provenance on the value register so
+                            // downstream Guards can trace back to the
+                            // unknown input collection.
+                            if let Some(base) = self.provenance.get(params.collection).cloned() {
+                                let element_path = {
+                                    let mut p = alloc::string::String::from(base.as_ref());
+                                    p.push_str("[_]");
+                                    crate::Rc::from(p.as_str())
+                                };
+                                self.provenance
+                                    .set_path(params.value_reg, Some(element_path));
+                            }
+
+                            let loop_next_pc = params.loop_end.saturating_sub(1);
+                            let body_resume_pc = compute_body_resume_pc(self.pc, params.body_start);
+
+                            let loop_context = LoopContext {
+                                mode: *mode,
+                                iteration_state: IterationState::Array {
+                                    items: crate::Rc::new(alloc::vec![]),
+                                    index: 0,
+                                },
+                                key_reg: params.key_reg,
+                                value_reg: params.value_reg,
+                                result_reg: params.result_reg,
+                                body_start: params.body_start,
+                                loop_end: params.loop_end,
+                                loop_next_pc,
+                                body_resume_pc,
+                                success_count: 0,
+                                total_iterations: 0,
+                                current_iteration_failed: false,
+                                #[cfg(feature = "explanations")]
+                                sample_key: None,
+                                #[cfg(feature = "explanations")]
+                                sample_value: None,
+                                #[cfg(feature = "explanations")]
+                                collection_provenance: self
+                                    .provenance
+                                    .get(params.collection)
+                                    .cloned(),
+                                #[cfg(feature = "explanations")]
+                                iteration_index: {
+                                    let id = self.trace.next_iteration_id;
+                                    self.trace.next_iteration_id = id.saturating_add(1);
+                                    id
+                                },
+                            };
+
+                            self.loop_stack.push(loop_context);
+                            self.pc = usize::from(params.body_start.saturating_sub(1));
+                            return Ok(None);
+                        }
+                    }
+                }
+
                 if self.virtual_element_on_non_collection && *mode == LoopMode::Every {
                     // Azure Policy: allOf [*] on non-collection iterates once
                     // over a virtual null element.
