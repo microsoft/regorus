@@ -9,21 +9,21 @@ use alloc::vec::Vec;
 
 use crate::Value;
 
-use super::super::obj_map::{make_value, new_map, obj_insert, val_str, ObjMap};
-use super::super::types::ResolvedEntry;
-use super::helpers::find_key_ci;
+use super::super::obj_map::{
+    for_each_array_object_in_path_ci, make_value, new_map, obj_get_mut_ci, obj_insert, val_str,
+    ObjMap,
+};
+use super::super::types::{PrecomputedSubResourceRewrap, ResolvedEntry};
 
 /// Sub-resource array element envelope fields that remain at the element root.
 const ELEMENT_ENVELOPE_FIELDS: &[&str] = &["name", "type", "id", "etag"];
 
-/// Re-wrap sub-resource array elements by moving non-envelope fields back
-/// under each element's `properties` object.
-pub fn rewrap_sub_resource_arrays(
-    properties: &mut ObjMap,
+/// Precompute sub-resource array rewrap operations for a specific API version.
+pub fn precompute_sub_resource_rewraps(
     sub_arrays: &BTreeSet<String>,
     entries: &BTreeMap<String, ResolvedEntry>,
     api_version: Option<&str>,
-) {
+) -> Vec<PrecomputedSubResourceRewrap> {
     let mut sorted: Vec<&String> = sub_arrays.iter().collect();
     sorted.sort_by(|a, b| {
         let depth_a = a.chars().filter(|&c| c == '.').count();
@@ -31,22 +31,39 @@ pub fn rewrap_sub_resource_arrays(
         depth_b.cmp(&depth_a)
     });
 
-    for sub_array_path in sorted {
-        let envelope_fields = classify_envelope_fields(sub_array_path, entries, api_version);
-        let parts: Vec<&str> = sub_array_path.split('.').collect();
+    sorted
+        .into_iter()
+        .filter_map(|sub_array_path| {
+            let envelope_fields = classify_envelope_fields(sub_array_path, entries, api_version);
+            let parts: Vec<&str> = sub_array_path.split('.').collect();
+            let (&array_name, parent_parts) = parts.split_last()?;
+            Some(PrecomputedSubResourceRewrap {
+                parent_path: parent_parts
+                    .iter()
+                    .map(|part| String::from(*part))
+                    .collect(),
+                array_name: String::from(array_name),
+                envelope_fields,
+            })
+        })
+        .collect()
+}
 
-        if parts.len() == 1 {
-            if let Some(key) = parts.first().and_then(|p| find_key_ci(properties, p)) {
-                if let Some(Value::Array(arr)) = properties.get_mut(key.as_ref()) {
-                    let inner = crate::Rc::make_mut(arr);
-                    for elem in inner.iter_mut() {
-                        *elem = rewrap_element(elem, &envelope_fields);
-                    }
+/// Re-wrap sub-resource array elements by moving non-envelope fields back
+/// under each element's `properties` object.
+pub fn rewrap_precomputed_sub_resource_arrays(
+    properties: &mut ObjMap,
+    ops: &[PrecomputedSubResourceRewrap],
+) {
+    for op in ops {
+        for_each_array_object_in_path_ci(properties, &op.parent_path, &mut |parent| {
+            if let Some(Value::Array(arr)) = obj_get_mut_ci(parent, &op.array_name) {
+                let inner = crate::Rc::make_mut(arr);
+                for elem in inner.iter_mut() {
+                    *elem = rewrap_element(elem, &op.envelope_fields);
                 }
             }
-        } else if let Some((&array_name, parent_parts)) = parts.split_last() {
-            rewrap_nested_array(properties, parent_parts, array_name, &envelope_fields);
-        }
+        });
     }
 }
 
@@ -91,110 +108,6 @@ fn classify_envelope_fields(
     }
 
     envelope
-}
-
-/// Recursively navigate nested arrays and re-wrap elements of the innermost
-/// sub-resource array.
-fn rewrap_nested_array(
-    obj: &mut ObjMap,
-    parent_parts: &[&str],
-    array_name: &str,
-    envelope_fields: &BTreeSet<String>,
-) {
-    if parent_parts.is_empty() {
-        return;
-    }
-
-    let parent_key = match parent_parts.first().and_then(|&p| find_key_ci(obj, p)) {
-        Some(k) => k,
-        None => return,
-    };
-
-    let parent_arr = match obj.get_mut(parent_key.as_ref()) {
-        Some(Value::Array(arr)) => crate::Rc::make_mut(arr),
-        _ => return,
-    };
-
-    for element in parent_arr.iter_mut() {
-        if let Value::Object(obj_rc) = element {
-            let inner_btree = crate::Rc::make_mut(obj_rc);
-
-            if parent_parts.len() > 1 {
-                rewrap_nested_array_in_btree(
-                    inner_btree,
-                    parent_parts.get(1..).unwrap_or_default(),
-                    array_name,
-                    envelope_fields,
-                );
-            } else if let Some(arr_key) = find_key_ci_btree(inner_btree, array_name) {
-                if let Some(Value::Array(arr)) = inner_btree.get_mut(&arr_key) {
-                    let inner = crate::Rc::make_mut(arr);
-                    for inner_elem in inner.iter_mut() {
-                        *inner_elem = rewrap_element(inner_elem, envelope_fields);
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// BTreeMap-native recursion for nested sub-resource array re-wrapping,
-/// avoiding ObjMap round-trips on each array element.
-fn rewrap_nested_array_in_btree(
-    btree: &mut alloc::collections::BTreeMap<Value, Value>,
-    parent_parts: &[&str],
-    array_name: &str,
-    envelope_fields: &BTreeSet<String>,
-) {
-    if parent_parts.is_empty() {
-        return;
-    }
-
-    let parent_key = match parent_parts
-        .first()
-        .and_then(|&p| find_key_ci_btree(btree, p))
-    {
-        Some(k) => k,
-        None => return,
-    };
-
-    let parent_arr = match btree.get_mut(&parent_key) {
-        Some(Value::Array(arr)) => crate::Rc::make_mut(arr),
-        _ => return,
-    };
-
-    for element in parent_arr.iter_mut() {
-        if let Value::Object(obj_rc) = element {
-            let inner_btree = crate::Rc::make_mut(obj_rc);
-
-            if parent_parts.len() > 1 {
-                rewrap_nested_array_in_btree(
-                    inner_btree,
-                    parent_parts.get(1..).unwrap_or_default(),
-                    array_name,
-                    envelope_fields,
-                );
-            } else if let Some(arr_key) = find_key_ci_btree(inner_btree, array_name) {
-                if let Some(Value::Array(arr)) = inner_btree.get_mut(&arr_key) {
-                    let inner = crate::Rc::make_mut(arr);
-                    for inner_elem in inner.iter_mut() {
-                        *inner_elem = rewrap_element(inner_elem, envelope_fields);
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Find a key in a BTreeMap using case-insensitive comparison.
-fn find_key_ci_btree(
-    btree: &alloc::collections::BTreeMap<Value, Value>,
-    key: &str,
-) -> Option<Value> {
-    btree
-        .keys()
-        .find(|k| val_str(k).is_some_and(|s| s.eq_ignore_ascii_case(key)))
-        .cloned()
 }
 
 /// Re-wrap a single sub-resource array element by moving non-envelope

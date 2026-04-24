@@ -18,6 +18,8 @@ use alloc::vec::Vec;
 
 use serde::{Deserialize, Deserializer};
 
+use super::obj_map::{collision_safe_key, is_root_field_collision};
+
 // ─── Top-level response wrappers ────────────────────────────────────────────
 
 /// ARM API response envelope: `{ "value": [...] }`
@@ -334,6 +336,8 @@ pub struct ResolvedAliases {
     /// `properties` wrapper to flatten).  Stored pre-lowercased so consumers
     /// can look up directly without per-call allocation.
     pub sub_resource_arrays: BTreeSet<String>,
+    /// Precomputed casing restoration map built from the resource type's aliases.
+    pub casing_map: BTreeMap<String, String>,
 
     // ── Precomputed aggregate fields ────────────────────────────────────
     /// Precomputed aggregates for the default path (api_version = None).
@@ -350,6 +354,14 @@ pub struct ResolvedAliases {
 /// time rather than reconstructed on every normalize/denormalize call.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VersionedAggregates {
+    /// Top-level normalized keys owned by alias transforms for this version.
+    pub alias_owned_normalized_roots: BTreeSet<String>,
+    /// Precomputed sub-resource array rewrap operations.
+    pub sub_resource_rewraps: Vec<PrecomputedSubResourceRewrap>,
+    /// Precomputed scalar alias operations for normalization.
+    pub scalar_aliases_normalize: Vec<PrecomputedScalarNormalize>,
+    /// Precomputed scalar alias operations for denormalization.
+    pub scalar_aliases_denormalize: Vec<PrecomputedScalarDenormalize>,
     /// Precomputed element-level field remaps for wildcard aliases.
     pub element_remaps: Vec<PrecomputedRemap>,
     /// Precomputed reverse element remaps for denormalization.
@@ -358,6 +370,39 @@ pub struct VersionedAggregates {
     pub array_renames_normalize: Vec<(String, String)>,
     /// Deduplicated array base renames for denormalization: `(short_base_lc, arm_base)`.
     pub array_renames_denormalize: Vec<(String, String)>,
+}
+
+/// A precomputed scalar alias operation used during normalization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrecomputedScalarNormalize {
+    /// Source ARM path segments for reading from raw ARM JSON.
+    pub arm_path_segments: Vec<String>,
+    /// Original-cased alias short name, used when normalizing extracted values.
+    pub short_name: String,
+    /// Normalized output path materialized in `input.resource`.
+    pub normalized_path: String,
+}
+
+/// A precomputed scalar alias operation used during denormalization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrecomputedScalarDenormalize {
+    /// Normalized path segments to read from `input.resource`.
+    pub normalized_path_segments: Vec<String>,
+    /// ARM path to write during denormalization.
+    pub arm_path: String,
+    /// Whether the ARM path should be written under `properties`.
+    pub write_to_properties: bool,
+}
+
+/// A precomputed sub-resource array rewrap operation used during denormalization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrecomputedSubResourceRewrap {
+    /// Path of parent arrays leading to the target array.
+    pub parent_path: Vec<String>,
+    /// Name of the target sub-resource array under each parent.
+    pub array_name: String,
+    /// Lowercased envelope fields that remain at the element root.
+    pub envelope_fields: BTreeSet<String>,
 }
 
 /// A precomputed element-level field remap, stored at `ResolvedAliases` level
@@ -380,7 +425,10 @@ pub struct PrecomputedReverseRemap {
     pub array_chain: Vec<Vec<String>>,
     /// Field to read within each element (was the forward target).
     pub source_field: String,
-    /// Field to write within each element (was the forward source).
+    /// Pre-split segments of `source_field` for zero-allocation CI lookup.
+    pub source_field_segments: Vec<String>,
+    /// Field to write within each element (was the forward source),
+    /// stored with original ARM casing so no runtime casing restoration is needed.
     pub target_field: String,
     /// The forward target field to remove after remapping.
     pub cleanup_field: String,
@@ -396,6 +444,9 @@ pub struct ResolvedEntry {
     pub short_name: String,
     /// The default ARM JSON path.
     pub default_path: String,
+    /// Precomputed normalized key used in the materialized `input.resource`
+    /// object for scalar alias lookup during denormalization.
+    pub normalized_key: String,
     /// Versioned path overrides: `(api_version, arm_path)` pairs.
     pub versioned_paths: Vec<(String, String)>,
     /// Optional metadata from the alias catalog (type, modifiability).
@@ -409,6 +460,10 @@ pub struct ResolvedEntry {
     /// Precomputed path segments for each versioned path, in the same order
     /// as `versioned_paths`.
     pub versioned_path_segments: Vec<Vec<String>>,
+    /// Precomputed normalized output path segments.
+    pub normalized_key_segments: Vec<String>,
+    /// Top-level normalized key that owns this alias in `input.resource`.
+    pub normalized_root_key: String,
 }
 
 impl ResolvedEntry {
@@ -420,19 +475,33 @@ impl ResolvedEntry {
         metadata: Option<AliasPathMetadata>,
     ) -> Self {
         let is_wildcard = short_name.contains("[*]");
+        let normalized_key = if is_root_field_collision(&short_name, &default_path) {
+            collision_safe_key(&short_name)
+        } else {
+            short_name.to_ascii_lowercase()
+        };
         let default_path_segments = default_path.split('.').map(String::from).collect();
         let versioned_path_segments = versioned_paths
             .iter()
             .map(|(_, p)| p.split('.').map(String::from).collect())
             .collect();
+        let normalized_key_segments: Vec<String> =
+            normalized_key.split('.').map(String::from).collect();
+        let normalized_root_key = normalized_key_segments
+            .first()
+            .map(|segment: &String| String::from(segment.trim_end_matches("[*]")))
+            .unwrap_or_else(|| normalized_key.clone());
         Self {
             short_name,
             default_path,
+            normalized_key,
             versioned_paths,
             metadata,
             is_wildcard,
             default_path_segments,
             versioned_path_segments,
+            normalized_key_segments,
+            normalized_root_key,
         }
     }
 
@@ -467,6 +536,33 @@ impl ResolvedEntry {
             }
         }
         &self.default_path_segments
+    }
+
+    /// Return the normalized key materialized in `input.resource` for this alias.
+    pub fn normalized_output_key(&self) -> &str {
+        &self.normalized_key
+    }
+
+    /// Return the normalized output path segments materialized in `input.resource`.
+    pub fn normalized_output_segments(&self) -> &[String] {
+        &self.normalized_key_segments
+    }
+
+    /// Return the top-level normalized key that owns this alias.
+    pub fn normalized_root_key(&self) -> &str {
+        &self.normalized_root_key
+    }
+}
+
+impl ResolvedAliases {
+    /// Select precomputed aggregates for the requested API version.
+    pub fn select_aggregates(&self, api_version: Option<&str>) -> &VersionedAggregates {
+        api_version.map_or(&self.default_aggregates, |ver| {
+            let ver_lc = ver.to_ascii_lowercase();
+            self.versioned_aggregates
+                .get(&ver_lc)
+                .unwrap_or(&self.default_aggregates)
+        })
     }
 }
 

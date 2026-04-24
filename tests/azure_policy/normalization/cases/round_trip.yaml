@@ -447,3 +447,79 @@ cases:
             properties:
               Config:
                 Score: 9
+
+  # Regression: a scalar alias whose short name matches a sub-resource array
+  # base must NOT clobber the flattened array during normalization.  The
+  # scalar precompute must skip entries that collide with detected
+  # sub-resource arrays.
+  - note: scalar alias colliding with sub-resource array base is skipped
+    aliases_json: |
+      [
+        {
+          "namespace": "Microsoft.Network",
+          "resourceTypes": [
+            {
+              "resourceType": "networkSecurityGroups",
+              "aliases": [
+                {
+                  "name": "Microsoft.Network/networkSecurityGroups/securityRules",
+                  "defaultPath": "properties.securityRules",
+                  "paths": []
+                },
+                {
+                  "name": "Microsoft.Network/networkSecurityGroups/securityRules[*].protocol",
+                  "defaultPath": "properties.securityRules[*].properties.protocol",
+                  "paths": []
+                },
+                {
+                  "name": "Microsoft.Network/networkSecurityGroups/securityRules[*].access",
+                  "defaultPath": "properties.securityRules[*].properties.access",
+                  "paths": []
+                },
+                {
+                  "name": "Microsoft.Network/networkSecurityGroups/securityRules[*].name",
+                  "defaultPath": "properties.securityRules[*].name",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: rule1
+            properties:
+              protocol: Tcp
+              access: Allow
+          - name: rule2
+            properties:
+              protocol: "*"
+              access: Deny
+    expected_normalized:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      securityrules:
+        - name: rule1
+          protocol: Tcp
+          access: Allow
+        - name: rule2
+          protocol: "*"
+          access: Deny
+    round_trip: true
+    expected_round_trip:
+      name: myNsg
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: rule1
+            properties:
+              protocol: Tcp
+              access: Allow
+          - name: rule2
+            properties:
+              protocol: "*"
+              access: Deny

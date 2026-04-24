@@ -1086,7 +1086,6 @@ dependencies = [
  "dashmap",
  "data-encoding",
  "globset",
- "hashbrown 0.16.1",
  "icu_casemap",
  "indexmap",
  "ipnet",

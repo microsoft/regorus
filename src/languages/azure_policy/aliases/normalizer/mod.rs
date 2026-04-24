@@ -11,7 +11,7 @@ mod element_remap;
 mod flatten;
 
 // Re-export items used by the denormalizer.
-pub(crate) use element_remap::{apply_element_remap, ElementRemap};
+pub(crate) use element_remap::apply_element_remap_reverse;
 
 use crate::Value;
 

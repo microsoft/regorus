@@ -134,19 +134,23 @@ fn resolve_aliases(
             let mut r = resolved.clone();
             if let Some(ref subs) = case.sub_resource_arrays {
                 r.sub_resource_arrays = subs.iter().map(|s| s.to_ascii_lowercase()).collect();
+                r.rebuild_aggregates();
             }
             return Some(r);
         }
     }
 
     if let Some(ref subs) = case.sub_resource_arrays {
-        return Some(ResolvedAliases {
+        let mut r = ResolvedAliases {
             resource_type: resource_type.unwrap_or_default(),
             entries: Default::default(),
             sub_resource_arrays: subs.iter().map(|s| s.to_ascii_lowercase()).collect(),
+            casing_map: Default::default(),
             default_aggregates: Default::default(),
             versioned_aggregates: Default::default(),
-        });
+        };
+        r.rebuild_aggregates();
+        return Some(r);
     }
 
     None
