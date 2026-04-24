@@ -115,12 +115,12 @@ jobs:
 
     - name: Setup Node.js
       if: matrix.language == 'javascript-typescript'
-      uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
       with:
         node-version: '18'
 
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@c10b8064de6f491fea524254123dbe5e09572f13 # v4.35.1
+      uses: github/codeql-action/init@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2
       with:
         languages: ${{ matrix.language }}
         build-mode: ${{ matrix.build-mode }}
@@ -141,7 +141,7 @@ jobs:
 
     - name: Setup Ruby
       if: matrix.language == 'rust' && contains(matrix.working-directory, 'ruby')
-      uses: ruby/setup-ruby@e65c17d16e57e481586a6a5a0282698790062f92 # v1.300.0
+      uses: ruby/setup-ruby@0cb964fd540e0a24c900370abf38a33466142735 # v1.305.0
       with:
         ruby-version: '3.4.2'
         bundler-cache: true
@@ -188,6 +188,6 @@ jobs:
       run: cargo xtask build-wasm --release
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@c10b8064de6f491fea524254123dbe5e09572f13 # v4.35.1
+      uses: github/codeql-action/analyze@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2
       with:
         category: "/language:${{matrix.language}}"
