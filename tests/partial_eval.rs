@@ -1742,3 +1742,424 @@ allow if {
         serde_json::to_string_pretty(&queries[0]).unwrap()
     );
 }
+
+// ===========================================================================
+// Cases 42–60: PE definitiveness — suppress residuals when result is determined
+// ===========================================================================
+
+/// Case 42: Jamie's bug — one disjunct resolves concretely, the other has assumptions.
+/// The result is definitive; residuals should be empty.
+#[test]
+fn pe_42_definitive_one_branch_concrete() {
+    let policy = r#"
+package test
+default allow = false
+allow if { input.user.role == "admin" }
+allow if { input.resource.is_public == true }
+"#;
+    let input = r#"{"resource": {"is_public": true}}"#;
+    let result = run_pe(policy, Some(input), None, "data.test.allow");
+    eprintln!("pe_42: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(
+        queries.len(),
+        0,
+        "result is definitive (second def concrete) — no residuals expected, got: {}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
+}
+
+/// Case 43: All definitions have unknowns — residuals should be returned.
+#[test]
+fn pe_43_definitive_all_unknown() {
+    let policy = r#"
+package test
+default allow = false
+allow if { input.user.role == "admin" }
+allow if { input.resource.is_public == true }
+"#;
+    let result = run_pe(policy, None, None, "data.test.allow");
+    eprintln!("pe_43: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(
+        queries.len(),
+        2,
+        "both defs have unknowns — 2 disjuncts expected, got: {}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
+}
+
+/// Case 44: Concrete definition comes first (order shouldn't matter).
+#[test]
+fn pe_44_definitive_concrete_first_def() {
+    let policy = r#"
+package test
+default allow = false
+allow if { input.resource.is_public == true }
+allow if { input.user.role == "admin" }
+"#;
+    let input = r#"{"resource": {"is_public": true}}"#;
+    let result = run_pe(policy, Some(input), None, "data.test.allow");
+    eprintln!("pe_44: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(
+        queries.len(),
+        0,
+        "first def concrete — result definitive, no residuals expected"
+    );
+}
+
+/// Case 45: Three definitions, one is always-true (no unknowns at all).
+#[test]
+fn pe_45_definitive_three_defs_one_always_true() {
+    let policy = r#"
+package test
+default allow = false
+allow if { input.user.role == "admin" }
+allow if { input.user.department == "legal" }
+allow if { true }
+"#;
+    let result = run_pe(policy, None, None, "data.test.allow");
+    eprintln!("pe_45: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(
+        queries.len(),
+        0,
+        "third def is always true — result definitive"
+    );
+}
+
+/// Case 46: Default + unknowns only — no definition succeeds concretely.
+#[test]
+fn pe_46_definitive_default_false_all_unknown() {
+    let policy = r#"
+package test
+default allow = false
+allow if { input.user.role == "admin" }
+allow if { input.user.department == "legal" }
+"#;
+    let result = run_pe(policy, None, None, "data.test.allow");
+    eprintln!("pe_46: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert!(
+        queries.len() >= 2,
+        "no concrete def — residuals expected, got: {}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
+}
+
+/// Case 47: Helper rule has assumptions, but another definition of `allow`
+/// succeeds concretely → result is definitive.
+#[test]
+fn pe_47_definitive_helper_rule_concrete() {
+    let policy = r#"
+package test
+default allow = false
+allow if { is_admin }
+allow if { input.resource.is_public == true }
+is_admin if { input.user.role == "admin" }
+"#;
+    let input = r#"{"resource": {"is_public": true}}"#;
+    let result = run_pe(policy, Some(input), None, "data.test.allow");
+    eprintln!("pe_47: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(
+        queries.len(),
+        0,
+        "second def concrete — result definitive despite helper assumptions"
+    );
+}
+
+/// Case 48: Single definition calls helper with unknowns — not definitive.
+#[test]
+fn pe_48_definitive_helper_transitive() {
+    let policy = r#"
+package test
+default allow = false
+allow if { is_privileged }
+is_privileged if { input.user.role == "admin" }
+is_privileged if { input.user.role == "superuser" }
+"#;
+    let result = run_pe(policy, None, None, "data.test.allow");
+    eprintln!("pe_48: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert!(
+        !queries.is_empty(),
+        "helper has unknowns — residuals expected, got: {}",
+        serde_json::to_string_pretty(&result).unwrap()
+    );
+}
+
+/// Case 49: One def concrete + one def uses negation with unknown.
+#[test]
+fn pe_49_definitive_with_negation_concrete() {
+    let policy = r#"
+package test
+default allow = false
+allow if { input.resource.is_public == true }
+allow if { not input.user.blocked }
+"#;
+    let input = r#"{"resource": {"is_public": true}}"#;
+    let result = run_pe(policy, Some(input), None, "data.test.allow");
+    eprintln!("pe_49: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(
+        queries.len(),
+        0,
+        "first def concrete — definitive despite negation assumption in second"
+    );
+}
+
+/// Case 50: Both defs have unknowns (including negation) — not definitive.
+#[test]
+fn pe_50_definitive_negation_no_concrete() {
+    let policy = r#"
+package test
+default allow = false
+allow if { input.user.role == "admin" }
+allow if { not input.user.blocked }
+"#;
+    let result = run_pe(policy, None, None, "data.test.allow");
+    eprintln!("pe_50: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert!(queries.len() >= 2, "no concrete def — residuals expected");
+}
+
+/// Case 51: Partial set — one def concrete, one depends on unknown.
+/// When input is fully unknown, both defs resolve (unknown becomes undefined),
+/// so result is definitive.
+#[test]
+fn pe_51_definitive_partial_set_mixed() {
+    let policy = r#"
+package test
+allowed contains x if { x := "read" }
+allowed contains x if { x := input.extra_perm }
+"#;
+    let result = run_pe(policy, None, None, "data.test.allowed");
+    eprintln!("pe_51: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(
+        queries.len(),
+        0,
+        "both defs resolve concretely — no residuals"
+    );
+}
+
+/// Case 52: Partial set — all definitions concrete.
+#[test]
+fn pe_52_definitive_partial_set_all_concrete() {
+    let policy = r#"
+package test
+allowed contains x if { x := "read" }
+allowed contains x if { x := "write" }
+"#;
+    let result = run_pe(policy, None, None, "data.test.allowed");
+    eprintln!("pe_52: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(
+        queries.len(),
+        0,
+        "all defs concrete — no additional values possible"
+    );
+}
+
+/// Case 53: Partial object — one def concrete, one depends on unknown.
+/// When input is fully unknown, both defs resolve concretely.
+#[test]
+fn pe_53_definitive_partial_object_mixed() {
+    let policy = r#"
+package test
+perms[key] := val if {
+    key := "read"
+    val := true
+}
+perms[key] := val if {
+    key := input.extra_key
+    val := true
+}
+"#;
+    let result = run_pe(policy, None, None, "data.test.perms");
+    eprintln!("pe_53: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(
+        queries.len(),
+        0,
+        "both defs resolve concretely — no residuals"
+    );
+}
+
+/// Case 54: Partial object — all definitions concrete.
+#[test]
+fn pe_54_definitive_partial_object_all_concrete() {
+    let policy = r#"
+package test
+perms[key] := val if {
+    key := "read"
+    val := true
+}
+perms[key] := val if {
+    key := "write"
+    val := false
+}
+"#;
+    let result = run_pe(policy, None, None, "data.test.perms");
+    eprintln!("pe_54: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(queries.len(), 0, "all defs concrete — no residuals");
+}
+
+/// Case 55: Loop with unknown + always-true second def → definitive.
+#[test]
+fn pe_55_definitive_loop_then_concrete() {
+    let policy = r#"
+package test
+default allow = false
+allow if {
+    some role in data.roles
+    role == input.user.role
+}
+allow if { true }
+"#;
+    let data = r#"{"roles": ["admin", "editor"]}"#;
+    let result = run_pe(policy, None, Some(data), "data.test.allow");
+    eprintln!("pe_55: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(
+        queries.len(),
+        0,
+        "second def always-true — result definitive"
+    );
+}
+
+/// Case 56: Comprehension with known data (concrete) + unknown override → definitive.
+#[test]
+fn pe_56_definitive_comprehension_concrete() {
+    let policy = r#"
+package test
+default allow = false
+allow if {
+    count([x | some x in data.items; x > 0]) > 0
+}
+allow if { input.override == true }
+"#;
+    let data = r#"{"items": [1, 2, 3]}"#;
+    let result = run_pe(policy, None, Some(data), "data.test.allow");
+    eprintln!("pe_56: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(
+        queries.len(),
+        0,
+        "first def concrete via comprehension — result definitive"
+    );
+}
+
+/// Case 57: Else chain (unknown primary) + always-true second def → definitive.
+#[test]
+fn pe_57_definitive_else_plus_concrete_def() {
+    let policy = r#"
+package test
+default allow = false
+allow if { input.user.role == "admin" } else := false if { true }
+allow if { true }
+"#;
+    let result = run_pe(policy, None, None, "data.test.allow");
+    eprintln!("pe_57: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(
+        queries.len(),
+        0,
+        "second definition always-true — result definitive"
+    );
+}
+
+/// Case 58: Inconsistent values from two definitions — should not crash.
+#[test]
+fn pe_58_definitive_inconsistent_no_crash() {
+    let policy = r#"
+package test
+level := "high" if { input.x == 1 }
+level := "low" if { true }
+"#;
+    let result = run_pe(policy, None, None, "data.test.level");
+    eprintln!("pe_58: {}", serde_json::to_string_pretty(&result).unwrap());
+    // Just verify it doesn't crash — the exact behavior with inconsistency is
+    // implementation-defined. The key is no panic.
+}
+
+/// Case 59: Function call — inner function has unknown + concrete defs.
+/// Inner assumptions still count in the outer scope (conservative).
+#[test]
+fn pe_59_definitive_function_transitive() {
+    let policy = r#"
+package test
+default allow = false
+allow if { check("admin") }
+check(role) if { role == input.user.role }
+check(role) if { role == "admin" }
+"#;
+    let result = run_pe(policy, None, None, "data.test.allow");
+    eprintln!("pe_59: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert!(
+        !queries.is_empty(),
+        "inner function assumptions count in outer scope — residuals expected"
+    );
+}
+
+/// Case 60: Selective unknowns — only `input.user` is unknown; resource is known.
+#[test]
+fn pe_60_definitive_selective_unknowns() {
+    let policy = r#"
+package test
+default allow = false
+allow if { input.user.role == "admin" }
+allow if { input.resource.public == true }
+"#;
+    let input = r#"{"resource": {"public": true}}"#;
+    let result = run_pe_with_unknowns(
+        policy,
+        Some(input),
+        None,
+        "data.test.allow",
+        Some(vec!["input.user".into()]),
+    );
+    eprintln!("pe_60: {}", serde_json::to_string_pretty(&result).unwrap());
+
+    assert_eq!(result["result"], true);
+    let queries = result["residual_queries"].as_array().unwrap();
+    assert_eq!(
+        queries.len(),
+        0,
+        "second def uses known input.resource — result definitive"
+    );
+}

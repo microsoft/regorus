@@ -282,6 +282,20 @@ pub fn materialize_pe(
     trace: &EvaluationTrace,
     query_result: Value,
 ) -> PartialEvalResult {
+    // If the result is fully determined (at least one definition succeeded
+    // without any assumptions), skip residual computation.
+    if trace.definitive_result {
+        let result = match query_result {
+            Value::Undefined => Value::Null,
+            other => other,
+        };
+        return PartialEvalResult {
+            result,
+            residual_queries: Vec::new(),
+            warnings: trace.warnings.clone(),
+        };
+    }
+
     use alloc::collections::BTreeMap;
 
     // -----------------------------------------------------------------------

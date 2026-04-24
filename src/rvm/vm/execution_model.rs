@@ -80,6 +80,21 @@ pub(super) struct RuleFrameData {
     pub(super) saved_registers: Vec<Value>,
     pub(super) saved_loop_stack: Vec<LoopContext>,
     pub(super) saved_comprehension_stack: Vec<ComprehensionContext>,
+    /// PE mode: assumption count when the current definition started.
+    #[cfg(feature = "explanations")]
+    pub(super) assumptions_at_def_start: usize,
+    /// PE mode: at least one definition succeeded with zero assumptions.
+    #[cfg(feature = "explanations")]
+    pub(super) pe_any_def_resolved: bool,
+    /// PE mode: at least one definition had assumptions.
+    #[cfg(feature = "explanations")]
+    pub(super) pe_any_def_has_assumptions: bool,
+    /// PE mode: a conjunction scope is currently active and needs popping.
+    #[cfg(feature = "explanations")]
+    pub(super) conjunction_scope_active: bool,
+    /// PE mode: the current definition had a body that succeeded.
+    #[cfg(feature = "explanations")]
+    pub(super) current_def_succeeded: bool,
 }
 
 /// Explicit execution stack replacing the Rust call stack

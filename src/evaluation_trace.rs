@@ -304,6 +304,11 @@ pub struct EvaluationTrace {
     /// Stack of active negation scope IDs.  Assumptions recorded while this
     /// stack is non-empty get tagged with the top-of-stack ID.
     pub negation_scope_stack: Vec<u32>,
+    /// Set to `true` during PE mode when the top-level queried rule has at
+    /// least one definition that succeeded without any assumptions.  When set,
+    /// `materialize_pe` returns empty residual queries because the result is
+    /// fully determined by concrete evaluation.
+    pub definitive_result: bool,
 }
 
 impl EvaluationTrace {
@@ -324,6 +329,7 @@ impl EvaluationTrace {
         self.next_conjunction_id = 0;
         self.next_negation_scope_id = 0;
         self.negation_scope_stack.clear();
+        self.definitive_result = false;
     }
 
     /// Returns true if the trace is empty (nothing recorded).

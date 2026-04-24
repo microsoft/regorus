@@ -117,11 +117,19 @@ impl RegoVM {
             }
         }
 
+        #[cfg(feature = "explanations")]
+        let mut pe_any_def_resolved = false;
+        #[cfg(feature = "explanations")]
+        let mut pe_any_def_has_assumptions = false;
+
         'outer: for (def_idx, definition_bodies) in rule_definitions.iter().enumerate() {
             // Each definition gets its own conjunction scope so that assumptions
             // from different definitions form separate disjuncts in the DNF output.
             #[cfg(feature = "explanations")]
             self.push_conjunction_scope();
+
+            #[cfg(feature = "explanations")]
+            let def_assumptions_start = self.trace.assumptions.len();
 
             for (body_entry_point_idx, body_entry_point) in definition_bodies.iter().enumerate() {
                 if let Some(ctx) = self.call_rule_stack.last_mut() {
@@ -183,6 +191,20 @@ impl RegoVM {
                             }
                         }
 
+                        // Track whether this definition resolved without
+                        // assumptions (PE definitiveness detection).
+                        #[cfg(feature = "explanations")]
+                        if self.explanation_settings.eval_mode
+                            == crate::evaluation_trace::EvaluationMode::PartialEval
+                            && self.call_rule_stack.len() == 1
+                        {
+                            if self.trace.assumptions.len() == def_assumptions_start {
+                                pe_any_def_resolved = true;
+                            } else {
+                                pe_any_def_has_assumptions = true;
+                            }
+                        }
+
                         // Independent bodies of partial rules accumulate their
                         // contributions. `else` bodies (and all complete/function
                         // rules) preserve first-success semantics.
@@ -223,6 +245,29 @@ impl RegoVM {
 
             #[cfg(feature = "explanations")]
             self.pop_conjunction_scope();
+        }
+
+        // PE definitiveness: if at least one definition resolved without
+        // assumptions, mark the result as definitive.
+        // - Complete / function rules (OR semantics): ANY resolved → definitive.
+        // - PartialSet / PartialObject (UNION semantics): ALL resolved → definitive.
+        #[cfg(feature = "explanations")]
+        if self.explanation_settings.eval_mode
+            == crate::evaluation_trace::EvaluationMode::PartialEval
+            && self.call_rule_stack.len() == 1
+            && pe_any_def_resolved
+        {
+            let is_definitive =
+                if matches!(rule_info.rule_type, RuleType::Complete) || is_function_call {
+                    // OR semantics: any single resolved def makes result definitive.
+                    true
+                } else {
+                    // UNION semantics: definitive only if NO def had assumptions.
+                    !pe_any_def_has_assumptions
+                };
+            if is_definitive {
+                self.trace.definitive_result = true;
+            }
         }
 
         let final_result = if rule_failed_due_to_inconsistency {
@@ -613,6 +658,16 @@ impl RegoVM {
             saved_registers,
             saved_loop_stack,
             saved_comprehension_stack,
+            #[cfg(feature = "explanations")]
+            assumptions_at_def_start: 0,
+            #[cfg(feature = "explanations")]
+            pe_any_def_resolved: false,
+            #[cfg(feature = "explanations")]
+            pe_any_def_has_assumptions: false,
+            #[cfg(feature = "explanations")]
+            conjunction_scope_active: false,
+            #[cfg(feature = "explanations")]
+            current_def_succeeded: false,
         };
 
         let initial_pc = self
@@ -673,6 +728,8 @@ impl RegoVM {
         rule_info: &RuleInfo,
     ) -> Result<Option<usize>> {
         if frame_data.rule_failed_due_to_inconsistency {
+            #[cfg(feature = "explanations")]
+            self.pop_conjunction_scope_for_frame(frame_data);
             frame_data.phase = RuleFramePhase::Finalizing;
             return Ok(None);
         }
@@ -690,6 +747,14 @@ impl RegoVM {
             };
 
             if frame_data.current_body_index < definition_bodies.len() {
+                // Push a conjunction scope for the first body of each definition.
+                #[cfg(feature = "explanations")]
+                if frame_data.current_body_index == 0 && !frame_data.conjunction_scope_active {
+                    self.push_conjunction_scope();
+                    frame_data.conjunction_scope_active = true;
+                    frame_data.assumptions_at_def_start = self.trace.assumptions.len();
+                }
+
                 if let Some(ctx) = self.call_rule_stack.last_mut() {
                     ctx.current_definition_index = frame_data.current_definition_index;
                     ctx.current_body_index = frame_data.current_body_index;
@@ -728,7 +793,11 @@ impl RegoVM {
                     "rule definition index",
                 )?;
                 frame_data.current_body_index = 0;
+                #[cfg(feature = "explanations")]
+                self.pop_conjunction_scope_for_frame(frame_data);
             } else {
+                #[cfg(feature = "explanations")]
+                self.pop_conjunction_scope_for_frame(frame_data);
                 self.increment_counter(
                     &mut frame_data.current_definition_index,
                     "rule definition index",
@@ -767,6 +836,31 @@ impl RegoVM {
         }
     }
 
+    /// Pop the conjunction scope for the current definition in a suspendable
+    /// rule frame, and track PE definitiveness.
+    #[cfg(feature = "explanations")]
+    fn pop_conjunction_scope_for_frame(&mut self, frame_data: &mut RuleFrameData) {
+        if !frame_data.conjunction_scope_active {
+            return;
+        }
+        frame_data.conjunction_scope_active = false;
+        self.pop_conjunction_scope();
+
+        // Track per-definition assumption resolution for PE definitiveness.
+        if self.explanation_settings.eval_mode
+            == crate::evaluation_trace::EvaluationMode::PartialEval
+            && self.call_rule_stack.len() == 1
+            && frame_data.current_def_succeeded
+        {
+            if self.trace.assumptions.len() == frame_data.assumptions_at_def_start {
+                frame_data.pe_any_def_resolved = true;
+            } else {
+                frame_data.pe_any_def_has_assumptions = true;
+            }
+        }
+        frame_data.current_def_succeeded = false;
+    }
+
     fn rule_frame_after_failure(
         &mut self,
         frame_data: &mut RuleFrameData,
@@ -782,6 +876,10 @@ impl RegoVM {
         rule_info: &RuleInfo,
     ) -> Result<Option<usize>> {
         frame_data.any_body_succeeded = true;
+        #[cfg(feature = "explanations")]
+        {
+            frame_data.current_def_succeeded = true;
+        }
 
         if matches!(frame_data.rule_type, RuleType::Complete) || frame_data.is_function_rule {
             let current_result = self
@@ -829,7 +927,21 @@ impl RegoVM {
         self.rule_frame_schedule_segment(frame_data, rule_info)
     }
 
-    pub(super) fn finalize_rule_frame_data(&mut self, frame_data: RuleFrameData) -> Result<Value> {
+    #[allow(unused_mut)]
+    pub(super) fn finalize_rule_frame_data(
+        &mut self,
+        mut frame_data: RuleFrameData,
+    ) -> Result<Value> {
+        // Pop any active conjunction scope before finalization.
+        #[cfg(feature = "explanations")]
+        self.pop_conjunction_scope_for_frame(&mut frame_data);
+
+        // Extract PE definitiveness state before destructuring.
+        #[cfg(feature = "explanations")]
+        let pe_any_def_resolved = frame_data.pe_any_def_resolved;
+        #[cfg(feature = "explanations")]
+        let pe_any_def_has_assumptions = frame_data.pe_any_def_has_assumptions;
+
         let RuleFrameData {
             return_pc,
             dest_reg,
@@ -991,6 +1103,22 @@ impl RegoVM {
         }
 
         self.pc = return_pc;
+
+        // PE definitiveness for suspendable path.
+        #[cfg(feature = "explanations")]
+        if self.explanation_settings.eval_mode
+            == crate::evaluation_trace::EvaluationMode::PartialEval
+            && pe_any_def_resolved
+        {
+            let is_definitive = if matches!(rule_type, RuleType::Complete) || is_function_rule {
+                true
+            } else {
+                !pe_any_def_has_assumptions
+            };
+            if is_definitive {
+                self.trace.definitive_result = true;
+            }
+        }
 
         Ok(final_value)
     }
