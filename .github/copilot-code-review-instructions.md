@@ -43,6 +43,66 @@ You decide which scale matters most for each change. A one-line fix in
 `value.rs` may need deep big-picture thinking. A large refactor may mostly
 need file-level polish review.
 
+## Review Perspectives
+
+Adopt these perspectives during your review. You cannot launch subagents, so
+**think from each relevant perspective yourself**. Not every perspective applies
+to every change — select the ones that matter based on what changed.
+
+For deeper guidance on any perspective, read the corresponding agent file from
+`.github/agents/` — each contains detailed domain-specific checklists.
+
+### 🔴 Red Teamer (`red-teamer.agent.md`)
+Think like an attacker who has read the source code. Can this change be exploited
+with pathological inputs? Deeply nested JSON → stack overflow? Enormous strings →
+OOM? Policies designed to exploit quadratic evaluation? Can Undefined propagation
+be weaponized to flip a policy decision?
+
+### 🧠 Semantics Expert (`semantics-expert.agent.md`)
+Does this match the OPA/Rego specification exactly? Is Undefined handled correctly
+in every expression? Do interpreter and RVM produce identical results? Are `with`
+overrides restored on exit? Does rule conflict resolution follow spec?
+
+### 🏗️ Architect (`architect.agent.md`)
+Does this respect module boundaries? How does it affect the 9 FFI bindings? Does
+it compile with `--no-default-features`? Will it block planned features (language
+servers, partial evaluation, daemon mode)? Is the API change backward compatible?
+
+### ⚡ Performance Engineer (`performance-engineer.agent.md`)
+Are there allocations in the evaluation hot path? Clone where borrow suffices?
+O(n²) patterns? Temporary collections built just to iterate once? Would this
+change benefit from a benchmark?
+
+### 🧪 Test Engineer (`test-engineer.agent.md`)
+Are new code paths tested? Both interpreter AND RVM paths? Edge cases: empty
+collections, Undefined operands, type mismatches, boundary values? Are tests
+testing behavior (not implementation)? Would property-based testing help?
+
+### 🔒 Security Auditor (`security-auditor.agent.md`)
+What trust boundaries are crossed? Are resource limits preserved? Any new
+dependencies — are they audited and no_std compatible? Actions pinned by SHA?
+Can the error path leak sensitive information?
+
+### 🛡️ Reliability Engineer (`reliability-engineer.agent.md`)
+Is evaluation still deterministic? Any new panic paths (`unwrap`, unchecked index)?
+Are resources bounded and cleaned up on all exit paths? When limits are hit, is
+the error clear and actionable?
+
+### 🔧 Support Engineer (`support-engineer.agent.md`)
+Do error messages include source location? Can an operator diagnose the issue
+without reading regorus source? Are error chains preserved through wrapping?
+Does this change preserve or improve diagnostic information?
+
+### 📋 API Steward (`api-steward.agent.md`)
+Does this change the public API? Is it backward compatible? Does it need a semver
+bump? Are all 9 bindings updated? Is there a deprecation path? Is the CHANGELOG
+updated?
+
+### 🔄 Refactorer (`refactorer.agent.md`)
+Is there duplicated logic that should be shared? Functions over 50 lines that
+should be decomposed? Dead code? Inconsistent patterns? Could newer Rust features
+simplify this?
+
 ## Domain Knowledge
 
 This is what makes regorus unique. Internalize this context and let it inform
