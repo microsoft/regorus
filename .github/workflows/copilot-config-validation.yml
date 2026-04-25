@@ -1,0 +1,145 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+#
+# Validates that Copilot configuration files stay in sync with the codebase.
+# Runs on changes to Copilot config or docs/knowledge/, and weekly to catch drift.
+
+name: Copilot Config Validation
+
+on:
+  pull_request:
+    paths:
+      - '.github/copilot-instructions.md'
+      - '.github/copilot-code-review-instructions.md'
+      - '.github/skills/**'
+      - '.github/workflows/copilot-setup-steps.yml'
+      - 'docs/knowledge/**'
+  push:
+    branches: ["main"]
+    paths:
+      - '.github/copilot-instructions.md'
+      - '.github/copilot-code-review-instructions.md'
+      - '.github/skills/**'
+      - '.github/workflows/copilot-setup-steps.yml'
+      - 'docs/knowledge/**'
+  schedule:
+    # Weekly on Monday at 7:00 AM UTC — catch drift from codebase changes
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-copilot-config:
+    name: Validate Copilot Configuration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Validate YAML syntax
+        run: |
+          echo "Checking copilot-setup-steps.yml..."
+          python3 -c "
+          import yaml, sys
+          with open('.github/workflows/copilot-setup-steps.yml') as f:
+              yaml.safe_load(f)
+          print('  ✓ Valid YAML')
+          "
+
+      - name: Validate knowledge file references
+        run: |
+          echo "Checking that all knowledge files referenced in instructions exist..."
+          # Extract knowledge file references from instructions
+          grep -oP '[a-z-]+\.md' .github/copilot-instructions.md | sort -u > /tmp/referenced.txt
+
+          # List actual knowledge files
+          ls docs/knowledge/*.md 2>/dev/null | xargs -I{} basename {} | sort -u > /tmp/actual.txt
+
+          # Check for references to non-existent files
+          missing=$(comm -23 /tmp/referenced.txt /tmp/actual.txt || true)
+          if [ -n "$missing" ]; then
+            echo "❌ Instructions reference non-existent knowledge files:"
+            echo "$missing"
+            exit 1
+          fi
+          echo "  ✓ All referenced knowledge files exist"
+
+          # Check for knowledge files not referenced in instructions
+          unreferenced=$(comm -13 /tmp/referenced.txt /tmp/actual.txt || true)
+          if [ -n "$unreferenced" ]; then
+            echo "⚠ Knowledge files not referenced in instructions (may be intentional):"
+            echo "$unreferenced"
+          fi
+
+      - name: Validate skill files
+        run: |
+          echo "Checking skill SKILL.md files..."
+          errors=0
+          for skill_dir in .github/skills/*/; do
+            skill_name=$(basename "$skill_dir")
+            skill_file="$skill_dir/SKILL.md"
+
+            if [ ! -f "$skill_file" ]; then
+              echo "❌ $skill_dir missing SKILL.md"
+              errors=$((errors + 1))
+              continue
+            fi
+
+            # Check frontmatter has required fields
+            if ! head -20 "$skill_file" | grep -q "^name:"; then
+              echo "❌ $skill_file missing 'name' in frontmatter"
+              errors=$((errors + 1))
+            fi
+            if ! head -20 "$skill_file" | grep -q "^description:"; then
+              echo "❌ $skill_file missing 'description' in frontmatter"
+              errors=$((errors + 1))
+            fi
+
+            echo "  ✓ $skill_name"
+          done
+
+          if [ $errors -gt 0 ]; then
+            echo "❌ $errors skill validation error(s)"
+            exit 1
+          fi
+          echo "  ✓ All skills valid"
+
+      - name: Check knowledge file freshness indicators
+        run: |
+          echo "Checking for potential staleness..."
+          warnings=0
+
+          # Check if key source files changed more recently than their knowledge files
+          check_freshness() {
+            knowledge_file="$1"
+            shift
+            for src in "$@"; do
+              if [ -f "$src" ] && [ -f "$knowledge_file" ]; then
+                src_commit=$(git log -1 --format=%ct -- "$src" 2>/dev/null || echo 0)
+                doc_commit=$(git log -1 --format=%ct -- "$knowledge_file" 2>/dev/null || echo 0)
+                if [ "$src_commit" -gt "$doc_commit" ] 2>/dev/null; then
+                  echo "⚠ $knowledge_file may be stale — $src changed more recently"
+                  warnings=$((warnings + 1))
+                fi
+              fi
+            done
+          }
+
+          check_freshness docs/knowledge/value-semantics.md src/value.rs
+          check_freshness docs/knowledge/rvm-architecture.md src/rvm/vm/mod.rs
+          check_freshness docs/knowledge/builtin-system.md src/builtins/mod.rs
+          check_freshness docs/knowledge/ffi-boundary.md bindings/ffi/src/lib.rs
+          check_freshness docs/knowledge/engine-api.md src/engine.rs
+          check_freshness docs/knowledge/interpreter-architecture.md src/interpreter.rs
+          check_freshness docs/knowledge/rego-compiler.md src/languages/rego/compiler/mod.rs
+          check_freshness docs/knowledge/compilation-pipeline.md src/scheduler.rs
+
+          if [ $warnings -gt 0 ]; then
+            echo ""
+            echo "⚠ $warnings knowledge file(s) may need updating"
+            echo "  This is informational — not a build failure"
+          else
+            echo "  ✓ No obvious staleness detected"
+          fi
