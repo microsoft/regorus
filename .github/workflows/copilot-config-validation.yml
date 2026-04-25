@@ -51,8 +51,8 @@ jobs:
       - name: Validate knowledge file references
         run: |
           echo "Checking that all knowledge files referenced in instructions exist..."
-          # Extract knowledge file references from instructions
-          grep -oP '[a-z-]+\.md' .github/copilot-instructions.md | sort -u > /tmp/referenced.txt
+          # Extract knowledge file references from the table (lines starting with | `...` |)
+          grep -P '^\| `[a-z-]+\.md`' .github/copilot-instructions.md | grep -oP '`[a-z-]+\.md`' | tr -d '`' | sort -u > /tmp/referenced.txt
 
           # List actual knowledge files
           ls docs/knowledge/*.md 2>/dev/null | xargs -I{} basename {} | sort -u > /tmp/actual.txt
