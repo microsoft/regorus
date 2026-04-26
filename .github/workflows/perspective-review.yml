@@ -1,0 +1,92 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+
+# Multi-perspective AI code review using GitHub Models API.
+# Two modes:
+#   Quick: runs on every push — fast, single-shot, line-level feedback
+#   Deep:  runs on ready_for_review or manual trigger — agentic, cross-file reasoning
+# Review logic: .github/scripts/perspective-review.sh (quick), .github/scripts/deep-review.py (deep)
+
+name: Perspective Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review'
+        required: true
+      mode:
+        description: 'Review mode'
+        required: false
+        default: 'quick'
+        type: choice
+        options:
+          - quick
+          - deep
+
+concurrency:
+  group: perspective-review-${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+  cancel-in-progress: true
+
+permissions:
+  models: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  quick-review:
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mode != 'deep') ||
+      (github.event_name == 'pull_request' &&
+       github.event.action != 'ready_for_review' &&
+       !github.event.pull_request.draft &&
+       github.event.pull_request.user.login != 'dependabot[bot]')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Run quick review
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+        run: |
+          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::Invalid PR number: '${PR_NUMBER}'"
+            exit 1
+          fi
+          chmod +x .github/scripts/perspective-review.sh
+          .github/scripts/perspective-review.sh "${{ github.repository }}" "$PR_NUMBER"
+
+  deep-review:
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'deep') ||
+      (github.event_name == 'pull_request' &&
+       github.event.action == 'ready_for_review' &&
+       github.event.pull_request.user.login != 'dependabot[bot]')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Run deep review
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+        run: |
+          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::Invalid PR number: '${PR_NUMBER}'"
+            exit 1
+          fi
+          python3 .github/scripts/deep-review.py "${{ github.repository }}" "$PR_NUMBER"
+

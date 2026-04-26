@@ -1,0 +1,5 @@
+{
+  "topic": "resource limits and DoS protection — enforce_limit usage, recursion depth, output size caps, timeout handling, and memory bounds",
+  "perspectives": "security-auditor,reliability-engineer,performance-engineer",
+  "description": "Ensures all code paths that could consume unbounded resources are properly guarded."
+}

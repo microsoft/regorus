@@ -1,0 +1,319 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+#
+# Validates that Copilot configuration files stay in sync with the codebase.
+# Runs on changes to Copilot config or docs/knowledge/, and weekly to catch drift.
+
+name: Copilot Config Validation
+
+on:
+  pull_request:
+    paths:
+      - '.github/copilot-instructions.md'
+      - '.github/copilot-code-review-instructions.md'
+      - '.github/agents/**'
+      - '.github/skills/**'
+      - '.github/scripts/**'
+      - '.github/prompts/**'
+      - '.github/workflows/copilot-setup-steps.yml'
+      - '.github/workflows/perspective-review.yml'
+      - '.github/workflows/codebase-audit.yml'
+      - '.github/workflows/copilot-config-validation.yml'
+      - 'docs/knowledge/**'
+  push:
+    branches: ["main"]
+    paths:
+      - '.github/copilot-instructions.md'
+      - '.github/copilot-code-review-instructions.md'
+      - '.github/agents/**'
+      - '.github/skills/**'
+      - '.github/scripts/**'
+      - '.github/prompts/**'
+      - '.github/workflows/copilot-setup-steps.yml'
+      - '.github/workflows/perspective-review.yml'
+      - '.github/workflows/codebase-audit.yml'
+      - '.github/workflows/copilot-config-validation.yml'
+      - 'docs/knowledge/**'
+  schedule:
+    # Weekly on Monday at 7:00 AM UTC — catch drift from codebase changes
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-copilot-config:
+    name: Validate Copilot Configuration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0  # Full history needed for freshness timestamp comparison
+
+      - name: Validate YAML syntax
+        run: |
+          # PyYAML is pre-installed on GitHub-hosted runners; add guard for self-hosted.
+          python3 -c "
+          try:
+              import yaml
+          except ImportError:
+              import subprocess, sys
+              subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--quiet', 'pyyaml'])
+              import yaml
+          import sys
+
+          workflows = [
+              '.github/workflows/copilot-setup-steps.yml',
+              '.github/workflows/perspective-review.yml',
+              '.github/workflows/codebase-audit.yml',
+              '.github/workflows/copilot-config-validation.yml',
+          ]
+          errors = 0
+          for wf in workflows:
+              try:
+                  with open(wf) as f:
+                      yaml.safe_load(f)
+                  print(f'  ✓ {wf}')
+              except FileNotFoundError:
+                  print(f'  ⚠ {wf} not found (skipping)')
+              except Exception as e:
+                  print(f'  ❌ {wf}: {e}')
+                  errors += 1
+          if errors:
+              print(f'{errors} YAML validation error(s)')
+              sys.exit(1)
+          print('All Copilot workflows are valid YAML')
+          "
+
+      - name: Validate knowledge file references
+        run: |
+          echo "Checking that all knowledge files referenced in instructions exist..."
+          # Extract knowledge file references from instructions
+          # Only match .md files in the knowledge file reference table (lines starting with | `)
+          grep -E '^\| `[a-z-]+\.md`' .github/copilot-instructions.md | grep -oE '`[a-z-]+\.md`' | tr -d '`' | sort -u > /tmp/referenced.txt
+
+          # List actual knowledge files
+          ls docs/knowledge/*.md 2>/dev/null | xargs -I{} basename {} | sort -u > /tmp/actual.txt
+
+          # Check for references to non-existent files
+          missing=$(comm -23 /tmp/referenced.txt /tmp/actual.txt || true)
+          if [ -n "$missing" ]; then
+            echo "❌ Instructions reference non-existent knowledge files:"
+            echo "$missing"
+            exit 1
+          fi
+          echo "  ✓ All referenced knowledge files exist"
+
+          # Check for knowledge files not referenced in instructions
+          unreferenced=$(comm -13 /tmp/referenced.txt /tmp/actual.txt || true)
+          if [ -n "$unreferenced" ]; then
+            echo "⚠ Knowledge files not referenced in instructions (may be intentional):"
+            echo "$unreferenced"
+          fi
+
+      - name: Validate skill files
+        run: |
+          echo "Checking skill SKILL.md files..."
+          errors=0
+          for skill_dir in .github/skills/*/; do
+            skill_name=$(basename "$skill_dir")
+            skill_file="$skill_dir/SKILL.md"
+
+            if [ ! -f "$skill_file" ]; then
+              echo "❌ $skill_dir missing SKILL.md"
+              errors=$((errors + 1))
+              continue
+            fi
+
+            # Check frontmatter has required fields
+            if ! head -20 "$skill_file" | grep -q "^name:"; then
+              echo "❌ $skill_file missing 'name' in frontmatter"
+              errors=$((errors + 1))
+            fi
+            if ! head -20 "$skill_file" | grep -q "^description:"; then
+              echo "❌ $skill_file missing 'description' in frontmatter"
+              errors=$((errors + 1))
+            fi
+
+            echo "  ✓ $skill_name"
+          done
+
+          if [ $errors -gt 0 ]; then
+            echo "❌ $errors skill validation error(s)"
+            exit 1
+          fi
+          echo "  ✓ All skills valid"
+
+      - name: Check knowledge file freshness indicators
+        run: |
+          echo "Checking for potential staleness..."
+          warnings=0
+
+          # Check if key source files changed more recently than their knowledge files
+          check_freshness() {
+            knowledge_file="$1"
+            shift
+            for src in "$@"; do
+              if [ -f "$src" ] && [ -f "$knowledge_file" ]; then
+                src_commit=$(git log -1 --format=%ct -- "$src" 2>/dev/null || echo 0)
+                doc_commit=$(git log -1 --format=%ct -- "$knowledge_file" 2>/dev/null || echo 0)
+                if [ "$src_commit" -gt "$doc_commit" ] 2>/dev/null; then
+                  echo "⚠ $knowledge_file may be stale — $src changed more recently"
+                  warnings=$((warnings + 1))
+                fi
+              fi
+            done
+          }
+
+          check_freshness docs/knowledge/value-semantics.md src/value.rs
+          check_freshness docs/knowledge/rvm-architecture.md src/rvm/vm/mod.rs
+          check_freshness docs/knowledge/builtin-system.md src/builtins/mod.rs
+          check_freshness docs/knowledge/ffi-boundary.md bindings/ffi/src/lib.rs
+          check_freshness docs/knowledge/engine-api.md src/engine.rs
+          check_freshness docs/knowledge/interpreter-architecture.md src/interpreter.rs
+          check_freshness docs/knowledge/rego-compiler.md src/languages/rego/compiler/mod.rs
+          check_freshness docs/knowledge/compilation-pipeline.md src/scheduler.rs
+
+          if [ $warnings -gt 0 ]; then
+            echo ""
+            echo "⚠ $warnings knowledge file(s) may need updating"
+            echo "  This is informational — not a build failure"
+          else
+            echo "  ✓ No obvious staleness detected"
+          fi
+
+      - name: Validate agent files
+        run: |
+          echo "Checking agent definition files..."
+          errors=0
+          for agent_file in .github/agents/*.agent.md; do
+            name=$(basename "$agent_file" .agent.md)
+
+            # Check frontmatter has required description field
+            if ! head -20 "$agent_file" | grep -q "^description:"; then
+              echo "❌ $agent_file missing 'description' in frontmatter"
+              errors=$((errors + 1))
+              continue
+            fi
+
+            echo "  ✓ $name"
+          done
+
+          if [ $errors -gt 0 ]; then
+            echo "❌ $errors agent validation error(s)"
+            exit 1
+          fi
+          echo "  ✓ All agents valid ($(ls .github/agents/*.agent.md | wc -l) agents)"
+
+      - name: Validate shell scripts
+        run: |
+          echo "Checking shell scripts..."
+          errors=0
+          for script in .github/scripts/*.sh; do
+            name=$(basename "$script")
+
+            # Syntax check
+            if ! bash -n "$script" 2>/dev/null; then
+              echo "❌ $name has syntax errors"
+              errors=$((errors + 1))
+              continue
+            fi
+
+            # Check for set -euo pipefail
+            if ! head -5 "$script" | grep -q 'set -euo pipefail'; then
+              echo "❌ $name missing 'set -euo pipefail'"
+              errors=$((errors + 1))
+            fi
+
+            # Check for unsafe ${{ }} patterns (should use env: instead)
+            if grep -qE '\$\{\{' "$script" 2>/dev/null; then
+              echo "❌ $name contains \${{ }} expression — use env: in workflow"
+              errors=$((errors + 1))
+            fi
+
+            echo "  ✓ $name"
+          done
+
+          if [ $errors -gt 0 ]; then
+            echo "❌ $errors script validation error(s)"
+            exit 1
+          fi
+          echo "  ✓ All scripts valid"
+
+      - name: Validate Python scripts
+        run: |
+          echo "Checking Python scripts..."
+          errors=0
+          for script in .github/scripts/*.py; do
+            [ -f "$script" ] || continue
+            name=$(basename "$script")
+            if ! python3 -m py_compile "$script" 2>/dev/null; then
+              echo "❌ $name has syntax errors"
+              errors=$((errors + 1))
+            else
+              echo "  ✓ $name"
+            fi
+          done
+
+          if [ $errors -gt 0 ]; then
+            echo "❌ $errors Python validation error(s)"
+            exit 1
+          fi
+          echo "  ✓ All Python scripts valid"
+
+      - name: Validate audit preset JSON
+        run: |
+          echo "Checking audit preset files..."
+          errors=0
+          for preset in .github/prompts/audit-*.json; do
+            name=$(basename "$preset" .json)
+
+            # Valid JSON check
+            if ! jq empty "$preset" 2>/dev/null; then
+              echo "❌ $name is not valid JSON"
+              errors=$((errors + 1))
+              continue
+            fi
+
+            # Required field: topic
+            if ! jq -e '.topic' "$preset" > /dev/null 2>&1; then
+              echo "❌ $name missing 'topic' field"
+              errors=$((errors + 1))
+            fi
+
+            # If script field present, validate name pattern
+            script=$(jq -r '.script // ""' "$preset")
+            if [ -n "$script" ] && [[ ! "$script" =~ ^[a-z0-9-]+$ ]]; then
+              echo "❌ $name has invalid script name: '$script'"
+              errors=$((errors + 1))
+            fi
+
+            echo "  ✓ $name"
+          done
+
+          if [ $errors -gt 0 ]; then
+            echo "❌ $errors preset validation error(s)"
+            exit 1
+          fi
+          echo "  ✓ All presets valid"
+
+      - name: Validate review instructions references
+        run: |
+          echo "Checking review instructions knowledge file references..."
+          # Extract knowledge file references from code review instructions
+          grep -oE '`[a-z-]+\.md`' .github/copilot-code-review-instructions.md 2>/dev/null | tr -d '`' | sort -u > /tmp/review_refs.txt
+
+          missing=0
+          while read -r ref; do
+            if [ ! -f "docs/knowledge/$ref" ]; then
+              echo "❌ copilot-code-review-instructions.md references missing: $ref"
+              missing=$((missing + 1))
+            fi
+          done < /tmp/review_refs.txt
+
+          if [ "$missing" -gt 0 ]; then
+            exit 1
+          fi
+          echo "  ✓ All review instruction knowledge references valid"

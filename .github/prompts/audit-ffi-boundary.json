@@ -1,0 +1,5 @@
+{
+  "topic": "FFI boundary safety — memory safety, panic containment, handle validation, and error propagation across language boundaries",
+  "perspectives": "security-auditor,architect,api-steward,reliability-engineer",
+  "description": "Audits all FFI bindings (C, Python, Ruby, Java, Go, C#, WASM) for safety invariants."
+}

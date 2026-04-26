@@ -1,0 +1,5 @@
+{
+  "topic": "performance bottlenecks — hot paths, unnecessary allocations, redundant cloning, inefficient data structures, and missed optimization opportunities",
+  "perspectives": "performance-engineer,architect,reliability-engineer",
+  "description": "Identifies performance regressions and optimization opportunities across evaluation, compilation, and builtin execution paths."
+}
