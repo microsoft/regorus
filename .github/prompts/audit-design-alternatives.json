@@ -1,0 +1,5 @@
+{
+  "topic": "design alternatives — areas where a different data structure, algorithm, abstraction, or API design would simplify code, improve correctness, or reduce maintenance burden",
+  "perspectives": "architect,semantics-expert,refactorer",
+  "description": "Surfaces structural improvements and alternative approaches that could make the codebase simpler or more robust."
+}

@@ -1,0 +1,5 @@
+{
+  "topic": "security hardening — input validation, resource limits, DoS protection, untrusted policy handling, and supply chain safety",
+  "perspectives": "security-auditor,red-teamer,reliability-engineer",
+  "description": "Comprehensive security review of the policy engine. Focuses on attack surfaces exposed to untrusted inputs."
+}

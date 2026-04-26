@@ -1,0 +1,183 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+
+# Codebase audit using GitHub Models API.
+# Discovers all relevant files for a topic, analyzes them with multiple
+# perspectives, and posts findings as a GitHub Issue.
+#
+# Triggers:
+# - Manual: pick a preset or enter a free-text topic
+# - Scheduled: rotates through presets on a weekly cadence
+
+name: Codebase Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: 'Audit topic (e.g., "error handling patterns", "FFI boundary safety")'
+        required: false
+        default: ''
+        type: string
+      perspectives:
+        description: 'Comma-separated perspectives (or "auto" for topic-based selection)'
+        required: false
+        default: 'auto'
+        type: string
+      preset:
+        description: 'Use a preset audit (overrides topic/perspectives if set)'
+        required: false
+        type: choice
+        options:
+          - '(none)'
+          - 'panic-safety'
+          - 'ffi-boundary'
+          - 'security-hardening'
+          - 'undefined-propagation'
+          - 'resource-limits'
+          - 'performance'
+          - 'design-alternatives'
+          - 'code-cleanup'
+          - 'test-gaps'
+          - 'api-ergonomics'
+          - 'knowledge-accuracy'
+
+  # Runs Mon/Wed/Fri, rotating through all 11 presets.
+  # Full codebase coverage every ~4 weeks.
+  schedule:
+    - cron: '0 8 * * 1'  # Monday at 8:00 UTC
+    - cron: '0 8 * * 3'  # Wednesday at 8:00 UTC
+    - cron: '0 8 * * 5'  # Friday at 8:00 UTC
+
+concurrency:
+  group: codebase-audit-${{ github.event.inputs.preset || 'scheduled' }}
+  cancel-in-progress: false
+
+permissions:
+  models: read
+  contents: read
+  issues: write
+
+jobs:
+  codebase-audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Resolve inputs
+        id: resolve
+        env:
+          INPUT_PRESET: ${{ github.event.inputs.preset }}
+          INPUT_TOPIC: ${{ github.event.inputs.topic }}
+          INPUT_PERSPECTIVES: ${{ github.event.inputs.perspectives }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          PRESET="$INPUT_PRESET"
+          TOPIC="$INPUT_TOPIC"
+          PERSPECTIVES="$INPUT_PERSPECTIVES"
+
+          # Reject inputs with newlines or control characters (GITHUB_OUTPUT injection)
+          for val in "$PRESET" "$TOPIC" "$PERSPECTIVES"; do
+            if [[ "$val" == *$'\n'* ]] || [[ "$val" == *$'\r'* ]]; then
+              echo "::error::Input contains newlines — rejected"
+              exit 1
+            fi
+          done
+
+          # For scheduled runs, rotate through presets by day-of-year.
+          # With 3 runs/week and 11 presets, full coverage in ~4 weeks.
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            PRESETS=(
+              panic-safety
+              ffi-boundary
+              security-hardening
+              undefined-propagation
+              resource-limits
+              performance
+              design-alternatives
+              code-cleanup
+              test-gaps
+              api-ergonomics
+              knowledge-accuracy
+            )
+            DAY_OF_YEAR=$(date +%j)
+            INDEX=$((10#$DAY_OF_YEAR % ${#PRESETS[@]}))
+            PRESET="${PRESETS[$INDEX]}"
+            echo "Scheduled run: day ${DAY_OF_YEAR} → preset '${PRESET}'"
+          fi
+
+          # Resolve preset to topic + perspectives + optional script override
+          SCRIPT=""
+          if [ "$PRESET" != "(none)" ] && [ -n "$PRESET" ]; then
+            PRESET_FILE=".github/prompts/audit-${PRESET}.json"
+            if [ -f "$PRESET_FILE" ]; then
+              TOPIC=$(jq -r '.topic' "$PRESET_FILE")
+              PERSPECTIVES=$(jq -r '.perspectives // "auto"' "$PRESET_FILE")
+              SCRIPT=$(jq -r '.script // ""' "$PRESET_FILE")
+              echo "Using preset: ${PRESET} → topic='${TOPIC}'"
+            else
+              echo "::warning::Preset file not found: ${PRESET_FILE}"
+            fi
+          fi
+
+          if [ -z "$TOPIC" ]; then
+            echo "::error::No topic specified. Use a preset or enter a topic."
+            exit 1
+          fi
+
+          # Re-validate after preset resolution: reject newlines/carriage returns
+          # (preset JSON files in PRs could inject GITHUB_OUTPUT values)
+          for var_name in TOPIC PERSPECTIVES SCRIPT; do
+            eval "val=\$$var_name"
+            case "$val" in
+              *$'\n'*|*$'\r'*)
+                echo "::error::${var_name} contains newline after preset resolution — rejected"
+                exit 1
+                ;;
+            esac
+          done
+
+          # Validate script name: only lowercase alphanumeric and hyphens allowed
+          if [ -n "$SCRIPT" ]; then
+            if [[ ! "$SCRIPT" =~ ^[a-z0-9-]+$ ]]; then
+              echo "::error::Invalid script name '${SCRIPT}' — must be [a-z0-9-]+ only"
+              exit 1
+            fi
+          fi
+
+          # Validate PERSPECTIVES: only comma-separated lowercase-alphanumeric-hyphen tokens
+          if [ -n "$PERSPECTIVES" ] && [ "$PERSPECTIVES" != "auto" ]; then
+            if [[ ! "$PERSPECTIVES" =~ ^[a-z0-9,-]+$ ]]; then
+              echo "::error::Invalid perspectives '${PERSPECTIVES}' — must be [a-z0-9,-]+ or 'auto'"
+              exit 1
+            fi
+          fi
+
+          echo "topic=${TOPIC}" >> "$GITHUB_OUTPUT"
+          echo "perspectives=${PERSPECTIVES}" >> "$GITHUB_OUTPUT"
+          echo "script=${SCRIPT}" >> "$GITHUB_OUTPUT"
+
+      - name: Run codebase audit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_SCRIPT: ${{ steps.resolve.outputs.script }}
+          AUDIT_TOPIC: ${{ steps.resolve.outputs.topic }}
+          AUDIT_PERSPECTIVES: ${{ steps.resolve.outputs.perspectives }}
+        run: |
+          if [ -n "$AUDIT_SCRIPT" ]; then
+            # Specialized audit script (e.g., knowledge-accuracy)
+            chmod +x ".github/scripts/${AUDIT_SCRIPT}.sh"
+            ".github/scripts/${AUDIT_SCRIPT}.sh" "${{ github.repository }}"
+          else
+            # Generic topic-based audit
+            chmod +x .github/scripts/codebase-audit.sh
+            .github/scripts/codebase-audit.sh \
+              "${{ github.repository }}" \
+              "$AUDIT_TOPIC" \
+              "$AUDIT_PERSPECTIVES"
+          fi

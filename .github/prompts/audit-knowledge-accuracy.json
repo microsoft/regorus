@@ -1,0 +1,6 @@
+{
+  "topic": "knowledge documentation accuracy — compare docs/knowledge/*.md against actual source code for inaccuracies, stale descriptions, deleted files, and coverage gaps",
+  "perspectives": "auto",
+  "script": "knowledge-accuracy",
+  "description": "Compares each knowledge file against its referenced source code. Detects factual errors, stale content from refactoring, deleted/renamed files, and important source files with no documentation."
+}

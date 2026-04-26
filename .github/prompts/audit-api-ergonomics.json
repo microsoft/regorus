@@ -1,0 +1,5 @@
+{
+  "topic": "API ergonomics — confusing public interfaces, missing builder patterns, inconsistent naming, poor error messages, and documentation gaps in the public API",
+  "perspectives": "api-steward,dx-engineer,architect",
+  "description": "Reviews the public API surface from the perspective of downstream consumers across all 9 language bindings."
+}
