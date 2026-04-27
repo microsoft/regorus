@@ -1,0 +1,170 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Cosmos DB/Cosmos_Locations_Deny
+# Real Azure Policy: "Azure Cosmos DB allowed locations"
+# Source: regolator/policyDefinitions/Cosmos DB/Cosmos_Locations_Deny.json
+#
+# Features exercised:
+#   - count with where clause
+#   - Chained template functions in where: replace(toLower(first(field(...))), ' ', '')
+#   - count result compared to length(field(...)) via notEquals
+#   - Parameterized effect with case-variant allowedValues
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Azure Cosmos DB allowed locations",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "listOfAllowedLocations": {
+          "type": "Array",
+          "metadata": {
+            "displayName": "Allowed locations",
+            "strongType": "location"
+          }
+        },
+        "policyEffect": {
+          "type": "String",
+          "allowedValues": ["audit", "Audit", "deny", "Deny", "disabled", "Disabled"],
+          "defaultValue": "Deny"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.DocumentDB/databaseAccounts"
+            },
+            {
+              "count": {
+                "field": "Microsoft.DocumentDB/databaseAccounts/Locations[*]",
+                "where": {
+                  "value": "[replace(toLower(first(field('Microsoft.DocumentDB/databaseAccounts/Locations[*].locationName'))), ' ', '')]",
+                  "in": "[parameters('listOfAllowedLocations')]"
+                }
+              },
+              "notEquals": "[length(field('Microsoft.DocumentDB/databaseAccounts/Locations[*]'))]"
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('policyEffect')]"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # All locations allowed → pass
+  # =========================================================================
+
+  - note: pass_all_locations_in_allowed_list
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-compliant"
+      properties:
+        Locations:
+          - locationName: "East US"
+          - locationName: "West US"
+    parameters:
+      listOfAllowedLocations: ["eastus", "westus"]
+    want_undefined: true
+
+  - note: pass_single_location_allowed
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-single"
+      properties:
+        Locations:
+          - locationName: "East US"
+    parameters:
+      listOfAllowedLocations: ["eastus", "westus", "centralus"]
+    want_undefined: true
+
+  # =========================================================================
+  # Location not in allowed list → deny
+  # =========================================================================
+
+  - note: deny_location_not_allowed
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-bad-region"
+      properties:
+        Locations:
+          - locationName: "East US"
+          - locationName: "North Europe"
+    parameters:
+      listOfAllowedLocations: ["eastus", "westus"]
+    want_effect: "Deny"
+
+  - note: deny_all_locations_disallowed
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-all-bad"
+      properties:
+        Locations:
+          - locationName: "South East Asia"
+          - locationName: "Japan East"
+    parameters:
+      listOfAllowedLocations: ["eastus", "westus"]
+    want_effect: "Deny"
+
+  - note: deny_one_of_three_disallowed
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-one-bad"
+      properties:
+        Locations:
+          - locationName: "East US"
+          - locationName: "West US"
+          - locationName: "Brazil South"
+    parameters:
+      listOfAllowedLocations: ["eastus", "westus"]
+    want_effect: "Deny"
+
+  # =========================================================================
+  # Edge: location names with spaces normalized by replace+toLower
+  # =========================================================================
+
+  - note: pass_location_with_spaces_normalized
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-spaces"
+      properties:
+        Locations:
+          - locationName: "Central US"
+    parameters:
+      listOfAllowedLocations: ["centralus"]
+    want_undefined: true
+
+  - note: pass_mixed_case_location
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-case"
+      properties:
+        Locations:
+          - locationName: "EAST US"
+    parameters:
+      listOfAllowedLocations: ["eastus"]
+    want_undefined: true
+
+  # =========================================================================
+  # Wrong type
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "not-cosmos"
+      properties:
+        Locations:
+          - locationName: "East US"
+    parameters:
+      listOfAllowedLocations: ["westus"]
+    want_undefined: true

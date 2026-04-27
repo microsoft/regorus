@@ -1,0 +1,182 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Monitoring DINE existenceCondition — field + count + nested count
+# Reproduces the failure pattern from ServiceHealthSubscriptionLevelAlertRules_DINE
+#
+# Uses bare field names (no FQ alias prefix, no alias catalog) to test
+# existence logic independent of alias resolution.
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Test DINE existenceCondition",
+      "policyType": "BuiltIn",
+      "mode": "All",
+      "parameters": {
+        "effect": {
+          "type": "String",
+          "defaultValue": "DeployIfNotExists",
+          "allowedValues": ["DeployIfNotExists", "AuditIfNotExists", "Disabled"]
+        },
+        "enableAlertRule": {
+          "type": "String",
+          "defaultValue": "true",
+          "allowedValues": ["true", "false"]
+        },
+        "eventTypes": {
+          "type": "Array",
+          "defaultValue": ["Service Issues", "Planned Maintenance", "Health Advisories", "Security Advisories"]
+        },
+        "actionGroups": {
+          "type": "Array",
+          "defaultValue": []
+        },
+        "createNewActionGroup": {
+          "type": "String",
+          "defaultValue": "true",
+          "allowedValues": ["true", "false"]
+        },
+        "newActionGroupName": {
+          "type": "String",
+          "defaultValue": "ag-ServiceHealthAlertActionGroup"
+        },
+        "resourceGroupName": {
+          "type": "String",
+          "defaultValue": "rg-serviceHealthAlert"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Resources/subscriptions"
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "type": "Microsoft.Insights/ActivityLogAlerts",
+            "existenceCondition": {
+              "allOf": [
+                {
+                  "field": "enabled",
+                  "equals": "[parameters('enableAlertRule')]"
+                },
+                {
+                  "count": {
+                    "field": "condition.allOf[*]",
+                    "where": {
+                      "allOf": [
+                        {
+                          "field": "condition.allOf[*].field",
+                          "equals": "category"
+                        },
+                        {
+                          "field": "condition.allOf[*].equals",
+                          "equals": "ServiceHealth"
+                        }
+                      ]
+                    }
+                  },
+                  "greaterOrEquals": 1
+                },
+                {
+                  "count": {
+                    "field": "condition.allOf[*].anyOf[*]",
+                    "where": {
+                      "field": "condition.allOf[*].anyOf[*].field",
+                      "equals": "properties.incidentType"
+                    }
+                  },
+                  "equals": "[if(contains(parameters('eventTypes'), 'Health Advisories'), add(length(parameters('eventTypes')), 2), length(parameters('eventTypes')))]"
+                },
+                {
+                  "count": {
+                    "field": "actions.actionGroups[*]"
+                  },
+                  "equals": "[add(length(parameters('actionGroups')), if(equals(parameters('createNewActionGroup'), 'true'), 1, 0))]"
+                }
+              ]
+            },
+            "existenceScope": "resourceGroup",
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ]
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Related resource matches all conditions → compliant (Undefined)
+  # =========================================================================
+  - note: compliant_all_conditions
+    resource:
+      type: "Microsoft.Resources/subscriptions"
+      id: "/subscriptions/00000000-0000-0000-0000-000000000000"
+    parameters:
+      effect: "AuditIfNotExists"
+    host_await:
+      - response:
+          enabled: "true"
+          scopes:
+            - "/subscriptions/00000000-0000-0000-0000-000000000000"
+          condition:
+            allof:
+              - field: "category"
+                equals: "ServiceHealth"
+              - anyof:
+                  - field: "properties.incidentType"
+                    equals: "Incident"
+                  - field: "properties.incidentType"
+                    equals: "Maintenance"
+                  - field: "properties.incidentType"
+                    equals: "Informational"
+                  - field: "properties.incidentType"
+                    equals: "ActionRequired"
+                  - field: "properties.incidentType"
+                    equals: "Security"
+                  - field: "properties.incidentType"
+                    equals: "Retirement"
+          actions:
+            actiongroups:
+              - actiongroupid: "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-serviceHealthAlert/providers/Microsoft.Insights/actionGroups/ag-ServiceHealthAlertActionGroup"
+    want_undefined: true
+
+  # =========================================================================
+  # Related resource not found → effect fires
+  # =========================================================================
+  - note: no_related_resource
+    resource:
+      type: "Microsoft.Resources/subscriptions"
+      id: "/subscriptions/00000000-0000-0000-0000-000000000000"
+    parameters:
+      effect: "AuditIfNotExists"
+    host_await:
+      - response: null
+    want_effect: "AuditIfNotExists"
+
+  # =========================================================================
+  # Related resource found but enabled is false → effect fires
+  # =========================================================================
+  - note: enabled_false
+    resource:
+      type: "Microsoft.Resources/subscriptions"
+      id: "/subscriptions/00000000-0000-0000-0000-000000000000"
+    parameters:
+      effect: "AuditIfNotExists"
+    host_await:
+      - response:
+          enabled: "false"
+          condition:
+            allof:
+              - field: "category"
+                equals: "ServiceHealth"
+              - anyof:
+                  - field: "properties.incidentType"
+                    equals: "Incident"
+          actions:
+            actiongroups:
+              - actiongroupid: "something"
+    want_effect: "AuditIfNotExists"

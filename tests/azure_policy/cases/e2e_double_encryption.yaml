@@ -1,0 +1,130 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Compute/DoubleEncryptionRequired_Deny
+# Real Azure Policy: "Managed disks should be double encrypted with both
+#   platform-managed and customer-managed keys"
+# Features: allOf, field (type + alias), equals, notEquals, parameters() with
+#   defaultValue and allowedValues, parameterized effect
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Managed disks should be double encrypted",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "string",
+          "defaultValue": "Audit",
+          "allowedValues": ["Audit", "Deny", "Disabled"],
+          "metadata": {
+            "displayName": "Effect",
+            "description": "Enable or disable the execution of the policy"
+          }
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Compute/diskEncryptionSets"
+            },
+            {
+              "field": "Microsoft.Compute/diskEncryptionSets/encryptionType",
+              "notEquals": "EncryptionAtRestWithPlatformAndCustomerKeys"
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Audit (default effect) — wrong encryption type
+  # =========================================================================
+
+  - note: audit_single_key_encryption
+    resource:
+      type: "Microsoft.Compute/diskEncryptionSets"
+      name: "myDES"
+      location: "eastus"
+      properties:
+        encryptionType: "EncryptionAtRestWithCustomerKey"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # No effect — correct double encryption
+  # =========================================================================
+
+  - note: pass_double_encryption
+    resource:
+      type: "Microsoft.Compute/diskEncryptionSets"
+      name: "myDES"
+      location: "eastus"
+      properties:
+        encryptionType: "EncryptionAtRestWithPlatformAndCustomerKeys"
+    want_undefined: true
+
+  # =========================================================================
+  # No effect — wrong resource type
+  # =========================================================================
+
+  - note: skip_wrong_type
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "myVM"
+      location: "eastus"
+      properties:
+        hardwareProfile:
+          vmSize: "Standard_D2s_v3"
+    want_undefined: true
+
+  # =========================================================================
+  # Deny — explicit effect parameter override
+  # =========================================================================
+
+  - note: deny_with_explicit_effect
+    resource:
+      type: "Microsoft.Compute/diskEncryptionSets"
+      name: "myDES"
+      location: "westus"
+      properties:
+        encryptionType: "EncryptionAtRestWithCustomerKey"
+    parameters:
+      effect: "Deny"
+    want_effect: "Deny"
+
+  # =========================================================================
+  # Audit — platform-only encryption (not double)
+  # =========================================================================
+
+  - note: audit_platform_only_encryption
+    resource:
+      type: "Microsoft.Compute/diskEncryptionSets"
+      name: "platformDES"
+      location: "eastus"
+      properties:
+        encryptionType: "EncryptionAtRestWithPlatformKey"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # No effect — encryption type missing (field is undefined/null)
+  # notEquals with null LHS: Azure Policy treats missing field as null,
+  # and null notEquals "string" is true → should fire
+  # =========================================================================
+
+  - note: audit_missing_encryption_type
+    resource:
+      type: "Microsoft.Compute/diskEncryptionSets"
+      name: "noPropDES"
+      location: "eastus"
+      properties: {}
+    want_effect: "Audit"

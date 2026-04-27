@@ -1,0 +1,247 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Managed Identity/FIC_LimitToAzureKubernetesIssuer
+# Real Azure Policy: "Managed Identity Federated Credentials from Azure
+#                     Kubernetes should be from trusted sources"
+# Source: regolator/policyDefinitions/Managed Identity/FIC_LimitToAzureKubernetesIssuer.json
+#
+# Features exercised:
+#   - Value count (count over parameter arrays)
+#   - Complex nested if/split/length value expressions to parse issuer URL
+#   - Double negation: not { anyOf [...] }
+#   - Child resource type (sub-resource)
+#   - `like` operator with wildcard pattern
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "[Preview]: Managed Identity Federated Credentials from Azure Kubernetes should be from trusted sources",
+      "policyType": "BuiltIn",
+      "mode": "All",
+      "parameters": {
+        "allowedTenants": {
+          "type": "Array",
+          "metadata": {
+            "displayName": "Allowed tenants",
+            "description": "The list of allowed Azure AD tenant ID's of AKS OIDC issuers. Empty to allow all tenants."
+          }
+        },
+        "allowedLocations": {
+          "type": "Array",
+          "defaultValue": [],
+          "metadata": {
+            "displayName": "Allowed locations",
+            "description": "The list of allowed locations for AKS OIDC issuers. Empty to allow any location."
+          }
+        },
+        "allowedClusterExceptions": {
+          "type": "Array",
+          "defaultValue": [],
+          "metadata": {
+            "displayName": "Allowed Exception Clusters",
+            "description": "The list of specific cluster ids that will be exceptions to the location and tenant rules."
+          }
+        },
+        "effect": {
+          "type": "String",
+          "defaultValue": "Audit",
+          "allowedValues": ["Audit", "Disabled", "Deny"]
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials"
+            },
+            {
+              "allOf": [
+                {
+                  "value": "[if(greaterOrEquals(length(split(field('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/issuer'),'/')),3),split(field('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/issuer'),'/')[2],'')]",
+                  "like": "*.oic.prod-aks.azure.com"
+                },
+                {
+                  "not": {
+                    "anyOf": [
+                      {
+                        "allOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "count": {
+                                  "value": "[parameters('allowedLocations')]"
+                                },
+                                "equals": 0
+                              },
+                              {
+                                "value": "[if(greaterOrEquals(length(split(if(greaterOrEquals(length(split(field('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/issuer'),'/')),3),split(field('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/issuer'),'/')[2],''), '.')),1),split(if(greaterOrEquals(length(split(field('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/issuer'),'/')),3),split(field('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/issuer'),'/')[2],''), '.')[0],'')]",
+                                "in": "[parameters('allowedLocations')]"
+                              }
+                            ]
+                          },
+                          {
+                            "anyOf": [
+                              {
+                                "count": {
+                                  "value": "[parameters('allowedTenants')]"
+                                },
+                                "equals": 0
+                              },
+                              {
+                                "value": "[if(greaterOrEquals(length(split(field('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/issuer'),'/')),4),split(field('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/issuer'),'/')[3],'')]",
+                                "in": "[parameters('allowedTenants')]"
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "value": "[if(greaterOrEquals(length(split(field('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/issuer'),'/')),5),split(field('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/issuer'),'/')[4],'')]",
+                        "in": "[parameters('allowedClusterExceptions')]"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Audit — untrusted AKS issuer (wrong tenant AND wrong location)
+  # =========================================================================
+
+  - note: audit_untrusted_tenant_and_location
+    resource:
+      type: "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials"
+      name: "aks-fic"
+      properties:
+        issuer: "https://eastus.oic.prod-aks.azure.com/bad-tenant-id/some-cluster-id"
+        subject: "system:serviceaccount:default:workload-identity-sa"
+    parameters:
+      allowedTenants: ["good-tenant-id"]
+      allowedLocations: ["westus"]
+      allowedClusterExceptions: []
+    want_effect: "Audit"
+
+  # =========================================================================
+  # Audit — correct location but wrong tenant
+  # =========================================================================
+
+  - note: audit_wrong_tenant_correct_location
+    resource:
+      type: "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials"
+      name: "aks-fic"
+      properties:
+        issuer: "https://eastus.oic.prod-aks.azure.com/bad-tenant-id/some-cluster-id"
+        subject: "system:serviceaccount:default:workload-identity-sa"
+    parameters:
+      allowedTenants: ["good-tenant-id"]
+      allowedLocations: ["eastus"]
+      allowedClusterExceptions: []
+    want_effect: "Audit"
+
+  # =========================================================================
+  # Pass — allowed tenant and allowed location
+  # =========================================================================
+
+  - note: pass_allowed_tenant_and_location
+    resource:
+      type: "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials"
+      name: "aks-fic"
+      properties:
+        issuer: "https://eastus.oic.prod-aks.azure.com/good-tenant-id/some-cluster-id"
+        subject: "system:serviceaccount:default:workload-identity-sa"
+    parameters:
+      allowedTenants: ["good-tenant-id", "other-tenant-id"]
+      allowedLocations: ["eastus", "westus"]
+      allowedClusterExceptions: []
+    want_undefined: true
+
+  # =========================================================================
+  # Pass — allowed tenant, empty allowedLocations (any location allowed)
+  # =========================================================================
+
+  - note: pass_allowed_tenant_any_location
+    resource:
+      type: "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials"
+      name: "aks-fic"
+      properties:
+        issuer: "https://westeurope.oic.prod-aks.azure.com/good-tenant-id/some-cluster-id"
+        subject: "system:serviceaccount:default:workload-identity-sa"
+    parameters:
+      allowedTenants: ["good-tenant-id"]
+      allowedLocations: []
+      allowedClusterExceptions: []
+    want_undefined: true
+
+  # =========================================================================
+  # Pass — empty allowedTenants and empty allowedLocations (allow all)
+  # =========================================================================
+
+  - note: pass_empty_tenants_and_locations_allows_all
+    resource:
+      type: "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials"
+      name: "aks-fic"
+      properties:
+        issuer: "https://australiaeast.oic.prod-aks.azure.com/any-tenant/any-cluster"
+        subject: "system:serviceaccount:kube-system:my-sa"
+    parameters:
+      allowedTenants: []
+      allowedLocations: []
+      allowedClusterExceptions: []
+    want_undefined: true
+
+  # =========================================================================
+  # Pass — cluster ID is in the exceptions list (bypasses tenant/location)
+  # =========================================================================
+
+  - note: pass_cluster_in_exceptions
+    resource:
+      type: "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials"
+      name: "aks-fic"
+      properties:
+        issuer: "https://eastus.oic.prod-aks.azure.com/untrusted-tenant/special-cluster-id"
+        subject: "system:serviceaccount:default:workload-identity-sa"
+    parameters:
+      allowedTenants: ["other-tenant"]
+      allowedLocations: ["westus"]
+      allowedClusterExceptions: ["special-cluster-id"]
+    want_undefined: true
+
+  # =========================================================================
+  # Pass — non-AKS issuer (GitHub Actions OIDC)
+  # =========================================================================
+
+  - note: pass_non_aks_issuer
+    resource:
+      type: "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials"
+      name: "github-fic"
+      properties:
+        issuer: "https://token.actions.githubusercontent.com"
+        subject: "repo:myorg/myrepo:ref:refs/heads/main"
+    parameters:
+      allowedTenants: ["some-tenant"]
+    want_undefined: true
+
+  # =========================================================================
+  # Skip — wrong resource type entirely
+  # =========================================================================
+
+  - note: skip_wrong_resource_type
+    resource:
+      type: "Microsoft.ManagedIdentity/userAssignedIdentities"
+      name: "my-identity"
+      properties: {}
+    want_undefined: true

@@ -1,0 +1,103 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Monitoring/ActivityLog_CaptureAllRegions
+# Features: AuditIfNotExists with inline existenceCondition using
+# implicit allOf over [*] wildcard fields + not-wrapping.
+#
+# NOTE: Without an alias catalog, fully-qualified field paths like
+# "Microsoft.Insights/logProfiles/locations[*]" resolve as raw object
+# keys. The test response structure mirrors this resolution.
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Azure Monitor should collect activity logs from all regions",
+      "policyType": "BuiltIn",
+      "mode": "All",
+      "parameters": {
+        "effect": {
+          "type": "string",
+          "defaultValue": "AuditIfNotExists",
+          "allowedValues": ["AuditIfNotExists", "Disabled"]
+        }
+      },
+      "policyRule": {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Resources/subscriptions"
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "type": "Microsoft.Insights/logProfiles",
+            "existenceCondition": {
+              "allOf": [
+                {
+                  "not": {
+                    "field": "Microsoft.Insights/logProfiles/locations[*]",
+                    "notEquals": "eastus"
+                  }
+                },
+                {
+                  "not": {
+                    "field": "Microsoft.Insights/logProfiles/locations[*]",
+                    "notEquals": "westus"
+                  }
+                },
+                {
+                  "not": {
+                    "field": "Microsoft.Insights/logProfiles/locations[*]",
+                    "notEquals": "global"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # Related resource not found → non-compliant
+  - note: non_compliant_resource_not_found
+    resource:
+      type: "Microsoft.Resources/subscriptions"
+      name: "sub-a"
+      properties: {}
+    host_await:
+      - key:
+          operation: "lookup_related_resources"
+          type: "Microsoft.Insights/logProfiles"
+        response: null
+    want_effect: "AuditIfNotExists"
+
+  # Related resource found with all required regions → compliant
+  - note: compliant_all_regions_present
+    resource:
+      type: "Microsoft.Resources/subscriptions"
+      name: "sub-b"
+      properties: {}
+    host_await:
+      - response:
+          Microsoft:
+            "Insights/logProfiles/locations":
+              - eastus
+              - westus
+              - global
+    want_undefined: true
+
+  # Related resource found but missing a region → non-compliant
+  - note: non_compliant_missing_region
+    resource:
+      type: "Microsoft.Resources/subscriptions"
+      name: "sub-c"
+      properties: {}
+    host_await:
+      - response:
+          Microsoft:
+            "Insights/logProfiles/locations":
+              - eastus
+              - westus
+    want_effect: "AuditIfNotExists"

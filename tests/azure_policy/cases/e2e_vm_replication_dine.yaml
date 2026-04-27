@@ -1,0 +1,342 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Compute/VirtualMachineReplication_AzureSiteRecovery_DINE
+# Real Azure Policy: "Configure disaster recovery on virtual machines by
+#                     enabling replication via Azure Site Recovery"
+# Source: regolator/policyDefinitions/Compute/VirtualMachineReplication_AzureSiteRecovery_DINE.json
+#
+# Features exercised:
+#   - DeployIfNotExists effect
+#   - concat('tags[', parameters('tagName'), ']') — dynamic tag field access
+#   - empty() function for Boolean branching
+#   - in / notIn operators on tag values
+#   - Multi-branch anyOf/allOf with parameterised control flow
+#   - existenceCondition with like + contains operators
+#   - host_await for cross-resource lookup
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Configure disaster recovery on virtual machines",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "sourceRegion": {
+          "type": "String"
+        },
+        "targetRegion": {
+          "type": "String"
+        },
+        "targetResourceGroupId": {
+          "type": "String"
+        },
+        "vaultResourceGroupId": {
+          "type": "String"
+        },
+        "vaultId": {
+          "type": "String"
+        },
+        "recoveryNetworkId": {
+          "type": "String",
+          "defaultValue": ""
+        },
+        "targetZone": {
+          "type": "String",
+          "defaultValue": ""
+        },
+        "cacheStorageAccountId": {
+          "type": "String",
+          "defaultValue": ""
+        },
+        "tagName": {
+          "type": "String",
+          "defaultValue": ""
+        },
+        "tagValue": {
+          "type": "Array",
+          "defaultValue": []
+        },
+        "tagType": {
+          "type": "String",
+          "allowedValues": ["Inclusion", "Exclusion", ""],
+          "defaultValue": ""
+        },
+        "effect": {
+          "type": "String",
+          "allowedValues": ["DeployIfNotExists", "Disabled"],
+          "defaultValue": "DeployIfNotExists"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Compute/virtualMachines"
+            },
+            {
+              "field": "location",
+              "equals": "[parameters('sourceRegion')]"
+            },
+            {
+              "anyOf": [
+                {
+                  "allOf": [
+                    {
+                      "value": "[parameters('tagType')]",
+                      "equals": "Inclusion"
+                    },
+                    {
+                      "field": "[concat('tags[', parameters('tagName'), ']')]",
+                      "in": "[parameters('tagValue')]"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "value": "[parameters('tagType')]",
+                      "equals": "Exclusion"
+                    },
+                    {
+                      "field": "[concat('tags[', parameters('tagName'), ']')]",
+                      "notIn": "[parameters('tagValue')]"
+                    }
+                  ]
+                },
+                {
+                  "anyOf": [
+                    {
+                      "value": "[empty(parameters('tagName'))]",
+                      "equals": "true"
+                    },
+                    {
+                      "value": "[empty(parameters('tagValue'))]",
+                      "equals": "true"
+                    },
+                    {
+                      "value": "[empty(parameters('tagType'))]",
+                      "equals": "true"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "type": "Microsoft.Resources/links",
+            "existenceCondition": {
+              "allOf": [
+                {
+                  "field": "name",
+                  "like": "ASR-Policy-Protect-*"
+                },
+                {
+                  "field": "Microsoft.Resources/links/targetId",
+                  "contains": "/replicationProtectedItems/"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # No tag filters (all params empty) → matches, related resource not found → DINE
+  # =========================================================================
+
+  - note: dine_no_tag_filter_no_related
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-no-dr"
+      location: "eastus"
+      properties: {}
+    parameters:
+      sourceRegion: "eastus"
+      targetRegion: "westus"
+      targetResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-dr"
+      vaultResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-vault"
+      vaultId: "/subscriptions/sub1/resourceGroups/rg-vault/providers/Microsoft.RecoveryServices/vaults/vault1"
+    host_await:
+      - key:
+          operation: "lookup_related_resources"
+          type: "Microsoft.Resources/links"
+        response: null
+    want_effect: "DeployIfNotExists"
+
+  # =========================================================================
+  # No tag filter, related resource found with matching name/targetId → compliant
+  # =========================================================================
+
+  - note: compliant_dr_configured
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-dr-ok"
+      location: "eastus"
+      properties: {}
+    parameters:
+      sourceRegion: "eastus"
+      targetRegion: "westus"
+      targetResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-dr"
+      vaultResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-vault"
+      vaultId: "/subscriptions/sub1/resourceGroups/rg-vault/providers/Microsoft.RecoveryServices/vaults/vault1"
+    host_await:
+      - response:
+          name: "ASR-Policy-Protect-vm-dr-ok"
+          properties:
+            targetid: "/subscriptions/sub1/resourceGroups/rg-vault/providers/Microsoft.RecoveryServices/vaults/vault1/replicationProtectedItems/item1"
+    want_undefined: true
+
+  # =========================================================================
+  # Related resource found but name doesn't match like → DINE
+  # =========================================================================
+
+  - note: dine_wrong_link_name
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-wrong-link"
+      location: "eastus"
+      properties: {}
+    parameters:
+      sourceRegion: "eastus"
+      targetRegion: "westus"
+      targetResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-dr"
+      vaultResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-vault"
+      vaultId: "/subscriptions/sub1/resourceGroups/rg-vault/providers/Microsoft.RecoveryServices/vaults/vault1"
+    host_await:
+      - response:
+          name: "some-other-link"
+          properties:
+            targetid: "/subscriptions/sub1/resourceGroups/rg-vault/providers/Microsoft.RecoveryServices/vaults/vault1/replicationProtectedItems/item1"
+    want_effect: "DeployIfNotExists"
+
+  # =========================================================================
+  # Inclusion tag type — VM has matching tag → if-condition matches
+  # =========================================================================
+
+  - note: dine_inclusion_tag_match
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-tagged"
+      location: "eastus"
+      tags:
+        Environment: "production"
+      properties: {}
+    parameters:
+      sourceRegion: "eastus"
+      targetRegion: "westus"
+      targetResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-dr"
+      vaultResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-vault"
+      vaultId: "/subscriptions/sub1/resourceGroups/rg-vault/providers/Microsoft.RecoveryServices/vaults/vault1"
+      tagName: "Environment"
+      tagValue:
+        - "production"
+        - "staging"
+      tagType: "Inclusion"
+    host_await:
+      - response: null
+    want_effect: "DeployIfNotExists"
+
+  # =========================================================================
+  # Inclusion tag type — VM tag doesn't match → if-condition fails → pass
+  # =========================================================================
+
+  - note: pass_inclusion_tag_no_match
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-dev"
+      location: "eastus"
+      tags:
+        Environment: "development"
+      properties: {}
+    parameters:
+      sourceRegion: "eastus"
+      targetRegion: "westus"
+      targetResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-dr"
+      vaultResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-vault"
+      vaultId: "/subscriptions/sub1/resourceGroups/rg-vault/providers/Microsoft.RecoveryServices/vaults/vault1"
+      tagName: "Environment"
+      tagValue:
+        - "production"
+        - "staging"
+      tagType: "Inclusion"
+    want_undefined: true
+
+  # =========================================================================
+  # Exclusion tag type — VM tag in exclusion list → pass (excluded from scope)
+  # =========================================================================
+
+  - note: pass_exclusion_tag_excluded
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-excluded"
+      location: "eastus"
+      tags:
+        Environment: "sandbox"
+      properties: {}
+    parameters:
+      sourceRegion: "eastus"
+      targetRegion: "westus"
+      targetResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-dr"
+      vaultResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-vault"
+      vaultId: "/subscriptions/sub1/resourceGroups/rg-vault/providers/Microsoft.RecoveryServices/vaults/vault1"
+      tagName: "Environment"
+      tagValue:
+        - "sandbox"
+        - "test"
+      tagType: "Exclusion"
+    want_undefined: true
+
+  # =========================================================================
+  # Exclusion tag type — VM tag NOT in exclusion list → matches → DINE
+  # =========================================================================
+
+  - note: dine_exclusion_tag_not_excluded
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-prod-excl"
+      location: "eastus"
+      tags:
+        Environment: "production"
+      properties: {}
+    parameters:
+      sourceRegion: "eastus"
+      targetRegion: "westus"
+      targetResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-dr"
+      vaultResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-vault"
+      vaultId: "/subscriptions/sub1/resourceGroups/rg-vault/providers/Microsoft.RecoveryServices/vaults/vault1"
+      tagName: "Environment"
+      tagValue:
+        - "sandbox"
+        - "test"
+      tagType: "Exclusion"
+    host_await:
+      - response: null
+    want_effect: "DeployIfNotExists"
+
+  # =========================================================================
+  # Wrong location → if-condition fails → pass
+  # =========================================================================
+
+  - note: pass_wrong_location
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-wrong-loc"
+      location: "westus"
+      properties: {}
+    parameters:
+      sourceRegion: "eastus"
+      targetRegion: "westus"
+      targetResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-dr"
+      vaultResourceGroupId: "/subscriptions/sub1/resourceGroups/rg-vault"
+      vaultId: "/subscriptions/sub1/resourceGroups/rg-vault/providers/Microsoft.RecoveryServices/vaults/vault1"
+    want_undefined: true

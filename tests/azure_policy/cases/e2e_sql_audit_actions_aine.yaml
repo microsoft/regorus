@@ -1,0 +1,183 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: SQL/SqlServerAuditing_ActionsAndGroups_Audit
+# Real Azure Policy: "SQL Auditing settings should have Action-Groups
+#                     configured to capture critical activities"
+# Source: regolator/policyDefinitions/SQL/SqlServerAuditing_ActionsAndGroups_Audit.json
+#
+# Features exercised:
+#   - AuditIfNotExists with existenceCondition
+#   - Triple double-negation: not { field[*] notEquals X } — asserts X is
+#     present in the array (aka "all elements are not-not-equal to X")
+#   - Wildcard array alias: auditActionsAndGroups[*]
+#   - host_await for cross-resource lookup
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "SQL Auditing settings should have Action-Groups configured to capture critical activities",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "string",
+          "defaultValue": "AuditIfNotExists",
+          "allowedValues": ["AuditIfNotExists", "Disabled"]
+        }
+      },
+      "policyRule": {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Sql/servers"
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "type": "Microsoft.Sql/servers/auditingSettings",
+            "name": "default",
+            "existenceCondition": {
+              "allOf": [
+                {
+                  "not": {
+                    "field": "Microsoft.Sql/servers/auditingSettings/auditActionsAndGroups[*]",
+                    "notEquals": "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"
+                  }
+                },
+                {
+                  "not": {
+                    "field": "Microsoft.Sql/servers/auditingSettings/auditActionsAndGroups[*]",
+                    "notEquals": "FAILED_DATABASE_AUTHENTICATION_GROUP"
+                  }
+                },
+                {
+                  "not": {
+                    "field": "Microsoft.Sql/servers/auditingSettings/auditActionsAndGroups[*]",
+                    "notEquals": "BATCH_COMPLETED_GROUP"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Related resource not found → AuditIfNotExists
+  # =========================================================================
+
+  - note: aine_no_related_resource
+    resource:
+      type: "Microsoft.Sql/servers"
+      name: "sql-no-audit"
+      properties: {}
+    host_await:
+      - key:
+          operation: "lookup_related_resources"
+          type: "Microsoft.Sql/servers/auditingSettings"
+          name: "default"
+        response: null
+    want_effect: "AuditIfNotExists"
+
+  # =========================================================================
+  # All three groups present → compliant (undefined)
+  # =========================================================================
+
+  - note: compliant_all_three_groups
+    resource:
+      type: "Microsoft.Sql/servers"
+      name: "sql-complete"
+      properties: {}
+    host_await:
+      - response:
+          properties:
+            auditactionsandgroups:
+              - "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"
+              - "FAILED_DATABASE_AUTHENTICATION_GROUP"
+              - "BATCH_COMPLETED_GROUP"
+    want_undefined: true
+
+  # =========================================================================
+  # All three present among extras → still compliant
+  # =========================================================================
+
+  - note: compliant_extras_present
+    resource:
+      type: "Microsoft.Sql/servers"
+      name: "sql-extras"
+      properties: {}
+    host_await:
+      - response:
+          properties:
+            auditactionsandgroups:
+              - "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"
+              - "FAILED_DATABASE_AUTHENTICATION_GROUP"
+              - "BATCH_COMPLETED_GROUP"
+              - "APPLICATION_ROLE_CHANGE_PASSWORD_GROUP"
+              - "DATABASE_OBJECT_ACCESS_GROUP"
+    want_undefined: true
+
+  # =========================================================================
+  # Missing BATCH_COMPLETED_GROUP → non-compliant
+  # =========================================================================
+
+  - note: aine_missing_batch_completed
+    resource:
+      type: "Microsoft.Sql/servers"
+      name: "sql-missing-batch"
+      properties: {}
+    host_await:
+      - response:
+          properties:
+            auditactionsandgroups:
+              - "SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP"
+              - "FAILED_DATABASE_AUTHENTICATION_GROUP"
+    want_effect: "AuditIfNotExists"
+
+  # =========================================================================
+  # Missing SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP → non-compliant
+  # =========================================================================
+
+  - note: aine_missing_successful_auth
+    resource:
+      type: "Microsoft.Sql/servers"
+      name: "sql-missing-success"
+      properties: {}
+    host_await:
+      - response:
+          properties:
+            auditactionsandgroups:
+              - "FAILED_DATABASE_AUTHENTICATION_GROUP"
+              - "BATCH_COMPLETED_GROUP"
+    want_effect: "AuditIfNotExists"
+
+  # =========================================================================
+  # Empty array → all three missing → non-compliant
+  # =========================================================================
+
+  - note: aine_empty_groups
+    resource:
+      type: "Microsoft.Sql/servers"
+      name: "sql-empty-groups"
+      properties: {}
+    host_await:
+      - response:
+          properties:
+            auditactionsandgroups: []
+    want_effect: "AuditIfNotExists"
+
+  # =========================================================================
+  # Wrong type → pass (if-condition fails)
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "not-sql"
+      properties: {}
+    want_undefined: true

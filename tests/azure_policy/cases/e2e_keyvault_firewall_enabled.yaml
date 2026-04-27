@@ -1,0 +1,127 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Key Vault/FirewallEnabled_Audit
+# Features: nested count + current() + ipRangeContains + parameterized effect/defaults
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Azure Key Vault should have firewall enabled",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "String",
+          "allowedValues": ["Audit", "Deny", "Disabled"],
+          "defaultValue": "Audit"
+        },
+        "restrictIPAddresses": {
+          "type": "String",
+          "defaultValue": "No",
+          "allowedValues": ["Yes", "No"]
+        },
+        "allowedIPAddresses": {
+          "type": "Array",
+          "defaultValue": []
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {"field": "type", "equals": "Microsoft.KeyVault/vaults"},
+            {"field": "Microsoft.KeyVault/vaults/createMode", "notEquals": "recover"},
+            {
+              "anyOf": [
+                {
+                  "field": "Microsoft.KeyVault/vaults/networkAcls.defaultAction",
+                  "notEquals": "Deny"
+                },
+                {
+                  "allOf": [
+                    {"value": "[parameters('restrictIPAddresses')]", "equals": "Yes"},
+                    {
+                      "anyOf": [
+                        {
+                          "allOf": [
+                            {
+                              "count": {
+                                "value": "[parameters('allowedIPAddresses')]",
+                                "name": "allowedIPAddresses"
+                              },
+                              "notEquals": 0
+                            },
+                            {
+                              "not": {
+                                "count": {
+                                  "field": "Microsoft.KeyVault/vaults/networkAcls.ipRules[*]",
+                                  "where": {
+                                    "count": {
+                                      "value": "[parameters('allowedIPAddresses')]",
+                                      "name": "allowedIpAddress",
+                                      "where": {
+                                        "value": "[ipRangeContains(current('allowedIpAddress'), current('Microsoft.KeyVault/vaults/networkAcls.ipRules[*].value'))]",
+                                        "equals": true
+                                      }
+                                    },
+                                    "greater": 0
+                                  }
+                                },
+                                "equals": "[length(field('Microsoft.KeyVault/vaults/networkAcls.ipRules[*]'))]"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    }
+  }
+
+cases:
+  - note: audit_when_default_action_allow
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+      name: "kv-open"
+      properties:
+        networkAcls:
+          defaultAction: "Allow"
+          ipRules: []
+    want_effect: "Audit"
+
+  - note: pass_when_default_action_deny_and_no_restriction_mode
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+      name: "kv-deny"
+      properties:
+        networkAcls:
+          defaultAction: "Deny"
+          ipRules: []
+    want_undefined: true
+
+  - note: audit_when_restricted_allowed_ips_do_not_cover_all_rules
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+      name: "kv-partial"
+      properties:
+        networkAcls:
+          defaultAction: "Deny"
+          ipRules:
+            - value: "10.0.0.5"
+            - value: "192.168.1.5"
+    parameters:
+      restrictIPAddresses: "Yes"
+      allowedIPAddresses: ["10.0.0.0/24"]
+      effect: "Audit"
+    want_effect: "Audit"

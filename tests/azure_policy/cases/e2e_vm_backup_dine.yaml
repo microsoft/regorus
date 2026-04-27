@@ -1,0 +1,861 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Backup/VirtualMachineBackup_DINE
+# Real Azure Policy: "Configure backup on virtual machines without a given tag
+#                     to an existing recovery services vault in the same location"
+# Source: regolator/policyDefinitions/Backup/VirtualMachineBackup_DINE.json
+#
+# Features exercised:
+#   - DeployIfNotExists effect
+#   - concat('tags[', parameters('exclusionTagName'), ']') — dynamic tag field access
+#   - empty() function for Boolean branching
+#   - notEquals for image publisher exclusion (azureopenshift, AzureDatabricks)
+#   - notContains on resource id (databricks-rg-)
+#   - Large anyOf/allOf for image publisher/offer/SKU matching
+#   - host_await for cross-resource DINE lookup (backupprotecteditems)
+#   - Deployment template with nested deployment
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Configure backup on virtual machines without a given tag to an existing recovery services vault in the same location",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "vaultLocation": {
+          "type": "String"
+        },
+        "backupPolicyId": {
+          "type": "String"
+        },
+        "exclusionTagName": {
+          "type": "String",
+          "defaultValue": ""
+        },
+        "exclusionTagValue": {
+          "type": "Array",
+          "defaultValue": []
+        },
+        "effect": {
+          "type": "String",
+          "allowedValues": [
+            "auditIfNotExists",
+            "AuditIfNotExists",
+            "deployIfNotExists",
+            "DeployIfNotExists",
+            "disabled",
+            "Disabled"
+          ],
+          "defaultValue": "DeployIfNotExists"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Compute/virtualMachines"
+            },
+            {
+              "field": "location",
+              "equals": "[parameters('vaultLocation')]"
+            },
+            {
+              "field": "id",
+              "notContains": "/resourceGroups/databricks-rg-"
+            },
+            {
+              "field": "Microsoft.Compute/imagePublisher",
+              "notEquals": "azureopenshift"
+            },
+            {
+              "field": "Microsoft.Compute/imagePublisher",
+              "notEquals": "AzureDatabricks"
+            },
+            {
+              "anyOf": [
+                {
+                  "not": {
+                    "field": "[concat('tags[', parameters('exclusionTagName'), ']')]",
+                    "in": "[parameters('exclusionTagValue')]"
+                  }
+                },
+                {
+                  "value": "[empty(parameters('exclusionTagValue'))]",
+                  "equals": "true"
+                },
+                {
+                  "value": "[empty(parameters('exclusionTagName'))]",
+                  "equals": "true"
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "MicrosoftWindowsServer"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "equals": "WindowsServer"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageSKU",
+                      "in": [
+                        "2008-R2-SP1",
+                        "2008-R2-SP1-smalldisk",
+                        "2012-Datacenter",
+                        "2012-Datacenter-smalldisk",
+                        "2012-R2-Datacenter",
+                        "2012-R2-Datacenter-smalldisk",
+                        "2016-Datacenter",
+                        "2016-datacenter-gensecond",
+                        "2016-Datacenter-Server-Core",
+                        "2016-Datacenter-Server-Core-smalldisk",
+                        "2016-Datacenter-smalldisk",
+                        "2016-Datacenter-with-Containers",
+                        "2016-Datacenter-with-RDSH",
+                        "2019-Datacenter",
+                        "2019-Datacenter-Core",
+                        "2019-Datacenter-Core-smalldisk",
+                        "2019-Datacenter-Core-with-Containers",
+                        "2019-Datacenter-Core-with-Containers-smalldisk",
+                        "2019-Datacenter-smalldisk",
+                        "2019-Datacenter-with-Containers",
+                        "2019-Datacenter-with-Containers-smalldisk",
+                        "2019-Datacenter-zhcn",
+                        "2019-datacenter-gensecond",
+                        "2022-datacenter-g2",
+                        "2022-datacenter",
+                        "2022-datacenter-azure-edition",
+                        "2022-datacenter-azure-edition-smalldisk",
+                        "2022-datacenter-azure-edition-core",
+                        "2022-datacenter-azure-edition-core-smalldisk",
+                        "2022-datacenter-smalldisk-g2",
+                        "2022-datacenter-smalldisk",
+                        "2022-datacenter-core-g2",
+                        "2022-datacenter-core",
+                        "2022-datacenter-core-smalldisk-g2",
+                        "2022-datacenter-core-smalldisk"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "MicrosoftWindowsServer"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "equals": "WindowsServerSemiAnnual"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageSKU",
+                      "in": [
+                        "Datacenter-Core-1709-smalldisk",
+                        "Datacenter-Core-1709-with-Containers-smalldisk",
+                        "Datacenter-Core-1803-with-Containers-smalldisk"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "MicrosoftWindowsServerHPCPack"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "equals": "WindowsServerHPCPack"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "MicrosoftSQLServer"
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "allOf": [
+                            {
+                              "field": "Microsoft.Compute/imageOffer",
+                              "like": "sql2019-ws2022"
+                            },
+                            {
+                              "field": "Microsoft.Compute/imageSKU",
+                              "in": [
+                                "sqldev",
+                                "sqldev-gen2",
+                                "standard",
+                                "standard-gen2"
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "anyOf": [
+                            {
+                              "field": "Microsoft.Compute/imageOffer",
+                              "like": "*-WS2019"
+                            },
+                            {
+                              "field": "Microsoft.Compute/imageOffer",
+                              "like": "*-WS2016"
+                            },
+                            {
+                              "field": "Microsoft.Compute/imageOffer",
+                              "like": "*-WS2016-BYOL"
+                            },
+                            {
+                              "field": "Microsoft.Compute/imageOffer",
+                              "like": "*-WS2012R2"
+                            },
+                            {
+                              "field": "Microsoft.Compute/imageOffer",
+                              "like": "*-WS2012R2-BYOL"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "MicrosoftRServer"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "equals": "MLServer-WS2016"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "MicrosoftVisualStudio"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "in": [
+                        "VisualStudio",
+                        "Windows"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "MicrosoftDynamicsAX"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "equals": "Dynamics"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageSKU",
+                      "equals": "Pre-Req-AX7-Onebox-U8"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "microsoft-ads"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "equals": "windows-data-science-vm"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "MicrosoftWindowsDesktop"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "equals": "Windows-10"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "MicrosoftWindowsDesktop"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "equals": "Windows-11"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "RedHat"
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "allOf": [
+                            {
+                              "field": "Microsoft.Compute/imageOffer",
+                              "equals": "RHEL-BYOS"
+                            },
+                            {
+                              "field": "Microsoft.Compute/imageSKU",
+                              "equals": "rhel-lvm77"
+                            }
+                          ]
+                        },
+                        {
+                          "allOf": [
+                            {
+                              "field": "Microsoft.Compute/imageOffer",
+                              "in": [
+                                "RHEL",
+                                "RHEL-SAP-HANA"
+                              ]
+                            },
+                            {
+                              "anyOf": [
+                                {
+                                  "field": "Microsoft.Compute/imageSKU",
+                                  "like": "6.*"
+                                },
+                                {
+                                  "field": "Microsoft.Compute/imageSKU",
+                                  "like": "7*"
+                                },
+                                {
+                                  "field": "Microsoft.Compute/imageSKU",
+                                  "like": "8*"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "SUSE"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "in": [
+                        "SLES",
+                        "SLES-HPC",
+                        "SLES-HPC-Priority",
+                        "SLES-SAP",
+                        "SLES-SAP-BYOS",
+                        "SLES-Priority",
+                        "SLES-BYOS",
+                        "SLES-SAPCAL",
+                        "SLES-Standard"
+                      ]
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "field": "Microsoft.Compute/imageSKU",
+                          "like": "12*"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "Canonical"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "contains": "ubuntu"
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "field": "Microsoft.Compute/imageSKU",
+                          "like": "14.04*LTS"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSKU",
+                          "like": "16.04*LTS"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSKU",
+                          "like": "18.04*LTS"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSKU",
+                          "like": "*20_04-lts"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSKU",
+                          "like": "20_04-lts*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSKU",
+                          "like": "22_04-lts-gen2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "Oracle"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "equals": "Oracle-Linux"
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "field": "Microsoft.Compute/imageSKU",
+                          "like": "6.*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSKU",
+                          "like": "7*"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "OpenLogic"
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "allOf": [
+                            {
+                              "field": "Microsoft.Compute/imageOffer",
+                              "equals": "CentOS-HPC"
+                            },
+                            {
+                              "field": "Microsoft.Compute/imageSKU",
+                              "equals": "7_9-gen2"
+                            }
+                          ]
+                        },
+                        {
+                          "allOf": [
+                            {
+                              "field": "Microsoft.Compute/imageOffer",
+                              "in": [
+                                "CentOS",
+                                "Centos-LVM",
+                                "CentOS-SRIOV"
+                              ]
+                            },
+                            {
+                              "anyOf": [
+                                {
+                                  "field": "Microsoft.Compute/imageSKU",
+                                  "like": "6.*"
+                                },
+                                {
+                                  "field": "Microsoft.Compute/imageSKU",
+                                  "like": "7*"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "cloudera"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "equals": "cloudera-centos-os"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageSKU",
+                      "like": "7*"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/microsoft.authorization/roleDefinitions/9980e02c-c2be-4d73-94e8-173b1dc7cf3c",
+              "/providers/microsoft.authorization/roleDefinitions/5e467623-bb1f-42f4-a55d-6e525e11384b"
+            ],
+            "type": "Microsoft.RecoveryServices/backupprotecteditems",
+            "deployment": {
+              "properties": {
+                "mode": "incremental",
+                "template": {
+                  "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "parameters": {
+                    "backupPolicyId": {
+                      "type": "String"
+                    },
+                    "fabricName": {
+                      "type": "String"
+                    },
+                    "protectionContainers": {
+                      "type": "String"
+                    },
+                    "protectedItems": {
+                      "type": "String"
+                    },
+                    "sourceResourceId": {
+                      "type": "String"
+                    }
+                  },
+                  "resources": [
+                    {
+                      "apiVersion": "2017-05-10",
+                      "name": "[concat('DeployProtection-',uniqueString(parameters('protectedItems')))]",
+                      "type": "Microsoft.Resources/deployments",
+                      "resourceGroup": "[first(skip(split(parameters('backupPolicyId'), '/'), 4))]",
+                      "subscriptionId": "[first(skip(split(parameters('backupPolicyId'), '/'), 2))]",
+                      "properties": {
+                        "mode": "Incremental",
+                        "template": {
+                          "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+                          "contentVersion": "1.0.0.0",
+                          "parameters": {
+                            "backupPolicyId": {
+                              "type": "String"
+                            },
+                            "fabricName": {
+                              "type": "String"
+                            },
+                            "protectionContainers": {
+                              "type": "String"
+                            },
+                            "protectedItems": {
+                              "type": "String"
+                            },
+                            "sourceResourceId": {
+                              "type": "String"
+                            }
+                          },
+                          "resources": [
+                            {
+                              "type": "Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems",
+                              "name": "[concat(first(skip(split(parameters('backupPolicyId'), '/'), 8)), '/', parameters('fabricName'), '/',parameters('protectionContainers'), '/', parameters('protectedItems'))]",
+                              "apiVersion": "2016-06-01",
+                              "properties": {
+                                "protectedItemType": "Microsoft.Compute/virtualMachines",
+                                "policyId": "[parameters('backupPolicyId')]",
+                                "sourceResourceId": "[parameters('sourceResourceId')]"
+                              }
+                            }
+                          ]
+                        },
+                        "parameters": {
+                          "backupPolicyId": {
+                            "value": "[parameters('backupPolicyId')]"
+                          },
+                          "fabricName": {
+                            "value": "[parameters('fabricName')]"
+                          },
+                          "protectionContainers": {
+                            "value": "[parameters('protectionContainers')]"
+                          },
+                          "protectedItems": {
+                            "value": "[parameters('protectedItems')]"
+                          },
+                          "sourceResourceId": {
+                            "value": "[parameters('sourceResourceId')]"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                "parameters": {
+                  "backupPolicyId": {
+                    "value": "[parameters('backupPolicyId')]"
+                  },
+                  "fabricName": {
+                    "value": "Azure"
+                  },
+                  "protectionContainers": {
+                    "value": "[concat('iaasvmcontainer;iaasvmcontainerv2;', resourceGroup().name, ';' ,field('name'))]"
+                  },
+                  "protectedItems": {
+                    "value": "[concat('vm;iaasvmcontainerv2;', resourceGroup().name, ';' ,field('name'))]"
+                  },
+                  "sourceResourceId": {
+                    "value": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Compute/virtualMachines/',field('name'))]"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # VM without backup → no related backupprotecteditems → DeployIfNotExists
+  # (default empty exclusion tag params → empty() branches pass the anyOf)
+  # =========================================================================
+
+  - note: dine_vm_no_backup
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-no-backup"
+      location: "eastus"
+      properties:
+        storageProfile:
+          imageReference:
+            publisher: "MicrosoftWindowsServer"
+            offer: "WindowsServer"
+            sku: "2019-Datacenter"
+    parameters:
+      vaultLocation: "eastus"
+      backupPolicyId: "/subscriptions/sub1/resourceGroups/backup-rg/providers/Microsoft.RecoveryServices/vaults/vault1/backupPolicies/DefaultPolicy"
+    host_await:
+      - key:
+          operation: "lookup_related_resources"
+          type: "Microsoft.RecoveryServices/backupprotecteditems"
+        response: null
+    want_effect: "DeployIfNotExists"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/microsoft.authorization/roleDefinitions/9980e02c-c2be-4d73-94e8-173b1dc7cf3c"
+        - "/providers/microsoft.authorization/roleDefinitions/5e467623-bb1f-42f4-a55d-6e525e11384b"
+      type: "Microsoft.RecoveryServices/backupprotecteditems"
+
+  # =========================================================================
+  # VM with existing backup → backupprotecteditems found → compliant (pass)
+  # =========================================================================
+
+  - note: pass_vm_with_backup
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-has-backup"
+      location: "eastus"
+      properties:
+        storageProfile:
+          imageReference:
+            publisher: "MicrosoftWindowsServer"
+            offer: "WindowsServer"
+            sku: "2019-Datacenter"
+    parameters:
+      vaultLocation: "eastus"
+      backupPolicyId: "/subscriptions/sub1/resourceGroups/backup-rg/providers/Microsoft.RecoveryServices/vaults/vault1/backupPolicies/DefaultPolicy"
+    host_await:
+      - response:
+          properties:
+            protectedItemType: "Microsoft.Compute/virtualMachines"
+            policyId: "/subscriptions/sub1/resourceGroups/backup-rg/providers/Microsoft.RecoveryServices/vaults/vault1/backupPolicies/DefaultPolicy"
+            sourceResourceId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm-has-backup"
+    want_undefined: true
+
+  # =========================================================================
+  # VM with exclusion tag matching parameter value → excluded from scope → pass
+  # Tag "backup-opt-out" = "true" is IN exclusionTagValue ["true", "yes"]
+  # → not(in) = false, empty(tagValue) = false, empty(tagName) = false
+  # → anyOf fails → allOf fails → if-condition false → pass
+  # =========================================================================
+
+  - note: pass_vm_excluded_by_tag
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-excluded-tag"
+      location: "eastus"
+      tags:
+        backup-opt-out: "true"
+      properties:
+        storageProfile:
+          imageReference:
+            publisher: "MicrosoftWindowsServer"
+            offer: "WindowsServer"
+            sku: "2019-Datacenter"
+    parameters:
+      vaultLocation: "eastus"
+      backupPolicyId: "/subscriptions/sub1/resourceGroups/backup-rg/providers/Microsoft.RecoveryServices/vaults/vault1/backupPolicies/DefaultPolicy"
+      exclusionTagName: "backup-opt-out"
+      exclusionTagValue:
+        - "true"
+        - "yes"
+    want_undefined: true
+
+  # =========================================================================
+  # VM with excluded publisher "AzureDatabricks" → notEquals fails → pass
+  # =========================================================================
+
+  - note: pass_vm_excluded_publisher
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-databricks"
+      location: "eastus"
+      properties:
+        storageProfile:
+          imageReference:
+            publisher: "AzureDatabricks"
+            offer: "databricks"
+            sku: "standard"
+    parameters:
+      vaultLocation: "eastus"
+      backupPolicyId: "/subscriptions/sub1/resourceGroups/backup-rg/providers/Microsoft.RecoveryServices/vaults/vault1/backupPolicies/DefaultPolicy"
+    want_undefined: true
+
+  # =========================================================================
+  # Wrong resource type → type check fails → pass
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "storage1"
+      location: "eastus"
+      properties: {}
+    parameters:
+      vaultLocation: "eastus"
+      backupPolicyId: "/subscriptions/sub1/resourceGroups/backup-rg/providers/Microsoft.RecoveryServices/vaults/vault1/backupPolicies/DefaultPolicy"
+    want_undefined: true
+
+  # =========================================================================
+  # VM has exclusion tag but value NOT in exclusion list → still in scope
+  # Tag "backup-opt-out" = "no" is NOT IN ["true", "yes"]
+  # → not(in) = true → anyOf passes → VM is in scope → DINE
+  # =========================================================================
+
+  - note: dine_vm_tag_not_in_exclusion
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-tag-no-match"
+      location: "eastus"
+      tags:
+        backup-opt-out: "no"
+      properties:
+        storageProfile:
+          imageReference:
+            publisher: "MicrosoftWindowsServer"
+            offer: "WindowsServer"
+            sku: "2019-Datacenter"
+    parameters:
+      vaultLocation: "eastus"
+      backupPolicyId: "/subscriptions/sub1/resourceGroups/backup-rg/providers/Microsoft.RecoveryServices/vaults/vault1/backupPolicies/DefaultPolicy"
+      exclusionTagName: "backup-opt-out"
+      exclusionTagValue:
+        - "true"
+        - "yes"
+    host_await:
+      - key:
+          operation: "lookup_related_resources"
+          type: "Microsoft.RecoveryServices/backupprotecteditems"
+        response: null
+    want_effect: "DeployIfNotExists"
+
+  # =========================================================================
+  # VM in a different location than vaultLocation → location check fails → pass
+  # =========================================================================
+
+  - note: pass_vm_wrong_location
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-wrong-loc"
+      location: "westeurope"
+      properties:
+        storageProfile:
+          imageReference:
+            publisher: "MicrosoftWindowsServer"
+            offer: "WindowsServer"
+            sku: "2019-Datacenter"
+    parameters:
+      vaultLocation: "eastus"
+      backupPolicyId: "/subscriptions/sub1/resourceGroups/backup-rg/providers/Microsoft.RecoveryServices/vaults/vault1/backupPolicies/DefaultPolicy"
+    want_undefined: true
+
+  # =========================================================================
+  # VM in a Databricks resource group → notContains "/resourceGroups/databricks-rg-"
+  # fails → allOf fails → pass
+  # =========================================================================
+
+  - note: pass_vm_databricks_rg
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-dbr"
+      id: "/subscriptions/sub1/resourceGroups/databricks-rg-myworkspace/providers/Microsoft.Compute/virtualMachines/vm-dbr"
+      location: "eastus"
+      properties:
+        storageProfile:
+          imageReference:
+            publisher: "MicrosoftWindowsServer"
+            offer: "WindowsServer"
+            sku: "2019-Datacenter"
+    parameters:
+      vaultLocation: "eastus"
+      backupPolicyId: "/subscriptions/sub1/resourceGroups/backup-rg/providers/Microsoft.RecoveryServices/vaults/vault1/backupPolicies/DefaultPolicy"
+    want_undefined: true
+
+  # =========================================================================
+  # VM with publisher "azureopenshift" → notEquals fails → allOf fails → pass
+  # =========================================================================
+
+  - note: pass_vm_excluded_publisher_azureopenshift
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-openshift"
+      location: "eastus"
+      properties:
+        storageProfile:
+          imageReference:
+            publisher: "azureopenshift"
+            offer: "aro4"
+            sku: "aro_worker"
+    parameters:
+      vaultLocation: "eastus"
+      backupPolicyId: "/subscriptions/sub1/resourceGroups/backup-rg/providers/Microsoft.RecoveryServices/vaults/vault1/backupPolicies/DefaultPolicy"
+    want_undefined: true
