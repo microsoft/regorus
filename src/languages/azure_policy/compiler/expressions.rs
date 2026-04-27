@@ -26,7 +26,13 @@ impl Compiler {
         span: &crate::lexer::Span,
     ) -> Result<u8> {
         match voe {
-            ValueOrExpr::Value(value) => self.compile_json_value(value, span),
+            // The parser's `json_to_value_or_expr` already resolved template
+            // expressions and unescaped `[[` → `[` literals.  Skip the
+            // top-level template-expression check so an unescaped string like
+            // `"[not-an-expression]"` (originally `"[[not-an-expression]"`) is
+            // not re-parsed as a template expression.  Nested arrays/objects
+            // still get full template-expression handling at depth > 0.
+            ValueOrExpr::Value(value) => self.compile_json_value_inner(value, span, 0, true),
             ValueOrExpr::Expr { expr, .. } => self.compile_expr(expr),
         }
     }
@@ -36,14 +42,23 @@ impl Compiler {
         value: &crate::languages::azure_policy::ast::JsonValue,
         span: &crate::lexer::Span,
     ) -> Result<u8> {
-        self.compile_json_value_inner(value, span, 0)
+        self.compile_json_value_inner(value, span, 0, false)
     }
 
+    /// Compile a JSON value to a register.
+    ///
+    /// `resolved_top` — when `true`, the top-level string has already been
+    /// through `json_to_value_or_expr` (template expressions extracted, `[[`
+    /// unescaped).  Skip the template-expression check at this level so that
+    /// an unescaped `"[literal]"` is not re-parsed.  Recursive calls for
+    /// array elements and object values always pass `false` since those
+    /// nested values have not been pre-resolved.
     fn compile_json_value_inner(
         &mut self,
         value: &crate::languages::azure_policy::ast::JsonValue,
         span: &crate::lexer::Span,
         depth: usize,
+        resolved_top: bool,
     ) -> Result<u8> {
         if depth > MAX_JSON_DEPTH {
             bail!(span.error(&format!(
@@ -55,18 +70,22 @@ impl Compiler {
         use crate::languages::azure_policy::parser::is_template_expr;
 
         // Standalone string template expressions like `"[concat(...)]"`
-        // must be compiled so they evaluate at runtime.
-        if let JsonValue::Str(str_span, s) = value {
-            if is_template_expr(s) {
-                let inner = s
-                    .strip_prefix('[')
-                    .and_then(|inner| inner.strip_suffix(']'))
-                    .ok_or_else(|| {
-                        str_span.error("invalid template expression: missing brackets")
-                    })?;
-                let expr = ExprParser::parse_from_brackets(inner, str_span)
-                    .map_err(|e| anyhow!("{}", e))?;
-                return self.compile_expr(&expr);
+        // must be compiled so they evaluate at runtime.  Skip this check
+        // when the caller has already resolved template expressions (e.g.
+        // values coming from `ValueOrExpr::Value`).
+        if !resolved_top {
+            if let JsonValue::Str(str_span, s) = value {
+                if is_template_expr(s) {
+                    let inner = s
+                        .strip_prefix('[')
+                        .and_then(|inner| inner.strip_suffix(']'))
+                        .ok_or_else(|| {
+                            str_span.error("invalid template expression: missing brackets")
+                        })?;
+                    let expr = ExprParser::parse_from_brackets(inner, str_span)
+                        .map_err(|e| anyhow!("{}", e))?;
+                    return self.compile_expr(&expr);
+                }
             }
         }
 
@@ -111,7 +130,7 @@ impl Compiler {
     ) -> Result<u8> {
         let mut element_regs = Vec::with_capacity(items.len());
         for item in items {
-            let reg = self.compile_json_value_inner(item, item.span(), depth)?;
+            let reg = self.compile_json_value_inner(item, item.span(), depth, false)?;
             element_regs.push(reg);
         }
 
@@ -140,7 +159,8 @@ impl Compiler {
     ) -> Result<u8> {
         let mut keys: Vec<(u16, u8)> = Vec::with_capacity(entries.len());
         for entry in entries {
-            let val_reg = self.compile_json_value_inner(&entry.value, entry.value.span(), depth)?;
+            let val_reg =
+                self.compile_json_value_inner(&entry.value, entry.value.span(), depth, false)?;
             let key_idx = self.add_literal_u16(Value::from(entry.key.clone()))?;
             keys.push((key_idx, val_reg));
         }
@@ -228,17 +248,26 @@ impl Compiler {
                 let input_reg = self.load_input(span)?;
                 let params_reg =
                     self.emit_chained_index_literal_path(input_reg, &["parameters"], span)?;
-                let defaults_reg = if let Some(reg) = self.cached_defaults_reg {
-                    reg
-                } else {
-                    let reg = if let Some(ref defaults) = self.parameter_defaults {
-                        self.load_literal(defaults.clone(), span)?
-                    } else {
-                        self.load_literal(Value::new_object(), span)?
-                    };
-                    self.cached_defaults_reg = Some(reg);
-                    reg
+                let defaults_literal_idx = match self.cached_defaults_literal_idx {
+                    Some(idx) => idx,
+                    None => {
+                        let val = self
+                            .parameter_defaults
+                            .clone()
+                            .unwrap_or_else(Value::new_object);
+                        let idx = self.add_literal_u16(val)?;
+                        self.cached_defaults_literal_idx = Some(idx);
+                        idx
+                    }
                 };
+                let defaults_reg = self.alloc_register()?;
+                self.emit(
+                    Instruction::Load {
+                        dest: defaults_reg,
+                        literal_idx: defaults_literal_idx,
+                    },
+                    span,
+                );
                 let name_reg = self.load_literal(Value::from(param_name), span)?;
                 self.emit_builtin_call(
                     "azure.policy.get_parameter",

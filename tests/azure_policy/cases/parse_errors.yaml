@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# Parse Error Test Suite
-# Tests that malformed policy JSON and invalid constructs are properly rejected.
-# These test cases are expected to fail parsing.
+# Parse Error and Edge Case Test Suite
+# Tests mostly malformed policy JSON and invalid constructs to ensure they are
+# properly rejected, but also includes valid edge cases that verify parser
+# behavior at boundary conditions.
 
 cases:
   # =========================================================================
@@ -267,3 +268,33 @@ cases:
     resource:
       type: "any"
     want_effect: "deny"
+
+  # =========================================================================
+  # Compile errors: unsupported deployment-template functions
+  # =========================================================================
+
+  - note: guid_compile_error
+    policy_rule: |
+      {
+        "if": {
+          "value": "[guid('baseString')]",
+          "equals": "anything"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_compile_error: true
+
+  - note: uniquestring_compile_error
+    policy_rule: |
+      {
+        "if": {
+          "value": "[uniqueString('baseString')]",
+          "equals": "anything"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_compile_error: true

@@ -43,6 +43,13 @@ use super::expr::ExprParser;
 
 use self::core::Parser;
 
+/// Column-width limit for Azure Policy definitions.
+///
+/// Azure Policy definitions are often serialized as single-line JSON with
+/// deeply nested template expressions, requiring a much higher limit than
+/// the standard Rego default (1024).
+pub const MAX_COL: u32 = Parser::MAX_COL;
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -62,12 +69,14 @@ pub fn parse_policy_rule(source: &Source) -> Result<PolicyRule, ParseError> {
     parse_policy_rule_with_max_col(source, None)
 }
 
-/// Like [`parse_policy_rule`] but with an optional column-width override.
+/// Like [`parse_policy_rule`] but with an explicit column-width override.
+///
+/// When `max_col` is `None`, uses [`MAX_COL`] (the Azure Policy default).
 pub fn parse_policy_rule_with_max_col(
     source: &Source,
     max_col: Option<NonZeroU32>,
 ) -> Result<PolicyRule, ParseError> {
-    let mut parser = Parser::new_with_max_col(source, max_col)?;
+    let mut parser = Parser::new_with_max_col(source, max_col.or(NonZeroU32::new(MAX_COL)))?;
     let rule = parser.parse_policy_rule()?;
 
     if parser.tok.0 != TokenKind::Eof {
@@ -92,12 +101,14 @@ pub fn parse_policy_definition(source: &Source) -> Result<PolicyDefinition, Pars
     parse_policy_definition_with_max_col(source, None)
 }
 
-/// Like [`parse_policy_definition`] but with an optional column-width override.
+/// Like [`parse_policy_definition`] but with an explicit column-width override.
+///
+/// When `max_col` is `None`, uses [`MAX_COL`] (the Azure Policy default).
 pub fn parse_policy_definition_with_max_col(
     source: &Source,
     max_col: Option<NonZeroU32>,
 ) -> Result<PolicyDefinition, ParseError> {
-    let mut parser = Parser::new_with_max_col(source, max_col)?;
+    let mut parser = Parser::new_with_max_col(source, max_col.or(NonZeroU32::new(MAX_COL)))?;
     let defn = parser.parse_policy_definition()?;
 
     if parser.tok.0 != TokenKind::Eof {

@@ -24,7 +24,7 @@ default = ["full-opa", "arc", "rvm"]
 
 arc = []
 ast = []
-azure_policy = ["dep:jsonschema", "dep:chrono", "dep:ipnet", "dep:icu_casemap", "dep:hashbrown", "arc", "dashmap"]
+azure_policy = ["dep:jsonschema", "dep:chrono", "dep:ipnet", "dep:icu_casemap", "dep:hashbrown", "arc", "dashmap", "rvm"]
 azure-rbac = ["regex", "time", "net"]
 base64 = ["dep:data-encoding"]
 base64url = ["dep:data-encoding"]

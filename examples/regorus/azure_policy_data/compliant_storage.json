@@ -1,0 +1,15 @@
+{
+  "type": "Microsoft.Storage/storageAccounts",
+  "name": "securestorageaccount",
+  "location": "eastus",
+  "kind": "StorageV2",
+  "properties": {
+    "supportsHttpsTrafficOnly": true,
+    "minimumTlsVersion": "TLS1_2",
+    "encryption": {
+      "services": {
+        "blob": { "enabled": true }
+      }
+    }
+  }
+}

@@ -339,7 +339,7 @@ fn custom_max_col_allows_wide_line() -> Result<()> {
     use regorus::{Engine, PolicyLengthConfig};
 
     // A line wider than the default 1024 columns.
-    let wide = format!("package test\na := \"{}\"", "x".repeat(2000));
+    let wide = format!("package test\na := \"{}\"", "x".repeat(9000));
 
     let mut engine = Engine::new();
 
@@ -351,7 +351,7 @@ fn custom_max_col_allows_wide_line() -> Result<()> {
 
     // Should succeed with a raised max_col.
     engine.set_policy_length_config(PolicyLengthConfig {
-        max_col: NonZeroU32::new(4096).unwrap(),
+        max_col: NonZeroU32::new(16384).unwrap(),
         ..Default::default()
     });
     engine.add_policy("wide.rego".into(), wide)?;
