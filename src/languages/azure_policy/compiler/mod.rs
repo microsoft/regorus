@@ -138,12 +138,22 @@ pub fn compile_policy_definition_with_aliases_opts(
 fn build_parameter_defaults(
     params: &[crate::languages::azure_policy::ast::ParameterDefinition],
 ) -> Result<Value> {
+    use crate::languages::azure_policy::compiler::expressions::check_json_depth;
     use crate::languages::azure_policy::compiler::utils::json_value_to_runtime;
+    use alloc::format;
+    use anyhow::Context as _;
     let mut obj = Value::new_object();
     let map = obj.as_object_mut()?;
     for param in params {
         if let Some(ref default_val) = param.default_value {
-            let runtime_val = json_value_to_runtime(default_val)?;
+            check_json_depth(default_val, 0).with_context(|| {
+                format!(
+                    "invalid defaultValue for parameter '{}': exceeds maximum JSON depth",
+                    param.name
+                )
+            })?;
+            let runtime_val = json_value_to_runtime(default_val)
+                .with_context(|| format!("invalid defaultValue for parameter '{}'", param.name))?;
             map.insert(Value::from(param.name.clone()), runtime_val);
         }
     }
