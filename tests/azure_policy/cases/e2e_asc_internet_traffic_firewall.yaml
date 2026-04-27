@@ -1,0 +1,250 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Network/ASC_All_Internet_traffic_should_be_routed_via_Azure_Firewall
+# Real Azure Policy: "[Preview]: All Internet traffic should be routed via
+#                     your deployed Azure Firewall"
+# Source: regolator/policyDefinitions/Network/ASC_All_Internet_traffic_should_be_routed_via_Azure_Firewall.json
+#
+# Features exercised:
+#   - Nested array count: subnets[*] containing ipConfigurations[*]
+#   - Count in existenceCondition (503-policy gap)
+#   - Double negation: not { anyOf [name excludes] }
+#   - subscription().subscriptionId, first(), split(), field('fullName')
+#   - empty() on doubly-nested array field
+#   - AuditIfNotExists with existence count check
+#   - like operator with wildcard pattern in existenceCondition
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "[Preview]: All Internet traffic should be routed via your deployed Azure Firewall",
+      "policyType": "BuiltIn",
+      "mode": "All",
+      "parameters": {
+        "effect": {
+          "type": "string",
+          "defaultValue": "AuditIfNotExists",
+          "allowedValues": ["AuditIfNotExists", "Disabled"]
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Network/virtualNetworks"
+            },
+            {
+              "count": {
+                "field": "Microsoft.Network/virtualNetworks/subnets[*]",
+                "where": {
+                  "allOf": [
+                    {
+                      "count": {
+                        "field": "Microsoft.Network/virtualNetworks/subnets[*].ipConfigurations[*]",
+                        "where": {
+                          "value": "[empty(field('Microsoft.Network/virtualNetworks/subnets[*].ipConfigurations[*].id'))]",
+                          "equals": false
+                        }
+                      },
+                      "greaterOrEquals": 2
+                    },
+                    {
+                      "field": "Microsoft.Network/virtualNetworks/subnets[*].routeTable",
+                      "exists": false
+                    },
+                    {
+                      "not": {
+                        "anyOf": [
+                          {
+                            "field": "Microsoft.Network/virtualNetworks/subnets[*].name",
+                            "equals": "AzureBastionSubnet"
+                          },
+                          {
+                            "field": "Microsoft.Network/virtualNetworks/subnets[*].name",
+                            "equals": "GatewaySubnet"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "type": "Microsoft.Network/azureFirewalls",
+            "existenceCondition": {
+              "count": {
+                "field": "Microsoft.Network/azureFirewalls/ipConfigurations[*]",
+                "where": {
+                  "field": "Microsoft.Network/azureFirewalls/ipConfigurations[*].subnet.id",
+                  "like": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/*/providers/Microsoft.Network/virtualNetworks/', first(split(field('fullName'), '/')), '/subnets/AzureFirewallSubnet')]"
+                }
+              },
+              "equals": 1
+            }
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # AINE — VNet has a qualifying subnet (2+ ipConfigs, no routeTable, not
+  #        excluded name) and no firewall found
+  # =========================================================================
+
+  - note: aine_qualifying_subnet_no_firewall
+    resource:
+      type: "Microsoft.Network/virtualNetworks"
+      name: "vnet-no-fw"
+      id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet-no-fw"
+      properties:
+        subnets:
+          - name: "WorkloadSubnet"
+            properties:
+              ipConfigurations:
+                - id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1/ipConfigurations/ipconfig1"
+                - id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic2/ipConfigurations/ipconfig1"
+    host_await:
+      - key:
+          operation: "lookup_related_resources"
+          type: "Microsoft.Network/azureFirewalls"
+        response: null
+    want_effect: "AuditIfNotExists"
+
+  # =========================================================================
+  # Pass — VNet has subnet but only 1 ipConfiguration (threshold is >=2)
+  # =========================================================================
+
+  - note: pass_subnet_only_one_ip_config
+    resource:
+      type: "Microsoft.Network/virtualNetworks"
+      name: "vnet-single-ip"
+      properties:
+        subnets:
+          - name: "AppSubnet"
+            properties:
+              ipConfigurations:
+                - id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1/ipConfigurations/ipconfig1"
+    want_undefined: true
+
+  # =========================================================================
+  # Pass — all qualifying subnets have routeTable set
+  # =========================================================================
+
+  - note: pass_all_subnets_have_route_table
+    resource:
+      type: "Microsoft.Network/virtualNetworks"
+      name: "vnet-routed"
+      properties:
+        subnets:
+          - name: "WorkloadSubnet"
+            properties:
+              routeTable:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/routeTables/rt1"
+              ipConfigurations:
+                - id: "/subscriptions/sub1/resourceGroups/rg1/providers/nic1/ipconfig1"
+                - id: "/subscriptions/sub1/resourceGroups/rg1/providers/nic2/ipconfig1"
+                - id: "/subscriptions/sub1/resourceGroups/rg1/providers/nic3/ipconfig1"
+    want_undefined: true
+
+  # =========================================================================
+  # Pass — only excluded subnets (AzureBastionSubnet, GatewaySubnet)
+  # =========================================================================
+
+  - note: pass_excluded_subnets_only
+    resource:
+      type: "Microsoft.Network/virtualNetworks"
+      name: "vnet-bastion-gw"
+      properties:
+        subnets:
+          - name: "AzureBastionSubnet"
+            properties:
+              ipConfigurations:
+                - id: "/subscriptions/sub1/rg1/nic1/ip1"
+                - id: "/subscriptions/sub1/rg1/nic2/ip1"
+                - id: "/subscriptions/sub1/rg1/nic3/ip1"
+          - name: "GatewaySubnet"
+            properties:
+              ipConfigurations:
+                - id: "/subscriptions/sub1/rg1/nic4/ip1"
+                - id: "/subscriptions/sub1/rg1/nic5/ip1"
+    want_undefined: true
+
+  # =========================================================================
+  # AINE — qualifying subnet exists + firewall found but no matching
+  #        ipConfiguration for this VNet
+  # =========================================================================
+
+  - note: aine_firewall_no_matching_subnet
+    resource:
+      type: "Microsoft.Network/virtualNetworks"
+      name: "vnet-no-match"
+      id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet-no-match"
+      properties:
+        subnets:
+          - name: "AppSubnet"
+            properties:
+              ipConfigurations:
+                - id: "/subscriptions/sub1/rg1/nic1/ip1"
+                - id: "/subscriptions/sub1/rg1/nic2/ip1"
+    host_await:
+      - response:
+          properties:
+            ipConfigurations:
+              - properties:
+                  subnet:
+                    id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/other-vnet/subnets/AzureFirewallSubnet"
+    want_effect: "AuditIfNotExists"
+
+  # =========================================================================
+  # Pass — qualifying subnet exists + firewall with matching VNet
+  # =========================================================================
+
+  - note: pass_firewall_matches_vnet
+    context:
+      resourceGroup:
+        name: "rg1"
+        location: "eastus"
+      subscription:
+        subscriptionId: "sub1"
+    resource:
+      type: "Microsoft.Network/virtualNetworks"
+      name: "vnet-protected"
+      id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet-protected"
+      properties:
+        subnets:
+          - name: "WorkloadSubnet"
+            properties:
+              ipConfigurations:
+                - id: "/subscriptions/sub1/rg1/nic1/ip1"
+                - id: "/subscriptions/sub1/rg1/nic2/ip1"
+    host_await:
+      - response:
+          properties:
+            ipConfigurations:
+              - properties:
+                  subnet:
+                    id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet-protected/subnets/AzureFirewallSubnet"
+    want_undefined: true
+
+  # =========================================================================
+  # Wrong type → skip
+  # =========================================================================
+
+  - note: skip_wrong_type
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      name: "nsg1"
+      properties: {}
+    want_undefined: true

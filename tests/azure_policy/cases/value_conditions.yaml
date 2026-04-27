@@ -1,0 +1,264 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Value Conditions Test Suite
+# Tests the "value" LHS in conditions (as opposed to "field" or "count").
+
+cases:
+  # =========================================================================
+  # Value with literal values
+  # =========================================================================
+
+  - note: value_string_literal
+    policy_rule: |
+      {
+        "if": {
+          "value": "hello",
+          "equals": "hello"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: value_number_literal
+    policy_rule: |
+      {
+        "if": {
+          "value": 42,
+          "equals": 42
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: value_boolean_literal
+    policy_rule: |
+      {
+        "if": {
+          "value": true,
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: value_null_literal
+    policy_rule: |
+      {
+        "if": {
+          "value": null,
+          "equals": null
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Value with expressions
+  # =========================================================================
+
+  - note: value_parameters_expression
+    policy_rule: |
+      {
+        "if": {
+          "value": "[parameters('environment')]",
+          "equals": "production"
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      environment: "production"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: value_concat_expression
+    policy_rule: |
+      {
+        "if": {
+          "value": "[concat(parameters('prefix'), '-resource')]",
+          "contains": "prod"
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      prefix: "prod"
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: value_field_expression
+    policy_rule: |
+      {
+        "if": {
+          "value": "[field('name')]",
+          "contains": "prod"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "my-prod-vm"
+    want_effect: "audit"
+
+  - note: value_length_expression
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(field('name'))]",
+          "greater": 5
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "my-long-resource-name"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Value with array RHS
+  # =========================================================================
+
+  - note: value_in_array
+    policy_rule: |
+      {
+        "if": {
+          "value": "[parameters('location')]",
+          "in": ["eastus", "westus", "centralus"]
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      location: "eastus"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: value_notIn_array
+    policy_rule: |
+      {
+        "if": {
+          "value": "[parameters('location')]",
+          "notIn": ["eastus", "westus"]
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      location: "northeurope"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Value in allOf / anyOf
+  # =========================================================================
+
+  - note: value_in_allOf
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "value": "[parameters('env')]", "equals": "production" },
+            { "value": "[parameters('region')]", "in": ["eastus", "westus"] }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      env: "production"
+      region: "eastus"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: value_in_anyOf
+    policy_rule: |
+      {
+        "if": {
+          "anyOf": [
+            { "value": "[parameters('tier')]", "equals": "free" },
+            { "value": "[parameters('tier')]", "equals": "basic" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      tier: "free"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Value mixed with field conditions
+  # =========================================================================
+
+  - note: value_mixed_with_field
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            { "value": "[parameters('enforcePolicy')]", "equals": true },
+            { "field": "location", "notIn": "[parameters('allowedLocations')]" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      enforcePolicy: true
+      allowedLocations:
+        - "eastus"
+        - "westus"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      location: "northeurope"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Value with negative numbers
+  # =========================================================================
+
+  - note: value_negative_number
+    policy_rule: |
+      {
+        "if": {
+          "value": -1,
+          "less": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: value_zero
+    policy_rule: |
+      {
+        "if": {
+          "value": 0,
+          "equals": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: value_float
+    policy_rule: |
+      {
+        "if": {
+          "value": 3.14,
+          "greater": 3
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"

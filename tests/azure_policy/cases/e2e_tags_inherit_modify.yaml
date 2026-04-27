@@ -1,0 +1,147 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Tags/InheritTag_AddOrReplace_Modify
+# Real Azure Policy: "Inherit a tag from the resource group"
+# Source: regolator/policyDefinitions/Tags/InheritTag_AddOrReplace_Modify.json
+#
+# Features exercised:
+#   - resourceGroup() template function
+#   - concat() to build dynamic tag field path: tags[<tagName>]
+#   - Parameter-derived field names
+#   - Modify effect with addOrReplace operation
+#   - value condition with resourceGroup().tags[parameters('tagName')]
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Inherit a tag from the resource group",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "tagName": {
+          "type": "String",
+          "metadata": {
+            "displayName": "Tag Name",
+            "description": "Name of the tag, such as 'environment'"
+          }
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "[concat('tags[', parameters('tagName'), ']')]",
+              "notEquals": "[resourceGroup().tags[parameters('tagName')]]"
+            },
+            {
+              "value": "[resourceGroup().tags[parameters('tagName')]]",
+              "notEquals": ""
+            }
+          ]
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/microsoft.authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "[concat('tags[', parameters('tagName'), ']')]",
+                "value": "[resourceGroup().tags[parameters('tagName')]]"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Resource tag differs from resource group tag → modify
+  # =========================================================================
+
+  - note: modify_tag_differs
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-wrong-env"
+      properties:
+        tags:
+          environment: "dev"
+    parameters:
+      tagName: "environment"
+    context:
+      resourceGroup:
+        tags:
+          environment: "production"
+    want_effect: "modify"
+
+  - note: modify_tag_missing_on_resource
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-no-tag"
+      properties: {}
+    parameters:
+      tagName: "environment"
+    context:
+      resourceGroup:
+        tags:
+          environment: "production"
+    want_effect: "modify"
+
+  # =========================================================================
+  # Resource tag matches resource group tag → pass
+  # =========================================================================
+
+  - note: pass_tag_matches
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-correct-env"
+      properties:
+        tags:
+          environment: "production"
+    parameters:
+      tagName: "environment"
+    context:
+      resourceGroup:
+        tags:
+          environment: "production"
+    want_undefined: true
+
+  # =========================================================================
+  # Resource group tag is empty → pass (second condition fails)
+  # =========================================================================
+
+  - note: pass_rg_tag_empty
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-rg-empty"
+      properties:
+        tags:
+          environment: "dev"
+    parameters:
+      tagName: "environment"
+    context:
+      resourceGroup:
+        tags:
+          environment: ""
+    want_undefined: true
+
+  - note: pass_rg_tag_missing
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-rg-no-tag"
+      properties:
+        tags:
+          environment: "dev"
+    parameters:
+      tagName: "environment"
+    context:
+      resourceGroup:
+        tags: {}
+    want_undefined: true

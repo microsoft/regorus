@@ -1,0 +1,1155 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Casing & Case-Insensitive Comparison Test Suite
+#
+# Locks down the two-tier case-insensitivity semantics:
+#   1. ARM property keys: OrdinalIgnoreCase (ASCII fold only)
+#   2. Azure Policy condition values: InvariantCultureIgnoreCase (full Unicode
+#      case folding via ICU — ß=SS, ﬃ=FFI, Σ/σ/ς unified, etc.)
+#
+# See docs/azure-policy/casing.md for the full specification.
+
+cases:
+  # =========================================================================
+  # equals — ASCII case-insensitive string values
+  # =========================================================================
+
+  - note: equals_ascii_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "microsoft.compute/virtualmachines"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "deny"
+
+  - note: equals_ascii_mixed_case
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "equals": "WESTUS2"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      location: "westus2"
+    want_effect: "audit"
+
+  - note: equals_ascii_exact_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "equals": "MyVM"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "myvm"
+    want_effect: "audit"
+
+  - note: equals_ascii_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "equals": "MyVM"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "OtherVM"
+    want_undefined: true
+
+  # =========================================================================
+  # equals — Unicode case folding (InvariantCultureIgnoreCase)
+  # =========================================================================
+
+  - note: equals_unicode_sharp_s
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.description",
+          "equals": "Straße"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        description: "STRASSE"
+    want_effect: "deny"
+
+  - note: equals_unicode_sharp_s_reverse
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.description",
+          "equals": "STRASSE"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        description: "Straße"
+    want_effect: "deny"
+
+  - note: equals_unicode_ligature_ffi
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.label",
+          "equals": "ﬃce"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        label: "FFICE"
+    want_effect: "audit"
+
+  # =========================================================================
+  # notEquals — casing
+  # =========================================================================
+
+  - note: notEquals_case_insensitive_no_trigger
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "notEquals": "westus2"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "WestUS2"
+    want_undefined: true
+
+  - note: notEquals_case_insensitive_trigger
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "notEquals": "eastus"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "WestUS2"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Tag name case insensitivity
+  # =========================================================================
+
+  - note: tag_name_case_insensitive_lowercase_policy
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.environment",
+          "equals": "production"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        Environment: "production"
+    want_effect: "deny"
+
+  - note: tag_name_case_insensitive_uppercase_policy
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.Environment",
+          "equals": "production"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_effect: "deny"
+
+  - note: tag_name_case_insensitive_mixed
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.CostCenter",
+          "equals": "finance"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        costcenter: "finance"
+    want_effect: "audit"
+
+  - note: tag_value_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.environment",
+          "equals": "PRODUCTION"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "Production"
+    want_effect: "deny"
+
+  # =========================================================================
+  # contains — string case insensitivity
+  # =========================================================================
+
+  - note: contains_string_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "contains": "PROD"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "my-prod-vm"
+    want_effect: "audit"
+
+  - note: contains_string_unicode_sharp_s
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.description",
+          "contains": "STRASSE"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        description: "Die Straße ist lang"
+    want_effect: "audit"
+
+  - note: notContains_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "notContains": "PROD"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "my-prod-vm"
+    want_undefined: true
+
+  # =========================================================================
+  # containsKey — key name case insensitivity
+  # =========================================================================
+
+  - note: containsKey_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags",
+          "containsKey": "Environment"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_effect: "audit"
+
+  - note: notContainsKey_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags",
+          "notContainsKey": "Environment"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_undefined: true
+
+  # =========================================================================
+  # in / notIn — case-insensitive membership
+  # =========================================================================
+
+  - note: in_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "in": ["EASTUS", "WESTUS2", "CENTRALUS"]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      location: "westus2"
+    want_effect: "audit"
+
+  - note: in_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "in": ["eastus", "westus2"]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      location: "northeurope"
+    want_undefined: true
+
+  - note: notIn_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "notIn": ["EASTUS", "WESTUS2"]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "westus2"
+    want_undefined: true
+
+  # =========================================================================
+  # greater / less — case-insensitive string ordering
+  # =========================================================================
+
+  - note: greater_string_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "greater": "ALPHA"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "beta"
+    want_effect: "audit"
+
+  - note: greater_string_equal_different_case
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "greater": "HELLO"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "hello"
+    want_undefined: true
+
+  - note: less_string_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "less": "BETA"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "alpha"
+    want_effect: "audit"
+
+  - note: greaterOrEquals_string_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "greaterOrEquals": "HELLO"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "hello"
+    want_effect: "audit"
+
+  - note: lessOrEquals_string_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "lessOrEquals": "HELLO"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "hello"
+    want_effect: "audit"
+
+  # =========================================================================
+  # like / notLike — case-insensitive wildcard matching
+  # =========================================================================
+
+  - note: like_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "like": "MY-*-VM"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "my-prod-vm"
+    want_effect: "audit"
+
+  - note: like_case_insensitive_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "like": "MY-*-VM"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "your-prod-vm"
+    want_undefined: true
+
+  - note: notLike_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "notLike": "MY-*-VM"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "my-prod-vm"
+    want_undefined: true
+
+  # =========================================================================
+  # match / matchInsensitively
+  # =========================================================================
+
+  - note: match_is_case_sensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "match": "abc-##"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "abc-12"
+    want_effect: "audit"
+
+  - note: match_case_sensitive_literal_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "match": "abc-##"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "ABC-12"
+    want_undefined: true
+
+  - note: matchInsensitively_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "matchInsensitively": "abc-##"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "ABC-12"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Property key casing (ARM OrdinalIgnoreCase)
+  # =========================================================================
+
+  - note: property_key_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.enableHttpsTrafficOnly",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        EnableHttpsTrafficOnly: true
+    want_effect: "audit"
+
+  # =========================================================================
+  # type field — case-insensitive resource type matching
+  # =========================================================================
+
+  - note: type_case_insensitive_upper
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "MICROSOFT.COMPUTE/VIRTUALMACHINES"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "deny"
+
+  - note: type_case_insensitive_lower
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "microsoft.compute/virtualmachines"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "deny"
+
+  # =========================================================================
+  # contains with array — case-insensitive element matching
+  # =========================================================================
+
+  - note: contains_array_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.allowedLocations",
+          "contains": "WESTUS2"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        allowedLocations:
+          - "eastus"
+          - "westus2"
+          - "centralus"
+    want_effect: "audit"
+
+  - note: notContains_array_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.allowedLocations",
+          "notContains": "WESTUS2"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        allowedLocations:
+          - "eastus"
+          - "westus2"
+    want_undefined: true
+
+  # =========================================================================
+  # exists — not affected by casing (boolean check)
+  # =========================================================================
+
+  - note: exists_tag_case_insensitive_name
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.Environment",
+          "exists": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_effect: "deny"
+
+  - note: exists_tag_missing
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.costCenter",
+          "exists": false
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Edge cases: empty strings, numbers, booleans
+  # =========================================================================
+
+  - note: equals_empty_string
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.label",
+          "equals": ""
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        label: ""
+    want_effect: "audit"
+
+  - note: equals_number_not_affected_by_casing
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.count",
+          "equals": 42
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        count: 42
+    want_effect: "audit"
+
+  - note: equals_boolean_not_affected_by_casing
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.enabled",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        enabled: true
+    want_effect: "audit"
+
+  - note: equals_string_number_coercion_with_casing
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.port",
+          "equals": "443"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        port: 443
+    want_effect: "audit"
+
+  # =========================================================================
+  # Corner cases: undefined / missing fields
+  # =========================================================================
+
+  - note: equals_missing_field_is_undefined
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.missing",
+          "equals": "anything"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_undefined: true
+
+  - note: notEquals_missing_field_fires
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.missing",
+          "notEquals": "anything"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_effect: "deny"
+
+  - note: contains_string_missing_field_is_undefined
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.missing",
+          "contains": "X"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_undefined: true
+
+  - note: in_missing_field_is_undefined
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.missing",
+          "in": ["a", "b"]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_undefined: true
+
+  - note: greater_missing_field_is_undefined
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.missing",
+          "greater": "z"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_undefined: true
+
+  # =========================================================================
+  # Tag bracket notation — tags['Key'] equivalent to tags.Key
+  # =========================================================================
+
+  - note: tag_bracket_notation_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags['Environment']",
+          "equals": "production"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_effect: "deny"
+
+  - note: tag_bracket_notation_value_ci
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags['costCenter']",
+          "equals": "FINANCE"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        CostCenter: "finance"
+    want_effect: "audit"
+
+  # =========================================================================
+  # String ↔ Bool coercion with mixed casing
+  # =========================================================================
+
+  - note: equals_string_true_uppercase_coercion
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.flag",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        flag: "TRUE"
+    want_effect: "audit"
+
+  - note: equals_string_false_mixed_case_coercion
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.flag",
+          "equals": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        flag: "False"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Unicode: Greek sigma variants (Σ/σ/ς all fold to σ)
+  # =========================================================================
+
+  - note: equals_greek_sigma_upper_vs_lower
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.label",
+          "equals": "ΣΕΛΑΣ"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        label: "σελας"
+    want_effect: "audit"
+
+  - note: equals_greek_final_sigma
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.label",
+          "equals": "ΚΟΣΜΟΣ"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        label: "κοσμος"
+    want_effect: "audit"
+
+  # =========================================================================
+  # notEquals with Unicode — should NOT fire when values match after folding
+  # =========================================================================
+
+  - note: notEquals_unicode_sharp_s_equal
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.description",
+          "notEquals": "STRASSE"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        description: "Straße"
+    want_undefined: true
+
+  # =========================================================================
+  # in/notIn with Unicode values
+  # =========================================================================
+
+  - note: in_unicode_sharp_s_in_array
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.street",
+          "in": ["STRASSE", "AVENUE", "BOULEVARD"]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        street: "Straße"
+    want_effect: "audit"
+
+  - note: notIn_unicode_value_present
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.street",
+          "notIn": ["STRASSE", "AVENUE"]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        street: "Straße"
+    want_undefined: true
+
+  # =========================================================================
+  # contains — empty needle/haystack edge cases
+  # =========================================================================
+
+  - note: contains_empty_needle_always_matches
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "contains": ""
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "anything"
+    want_effect: "audit"
+
+  - note: contains_empty_haystack_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "contains": "something"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: ""
+    want_undefined: true
+
+  - note: notContains_string_truly_absent
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "notContains": "STAGING"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "my-prod-vm"
+    want_effect: "audit"
+
+  # =========================================================================
+  # contains with Unicode ligature as substring
+  # =========================================================================
+
+  - note: contains_unicode_ligature_substring
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.description",
+          "contains": "ﬃce"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        description: "The OFFICE is closed"
+    want_effect: "audit"
+
+  # =========================================================================
+  # containsKey — key truly missing vs case mismatch
+  # =========================================================================
+
+  - note: containsKey_key_truly_missing
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags",
+          "containsKey": "billing"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_undefined: true
+
+  - note: notContainsKey_key_truly_missing
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags",
+          "notContainsKey": "billing"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_effect: "deny"
+
+  # =========================================================================
+  # greater/less with Unicode — ß folds to "ss" for ordering
+  # =========================================================================
+
+  - note: greater_unicode_sharp_s_equal_after_fold
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.street",
+          "greater": "strasse"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        street: "Straße"
+    want_undefined: true
+
+  - note: lessOrEquals_unicode_sharp_s
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.street",
+          "lessOrEquals": "STRASSE"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        street: "Straße"
+    want_effect: "audit"
+
+  # =========================================================================
+  # like with Unicode — input folded before wildcard matching
+  # =========================================================================
+
+  - note: like_unicode_folded_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.description",
+          "like": "die strasse*"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        description: "Die Straße ist lang"
+    want_effect: "audit"
+
+  # =========================================================================
+  # matchInsensitively with Unicode literals
+  # =========================================================================
+
+  - note: matchInsensitively_unicode_literal
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.code",
+          "matchInsensitively": "strasse-##"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        code: "STRASSE-42"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Nested property key casing (deep paths)
+  # =========================================================================
+
+  - note: nested_property_key_deep_path
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.networkProfile.primaryNic",
+          "equals": "nic-01"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        NetworkProfile:
+          PrimaryNic: "NIC-01"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Multiple tags — lookup finds correct tag by name
+  # =========================================================================
+
+  - note: multiple_tags_lookup_correct_one
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "tags.Environment", "equals": "production" },
+            { "field": "tags.CostCenter", "equals": "FINANCE" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "PRODUCTION"
+        costCenter: "finance"
+    want_effect: "deny"
+
+  # =========================================================================
+  # in with single-element array
+  # =========================================================================
+
+  - note: in_single_element_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "in": ["WestUS2"]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      location: "westus2"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Null value interactions
+  # =========================================================================
+
+  - note: equals_null_explicit
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.optionalField",
+          "equals": null
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        optionalField: null
+    want_effect: "audit"
+
+  - note: equals_null_missing_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.optionalField",
+          "equals": null
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties: {}
+    want_effect: "audit"
+
+  - note: notEquals_null_with_string_value
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.optionalField",
+          "notEquals": null
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        optionalField: "has-a-value"
+    want_effect: "audit"
+
+  # =========================================================================
+  # String self-comparison with different casing
+  # =========================================================================
+
+  - note: equals_self_different_case
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "equals": "My-Production-VM"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "MY-PRODUCTION-VM"
+    want_effect: "audit"

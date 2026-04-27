@@ -1,0 +1,617 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Count Expressions Test Suite
+# Tests field count and value count with optional where clauses and name bindings.
+
+cases:
+  # =========================================================================
+  # Field count — direct path (core subset, no alias resolution)
+  # =========================================================================
+
+  - note: field_count_direct_path_core
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "securityRules[*]"
+          },
+          "greater": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      securityRules:
+        - { "name": "r1" }
+        - { "name": "r2" }
+        - { "name": "r3" }
+    want_effect: "deny"
+
+  - note: field_count_direct_path_where_core
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "securityRules[*]",
+            "where": {
+              "field": "securityRules[*].access",
+              "equals": "Allow"
+            }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      securityRules:
+        - { "access": "Allow" }
+        - { "access": "Deny" }
+        - { "access": "Allow" }
+    want_effect: "audit"
+
+  # =========================================================================
+  # Field count — basic
+  # =========================================================================
+
+  - note: field_count_basic
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "securityRules[*]"
+          },
+          "greater": 10
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      securityRules:
+        - { "name": "r1" }
+        - { "name": "r2" }
+        - { "name": "r3" }
+        - { "name": "r4" }
+        - { "name": "r5" }
+        - { "name": "r6" }
+        - { "name": "r7" }
+        - { "name": "r8" }
+        - { "name": "r9" }
+        - { "name": "r10" }
+        - { "name": "r11" }
+    want_effect: "deny"
+
+  - note: field_count_equals_zero
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "storageProfile.dataDisks[*]"
+          },
+          "equals": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Field count — with where clause
+  # =========================================================================
+
+  - note: field_count_with_where
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "securityRules[*]",
+            "where": {
+              "field": "securityRules[*].access",
+              "equals": "Allow"
+            }
+          },
+          "greater": 5
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      securityRules:
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+    want_effect: "deny"
+
+  - note: field_count_where_allOf
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "securityRules[*]",
+            "where": {
+              "allOf": [
+                {
+                  "field": "securityRules[*].access",
+                  "equals": "Allow"
+                },
+                {
+                  "field": "securityRules[*].direction",
+                  "equals": "Inbound"
+                }
+              ]
+            }
+          },
+          "greaterOrEquals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      securityRules:
+        - { "access": "Allow", "direction": "Inbound" }
+        - { "access": "Deny", "direction": "Outbound" }
+    want_effect: "deny"
+
+  - note: field_count_where_anyOf
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "securityRules[*]",
+            "where": {
+              "anyOf": [
+                {
+                  "field": "securityRules[*].destinationPortRange",
+                  "equals": "22"
+                },
+                {
+                  "field": "securityRules[*].destinationPortRange",
+                  "equals": "3389"
+                }
+              ]
+            }
+          },
+          "notEquals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      securityRules:
+        - { "destinationPortRange": "22" }
+        - { "destinationPortRange": "443" }
+    want_effect: "deny"
+
+  - note: field_count_where_not
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "securityRules[*]",
+            "where": {
+              "not": {
+                "field": "securityRules[*].access",
+                "equals": "Deny"
+              }
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      securityRules:
+        - { "access": "Allow" }
+        - { "access": "Deny" }
+    want_effect: "audit"
+
+  # =========================================================================
+  # Value count
+  # =========================================================================
+
+  - note: value_count_basic
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": ["eastus", "westus", "centralus"]
+          },
+          "equals": 3
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: value_count_with_name
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": ["eastus", "westus", "centralus"],
+            "name": "location"
+          },
+          "greater": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: value_count_with_name_and_where
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": ["eastus", "westus", "centralus", "northeurope"],
+            "name": "loc",
+            "where": {
+              "value": "[current('loc')]",
+              "like": "*us"
+            }
+          },
+          "equals": 3
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: value_count_expression
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('allowedLocations')]",
+            "name": "loc"
+          },
+          "greater": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      allowedLocations:
+        - "eastus"
+        - "westus"
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Count in allOf/anyOf
+  # =========================================================================
+
+  - note: count_in_allOf
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Network/networkSecurityGroups" },
+            {
+              "count": {
+                "field": "securityRules[*]",
+                "where": {
+                  "field": "securityRules[*].access",
+                  "equals": "Allow"
+                }
+              },
+              "greater": 10
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      securityRules:
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+        - { "access": "Allow" }
+    want_effect: "deny"
+
+  - note: count_in_not
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "count": {
+              "field": "storageProfile.dataDisks[*]"
+            },
+            "lessOrEquals": 4
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      storageProfile:
+        dataDisks:
+          - { "name": "d1" }
+          - { "name": "d2" }
+          - { "name": "d3" }
+          - { "name": "d4" }
+          - { "name": "d5" }
+    want_effect: "deny"
+
+  # =========================================================================
+  # Count with nested where containing count
+  # =========================================================================
+
+  - note: value_count_nested_where
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('requiredTags')]",
+            "name": "tag",
+            "where": {
+              "field": "[concat('tags[', current('tag'), ']')]",
+              "exists": true
+            }
+          },
+          "notEquals": "[length(parameters('requiredTags'))]"
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      requiredTags:
+        - "environment"
+        - "costCenter"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      tags:
+        environment: "prod"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Alias field refs inside count resolve to current loop element
+  # =========================================================================
+
+  - note: field_count_multiple_alias_refs_same_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "securityRules[*]",
+            "where": {
+              "allOf": [
+                { "field": "securityRules[*].access", "equals": "Allow" },
+                { "field": "securityRules[*].direction", "equals": "Inbound" },
+                { "field": "securityRules[*].protocol", "equals": "Tcp" }
+              ]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      securityRules:
+        - { "access": "Allow", "direction": "Inbound", "protocol": "Tcp" }
+        - { "access": "Allow", "direction": "Outbound", "protocol": "Tcp" }
+        - { "access": "Deny", "direction": "Inbound", "protocol": "Tcp" }
+    want_effect: "audit"
+
+  - note: field_count_nested_field_access
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "storageProfile.dataDisks[*]",
+            "where": {
+              "field": "storageProfile.dataDisks[*].managedDisk.storageAccountType",
+              "notEquals": "Premium_LRS"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      storageProfile:
+        dataDisks:
+          - { "name": "d1", "managedDisk": { "storageAccountType": "Premium_LRS" } }
+          - { "name": "d2", "managedDisk": { "storageAccountType": "Standard_LRS" } }
+    want_effect: "deny"
+
+  - note: field_count_where_zero_matches
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "field": "items[*].status",
+              "equals": "failed"
+            }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      items:
+        - { "status": "ok" }
+        - { "status": "ok" }
+        - { "status": "ok" }
+    want_effect: "audit"
+
+  # =========================================================================
+  # Nested count: count inside another count's where clause
+  # =========================================================================
+
+  - note: nested_field_and_value_count
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('requiredPorts')]",
+            "name": "port",
+            "where": {
+              "count": {
+                "field": "securityRules[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "securityRules[*].destinationPortRange", "equals": "[current('port')]" },
+                    { "field": "securityRules[*].access", "equals": "Allow" }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          },
+          "equals": "[length(parameters('requiredPorts'))]"
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      requiredPorts:
+        - "443"
+        - "80"
+    resource:
+      securityRules:
+        - { "destinationPortRange": "443", "access": "Allow" }
+        - { "destinationPortRange": "80", "access": "Allow" }
+        - { "destinationPortRange": "22", "access": "Deny" }
+    want_effect: "audit"
+
+  - note: nested_field_and_value_count_fail
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('requiredPorts')]",
+            "name": "port",
+            "where": {
+              "count": {
+                "field": "securityRules[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "securityRules[*].destinationPortRange", "equals": "[current('port')]" },
+                    { "field": "securityRules[*].access", "equals": "Allow" }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          },
+          "equals": "[length(parameters('requiredPorts'))]"
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      requiredPorts:
+        - "443"
+        - "80"
+        - "8080"
+    resource:
+      securityRules:
+        - { "destinationPortRange": "443", "access": "Allow" }
+        - { "destinationPortRange": "80", "access": "Allow" }
+        - { "destinationPortRange": "22", "access": "Deny" }
+    want_effect: ~
+
+  # =========================================================================
+  # current() — zero-arg form (innermost count element)
+  # =========================================================================
+
+  - note: current_zero_arg_value_count
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": ["Allow", "Allow", "Deny"],
+            "name": "access",
+            "where": {
+              "value": "[current()]",
+              "equals": "Allow"
+            }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: current_zero_arg_field_count
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "value": "[current()]",
+              "equals": "yes"
+            }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items: ["yes", "no", "yes"]
+    want_effect: "deny"
+
+  - note: current_zero_arg_with_function
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": ["HELLO", "WORLD"],
+            "name": "word",
+            "where": {
+              "value": "[startsWith(current(), 'HE')]",
+              "equals": true
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: current_zero_arg_nested_innermost
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": ["a", "b"],
+            "name": "outer",
+            "where": {
+              "count": {
+                "value": ["x", "y"],
+                "name": "inner",
+                "where": {
+                  "value": "[current()]",
+                  "equals": "x"
+                }
+              },
+              "greater": 0
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"

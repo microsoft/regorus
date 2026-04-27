@@ -1,0 +1,548 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# ARM Template Functions Test Suite
+# Tests: split, empty, first, last, createArray, startsWith, endsWith,
+# int, string, bool.
+
+cases:
+  # =========================================================================
+  # split(inputString, delimiter)
+  # =========================================================================
+
+  - note: fn_split_basic
+    policy_rule: |
+      {
+        "if": {
+          "value": "[first(split('a-b-c', '-'))]",
+          "equals": "a"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_split_last_element
+    policy_rule: |
+      {
+        "if": {
+          "value": "[last(split('foo/bar/baz', '/'))]",
+          "equals": "baz"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_split_length
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(split('a,b,c,d', ','))]",
+          "equals": 4
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_split_no_match_delimiter
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(split('hello', ','))]",
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  # =========================================================================
+  # empty(item)
+  # =========================================================================
+
+  - note: fn_empty_string_true
+    policy_rule: |
+      {
+        "if": {
+          "value": "[empty('')]",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_empty_string_false
+    policy_rule: |
+      {
+        "if": {
+          "value": "[empty('hello')]",
+          "equals": false
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_empty_with_parameter_array
+    policy_rule: |
+      {
+        "if": {
+          "value": "[empty(parameters('items'))]",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      items: []
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_empty_nonempty_array
+    policy_rule: |
+      {
+        "if": {
+          "value": "[empty(parameters('items'))]",
+          "equals": false
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      items:
+        - "a"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  # =========================================================================
+  # first(arg) / last(arg)
+  # =========================================================================
+
+  - note: fn_first_string
+    policy_rule: |
+      {
+        "if": {
+          "value": "[first('hello')]",
+          "equals": "h"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_last_string
+    policy_rule: |
+      {
+        "if": {
+          "value": "[last('hello')]",
+          "equals": "o"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_first_array
+    policy_rule: |
+      {
+        "if": {
+          "value": "[first(parameters('items'))]",
+          "equals": "alpha"
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      items:
+        - "alpha"
+        - "beta"
+        - "gamma"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_last_array
+    policy_rule: |
+      {
+        "if": {
+          "value": "[last(parameters('items'))]",
+          "equals": "gamma"
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      items:
+        - "alpha"
+        - "beta"
+        - "gamma"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  # =========================================================================
+  # createArray(items...)
+  # =========================================================================
+
+  - note: fn_createArray_basic
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(createArray('a', 'b', 'c'))]",
+          "equals": 3
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_createArray_first
+    policy_rule: |
+      {
+        "if": {
+          "value": "[first(createArray('x', 'y'))]",
+          "equals": "x"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  # =========================================================================
+  # startsWith / endsWith
+  # =========================================================================
+
+  - note: fn_startsWith_true
+    policy_rule: |
+      {
+        "if": {
+          "value": "[startsWith('abcdef', 'abc')]",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_startsWith_false
+    policy_rule: |
+      {
+        "if": {
+          "value": "[startsWith('abcdef', 'xyz')]",
+          "equals": false
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_startsWith_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "value": "[startsWith('AbCdEf', 'abc')]",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_endsWith_true
+    policy_rule: |
+      {
+        "if": {
+          "value": "[endsWith('abcdef', 'def')]",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_endsWith_false
+    policy_rule: |
+      {
+        "if": {
+          "value": "[endsWith('abcdef', 'xyz')]",
+          "equals": false
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_endsWith_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "value": "[endsWith('AbCdEf', 'DEF')]",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_startsWith_field_value
+    policy_rule: |
+      {
+        "if": {
+          "value": "[startsWith(field('name'), 'test-')]",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      name: "test-resource"
+    want_effect: "deny"
+
+  # =========================================================================
+  # int(value)
+  # =========================================================================
+
+  - note: fn_int_from_string
+    policy_rule: |
+      {
+        "if": {
+          "value": "[int('42')]",
+          "equals": 42
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_int_from_float_string
+    policy_rule: |
+      {
+        "if": {
+          "value": "[int('3.7')]",
+          "equals": 3
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_int_identity
+    policy_rule: |
+      {
+        "if": {
+          "value": "[int(parameters('num'))]",
+          "equals": 10
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      num: 10
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  # =========================================================================
+  # string(value)
+  # =========================================================================
+
+  - note: fn_string_from_int
+    policy_rule: |
+      {
+        "if": {
+          "value": "[string(42)]",
+          "equals": "42"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_string_from_bool
+    policy_rule: |
+      {
+        "if": {
+          "value": "[string(true)]",
+          "equals": "true"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_string_identity
+    policy_rule: |
+      {
+        "if": {
+          "value": "[string('hello')]",
+          "equals": "hello"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  # =========================================================================
+  # bool(value)
+  # =========================================================================
+
+  - note: fn_bool_from_true_string
+    policy_rule: |
+      {
+        "if": {
+          "value": "[bool('true')]",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_bool_from_false_string
+    policy_rule: |
+      {
+        "if": {
+          "value": "[bool('false')]",
+          "equals": false
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_bool_from_1_string
+    policy_rule: |
+      {
+        "if": {
+          "value": "[bool('1')]",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_bool_from_number
+    policy_rule: |
+      {
+        "if": {
+          "value": "[bool(1)]",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_bool_zero_is_false
+    policy_rule: |
+      {
+        "if": {
+          "value": "[bool(0)]",
+          "equals": false
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Composed / nested ARM functions
+  # =========================================================================
+
+  - note: fn_composed_split_startsWith
+    policy_rule: |
+      {
+        "if": {
+          "value": "[startsWith(first(split(field('name'), '-')), 'prod')]",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      name: "production-vm-001"
+    want_effect: "deny"
+
+  - note: fn_composed_int_add
+    policy_rule: |
+      {
+        "if": {
+          "value": "[add(int('10'), int('20'))]",
+          "equals": 30
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_composed_if_empty
+    policy_rule: |
+      {
+        "if": {
+          "value": "[if(empty(parameters('label')), 'default', parameters('label'))]",
+          "equals": "default"
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      label: ""
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_composed_concat_with_string
+    policy_rule: |
+      {
+        "if": {
+          "value": "[concat('count=', string(length(parameters('items'))))]",
+          "equals": "count=3"
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      items:
+        - "a"
+        - "b"
+        - "c"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_composed_endsWith_toLower
+    policy_rule: |
+      {
+        "if": {
+          "value": "[endsWith(toLower(field('name')), '.json')]",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      name: "Config.JSON"
+    want_effect: "deny"

@@ -1,0 +1,118 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Cosmos DB/Cosmos_PrivateNetworkAccess_Modify
+# Real Azure Policy: "Configure CosmosDB accounts to disable public network access"
+# Source: regolator/policyDefinitions/Cosmos DB/Cosmos_PrivateNetworkAccess_Modify.json
+#
+# Features exercised:
+#   - Modify effect with requestContext().apiVersion condition on operation
+#   - greaterOrEquals on API version string
+#   - conflictEffect in details
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Configure CosmosDB accounts to disable public network access",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "String",
+          "allowedValues": ["Modify", "Disabled"],
+          "defaultValue": "Modify"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.DocumentDB/databaseAccounts"
+            },
+            {
+              "field": "Microsoft.DocumentDB/databaseAccounts/publicNetworkAccess",
+              "notEquals": "Disabled"
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/microsoft.authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c",
+              "/providers/Microsoft.Authorization/roleDefinitions/5bd9cd88-fe45-4216-938b-f97437e15450"
+            ],
+            "conflictEffect": "audit",
+            "operations": [
+              {
+                "condition": "[greaterOrEquals(requestContext().apiVersion, '2021-01-15')]",
+                "operation": "addOrReplace",
+                "field": "Microsoft.DocumentDB/databaseAccounts/publicNetworkAccess",
+                "value": "Disabled"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Public access enabled → modify
+  # =========================================================================
+
+  - note: modify_public_access_enabled
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-public"
+      properties:
+        publicNetworkAccess: "Enabled"
+    api_version: "2023-04-15"
+    want_effect: "Modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/microsoft.authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+        - "/providers/Microsoft.Authorization/roleDefinitions/5bd9cd88-fe45-4216-938b-f97437e15450"
+      operations:
+        - condition: "[greaterOrEquals(requestContext().apiVersion, '2021-01-15')]"
+          operation: "addOrReplace"
+          field: "Microsoft.DocumentDB/databaseAccounts/publicNetworkAccess"
+          value: "Disabled"
+
+  - note: modify_public_access_missing
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-no-field"
+      properties: {}
+    api_version: "2023-04-15"
+    want_effect: "Modify"
+
+  # =========================================================================
+  # Public access already disabled → pass
+  # =========================================================================
+
+  - note: pass_public_access_disabled
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-disabled"
+      properties:
+        publicNetworkAccess: "Disabled"
+    api_version: "2023-04-15"
+    want_undefined: true
+
+  # =========================================================================
+  # Wrong type
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "not-cosmos"
+      properties:
+        publicNetworkAccess: "Enabled"
+    api_version: "2023-04-15"
+    want_undefined: true

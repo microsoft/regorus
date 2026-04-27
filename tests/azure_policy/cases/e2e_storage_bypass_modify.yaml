@@ -1,0 +1,243 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: VirtualEnclaves/StorageNetworkAccessBypassOnly_Modify
+# Real Azure Policy: "Configure Storage Accounts to restrict network access
+#                     through network ACL bypass configuration only"
+# Source: regolator/policyDefinitions/VirtualEnclaves/StorageNetworkAccessBypassOnly_Modify.json
+#
+# Features exercised:
+#   - Three plain field counts (ipRules[*], resourceAccessRules[*], virtualNetworkRules[*])
+#   - greaterOrEquals 1 count comparison
+#   - Modify with 4 addOrReplace operations (no condition)
+#   - parameterised bypass configuration
+#   - notEquals on field
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Configure Storage Accounts to restrict network access through network ACL bypass configuration only",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "String",
+          "allowedValues": ["Modify", "Disabled"],
+          "defaultValue": "Modify"
+        },
+        "bypassConfiguration": {
+          "type": "String",
+          "allowedValues": [
+            "None",
+            "AzureServices",
+            "Logging",
+            "Metrics",
+            "Logging, Metrics",
+            "Logging, Metrics, AzureServices",
+            "Logging, AzureServices",
+            "Metrics, AzureServices"
+          ],
+          "defaultValue": "AzureServices"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Storage/storageAccounts"
+            },
+            {
+              "anyOf": [
+                {
+                  "field": "Microsoft.Storage/storageAccounts/networkAcls.defaultAction",
+                  "notEquals": "Deny"
+                },
+                {
+                  "count": {
+                    "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules[*]"
+                  },
+                  "greaterOrEquals": 1
+                },
+                {
+                  "count": {
+                    "field": "Microsoft.Storage/storageAccounts/networkAcls.resourceAccessRules[*]"
+                  },
+                  "greaterOrEquals": 1
+                },
+                {
+                  "count": {
+                    "field": "Microsoft.Storage/storageAccounts/networkAcls.virtualNetworkRules[*]"
+                  },
+                  "greaterOrEquals": 1
+                },
+                {
+                  "field": "Microsoft.Storage/storageAccounts/networkAcls.bypass",
+                  "notEquals": "[parameters('bypassConfiguration')]"
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "conflictEffect": "audit",
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/17d1049b-9a84-46fb-8f53-869881c3d3ab"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.Storage/storageAccounts/networkAcls.defaultAction",
+                "value": "Deny"
+              },
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules",
+                "value": []
+              },
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.Storage/storageAccounts/networkAcls.virtualNetworkRules",
+                "value": []
+              },
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.Storage/storageAccounts/networkAcls.bypass",
+                "value": "[parameters('bypassConfiguration')]"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Fully compliant — defaultAction=Deny, no rules, bypass matches
+  # =========================================================================
+
+  - note: pass_fully_compliant
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "stg-compliant"
+      properties:
+        networkAcls:
+          defaultAction: "Deny"
+          ipRules: []
+          resourceAccessRules: []
+          virtualNetworkRules: []
+          bypass: "AzureServices"
+    want_undefined: true
+
+  # =========================================================================
+  # defaultAction != Deny → Modify
+  # =========================================================================
+
+  - note: modify_default_action_allow
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "stg-allow"
+      properties:
+        networkAcls:
+          defaultAction: "Allow"
+          ipRules: []
+          resourceAccessRules: []
+          virtualNetworkRules: []
+          bypass: "AzureServices"
+    want_effect: "Modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/Microsoft.Authorization/roleDefinitions/17d1049b-9a84-46fb-8f53-869881c3d3ab"
+      operations:
+        - operation: "addOrReplace"
+          field: "Microsoft.Storage/storageAccounts/networkAcls.defaultAction"
+          value: "Deny"
+        - operation: "addOrReplace"
+          field: "Microsoft.Storage/storageAccounts/networkAcls.ipRules"
+          value: []
+        - operation: "addOrReplace"
+          field: "Microsoft.Storage/storageAccounts/networkAcls.virtualNetworkRules"
+          value: []
+        - operation: "addOrReplace"
+          field: "Microsoft.Storage/storageAccounts/networkAcls.bypass"
+          value: "AzureServices"
+
+  # =========================================================================
+  # Has IP rules → count >= 1 triggers Modify
+  # =========================================================================
+
+  - note: modify_has_ip_rules
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "stg-ip-rules"
+      properties:
+        networkAcls:
+          defaultAction: "Deny"
+          ipRules:
+            - value: "10.0.0.1"
+              action: "Allow"
+          resourceAccessRules: []
+          virtualNetworkRules: []
+          bypass: "AzureServices"
+    want_effect: "Modify"
+
+  # =========================================================================
+  # Has vnet rules → count >= 1 triggers Modify
+  # =========================================================================
+
+  - note: modify_has_vnet_rules
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "stg-vnet-rules"
+      properties:
+        networkAcls:
+          defaultAction: "Deny"
+          ipRules: []
+          resourceAccessRules: []
+          virtualNetworkRules:
+            - id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/subnet1"
+          bypass: "AzureServices"
+    want_effect: "Modify"
+
+  # =========================================================================
+  # bypass != parameter → Modify
+  # =========================================================================
+
+  - note: modify_bypass_mismatch
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "stg-bypass"
+      properties:
+        networkAcls:
+          defaultAction: "Deny"
+          ipRules: []
+          resourceAccessRules: []
+          virtualNetworkRules: []
+          bypass: "None"
+    parameters:
+      bypassConfiguration: "AzureServices"
+    want_effect: "Modify"
+
+  # =========================================================================
+  # Custom bypass param, bypass matches → pass
+  # =========================================================================
+
+  - note: pass_custom_bypass_matches
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "stg-custom-bypass"
+      properties:
+        networkAcls:
+          defaultAction: "Deny"
+          ipRules: []
+          resourceAccessRules: []
+          virtualNetworkRules: []
+          bypass: "Logging, Metrics"
+    parameters:
+      bypassConfiguration: "Logging, Metrics"
+    want_undefined: true

@@ -1,0 +1,138 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Network/NetworkPublicIPNic_Deny
+# Real Azure Policy: "Network interfaces should not have public IPs"
+# Source: regolator/policyDefinitions/Network/NetworkPublicIPNic_Deny.json
+#
+# Features exercised:
+#   - Double negation pattern: not { field notLike "*" }
+#   - Wildcard array alias: ipconfigurations[*].publicIpAddress.id
+#   - No parameters (hardcoded deny effect)
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Network interfaces should not have public IPs",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {},
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Network/networkInterfaces"
+            },
+            {
+              "not": {
+                "field": "Microsoft.Network/networkInterfaces/ipconfigurations[*].publicIpAddress.id",
+                "notLike": "*"
+              }
+            }
+          ]
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # NIC with public IP → deny
+  # =========================================================================
+
+  - note: deny_single_ip_config_with_public_ip
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-public"
+      properties:
+        ipConfigurations:
+          - properties:
+              privateIPAddress: "10.0.0.4"
+              publicIpAddress:
+                id: "/subscriptions/sub1/resourceGroups/rg/providers/Microsoft.Network/publicIPAddresses/pip1"
+    want_effect: "deny"
+
+  - note: deny_multiple_ip_configs_all_public
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-multi-public"
+      properties:
+        ipConfigurations:
+          - properties:
+              privateIPAddress: "10.0.0.4"
+              publicIpAddress:
+                id: "/subscriptions/sub1/resourceGroups/rg/providers/Microsoft.Network/publicIPAddresses/pip1"
+          - properties:
+              privateIPAddress: "10.0.0.5"
+              publicIpAddress:
+                id: "/subscriptions/sub1/resourceGroups/rg/providers/Microsoft.Network/publicIPAddresses/pip2"
+    want_effect: "deny"
+
+  - note: deny_one_of_many_has_public_ip
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-mixed"
+      properties:
+        ipConfigurations:
+          - properties:
+              privateIPAddress: "10.0.0.4"
+          - properties:
+              privateIPAddress: "10.0.0.5"
+              publicIpAddress:
+                id: "/subscriptions/sub1/resourceGroups/rg/providers/Microsoft.Network/publicIPAddresses/pip1"
+    want_effect: "deny"
+
+  # =========================================================================
+  # NIC without public IP → pass
+  # =========================================================================
+
+  - note: pass_no_public_ip
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-private"
+      properties:
+        ipConfigurations:
+          - properties:
+              privateIPAddress: "10.0.0.4"
+    want_undefined: true
+
+  - note: pass_multiple_configs_no_public_ip
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-multi-private"
+      properties:
+        ipConfigurations:
+          - properties:
+              privateIPAddress: "10.0.0.4"
+          - properties:
+              privateIPAddress: "10.0.0.5"
+    want_undefined: true
+
+  - note: pass_empty_ip_configs
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-empty"
+      properties:
+        ipConfigurations: []
+    want_undefined: true
+
+  # =========================================================================
+  # Wrong resource type
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "not-a-nic"
+      properties:
+        ipConfigurations:
+          - properties:
+              publicIpAddress:
+                id: "some-id"
+    want_undefined: true

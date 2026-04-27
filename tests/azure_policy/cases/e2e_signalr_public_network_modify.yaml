@@ -1,0 +1,183 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: SignalR/PublicNetworkAccessDisabled_Modify
+# Real Azure Policy: "Modify Azure SignalR Service resources to disable public network access"
+# Source: regolator/policyDefinitions/SignalR/PublicNetworkAccessDisabled_Modify.json
+#
+# Features exercised:
+#   - Multi-modify (3 operations, one conditional)
+#   - Conditional modify gated on requestContext().apiVersion
+#   - conflictEffect: Audit
+#   - Bare field count (no where clause)
+#   - exists false
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Modify Azure SignalR Service resources to disable public network access",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "String",
+          "allowedValues": ["Modify", "Disabled"],
+          "defaultValue": "Modify"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.SignalRService/SignalR"
+            },
+            {
+              "anyOf": [
+                {
+                  "field": "Microsoft.SignalRService/SignalR/networkACLs.defaultAction",
+                  "equals": "Allow"
+                },
+                {
+                  "field": "Microsoft.SignalRService/SignalR/networkACLs.publicNetwork.allow",
+                  "exists": false
+                },
+                {
+                  "count": {
+                    "field": "Microsoft.SignalRService/SignalR/networkACLs.publicNetwork.allow[*]"
+                  },
+                  "greater": 0
+                }
+              ]
+            },
+            {
+              "field": "Microsoft.SignalRService/SignalR/publicNetworkAccess",
+              "notEquals": "Disabled"
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "conflictEffect": "Audit",
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/8cf5e20a-e4b2-4e9d-b3a1-5ceb692c2761"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.SignalRService/SignalR/networkACLs.defaultAction",
+                "value": "Deny"
+              },
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.SignalRService/SignalR/networkACLs.publicNetwork.allow",
+                "value": []
+              },
+              {
+                "condition": "[greaterOrEquals(requestContext().apiVersion, '2021-06-01-preview')]",
+                "operation": "addOrReplace",
+                "field": "Microsoft.SignalRService/SignalR/publicNetworkAccess",
+                "value": "Disabled"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Modify — default action is Allow
+  # =========================================================================
+
+  - note: modify_default_action_allow
+    resource:
+      type: "Microsoft.SignalRService/SignalR"
+      name: "signalr-open"
+      properties:
+        networkACLs:
+          defaultAction: "Allow"
+          publicNetwork:
+            allow:
+              - "ServerConnection"
+        publicNetworkAccess: "Enabled"
+    want_effect: "Modify"
+
+  # =========================================================================
+  # Modify — publicNetwork.allow does not exist
+  # =========================================================================
+
+  - note: modify_public_allow_not_exists
+    resource:
+      type: "Microsoft.SignalRService/SignalR"
+      name: "signalr-no-allow"
+      properties:
+        networkACLs:
+          defaultAction: "Deny"
+        publicNetworkAccess: "Enabled"
+    want_effect: "Modify"
+
+  # =========================================================================
+  # Modify — publicNetwork.allow has items (count > 0)
+  # =========================================================================
+
+  - note: modify_public_allow_has_items
+    resource:
+      type: "Microsoft.SignalRService/SignalR"
+      name: "signalr-with-allow"
+      properties:
+        networkACLs:
+          defaultAction: "Deny"
+          publicNetwork:
+            allow:
+              - "ClientConnection"
+              - "ServerConnection"
+        publicNetworkAccess: "Enabled"
+    want_effect: "Modify"
+
+  # =========================================================================
+  # Compliant — already disabled
+  # =========================================================================
+
+  - note: pass_already_disabled
+    resource:
+      type: "Microsoft.SignalRService/SignalR"
+      name: "signalr-locked"
+      properties:
+        networkACLs:
+          defaultAction: "Deny"
+          publicNetwork:
+            allow: []
+        publicNetworkAccess: "Disabled"
+    want_undefined: true
+
+  # =========================================================================
+  # Compliant — defaultAction=Deny, no allow field, already disabled
+  # =========================================================================
+
+  - note: pass_deny_no_allow_disabled
+    resource:
+      type: "Microsoft.SignalRService/SignalR"
+      name: "signalr-minimal"
+      properties:
+        networkACLs:
+          defaultAction: "Deny"
+          publicNetwork:
+            allow: []
+        publicNetworkAccess: "Disabled"
+    want_undefined: true
+
+  # =========================================================================
+  # Wrong type → skip
+  # =========================================================================
+
+  - note: skip_wrong_type
+    resource:
+      type: "Microsoft.SignalRService/WebPubSub"
+      name: "webpubsub"
+      properties: {}
+    want_undefined: true

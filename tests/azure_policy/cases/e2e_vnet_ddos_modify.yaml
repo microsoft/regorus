@@ -1,0 +1,157 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Network/VirtualNetworkDdosStandard_Audit
+# Real Azure Policy: "Virtual networks should be protected by Azure DDoS Protection"
+# Source: regolator/policyDefinitions/Network/VirtualNetworkDdosStandard_Audit.json
+#
+# Features exercised:
+#   - Modify effect with operations (addOrReplace)
+#   - anyOf within allOf (enableDdosProtection OR ddosProtectionPlan empty)
+#   - Parameterized effect with Modify/Audit/Disabled
+#   - conflictEffect in details
+#   - field equals "" (empty string check)
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Virtual networks should be protected by Azure DDoS Protection",
+      "policyType": "BuiltIn",
+      "mode": "All",
+      "parameters": {
+        "effect": {
+          "type": "String",
+          "allowedValues": ["Modify", "Audit", "Disabled"],
+          "defaultValue": "Modify"
+        },
+        "ddosPlan": {
+          "type": "String",
+          "metadata": {
+            "displayName": "DDoS Protection Plan",
+            "strongType": "Microsoft.Network/ddosProtectionPlans"
+          }
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Network/virtualNetworks"
+            },
+            {
+              "anyOf": [
+                {
+                  "field": "Microsoft.Network/virtualNetworks/enableDdosProtection",
+                  "notEquals": true
+                },
+                {
+                  "field": "Microsoft.Network/virtualNetworks/ddosProtectionPlan",
+                  "equals": ""
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "conflictEffect": "audit",
+            "roleDefinitionIds": [
+              "/providers/microsoft.authorization/roleDefinitions/4d97b98b-1d4f-4787-a291-c67834d212e7"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.Network/virtualNetworks/enableDdosProtection",
+                "value": true
+              },
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.Network/virtualNetworks/ddosProtectionPlan.id",
+                "value": "[parameters('ddosPlan')]"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Non-compliant: DDoS not enabled
+  # =========================================================================
+
+  - note: modify_ddos_not_enabled
+    resource:
+      type: "Microsoft.Network/virtualNetworks"
+      name: "vnet-no-ddos"
+      properties:
+        enableDdosProtection: false
+        ddosProtectionPlan: ""
+    parameters:
+      ddosPlan: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/ddosProtectionPlans/plan1"
+    want_effect: "Modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/microsoft.authorization/roleDefinitions/4d97b98b-1d4f-4787-a291-c67834d212e7"
+      operations:
+        - operation: "addOrReplace"
+          field: "Microsoft.Network/virtualNetworks/enableDdosProtection"
+          value: true
+        - operation: "addOrReplace"
+          field: "Microsoft.Network/virtualNetworks/ddosProtectionPlan.id"
+          value: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/ddosProtectionPlans/plan1"
+
+  - note: modify_ddos_enabled_but_no_plan
+    resource:
+      type: "Microsoft.Network/virtualNetworks"
+      name: "vnet-no-plan"
+      properties:
+        enableDdosProtection: true
+        ddosProtectionPlan: ""
+    parameters:
+      ddosPlan: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/ddosProtectionPlans/plan1"
+    want_effect: "Modify"
+
+  - note: modify_ddos_missing_field
+    resource:
+      type: "Microsoft.Network/virtualNetworks"
+      name: "vnet-missing"
+      properties: {}
+    parameters:
+      ddosPlan: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/ddosProtectionPlans/plan1"
+    want_effect: "Modify"
+
+  # =========================================================================
+  # Compliant: DDoS enabled with plan
+  # =========================================================================
+
+  - note: pass_ddos_enabled_with_plan
+    resource:
+      type: "Microsoft.Network/virtualNetworks"
+      name: "vnet-protected"
+      properties:
+        enableDdosProtection: true
+        ddosProtectionPlan:
+          id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/ddosProtectionPlans/plan1"
+    parameters:
+      ddosPlan: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/ddosProtectionPlans/plan1"
+    want_undefined: true
+
+  # =========================================================================
+  # Wrong type
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "not-a-vnet"
+      properties:
+        enableDdosProtection: false
+    parameters:
+      ddosPlan: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/ddosProtectionPlans/plan1"
+    want_undefined: true

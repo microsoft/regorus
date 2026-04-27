@@ -1,0 +1,428 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Stream Analytics/DataExfiltration_Audit
+# Real Azure Policy: "Stream Analytics job should connect to trusted inputs
+#                     and outputs"
+# Source: regolator/policyDefinitions/Stream Analytics/DataExfiltration_Audit.json
+#
+# Features exercised:
+#   - Massive anyOf tree (4 top-level branches for outputs/inputs/functions/streamingjobs)
+#   - Multiple datasource type checks with notIn on sub-resource types
+#   - Count with where clause on wildcard array (storageAccounts[*].accountName)
+#   - notIn operator with parameterised Array
+#   - Long alias paths with dots and hyphens (e.g. datasource.Microsoft-Storage-Blob.storageAccounts[*])
+#   - exists "true" + notIn combined check
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Stream Analytics job should connect to trusted inputs and outputs",
+      "policyType": "BuiltIn",
+      "mode": "All",
+      "parameters": {
+        "effect": {
+          "type": "String",
+          "allowedValues": ["Deny", "Disabled", "Audit"],
+          "defaultValue": "Audit"
+        },
+        "allowedEventHubNamespaces": {
+          "type": "Array",
+          "defaultValue": []
+        },
+        "allowedSQLServers": {
+          "type": "Array",
+          "defaultValue": []
+        },
+        "allowedStorageAccounts": {
+          "type": "Array",
+          "defaultValue": []
+        },
+        "allowedCosmosAccounts": {
+          "type": "Array",
+          "defaultValue": []
+        },
+        "allowedAzureFunctionAccounts": {
+          "type": "Array",
+          "defaultValue": []
+        },
+        "allowedIoTHubNamespaces": {
+          "type": "Array",
+          "defaultValue": []
+        },
+        "allowedMLWebServiceEndpoints": {
+          "type": "Array",
+          "defaultValue": []
+        }
+      },
+      "policyRule": {
+        "if": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.StreamAnalytics/streamingjobs/outputs"
+                },
+                {
+                  "anyOf": [
+                    {
+                      "allOf": [
+                        {
+                          "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.type",
+                          "equals": "Microsoft.EventHub/EventHub"
+                        },
+                        {
+                          "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.Microsoft-ServiceBus-EventHub.serviceBusNamespace",
+                          "notIn": "[parameters('allowedEventHubNamespaces')]"
+                        }
+                      ]
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.type",
+                          "equals": "Microsoft.Sql/Server/Database"
+                        },
+                        {
+                          "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.Microsoft-Sql-Server-Database.server",
+                          "notIn": "[parameters('allowedSQLServers')]"
+                        }
+                      ]
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.type",
+                          "equals": "Microsoft.Storage/Table"
+                        },
+                        {
+                          "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.Microsoft-Storage-Table.accountName",
+                          "notIn": "[parameters('allowedStorageAccounts')]"
+                        }
+                      ]
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.type",
+                          "equals": "Microsoft.Storage/DocumentDB"
+                        },
+                        {
+                          "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.Microsoft-Storage-DocumentDB.accountId",
+                          "notIn": "[parameters('allowedCosmosAccounts')]"
+                        }
+                      ]
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.type",
+                          "equals": "Microsoft.AzureFunction"
+                        },
+                        {
+                          "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.Microsoft-AzureFunction.functionAppName",
+                          "notIn": "[parameters('allowedAzureFunctionAccounts')]"
+                        }
+                      ]
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.type",
+                          "equals": "Microsoft.Storage/Blob"
+                        },
+                        {
+                          "count": {
+                            "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.Microsoft-Storage-Blob.storageAccounts[*]",
+                            "where": {
+                              "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.Microsoft-Storage-Blob.storageAccounts[*].accountName",
+                              "notIn": "[parameters('allowedStorageAccounts')]"
+                            }
+                          },
+                          "greater": 0
+                        }
+                      ]
+                    },
+                    {
+                      "field": "Microsoft.StreamAnalytics/streamingjobs/outputs/datasource.type",
+                      "notIn": [
+                        "Microsoft.EventHub/EventHub",
+                        "Microsoft.Sql/Server/Database",
+                        "Microsoft.Storage/Table",
+                        "Microsoft.Storage/DocumentDB",
+                        "Microsoft.AzureFunction",
+                        "Microsoft.Storage/Blob"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.StreamAnalytics/streamingjobs"
+                },
+                {
+                  "anyOf": [
+                    {
+                      "allOf": [
+                        {
+                          "field": "Microsoft.StreamAnalytics/streamingjobs/jobStorageAccount",
+                          "exists": "true"
+                        },
+                        {
+                          "field": "Microsoft.StreamAnalytics/streamingjobs/jobStorageAccount.accountName",
+                          "notIn": "[parameters('allowedStorageAccounts')]"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # OUTPUT: EventHub output to allowed namespace → pass
+  # =========================================================================
+
+  - note: pass_output_eventhub_allowed
+    resource:
+      type: "Microsoft.StreamAnalytics/streamingjobs/outputs"
+      name: "output1"
+      properties:
+        datasource:
+          type: "Microsoft.EventHub/EventHub"
+          Microsoft-ServiceBus-EventHub:
+            serviceBusNamespace: "my-eh-namespace"
+    parameters:
+      allowedEventHubNamespaces:
+        - "my-eh-namespace"
+    want_undefined: true
+
+  # =========================================================================
+  # OUTPUT: EventHub output to disallowed namespace → Audit
+  # =========================================================================
+
+  - note: audit_output_eventhub_disallowed
+    resource:
+      type: "Microsoft.StreamAnalytics/streamingjobs/outputs"
+      name: "output2"
+      properties:
+        datasource:
+          type: "Microsoft.EventHub/EventHub"
+          Microsoft-ServiceBus-EventHub:
+            serviceBusNamespace: "rogue-namespace"
+    parameters:
+      allowedEventHubNamespaces:
+        - "trusted-namespace"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # OUTPUT: SQL output to allowed server → pass
+  # =========================================================================
+
+  - note: pass_output_sql_allowed
+    resource:
+      type: "Microsoft.StreamAnalytics/streamingjobs/outputs"
+      name: "output-sql"
+      properties:
+        datasource:
+          type: "Microsoft.Sql/Server/Database"
+          Microsoft-Sql-Server-Database:
+            server: "sql-server-approved"
+    parameters:
+      allowedSQLServers:
+        - "sql-server-approved"
+    want_undefined: true
+
+  # =========================================================================
+  # OUTPUT: Blob storage with disallowed account in storageAccounts[*] → Audit
+  # =========================================================================
+
+  - note: audit_output_blob_disallowed
+    resource:
+      type: "Microsoft.StreamAnalytics/streamingjobs/outputs"
+      name: "output-blob"
+      properties:
+        datasource:
+          type: "Microsoft.Storage/Blob"
+          Microsoft-Storage-Blob:
+            storageAccounts:
+              - accountName: "rogue-storage"
+              - accountName: "trusted-storage"
+    parameters:
+      allowedStorageAccounts:
+        - "trusted-storage"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # OUTPUT: Blob storage with all accounts allowed → pass
+  # =========================================================================
+
+  - note: pass_output_blob_all_allowed
+    resource:
+      type: "Microsoft.StreamAnalytics/streamingjobs/outputs"
+      name: "output-blob-ok"
+      properties:
+        datasource:
+          type: "Microsoft.Storage/Blob"
+          Microsoft-Storage-Blob:
+            storageAccounts:
+              - accountName: "trusted-storage"
+    parameters:
+      allowedStorageAccounts:
+        - "trusted-storage"
+    want_undefined: true
+
+  # =========================================================================
+  # OUTPUT: SQL output to disallowed server → Audit
+  # =========================================================================
+
+  - note: audit_output_sql_disallowed
+    resource:
+      type: "Microsoft.StreamAnalytics/streamingjobs/outputs"
+      name: "output-sql-bad"
+      properties:
+        datasource:
+          type: "Microsoft.Sql/Server/Database"
+          Microsoft-Sql-Server-Database:
+            server: "rogue-sql-server"
+    parameters:
+      allowedSQLServers:
+        - "trusted-sql-server"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # OUTPUT: Table output to disallowed account → Audit
+  # =========================================================================
+
+  - note: audit_output_table_disallowed
+    resource:
+      type: "Microsoft.StreamAnalytics/streamingjobs/outputs"
+      name: "output-table"
+      properties:
+        datasource:
+          type: "Microsoft.Storage/Table"
+          Microsoft-Storage-Table:
+            accountName: "rogue-storage"
+    parameters:
+      allowedStorageAccounts:
+        - "trusted-storage"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # OUTPUT: CosmosDB output to disallowed account → Audit
+  # =========================================================================
+
+  - note: audit_output_cosmosdb_disallowed
+    resource:
+      type: "Microsoft.StreamAnalytics/streamingjobs/outputs"
+      name: "output-cosmosdb"
+      properties:
+        datasource:
+          type: "Microsoft.Storage/DocumentDB"
+          Microsoft-Storage-DocumentDB:
+            accountId: "rogue-cosmos-account"
+    parameters:
+      allowedCosmosAccounts:
+        - "trusted-cosmos-account"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # OUTPUT: AzureFunction output to disallowed function app → Audit
+  # =========================================================================
+
+  - note: audit_output_function_disallowed
+    resource:
+      type: "Microsoft.StreamAnalytics/streamingjobs/outputs"
+      name: "output-function"
+      properties:
+        datasource:
+          type: "Microsoft.AzureFunction"
+          Microsoft-AzureFunction:
+            functionAppName: "rogue-function-app"
+    parameters:
+      allowedAzureFunctionAccounts:
+        - "trusted-function-app"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # OUTPUT: Unknown datasource type → Audit (not in known list)
+  # =========================================================================
+
+  - note: audit_output_unknown_type
+    resource:
+      type: "Microsoft.StreamAnalytics/streamingjobs/outputs"
+      name: "output-unknown"
+      properties:
+        datasource:
+          type: "Microsoft.SomeNewService/SomeType"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # STREAMINGJOB: jobStorageAccount with disallowed account → Audit
+  # =========================================================================
+
+  - note: audit_job_storage_disallowed
+    resource:
+      type: "Microsoft.StreamAnalytics/streamingjobs"
+      name: "job1"
+      properties:
+        jobStorageAccount:
+          accountName: "rogue-storage"
+    parameters:
+      allowedStorageAccounts:
+        - "trusted-storage"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # STREAMINGJOB: jobStorageAccount with allowed account → pass
+  # =========================================================================
+
+  - note: pass_job_storage_allowed
+    resource:
+      type: "Microsoft.StreamAnalytics/streamingjobs"
+      name: "job2"
+      properties:
+        jobStorageAccount:
+          accountName: "trusted-storage"
+    parameters:
+      allowedStorageAccounts:
+        - "trusted-storage"
+    want_undefined: true
+
+  # =========================================================================
+  # STREAMINGJOB: no jobStorageAccount → pass (exists "true" fails)
+  # =========================================================================
+
+  - note: pass_job_no_storage
+    resource:
+      type: "Microsoft.StreamAnalytics/streamingjobs"
+      name: "job3"
+      properties: {}
+    want_undefined: true
+
+  # =========================================================================
+  # Wrong type entirely → pass
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm1"
+      properties: {}
+    want_undefined: true

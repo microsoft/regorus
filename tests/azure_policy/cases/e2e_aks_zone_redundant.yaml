@@ -1,0 +1,227 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Resilience/ContainerService_managedclusters_ZoneRedundant_Audit
+# Real Azure Policy: "Azure Kubernetes Service Managed Clusters should be
+#   Zone Redundant"
+# Features: allOf, anyOf, field (type + alias), equals, field count with where,
+#   nested field count ([*] inside [*]), less, greater, parameters() with
+#   defaultValue
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "[Preview]: Azure Kubernetes Service Managed Clusters should be Zone Redundant",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "String",
+          "metadata": {
+            "displayName": "Effect"
+          },
+          "allowedValues": ["Audit", "Deny", "Disabled"],
+          "defaultValue": "Audit"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.ContainerService/managedclusters"
+            },
+            {
+              "anyOf": [
+                {
+                  "count": {
+                    "field": "Microsoft.ContainerService/managedClusters/agentPoolProfiles[*]",
+                    "where": {
+                      "count": {
+                        "field": "Microsoft.ContainerService/managedClusters/agentPoolProfiles[*].availabilityZones[*]"
+                      },
+                      "less": 3
+                    }
+                  },
+                  "greater": 0
+                },
+                {
+                  "count": {
+                    "field": "Microsoft.ContainerService/managedClusters/agentPoolProfiles[*]",
+                    "where": {
+                      "field": "Microsoft.ContainerService/managedClusters/agentPoolProfiles[*].count",
+                      "less": 3
+                    }
+                  },
+                  "greater": 0
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # No effect — all pools have 3 AZs and count >= 3
+  # =========================================================================
+
+  - note: pass_fully_zone_redundant
+    resource:
+      type: "Microsoft.ContainerService/managedclusters"
+      name: "myAKS"
+      location: "eastus"
+      properties:
+        agentPoolProfiles:
+          - name: "system"
+            count: 3
+            availabilityZones: ["1", "2", "3"]
+          - name: "user"
+            count: 5
+            availabilityZones: ["1", "2", "3"]
+    want_undefined: true
+
+  # =========================================================================
+  # Audit — one pool has fewer than 3 AZs
+  # =========================================================================
+
+  - note: audit_pool_missing_az
+    resource:
+      type: "Microsoft.ContainerService/managedclusters"
+      name: "myAKS"
+      location: "eastus"
+      properties:
+        agentPoolProfiles:
+          - name: "system"
+            count: 3
+            availabilityZones: ["1", "2", "3"]
+          - name: "user"
+            count: 3
+            availabilityZones: ["1", "2"]
+    want_effect: "Audit"
+
+  # =========================================================================
+  # Audit — one pool has no AZs at all
+  # =========================================================================
+
+  - note: audit_pool_no_azs
+    resource:
+      type: "Microsoft.ContainerService/managedclusters"
+      name: "myAKS"
+      location: "westus"
+      properties:
+        agentPoolProfiles:
+          - name: "system"
+            count: 3
+            availabilityZones: ["1", "2", "3"]
+          - name: "badpool"
+            count: 3
+            availabilityZones: []
+    want_effect: "Audit"
+
+  # =========================================================================
+  # Audit — pool count < 3 (even with 3 AZs)
+  # =========================================================================
+
+  - note: audit_pool_low_count
+    resource:
+      type: "Microsoft.ContainerService/managedclusters"
+      name: "myAKS"
+      location: "eastus"
+      properties:
+        agentPoolProfiles:
+          - name: "system"
+            count: 2
+            availabilityZones: ["1", "2", "3"]
+    want_effect: "Audit"
+
+  # =========================================================================
+  # Audit — both: pool has 2 AZs and count = 1
+  # =========================================================================
+
+  - note: audit_both_violations
+    resource:
+      type: "Microsoft.ContainerService/managedclusters"
+      name: "tinyAKS"
+      location: "eastus"
+      properties:
+        agentPoolProfiles:
+          - name: "system"
+            count: 1
+            availabilityZones: ["1"]
+    want_effect: "Audit"
+
+  # =========================================================================
+  # No effect — wrong resource type
+  # =========================================================================
+
+  - note: skip_wrong_type
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "myVM"
+      location: "eastus"
+      properties: {}
+    want_undefined: true
+
+  # =========================================================================
+  # Audit — single pool, exactly 3 AZs but count = 2
+  # =========================================================================
+
+  - note: audit_three_azs_low_count
+    resource:
+      type: "Microsoft.ContainerService/managedclusters"
+      name: "myAKS"
+      location: "eastus"
+      properties:
+        agentPoolProfiles:
+          - name: "system"
+            count: 2
+            availabilityZones: ["1", "2", "3"]
+    want_effect: "Audit"
+
+  # =========================================================================
+  # Deny — explicit effect parameter override
+  # =========================================================================
+
+  - note: deny_with_explicit_effect
+    resource:
+      type: "Microsoft.ContainerService/managedclusters"
+      name: "myAKS"
+      location: "eastus"
+      properties:
+        agentPoolProfiles:
+          - name: "system"
+            count: 1
+            availabilityZones: []
+    parameters:
+      effect: "Deny"
+    want_effect: "Deny"
+
+  # =========================================================================
+  # No effect — three pools, all fully zone-redundant
+  # =========================================================================
+
+  - note: pass_three_pools_all_good
+    resource:
+      type: "Microsoft.ContainerService/managedclusters"
+      name: "bigAKS"
+      location: "eastus"
+      properties:
+        agentPoolProfiles:
+          - name: "system"
+            count: 3
+            availabilityZones: ["1", "2", "3"]
+          - name: "user1"
+            count: 6
+            availabilityZones: ["1", "2", "3"]
+          - name: "user2"
+            count: 9
+            availabilityZones: ["1", "2", "3"]
+    want_undefined: true
