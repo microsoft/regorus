@@ -18,6 +18,8 @@ use alloc::vec::Vec;
 
 use anyhow::{bail, Result};
 
+use crate::languages::azure_policy::compiler::utils::json_value_to_runtime;
+
 use crate::languages::azure_policy::ast::{JsonValue, ObjectEntry};
 use crate::rvm::instructions::ArrayCreateParams;
 use crate::rvm::Instruction;
@@ -37,8 +39,12 @@ impl Compiler {
         details: Option<&JsonValue>,
         span: &crate::lexer::Span,
     ) -> Result<u8> {
+        // When details is absent or not an object, return the bare effect.
+        // Azure Policy accepts this — the effect is reported for compliance
+        // evaluation even when remediation details are missing. Erroring here
+        // would reject policies that the real engine considers valid.
         let Some(JsonValue::Object(_, entries)) = details else {
-            bail!(span.error("Modify effect requires 'details' to be an object"));
+            return self.wrap_effect_result(effect_name_reg, None, span);
         };
 
         // Extract roleDefinitionIds and operations from details entries.
@@ -185,8 +191,16 @@ impl Compiler {
                     has_value = true;
                 }
                 "condition" => {
-                    // Condition may contain template expressions.
-                    let reg = self.compile_json_value(value, value.span())?;
+                    // The `condition` field is NOT evaluated during policy
+                    // rule evaluation.  It is a remediation instruction:
+                    // when Azure's remediation engine applies the modify
+                    // effect it evaluates this condition against the
+                    // resource to decide whether to execute the specific
+                    // operation.  We preserve it verbatim (as a literal
+                    // string) so the consumer receives the original
+                    // expression, e.g. `"[equals(field('tags.env'), '')]"`.
+                    let runtime_value = json_value_to_runtime(value)?;
+                    let reg = self.load_literal(runtime_value, value.span())?;
                     let key_idx = self.add_literal_u16(Value::from("condition"))?;
                     op_keys.push((key_idx, reg));
                 }
@@ -227,7 +241,9 @@ impl Compiler {
         span: &crate::lexer::Span,
     ) -> Result<u8> {
         let Some(details) = details else {
-            bail!(span.error("Append effect requires 'details'"));
+            // When details is absent, return the bare effect. Same rationale
+            // as modify: Azure Policy accepts this for compliance evaluation.
+            return self.wrap_effect_result(effect_name_reg, None, span);
         };
 
         let item_regs = match details {
