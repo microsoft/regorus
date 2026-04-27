@@ -1,0 +1,204 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Portal/SharedDashboardInlineContent_Deny
+# Real Azure Policy: "Shared dashboards should not have markdown tiles with inline content"
+# Source: regolator/policyDefinitions/Portal/SharedDashboardInlineContent_Deny.json
+#
+# Features exercised:
+#   - Doubly-nested wildcard: lenses[*].parts[*]
+#   - Field count with where clause on deeply-nested metadata paths
+#   - requestContext().apiVersion guard with NOT (double negation pattern)
+#   - "anyof" (lowercase 'o') variant
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Shared dashboards should not have markdown tiles with inline content",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "string",
+          "defaultValue": "Audit",
+          "allowedValues": ["Audit", "Deny", "Disabled"]
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Portal/dashboards"
+            },
+            {
+              "anyof": [
+                {
+                  "not": {
+                    "value": "[requestContext().apiVersion]",
+                    "greaterOrEquals": "2020-09-01-alpha"
+                  }
+                },
+                {
+                  "count": {
+                    "field": "Microsoft.Portal/dashboards/lenses[*].parts[*]",
+                    "where": {
+                      "allOf": [
+                        {
+                          "field": "Microsoft.Portal/dashboards/lenses[*].parts[*].metadata.type",
+                          "equals": "Extension/HubsExtension/PartType/MarkdownPart"
+                        },
+                        {
+                          "anyOf": [
+                            {
+                              "field": "Microsoft.Portal/dashboards/lenses[*].parts[*].metadata.Extension-HubsExtension-PartType-MarkdownPart.settings.content.settings.markdownUri",
+                              "exists": "false"
+                            },
+                            {
+                              "field": "Microsoft.Portal/dashboards/lenses[*].parts[*].metadata.Extension-HubsExtension-PartType-MarkdownPart.settings.content.settings.markdownSource",
+                              "exists": "false"
+                            },
+                            {
+                              "field": "Microsoft.Portal/dashboards/lenses[*].parts[*].metadata.Extension-HubsExtension-PartType-MarkdownPart.settings.content.settings.markdownSource",
+                              "equals": "1"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "greater": 0
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Old API version → triggers (not greaterOrEquals "2020-09-01-alpha")
+  # =========================================================================
+
+  - note: audit_old_api_version
+    resource:
+      type: "Microsoft.Portal/dashboards"
+      name: "old-api-dashboard"
+      properties:
+        lenses: []
+    request_context:
+      apiVersion: "2019-01-01"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # New API version, markdown part with inline content (no markdownUri)
+  # =========================================================================
+
+  - note: audit_inline_markdown_no_uri
+    resource:
+      type: "Microsoft.Portal/dashboards"
+      name: "inline-md"
+      properties:
+        lenses:
+          - parts:
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/MarkdownPart"
+                  Extension-HubsExtension-PartType-MarkdownPart:
+                    settings:
+                      content:
+                        settings:
+                          markdownSource: "1"
+    request_context:
+      apiVersion: "2022-12-01"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # New API version, markdown part with markdownUri set → compliant
+  # =========================================================================
+
+  - note: pass_markdown_with_uri
+    resource:
+      type: "Microsoft.Portal/dashboards"
+      name: "external-md"
+      properties:
+        lenses:
+          - parts:
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/MarkdownPart"
+                  Extension-HubsExtension-PartType-MarkdownPart:
+                    settings:
+                      content:
+                        settings:
+                          markdownUri: "https://raw.githubusercontent.com/org/repo/main/README.md"
+                          markdownSource: "url"
+    request_context:
+      apiVersion: "2022-12-01"
+    want_undefined: true
+
+  # =========================================================================
+  # Non-markdown part → compliant
+  # =========================================================================
+
+  - note: pass_non_markdown_part
+    resource:
+      type: "Microsoft.Portal/dashboards"
+      name: "chart-dashboard"
+      properties:
+        lenses:
+          - parts:
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/MonitorChartPart"
+    request_context:
+      apiVersion: "2022-12-01"
+    want_undefined: true
+
+  # =========================================================================
+  # Multiple lenses/parts, mixed: one inline, one external → triggers
+  # =========================================================================
+
+  - note: audit_mixed_parts_one_inline
+    resource:
+      type: "Microsoft.Portal/dashboards"
+      name: "mixed-dashboard"
+      properties:
+        lenses:
+          - parts:
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/MonitorChartPart"
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/MarkdownPart"
+                  Extension-HubsExtension-PartType-MarkdownPart:
+                    settings:
+                      content:
+                        settings:
+                          markdownSource: "1"
+          - parts:
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/MarkdownPart"
+                  Extension-HubsExtension-PartType-MarkdownPart:
+                    settings:
+                      content:
+                        settings:
+                          markdownUri: "https://example.com/md.md"
+                          markdownSource: "url"
+    request_context:
+      apiVersion: "2022-12-01"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # Wrong type → skip
+  # =========================================================================
+
+  - note: skip_wrong_type
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "storage"
+      properties: {}
+    want_undefined: true

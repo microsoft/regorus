@@ -1,0 +1,757 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Monitoring/AzureMonitor_DCRA_VMSS_Linux_DINE
+# Real Azure Policy: "Configure Linux Virtual Machine Scale Sets to be associated
+#                     with a Data Collection Rule or a Data Collection Endpoint"
+# Source: regolator/policyDefinitions/Monitoring/AzureMonitor_DCRA_VMSS_Linux_DINE.json
+#
+# Features exercised:
+#   - 78 condition nodes, 611 lines — representative of ~30 Monitoring/* policies
+#   - Boolean parameter (scopeToSupportedImages)
+#   - Polymorphic resourceType parameter (DCR vs DCE)
+#   - DeployIfNotExists with conditional deployment
+#   - existenceCondition with anyOf
+#   - Large hardcoded region list (60+ locations)
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Configure Linux Virtual Machine Scale Sets to be associated with a Data Collection Rule or a Data Collection Endpoint",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "description": "Deploy Association to link Linux virtual machine scale sets to the specified Data Collection Rule or the specified Data Collection Endpoint. The list of locations and OS images are updated over time as support is increased.",
+      "parameters": {
+        "effect": {
+          "type": "String",
+          "metadata": {
+            "displayName": "Effect",
+            "description": "Enable or disable the execution of the policy."
+          },
+          "allowedValues": [
+            "DeployIfNotExists",
+            "Disabled"
+          ],
+          "defaultValue": "DeployIfNotExists"
+        },
+        "scopeToSupportedImages": {
+          "type": "Boolean",
+          "metadata": {
+            "displayName": "Scope Policy to Azure Monitor Agent-Supported Operating Systems",
+            "description": "If set to true, the policy will apply only to virtual machine scale sets with AMA-supported operating systems. Otherwise, the policy will apply to all virtual machine scale set resources in the assignment scope. For supported operating systems, see https://aka.ms/AMAOverview."
+          },
+          "allowedValues": [
+            true,
+            false
+          ],
+          "defaultValue": true
+        },
+        "listOfLinuxImageIdToInclude": {
+          "type": "Array",
+          "metadata": {
+            "displayName": "Additional Linux Machine Images",
+            "description": "List of virtual machine scale set images that have supported Linux OS to add to scope. Example values: '/subscriptions/<subscriptionId>/resourceGroups/YourResourceGroup/providers/Microsoft.Compute/images/ContosoStdImage'"
+          },
+          "defaultValue": []
+        },
+        "dcrResourceId": {
+          "type": "String",
+          "metadata": {
+            "displayName": "Data Collection Rule Resource Id or Data Collection Endpoint Resource Id",
+            "description": "Resource Id of the Data Collection Rule or the Data Collection Endpoint to be applied on the Linux machines in scope.",
+            "portalReview": "true",
+            "assignPermissions": true
+          }
+        },
+        "resourceType": {
+          "type": "String",
+          "metadata": {
+            "displayName": "Resource Type",
+            "description": "Either a Data Collection Rule (DCR) or a Data Collection Endpoint (DCE)",
+            "portalReview": "true"
+          },
+          "allowedValues": [
+            "Microsoft.Insights/dataCollectionRules",
+            "Microsoft.Insights/dataCollectionEndpoints"
+          ],
+          "defaultValue": "Microsoft.Insights/dataCollectionRules"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Compute/virtualMachineScaleSets"
+            },
+            {
+              "field": "location",
+              "in": [
+                "australiacentral",
+                "australiacentral2",
+                "australiaeast",
+                "australiasoutheast",
+                "brazilsouth",
+                "brazilsoutheast",
+                "canadacentral",
+                "canadaeast",
+                "centralindia",
+                "centralus",
+                "centraluseuap",
+                "eastasia",
+                "eastus",
+                "eastus2",
+                "eastus2euap",
+                "francecentral",
+                "francesouth",
+                "germanynorth",
+                "germanywestcentral",
+                "israelcentral",
+                "italynorth",
+                "japaneast",
+                "japanwest",
+                "jioindiacentral",
+                "jioindiawest",
+                "koreacentral",
+                "koreasouth",
+                "malaysiasouth",
+                "mexicocentral",
+                "northcentralus",
+                "northeurope",
+                "norwayeast",
+                "norwaywest",
+                "polandcentral",
+                "qatarcentral",
+                "southafricanorth",
+                "southafricawest",
+                "southcentralus",
+                "southeastasia",
+                "southindia",
+                "spaincentral",
+                "swedencentral",
+                "swedensouth",
+                "switzerlandnorth",
+                "switzerlandwest",
+                "taiwannorth",
+                "taiwannorthwest",
+                "uaecentral",
+                "uaenorth",
+                "uksouth",
+                "ukwest",
+                "westcentralus",
+                "westeurope",
+                "westindia",
+                "westus",
+                "westus2",
+                "westus3"
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "allOf": [
+                    {
+                      "value": "[parameters('scopeToSupportedImages')]",
+                      "equals": false
+                    },
+                    {
+                      "field": "Microsoft.Compute/virtualMachineScaleSets/virtualMachineProfile.storageProfile.osDisk.osType",
+                      "like": "Linux*"
+                    }
+                  ]
+                },
+                {
+                  "field": "Microsoft.Compute/imageId",
+                  "in": "[parameters('listOfLinuxImageIdToInclude')]"
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "RedHat"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "in": [
+                        "RHEL",
+                        "RHEL-ARM64",
+                        "RHEL-BYOS",
+                        "RHEL-HA",
+                        "RHEL-SAP",
+                        "RHEL-SAP-APPS",
+                        "RHEL-SAP-HA"
+                      ]
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "7*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "8*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "9*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "rhel-lvm7*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "rhel-lvm8*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "rhel-lvm9*"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "SUSE"
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "allOf": [
+                            {
+                              "field": "Microsoft.Compute/imageOffer",
+                              "in": [
+                                "SLES",
+                                "SLES-HPC",
+                                "SLES-HPC-Priority",
+                                "SLES-SAP",
+                                "SLES-SAP-BYOS",
+                                "SLES-Priority",
+                                "SLES-BYOS",
+                                "SLES-SAPCAL",
+                                "SLES-Standard"
+                              ]
+                            },
+                            {
+                              "anyOf": [
+                                {
+                                  "field": "Microsoft.Compute/imageSku",
+                                  "like": "12*"
+                                },
+                                {
+                                  "field": "Microsoft.Compute/imageSku",
+                                  "like": "15*"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "allOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "field": "Microsoft.Compute/imageOffer",
+                                  "like": "sles-12*"
+                                },
+                                {
+                                  "field": "Microsoft.Compute/imageOffer",
+                                  "like": "sles-15*"
+                                }
+                              ]
+                            },
+                            {
+                              "field": "Microsoft.Compute/imageSku",
+                              "in": [
+                                "gen1",
+                                "gen2"
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "Canonical"
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "field": "Microsoft.Compute/imageOffer",
+                          "equals": "UbuntuServer"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageOffer",
+                          "like": "0001-com-ubuntu-server-*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageOffer",
+                          "like": "0001-com-ubuntu-pro-*"
+                        }
+                      ]
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageSku",
+                      "in": [
+                        "14.04.0-lts",
+                        "14.04.1-lts",
+                        "14.04.2-lts",
+                        "14.04.3-lts",
+                        "14.04.4-lts",
+                        "14.04.5-lts",
+                        "16_04_0-lts-gen2",
+                        "16_04-lts-gen2",
+                        "16.04-lts",
+                        "16.04.0-lts",
+                        "18_04-lts-arm64",
+                        "18_04-lts-gen2",
+                        "18.04-lts",
+                        "20_04-lts-arm64",
+                        "20_04-lts-gen2",
+                        "20_04-lts",
+                        "22_04-lts-gen2",
+                        "22_04-lts",
+                        "pro-16_04-lts-gen2",
+                        "pro-16_04-lts",
+                        "pro-18_04-lts-gen2",
+                        "pro-18_04-lts",
+                        "pro-20_04-lts-gen2",
+                        "pro-20_04-lts",
+                        "pro-22_04-lts-gen2",
+                        "pro-22_04-lts"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "Oracle"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "equals": "Oracle-Linux"
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "7*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "8*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "ol7*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "ol8*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "ol9*"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "OpenLogic"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "in": [
+                        "CentOS",
+                        "Centos-LVM",
+                        "CentOS-SRIOV"
+                      ]
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "7*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "8*"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "cloudera"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "equals": "cloudera-centos-os"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageSku",
+                      "like": "7*"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "almalinux"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "like": "almalinux*"
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "8*"
+                        },
+                        {
+                          "field": "Microsoft.Compute/imageSku",
+                          "like": "9*"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "ctrliqinc1648673227698"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "like": "rocky-8*"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageSku",
+                      "like": "rocky-8*"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "credativ"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "in": [
+                        "Debian"
+                      ]
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageSku",
+                      "equals": "9"
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "Debian"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "in": [
+                        "debian-10",
+                        "debian-11"
+                      ]
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageSku",
+                      "in": [
+                        "10",
+                        "10-gen2",
+                        "11",
+                        "11-gen2"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "field": "Microsoft.Compute/imagePublisher",
+                      "equals": "microsoftcblmariner"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageOffer",
+                      "equals": "cbl-mariner"
+                    },
+                    {
+                      "field": "Microsoft.Compute/imageSku",
+                      "in": [
+                        "1-gen2",
+                        "cbl-mariner-1",
+                        "cbl-mariner-2",
+                        "cbl-mariner-2-arm64",
+                        "cbl-mariner-2-gen2"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "type": "Microsoft.Insights/dataCollectionRuleAssociations",
+            "roleDefinitionIds": [
+              "/providers/microsoft.authorization/roleDefinitions/749f88d5-cbae-40b8-bcfc-e573ddc772fa",
+              "/providers/microsoft.authorization/roleDefinitions/92aaf0da-9dab-42b6-94a3-d43ce8d16293"
+            ],
+            "evaluationDelay": "AfterProvisioning",
+            "existenceCondition": {
+              "anyOf": [
+                {
+                  "field": "Microsoft.Insights/dataCollectionRuleAssociations/dataCollectionRuleId",
+                  "equals": "[parameters('dcrResourceId')]"
+                },
+                {
+                  "field": "Microsoft.Insights/dataCollectionRuleAssociations/dataCollectionEndpointId",
+                  "equals": "[parameters('dcrResourceId')]"
+                }
+              ]
+            },
+            "deployment": {
+              "properties": {
+                "mode": "incremental",
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "parameters": {
+                    "resourceName": {
+                      "type": "string"
+                    },
+                    "location": {
+                      "type": "string"
+                    },
+                    "dcrResourceId": {
+                      "type": "string"
+                    },
+                    "resourceType": {
+                      "type": "string"
+                    }
+                  },
+                  "variables": {
+                    "dcrAssociationName": "[concat('assoc-', uniqueString(concat(parameters('resourceName'), parameters('dcrResourceId'))))]",
+                    "dceAssociationName": "configurationAccessEndpoint",
+                    "dcrResourceType": "Microsoft.Insights/dataCollectionRules",
+                    "dceResourceType": "Microsoft.Insights/dataCollectionEndpoints"
+                  },
+                  "resources": [
+                    {
+                      "condition": "[equals(parameters('resourceType'), variables('dcrResourceType'))]",
+                      "name": "[variables('dcrAssociationName')]",
+                      "type": "Microsoft.Insights/dataCollectionRuleAssociations",
+                      "apiVersion": "2021-04-01",
+                      "properties": {
+                        "dataCollectionRuleId": "[parameters('dcrResourceId')]"
+                      },
+                      "scope": "[concat('Microsoft.Compute/virtualMachineScaleSets/', parameters('resourceName'))]"
+                    },
+                    {
+                      "condition": "[equals(parameters('resourceType'), variables('dceResourceType'))]",
+                      "name": "[variables('dceAssociationName')]",
+                      "type": "Microsoft.Insights/dataCollectionRuleAssociations",
+                      "apiVersion": "2021-04-01",
+                      "properties": {
+                        "dataCollectionEndpointId": "[parameters('dcrResourceId')]"
+                      },
+                      "scope": "[concat('Microsoft.Compute/virtualMachineScaleSets/', parameters('resourceName'))]"
+                    }
+                  ]
+                },
+                "parameters": {
+                  "resourceName": {
+                    "value": "[field('name')]"
+                  },
+                  "location": {
+                    "value": "[field('location')]"
+                  },
+                  "dcrResourceId": {
+                    "value": "[parameters('dcrResourceId')]"
+                  },
+                  "resourceType": {
+                    "value": "[parameters('resourceType')]"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # DINE - Linux VMSS with Canonical/UbuntuServer image, no DCRA
+  # =========================================================================
+
+  - note: dine_vmss_canonical_ubuntu
+    resource:
+      type: "Microsoft.Compute/virtualMachineScaleSets"
+      name: "vmss-ubuntu"
+      id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachineScaleSets/vmss-ubuntu"
+      location: "eastus"
+      properties:
+        virtualMachineProfile:
+          storageProfile:
+            osDisk:
+              osType: "Linux"
+            imageReference:
+              publisher: "Canonical"
+              offer: "UbuntuServer"
+              sku: "18.04-lts"
+    parameters:
+      dcrResourceId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Insights/dataCollectionRules/dcr1"
+      effect: "DeployIfNotExists"
+      scopeToSupportedImages: true
+      listOfLinuxImageIdToInclude: []
+      resourceType: "Microsoft.Insights/dataCollectionRules"
+    host_await:
+      - key:
+          operation: "lookup_related_resources"
+          type: "Microsoft.Insights/dataCollectionRuleAssociations"
+        response: null
+    want_effect: "DeployIfNotExists"
+
+  # =========================================================================
+  # Pass - Windows VMSS (wrong OS type)
+  # =========================================================================
+
+  - note: pass_wrong_os_type
+    resource:
+      type: "Microsoft.Compute/virtualMachineScaleSets"
+      name: "vmss-windows"
+      location: "eastus"
+      properties:
+        virtualMachineProfile:
+          storageProfile:
+            osDisk:
+              osType: "Windows"
+            imageReference:
+              publisher: "MicrosoftWindowsServer"
+              offer: "WindowsServer"
+              sku: "2019-Datacenter"
+    parameters:
+      dcrResourceId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Insights/dataCollectionRules/dcr1"
+      effect: "DeployIfNotExists"
+      scopeToSupportedImages: true
+      listOfLinuxImageIdToInclude: []
+      resourceType: "Microsoft.Insights/dataCollectionRules"
+    want_undefined: true
+
+  # =========================================================================
+  # DINE - VMSS with unsupported publisher but scopeToSupportedImages=false
+  # =========================================================================
+
+  - note: dine_vmss_scope_bypass
+    resource:
+      type: "Microsoft.Compute/virtualMachineScaleSets"
+      name: "vmss-custom"
+      id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachineScaleSets/vmss-custom"
+      location: "eastus"
+      properties:
+        virtualMachineProfile:
+          storageProfile:
+            osDisk:
+              osType: "Linux"
+            imageReference:
+              publisher: "CustomPublisher"
+              offer: "CustomLinux"
+              sku: "1.0"
+    parameters:
+      dcrResourceId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Insights/dataCollectionRules/dcr1"
+      effect: "DeployIfNotExists"
+      scopeToSupportedImages: false
+      listOfLinuxImageIdToInclude: []
+      resourceType: "Microsoft.Insights/dataCollectionRules"
+    host_await:
+      - key:
+          operation: "lookup_related_resources"
+          type: "Microsoft.Insights/dataCollectionRuleAssociations"
+        response: null
+    want_effect: "DeployIfNotExists"
+
+  # =========================================================================
+  # Pass - unsupported publisher with scopeToSupportedImages=true
+  # =========================================================================
+
+  - note: pass_unsupported_publisher_scoped
+    resource:
+      type: "Microsoft.Compute/virtualMachineScaleSets"
+      name: "vmss-custom-scoped"
+      location: "eastus"
+      properties:
+        virtualMachineProfile:
+          storageProfile:
+            osDisk:
+              osType: "Linux"
+            imageReference:
+              publisher: "CustomPublisher"
+              offer: "CustomLinux"
+              sku: "1.0"
+    parameters:
+      dcrResourceId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Insights/dataCollectionRules/dcr1"
+      effect: "DeployIfNotExists"
+      scopeToSupportedImages: true
+      listOfLinuxImageIdToInclude: []
+      resourceType: "Microsoft.Insights/dataCollectionRules"
+    want_undefined: true
+
+  # =========================================================================
+  # Skip - wrong resource type
+  # =========================================================================
+
+  - note: skip_wrong_type
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-linux"
+      location: "eastus"
+      properties:
+        storageProfile:
+          osDisk:
+            osType: "Linux"
+          imageReference:
+            publisher: "Canonical"
+            offer: "UbuntuServer"
+            sku: "18.04-lts"
+    parameters:
+      dcrResourceId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Insights/dataCollectionRules/dcr1"
+      effect: "DeployIfNotExists"
+      scopeToSupportedImages: true
+      listOfLinuxImageIdToInclude: []
+      resourceType: "Microsoft.Insights/dataCollectionRules"
+    want_undefined: true

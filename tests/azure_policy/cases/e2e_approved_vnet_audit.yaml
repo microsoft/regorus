@@ -1,0 +1,134 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Network/ApprovedVirtualNetwork_Audit
+# Real Azure Policy: "Virtual machines should be connected to an approved virtual network"
+# Source: regolator/policyDefinitions/Network/ApprovedVirtualNetwork_Audit.json
+#
+# Features exercised:
+#   - not { field like concat(...) } — double negation on wildcard array
+#   - concat() to build VNet prefix pattern
+#   - Wildcard array alias: ipconfigurations[*].subnet.id
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Virtual machines should be connected to an approved virtual network",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "string",
+          "defaultValue": "Audit",
+          "allowedValues": ["Audit", "Deny", "Disabled"]
+        },
+        "virtualNetworkId": {
+          "type": "string",
+          "metadata": {
+            "displayName": "Virtual network Id"
+          }
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Network/networkInterfaces"
+            },
+            {
+              "not": {
+                "field": "Microsoft.Network/networkInterfaces/ipconfigurations[*].subnet.id",
+                "like": "[concat(parameters('virtualNetworkId'),'/*')]"
+              }
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # NIC in approved VNet → pass
+  # =========================================================================
+
+  - note: pass_nic_in_approved_vnet
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-good"
+      properties:
+        ipConfigurations:
+          - properties:
+              subnet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/approved-vnet/subnets/default"
+    parameters:
+      virtualNetworkId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/approved-vnet"
+    want_undefined: true
+
+  - note: pass_multiple_ips_all_in_approved_vnet
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-multi-good"
+      properties:
+        ipConfigurations:
+          - properties:
+              subnet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/approved-vnet/subnets/subnet1"
+          - properties:
+              subnet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/approved-vnet/subnets/subnet2"
+    parameters:
+      virtualNetworkId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/approved-vnet"
+    want_undefined: true
+
+  # =========================================================================
+  # NIC in wrong VNet → audit
+  # =========================================================================
+
+  - note: audit_nic_in_wrong_vnet
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-bad"
+      properties:
+        ipConfigurations:
+          - properties:
+              subnet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/other-vnet/subnets/default"
+    parameters:
+      virtualNetworkId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/approved-vnet"
+    want_effect: "Audit"
+
+  - note: audit_one_ip_in_wrong_vnet
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-mixed-vnet"
+      properties:
+        ipConfigurations:
+          - properties:
+              subnet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/approved-vnet/subnets/subnet1"
+          - properties:
+              subnet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/other-vnet/subnets/subnet1"
+    parameters:
+      virtualNetworkId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/approved-vnet"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # Wrong type
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "not-nic"
+      properties: {}
+    parameters:
+      virtualNetworkId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/approved-vnet"
+    want_undefined: true

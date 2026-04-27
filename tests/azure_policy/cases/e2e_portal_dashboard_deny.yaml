@@ -1,0 +1,240 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Portal/SharedDashboardInlineContent_Deny
+# Real Azure Policy: "Shared dashboards should not have markdown tiles with inline content"
+# Source: regolator/policyDefinitions/Portal/SharedDashboardInlineContent_Deny.json
+#
+# Features exercised:
+#   - Doubly-nested wildcard array: lenses[*].parts[*]
+#   - requestContext().apiVersion with greaterOrEquals version comparison
+#   - count with allOf+anyOf where clause
+#   - Very long alias names (Extension-HubsExtension-PartType-MarkdownPart...)
+#   - exists "false" inside count where
+#   - anyOf at top level selects old-API OR inline-content branches
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Shared dashboards should not have markdown tiles with inline content",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "string",
+          "defaultValue": "Audit",
+          "allowedValues": ["Audit", "Deny", "Disabled"]
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Portal/dashboards"
+            },
+            {
+              "anyof": [
+                {
+                  "not": {
+                    "value": "[requestContext().apiVersion]",
+                    "greaterOrEquals": "2020-09-01-alpha"
+                  }
+                },
+                {
+                  "count": {
+                    "field": "Microsoft.Portal/dashboards/lenses[*].parts[*]",
+                    "where": {
+                      "allOf": [
+                        {
+                          "field": "Microsoft.Portal/dashboards/lenses[*].parts[*].metadata.type",
+                          "equals": "Extension/HubsExtension/PartType/MarkdownPart"
+                        },
+                        {
+                          "anyOf": [
+                            {
+                              "field": "Microsoft.Portal/dashboards/lenses[*].parts[*].metadata.Extension-HubsExtension-PartType-MarkdownPart.settings.content.settings.markdownUri",
+                              "exists": "false"
+                            },
+                            {
+                              "field": "Microsoft.Portal/dashboards/lenses[*].parts[*].metadata.Extension-HubsExtension-PartType-MarkdownPart.settings.content.settings.markdownSource",
+                              "exists": "false"
+                            },
+                            {
+                              "field": "Microsoft.Portal/dashboards/lenses[*].parts[*].metadata.Extension-HubsExtension-PartType-MarkdownPart.settings.content.settings.markdownSource",
+                              "equals": "1"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "greater": 0
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Old API version (< 2020-09-01-alpha) → always audit
+  # =========================================================================
+
+  - note: audit_old_api_version
+    resource:
+      type: "Microsoft.Portal/dashboards"
+      name: "dash-old-api"
+      properties:
+        lenses: []
+    api_version: "2019-01-01-preview"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # New API, markdown part with inline content (markdownSource = "1") → audit
+  # =========================================================================
+
+  - note: audit_markdown_inline_content
+    resource:
+      type: "Microsoft.Portal/dashboards"
+      name: "dash-inline"
+      properties:
+        lenses:
+          - parts:
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/MarkdownPart"
+                  Extension-HubsExtension-PartType-MarkdownPart:
+                    settings:
+                      content:
+                        settings:
+                          markdownUri: "https://example.com/content.md"
+                          markdownSource: "1"
+    api_version: "2022-12-01-preview"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # New API, markdown part missing markdownUri → audit
+  # =========================================================================
+
+  - note: audit_markdown_missing_uri
+    resource:
+      type: "Microsoft.Portal/dashboards"
+      name: "dash-no-uri"
+      properties:
+        lenses:
+          - parts:
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/MarkdownPart"
+                  Extension-HubsExtension-PartType-MarkdownPart:
+                    settings:
+                      content:
+                        settings:
+                          markdownSource: "2"
+    api_version: "2022-12-01-preview"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # New API, markdown part missing markdownSource → audit
+  # =========================================================================
+
+  - note: audit_markdown_missing_source
+    resource:
+      type: "Microsoft.Portal/dashboards"
+      name: "dash-no-source"
+      properties:
+        lenses:
+          - parts:
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/MarkdownPart"
+                  Extension-HubsExtension-PartType-MarkdownPart:
+                    settings:
+                      content:
+                        settings:
+                          markdownUri: "https://example.com/content.md"
+    api_version: "2022-12-01-preview"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # New API, markdown part with external source (markdownSource != "1") → pass
+  # =========================================================================
+
+  - note: pass_markdown_external_source
+    resource:
+      type: "Microsoft.Portal/dashboards"
+      name: "dash-external"
+      properties:
+        lenses:
+          - parts:
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/MarkdownPart"
+                  Extension-HubsExtension-PartType-MarkdownPart:
+                    settings:
+                      content:
+                        settings:
+                          markdownUri: "https://example.com/content.md"
+                          markdownSource: "2"
+    api_version: "2022-12-01-preview"
+    want_undefined: true
+
+  # =========================================================================
+  # New API, non-markdown parts only → pass
+  # =========================================================================
+
+  - note: pass_no_markdown_parts
+    resource:
+      type: "Microsoft.Portal/dashboards"
+      name: "dash-charts"
+      properties:
+        lenses:
+          - parts:
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/MonitorChartPart"
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/VideoPart"
+    api_version: "2022-12-01-preview"
+    want_undefined: true
+
+  # =========================================================================
+  # New API, multiple lenses with mixed parts → audit if any inline
+  # =========================================================================
+
+  - note: audit_multi_lens_one_inline
+    resource:
+      type: "Microsoft.Portal/dashboards"
+      name: "dash-multi"
+      properties:
+        lenses:
+          - parts:
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/MonitorChartPart"
+          - parts:
+              - metadata:
+                  type: "Extension/HubsExtension/PartType/MarkdownPart"
+                  Extension-HubsExtension-PartType-MarkdownPart:
+                    settings:
+                      content:
+                        settings:
+                          markdownSource: "1"
+                          markdownUri: "https://example.com/a.md"
+    api_version: "2022-12-01-preview"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # Wrong type
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "not-dashboard"
+      properties: {}
+    api_version: "2019-01-01"
+    want_undefined: true

@@ -1,0 +1,192 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: VirtualEnclaves/ApprovedVirtualNetworkSubnets_Deny
+# Real Azure Policy: "Network interfaces should be connected to an approved subnet
+#   of the approved virtual network"
+# Source: regolator/policyDefinitions/VirtualEnclaves/ApprovedVirtualNetworkSubnets_Deny.json
+#
+# Features exercised:
+#   - Value count with named iterator: count { value: params, name: "subnetName" }
+#   - current('subnetName') to reference the iterator value
+#   - concat() to build dynamic resource IDs
+#   - Boolean parameter branching (allowAllSubnets true vs false)
+#   - not { field like concat(...) } double-negation on wildcard array
+#   - Two distinct allOf branches inside anyOf based on parameter value
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Network interfaces should be connected to an approved subnet of the approved virtual network",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "String",
+          "defaultValue": "Deny",
+          "allowedValues": ["Audit", "Deny", "Disabled"]
+        },
+        "virtualNetworkId": {
+          "type": "String",
+          "metadata": {
+            "displayName": "Virtual network Id"
+          }
+        },
+        "allowedSubnetList": {
+          "type": "Array",
+          "defaultValue": []
+        },
+        "allowAllSubnets": {
+          "type": "Boolean",
+          "defaultValue": true
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Network/networkInterfaces"
+            },
+            {
+              "anyOf": [
+                {
+                  "allOf": [
+                    {
+                      "value": "[parameters('allowAllSubnets')]",
+                      "equals": true
+                    },
+                    {
+                      "not": {
+                        "field": "Microsoft.Network/networkInterfaces/ipconfigurations[*].subnet.id",
+                        "like": "[concat(parameters('virtualNetworkId'),'/*')]"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "value": "[parameters('allowAllSubnets')]",
+                      "equals": false
+                    },
+                    {
+                      "count": {
+                        "value": "[parameters('allowedSubnetList')]",
+                        "name": "subnetName",
+                        "where": {
+                          "field": "Microsoft.Network/networkInterfaces/ipconfigurations[*].subnet.id",
+                          "equals": "[concat(parameters('virtualNetworkId'),'/subnets/',current('subnetName'))]"
+                        }
+                      },
+                      "equals": 0
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Branch 1: allowAllSubnets = true — any subnet in the VNet is OK
+  # =========================================================================
+
+  - note: pass_allow_all_subnets_correct_vnet
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-good-vnet"
+      properties:
+        ipConfigurations:
+          - properties:
+              subnet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/default"
+    parameters:
+      virtualNetworkId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1"
+      allowAllSubnets: true
+    want_undefined: true
+
+  - note: deny_allow_all_subnets_wrong_vnet
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-wrong-vnet"
+      properties:
+        ipConfigurations:
+          - properties:
+              subnet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet2/subnets/default"
+    parameters:
+      virtualNetworkId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1"
+      allowAllSubnets: true
+    want_effect: "Deny"
+
+  # =========================================================================
+  # Branch 2: allowAllSubnets = false — value count with subnet list
+  # =========================================================================
+
+  - note: pass_specific_subnet_allowed
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-allowed-subnet"
+      properties:
+        ipConfigurations:
+          - properties:
+              subnet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/frontend"
+    parameters:
+      virtualNetworkId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1"
+      allowAllSubnets: false
+      allowedSubnetList: ["frontend", "backend"]
+    want_undefined: true
+
+  - note: deny_subnet_not_in_allowed_list
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-bad-subnet"
+      properties:
+        ipConfigurations:
+          - properties:
+              subnet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/management"
+    parameters:
+      virtualNetworkId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1"
+      allowAllSubnets: false
+      allowedSubnetList: ["frontend", "backend"]
+    want_effect: "Deny"
+
+  - note: deny_empty_subnet_list
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "nic-no-list"
+      properties:
+        ipConfigurations:
+          - properties:
+              subnet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/default"
+    parameters:
+      virtualNetworkId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1"
+      allowAllSubnets: false
+      allowedSubnetList: []
+    want_effect: "Deny"
+
+  # =========================================================================
+  # Wrong type
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "not-a-nic"
+      properties: {}
+    parameters:
+      virtualNetworkId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1"
+    want_undefined: true

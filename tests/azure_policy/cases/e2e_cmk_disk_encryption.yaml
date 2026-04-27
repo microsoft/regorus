@@ -1,0 +1,572 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Compute/OSAndDataDiskCMKRequired_Deny
+# Real Azure Policy: "OS and data disks should be encrypted with a customer-managed key"
+# Features: anyOf, allOf nesting, field (type + alias), exists, equals,
+#   length(), count, not, current(), multiple resource types
+#   (VM, VMSS, disks, images, galleries/images/versions)
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "OS and data disks should be encrypted with a customer-managed key",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "description": "Use customer-managed keys to manage the encryption at rest of the contents of your managed disks. By default, the data is encrypted at rest with platform-managed keys, but customer-managed keys are commonly required to meet regulatory compliance standards. Customer-managed keys enable the data to be encrypted with an Azure Key Vault key created and owned by you. You have full control and responsibility for the key lifecycle, including rotation and management. Learn more at https://aka.ms/disks-cmk.",
+      "metadata": {
+        "category": "Compute",
+        "version": "3.0.0"
+      },
+      "version": "3.0.0",
+      "parameters": {
+        "effect": {
+          "type": "string",
+          "defaultValue": "Audit",
+          "allowedValues": [
+            "Audit",
+            "Deny",
+            "Disabled"
+          ],
+          "metadata": {
+            "displayName": "Effect",
+            "description": "Enable or disable the execution of the policy"
+          }
+        }
+      },
+      "policyRule": {
+        "if": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Compute/virtualMachines"
+                },
+                {
+                  "field": "Microsoft.Compute/virtualMachines/storageProfile.osDisk.managedDisk.diskEncryptionSet.id",
+                  "exists": "False"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Compute/virtualMachines"
+                },
+                {
+                  "value": "[length(field('Microsoft.Compute/virtualMachines/storageProfile.dataDisks'))]",
+                  "greater": 0
+                },
+                {
+                  "field": "Microsoft.Compute/virtualMachines/storageProfile.dataDisks[*].managedDisk.id",
+                  "exists": "False"
+                },
+                {
+                  "field": "Microsoft.Compute/virtualMachines/storageProfile.dataDisks[*].managedDisk.diskEncryptionSet.id",
+                  "exists": "False"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Compute/virtualMachineScaleSets"
+                },
+                {
+                  "field": "Microsoft.Compute/virtualMachineScaleSets/virtualMachineProfile.storageProfile.osDisk.managedDisk.diskEncryptionSet.id",
+                  "exists": "False"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Compute/virtualMachineScaleSets"
+                },
+                {
+                  "count": {
+                    "field": "Microsoft.Compute/virtualMachineScaleSets/virtualMachineProfile.storageProfile.dataDisks[*]"
+                  },
+                  "greater": 0
+                },
+                {
+                  "not": {
+                    "field": "Microsoft.Compute/virtualMachineScaleSets/virtualMachineProfile.storageProfile.dataDisks[*].managedDisk.diskEncryptionSet.id",
+                    "exists": "true"
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Compute/disks"
+                },
+                {
+                  "field": "Microsoft.Compute/disks/encryption.diskEncryptionSetId",
+                  "exists": "False"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Compute/galleries/images/versions"
+                },
+                {
+                  "value": "[length(field('Microsoft.Compute/galleries/images/versions/publishingProfile.targetRegions[*].encryption.osDiskImage.diskEncryptionSetId'))]",
+                  "notEquals": "[length(field('Microsoft.Compute/galleries/images/versions/publishingProfile.targetRegions[*]'))]"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Compute/galleries/images/versions"
+                },
+                {
+                  "value": "[length(field('Microsoft.Compute/galleries/images/versions/storageProfile.dataDiskImages[*]'))]",
+                  "greater": 0
+                },
+                {
+                  "anyOf": [
+                    {
+                      "count": {
+                        "field": "Microsoft.Compute/galleries/images/versions/publishingProfile.targetRegions[*]",
+                        "where": {
+                          "value": "[length(current('Microsoft.Compute/galleries/images/versions/publishingProfile.targetRegions[*].encryption.dataDiskImages[*].diskEncryptionSetId'))]",
+                          "notEquals": "[length(field('Microsoft.Compute/galleries/images/versions/storageProfile.dataDiskImages[*]'))]"
+                        }
+                      },
+                      "greater": 0
+                    },
+                    {
+                      "not": {
+                        "field": "Microsoft.Compute/galleries/images/versions/publishingProfile.targetRegions[*].encryption.dataDiskImages[*].diskEncryptionSetId",
+                        "exists": "true"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Compute/images"
+                },
+                {
+                  "field": "Microsoft.Compute/images/storageProfile.osDisk.diskEncryptionSet.id",
+                  "exists": "False"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Compute/images"
+                },
+                {
+                  "value": "[length(field('Microsoft.Compute/images/storageProfile.dataDisks[*]'))]",
+                  "greater": 0
+                },
+                {
+                  "not": {
+                    "field": "Microsoft.Compute/images/storageProfile.dataDisks[*].diskEncryptionSet.id",
+                    "exists": "true"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      },
+      "versions": [
+        "3.0.0"
+      ]
+    },
+    "id": "/providers/Microsoft.Authorization/policyDefinitions/702dd420-7fcc-42c5-afe8-4026edd20fe0",
+    "name": "702dd420-7fcc-42c5-afe8-4026edd20fe0"
+  }
+
+cases:
+  # =========================================================================
+  # 1. VM with CMK on OS disk → pass
+  # =========================================================================
+
+  - note: pass_vm_osdisk_with_cmk
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-with-cmk"
+      properties:
+        storageProfile:
+          osDisk:
+            managedDisk:
+              diskEncryptionSet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+    want_undefined: true
+
+  # =========================================================================
+  # 2. VM without CMK on OS disk → Audit
+  # =========================================================================
+
+  - note: audit_vm_osdisk_no_cmk
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-no-cmk"
+      properties:
+        storageProfile:
+          osDisk:
+            managedDisk:
+              storageAccountType: "Premium_LRS"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # 3. VM with CMK on OS disk and data disks having CMK → pass
+  # =========================================================================
+
+  - note: pass_vm_osdisk_and_datadisks_with_cmk
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-all-cmk"
+      properties:
+        storageProfile:
+          osDisk:
+            managedDisk:
+              diskEncryptionSet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+          dataDisks:
+            - lun: 0
+              manageddisk:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/disks/datadisk0"
+                diskencryptionset:
+                  id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+            - lun: 1
+              manageddisk:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/disks/datadisk1"
+                diskencryptionset:
+                  id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+    want_undefined: true
+
+  # =========================================================================
+  # 4. VM with data disks missing CMK (no managedDisk.id and no
+  #    diskEncryptionSet.id) → Audit
+  # =========================================================================
+
+  - note: audit_vm_datadisks_no_cmk
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-datadisks-no-cmk"
+      properties:
+        storageProfile:
+          osDisk:
+            managedDisk:
+              diskEncryptionSet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+          dataDisks:
+            - lun: 0
+              manageddisk:
+                storageaccounttype: "Premium_LRS"
+            - lun: 1
+              manageddisk:
+                storageaccounttype: "Standard_LRS"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # 5. VMSS without CMK on OS disk → Audit
+  # =========================================================================
+
+  - note: audit_vmss_osdisk_no_cmk
+    resource:
+      type: "Microsoft.Compute/virtualMachineScaleSets"
+      name: "vmss-no-cmk"
+      properties:
+        virtualMachineProfile:
+          storageProfile:
+            osDisk:
+              managedDisk:
+                storageAccountType: "Premium_LRS"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # 5b. VMSS with CMK on OS disk → pass
+  # =========================================================================
+
+  - note: pass_vmss_osdisk_with_cmk
+    resource:
+      type: "Microsoft.Compute/virtualMachineScaleSets"
+      name: "vmss-with-cmk"
+      properties:
+        virtualMachineProfile:
+          storageProfile:
+            osDisk:
+              managedDisk:
+                diskEncryptionSet:
+                  id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+    want_undefined: true
+
+  # =========================================================================
+  # 5c. VMSS with data disks missing CMK → Audit
+  # =========================================================================
+
+  - note: audit_vmss_datadisks_no_cmk
+    resource:
+      type: "Microsoft.Compute/virtualMachineScaleSets"
+      name: "vmss-datadisks-no-cmk"
+      properties:
+        virtualMachineProfile:
+          storageProfile:
+            osDisk:
+              managedDisk:
+                diskEncryptionSet:
+                  id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+            dataDisks:
+              - lun: 0
+                managedDisk:
+                  storageAccountType: "Premium_LRS"
+              - lun: 1
+                managedDisk:
+                  storageAccountType: "Standard_LRS"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # 5d. VMSS with data disks having CMK → pass
+  # =========================================================================
+
+  - note: pass_vmss_datadisks_with_cmk
+    resource:
+      type: "Microsoft.Compute/virtualMachineScaleSets"
+      name: "vmss-datadisks-cmk"
+      properties:
+        virtualMachineProfile:
+          storageProfile:
+            osDisk:
+              managedDisk:
+                diskEncryptionSet:
+                  id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+            dataDisks:
+              - lun: 0
+                managedDisk:
+                  diskEncryptionSet:
+                    id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+              - lun: 1
+                managedDisk:
+                  diskEncryptionSet:
+                    id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+    want_undefined: true
+
+  # =========================================================================
+  # 6. Disk without diskEncryptionSetId → Audit
+  # =========================================================================
+
+  - note: audit_disk_no_des
+    resource:
+      type: "Microsoft.Compute/disks"
+      name: "disk-no-encryption"
+      properties:
+        diskSizeGB: 128
+        encryption:
+          type: "EncryptionAtRestWithPlatformKey"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # 7. Disk with diskEncryptionSetId → pass
+  # =========================================================================
+
+  - note: pass_disk_with_des
+    resource:
+      type: "Microsoft.Compute/disks"
+      name: "disk-with-des"
+      properties:
+        diskSizeGB: 128
+        encryption:
+          diskEncryptionSetId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+          type: "EncryptionAtRestWithCustomerKey"
+    want_undefined: true
+
+  # =========================================================================
+  # 8. Image without CMK on OS disk → Audit
+  # =========================================================================
+
+  - note: audit_image_osdisk_no_cmk
+    resource:
+      type: "Microsoft.Compute/images"
+      name: "image-no-cmk"
+      properties:
+        storageProfile:
+          osDisk:
+            osType: "Linux"
+            osState: "Generalized"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # 8b. Image with CMK on OS disk → pass
+  # =========================================================================
+
+  - note: pass_image_osdisk_with_cmk
+    resource:
+      type: "Microsoft.Compute/images"
+      name: "image-with-cmk"
+      properties:
+        storageProfile:
+          osDisk:
+            osType: "Linux"
+            osState: "Generalized"
+            diskEncryptionSet:
+              id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+    want_undefined: true
+
+  # =========================================================================
+  # 8c. Image with data disks missing CMK → Audit
+  # =========================================================================
+
+  - note: audit_image_datadisks_no_cmk
+    resource:
+      type: "Microsoft.Compute/images"
+      name: "image-datadisks-no-cmk"
+      properties:
+        storageProfile:
+          osDisk:
+            osType: "Linux"
+            osState: "Generalized"
+            diskEncryptionSet:
+              id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+          dataDisks:
+            - lun: 0
+              blobUri: "https://storage.blob.core.windows.net/vhds/datadisk.vhd"
+            - lun: 1
+              blobUri: "https://storage.blob.core.windows.net/vhds/datadisk2.vhd"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # 8d. Image with data disks having CMK → pass
+  # =========================================================================
+
+  - note: pass_image_datadisks_with_cmk
+    resource:
+      type: "Microsoft.Compute/images"
+      name: "image-datadisks-cmk"
+      properties:
+        storageProfile:
+          osDisk:
+            osType: "Linux"
+            osState: "Generalized"
+            diskEncryptionSet:
+              id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+          dataDisks:
+            - lun: 0
+              diskEncryptionSet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+            - lun: 1
+              diskEncryptionSet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+    want_undefined: true
+
+  # =========================================================================
+  # Gallery Image Version: OS disk encryption (branch 6)
+  # =========================================================================
+
+  - note: audit_gallery_version_osdisk_no_cmk
+    resource:
+      type: "Microsoft.Compute/galleries/images/versions"
+      name: "gallery-version-osdisk-no-cmk"
+      properties:
+        publishingProfile:
+          targetRegions:
+            - name: "eastus"
+            - name: "westus"
+    want_effect: "Audit"
+
+  - note: pass_gallery_version_osdisk_with_cmk
+    resource:
+      type: "Microsoft.Compute/galleries/images/versions"
+      name: "gallery-version-osdisk-cmk"
+      properties:
+        publishingProfile:
+          targetRegions:
+            - name: "eastus"
+              encryption:
+                osDiskImage:
+                  diskEncryptionSetId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+            - name: "westus"
+              encryption:
+                osDiskImage:
+                  diskEncryptionSetId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+    want_undefined: true
+
+  # =========================================================================
+  # Gallery Image Version: data disk encryption (branch 7)
+  # =========================================================================
+
+  - note: audit_gallery_version_datadisks_no_cmk
+    resource:
+      type: "Microsoft.Compute/galleries/images/versions"
+      name: "gallery-version-datadisks-no-cmk"
+      properties:
+        storageProfile:
+          dataDiskImages:
+            - lun: 0
+            - lun: 1
+        publishingProfile:
+          targetRegions:
+            - name: "eastus"
+              encryption:
+                osDiskImage:
+                  diskEncryptionSetId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+            - name: "westus"
+              encryption:
+                osDiskImage:
+                  diskEncryptionSetId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+    want_effect: "Audit"
+
+  - note: pass_gallery_version_datadisks_with_cmk
+    resource:
+      type: "Microsoft.Compute/galleries/images/versions"
+      name: "gallery-version-datadisks-cmk"
+      properties:
+        storageProfile:
+          dataDiskImages:
+            - lun: 0
+            - lun: 1
+        publishingProfile:
+          targetRegions:
+            - name: "eastus"
+              encryption:
+                osDiskImage:
+                  diskEncryptionSetId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+                dataDiskImages:
+                  - diskEncryptionSetId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+                  - diskEncryptionSetId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+            - name: "westus"
+              encryption:
+                osDiskImage:
+                  diskEncryptionSetId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+                dataDiskImages:
+                  - diskEncryptionSetId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+                  - diskEncryptionSetId: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/diskEncryptionSets/myDES"
+    want_undefined: true
+
+  # =========================================================================
+  # 9. Wrong resource type → pass
+  # =========================================================================
+
+  - note: skip_wrong_type
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "myStorage"
+      properties: {}
+    want_undefined: true

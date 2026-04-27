@@ -1,0 +1,231 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: General/CustomSubscription_OwnerRole_Audit
+# Real Azure Policy: "[Deprecated]: Custom subscription owner roles should not exist"
+# Source: regolator/policyDefinitions/General/CustomSubscription_OwnerRole_Audit.json
+#
+# Features exercised:
+#   - 4 double-negation blocks: not { field notEquals }, not { field notIn }, not { field notLike }
+#   - Array wildcard aliases: permissions[*].actions[*], assignableScopes[*]
+#   - subscription().id and concat(subscription().id, '/')
+#   - notLike "/providers/Microsoft.Management/*"
+#   - Deeply nested sub-resource arrays (permissions[*].actions[*])
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "[Deprecated]: Custom subscription owner roles should not exist",
+      "policyType": "BuiltIn",
+      "mode": "All",
+      "parameters": {
+        "effect": {
+          "type": "string",
+          "defaultValue": "Audit",
+          "allowedValues": ["Audit", "Disabled"]
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Authorization/roleDefinitions"
+            },
+            {
+              "field": "Microsoft.Authorization/roleDefinitions/type",
+              "equals": "CustomRole"
+            },
+            {
+              "anyOf": [
+                {
+                  "not": {
+                    "field": "Microsoft.Authorization/roleDefinitions/permissions[*].actions[*]",
+                    "notEquals": "*"
+                  }
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "not": {
+                    "field": "Microsoft.Authorization/roleDefinitions/assignableScopes[*]",
+                    "notIn": [
+                      "[concat(subscription().id,'/')]",
+                      "[subscription().id]",
+                      "/"
+                    ]
+                  }
+                },
+                {
+                  "not": {
+                    "field": "Microsoft.Authorization/roleDefinitions/assignableScopes[*]",
+                    "notLike": "/providers/Microsoft.Management/*"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Custom owner role with subscription scope → audit
+  # =========================================================================
+
+  - note: audit_custom_owner_subscription_scope
+    resource:
+      type: "Microsoft.Authorization/roleDefinitions"
+      name: "custom-owner"
+      properties:
+        type: "CustomRole"
+        permissions:
+          - actions:
+              - "*"
+        assignableScopes:
+          - "/subscriptions/sub-123"
+    context:
+      subscription:
+        subscriptionId: "sub-123"
+        id: "/subscriptions/sub-123"
+    want_effect: "Audit"
+
+  - note: audit_custom_owner_subscription_trailing_slash
+    resource:
+      type: "Microsoft.Authorization/roleDefinitions"
+      name: "custom-owner-slash"
+      properties:
+        type: "CustomRole"
+        permissions:
+          - actions:
+              - "*"
+        assignableScopes:
+          - "/subscriptions/sub-123/"
+    context:
+      subscription:
+        subscriptionId: "sub-123"
+        id: "/subscriptions/sub-123"
+    want_effect: "Audit"
+
+  - note: audit_custom_owner_root_scope
+    resource:
+      type: "Microsoft.Authorization/roleDefinitions"
+      name: "custom-owner-root"
+      properties:
+        type: "CustomRole"
+        permissions:
+          - actions:
+              - "*"
+        assignableScopes:
+          - "/"
+    context:
+      subscription:
+        subscriptionId: "sub-123"
+        id: "/subscriptions/sub-123"
+    want_effect: "Audit"
+
+  - note: audit_custom_owner_management_group_scope
+    resource:
+      type: "Microsoft.Authorization/roleDefinitions"
+      name: "custom-owner-mg"
+      properties:
+        type: "CustomRole"
+        permissions:
+          - actions:
+              - "*"
+        assignableScopes:
+          - "/providers/Microsoft.Management/managementGroups/mg1"
+    context:
+      subscription:
+        subscriptionId: "sub-123"
+        id: "/subscriptions/sub-123"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # Custom role without owner (*) actions → pass
+  # =========================================================================
+
+  - note: pass_custom_role_no_wildcard_actions
+    resource:
+      type: "Microsoft.Authorization/roleDefinitions"
+      name: "custom-reader"
+      properties:
+        type: "CustomRole"
+        permissions:
+          - actions:
+              - "Microsoft.Compute/virtualMachines/read"
+              - "Microsoft.Storage/storageAccounts/read"
+        assignableScopes:
+          - "/subscriptions/sub-123"
+    context:
+      subscription:
+        subscriptionId: "sub-123"
+        id: "/subscriptions/sub-123"
+    want_undefined: true
+
+  # =========================================================================
+  # Custom owner role but NOT scoped to subscription/root/MG → pass
+  # =========================================================================
+
+  - note: pass_custom_owner_resource_group_scope
+    resource:
+      type: "Microsoft.Authorization/roleDefinitions"
+      name: "custom-owner-rg"
+      properties:
+        type: "CustomRole"
+        permissions:
+          - actions:
+              - "*"
+        assignableScopes:
+          - "/subscriptions/sub-123/resourceGroups/rg1"
+    context:
+      subscription:
+        subscriptionId: "sub-123"
+        id: "/subscriptions/sub-123"
+    want_undefined: true
+
+  # =========================================================================
+  # BuiltIn role (not CustomRole) → pass
+  # =========================================================================
+
+  - note: pass_builtin_role
+    resource:
+      type: "Microsoft.Authorization/roleDefinitions"
+      name: "builtin-owner"
+      properties:
+        type: "BuiltInRole"
+        permissions:
+          - actions:
+              - "*"
+        assignableScopes:
+          - "/"
+    context:
+      subscription:
+        subscriptionId: "sub-123"
+        id: "/subscriptions/sub-123"
+    want_undefined: true
+
+  # =========================================================================
+  # Wrong resource type
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "not-role-def"
+      properties:
+        type: "CustomRole"
+    context:
+      subscription:
+        subscriptionId: "sub-123"
+        id: "/subscriptions/sub-123"
+    want_undefined: true

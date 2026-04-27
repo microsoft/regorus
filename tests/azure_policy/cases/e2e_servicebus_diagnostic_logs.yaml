@@ -1,0 +1,116 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Service Bus/AuditDiagnosticLog_Audit
+# Features: AuditIfNotExists with inline existenceCondition evaluation,
+# including count-with-where and ARM template expression padLeft().
+#
+# NOTE: Without an alias catalog, fully-qualified field paths like
+# "Microsoft.Insights/diagnosticSettings/logs[*]..." resolve as raw
+# object keys. The test response structure mirrors this resolution.
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Resource logs in Service Bus should be enabled",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "string",
+          "defaultValue": "AuditIfNotExists",
+          "allowedValues": ["AuditIfNotExists", "Disabled"]
+        },
+        "requiredRetentionDays": {
+          "type": "String",
+          "defaultValue": "365"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.ServiceBus/namespaces"
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "type": "Microsoft.Insights/diagnosticSettings",
+            "existenceCondition": {
+              "count": {
+                "field": "Microsoft.Insights/diagnosticSettings/logs[*]",
+                "where": {
+                  "anyOf": [
+                    {
+                      "allOf": [
+                        {
+                          "field": "Microsoft.Insights/diagnosticSettings/logs[*].retentionPolicy.enabled",
+                          "equals": "true"
+                        },
+                        {
+                          "anyOf": [
+                            {
+                              "field": "Microsoft.Insights/diagnosticSettings/logs[*].retentionPolicy.days",
+                              "equals": "0"
+                            },
+                            {
+                              "value": "[padLeft(current('Microsoft.Insights/diagnosticSettings/logs[*].retentionPolicy.days'), 3, '0')]",
+                              "greaterOrEquals": "[padLeft(parameters('requiredRetentionDays'), 3, '0')]"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "greaterOrEquals": 1
+            }
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # Related resource not found → non-compliant
+  - note: non_compliant_resource_not_found
+    resource:
+      type: "Microsoft.ServiceBus/namespaces"
+      name: "sb-a"
+      properties: {}
+    host_await:
+      - key:
+          operation: "lookup_related_resources"
+          type: "Microsoft.Insights/diagnosticSettings"
+        response: null
+    want_effect: "AuditIfNotExists"
+
+  # Related resource found with compliant diagnostic log → compliant
+  - note: compliant_resource_found_and_condition_passes
+    resource:
+      type: "Microsoft.ServiceBus/namespaces"
+      name: "sb-b"
+      properties: {}
+    host_await:
+      - response:
+          Microsoft:
+            "Insights/diagnosticSettings/logs":
+              - retentionPolicy:
+                  enabled: "true"
+                  days: "365"
+    want_undefined: true
+
+  # Related resource found but retention too short → non-compliant
+  - note: non_compliant_retention_too_short
+    resource:
+      type: "Microsoft.ServiceBus/namespaces"
+      name: "sb-c"
+      properties: {}
+    host_await:
+      - response:
+          Microsoft:
+            "Insights/diagnosticSettings/logs":
+              - retentionPolicy:
+                  enabled: "true"
+                  days: "10"
+    want_effect: "AuditIfNotExists"

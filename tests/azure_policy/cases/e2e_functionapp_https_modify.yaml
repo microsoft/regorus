@@ -1,0 +1,183 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: App Service/FunctionApp_AuditHTTP_Modify
+# Real Azure Policy: "Configure Function apps to only be accessible over HTTPS"
+# Source: regolator/policyDefinitions/App Service/FunctionApp_AuditHTTP_Modify.json
+#
+# Features exercised:
+#   - kind contains / notContains string operators
+#   - exists "false" — field doesn't exist or is null
+#   - Modify with greaterOrEquals(requestContext().apiVersion,...) condition
+#   - conflictEffect: audit
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Configure Function apps to only be accessible over HTTPS",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "string",
+          "defaultValue": "Modify",
+          "allowedValues": ["Modify", "Disabled"]
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Web/sites"
+            },
+            {
+              "field": "kind",
+              "contains": "functionapp"
+            },
+            {
+              "field": "kind",
+              "notContains": "workflowapp"
+            },
+            {
+              "anyOf": [
+                {
+                  "field": "Microsoft.Web/sites/httpsOnly",
+                  "exists": "false"
+                },
+                {
+                  "field": "Microsoft.Web/sites/httpsOnly",
+                  "equals": "false"
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/microsoft.authorization/roleDefinitions/de139f84-1756-47ae-9be6-808fbbe84772"
+            ],
+            "conflictEffect": "audit",
+            "operations": [
+              {
+                "condition": "[greaterOrEquals(requestContext().apiVersion, '2019-08-01')]",
+                "operation": "addOrReplace",
+                "field": "Microsoft.Web/sites/httpsOnly",
+                "value": true
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Function app with httpsOnly missing → Modify
+  # =========================================================================
+
+  - note: modify_functionapp_httpsonly_missing
+    resource:
+      type: "Microsoft.Web/sites"
+      kind: "functionapp"
+      name: "func-no-https"
+      properties: {}
+    api_version: "2022-03-01"
+    want_effect: "Modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/microsoft.authorization/roleDefinitions/de139f84-1756-47ae-9be6-808fbbe84772"
+      operations:
+        - condition: "[greaterOrEquals(requestContext().apiVersion, '2019-08-01')]"
+          operation: "addOrReplace"
+          field: "Microsoft.Web/sites/httpsOnly"
+          value: true
+
+  # =========================================================================
+  # Function app with httpsOnly = false → Modify
+  # =========================================================================
+
+  - note: modify_functionapp_httpsonly_false
+    resource:
+      type: "Microsoft.Web/sites"
+      kind: "functionapp,linux"
+      name: "func-linux-no-https"
+      properties:
+        httpsOnly: false
+    api_version: "2020-06-01"
+    want_effect: "Modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/microsoft.authorization/roleDefinitions/de139f84-1756-47ae-9be6-808fbbe84772"
+      operations:
+        - condition: "[greaterOrEquals(requestContext().apiVersion, '2019-08-01')]"
+          operation: "addOrReplace"
+          field: "Microsoft.Web/sites/httpsOnly"
+          value: true
+
+  # =========================================================================
+  # Function app with httpsOnly = true → pass (condition not met)
+  # =========================================================================
+
+  - note: pass_functionapp_httpsonly_true
+    resource:
+      type: "Microsoft.Web/sites"
+      kind: "functionapp"
+      name: "func-https"
+      properties:
+        httpsOnly: true
+    api_version: "2022-03-01"
+    want_undefined: true
+
+  # =========================================================================
+  # Workflow app (Logic App) — notContains "workflowapp" fails → pass
+  # =========================================================================
+
+  - note: pass_workflowapp_excluded
+    resource:
+      type: "Microsoft.Web/sites"
+      kind: "functionapp,workflowapp"
+      name: "logic-app"
+      properties: {}
+    api_version: "2022-03-01"
+    want_undefined: true
+
+  # =========================================================================
+  # Web app (not function app) — contains "functionapp" fails → pass
+  # =========================================================================
+
+  - note: pass_webapp_not_functionapp
+    resource:
+      type: "Microsoft.Web/sites"
+      kind: "app"
+      name: "web-app"
+      properties:
+        httpsOnly: false
+    api_version: "2022-03-01"
+    want_undefined: true
+
+  # =========================================================================
+  # Old API version → operation condition not met, no operations emitted
+  # =========================================================================
+
+  - note: modify_old_api_no_operations
+    resource:
+      type: "Microsoft.Web/sites"
+      kind: "functionapp"
+      name: "func-old-api"
+      properties: {}
+    api_version: "2018-02-01"
+    want_effect: "Modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/microsoft.authorization/roleDefinitions/de139f84-1756-47ae-9be6-808fbbe84772"
+      operations:
+        - condition: "[greaterOrEquals(requestContext().apiVersion, '2019-08-01')]"
+          operation: "addOrReplace"
+          field: "Microsoft.Web/sites/httpsOnly"
+          value: true
