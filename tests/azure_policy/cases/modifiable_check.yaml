@@ -1,0 +1,221 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Modifiable Check Test Suite
+# When an alias catalog is loaded, the compiler validates that aliases used
+# in Modify operations have `defaultMetadata.attributes = "Modifiable"`.
+#
+# Non-modifiable aliases should cause a compile-time error.
+# Modifiable aliases, tag paths, and built-in fields should compile fine.
+
+aliases: test_aliases.json
+
+cases:
+  # =========================================================================
+  # Modifiable alias in Modify — should compile and evaluate
+  # =========================================================================
+
+  - note: modify_modifiable_alias_ok
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Storage/storageAccounts"
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+                "value": true
+              }
+            ]
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: false
+    want_effect: "modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+      operations:
+        - operation: "addOrReplace"
+          field: "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly"
+          value: true
+
+  # =========================================================================
+  # Non-modifiable alias in Modify — should fail compilation
+  # =========================================================================
+
+  - note: modify_non_modifiable_alias_error
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Storage/storageAccounts"
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.Storage/storageAccounts/primaryEndpoints.blob",
+                "value": "https://example.blob.core.windows.net"
+              }
+            ]
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+    want_compile_error: true
+
+  # =========================================================================
+  # Tag field in Modify — always allowed (no alias check needed)
+  # =========================================================================
+
+  - note: modify_tag_field_ok
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "tags['environment']",
+                "value": "production"
+              }
+            ]
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "modify"
+
+  # =========================================================================
+  # Properties path in Modify — no alias match, allowed
+  # =========================================================================
+
+  - note: modify_properties_path_ok
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "properties.someCustomField",
+                "value": "custom-value"
+              }
+            ]
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "modify"
+
+  # =========================================================================
+  # Multiple operations — one non-modifiable should fail entire compilation
+  # =========================================================================
+
+  - note: modify_mixed_modifiable_non_modifiable_error
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Storage/storageAccounts"
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+                "value": true
+              },
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.Storage/storageAccounts/primaryEndpoints.blob",
+                "value": "https://override.blob.core.windows.net"
+              }
+            ]
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+    want_compile_error: true
+
+  # =========================================================================
+  # Modify with modifiable alias — details include resolved short name
+  # =========================================================================
+
+  - note: modify_modifiable_alias_details_check
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Storage/storageAccounts"
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.Storage/storageAccounts/minimumTlsVersion",
+                "value": "TLS1_2"
+              }
+            ]
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        minimumTlsVersion: "TLS1_0"
+    want_effect: "modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+      operations:
+        - operation: "addOrReplace"
+          field: "Microsoft.Storage/storageAccounts/minimumTlsVersion"
+          value: "TLS1_2"
