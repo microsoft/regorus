@@ -1,0 +1,156 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Compute/VMRequireManagedDisk_Audit
+# Real Azure Policy: "Audit VMs that do not use managed disks"
+# Features: anyOf, allOf nesting, field (type + alias), equals, exists,
+#   multiple resource types (VM + VMSS)
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Audit VMs that do not use managed disks",
+      "policyType": "BuiltIn",
+      "mode": "All",
+      "parameters": {},
+      "policyRule": {
+        "if": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Compute/virtualMachines"
+                },
+                {
+                  "field": "Microsoft.Compute/virtualMachines/osDisk.uri",
+                  "exists": "True"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Compute/VirtualMachineScaleSets"
+                },
+                {
+                  "anyOf": [
+                    {
+                      "field": "Microsoft.Compute/VirtualMachineScaleSets/osDisk.vhdContainers",
+                      "exists": "True"
+                    },
+                    {
+                      "field": "Microsoft.Compute/VirtualMachineScaleSets/osdisk.imageUrl",
+                      "exists": "True"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Audit — VM with unmanaged OS disk (vhd uri present)
+  # =========================================================================
+
+  - note: audit_vm_unmanaged_osdisk
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "legacyVM"
+      location: "eastus"
+      properties:
+        storageProfile:
+          osDisk:
+            vhd:
+              uri: "https://mystorage.blob.core.windows.net/vhds/osdisk.vhd"
+    want_effect: "audit"
+
+  # =========================================================================
+  # No effect — VM with managed disk (no vhd uri)
+  # =========================================================================
+
+  - note: pass_vm_managed_disk
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "modernVM"
+      location: "eastus"
+      properties:
+        storageProfile:
+          osDisk:
+            managedDisk:
+              storageAccountType: "Premium_LRS"
+    want_undefined: true
+
+  # =========================================================================
+  # Audit — VMSS with vhdContainers (unmanaged)
+  # =========================================================================
+
+  - note: audit_vmss_vhd_containers
+    resource:
+      type: "Microsoft.Compute/VirtualMachineScaleSets"
+      name: "legacyScaleSet"
+      location: "westus"
+      properties:
+        virtualMachineProfile:
+          storageProfile:
+            osDisk:
+              vhdContainers:
+                - "https://stor1.blob.core.windows.net/vhds"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Audit — VMSS with custom image URL (unmanaged)
+  # =========================================================================
+
+  - note: audit_vmss_image_url
+    resource:
+      type: "Microsoft.Compute/VirtualMachineScaleSets"
+      name: "customImgScaleSet"
+      location: "westus"
+      properties:
+        virtualMachineProfile:
+          storageProfile:
+            osDisk:
+              image:
+                uri: "https://mystorage.blob.core.windows.net/images/custom.vhd"
+    want_effect: "audit"
+
+  # =========================================================================
+  # No effect — VMSS with managed disk (no vhdContainers, no imageUrl)
+  # =========================================================================
+
+  - note: pass_vmss_managed_disk
+    resource:
+      type: "Microsoft.Compute/VirtualMachineScaleSets"
+      name: "modernScaleSet"
+      location: "eastus"
+      properties:
+        virtualMachineProfile:
+          storageProfile:
+            osDisk:
+              managedDisk:
+                storageAccountType: "Standard_LRS"
+    want_undefined: true
+
+  # =========================================================================
+  # No effect — wrong resource type entirely
+  # =========================================================================
+
+  - note: skip_wrong_type
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "myStorage"
+      location: "eastus"
+      properties: {}
+    want_undefined: true

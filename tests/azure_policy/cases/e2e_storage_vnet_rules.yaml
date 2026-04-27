@@ -1,0 +1,180 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Storage/StorageAccountOnlyVnetRulesEnabled_Audit
+# Real Azure Policy: "Storage accounts should restrict network access using
+#   virtual network rules"
+# Features: allOf, anyOf, field (type + alias), equals, notEquals, field count
+#   (array [*] without where), greaterOrEquals, parameters() with defaultValue
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Storage accounts should restrict network access using virtual network rules",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "String",
+          "metadata": {
+            "displayName": "Effect",
+            "description": "Enable or disable the execution of the audit policy"
+          },
+          "allowedValues": ["Audit", "Deny", "Disabled"],
+          "defaultValue": "Audit"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Storage/storageAccounts"
+            },
+            {
+              "anyOf": [
+                {
+                  "field": "Microsoft.Storage/storageAccounts/networkAcls.defaultAction",
+                  "notEquals": "Deny"
+                },
+                {
+                  "count": {
+                    "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules[*]"
+                  },
+                  "greaterOrEquals": 1
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Audit — default action is Allow (not Deny)
+  # =========================================================================
+
+  - note: audit_default_action_allow
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "openStorage"
+      location: "eastus"
+      properties:
+        networkAcls:
+          defaultAction: "Allow"
+          ipRules: []
+    want_effect: "Audit"
+
+  # =========================================================================
+  # Audit — default action is Deny but has IP rules
+  # =========================================================================
+
+  - note: audit_deny_with_ip_rules
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "restrictedStorage"
+      location: "eastus"
+      properties:
+        networkAcls:
+          defaultAction: "Deny"
+          ipRules:
+            - value: "10.0.0.0/24"
+              action: "Allow"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # No effect — default action is Deny and no IP rules
+  # =========================================================================
+
+  - note: pass_deny_no_ip_rules
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "vnetOnlyStorage"
+      location: "eastus"
+      properties:
+        networkAcls:
+          defaultAction: "Deny"
+          ipRules: []
+    want_undefined: true
+
+  # =========================================================================
+  # Audit — both violations: default Allow AND has IP rules
+  # =========================================================================
+
+  - note: audit_allow_with_ip_rules
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "wideOpenStorage"
+      location: "westus"
+      properties:
+        networkAcls:
+          defaultAction: "Allow"
+          ipRules:
+            - value: "192.168.1.0/24"
+              action: "Allow"
+            - value: "10.0.0.1"
+              action: "Allow"
+    want_effect: "Audit"
+
+  # =========================================================================
+  # Audit — networkAcls missing entirely (defaultAction undefined → notEquals
+  # "Deny" is true for null/undefined)
+  # =========================================================================
+
+  - note: audit_no_network_acls
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "noAclStorage"
+      location: "eastus"
+      properties: {}
+    want_effect: "Audit"
+
+  # =========================================================================
+  # No effect — wrong resource type
+  # =========================================================================
+
+  - note: skip_wrong_type
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "myVM"
+      location: "eastus"
+      properties: {}
+    want_undefined: true
+
+  # =========================================================================
+  # Deny — explicit effect parameter override
+  # =========================================================================
+
+  - note: deny_with_explicit_effect
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "openStorage"
+      location: "eastus"
+      properties:
+        networkAcls:
+          defaultAction: "Allow"
+          ipRules: []
+    parameters:
+      effect: "Deny"
+    want_effect: "Deny"
+
+  # =========================================================================
+  # No effect — Deny action, ipRules key missing (count over undefined = 0)
+  # =========================================================================
+
+  - note: pass_deny_no_ip_rules_key
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "minimalStorage"
+      location: "eastus"
+      properties:
+        networkAcls:
+          defaultAction: "Deny"
+    want_undefined: true

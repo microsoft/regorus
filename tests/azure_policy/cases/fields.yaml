@@ -1,0 +1,323 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Built-in Fields Test Suite
+# Tests all built-in field types: type, id, kind, name, location, fullName,
+# tags, identity.type, and tag indexing patterns.
+
+cases:
+  # =========================================================================
+  # Core built-in fields
+  # =========================================================================
+
+  - note: field_type
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "deny"
+
+  - note: field_id
+    policy_rule: |
+      {
+        "if": {
+          "field": "id",
+          "contains": "/resourceGroups/myRg/"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      id: "/subscriptions/sub1/resourceGroups/myRg/providers/Microsoft.Compute/virtualMachines/vm1"
+    want_effect: "audit"
+
+  - note: field_kind
+    policy_rule: |
+      {
+        "if": {
+          "field": "kind",
+          "equals": "StorageV2"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      kind: "StorageV2"
+    want_effect: "audit"
+
+  - note: field_name
+    policy_rule: |
+      {
+        "if": {
+          "field": "name",
+          "contains": "prod"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      name: "my-prod-vm"
+    want_effect: "deny"
+
+  - note: field_location
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "equals": "eastus"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "eastus"
+    want_effect: "deny"
+
+  - note: field_fullName
+    policy_rule: |
+      {
+        "if": {
+          "field": "fullName",
+          "contains": "Microsoft.Compute"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      fullName: "Microsoft.Compute/virtualMachines/vm1"
+    want_effect: "audit"
+
+  - note: field_identity_type
+    policy_rule: |
+      {
+        "if": {
+          "field": "identity.type",
+          "equals": "SystemAssigned"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      identity:
+        type: "SystemAssigned"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Tags
+  # =========================================================================
+
+  - note: field_tags_object
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags",
+          "containsKey": "environment"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_effect: "audit"
+
+  - note: field_tags_dot_notation
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.environment",
+          "equals": "production"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_effect: "audit"
+
+  - note: field_tags_bracket_notation
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags['environment']",
+          "equals": "production"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_effect: "deny"
+
+  - note: field_tags_dot_hyphen
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.cost-center",
+          "equals": "engineering"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        cost-center: "engineering"
+    want_effect: "audit"
+
+  - note: field_tags_bracket_space
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags['Created By']",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        Created By: "admin"
+    want_effect: "audit"
+
+  - note: field_tags_missing
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags.environment",
+          "exists": false
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags: {}
+    want_effect: "deny"
+
+  # =========================================================================
+  # Nested property fields (aliases)
+  # =========================================================================
+  # Note: These test parsing of alias-like dotted paths in field position.
+  # Actual alias resolution is out of scope; these confirm the parser
+  # correctly handles them.
+
+  - note: field_deep_property
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.securityProfile.uefiSettings.secureBootEnabled",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        securityProfile:
+          uefiSettings:
+            secureBootEnabled: true
+    want_effect: "audit"
+
+  - note: field_multiple_field_conditions
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Network/networkSecurityGroups/securityRules" },
+            { "field": "name", "contains": "allow" },
+            { "field": "location", "in": ["eastus", "westus", "centralus"] },
+            { "field": "tags.team", "equals": "security" }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups/securityRules"
+      name: "allow-https"
+      location: "eastus"
+      tags:
+        team: "security"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Bracket notation in field paths
+  # =========================================================================
+
+  - note: field_bracket_notation_string_key
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.networkAcls['default-action']",
+          "equals": "Allow"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        networkAcls:
+          default-action: "Allow"
+    want_effect: "deny"
+
+  - note: field_bracket_notation_double_quote
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.settings['log-level']",
+          "equals": "debug"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        settings:
+          log-level: "debug"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Array index access in field paths
+  # =========================================================================
+
+  - note: field_array_index_zero
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.ipConfigurations[0].name",
+          "equals": "primary"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        ipConfigurations:
+          - name: "primary"
+            properties:
+              subnet: "default"
+          - name: "secondary"
+            properties:
+              subnet: "dmz"
+    want_effect: "deny"
+
+  - note: field_array_index_one
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.ipConfigurations[1].name",
+          "equals": "secondary"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        ipConfigurations:
+          - name: "primary"
+          - name: "secondary"
+    want_effect: "deny"
+
+  - note: field_array_index_out_of_bounds
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.ipConfigurations[5].name",
+          "exists": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        ipConfigurations:
+          - name: "primary"
+    want_undefined: true

@@ -1,0 +1,238 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Cosmos DB/Cosmos_NetworkRulesExist_Audit
+# Real Azure Policy: "Azure Cosmos DB accounts should have firewall rules"
+# Source: regolator/policyDefinitions/Cosmos DB/Cosmos_NetworkRulesExist_Audit.json
+#
+# Features exercised:
+#   - 4-level nesting: allOf → anyOf → allOf → anyOf
+#   - 3 separate count expressions (ipRules, privateEndpointConnections)
+#   - exists "false" checks
+#   - count field without where (plain count)
+#   - count with where clause (privateLinkServiceConnectionState.status)
+#   - Deeply nested sub-resource array alias
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Azure Cosmos DB accounts should have firewall rules",
+      "policyType": "BuiltIn",
+      "mode": "All",
+      "parameters": {
+        "effect": {
+          "type": "String",
+          "allowedValues": ["Audit", "Deny", "Disabled"],
+          "defaultValue": "Deny"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.DocumentDB/databaseAccounts"
+            },
+            {
+              "anyOf": [
+                {
+                  "field": "Microsoft.DocumentDB/databaseAccounts/publicNetworkAccess",
+                  "exists": "false"
+                },
+                {
+                  "field": "Microsoft.DocumentDB/databaseAccounts/publicNetworkAccess",
+                  "equals": "Enabled"
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "field": "Microsoft.DocumentDB/databaseAccounts/isVirtualNetworkFilterEnabled",
+                  "exists": "false"
+                },
+                {
+                  "field": "Microsoft.DocumentDB/databaseAccounts/isVirtualNetworkFilterEnabled",
+                  "equals": "false"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "field": "Microsoft.DocumentDB/databaseAccounts/ipRules",
+                      "exists": "false"
+                    },
+                    {
+                      "count": {
+                        "field": "Microsoft.DocumentDB/databaseAccounts/ipRules[*]"
+                      },
+                      "equals": 0
+                    }
+                  ]
+                },
+                {
+                  "anyOf": [
+                    {
+                      "field": "Microsoft.DocumentDB/databaseAccounts/ipRangeFilter",
+                      "exists": "false"
+                    },
+                    {
+                      "field": "Microsoft.DocumentDB/databaseAccounts/ipRangeFilter",
+                      "equals": ""
+                    }
+                  ]
+                },
+                {
+                  "anyOf": [
+                    {
+                      "count": {
+                        "field": "Microsoft.DocumentDB/databaseAccounts/privateEndpointConnections[*]",
+                        "where": {
+                          "field": "Microsoft.DocumentDB/databaseAccounts/privateEndpointConnections[*].privateLinkServiceConnectionState.status",
+                          "equals": "Approved"
+                        }
+                      },
+                      "less": 1
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Fully unprotected (public, no vnet filter, no ip rules, no PE) → deny
+  # =========================================================================
+
+  - note: deny_completely_open
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-open"
+      properties:
+        publicNetworkAccess: "Enabled"
+        isVirtualNetworkFilterEnabled: false
+        ipRules: []
+        ipRangeFilter: ""
+        privateEndpointConnections: []
+    want_effect: "Deny"
+
+  - note: deny_public_access_missing_fields
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-defaults"
+      properties: {}
+    want_effect: "Deny"
+
+  # =========================================================================
+  # Protected by disabling public access → pass
+  # =========================================================================
+
+  - note: pass_public_access_disabled
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-private"
+      properties:
+        publicNetworkAccess: "Disabled"
+    want_undefined: true
+
+  # =========================================================================
+  # Protected by vnet filter → pass
+  # =========================================================================
+
+  - note: pass_vnet_filter_enabled
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-vnet"
+      properties:
+        publicNetworkAccess: "Enabled"
+        isVirtualNetworkFilterEnabled: true
+    want_undefined: true
+
+  # =========================================================================
+  # Protected by IP rules → pass
+  # =========================================================================
+
+  - note: pass_has_ip_rules
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-ip"
+      properties:
+        publicNetworkAccess: "Enabled"
+        isVirtualNetworkFilterEnabled: false
+        ipRules:
+          - ipAddressOrRange: "10.0.0.1"
+    want_undefined: true
+
+  - note: pass_has_ip_range_filter
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-iprange"
+      properties:
+        publicNetworkAccess: "Enabled"
+        isVirtualNetworkFilterEnabled: false
+        ipRules: []
+        ipRangeFilter: "10.0.0.0/24"
+    want_undefined: true
+
+  # =========================================================================
+  # Protected by approved private endpoint → pass
+  # =========================================================================
+
+  - note: pass_approved_private_endpoint
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-pe"
+      properties:
+        publicNetworkAccess: "Enabled"
+        isVirtualNetworkFilterEnabled: false
+        ipRules: []
+        ipRangeFilter: ""
+        privateEndpointConnections:
+          - properties:
+              privateLinkServiceConnectionState:
+                status: "Approved"
+    want_undefined: true
+
+  # =========================================================================
+  # Private endpoint exists but not approved → deny
+  # =========================================================================
+
+  - note: deny_pending_private_endpoint
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+      name: "cosmos-pe-pending"
+      properties:
+        publicNetworkAccess: "Enabled"
+        isVirtualNetworkFilterEnabled: false
+        ipRules: []
+        ipRangeFilter: ""
+        privateEndpointConnections:
+          - properties:
+              privateLinkServiceConnectionState:
+                status: "Pending"
+    want_effect: "Deny"
+
+  # =========================================================================
+  # Wrong type
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "not-cosmos"
+      properties:
+        publicNetworkAccess: "Enabled"
+    want_undefined: true

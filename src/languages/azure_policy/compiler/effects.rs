@@ -21,6 +21,7 @@ use anyhow::{anyhow, bail, Result};
 use crate::languages::azure_policy::ast::{
     EffectKind, EffectNode, Expr, ExprLiteral, JsonValue, ObjectEntry, PolicyRule,
 };
+use crate::languages::azure_policy::compiler::utils::json_value_to_runtime;
 use crate::rvm::instructions::ObjectCreateParams;
 use crate::rvm::Instruction;
 use crate::Value;
@@ -467,17 +468,26 @@ impl Compiler {
         let mut detail_keys: Vec<(u16, u8)> = Vec::new();
 
         for ObjectEntry { key, value, .. } in entries {
-            // existenceCondition is evaluated inline — not included in result.
-            if key.eq_ignore_ascii_case("existenceCondition") {
-                continue;
+            // Only emit `roleDefinitionIds` and `type` into the structured
+            // result.  All other fields (existenceCondition, deployment,
+            // name, resourceGroupName, etc.) are either evaluated inline
+            // during compilation or are ARM deployment metadata that the
+            // policy evaluation engine does not interpret.
+            match key.to_lowercase().as_str() {
+                "roledefinitionids" => {
+                    let val = json_value_to_runtime(value)?;
+                    let reg = self.load_literal(val, span)?;
+                    let key_idx = self.add_literal_u16(Value::from("roleDefinitionIds"))?;
+                    detail_keys.push((key_idx, reg));
+                }
+                "type" => {
+                    let val = json_value_to_runtime(value)?;
+                    let reg = self.load_literal(val, span)?;
+                    let key_idx = self.add_literal_u16(Value::from("type"))?;
+                    detail_keys.push((key_idx, reg));
+                }
+                _ => {}
             }
-
-            let reg = self.compile_json_value(value, value.span())?;
-
-            // Canonicalize known Azure field names.
-            let canonical_key = canonicalize_detail_key(key);
-            let key_idx = self.add_literal_u16(Value::from(canonical_key))?;
-            detail_keys.push((key_idx, reg));
         }
 
         if detail_keys.is_empty() {

@@ -1,0 +1,104 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: SQL/SqlServerAuditing_Audit
+# Features: AuditIfNotExists with inline existenceCondition evaluation.
+# The host returns the related resource (or null if not found), and the
+# compiler evaluates the existenceCondition against it.
+#
+# NOTE: Without an alias catalog, fully-qualified field paths like
+# "Microsoft.Sql/auditingSettings.state" resolve as raw object keys
+# ("Microsoft" → "Sql/auditingSettings" → "state"). The test response
+# structure mirrors this resolution.
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Auditing on SQL server should be enabled",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "string",
+          "defaultValue": "AuditIfNotExists",
+          "allowedValues": ["AuditIfNotExists", "Disabled"]
+        },
+        "setting": {
+          "type": "String",
+          "defaultValue": "enabled",
+          "allowedValues": ["enabled", "disabled"]
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {"field": "type", "equals": "Microsoft.Sql/servers"},
+            {"field": "kind", "notContains": "analytics"}
+          ]
+        },
+        "then": {
+          "effect": "AuditIfNotExists",
+          "details": {
+            "type": "Microsoft.Sql/servers/auditingSettings",
+            "name": "default",
+            "existenceCondition": {
+              "field": "Microsoft.Sql/auditingSettings.state",
+              "equals": "[parameters('setting')]"
+            }
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # Related resource not found → non-compliant
+  - note: non_compliant_resource_not_found
+    resource:
+      type: "Microsoft.Sql/servers"
+      kind: "v12.0"
+      name: "sql-a"
+      properties: {}
+    host_await:
+      - key:
+          operation: "lookup_related_resources"
+          type: "Microsoft.Sql/servers/auditingSettings"
+          name: "default"
+        response: null
+    want_effect: "AuditIfNotExists"
+
+  # Related resource found and existenceCondition matches → compliant
+  - note: compliant_resource_found_and_condition_passes
+    resource:
+      type: "Microsoft.Sql/servers"
+      kind: "v12.0"
+      name: "sql-b"
+      properties: {}
+    host_await:
+      - response:
+          Microsoft:
+            "Sql/auditingSettings":
+              state: "enabled"
+    want_undefined: true
+
+  # Related resource found but existenceCondition fails → non-compliant
+  - note: non_compliant_condition_fails
+    resource:
+      type: "Microsoft.Sql/servers"
+      kind: "v12.0"
+      name: "sql-c"
+      properties: {}
+    host_await:
+      - response:
+          Microsoft:
+            "Sql/auditingSettings":
+              state: "disabled"
+    want_effect: "AuditIfNotExists"
+
+  # Primary resource type doesn't match → if-condition false → compliant
+  - note: pass_when_type_not_matching
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "stg"
+      properties: {}
+    want_undefined: true

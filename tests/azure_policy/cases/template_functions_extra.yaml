@@ -1,0 +1,561 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# ARM Template Functions — Additional String, Collection, and Numeric Functions
+# Tests indexOf, lastIndexOf, trim, format, base64, base64ToString, base64ToJson,
+# uri, uriComponent, uriComponentToString, dataUri, dataUriToString,
+# intersection, union, take, skip, range, array, coalesce, createObject,
+# sub, mul, div, mod, min, max, float.
+
+cases:
+  # =========================================================================
+  # String functions
+  # =========================================================================
+
+  - note: fn_indexOf_found
+    policy_rule: |
+      {
+        "if": {
+          "value": "[indexOf('hello world', 'world')]",
+          "equals": 6
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_indexOf_not_found
+    policy_rule: |
+      {
+        "if": {
+          "value": "[indexOf('hello world', 'xyz')]",
+          "equals": -1
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_lastIndexOf_found
+    policy_rule: |
+      {
+        "if": {
+          "value": "[lastIndexOf('hello world hello', 'hello')]",
+          "equals": 12
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_lastIndexOf_not_found
+    policy_rule: |
+      {
+        "if": {
+          "value": "[lastIndexOf('hello', 'xyz')]",
+          "equals": -1
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_trim
+    policy_rule: |
+      {
+        "if": {
+          "value": "[trim('  hello  ')]",
+          "equals": "hello"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_format_simple
+    policy_rule: |
+      {
+        "if": {
+          "value": "[format('Hello {0}, you are {1}', 'World', 'great')]",
+          "equals": "Hello World, you are great"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_format_numbers
+    policy_rule: |
+      {
+        "if": {
+          "value": "[format('{0} + {1} = {2}', 1, 2, 3)]",
+          "equals": "1 + 2 = 3"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_base64_encode
+    policy_rule: |
+      {
+        "if": {
+          "value": "[base64('hello')]",
+          "equals": "aGVsbG8="
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_base64ToString
+    policy_rule: |
+      {
+        "if": {
+          "value": "[base64ToString('aGVsbG8=')]",
+          "equals": "hello"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_base64ToJson
+    policy_rule: |
+      {
+        "if": {
+          "value": "[base64ToJson('eyJrZXkiOiJ2YWx1ZSJ9')]",
+          "notEquals": ""
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_uriComponent_encode
+    policy_rule: |
+      {
+        "if": {
+          "value": "[uriComponent('hello world')]",
+          "equals": "hello%20world"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_uriComponentToString
+    policy_rule: |
+      {
+        "if": {
+          "value": "[uriComponentToString('hello%20world')]",
+          "equals": "hello world"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_uri_combine
+    policy_rule: |
+      {
+        "if": {
+          "value": "[uri('https://example.com/path/', 'api/v1')]",
+          "equals": "https://example.com/path/api/v1"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_dataUri
+    policy_rule: |
+      {
+        "if": {
+          "value": "[dataUri('Hello')]",
+          "contains": "base64,"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_dataUriToString
+    policy_rule: |
+      {
+        "if": {
+          "value": "[dataUriToString(dataUri('Hello'))]",
+          "equals": "Hello"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Collection functions
+  # =========================================================================
+
+  - note: fn_intersection_arrays
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(intersection(createArray('a','b','c'), createArray('b','c','d')))]",
+          "equals": 2
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_union_arrays
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(union(createArray('a','b'), createArray('b','c')))]",
+          "equals": 3
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_take_array
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(take(createArray('a','b','c','d'), 2))]",
+          "equals": 2
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_take_string
+    policy_rule: |
+      {
+        "if": {
+          "value": "[take('Hello World', 5)]",
+          "equals": "Hello"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_skip_array
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(skip(createArray('a','b','c','d'), 2))]",
+          "equals": 2
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_skip_string
+    policy_rule: |
+      {
+        "if": {
+          "value": "[skip('Hello World', 6)]",
+          "equals": "World"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_range
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(range(0, 5))]",
+          "equals": 5
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_array_wrap
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(array('hello'))]",
+          "equals": 1
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_coalesce_first_non_null
+    policy_rule: |
+      {
+        "if": {
+          "value": "[coalesce('first', 'second')]",
+          "equals": "first"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_createObject
+    policy_rule: |
+      {
+        "if": {
+          "value": "[string(createObject('key', 'value'))]",
+          "contains": "key"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Numeric functions
+  # =========================================================================
+
+  - note: fn_sub
+    policy_rule: |
+      {
+        "if": {
+          "value": "[sub(10, 3)]",
+          "equals": 7
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_mul
+    policy_rule: |
+      {
+        "if": {
+          "value": "[mul(3, 4)]",
+          "equals": 12
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_div
+    policy_rule: |
+      {
+        "if": {
+          "value": "[div(10, 3)]",
+          "equals": 3
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_mod
+    policy_rule: |
+      {
+        "if": {
+          "value": "[mod(10, 3)]",
+          "equals": 1
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_min_args
+    policy_rule: |
+      {
+        "if": {
+          "value": "[min(5, 3, 8, 1)]",
+          "equals": 1
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_max_args
+    policy_rule: |
+      {
+        "if": {
+          "value": "[max(5, 3, 8, 1)]",
+          "equals": 8
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_min_array
+    policy_rule: |
+      {
+        "if": {
+          "value": "[min(createArray(5, 3, 8, 1))]",
+          "equals": 1
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_max_array
+    policy_rule: |
+      {
+        "if": {
+          "value": "[max(createArray(5, 3, 8, 1))]",
+          "equals": 8
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_float_from_int
+    policy_rule: |
+      {
+        "if": {
+          "value": "[float(42)]",
+          "equals": 42
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_float_from_string
+    policy_rule: |
+      {
+        "if": {
+          "value": "[float('3.14')]",
+          "greaterOrEquals": "3.14"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Composition tests — functions calling functions
+  # =========================================================================
+
+  - note: fn_composition_trim_tolower
+    policy_rule: |
+      {
+        "if": {
+          "value": "[toLower(trim('  Hello  '))]",
+          "equals": "hello"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_composition_indexOf_with_param
+    policy_rule: |
+      {
+        "if": {
+          "value": "[indexOf(parameters('input'), parameters('search'))]",
+          "greaterOrEquals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      input: "Microsoft.Compute/virtualMachines"
+      search: "Compute"
+    resource:
+      type: "any"
+    want_effect: "deny"
+
+  - note: fn_composition_base64_roundtrip
+    policy_rule: |
+      {
+        "if": {
+          "value": "[base64ToString(base64('round trip'))]",
+          "equals": "round trip"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_composition_uri_roundtrip
+    policy_rule: |
+      {
+        "if": {
+          "value": "[uriComponentToString(uriComponent('hello world&foo=bar'))]",
+          "equals": "hello world&foo=bar"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_composition_padleft_format
+    policy_rule: |
+      {
+        "if": {
+          "value": "[format('Days: {0}', padLeft('5', 3, '0'))]",
+          "equals": "Days: 005"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: fn_composition_arithmetic
+    policy_rule: |
+      {
+        "if": {
+          "value": "[add(mul(3, 4), sub(10, 5))]",
+          "equals": 17
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"

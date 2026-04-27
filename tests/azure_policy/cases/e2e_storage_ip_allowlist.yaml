@@ -1,0 +1,115 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Custom Storage IP allowlist
+# Features: count.field + where(allOf) with action gate + notIn(parameters()) +
+# parameter defaults from policy definition.
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Storage IP allowlist",
+      "policyType": "Custom",
+      "mode": "Indexed",
+      "description": "Only allow IP rules that match an approved allowlist.",
+      "metadata": {
+        "version": "1.0.0",
+        "category": "Network"
+      },
+      "version": "1.0.0",
+      "parameters": {
+        "allowedIps": {
+          "type": "Array",
+          "metadata": {
+            "displayName": "Allowed IPs",
+            "description": "IP addresses permitted in IP rules"
+          },
+          "defaultValue": ["10.0.0.0/24", "192.168.10.10"]
+        },
+        "effect": {
+          "type": "String",
+          "metadata": {
+            "displayName": "Effect",
+            "description": "Enable or disable the execution of the policy"
+          },
+          "allowedValues": ["deny", "audit", "disabled"],
+          "defaultValue": "deny"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "count": {
+            "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules[*]",
+            "where": {
+              "allOf": [
+                {
+                  "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules[*].action",
+                  "equals": "Allow"
+                },
+                {
+                  "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules[*].value",
+                  "notIn": "[parameters('allowedIps')]"
+                }
+              ]
+            }
+          },
+          "greater": 0
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      },
+      "versions": ["1.0.0"]
+    },
+    "id": "/providers/Microsoft.Authorization/policyDefinitions/storage-ip-allowlist",
+    "name": "storage-ip-allowlist",
+    "type": "Microsoft.Authorization/policyDefinitions"
+  }
+
+cases:
+  - note: provided_payload_allow1_does_not_match_action_filter
+    input:
+      resource:
+        name: "storage-dev"
+        type: "Microsoft.Storage/storageAccounts"
+        location: "westus2"
+        properties:
+          networkAcls:
+            ipRules:
+              - value: "10.0.0.0/24"
+                action: "Allow1"
+              - value: "203.0.113.5"
+                action: "Allow1"
+      context: {}
+      parameters: {}
+    want_undefined: true
+
+  - note: deny_when_allow_action_and_ip_not_in_allowlist
+    resource:
+      name: "storage-dev"
+      type: "Microsoft.Storage/storageAccounts"
+      location: "westus2"
+      properties:
+        networkAcls:
+          ipRules:
+            - value: "10.0.0.0/24"
+              action: "Allow"
+            - value: "203.0.113.5"
+              action: "Allow"
+    want_effect: "deny"
+
+  - note: pass_when_all_allow_actions_are_in_allowlist
+    resource:
+      name: "storage-dev"
+      type: "Microsoft.Storage/storageAccounts"
+      location: "westus2"
+      properties:
+        networkAcls:
+          ipRules:
+            - value: "10.0.0.0/24"
+              action: "Allow"
+            - value: "192.168.10.10"
+              action: "Allow"
+    want_undefined: true

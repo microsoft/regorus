@@ -1,0 +1,15 @@
+{
+  "type": "Microsoft.Storage/storageAccounts",
+  "name": "mystorageaccount",
+  "location": "eastus",
+  "kind": "StorageV2",
+  "properties": {
+    "supportsHttpsTrafficOnly": false,
+    "minimumTlsVersion": "TLS1_0",
+    "encryption": {
+      "services": {
+        "blob": { "enabled": true }
+      }
+    }
+  }
+}

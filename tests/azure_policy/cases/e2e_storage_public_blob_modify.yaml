@@ -1,0 +1,158 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Storage/StorageAccountDisablePublicBlobAccess_Modify
+# Real Azure Policy: "Configure your Storage account public access to be disallowed"
+# Source: regolator/policyDefinitions/Storage/StorageAccountDisablePublicBlobAccess_Modify.json
+#
+# Features exercised:
+#   - requestContext().apiVersion less / greaterOrEquals comparisons
+#   - exists "true" combined with value condition in allOf
+#   - Modify with requestContext().apiVersion operation condition
+#   - conflictEffect: audit
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Configure your Storage account public access to be disallowed",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "String",
+          "allowedValues": ["Modify", "Disabled"],
+          "defaultValue": "Modify"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Storage/storageAccounts"
+            },
+            {
+              "anyOf": [
+                {
+                  "allOf": [
+                    {
+                      "value": "[requestContext().apiVersion]",
+                      "less": "2019-04-01"
+                    },
+                    {
+                      "field": "Microsoft.Storage/storageAccounts/allowBlobPublicAccess",
+                      "exists": "true"
+                    }
+                  ]
+                },
+                {
+                  "field": "Microsoft.Storage/storageAccounts/allowBlobPublicAccess",
+                  "equals": "true"
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "conflictEffect": "audit",
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/17d1049b-9a84-46fb-8f53-869881c3d3ab"
+            ],
+            "operations": [
+              {
+                "condition": "[greaterOrEquals(requestContext().apiVersion, '2019-04-01')]",
+                "operation": "addOrReplace",
+                "field": "Microsoft.Storage/storageAccounts/allowBlobPublicAccess",
+                "value": false
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # allowBlobPublicAccess = true, modern API → Modify
+  # =========================================================================
+
+  - note: modify_public_blob_enabled_modern_api
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "stg1"
+      properties:
+        allowBlobPublicAccess: true
+    api_version: "2021-02-01"
+    want_effect: "Modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/Microsoft.Authorization/roleDefinitions/17d1049b-9a84-46fb-8f53-869881c3d3ab"
+      operations:
+        - condition: "[greaterOrEquals(requestContext().apiVersion, '2019-04-01')]"
+          operation: "addOrReplace"
+          field: "Microsoft.Storage/storageAccounts/allowBlobPublicAccess"
+          value: false
+
+  # =========================================================================
+  # Old API version + field exists → triggers via the less branch
+  # (requestContext().apiVersion < "2019-04-01" AND field exists → Modify)
+  # =========================================================================
+
+  - note: modify_old_api_field_exists
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "stg2"
+      properties:
+        allowBlobPublicAccess: false
+    api_version: "2018-11-01"
+    want_effect: "Modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/Microsoft.Authorization/roleDefinitions/17d1049b-9a84-46fb-8f53-869881c3d3ab"
+      operations:
+        - condition: "[greaterOrEquals(requestContext().apiVersion, '2019-04-01')]"
+          operation: "addOrReplace"
+          field: "Microsoft.Storage/storageAccounts/allowBlobPublicAccess"
+          value: false
+
+  # =========================================================================
+  # Old API version but field doesn't exist → pass
+  # =========================================================================
+
+  - note: pass_old_api_field_missing
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "stg3"
+      properties: {}
+    api_version: "2018-11-01"
+    want_undefined: true
+
+  # =========================================================================
+  # allowBlobPublicAccess = false, modern API → pass
+  # =========================================================================
+
+  - note: pass_public_blob_disabled
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "stg4"
+      properties:
+        allowBlobPublicAccess: false
+    api_version: "2021-02-01"
+    want_undefined: true
+
+  # =========================================================================
+  # Wrong resource type → pass
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm1"
+      properties: {}
+    api_version: "2021-03-01"
+    want_undefined: true

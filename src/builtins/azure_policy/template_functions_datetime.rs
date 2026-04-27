@@ -37,84 +37,60 @@ pub(super) fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::Bui
 // ── ISO 8601 datetime parsing ─────────────────────────────────────────
 
 /// Parse an ISO 8601 / RFC 3339 datetime string.
+///
+/// Accepts multiple formats common in Azure Policy and ARM templates:
+/// - RFC 3339 with `T` separator (`2024-01-15T12:00:00Z`, `...+05:30`)
+/// - ISO 8601 without timezone (assumed UTC)
+/// - Space-separated variants (`2024-01-15 12:00:00Z`)
 fn parse_datetime(s: &str) -> Option<DateTime<FixedOffset>> {
-    parse_datetime_styled(s).map(|(dt, _)| dt)
-}
-
-/// The detected format style of a parsed datetime string, used to reproduce
-/// the same shape when no explicit output format is given.
-#[derive(Clone, Copy)]
-enum DateTimeStyle {
-    /// RFC 3339 with T separator and Z suffix.
-    Rfc3339Z,
-    /// RFC 3339 with T separator and explicit numeric offset.
-    Rfc3339Offset,
-    /// T separator, no timezone (assumed UTC).
-    IsoNoTz,
-    /// Space separator, no timezone (assumed UTC).
-    SpaceNoTz,
-    /// Space separator with Z suffix.
-    SpaceZ,
-    /// Space separator with explicit offset.
-    SpaceOffset,
-}
-
-/// Parse a datetime string and return both the parsed value and the detected
-/// input style so that output formatting can preserve it.
-fn parse_datetime_styled(s: &str) -> Option<(DateTime<FixedOffset>, DateTimeStyle)> {
     // Check for space separator at position 10 (after "YYYY-MM-DD") so that
     // space-separated inputs are detected before RFC 3339 (which also allows
     // a space in place of T).
     if s.len() > 10 && s.as_bytes().get(10).copied() == Some(b' ') {
         // Space separator with explicit offset (e.g. "2020-04-07 14:55:59+00:00").
         if let Ok(dt) = DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%:z") {
-            return Some((dt, DateTimeStyle::SpaceOffset));
+            return Some(dt);
         }
         if let Ok(dt) = DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%:z") {
-            return Some((dt, DateTimeStyle::SpaceOffset));
+            return Some(dt);
         }
         // Space separator with Z suffix (e.g. "2020-04-07 14:55:59Z").
         if let Some(stripped) = s.strip_suffix('Z').or_else(|| s.strip_suffix('z')) {
             if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(stripped, "%Y-%m-%d %H:%M:%S")
             {
                 let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-                return Some((utc.fixed_offset(), DateTimeStyle::SpaceZ));
+                return Some(utc.fixed_offset());
             }
             if let Ok(naive) =
                 chrono::NaiveDateTime::parse_from_str(stripped, "%Y-%m-%d %H:%M:%S%.f")
             {
                 let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-                return Some((utc.fixed_offset(), DateTimeStyle::SpaceZ));
+                return Some(utc.fixed_offset());
             }
         }
         // Space separator, no timezone (assume UTC).
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
             let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-            return Some((utc.fixed_offset(), DateTimeStyle::SpaceNoTz));
+            return Some(utc.fixed_offset());
         }
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f") {
             let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-            return Some((utc.fixed_offset(), DateTimeStyle::SpaceNoTz));
+            return Some(utc.fixed_offset());
         }
     }
 
     // Try RFC 3339 first (most common for ARM templates).
     if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        let style = if s.ends_with('Z') || s.ends_with('z') {
-            DateTimeStyle::Rfc3339Z
-        } else {
-            DateTimeStyle::Rfc3339Offset
-        };
-        return Some((dt, style));
+        return Some(dt);
     }
     // Try with T separator, no timezone (assume UTC).
     if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
         let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-        return Some((utc.fixed_offset(), DateTimeStyle::IsoNoTz));
+        return Some(utc.fixed_offset());
     }
     if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
         let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-        return Some((utc.fixed_offset(), DateTimeStyle::IsoNoTz));
+        return Some(utc.fixed_offset());
     }
     None
 }
@@ -124,22 +100,10 @@ fn parse_datetime_styled(s: &str) -> Option<(DateTime<FixedOffset>, DateTimeStyl
 /// explicit offset.  Fractional seconds are included when non-zero.
 fn format_datetime(dt: &DateTime<FixedOffset>) -> String {
     if dt.offset().local_minus_utc() == 0 {
-        // UTC → use Z suffix
+        // UTC → use Z suffix.  `%.f` includes subsecond digits only when non-zero.
         dt.format("%Y-%m-%dT%H:%M:%S%.fZ").to_string()
     } else {
         dt.format("%Y-%m-%dT%H:%M:%S%.f%:z").to_string()
-    }
-}
-
-/// Format a datetime preserving the detected input style.
-fn format_datetime_styled(dt: &DateTime<FixedOffset>, style: DateTimeStyle) -> String {
-    match style {
-        DateTimeStyle::Rfc3339Z => dt.format("%Y-%m-%dT%H:%M:%S%.fZ").to_string(),
-        DateTimeStyle::Rfc3339Offset => dt.format("%Y-%m-%dT%H:%M:%S%.f%:z").to_string(),
-        DateTimeStyle::IsoNoTz => dt.format("%Y-%m-%dT%H:%M:%S%.f").to_string(),
-        DateTimeStyle::SpaceNoTz => dt.format("%Y-%m-%d %H:%M:%S%.f").to_string(),
-        DateTimeStyle::SpaceZ => dt.format("%Y-%m-%d %H:%M:%S%.fZ").to_string(),
-        DateTimeStyle::SpaceOffset => dt.format("%Y-%m-%d %H:%M:%S%.f%:z").to_string(),
     }
 }
 
@@ -244,7 +208,7 @@ fn fn_date_time_add(
         return Ok(Value::Undefined);
     };
 
-    let Some((base_dt, style)) = parse_datetime_styled(base_str) else {
+    let Some(base_dt) = parse_datetime(base_str) else {
         return Ok(Value::Undefined);
     };
     let Some(duration) = parse_iso8601_duration(duration_str) else {
@@ -257,7 +221,7 @@ fn fn_date_time_add(
 
     let output = match args.get(2).and_then(as_str) {
         Some(fmt) => format_datetime_dotnet(&result, fmt)?,
-        None => format_datetime_styled(&result, style),
+        None => format_datetime(&result),
     };
     Ok(Value::from(output))
 }

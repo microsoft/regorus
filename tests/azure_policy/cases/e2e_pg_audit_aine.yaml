@@ -1,0 +1,121 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: PostgreSQL/FlexibleServers_EnablePgAudit_AINE
+# Real Azure Policy: "Auditing with PgAudit should be enabled for PostgreSQL
+#                     flexible servers"
+# Source: regolator/policyDefinitions/PostgreSQL/FlexibleServers_EnablePgAudit_AINE.json
+#
+# Features exercised:
+#   - AuditIfNotExists with simple existenceCondition (notEquals)
+#   - Sub-resource type: Microsoft.DBforPostgreSQL/flexibleServers/configurations
+#   - host_await for cross-resource lookup
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Auditing with PgAudit should be enabled for PostgreSQL flexible servers",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "effect": {
+          "type": "string",
+          "defaultValue": "AuditIfNotExists",
+          "allowedValues": ["AuditIfNotExists", "Disabled"]
+        }
+      },
+      "policyRule": {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.DBforPostgreSQL/flexibleServers"
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "type": "Microsoft.DBforPostgreSQL/flexibleServers/configurations",
+            "name": "pgaudit.log",
+            "existenceCondition": {
+              "field": "Microsoft.DBforPostgreSQL/flexibleServers/configurations/value",
+              "notEquals": "none"
+            }
+          }
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Related resource not found → AuditIfNotExists
+  # =========================================================================
+
+  - note: aine_config_not_found
+    resource:
+      type: "Microsoft.DBforPostgreSQL/flexibleServers"
+      name: "pg-no-config"
+      properties: {}
+    host_await:
+      - key:
+          operation: "lookup_related_resources"
+          type: "Microsoft.DBforPostgreSQL/flexibleServers/configurations"
+          name: "pgaudit.log"
+        response: null
+    want_effect: "AuditIfNotExists"
+
+  # =========================================================================
+  # pgaudit.log value is "all" → compliant
+  # =========================================================================
+
+  - note: compliant_pgaudit_enabled
+    resource:
+      type: "Microsoft.DBforPostgreSQL/flexibleServers"
+      name: "pg-audit-on"
+      properties: {}
+    host_await:
+      - response:
+          properties:
+            value: "all"
+    want_undefined: true
+
+  # =========================================================================
+  # pgaudit.log value is "none" → non-compliant (notEquals "none" fails)
+  # =========================================================================
+
+  - note: aine_pgaudit_none
+    resource:
+      type: "Microsoft.DBforPostgreSQL/flexibleServers"
+      name: "pg-audit-off"
+      properties: {}
+    host_await:
+      - response:
+          properties:
+            value: "none"
+    want_effect: "AuditIfNotExists"
+
+  # =========================================================================
+  # pgaudit.log value has specific categories → compliant
+  # =========================================================================
+
+  - note: compliant_pgaudit_specific
+    resource:
+      type: "Microsoft.DBforPostgreSQL/flexibleServers"
+      name: "pg-audit-specific"
+      properties: {}
+    host_await:
+      - response:
+          properties:
+            value: "read,write,ddl"
+    want_undefined: true
+
+  # =========================================================================
+  # Wrong type → pass
+  # =========================================================================
+
+  - note: pass_wrong_type
+    resource:
+      type: "Microsoft.Sql/servers"
+      name: "not-pg"
+      properties: {}
+    want_undefined: true

@@ -1,0 +1,115 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# E2E Test: Tags/ApplyTag_Append
+# Real Azure Policy: "Append a tag and its value to resources"
+# Source: regolator/policyDefinitions/Tags/ApplyTag_Append.json
+#
+# Features exercised:
+#   - Append effect with details array
+#   - concat() for dynamic tag field
+#   - exists operator ("false")
+#   - No type filter (applies to all resource types)
+
+aliases: test_aliases.json
+
+policy_definition: |
+  {
+    "properties": {
+      "displayName": "Append a tag and its value to resources",
+      "policyType": "BuiltIn",
+      "mode": "Indexed",
+      "parameters": {
+        "tagName": {
+          "type": "String"
+        },
+        "tagValue": {
+          "type": "String"
+        }
+      },
+      "policyRule": {
+        "if": {
+          "field": "[concat('tags[', parameters('tagName'), ']')]",
+          "exists": "false"
+        },
+        "then": {
+          "effect": "append",
+          "details": [
+            {
+              "field": "[concat('tags[', parameters('tagName'), ']')]",
+              "value": "[parameters('tagValue')]"
+            }
+          ]
+        }
+      }
+    }
+  }
+
+cases:
+  # =========================================================================
+  # Tag missing → append
+  # =========================================================================
+
+  - note: append_tag_missing
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-no-env"
+      properties:
+        tags: {}
+    parameters:
+      tagName: "environment"
+      tagValue: "production"
+    want_effect: "append"
+    want_details:
+      - field: "[concat('tags[', parameters('tagName'), ']')]"
+        value: "production"
+
+  - note: append_no_tags_at_all
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-no-tags"
+      properties: {}
+    parameters:
+      tagName: "costCenter"
+      tagValue: "12345"
+    want_effect: "append"
+
+  - note: append_other_tags_exist
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "sa-partial-tags"
+      properties:
+        tags:
+          owner: "alice"
+    parameters:
+      tagName: "environment"
+      tagValue: "staging"
+    want_effect: "append"
+
+  # =========================================================================
+  # Tag already exists → pass
+  # =========================================================================
+
+  - note: pass_tag_already_exists
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-has-env"
+      properties:
+        tags:
+          environment: "dev"
+    parameters:
+      tagName: "environment"
+      tagValue: "production"
+    want_undefined: true
+
+  - note: pass_tag_matches_value
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "vm-correct"
+      properties:
+        tags:
+          environment: "production"
+    parameters:
+      tagName: "environment"
+      tagValue: "production"
+    want_undefined: true

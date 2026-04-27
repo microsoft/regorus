@@ -1,0 +1,399 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Full Policy Definition Test Suite
+# Tests parsing of the complete Azure Policy definition envelope,
+# including parameters, displayName, description, mode, and metadata.
+
+cases:
+  # =========================================================================
+  # Unwrapped form (properties-level)
+  # =========================================================================
+
+  - note: defn_unwrapped_basic
+    policy_definition: |
+      {
+        "displayName": "Deny Public IPs",
+        "description": "Prevents creation of public IP addresses",
+        "mode": "All",
+        "parameters": {},
+        "policyRule": {
+          "if": {
+            "field": "type",
+            "equals": "Microsoft.Network/publicIPAddresses"
+          },
+          "then": {
+            "effect": "deny"
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Network/publicIPAddresses"
+    want_effect: "deny"
+
+  - note: defn_unwrapped_no_match
+    policy_definition: |
+      {
+        "displayName": "Deny Public IPs",
+        "mode": "All",
+        "policyRule": {
+          "if": {
+            "field": "type",
+            "equals": "Microsoft.Network/publicIPAddresses"
+          },
+          "then": {
+            "effect": "deny"
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_undefined: true
+
+  - note: defn_unwrapped_with_parameters
+    policy_definition: |
+      {
+        "displayName": "Require tag",
+        "description": "Requires a specified tag on resources",
+        "mode": "Indexed",
+        "parameters": {
+          "tagName": {
+            "type": "String",
+            "metadata": {
+              "displayName": "Tag Name",
+              "description": "Name of the tag to require"
+            }
+          },
+          "tagValue": {
+            "type": "String",
+            "defaultValue": "production",
+            "allowedValues": ["production", "staging", "development"]
+          }
+        },
+        "policyRule": {
+          "if": {
+            "field": "[concat('tags.', parameters('tagName'))]",
+            "notEquals": "[parameters('tagValue')]"
+          },
+          "then": {
+            "effect": "deny"
+          }
+        }
+      }
+    parameters:
+      tagName: "environment"
+      tagValue: "production"
+    resource:
+      tags:
+        environment: "production"
+    want_undefined: true
+
+  - note: defn_unwrapped_param_tag_mismatch
+    policy_definition: |
+      {
+        "displayName": "Require tag",
+        "parameters": {
+          "tagName": {
+            "type": "String"
+          },
+          "tagValue": {
+            "type": "String"
+          }
+        },
+        "policyRule": {
+          "if": {
+            "field": "[concat('tags.', parameters('tagName'))]",
+            "notEquals": "[parameters('tagValue')]"
+          },
+          "then": {
+            "effect": "deny"
+          }
+        }
+      }
+    parameters:
+      tagName: "environment"
+      tagValue: "production"
+    resource:
+      tags:
+        environment: "staging"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Wrapped form (with "properties" envelope)
+  # =========================================================================
+
+  - note: defn_wrapped_basic
+    policy_definition: |
+      {
+        "id": "/providers/Microsoft.Authorization/policyDefinitions/test-001",
+        "name": "test-001",
+        "type": "Microsoft.Authorization/policyDefinitions",
+        "properties": {
+          "displayName": "Deny Storage without HTTPS",
+          "description": "Storage accounts should only allow HTTPS traffic",
+          "policyType": "BuiltIn",
+          "mode": "All",
+          "parameters": {},
+          "policyRule": {
+            "if": {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Storage/storageAccounts"
+                },
+                {
+                  "field": "properties.supportsHttpsTrafficOnly",
+                  "notEquals": true
+                }
+              ]
+            },
+            "then": {
+              "effect": "deny"
+            }
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: false
+    want_effect: "deny"
+
+  - note: defn_wrapped_compliant
+    policy_definition: |
+      {
+        "id": "/providers/Microsoft.Authorization/policyDefinitions/test-001",
+        "name": "test-001",
+        "type": "Microsoft.Authorization/policyDefinitions",
+        "properties": {
+          "displayName": "Deny Storage without HTTPS",
+          "mode": "All",
+          "parameters": {},
+          "policyRule": {
+            "if": {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Storage/storageAccounts"
+                },
+                {
+                  "field": "properties.supportsHttpsTrafficOnly",
+                  "notEquals": true
+                }
+              ]
+            },
+            "then": {
+              "effect": "deny"
+            }
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: true
+    want_undefined: true
+
+  # =========================================================================
+  # Parameterized effect
+  # =========================================================================
+
+  - note: defn_parameterized_effect
+    policy_definition: |
+      {
+        "displayName": "Allowed locations",
+        "parameters": {
+          "allowedLocations": {
+            "type": "Array",
+            "metadata": {
+              "displayName": "Allowed locations",
+              "description": "The list of allowed locations for resources"
+            }
+          },
+          "effect": {
+            "type": "String",
+            "defaultValue": "deny",
+            "allowedValues": ["audit", "deny", "disabled"]
+          }
+        },
+        "policyRule": {
+          "if": {
+            "not": {
+              "field": "location",
+              "in": "[parameters('allowedLocations')]"
+            }
+          },
+          "then": {
+            "effect": "[parameters('effect')]"
+          }
+        }
+      }
+    parameters:
+      allowedLocations:
+        - "eastus"
+        - "westus"
+      effect: "audit"
+    resource:
+      location: "northeurope"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Extra / unknown fields preserved
+  # =========================================================================
+
+  - note: defn_extra_fields_ignored
+    policy_definition: |
+      {
+        "displayName": "Test Policy",
+        "policyType": "Custom",
+        "category": "General",
+        "version": "1.0.0",
+        "policyRule": {
+          "if": {
+            "field": "location",
+            "equals": "eastus"
+          },
+          "then": {
+            "effect": "audit"
+          }
+        }
+      }
+    resource:
+      location: "eastus"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Metadata
+  # =========================================================================
+
+  - note: defn_with_metadata
+    policy_definition: |
+      {
+        "displayName": "Audit VMs",
+        "metadata": {
+          "version": "2.0.0",
+          "category": "Compute",
+          "preview": true
+        },
+        "parameters": {},
+        "policyRule": {
+          "if": {
+            "field": "type",
+            "equals": "Microsoft.Compute/virtualMachines"
+          },
+          "then": {
+            "effect": "audit"
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Missing policyRule should fail
+  # =========================================================================
+
+  - note: defn_missing_policy_rule
+    policy_definition: |
+      {
+        "displayName": "No Rule",
+        "description": "This definition is missing policyRule",
+        "parameters": {}
+      }
+    want_parse_error: true
+
+  # =========================================================================
+  # Complex: wrapped with all fields
+  # =========================================================================
+
+  - note: defn_wrapped_full
+    policy_definition: |
+      {
+        "id": "/subscriptions/xxx/providers/Microsoft.Authorization/policyDefinitions/require-tag",
+        "name": "require-tag",
+        "type": "Microsoft.Authorization/policyDefinitions",
+        "properties": {
+          "displayName": "Require a tag and its value on resources",
+          "description": "Enforces a required tag and its value.",
+          "policyType": "Custom",
+          "mode": "Indexed",
+          "metadata": {
+            "version": "1.0.0",
+            "category": "Tags"
+          },
+          "parameters": {
+            "tagName": {
+              "type": "String",
+              "metadata": {
+                "displayName": "Tag Name",
+                "description": "Name of the tag, such as costCenter"
+              }
+            },
+            "tagValue": {
+              "type": "String",
+              "metadata": {
+                "displayName": "Tag Value",
+                "description": "Value of the tag, such as IT"
+              }
+            }
+          },
+          "policyRule": {
+            "if": {
+              "not": {
+                "field": "[concat('tags[', parameters('tagName'), ']')]",
+                "equals": "[parameters('tagValue')]"
+              }
+            },
+            "then": {
+              "effect": "deny"
+            }
+          }
+        }
+      }
+    parameters:
+      tagName: "costCenter"
+      tagValue: "IT"
+    resource:
+      tags:
+        costCenter: "IT"
+    want_undefined: true
+
+  - note: defn_wrapped_full_non_compliant
+    policy_definition: |
+      {
+        "id": "/subscriptions/xxx/providers/Microsoft.Authorization/policyDefinitions/require-tag",
+        "name": "require-tag",
+        "type": "Microsoft.Authorization/policyDefinitions",
+        "properties": {
+          "displayName": "Require a tag and its value on resources",
+          "policyType": "Custom",
+          "mode": "Indexed",
+          "parameters": {
+            "tagName": {
+              "type": "String"
+            },
+            "tagValue": {
+              "type": "String"
+            }
+          },
+          "policyRule": {
+            "if": {
+              "not": {
+                "field": "[concat('tags[', parameters('tagName'), ']')]",
+                "equals": "[parameters('tagValue')]"
+              }
+            },
+            "then": {
+              "effect": "deny"
+            }
+          }
+        }
+      }
+    parameters:
+      tagName: "costCenter"
+      tagValue: "IT"
+    resource:
+      tags:
+        costCenter: "Finance"
+    want_effect: "deny"
