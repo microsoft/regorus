@@ -248,6 +248,52 @@ $ diff <(regorus eval -b tests/aci -d tests/aci/data.json -i tests/aci/input.jso
 ```
 
 
+## Azure Policy (Preview)
+
+Regorus can evaluate [Azure Policy](https://learn.microsoft.com/en-us/azure/governance/policy/overview)
+definitions natively. A dedicated compiler translates Azure Policy JSON
+directly into RVM (Regorus Virtual Machine) bytecode — the same VM that
+powers Rego evaluation — so you don't have to rewrite policies in Rego.
+Enable it with the `azure_policy` cargo feature.
+
+Most of the policy language is supported: conditions with `field`, `count`,
+and `value`; logical connectives (`allOf`, `anyOf`, `not`); comparison
+operators; template expressions like `parameters()`, `concat()`,
+`dateTimeAdd()`, and `utcNow()`; and effects including Deny, Audit, Modify,
+Append, AuditIfNotExists, and DeployIfNotExists. An alias registry handles
+the translation from fully-qualified alias names to the flattened ARM resource
+shape expected by the engine.
+
+### Quick start
+
+```bash
+cargo install --example regorus --features azure_policy --path .
+
+# Evaluate a policy against a non-compliant storage account (→ Deny)
+regorus azure-policy-eval \
+    --policy-definition examples/regorus/azure_policy_data/require_https_storage.json \
+    --resource examples/regorus/azure_policy_data/non_compliant_storage.json \
+    --aliases tests/azure_policy/aliases/test_aliases.json
+
+# Same policy against a compliant resource (→ undefined, no effect)
+regorus azure-policy-eval \
+    --policy-definition examples/regorus/azure_policy_data/require_https_storage.json \
+    --resource examples/regorus/azure_policy_data/compliant_storage.json \
+    --aliases tests/azure_policy/aliases/test_aliases.json
+
+# List aliases for a resource type
+regorus azure-policy-aliases \
+    --aliases tests/azure_policy/aliases/test_aliases.json \
+    --resource-type Microsoft.Storage
+```
+
+The test suite covers conditions, effects, template functions, alias
+resolution, and end-to-end scenarios across 74 YAML-driven test files:
+
+```bash
+cargo test --features azure_policy -- azure_policy
+```
+
 ## Performance
 
 To check how fast Regorus runs on your system, first install a tool like [hyperfine](https://github.com/sharkdp/hyperfine).
