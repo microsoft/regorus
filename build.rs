@@ -18,16 +18,20 @@ fn main() -> Result<()> {
     // Supply information as compile-time environment variables.
     #[cfg(feature = "opa-runtime")]
     {
-        // Try to get the current git commit hash. This may fail when git is not
-        // available (e.g. vcpkg builds) or when building from a source tarball
-        // without a .git directory. In those cases we fall back to an empty string.
-        let git_hash = std::process::Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .output()
-            .ok()
-            .and_then(|o| if o.status.success() { Some(o.stdout) } else { None })
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .unwrap_or_default();
+        // Allow build systems (e.g. vcpkg, CI) to inject the commit hash directly
+        // via a GIT_HASH environment variable. If not set, attempt to read it from
+        // git. Fall back to "unknown" when git is unavailable or there is no .git
+        // directory (e.g. builds from source tarballs).
+        let git_hash = std::env::var("GIT_HASH").ok().unwrap_or_else(|| {
+            std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .ok()
+                .and_then(|o| if o.status.success() { Some(o.stdout) } else { None })
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        });
         println!("cargo:rustc-env=GIT_HASH={git_hash}");
     }
 
