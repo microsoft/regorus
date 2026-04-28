@@ -1,0 +1,5 @@
+{
+  "topic": "panic safety — unwrap, expect, index without bounds check, and potential panics in production code paths",
+  "perspectives": "reliability-engineer,security-auditor,semantics-expert",
+  "description": "Finds all potential panic points in non-test code. Critical for a no_std-compatible library used in Azure production."
+}

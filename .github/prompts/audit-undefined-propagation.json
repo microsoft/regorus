@@ -1,0 +1,5 @@
+{
+  "topic": "undefined value propagation — three-valued logic correctness, Undefined handling in builtins, partial sets, comprehensions, and rule evaluation",
+  "perspectives": "semantics-expert,test-engineer,reliability-engineer",
+  "description": "Verifies correct Undefined/three-valued logic handling throughout the evaluation pipeline. Rego's most subtle semantics."
+}

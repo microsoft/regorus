@@ -1,0 +1,5 @@
+{
+  "topic": "code cleanup — dead code, duplicated logic, overly complex functions, unclear naming, stale comments, and opportunities to simplify",
+  "perspectives": "refactorer,architect,reliability-engineer",
+  "description": "Finds concrete cleanup opportunities that reduce complexity without changing behavior."
+}

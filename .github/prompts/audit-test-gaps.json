@@ -1,0 +1,5 @@
+{
+  "topic": "test coverage gaps — untested code paths, missing edge cases, weak assertions, and areas where property-based or fuzz testing would add value",
+  "perspectives": "test-engineer,semantics-expert,red-teamer",
+  "description": "Identifies where testing is weakest relative to code complexity and risk."
+}
