@@ -1,0 +1,555 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Implicit allOf Test Suite
+# When a field with [*] appears in a condition outside count, Azure Policy
+# applies implicit allOf semantics: ALL elements must satisfy the operator.
+# Empty arrays evaluate to true (vacuous truth); missing arrays evaluate to
+# false because the field is not iterable and the condition is not met.
+
+cases:
+  # =========================================================================
+  # Basic allOf — all elements match
+  # =========================================================================
+
+  - note: allof_equals_all_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].status",
+          "equals": "active"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "status": "active" }
+        - { "status": "active" }
+        - { "status": "active" }
+    want_effect: "deny"
+
+  - note: allof_equals_one_mismatch
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].status",
+          "equals": "active"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "status": "active" }
+        - { "status": "inactive" }
+        - { "status": "active" }
+    want_undefined: true
+
+  # =========================================================================
+  # Empty array → true (vacuous truth)
+  # =========================================================================
+
+  - note: allof_empty_array_is_true
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].status",
+          "equals": "active"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items: []
+    want_effect: "deny"
+
+  # =========================================================================
+  # Missing array → false (not iterable → condition not met)
+  # Azure Policy: field[*] on null/missing/non-array → false
+  # =========================================================================
+
+  - note: allof_missing_array_is_false
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].status",
+          "equals": "active"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "some.type"
+    want_undefined: true
+
+  # =========================================================================
+  # No suffix — elements compared directly
+  # =========================================================================
+
+  - note: allof_no_suffix_all_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "ports[*]",
+          "equals": 443
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      ports: [443, 443, 443]
+    want_effect: "deny"
+
+  - note: allof_no_suffix_one_mismatch
+    policy_rule: |
+      {
+        "if": {
+          "field": "ports[*]",
+          "equals": 443
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      ports: [443, 80, 443]
+    want_undefined: true
+
+  # =========================================================================
+  # Dotted prefix before [*]
+  # =========================================================================
+
+  - note: allof_dotted_prefix
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.rules[*].enabled",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        rules:
+          - { "enabled": true }
+          - { "enabled": true }
+    want_effect: "deny"
+
+  - note: allof_dotted_prefix_mismatch
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.rules[*].enabled",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        rules:
+          - { "enabled": true }
+          - { "enabled": false }
+    want_undefined: true
+
+  # =========================================================================
+  # Various operators
+  # =========================================================================
+
+  - note: allof_not_equals
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].value",
+          "notEquals": "bad"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "value": "good" }
+        - { "value": "fine" }
+    want_effect: "deny"
+
+  - note: allof_not_equals_one_matches
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].value",
+          "notEquals": "bad"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "value": "good" }
+        - { "value": "bad" }
+    want_undefined: true
+
+  - note: allof_greater
+    policy_rule: |
+      {
+        "if": {
+          "field": "scores[*]",
+          "greater": 50
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      scores: [80, 90, 100]
+    want_effect: "deny"
+
+  - note: allof_greater_one_fails
+    policy_rule: |
+      {
+        "if": {
+          "field": "scores[*]",
+          "greater": 50
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      scores: [80, 30, 100]
+    want_undefined: true
+
+  - note: allof_in_operator
+    policy_rule: |
+      {
+        "if": {
+          "field": "regions[*]",
+          "in": ["eastus", "westus", "centralus"]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      regions: ["eastus", "westus"]
+    want_effect: "deny"
+
+  - note: allof_in_operator_one_outside
+    policy_rule: |
+      {
+        "if": {
+          "field": "regions[*]",
+          "in": ["eastus", "westus", "centralus"]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      regions: ["eastus", "northeurope"]
+    want_undefined: true
+
+  - note: allof_contains
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[*]",
+          "contains": "prod"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags: ["prod-web", "prod-api"]
+    want_effect: "deny"
+
+  - note: allof_like
+    policy_rule: |
+      {
+        "if": {
+          "field": "names[*]",
+          "like": "vm-*"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      names: ["vm-001", "vm-002"]
+    want_effect: "deny"
+
+  - note: allof_exists_true
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].name",
+          "exists": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "name": "a" }
+        - { "name": "b" }
+    want_effect: "deny"
+
+  - note: allof_exists_false_missing_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].name",
+          "exists": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "name": "a" }
+        - { "other": "b" }
+    want_undefined: true
+
+  # -- exists false with [*] ------------------------------------------------
+
+  - note: allof_exists_false_all_present
+    # All elements have the field → "exists false" is false for each → compliant
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].name",
+          "exists": "false"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "name": "a" }
+        - { "name": "b" }
+    want_undefined: true
+
+  - note: allof_exists_false_all_missing
+    # No element has the field → "exists false" is true for each → non-compliant
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].name",
+          "exists": "false"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "other": "x" }
+        - { "other": "y" }
+    want_effect: "deny"
+
+  - note: allof_exists_false_mixed
+    # Mixed — one has field, one doesn't → not all satisfy → compliant
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].name",
+          "exists": "false"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "name": "a" }
+        - { "other": "b" }
+    want_undefined: true
+
+  - note: allof_exists_true_null_values
+    # Null values → "exists true" is false (null = not defined) → compliant
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].name",
+          "exists": "true"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "name": null }
+        - { "name": null }
+    want_undefined: true
+
+  - note: allof_exists_false_null_values
+    # Null values → "exists false" is true (null = not defined) → non-compliant
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].name",
+          "exists": "false"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "name": null }
+        - { "name": null }
+    want_effect: "deny"
+
+  - note: allof_exists_false_empty_array
+    # Empty array → vacuous truth → non-compliant
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].name",
+          "exists": "false"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items: []
+    want_effect: "deny"
+
+  # =========================================================================
+  # Real-world pattern: not + [*] + notEquals
+  # "at least one element equals X" via double negation
+  # =========================================================================
+
+  - note: allof_not_notequals_pattern_match
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "field": "ports[*]",
+            "notEquals": "*"
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      ports: ["80", "*", "443"]
+    want_effect: "deny"
+
+  - note: allof_not_notequals_pattern_no_match
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "field": "ports[*]",
+            "notEquals": "*"
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      ports: ["80", "443"]
+    want_undefined: true
+
+  # =========================================================================
+  # Doubly-nested [*] — allOf over nested arrays
+  # =========================================================================
+
+  - note: allof_doubly_nested_all_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "groups[*].tags[*]",
+          "notEquals": "deprecated"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      groups:
+        - tags: ["prod", "web"]
+        - tags: ["staging", "api"]
+    want_effect: "deny"
+
+  - note: allof_doubly_nested_one_fails
+    policy_rule: |
+      {
+        "if": {
+          "field": "groups[*].tags[*]",
+          "notEquals": "deprecated"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      groups:
+        - tags: ["prod", "web"]
+        - tags: ["deprecated", "api"]
+    want_undefined: true
+
+  - note: allof_doubly_nested_with_suffix
+    policy_rule: |
+      {
+        "if": {
+          "field": "groups[*].members[*].role",
+          "equals": "admin"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      groups:
+        - members:
+            - { "role": "admin" }
+            - { "role": "admin" }
+        - members:
+            - { "role": "admin" }
+    want_effect: "deny"
+
+  - note: allof_doubly_nested_with_suffix_fail
+    policy_rule: |
+      {
+        "if": {
+          "field": "groups[*].members[*].role",
+          "equals": "admin"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      groups:
+        - members:
+            - { "role": "admin" }
+        - members:
+            - { "role": "viewer" }
+    want_undefined: true
+
+  # =========================================================================
+  # Doubly-nested — inner array missing/empty
+  # =========================================================================
+
+  - note: allof_doubly_nested_inner_empty
+    policy_rule: |
+      {
+        "if": {
+          "field": "groups[*].tags[*]",
+          "equals": "ok"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      groups:
+        - tags: []
+        - tags: []
+    want_effect: "deny"
+
+  - note: allof_doubly_nested_inner_missing
+    # Inner [*] on missing field → false (not iterable), outer Every fails
+    policy_rule: |
+      {
+        "if": {
+          "field": "groups[*].tags[*]",
+          "equals": "ok"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      groups:
+        - other: "no tags"
+        - other: "also no tags"
+    want_undefined: true
+
+  # =========================================================================
+  # Single element — trivially allOf
+  # =========================================================================
+
+  - note: allof_single_element_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].v",
+          "equals": 42
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "v": 42 }
+    want_effect: "deny"
+
+  - note: allof_single_element_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "items[*].v",
+          "equals": 42
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "v": 99 }
+    want_undefined: true

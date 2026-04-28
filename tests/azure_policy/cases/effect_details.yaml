@@ -1,0 +1,539 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Effect Details Test Suite
+# Tests that effects produce structured result objects:
+#   { "effect": "<name>", "details": { ... } }
+# and that want_details validation works correctly.
+
+cases:
+  # =========================================================================
+  # Simple effects — structured result with no details
+  # =========================================================================
+
+  - note: deny_structured_result
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "deny"
+
+  - note: audit_structured_result
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Modify — single operation
+  # =========================================================================
+
+  - note: modify_single_operation_details
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "tags['environment']",
+                "value": "production"
+              }
+            ]
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+      operations:
+        - operation: "addOrReplace"
+          field: "tags['environment']"
+          value: "production"
+
+  # =========================================================================
+  # Modify — multiple operations
+  # =========================================================================
+
+  - note: modify_multiple_operations_details
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "tags['environment']",
+                "value": "production"
+              },
+              {
+                "operation": "add",
+                "field": "tags['managedBy']",
+                "value": "policy"
+              }
+            ]
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+      operations:
+        - operation: "addOrReplace"
+          field: "tags['environment']"
+          value: "production"
+        - operation: "add"
+          field: "tags['managedBy']"
+          value: "policy"
+
+  # =========================================================================
+  # Modify — operation with condition
+  # =========================================================================
+
+  - note: modify_operation_with_condition
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "tags['environment']",
+                "value": "production",
+                "condition": "[equals(field('tags.environment'), '')]"
+              }
+            ]
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+      operations:
+        - operation: "addOrReplace"
+          field: "tags['environment']"
+          value: "production"
+          condition: "[equals(field('tags.environment'), '')]"
+
+  # =========================================================================
+  # Modify — template expression in value
+  # =========================================================================
+
+  - note: modify_template_expression_value
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            { "field": "tags.environment", "exists": false }
+          ]
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "tags['environment']",
+                "value": "[if(empty(field('tags.environment')), 'unknown', field('tags.environment'))]"
+              }
+            ]
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      tags: {}
+    want_effect: "modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+      operations:
+        - operation: "addOrReplace"
+          field: "tags['environment']"
+          value: "unknown"
+
+  # =========================================================================
+  # Modify — template expression with existing tag value
+  # =========================================================================
+
+  - note: modify_template_expression_existing_value
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "tags['environment']",
+                "value": "[if(empty(field('tags.environment')), 'unknown', field('tags.environment'))]"
+              }
+            ]
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      tags:
+        environment: "staging"
+    want_effect: "modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+      operations:
+        - operation: "addOrReplace"
+          field: "tags['environment']"
+          value: "staging"
+
+  # =========================================================================
+  # Modify — no details (bare effect)
+  # =========================================================================
+
+  - note: modify_no_details
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "modify"
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "modify"
+
+  # =========================================================================
+  # Append — single item
+  # =========================================================================
+
+  - note: append_single_item_details
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Storage/storageAccounts"
+        },
+        "then": {
+          "effect": "append",
+          "details": [
+            {
+              "field": "properties.supportsHttpsTrafficOnly",
+              "value": true
+            }
+          ]
+        }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+    want_effect: "append"
+    want_details:
+      - field: "properties.supportsHttpsTrafficOnly"
+        value: true
+
+  # =========================================================================
+  # Append — multiple items
+  # =========================================================================
+
+  - note: append_multiple_items_details
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Storage/storageAccounts"
+        },
+        "then": {
+          "effect": "append",
+          "details": [
+            {
+              "field": "properties.supportsHttpsTrafficOnly",
+              "value": true
+            },
+            {
+              "field": "properties.minimumTlsVersion",
+              "value": "TLS1_2"
+            }
+          ]
+        }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+    want_effect: "append"
+    want_details:
+      - field: "properties.supportsHttpsTrafficOnly"
+        value: true
+      - field: "properties.minimumTlsVersion"
+        value: "TLS1_2"
+
+  # =========================================================================
+  # Append — template expression in value
+  # =========================================================================
+
+  - note: append_template_expression_value
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Storage/storageAccounts"
+        },
+        "then": {
+          "effect": "append",
+          "details": [
+            {
+              "field": "properties.networkAcls.defaultAction",
+              "value": "[toLower('Deny')]"
+            }
+          ]
+        }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+    want_effect: "append"
+    want_details:
+      - field: "properties.networkAcls.defaultAction"
+        value: "deny"
+
+  # =========================================================================
+  # Cross-resource effect — auditIfNotExists with details
+  # =========================================================================
+
+  - note: aine_structured_details
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/9980e02c-c2be-4d73-94e8-173b1dc7cf3c"
+            ],
+            "existenceCondition": {
+              "field": "properties.publisher",
+              "equals": "Microsoft.Azure.Security"
+            }
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    host_await:
+      - response: null
+    want_effect: "auditIfNotExists"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/Microsoft.Authorization/roleDefinitions/9980e02c-c2be-4d73-94e8-173b1dc7cf3c"
+      type: "Microsoft.Compute/virtualMachines/extensions"
+
+  # =========================================================================
+  # Cross-resource effect — deployIfNotExists with details
+  # =========================================================================
+
+  - note: dine_structured_details
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "deployIfNotExists",
+          "details": {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/9980e02c-c2be-4d73-94e8-173b1dc7cf3c"
+            ],
+            "existenceCondition": {
+              "field": "properties.publisher",
+              "equals": "Microsoft.Azure.Monitoring"
+            }
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    host_await:
+      - response: null
+    want_effect: "deployIfNotExists"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/Microsoft.Authorization/roleDefinitions/9980e02c-c2be-4d73-94e8-173b1dc7cf3c"
+      type: "Microsoft.Compute/virtualMachines/extensions"
+
+  # =========================================================================
+  # Parameterized effect resolving to Modify
+  # =========================================================================
+
+  - note: parameterized_modify_details
+    policy_definition: |
+      {
+        "properties": {
+          "parameters": {
+            "effect": {
+              "type": "String",
+              "defaultValue": "Modify"
+            }
+          },
+          "policyRule": {
+            "if": {
+              "field": "type",
+              "equals": "Microsoft.Compute/virtualMachines"
+            },
+            "then": {
+              "effect": "[parameters('effect')]",
+              "details": {
+                "roleDefinitionIds": [
+                  "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+                ],
+                "operations": [
+                  {
+                    "operation": "addOrReplace",
+                    "field": "tags['owner']",
+                    "value": "platform-team"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "Modify"
+    want_details:
+      roleDefinitionIds:
+        - "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+      operations:
+        - operation: "addOrReplace"
+          field: "tags['owner']"
+          value: "platform-team"
+
+  # =========================================================================
+  # Parameterized effect resolving to Append
+  # =========================================================================
+
+  - note: parameterized_append_details
+    policy_definition: |
+      {
+        "properties": {
+          "parameters": {
+            "effect": {
+              "type": "String",
+              "defaultValue": "Append"
+            }
+          },
+          "policyRule": {
+            "if": {
+              "field": "type",
+              "equals": "Microsoft.Storage/storageAccounts"
+            },
+            "then": {
+              "effect": "[parameters('effect')]",
+              "details": [
+                {
+                  "field": "properties.supportsHttpsTrafficOnly",
+                  "value": true
+                }
+              ]
+            }
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+    want_effect: "Append"
+    want_details:
+      - field: "properties.supportsHttpsTrafficOnly"
+        value: true
+
+  # =========================================================================
+  # Condition not matching → undefined (no details)
+  # =========================================================================
+
+  - note: modify_condition_not_met
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "tags['environment']",
+                "value": "production"
+              }
+            ]
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+    want_undefined: true

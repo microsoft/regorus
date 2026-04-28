@@ -1,0 +1,2129 @@
+# Versioned alias normalization tests.
+#
+# Each test verifies that the normalizer picks the correct ARM path based on
+# the api_version.  Resources contain DIFFERENT values at each possible path
+# so that if the wrong path is selected, the "equals" check fails and the
+# test fails with an unexpected undefined / wrong effect.
+#
+# Aliases file: versioned_aliases.json  (Microsoft.Test/versionedResources)
+#
+# Alias                 | Old API (2015)                         | New API (2020)                   | Default (no match)
+# ----------------------|----------------------------------------|----------------------------------|-------------------
+# accountType           | properties.accountType                 | sku.name                         | properties.accountType
+# config.threshold      | properties.config.properties.threshold | properties.config.threshold      | properties.config.threshold
+# tier                  | properties.pricingTier                 | sku.tier                         | sku.tier
+# operationMode         | properties.legacyMode                  | properties.mode                  | properties.mode
+#                       | (2015-01-01 only)                      | (2020-01-01 only)                |
+#                       | properties.settings.mode (2017-06-01)  |                                  |
+
+aliases: versioned_aliases.json
+
+cases:
+  # =========================================================================
+  # 1. simpleProp — no versioning, baseline sanity check
+  # =========================================================================
+  - note: simple_prop_baseline
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/simpleProp",
+          "equals": "hello"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      properties:
+        simpleProp: "hello"
+    want_effect: "Deny"
+
+  # =========================================================================
+  # 2. accountType — properties.accountType (old) vs sku.name (new)
+  #    Resource has DIFFERENT values at each path.
+  # =========================================================================
+
+  # Old API → should read properties.accountType = "Premium_LRS"
+  - note: accountType_old_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/accountType",
+          "equals": "Premium_LRS"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      sku:
+        name: "Standard_LRS"
+      properties:
+        accountType: "Premium_LRS"
+    api_version: "2015-06-15"
+    want_effect: "Deny"
+
+  # Old API — verify wrong value is NOT matched
+  - note: accountType_old_api_wrong_value
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/accountType",
+          "equals": "Standard_LRS"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      sku:
+        name: "Standard_LRS"
+      properties:
+        accountType: "Premium_LRS"
+    api_version: "2015-06-15"
+    want_undefined: true
+
+  # New API → should read sku.name = "Standard_LRS"
+  - note: accountType_new_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/accountType",
+          "equals": "Standard_LRS"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      sku:
+        name: "Standard_LRS"
+      properties:
+        accountType: "Premium_LRS"
+    api_version: "2020-01-01"
+    want_effect: "Deny"
+
+  # New API — verify wrong value is NOT matched
+  - note: accountType_new_api_wrong_value
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/accountType",
+          "equals": "Premium_LRS"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      sku:
+        name: "Standard_LRS"
+      properties:
+        accountType: "Premium_LRS"
+    api_version: "2020-01-01"
+    want_undefined: true
+
+  # No API version → default path = properties.accountType
+  - note: accountType_no_api_version
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/accountType",
+          "equals": "Premium_LRS"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      sku:
+        name: "Standard_LRS"
+      properties:
+        accountType: "Premium_LRS"
+    want_effect: "Deny"
+
+  # Unknown API version → falls back to default = properties.accountType
+  - note: accountType_unknown_api_version
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/accountType",
+          "equals": "Premium_LRS"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      sku:
+        name: "Standard_LRS"
+      properties:
+        accountType: "Premium_LRS"
+    api_version: "2099-01-01"
+    want_effect: "Deny"
+
+  # =========================================================================
+  # 3. accountType with fully-qualified alias name in policy
+  #    Tests both compiler FQ→short resolution AND normalizer versioned path.
+  # =========================================================================
+
+  - note: fq_accountType_old_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/accountType",
+          "equals": "Premium_LRS"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      sku:
+        name: "Standard_LRS"
+      properties:
+        accountType: "Premium_LRS"
+    api_version: "2015-06-15"
+    want_effect: "Deny"
+
+  - note: fq_accountType_new_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/accountType",
+          "equals": "Standard_LRS"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      sku:
+        name: "Standard_LRS"
+      properties:
+        accountType: "Premium_LRS"
+    api_version: "2020-01-01"
+    want_effect: "Deny"
+
+  # =========================================================================
+  # 4. config.threshold — extra properties nesting in old API
+  #    Old: properties.config.properties.threshold = 200
+  #    New: properties.config.threshold = 100
+  # =========================================================================
+
+  - note: config_threshold_old_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/config.threshold",
+          "equals": 200
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      properties:
+        config:
+          threshold: 100
+          properties:
+            threshold: 200
+    api_version: "2015-06-15"
+    want_effect: "Deny"
+
+  - note: config_threshold_old_api_wrong
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/config.threshold",
+          "equals": 100
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      properties:
+        config:
+          threshold: 100
+          properties:
+            threshold: 200
+    api_version: "2015-06-15"
+    want_undefined: true
+
+  - note: config_threshold_new_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/config.threshold",
+          "equals": 100
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      properties:
+        config:
+          threshold: 100
+          properties:
+            threshold: 200
+    api_version: "2020-01-01"
+    want_effect: "Deny"
+
+  - note: config_threshold_new_api_wrong
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/config.threshold",
+          "equals": 200
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      properties:
+        config:
+          threshold: 100
+          properties:
+            threshold: 200
+    api_version: "2020-01-01"
+    want_undefined: true
+
+  # =========================================================================
+  # 5. tier — properties.pricingTier (old) vs sku.tier (new)
+  # =========================================================================
+
+  - note: tier_old_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/tier",
+          "equals": "Premium"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      sku:
+        tier: "Standard"
+      properties:
+        pricingTier: "Premium"
+    api_version: "2015-06-15"
+    want_effect: "Deny"
+
+  - note: tier_old_api_wrong
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/tier",
+          "equals": "Standard"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      sku:
+        tier: "Standard"
+      properties:
+        pricingTier: "Premium"
+    api_version: "2015-06-15"
+    want_undefined: true
+
+  - note: tier_new_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/tier",
+          "equals": "Standard"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      sku:
+        tier: "Standard"
+      properties:
+        pricingTier: "Premium"
+    api_version: "2020-01-01"
+    want_effect: "Deny"
+
+  - note: tier_new_api_wrong
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/tier",
+          "equals": "Premium"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      sku:
+        tier: "Standard"
+      properties:
+        pricingTier: "Premium"
+    api_version: "2020-01-01"
+    want_undefined: true
+
+  # =========================================================================
+  # 6. operationMode — three distinct paths across versions
+  #    2015-01-01: properties.legacyMode = "compat"
+  #    2017-06-01: properties.settings.mode = "advanced"
+  #    2020-01-01: properties.mode = "standard"
+  #    default:    properties.mode = "standard"
+  # =========================================================================
+
+  - note: operationMode_oldest_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/operationMode",
+          "equals": "compat"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      properties:
+        legacyMode: "compat"
+        mode: "standard"
+        settings:
+          mode: "advanced"
+    api_version: "2015-01-01"
+    want_effect: "Deny"
+
+  - note: operationMode_oldest_api_wrong
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/operationMode",
+          "equals": "standard"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      properties:
+        legacyMode: "compat"
+        mode: "standard"
+        settings:
+          mode: "advanced"
+    api_version: "2015-01-01"
+    want_undefined: true
+
+  - note: operationMode_middle_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/operationMode",
+          "equals": "advanced"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      properties:
+        legacyMode: "compat"
+        mode: "standard"
+        settings:
+          mode: "advanced"
+    api_version: "2017-06-01"
+    want_effect: "Deny"
+
+  - note: operationMode_middle_api_wrong
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/operationMode",
+          "equals": "compat"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      properties:
+        legacyMode: "compat"
+        mode: "standard"
+        settings:
+          mode: "advanced"
+    api_version: "2017-06-01"
+    want_undefined: true
+
+  - note: operationMode_newest_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/operationMode",
+          "equals": "standard"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      properties:
+        legacyMode: "compat"
+        mode: "standard"
+        settings:
+          mode: "advanced"
+    api_version: "2020-01-01"
+    want_effect: "Deny"
+
+  - note: operationMode_default_no_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/operationMode",
+          "equals": "standard"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      properties:
+        legacyMode: "compat"
+        mode: "standard"
+        settings:
+          mode: "advanced"
+    want_effect: "Deny"
+
+  # =========================================================================
+  # 7. FQ alias with operationMode (mixed-case short name + versioned paths)
+  # =========================================================================
+
+  - note: fq_operationMode_middle_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/versionedResources/operationMode",
+          "equals": "advanced"
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/versionedResources
+      name: testResource
+      properties:
+        legacyMode: "compat"
+        mode: "standard"
+        settings:
+          mode: "advanced"
+    api_version: "2017-06-01"
+    want_effect: "Deny"
+
+  # =========================================================================
+  #  PART 2 — Complex resource type: Microsoft.Test/complexResources
+  #
+  #  Alias catalog for this type includes:
+  #  - Sub-resource array: rules[*] (with properties flattening)
+  #  - Nested sub-resource array: rules[*].filters[*] (2-level flattening)
+  #  - Primitive array: allowedIPs[*] (strings, no properties wrapper)
+  #  - Sub-resource element fields: rules[*].action, rules[*].protocol, etc.
+  #  - Versioned sub-resource field: rules[*].priority (old vs new path)
+  #  - Nested object alias: config.retryCount (versioned), config.timeout
+  #  - Deeply nested alias: settings.encryption.enabled (versioned)
+  #  - Primitive array inside sub-resource: rules[*].targets[*]
+  # =========================================================================
+
+  # -----------------------------------------------------------------------
+  # 8. Scalar baseline — enabled field
+  # -----------------------------------------------------------------------
+  - note: complex_enabled_baseline
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/enabled",
+          "equals": true
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        enabled: true
+    want_effect: "Deny"
+
+  - note: complex_enabled_false
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/enabled",
+          "equals": true
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        enabled: false
+    want_undefined: true
+
+  # -----------------------------------------------------------------------
+  # 9. Sub-resource array: count rules[*]
+  # -----------------------------------------------------------------------
+  - note: count_rules_basic
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]"
+          },
+          "greater": 2
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+          - name: r2
+            properties:
+              action: "Deny"
+          - name: r3
+            properties:
+              action: "Allow"
+    want_effect: "Deny"
+
+  - note: count_rules_not_enough
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]"
+          },
+          "greater": 5
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+          - name: r2
+            properties:
+              action: "Deny"
+    want_undefined: true
+
+  # -----------------------------------------------------------------------
+  # 10. Sub-resource with where — access flattened properties
+  #     rules[*].action lives under properties wrapper in ARM.
+  #     After normalization, it should be at rules[*].action directly.
+  # -----------------------------------------------------------------------
+  - note: count_rules_where_action
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "field": "Microsoft.Test/complexResources/rules[*].action",
+              "equals": "Allow"
+            }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+          - name: r2
+            properties:
+              action: "Deny"
+          - name: r3
+            properties:
+              action: "Allow"
+    want_effect: "Deny"
+
+  - note: count_rules_where_action_zero
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "field": "Microsoft.Test/complexResources/rules[*].action",
+              "equals": "Block"
+            }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+          - name: r2
+            properties:
+              action: "Deny"
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 11. Sub-resource where with allOf — multiple flattened fields
+  # -----------------------------------------------------------------------
+  - note: count_rules_where_allOf
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "allOf": [
+                { "field": "Microsoft.Test/complexResources/rules[*].action", "equals": "Allow" },
+                { "field": "Microsoft.Test/complexResources/rules[*].direction", "equals": "Inbound" },
+                { "field": "Microsoft.Test/complexResources/rules[*].protocol", "equals": "Tcp" }
+              ]
+            }
+          },
+          "greaterOrEquals": 1
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+              direction: "Inbound"
+              protocol: "Tcp"
+          - name: r2
+            properties:
+              action: "Allow"
+              direction: "Outbound"
+              protocol: "Tcp"
+          - name: r3
+            properties:
+              action: "Deny"
+              direction: "Inbound"
+              protocol: "Tcp"
+    want_effect: "Deny"
+
+  - note: count_rules_where_allOf_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "allOf": [
+                { "field": "Microsoft.Test/complexResources/rules[*].action", "equals": "Allow" },
+                { "field": "Microsoft.Test/complexResources/rules[*].direction", "equals": "Inbound" },
+                { "field": "Microsoft.Test/complexResources/rules[*].protocol", "equals": "Udp" }
+              ]
+            }
+          },
+          "greaterOrEquals": 1
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+              direction: "Inbound"
+              protocol: "Tcp"
+    want_undefined: true
+
+  # -----------------------------------------------------------------------
+  # 12. Sub-resource where with anyOf
+  # -----------------------------------------------------------------------
+  - note: count_rules_where_anyOf_destPort
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "anyOf": [
+                { "field": "Microsoft.Test/complexResources/rules[*].destPort", "equals": "22" },
+                { "field": "Microsoft.Test/complexResources/rules[*].destPort", "equals": "3389" }
+              ]
+            }
+          },
+          "notEquals": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              destPort: "443"
+          - name: r2
+            properties:
+              destPort: "22"
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 13. Sub-resource where with not
+  # -----------------------------------------------------------------------
+  - note: count_rules_where_not
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "not": {
+                "field": "Microsoft.Test/complexResources/rules[*].action",
+                "equals": "Deny"
+              }
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+          - name: r2
+            properties:
+              action: "Deny"
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 14. Primitive array: count allowedIPs[*]
+  #     Unlike rules[*], allowedIPs is a plain string array — no properties
+  #     flattening.
+  # -----------------------------------------------------------------------
+  - note: count_allowedIPs_basic
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/allowedIPs[*]",
+            "where": {
+              "field": "Microsoft.Test/complexResources/allowedIPs[*]",
+              "like": "10.*"
+            }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        allowedIPs:
+          - "10.0.0.1"
+          - "192.168.1.1"
+          - "10.0.0.2"
+    want_effect: "Deny"
+
+  - note: count_allowedIPs_empty
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/allowedIPs[*]"
+          },
+          "equals": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        allowedIPs: []
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 15. Primitive array inside sub-resource: rules[*].targets[*]
+  # -----------------------------------------------------------------------
+  - note: count_rules_targets_nested
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*].targets[*]",
+                "where": {
+                  "field": "Microsoft.Test/complexResources/rules[*].targets[*]",
+                  "like": "*.prod.*"
+                }
+              },
+              "greater": 0
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+              targets:
+                - "app.prod.east"
+                - "app.dev.east"
+          - name: r2
+            properties:
+              action: "Allow"
+              targets:
+                - "api.dev.west"
+    want_effect: "Deny"
+
+  - note: count_rules_targets_nested_no_prod
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*].targets[*]",
+                "where": {
+                  "field": "Microsoft.Test/complexResources/rules[*].targets[*]",
+                  "like": "*.prod.*"
+                }
+              },
+              "greater": 0
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+              targets:
+                - "app.dev.east"
+          - name: r2
+            properties:
+              action: "Allow"
+              targets:
+                - "api.staging.west"
+    want_undefined: true
+
+  # -----------------------------------------------------------------------
+  # 16. Nested sub-resource arrays: rules[*].filters[*]
+  #     filters[*] is a sub-resource (has properties wrapper) nested inside
+  #     rules[*] — two-level properties flattening.
+  # -----------------------------------------------------------------------
+  - note: nested_sub_resource_count
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*].filters[*]",
+                "where": {
+                  "field": "Microsoft.Test/complexResources/rules[*].filters[*].name",
+                  "equals": "source-ip"
+                }
+              },
+              "greater": 0
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+              filters:
+                - properties:
+                    name: "source-ip"
+                    value: "10.0.0.0/8"
+                - properties:
+                    name: "protocol"
+                    value: "tcp"
+          - name: r2
+            properties:
+              action: "Deny"
+              filters:
+                - properties:
+                    name: "dest-port"
+                    value: "22"
+    want_effect: "Deny"
+
+  - note: nested_sub_resource_count_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*].filters[*]",
+                "where": {
+                  "field": "Microsoft.Test/complexResources/rules[*].filters[*].name",
+                  "equals": "geo-location"
+                }
+              },
+              "greater": 0
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+              filters:
+                - properties:
+                    name: "source-ip"
+                    value: "10.0.0.0/8"
+    want_undefined: true
+
+  - note: nested_sub_resource_filter_value
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*].filters[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "Microsoft.Test/complexResources/rules[*].filters[*].name", "equals": "protocol" },
+                    { "field": "Microsoft.Test/complexResources/rules[*].filters[*].value", "equals": "tcp" }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+              filters:
+                - properties:
+                    name: "protocol"
+                    value: "tcp"
+          - name: r2
+            properties:
+              action: "Deny"
+              filters:
+                - properties:
+                    name: "protocol"
+                    value: "udp"
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 17. Count in allOf: type check + sub-resource count
+  # -----------------------------------------------------------------------
+  - note: count_in_allOf_with_type_check
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Test/complexResources" },
+            {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "Microsoft.Test/complexResources/rules[*].action", "equals": "Allow" },
+                    { "field": "Microsoft.Test/complexResources/rules[*].direction", "equals": "Inbound" }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+              direction: "Inbound"
+          - name: r2
+            properties:
+              action: "Deny"
+              direction: "Outbound"
+    want_effect: "Deny"
+
+  - note: count_in_allOf_wrong_type
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Other/resources" },
+            {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*]",
+                "where": {
+                  "field": "Microsoft.Test/complexResources/rules[*].action",
+                  "equals": "Allow"
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+    want_undefined: true
+
+  # -----------------------------------------------------------------------
+  # 18. Nested object: config.retryCount — versioned
+  #     Old API: properties.config.properties.retryCount
+  #     New API: properties.config.retryCount
+  # -----------------------------------------------------------------------
+  - note: config_retryCount_old_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/config.retryCount",
+          "greater": 3
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        config:
+          retryCount: 2
+          properties:
+            retryCount: 5
+    api_version: "2015-01-01"
+    want_effect: "Deny"
+
+  - note: config_retryCount_old_api_wrong
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/config.retryCount",
+          "greater": 3
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        config:
+          retryCount: 2
+          properties:
+            retryCount: 1
+    api_version: "2015-01-01"
+    want_undefined: true
+
+  - note: config_retryCount_new_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/config.retryCount",
+          "greater": 3
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        config:
+          retryCount: 5
+          properties:
+            retryCount: 1
+    api_version: "2020-01-01"
+    want_effect: "Deny"
+
+  - note: config_retryCount_new_api_wrong
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/config.retryCount",
+          "greater": 3
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        config:
+          retryCount: 2
+          properties:
+            retryCount: 99
+    api_version: "2020-01-01"
+    want_undefined: true
+
+  # -----------------------------------------------------------------------
+  # 19. Non-versioned nested object: config.timeout
+  # -----------------------------------------------------------------------
+  - note: config_timeout_baseline
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/config.timeout",
+          "greater": 30
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        config:
+          timeout: 60
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 20. Deep nested alias: settings.encryption.enabled — versioned
+  #     Old API (2015): properties.encryptionEnabled (flat)
+  #     New API (2020): properties.settings.encryption.enabled (deep)
+  # -----------------------------------------------------------------------
+  - note: encryption_enabled_old_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/settings.encryption.enabled",
+          "equals": true
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        encryptionEnabled: true
+        settings:
+          encryption:
+            enabled: false
+    api_version: "2015-01-01"
+    want_effect: "Deny"
+
+  - note: encryption_enabled_old_api_wrong
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/settings.encryption.enabled",
+          "equals": true
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        encryptionEnabled: false
+        settings:
+          encryption:
+            enabled: true
+    api_version: "2015-01-01"
+    want_undefined: true
+
+  - note: encryption_enabled_new_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/settings.encryption.enabled",
+          "equals": true
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        encryptionEnabled: false
+        settings:
+          encryption:
+            enabled: true
+    api_version: "2020-01-01"
+    want_effect: "Deny"
+
+  - note: encryption_enabled_new_api_wrong
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/settings.encryption.enabled",
+          "equals": true
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        encryptionEnabled: true
+        settings:
+          encryption:
+            enabled: false
+    api_version: "2020-01-01"
+    want_undefined: true
+
+  - note: encryption_enabled_no_api_default
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/settings.encryption.enabled",
+          "equals": true
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        encryptionEnabled: false
+        settings:
+          encryption:
+            enabled: true
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 21. FQ alias: fully-qualified with complex resource
+  # -----------------------------------------------------------------------
+  - note: fq_config_retryCount_old_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/config.retryCount",
+          "greater": 3
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        config:
+          retryCount: 2
+          properties:
+            retryCount: 5
+    api_version: "2015-01-01"
+    want_effect: "Deny"
+
+  - note: fq_encryption_enabled_new_api
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Test/complexResources/settings.encryption.enabled",
+          "equals": true
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        encryptionEnabled: false
+        settings:
+          encryption:
+            enabled: true
+    api_version: "2020-01-01"
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 22. Complex NSG-like: type + count + where(allOf) + anyOf inside where
+  # -----------------------------------------------------------------------
+  - note: complex_nsg_like_deny_ssh
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Test/complexResources" },
+            {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "Microsoft.Test/complexResources/rules[*].action", "equals": "Allow" },
+                    { "field": "Microsoft.Test/complexResources/rules[*].direction", "equals": "Inbound" },
+                    {
+                      "anyOf": [
+                        { "field": "Microsoft.Test/complexResources/rules[*].destPort", "equals": "22" },
+                        { "field": "Microsoft.Test/complexResources/rules[*].destPort", "equals": "*" }
+                      ]
+                    },
+                    {
+                      "anyOf": [
+                        { "field": "Microsoft.Test/complexResources/rules[*].sourcePort", "equals": "*" },
+                        { "field": "Microsoft.Test/complexResources/rules[*].sourcePort", "equals": "0" }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: allowHTTPS
+            properties:
+              action: "Allow"
+              direction: "Inbound"
+              protocol: "Tcp"
+              destPort: "443"
+              sourcePort: "*"
+          - name: allowSSH
+            properties:
+              action: "Allow"
+              direction: "Inbound"
+              protocol: "Tcp"
+              destPort: "22"
+              sourcePort: "*"
+    want_effect: "Deny"
+
+  - note: complex_nsg_like_no_ssh
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Test/complexResources" },
+            {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "Microsoft.Test/complexResources/rules[*].action", "equals": "Allow" },
+                    { "field": "Microsoft.Test/complexResources/rules[*].direction", "equals": "Inbound" },
+                    {
+                      "anyOf": [
+                        { "field": "Microsoft.Test/complexResources/rules[*].destPort", "equals": "22" },
+                        { "field": "Microsoft.Test/complexResources/rules[*].destPort", "equals": "*" }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: allowHTTPS
+            properties:
+              action: "Allow"
+              direction: "Inbound"
+              protocol: "Tcp"
+              destPort: "443"
+              sourcePort: "*"
+          - name: denySSH
+            properties:
+              action: "Deny"
+              direction: "Inbound"
+              protocol: "Tcp"
+              destPort: "22"
+              sourcePort: "*"
+    want_undefined: true
+
+  # -----------------------------------------------------------------------
+  # 23. Value count with nested field count across sub-resources
+  #     "For each required port, at least one Allow rule must exist"
+  # -----------------------------------------------------------------------
+  - note: value_count_nested_field_count_rules
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('requiredPorts')]",
+            "name": "port",
+            "where": {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "Microsoft.Test/complexResources/rules[*].destPort", "equals": "[current('port')]" },
+                    { "field": "Microsoft.Test/complexResources/rules[*].action", "equals": "Allow" }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          },
+          "equals": "[length(parameters('requiredPorts'))]"
+        },
+        "then": { "effect": "Deny" }
+      }
+    parameters:
+      requiredPorts:
+        - "443"
+        - "80"
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: allowHTTPS
+            properties:
+              action: "Allow"
+              destPort: "443"
+          - name: allowHTTP
+            properties:
+              action: "Allow"
+              destPort: "80"
+          - name: denySSH
+            properties:
+              action: "Deny"
+              destPort: "22"
+    want_effect: "Deny"
+
+  - note: value_count_nested_field_count_rules_missing
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('requiredPorts')]",
+            "name": "port",
+            "where": {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "Microsoft.Test/complexResources/rules[*].destPort", "equals": "[current('port')]" },
+                    { "field": "Microsoft.Test/complexResources/rules[*].action", "equals": "Allow" }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          },
+          "equals": "[length(parameters('requiredPorts'))]"
+        },
+        "then": { "effect": "Deny" }
+      }
+    parameters:
+      requiredPorts:
+        - "443"
+        - "80"
+        - "8080"
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: allowHTTPS
+            properties:
+              action: "Allow"
+              destPort: "443"
+          - name: allowHTTP
+            properties:
+              action: "Allow"
+              destPort: "80"
+    want_undefined: true
+
+  # -----------------------------------------------------------------------
+  # 24. Empty sub-resource array — count = 0
+  # -----------------------------------------------------------------------
+  - note: count_rules_empty_array
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]"
+          },
+          "equals": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules: []
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 25. Missing sub-resource array — count = 0
+  # -----------------------------------------------------------------------
+  - note: count_rules_missing_array
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]"
+          },
+          "equals": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        enabled: true
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 26. Sub-resource where accessing root-level field (name on element)
+  #     The "name" field lives at the element root, not under properties.
+  # -----------------------------------------------------------------------
+  - note: count_rules_where_name_field
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "field": "Microsoft.Test/complexResources/rules[*].name",
+              "like": "allow*"
+            }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: allowHTTPS
+            properties:
+              action: "Allow"
+          - name: allowHTTP
+            properties:
+              action: "Allow"
+          - name: denySSH
+            properties:
+              action: "Deny"
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 27. Mixed: scalar alias AND count in allOf
+  # -----------------------------------------------------------------------
+  - note: enabled_and_rule_count_allOf
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "Microsoft.Test/complexResources/enabled", "equals": true },
+            {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*]",
+                "where": {
+                  "field": "Microsoft.Test/complexResources/rules[*].action",
+                  "equals": "Allow"
+                }
+              },
+              "greater": 3
+            }
+          ]
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        enabled: true
+        rules:
+          - name: r1
+            properties: { action: "Allow" }
+          - name: r2
+            properties: { action: "Allow" }
+          - name: r3
+            properties: { action: "Allow" }
+          - name: r4
+            properties: { action: "Allow" }
+    want_effect: "Deny"
+
+  - note: enabled_false_short_circuits
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "Microsoft.Test/complexResources/enabled", "equals": true },
+            {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*]",
+                "where": {
+                  "field": "Microsoft.Test/complexResources/rules[*].action",
+                  "equals": "Allow"
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        enabled: false
+        rules:
+          - name: r1
+            properties: { action: "Allow" }
+    want_undefined: true
+
+  # -----------------------------------------------------------------------
+  # 28. Count in not — negated sub-resource count
+  # -----------------------------------------------------------------------
+  - note: not_count_rules
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "count": {
+              "field": "Microsoft.Test/complexResources/rules[*]"
+            },
+            "lessOrEquals": 2
+          }
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties: { action: "Allow" }
+          - name: r2
+            properties: { action: "Allow" }
+          - name: r3
+            properties: { action: "Deny" }
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 29. Sub-resource element without properties wrapper
+  #     Some elements may just have top-level fields, no properties.
+  #     The normalizer should handle this gracefully.
+  # -----------------------------------------------------------------------
+  - note: sub_resource_no_properties_wrapper
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "field": "Microsoft.Test/complexResources/rules[*].name",
+              "equals": "direct"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: "direct"
+            action: "Allow"
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 30. Deep nesting: allOf > anyOf > not > count
+  # -----------------------------------------------------------------------
+  - note: deep_logical_with_count
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Test/complexResources" },
+            {
+              "anyOf": [
+                {
+                  "not": {
+                    "count": {
+                      "field": "Microsoft.Test/complexResources/rules[*]",
+                      "where": {
+                        "field": "Microsoft.Test/complexResources/rules[*].action",
+                        "equals": "Deny"
+                      }
+                    },
+                    "greaterOrEquals": 1
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+          - name: r2
+            properties:
+              action: "Allow"
+    want_effect: "Deny"
+
+  - note: deep_logical_with_count_has_deny
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Test/complexResources" },
+            {
+              "anyOf": [
+                {
+                  "not": {
+                    "count": {
+                      "field": "Microsoft.Test/complexResources/rules[*]",
+                      "where": {
+                        "field": "Microsoft.Test/complexResources/rules[*].action",
+                        "equals": "Deny"
+                      }
+                    },
+                    "greaterOrEquals": 1
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+          - name: r2
+            properties:
+              action: "Deny"
+    want_undefined: true
+
+  # -----------------------------------------------------------------------
+  # 31. Missing field in sub-resource element — exists false
+  # -----------------------------------------------------------------------
+  - note: exists_false_in_sub_resource
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "field": "Microsoft.Test/complexResources/rules[*].protocol",
+              "exists": false
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+              protocol: "Tcp"
+          - name: r2
+            properties:
+              action: "Deny"
+    want_effect: "Deny"
+
+  - note: exists_true_in_sub_resource_all_present
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "field": "Microsoft.Test/complexResources/rules[*].protocol",
+              "exists": false
+            }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+              protocol: "Tcp"
+          - name: r2
+            properties:
+              action: "Deny"
+              protocol: "Udp"
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 32. Versioned sub-resource field: rules[*].priority
+  #     Old API (2015): properties.rules[*].properties.priority
+  #     New API (2020): properties.rules[*].properties.prio
+  #     The "priority" alias always maps to a field under the element's
+  #     properties wrapper — the difference is the field NAME changes
+  #     across versions.
+  #
+  #     NOTE: Versioned paths for sub-resource element fields are handled
+  #     at the structural level (the alias defines the full ARM path).
+  #     After normalization, the alias short name "priority" should resolve
+  #     correctly. We place DIFFERENT values at "priority" vs "prio" in the
+  #     elements to test path selection.
+  # -----------------------------------------------------------------------
+
+  # Versioned sub-resource element fields use per-element alias resolution
+  # during normalization.  After structural flattening, the normalizer remaps
+  # element-level field names when the selected API path differs from the
+  # alias short name (e.g., "prio" → "priority" for new API versions).
+  - note: rules_priority_old_api
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "field": "Microsoft.Test/complexResources/rules[*].priority",
+              "greater": 100
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              priority: 200
+              prio: 50
+    api_version: "2015-01-01"
+    want_effect: "Deny"
+
+  - note: rules_priority_new_api
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/complexResources/rules[*]",
+            "where": {
+              "field": "Microsoft.Test/complexResources/rules[*].priority",
+              "greater": 100
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        rules:
+          - name: r1
+            properties:
+              priority: 50
+              prio: 200
+    api_version: "2020-01-01"
+    want_effect: "Deny"
+
+  # -----------------------------------------------------------------------
+  # 33. Three-level nesting: allOf > count(rules) > where > count(filters)
+  #     > where > allOf (filter name + value)
+  # -----------------------------------------------------------------------
+  - note: three_level_nesting_count_in_allof
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Test/complexResources" },
+            { "field": "Microsoft.Test/complexResources/enabled", "equals": true },
+            {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "Microsoft.Test/complexResources/rules[*].action", "equals": "Allow" },
+                    {
+                      "count": {
+                        "field": "Microsoft.Test/complexResources/rules[*].filters[*]",
+                        "where": {
+                          "allOf": [
+                            { "field": "Microsoft.Test/complexResources/rules[*].filters[*].name", "equals": "protocol" },
+                            { "field": "Microsoft.Test/complexResources/rules[*].filters[*].value", "equals": "tcp" }
+                          ]
+                        }
+                      },
+                      "greater": 0
+                    }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        enabled: true
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+              filters:
+                - properties:
+                    name: "protocol"
+                    value: "tcp"
+                - properties:
+                    name: "source-ip"
+                    value: "10.0.0.0/8"
+          - name: r2
+            properties:
+              action: "Deny"
+              filters:
+                - properties:
+                    name: "protocol"
+                    value: "udp"
+    want_effect: "Deny"
+
+  - note: three_level_nesting_enabled_false
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Test/complexResources" },
+            { "field": "Microsoft.Test/complexResources/enabled", "equals": true },
+            {
+              "count": {
+                "field": "Microsoft.Test/complexResources/rules[*]",
+                "where": {
+                  "count": {
+                    "field": "Microsoft.Test/complexResources/rules[*].filters[*]"
+                  },
+                  "greater": 0
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "Deny" }
+      }
+    resource:
+      type: Microsoft.Test/complexResources
+      name: myResource
+      properties:
+        enabled: false
+        rules:
+          - name: r1
+            properties:
+              action: "Allow"
+              filters:
+                - properties: { name: "x", value: "y" }
+    want_undefined: true

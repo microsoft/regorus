@@ -1,0 +1,463 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Exists Operator – comprehensive tests
+#
+# Covers bare-field paths, dotted nested paths, null values, missing fields,
+# object-valued fields, array-valued fields, and edge cases.  These lock down
+# the behaviour exercised by the external csharp-converted test suite.
+
+cases:
+  # =========================================================================
+  # Basic exists true / false on properties path
+  # =========================================================================
+
+  - note: exists_true_field_present
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.setting",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        setting: "hello"
+    want_effect: "audit"
+
+  - note: exists_true_field_absent
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.setting",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties: {}
+    want_undefined: true
+
+  - note: exists_false_field_absent
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.setting",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties: {}
+    want_effect: "audit"
+
+  - note: exists_false_field_present
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.setting",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        setting: "hello"
+    want_undefined: true
+
+  # =========================================================================
+  # Null-valued fields
+  # =========================================================================
+
+  - note: exists_true_null_value
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.setting",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        setting: null
+    want_undefined: true
+
+  - note: exists_false_null_value
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.setting",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        setting: null
+    want_effect: "audit"
+
+  # =========================================================================
+  # Null parent object
+  # =========================================================================
+
+  - note: exists_true_null_parent
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.nested.value",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        nested: null
+    want_undefined: true
+
+  - note: exists_false_null_parent
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.nested.value",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        nested: null
+    want_effect: "audit"
+
+  # =========================================================================
+  # Object-valued fields (exists checks the field itself, not its children)
+  # =========================================================================
+
+  - note: exists_true_object_value
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.config",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        config:
+          enabled: true
+    want_effect: "audit"
+
+  - note: exists_false_object_value
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.config",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        config:
+          enabled: true
+    want_undefined: true
+
+  - note: exists_true_empty_object
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.config",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        config: {}
+    want_effect: "audit"
+
+  # =========================================================================
+  # Array-valued fields
+  # =========================================================================
+
+  - note: exists_true_array_value
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.items",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        items:
+          - "a"
+          - "b"
+    want_effect: "audit"
+
+  - note: exists_true_empty_array
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.items",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        items: []
+    want_effect: "audit"
+
+  - note: exists_false_array_absent
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.items",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties: {}
+    want_effect: "audit"
+
+  # =========================================================================
+  # Deeply nested dotted paths
+  # =========================================================================
+
+  - note: exists_true_deep_path
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.network.subnet.cidr",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        network:
+          subnet:
+            cidr: "10.0.0.0/24"
+    want_effect: "audit"
+
+  - note: exists_false_deep_path_missing_leaf
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.network.subnet.cidr",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        network:
+          subnet: {}
+    want_effect: "audit"
+
+  - note: exists_false_deep_path_missing_intermediate
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.network.subnet.cidr",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        network: {}
+    want_effect: "audit"
+
+  # =========================================================================
+  # Root-level fields (type, name, location, etc.)
+  # =========================================================================
+
+  - note: exists_true_root_type
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "exists": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "deny"
+
+  - note: exists_false_root_location_absent
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "exists": false
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "deny"
+
+  - note: exists_true_root_tags
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      tags:
+        env: "prod"
+    want_effect: "audit"
+
+  - note: exists_false_root_tags_absent
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Numeric & boolean values (non-null truthy values ⇒ exists true)
+  # =========================================================================
+
+  - note: exists_true_zero
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.count",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        count: 0
+    want_effect: "audit"
+
+  - note: exists_true_false_boolean
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.enabled",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        enabled: false
+    want_effect: "audit"
+
+  - note: exists_true_empty_string
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.label",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        label: ""
+    want_effect: "audit"
+
+  # =========================================================================
+  # Combined with allOf / anyOf
+  # =========================================================================
+
+  - note: exists_allof_both_present
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "properties.a", "exists": true },
+            { "field": "properties.b", "exists": true }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        a: 1
+        b: 2
+    want_effect: "audit"
+
+  - note: exists_allof_one_missing
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "properties.a", "exists": true },
+            { "field": "properties.b", "exists": true }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        a: 1
+    want_undefined: true
+
+  - note: exists_anyof_one_present
+    policy_rule: |
+      {
+        "if": {
+          "anyOf": [
+            { "field": "properties.a", "exists": true },
+            { "field": "properties.b", "exists": true }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        b: "yes"
+    want_effect: "audit"
+
+  # =========================================================================
+  # exists with string value ("true"/"false") – must behave same as boolean
+  # =========================================================================
+
+  - note: exists_string_false_field_absent
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.setting",
+          "exists": "false"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties: {}
+    want_effect: "audit"
+
+  - note: exists_string_false_field_present
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.setting",
+          "exists": "false"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        setting: "val"
+    want_undefined: true

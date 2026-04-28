@@ -1,0 +1,253 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Field Wildcard Collection Test Suite
+# Tests field('path[*]') and field('path[*].prop') as value expressions
+# that return arrays, including missing-array → empty-array handling.
+
+cases:
+  # =========================================================================
+  # field('path[*]') — collect all elements
+  # =========================================================================
+
+  - note: field_wildcard_collect_all_elements
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(field('items[*]'))]",
+          "equals": 3
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - "a"
+        - "b"
+        - "c"
+    want_effect: "deny"
+
+  - note: field_wildcard_collect_all_elements_no_match
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(field('items[*]'))]",
+          "equals": 5
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - "a"
+        - "b"
+        - "c"
+    want_undefined: true
+
+  # =========================================================================
+  # field('path[*].prop') — collect property from each element
+  # =========================================================================
+
+  - note: field_wildcard_collect_property
+    policy_rule: |
+      {
+        "if": {
+          "value": "[first(field('rules[*].action'))]",
+          "equals": "Allow"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      rules:
+        - { "action": "Allow", "priority": 100 }
+        - { "action": "Deny", "priority": 200 }
+    want_effect: "deny"
+
+  - note: field_wildcard_collect_property_length
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(field('securityRules[*].access'))]",
+          "equals": 4
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      securityRules:
+        - { "access": "Allow" }
+        - { "access": "Deny" }
+        - { "access": "Allow" }
+        - { "access": "Deny" }
+    want_effect: "audit"
+
+  # =========================================================================
+  # Nested property path after [*]
+  # =========================================================================
+
+  - note: field_wildcard_nested_property
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(field('rules[*].target.name'))]",
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      rules:
+        - target:
+            name: "web-app"
+        - target:
+            name: "api-app"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Dotted prefix before [*]
+  # =========================================================================
+
+  - note: field_wildcard_dotted_prefix
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(field('properties.ipRules[*].value'))]",
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        ipRules:
+          - { "value": "10.0.0.0/8" }
+          - { "value": "192.168.0.0/16" }
+    want_effect: "deny"
+
+  # =========================================================================
+  # Missing array → empty collection
+  # =========================================================================
+
+  - note: field_wildcard_missing_array_length_zero
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(field('items[*]'))]",
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "some.type"
+    want_effect: "deny"
+
+  - note: field_wildcard_missing_array_empty_true
+    policy_rule: |
+      {
+        "if": {
+          "value": "[empty(field('properties.ipRules[*]'))]",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        enabled: true
+    want_effect: "deny"
+
+  - note: field_wildcard_missing_nested_prefix
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(field('config.logging.entries[*].level'))]",
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "some.type"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Empty array → empty collection (not missing, but zero elements)
+  # =========================================================================
+
+  - note: field_wildcard_empty_array
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(field('items[*]'))]",
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items: []
+    want_effect: "deny"
+
+  # =========================================================================
+  # Doubly-nested wildcards: field('a[*].b[*].c') — flat-map
+  # =========================================================================
+
+  - note: field_wildcard_doubly_nested
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(field('groups[*].members[*].name'))]",
+          "equals": 4
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      groups:
+        - members:
+            - { "name": "alice" }
+            - { "name": "bob" }
+        - members:
+            - { "name": "carol" }
+            - { "name": "dave" }
+    want_effect: "deny"
+
+  - note: field_wildcard_doubly_nested_no_suffix
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(field('groups[*].tags[*]'))]",
+          "equals": 5
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      groups:
+        - tags: ["a", "b", "c"]
+        - tags: ["d", "e"]
+    want_effect: "deny"
+
+  - note: field_wildcard_doubly_nested_partial_missing
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(field('groups[*].members[*].name'))]",
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      groups:
+        - members:
+            - { "name": "alice" }
+            - { "name": "bob" }
+        - other_field: "no members here"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Real-world pattern: field() with [*] used in condition comparisons
+  # =========================================================================
+
+  - note: field_wildcard_first_equals
+    policy_rule: |
+      {
+        "if": {
+          "value": "[first(field('ports[*]'))]",
+          "equals": 80
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      ports: [80, 443, 8080]
+    want_effect: "deny"

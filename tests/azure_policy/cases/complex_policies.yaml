@@ -1,0 +1,482 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Complex Policies Test Suite
+# Tests realistic, multi-layer Azure Policy definitions covering combinations of
+# operators, logical combinators, expressions, fields, counts, and effects.
+
+cases:
+  # =========================================================================
+  # Require HTTPS for storage accounts
+  # =========================================================================
+
+  - note: require_https_storage
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Storage/storageAccounts"
+            },
+            {
+              "field": "properties.supportsHttpsTrafficOnly",
+              "notEquals": true
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: false
+    want_effect: "deny"
+
+  # =========================================================================
+  # Allowed locations with parameterized effect
+  # =========================================================================
+
+  - note: allowed_locations_parameterized
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "location",
+              "notIn": "[parameters('allowedLocations')]"
+            },
+            {
+              "field": "location",
+              "notEquals": "global"
+            },
+            {
+              "field": "type",
+              "notEquals": "Microsoft.AzureActiveDirectory/b2cDirectories"
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]"
+        }
+      }
+    parameters:
+      allowedLocations:
+        - "eastus"
+        - "westus"
+      effect: "deny"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      location: "northeurope"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Require tags with parameter-driven enforcement
+  # =========================================================================
+
+  - note: require_tag_environment
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "notEquals": "Microsoft.Resources/subscriptions"
+            },
+            {
+              "field": "[concat('tags[', parameters('tagName'), ']')]",
+              "exists": false
+            }
+          ]
+        },
+        "then": {
+          "effect": "deny",
+          "details": {
+            "message": "Required tag is missing"
+          }
+        }
+      }
+    parameters:
+      tagName: "environment"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      tags: {}
+    want_effect: "deny"
+
+  # =========================================================================
+  # NSG rule restriction — deny risky inbound ports
+  # =========================================================================
+
+  - note: deny_risky_inbound_nsg
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Network/networkSecurityGroups/securityRules"
+            },
+            {
+              "field": "properties.direction",
+              "equals": "Inbound"
+            },
+            {
+              "field": "properties.access",
+              "equals": "Allow"
+            },
+            {
+              "anyOf": [
+                {
+                  "field": "properties.destinationPortRange",
+                  "in": ["22", "3389", "*"]
+                },
+                {
+                  "field": "properties.sourceAddressPrefix",
+                  "in": ["*", "Internet", "0.0.0.0/0"]
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "deny",
+          "details": {
+            "message": "Risky inbound NSG rules are not allowed"
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups/securityRules"
+      properties:
+        direction: "Inbound"
+        access: "Allow"
+        destinationPortRange: "22"
+        sourceAddressPrefix: "*"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Modify — add tags if missing
+  # =========================================================================
+
+  - note: modify_add_tags
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Compute/virtualMachines"
+            },
+            {
+              "anyOf": [
+                { "field": "tags.environment", "exists": false },
+                { "field": "tags.costCenter", "exists": false }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "tags['environment']",
+                "value": "[if(empty(field('tags.environment')), 'unknown', field('tags.environment'))]"
+              },
+              {
+                "operation": "addOrReplace",
+                "field": "tags['costCenter']",
+                "value": "[if(empty(field('tags.costCenter')), 'unassigned', field('tags.costCenter'))]"
+              }
+            ]
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      tags:
+        environment: "prod"
+    want_effect: "modify"
+
+  # =========================================================================
+  # Count — deny if too many open NSG rules
+  # =========================================================================
+
+  - note: deny_excessive_open_nsg_rules
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Network/networkSecurityGroups"
+            },
+            {
+              "count": {
+                "field": "securityRules[*]",
+                "where": {
+                  "allOf": [
+                    {
+                      "field": "securityRules[*].access",
+                      "equals": "Allow"
+                    },
+                    {
+                      "field": "securityRules[*].direction",
+                      "equals": "Inbound"
+                    },
+                    {
+                      "field": "securityRules[*].sourceAddressPrefix",
+                      "equals": "*"
+                    }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      securityRules:
+        -
+          access: "Allow"
+          direction: "Inbound"
+          sourceAddressPrefix: "*"
+    want_effect: "deny"
+
+  # =========================================================================
+  # AuditIfNotExists — require diagnostics settings
+  # =========================================================================
+
+  - note: audit_diagnostics_settings
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.KeyVault/vaults"
+        },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Microsoft.Insights/diagnosticSettings",
+            "existenceCondition": {
+              "allOf": [
+                {
+                  "field": "properties.logs.enabled",
+                  "equals": true
+                },
+                {
+                  "field": "properties.logs.retentionPolicy.enabled",
+                  "equals": true
+                },
+                {
+                  "field": "properties.logs.retentionPolicy.days",
+                  "greaterOrEquals": 90
+                }
+              ]
+            }
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+    host_await:
+      - key:
+          operation: "lookup_related_resources"
+          type: "Microsoft.Insights/diagnosticSettings"
+        response: null
+    want_effect: "auditIfNotExists"
+
+  # =========================================================================
+  # DeployIfNotExists — deploy monitoring agent
+  # =========================================================================
+
+  - note: deploy_monitoring_agent
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Compute/virtualMachines"
+            },
+            {
+              "field": "properties.storageProfile.imageReference.publisher",
+              "equals": "Canonical"
+            }
+          ]
+        },
+        "then": {
+          "effect": "deployIfNotExists",
+          "details": {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "roleDefinitionIds": [
+              "/providers/Microsoft.Authorization/roleDefinitions/9980e02c-c2be-4d73-94e8-173b1dc7cf3c"
+            ],
+            "existenceCondition": {
+              "allOf": [
+                {
+                  "field": "properties.publisher",
+                  "equals": "Microsoft.Azure.Monitor"
+                },
+                {
+                  "field": "properties.type",
+                  "equals": "AzureMonitorLinuxAgent"
+                }
+              ]
+            },
+            "deployment": {
+              "properties": {
+                "mode": "incremental",
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "parameters": {},
+                  "resources": []
+                }
+              }
+            }
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      properties:
+        storageProfile:
+          imageReference:
+            publisher: "Canonical"
+    host_await:
+      - response: null
+    want_effect: "deployIfNotExists"
+
+  # =========================================================================
+  # Value count with complex where — required tags
+  # =========================================================================
+
+  - note: required_tags_value_count
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "notEquals": "Microsoft.Resources/subscriptions"
+            },
+            {
+              "count": {
+                "value": "[parameters('requiredTags')]",
+                "name": "tagName",
+                "where": {
+                  "field": "[concat('tags[', current('tagName'), ']')]",
+                  "exists": true
+                }
+              },
+              "notEquals": "[length(parameters('requiredTags'))]"
+            }
+          ]
+        },
+        "then": {
+          "effect": "deny",
+          "details": {
+            "message": "Not all required tags are present"
+          }
+        }
+      }
+    parameters:
+      requiredTags:
+        - "environment"
+        - "costCenter"
+        - "owner"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      tags:
+        environment: "prod"
+        costCenter: "12345"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Multi-resource type policy with not
+  # =========================================================================
+
+  - note: multi_type_with_not
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "not": {
+                "anyOf": [
+                  { "field": "type", "equals": "Microsoft.Resources/subscriptions" },
+                  { "field": "type", "equals": "Microsoft.Resources/subscriptions/resourceGroups" },
+                  { "field": "type", "equals": "Microsoft.Authorization/roleAssignments" }
+                ]
+              }
+            },
+            {
+              "field": "location",
+              "notIn": "[parameters('allowedLocations')]"
+            }
+          ]
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "message": "Resource location is not in the allowed list"
+          }
+        }
+      }
+    parameters:
+      allowedLocations:
+        - "eastus"
+        - "westus"
+        - "centralus"
+      effect: "deny"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      location: "southeastasia"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Condition-free policy (always true if block is trivially satisfied)
+  # =========================================================================
+
+  - note: trivial_allOf_empty
+    policy_rule: |
+      {
+        "if": {
+          "allOf": []
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "anything"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Exists mixed with value comparisons
+  # =========================================================================
+
+  - note: exists_and_value_check
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+            { "field": "properties.networkAcls", "exists": true },
+            { "field": "properties.networkAcls.defaultAction", "notEquals": "Deny" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        networkAcls:
+          defaultAction: "Allow"
+    want_effect: "deny"
