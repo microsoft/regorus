@@ -1,0 +1,1131 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Alias Resolution Test Suite
+# Tests alias-to-short-name resolution, normalization of ARM resource JSON,
+# and correct field access through aliases across different resource types
+# and alias patterns (scalar, nested, wildcard arrays, sub-resources, sku.*).
+
+aliases: test_aliases.json
+
+cases:
+  # =========================================================================
+  # Scalar alias — properties-flattened path
+  # =========================================================================
+
+  - note: alias_scalar_properties_flat
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: true
+    want_effect: "deny"
+
+  - note: alias_scalar_properties_flat_false
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: false
+    want_undefined: true
+
+  - note: alias_scalar_properties_missing_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties: {}
+    want_undefined: true
+
+  # =========================================================================
+  # Nested alias — dotted path inside properties
+  # =========================================================================
+
+  - note: alias_nested_dotted_path
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/customDomain.name",
+          "equals": "cdn.contoso.com"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        customDomain:
+          name: "cdn.contoso.com"
+    want_effect: "audit"
+
+  - note: alias_nested_dotted_path_mismatch
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/customDomain.name",
+          "equals": "cdn.contoso.com"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        customDomain:
+          name: "other.example.com"
+    want_undefined: true
+
+  # =========================================================================
+  # SKU alias — non-properties root path
+  # =========================================================================
+
+  - note: alias_sku_root_path
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/sku.name",
+          "equals": "Standard_LRS"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      sku:
+        name: "Standard_LRS"
+    want_effect: "deny"
+
+  - note: alias_sku_not_in_list
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "field": "Microsoft.Storage/storageAccounts/sku.name",
+            "in": ["Standard_LRS", "Standard_GRS"]
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      sku:
+        name: "Premium_LRS"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Encryption alias — deeply nested properties path
+  # =========================================================================
+
+  - note: alias_deep_nested_encryption
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/enableBlobEncryption",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        encryption:
+          services:
+            blob:
+              enabled: true
+    want_effect: "audit"
+
+  - note: alias_deep_nested_encryption_false
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/enableBlobEncryption",
+          "notEquals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        encryption:
+          services:
+            blob:
+              enabled: false
+    want_effect: "deny"
+
+  # =========================================================================
+  # Network ACLs alias — nested non-array path
+  # =========================================================================
+
+  - note: alias_network_acls_default_action
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/networkAcls.defaultAction",
+          "notEquals": "Deny"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        networkAcls:
+          defaultAction: "Allow"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Wildcard array alias — ipRules[*] (NOT a sub-resource; no properties flattening)
+  # =========================================================================
+
+  - note: alias_wildcard_array_ip_rules_count
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules[*]"
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        networkAcls:
+          ipRules:
+            - value: "10.0.0.0/24"
+              action: "Allow"
+    want_effect: "deny"
+
+  - note: alias_wildcard_array_ip_rules_where
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules[*]",
+            "where": {
+              "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules[*].value",
+              "equals": "10.0.0.0/24"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        networkAcls:
+          ipRules:
+            - value: "10.0.0.0/24"
+              action: "Allow"
+            - value: "192.168.1.0/24"
+              action: "Allow"
+    want_effect: "audit"
+
+  - note: alias_wildcard_array_ip_rules_empty
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules[*]"
+          },
+          "equals": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        networkAcls:
+          ipRules: []
+    want_effect: "audit"
+
+  # =========================================================================
+  # Sub-resource alias — NSG securityRules[*] (properties flattening)
+  # =========================================================================
+
+  - note: alias_sub_resource_nsg_protocol
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Network/networkSecurityGroups/securityRules[*]",
+            "where": {
+              "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].protocol",
+              "equals": "Tcp"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: "allow-ssh"
+            properties:
+              protocol: "Tcp"
+              access: "Allow"
+              direction: "Inbound"
+    want_effect: "deny"
+
+  - note: alias_sub_resource_nsg_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Network/networkSecurityGroups/securityRules[*]",
+            "where": {
+              "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].protocol",
+              "equals": "Udp"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: "allow-ssh"
+            properties:
+              protocol: "Tcp"
+              access: "Allow"
+    want_undefined: true
+
+  - note: alias_sub_resource_nsg_multiple_rules
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Network/networkSecurityGroups/securityRules[*]",
+            "where": {
+              "allOf": [
+                {
+                  "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].access",
+                  "equals": "Allow"
+                },
+                {
+                  "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].direction",
+                  "equals": "Inbound"
+                }
+              ]
+            }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: "rule1"
+            properties:
+              protocol: "Tcp"
+              access: "Allow"
+              direction: "Inbound"
+          - name: "rule2"
+            properties:
+              protocol: "Udp"
+              access: "Allow"
+              direction: "Inbound"
+          - name: "rule3"
+            properties:
+              protocol: "Tcp"
+              access: "Deny"
+              direction: "Outbound"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Child resource alias — securityRules (non-array, single rule resource)
+  # =========================================================================
+
+  - note: alias_child_resource_security_rule_access
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Network/networkSecurityGroups/securityRules"
+            },
+            {
+              "field": "Microsoft.Network/networkSecurityGroups/securityRules/access",
+              "equals": "Allow"
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups/securityRules"
+      properties:
+        access: "Allow"
+        direction: "Inbound"
+    want_effect: "deny"
+
+  - note: alias_child_resource_security_rule_direction
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Network/networkSecurityGroups/securityRules"
+            },
+            {
+              "field": "Microsoft.Network/networkSecurityGroups/securityRules/direction",
+              "equals": "Outbound"
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups/securityRules"
+      properties:
+        direction: "Inbound"
+    want_undefined: true
+
+  # =========================================================================
+  # VM alias — deeply nested storage/OS profiles
+  # =========================================================================
+
+  - note: alias_vm_hardware_profile
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Compute/virtualMachines/hardwareProfile.vmSize",
+          "equals": "Standard_D2s_v3"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      properties:
+        hardwareProfile:
+          vmSize: "Standard_D2s_v3"
+    want_effect: "audit"
+
+  - note: alias_vm_managed_disk_type
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Compute/virtualMachines/storageProfile.osDisk.managedDisk.storageAccountType",
+          "notEquals": "Premium_LRS"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      properties:
+        storageProfile:
+          osDisk:
+            managedDisk:
+              storageAccountType: "Standard_LRS"
+    want_effect: "deny"
+
+  - note: alias_vm_data_disks_wildcard
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Compute/virtualMachines/storageProfile.dataDisks[*]",
+            "where": {
+              "field": "Microsoft.Compute/virtualMachines/storageProfile.dataDisks[*].managedDisk.storageAccountType",
+              "notEquals": "Premium_LRS"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      properties:
+        storageProfile:
+          dataDisks:
+            - diskSizeGB: 128
+              managedDisk:
+                storageAccountType: "Standard_LRS"
+            - diskSizeGB: 256
+              managedDisk:
+                storageAccountType: "Premium_LRS"
+    want_effect: "deny"
+
+  - note: alias_vm_data_disks_all_premium
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Compute/virtualMachines/storageProfile.dataDisks[*]",
+            "where": {
+              "field": "Microsoft.Compute/virtualMachines/storageProfile.dataDisks[*].managedDisk.storageAccountType",
+              "notEquals": "Premium_LRS"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      properties:
+        storageProfile:
+          dataDisks:
+            - diskSizeGB: 128
+              managedDisk:
+                storageAccountType: "Premium_LRS"
+            - diskSizeGB: 256
+              managedDisk:
+                storageAccountType: "Premium_LRS"
+    want_undefined: true
+
+  # =========================================================================
+  # KeyVault alias — scalar + nested
+  # =========================================================================
+
+  - note: alias_keyvault_create_mode
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.KeyVault/vaults"
+            },
+            {
+              "field": "Microsoft.KeyVault/vaults/createMode",
+              "notEquals": "recover"
+            }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+      properties:
+        createMode: "default"
+    want_effect: "audit"
+
+  - note: alias_keyvault_recover_mode_no_match
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.KeyVault/vaults"
+            },
+            {
+              "field": "Microsoft.KeyVault/vaults/createMode",
+              "notEquals": "recover"
+            }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+      properties:
+        createMode: "recover"
+    want_undefined: true
+
+  - note: alias_keyvault_network_acls
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.KeyVault/vaults"
+            },
+            {
+              "field": "Microsoft.KeyVault/vaults/networkAcls.defaultAction",
+              "notEquals": "Deny"
+            }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+      properties:
+        networkAcls:
+          defaultAction: "Allow"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Case-insensitive alias matching
+  # =========================================================================
+
+  - note: alias_case_insensitive_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "microsoft.storage/storageaccounts/supportsHttpsTrafficOnly",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: true
+    want_effect: "deny"
+
+  - note: alias_mixed_case_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "MICROSOFT.STORAGE/STORAGEACCOUNTS/supportsHttpsTrafficOnly",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: true
+    want_effect: "deny"
+
+  # =========================================================================
+  # Multiple aliases in same condition (allOf)
+  # =========================================================================
+
+  - note: alias_multiple_aliases_allof
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Storage/storageAccounts"
+            },
+            {
+              "field": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+              "equals": true
+            },
+            {
+              "field": "Microsoft.Storage/storageAccounts/networkAcls.defaultAction",
+              "equals": "Deny"
+            }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: true
+        networkAcls:
+          defaultAction: "Deny"
+    want_effect: "audit"
+
+  - note: alias_multiple_aliases_one_fails
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Storage/storageAccounts"
+            },
+            {
+              "field": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+              "equals": true
+            },
+            {
+              "field": "Microsoft.Storage/storageAccounts/networkAcls.defaultAction",
+              "equals": "Deny"
+            }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: true
+        networkAcls:
+          defaultAction: "Allow"
+    want_undefined: true
+
+  # =========================================================================
+  # Alias with exists operator
+  # =========================================================================
+
+  - note: alias_exists_true
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/isHnsEnabled",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        isHnsEnabled: true
+    want_effect: "audit"
+
+  - note: alias_exists_false_when_missing
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/isHnsEnabled",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties: {}
+    want_effect: "audit"
+
+  - note: alias_exists_true_when_missing
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/isHnsEnabled",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties: {}
+    want_undefined: true
+
+  # =========================================================================
+  # Alias with not operator
+  # =========================================================================
+
+  - note: alias_not_operator
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "field": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+            "equals": true
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: false
+    want_effect: "deny"
+
+  - note: alias_not_operator_negation
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "field": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+            "equals": true
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: true
+    want_undefined: true
+
+  # =========================================================================
+  # Alias with contains/like operators
+  # =========================================================================
+
+  - note: alias_contains_operator
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/accessTier",
+          "contains": "Ho"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        accessTier: "Hot"
+    want_effect: "audit"
+
+  - note: alias_like_operator
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/accessTier",
+          "like": "H*"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        accessTier: "Hot"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Alias with object parent (whole object)
+  # =========================================================================
+
+  - note: alias_object_parent
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/customDomain",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        customDomain:
+          name: "cdn.contoso.com"
+    want_effect: "audit"
+
+  - note: alias_object_parent_missing
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Storage/storageAccounts/customDomain",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties: {}
+    want_effect: "audit"
+
+  # =========================================================================
+  # VM image reference alias (deep nested, no sub-resource)
+  # =========================================================================
+
+  - note: alias_vm_image_publisher
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Compute/virtualMachines/storageProfile.imageReference.publisher",
+          "equals": "Canonical"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      properties:
+        storageProfile:
+          imageReference:
+            publisher: "Canonical"
+            offer: "UbuntuServer"
+    want_effect: "audit"
+
+  - note: alias_vm_image_offer
+    policy_rule: |
+      {
+        "if": {
+          "field": "Microsoft.Compute/virtualMachines/storageProfile.imageReference.offer",
+          "notEquals": "WindowsServer"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      properties:
+        storageProfile:
+          imageReference:
+            publisher: "Canonical"
+            offer: "UbuntuServer"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Cross-resource-type alias test (SQL Server auditing)
+  # =========================================================================
+
+  - note: alias_sql_server_auditing
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Sql/servers"
+            },
+            {
+              "field": "Microsoft.Sql/servers/state",
+              "equals": "Ready"
+            }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Sql/servers"
+      properties:
+        state: "Ready"
+    want_effect: "audit"
+
+  # =========================================================================
+  # NSG sub-resource: securityRules[*].name — not under properties in ARM
+  # =========================================================================
+
+  - note: alias_nsg_rule_name_not_in_properties
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Network/networkSecurityGroups/securityRules[*]",
+            "where": {
+              "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].name",
+              "equals": "allow-rdp"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: "allow-rdp"
+            properties:
+              protocol: "Tcp"
+              access: "Allow"
+          - name: "allow-ssh"
+            properties:
+              protocol: "Tcp"
+              access: "Allow"
+    want_effect: "deny"
+
+  # =========================================================================
+  # NSG sub-resource: complex where with nested allOf/anyOf
+  # =========================================================================
+
+  - note: alias_nsg_complex_where
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Network/networkSecurityGroups/securityRules[*]",
+            "where": {
+              "allOf": [
+                {
+                  "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].access",
+                  "equals": "Allow"
+                },
+                {
+                  "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].direction",
+                  "equals": "Inbound"
+                },
+                {
+                  "anyOf": [
+                    {
+                      "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange",
+                      "equals": "3389"
+                    },
+                    {
+                      "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange",
+                      "equals": "22"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: "allow-rdp"
+            properties:
+              protocol: "Tcp"
+              access: "Allow"
+              direction: "Inbound"
+              destinationPortRange: "3389"
+          - name: "allow-https"
+            properties:
+              protocol: "Tcp"
+              access: "Allow"
+              direction: "Inbound"
+              destinationPortRange: "443"
+    want_effect: "deny"
+
+  - note: alias_nsg_complex_where_no_dangerous_ports
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Network/networkSecurityGroups/securityRules[*]",
+            "where": {
+              "allOf": [
+                {
+                  "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].access",
+                  "equals": "Allow"
+                },
+                {
+                  "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].direction",
+                  "equals": "Inbound"
+                },
+                {
+                  "anyOf": [
+                    {
+                      "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange",
+                      "equals": "3389"
+                    },
+                    {
+                      "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange",
+                      "equals": "22"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      properties:
+        securityRules:
+          - name: "allow-https"
+            properties:
+              protocol: "Tcp"
+              access: "Allow"
+              direction: "Inbound"
+              destinationPortRange: "443"
+          - name: "allow-http"
+            properties:
+              protocol: "Tcp"
+              access: "Allow"
+              direction: "Inbound"
+              destinationPortRange: "80"
+    want_undefined: true
+
+  # =========================================================================
+  # Alias combined with type gate
+  # =========================================================================
+
+  - note: alias_with_type_gate_match
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Compute/virtualMachines"
+            },
+            {
+              "field": "Microsoft.Compute/virtualMachines/hardwareProfile.vmSize",
+              "notIn": ["Standard_D2s_v3", "Standard_D4s_v3"]
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      properties:
+        hardwareProfile:
+          vmSize: "Standard_E64i_v3"
+    want_effect: "deny"
+
+  - note: alias_with_type_gate_no_match_wrong_type
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Compute/virtualMachines"
+            },
+            {
+              "field": "Microsoft.Compute/virtualMachines/hardwareProfile.vmSize",
+              "notIn": ["Standard_D2s_v3", "Standard_D4s_v3"]
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        hardwareProfile:
+          vmSize: "Standard_E64i_v3"
+    want_undefined: true
+
+  # =========================================================================
+  # Alias with greaterOrEquals / lessOrEquals number operators
+  # =========================================================================
+
+  - note: alias_numeric_greater_or_equals
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules[*]"
+          },
+          "greaterOrEquals": 3
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        networkAcls:
+          ipRules:
+            - value: "10.0.0.0/24"
+            - value: "10.0.1.0/24"
+            - value: "10.0.2.0/24"
+    want_effect: "deny"
+
+  - note: alias_numeric_less_or_equals
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Storage/storageAccounts/networkAcls.ipRules[*]"
+          },
+          "lessOrEquals": 1
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        networkAcls:
+          ipRules:
+            - value: "10.0.0.0/24"
+    want_effect: "audit"

@@ -1,0 +1,1214 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Azure Policy Scenarios with ARM-shaped resources
+#
+# These tests model real-world Azure Policy rules that enterprise customers
+# commonly deploy. Policy rules use fully-qualified alias names as required by
+# the Azure Policy language. Resources use raw ARM shapes with `properties`
+# wrappers; the normalizer flattens them before evaluation.
+
+aliases: test_aliases.json
+
+cases:
+  # =========================================================================
+  # VM SKU Restriction — Deny non-allowed VM sizes
+  # =========================================================================
+
+  - note: vm_sku_restriction_denied
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            {
+              "not": {
+                "field": "Microsoft.Compute/virtualMachines/sku.name",
+                "in": "[parameters('allowedSKUs')]"
+              }
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      allowedSKUs:
+        - "Standard_D2s_v3"
+        - "Standard_D4s_v3"
+        - "Standard_D8s_v3"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "myVM"
+      location: "eastus"
+      properties:
+        hardwareProfile:
+          vmSize: "Standard_E64i_v3"
+    want_effect: "deny"
+
+  - note: vm_sku_restriction_allowed
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            {
+              "not": {
+                "field": "Microsoft.Compute/virtualMachines/sku.name",
+                "in": "[parameters('allowedSKUs')]"
+              }
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      allowedSKUs:
+        - "Standard_D2s_v3"
+        - "Standard_D4s_v3"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "myVM"
+      location: "eastus"
+      properties:
+        hardwareProfile:
+          vmSize: "Standard_D2s_v3"
+    want_effect: ~
+
+  # =========================================================================
+  # Storage — Require blob encryption enabled
+  # =========================================================================
+
+  - note: storage_blob_encryption_required_deny
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+            {
+              "field": "Microsoft.Storage/storageAccounts/enableBlobEncryption",
+              "notEquals": true
+            }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "mystorage123"
+      location: "westus2"
+      properties:
+        encryption:
+          services:
+            blob:
+              enabled: false
+            file:
+              enabled: true
+    want_effect: "audit"
+
+  - note: storage_blob_encryption_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+            {
+              "field": "Microsoft.Storage/storageAccounts/enableBlobEncryption",
+              "notEquals": true
+            }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "mystorage123"
+      location: "westus2"
+      properties:
+        encryption:
+          services:
+            blob:
+              enabled: true
+            file:
+              enabled: true
+    want_effect: ~
+
+  # =========================================================================
+  # Key Vault — Require soft delete enabled
+  # =========================================================================
+
+  - note: keyvault_soft_delete_required
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.KeyVault/vaults" },
+            { "field": "Microsoft.KeyVault/vaults/enableSoftDelete", "notEquals": true }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+      name: "myvault"
+      location: "eastus"
+      properties:
+        enableSoftDelete: false
+        enablePurgeProtection: true
+    want_effect: "deny"
+
+  - note: keyvault_soft_delete_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.KeyVault/vaults" },
+            { "field": "Microsoft.KeyVault/vaults/enableSoftDelete", "notEquals": true }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+      name: "myvault"
+      location: "eastus"
+      properties:
+        enableSoftDelete: true
+        enablePurgeProtection: true
+    want_effect: ~
+
+  # =========================================================================
+  # Web App — Enforce minimum TLS version
+  # =========================================================================
+
+  - note: webapp_min_tls_version_denied
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Web/sites" },
+            {
+              "field": "Microsoft.Web/sites/siteConfig.minTlsVersion",
+              "less": "1.2"
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Web/sites"
+      name: "mywebapp"
+      location: "eastus"
+      kind: "app"
+      properties:
+        siteConfig:
+          minTlsVersion: "1.0"
+          ftpsState: "Disabled"
+    want_effect: "deny"
+
+  - note: webapp_min_tls_version_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Web/sites" },
+            {
+              "field": "Microsoft.Web/sites/siteConfig.minTlsVersion",
+              "less": "1.2"
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Web/sites"
+      name: "mywebapp"
+      location: "eastus"
+      kind: "app"
+      properties:
+        siteConfig:
+          minTlsVersion: "1.2"
+          ftpsState: "Disabled"
+    want_effect: ~
+
+  # =========================================================================
+  # AKS — Require RBAC enabled
+  # =========================================================================
+
+  - note: aks_rbac_required_denied
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.ContainerService/managedClusters" },
+            { "field": "Microsoft.ContainerService/managedClusters/enableRBAC", "notEquals": true }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.ContainerService/managedClusters"
+      name: "myaks"
+      location: "eastus"
+      properties:
+        enableRBAC: false
+        kubernetesVersion: "1.28.0"
+    want_effect: "deny"
+
+  - note: aks_rbac_required_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.ContainerService/managedClusters" },
+            { "field": "Microsoft.ContainerService/managedClusters/enableRBAC", "notEquals": true }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.ContainerService/managedClusters"
+      name: "myaks"
+      location: "eastus"
+      properties:
+        enableRBAC: true
+        kubernetesVersion: "1.28.0"
+    want_effect: ~
+
+  # =========================================================================
+  # Disk Encryption — Require managed disk encryption
+  # =========================================================================
+
+  - note: disk_encryption_required
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/disks" },
+            {
+              "field": "Microsoft.Compute/disks/encryptionSettingsCollection.enabled",
+              "notEquals": true
+            }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Compute/disks"
+      name: "mydisk"
+      location: "eastus"
+      sku:
+        name: "Premium_LRS"
+        tier: "Premium"
+      properties:
+        encryptionSettingsCollection:
+          enabled: false
+    want_effect: "audit"
+
+  - note: disk_encryption_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/disks" },
+            {
+              "field": "Microsoft.Compute/disks/encryptionSettingsCollection.enabled",
+              "notEquals": true
+            }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Compute/disks"
+      name: "mydisk"
+      location: "eastus"
+      sku:
+        name: "Premium_LRS"
+        tier: "Premium"
+      properties:
+        encryptionSettingsCollection:
+          enabled: true
+    want_effect: ~
+
+  # =========================================================================
+  # Storage — Network ACLs default deny
+  # =========================================================================
+
+  - note: storage_network_acls_default_deny
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+            { "field": "Microsoft.Storage/storageAccounts/networkAcls.defaultAction", "notEquals": "Deny" }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "mystorage123"
+      location: "westus2"
+      sku:
+        name: "Standard_LRS"
+        tier: "Standard"
+      properties:
+        networkAcls:
+          defaultAction: "Allow"
+          bypass: "AzureServices"
+          ipRules: []
+          virtualNetworkRules: []
+    want_effect: "audit"
+
+  - note: storage_network_acls_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+            { "field": "Microsoft.Storage/storageAccounts/networkAcls.defaultAction", "notEquals": "Deny" }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "mystorage123"
+      location: "westus2"
+      sku:
+        name: "Standard_LRS"
+        tier: "Standard"
+      properties:
+        networkAcls:
+          defaultAction: "Deny"
+          bypass: "AzureServices"
+          ipRules:
+            - value: "10.0.0.0/24"
+              action: "Allow"
+    want_effect: ~
+
+  # =========================================================================
+  # NSG — Deny SSH from Internet (realistic multi-condition)
+  # =========================================================================
+
+  - note: nsg_deny_ssh_from_internet
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Network/networkSecurityGroups" },
+            {
+              "count": {
+                "field": "Microsoft.Network/networkSecurityGroups/securityRules[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].access", "equals": "Allow" },
+                    { "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].direction", "equals": "Inbound" },
+                    {
+                      "anyOf": [
+                        { "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange", "equals": "22" },
+                        { "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange", "equals": "*" }
+                      ]
+                    },
+                    {
+                      "anyOf": [
+                        { "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix", "equals": "*" },
+                        { "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix", "equals": "Internet" },
+                        { "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix", "equals": "0.0.0.0/0" }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      name: "myNsg"
+      location: "eastus"
+      properties:
+        securityRules:
+          - name: "AllowHTTPS"
+            properties:
+              access: "Allow"
+              direction: "Inbound"
+              protocol: "Tcp"
+              destinationPortRange: "443"
+              sourceAddressPrefix: "*"
+              priority: 100
+          - name: "AllowSSH"
+            properties:
+              access: "Allow"
+              direction: "Inbound"
+              protocol: "Tcp"
+              destinationPortRange: "22"
+              sourceAddressPrefix: "Internet"
+              priority: 200
+    want_effect: "deny"
+
+  - note: nsg_deny_ssh_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Network/networkSecurityGroups" },
+            {
+              "count": {
+                "field": "Microsoft.Network/networkSecurityGroups/securityRules[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].access", "equals": "Allow" },
+                    { "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].direction", "equals": "Inbound" },
+                    {
+                      "anyOf": [
+                        { "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange", "equals": "22" },
+                        { "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange", "equals": "*" }
+                      ]
+                    },
+                    {
+                      "anyOf": [
+                        { "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix", "equals": "*" },
+                        { "field": "Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix", "equals": "Internet" }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      name: "myNsg"
+      location: "eastus"
+      properties:
+        securityRules:
+          - name: "AllowHTTPS"
+            properties:
+              access: "Allow"
+              direction: "Inbound"
+              protocol: "Tcp"
+              destinationPortRange: "443"
+              sourceAddressPrefix: "*"
+              priority: 100
+          - name: "AllowSSHRestricted"
+            properties:
+              access: "Allow"
+              direction: "Inbound"
+              protocol: "Tcp"
+              destinationPortRange: "22"
+              sourceAddressPrefix: "10.0.0.0/24"
+              priority: 200
+    want_effect: ~
+
+  # =========================================================================
+  # VM — Require managed disks (check storageProfile)
+  # =========================================================================
+
+  - note: vm_require_managed_disks
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            {
+              "count": {
+                "field": "Microsoft.Compute/virtualMachines/storageProfile.dataDisks[*]",
+                "where": {
+                  "field": "Microsoft.Compute/virtualMachines/storageProfile.dataDisks[*].managedDisk.id",
+                  "exists": false
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "myVM"
+      location: "eastus"
+      sku:
+        name: "Standard_D4s_v3"
+      properties:
+        storageProfile:
+          osDisk:
+            osType: "Linux"
+            managedDisk:
+              storageAccountType: "Premium_LRS"
+          dataDisks:
+            - lun: 0
+              name: "datadisk0"
+              managedDisk:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/disks/datadisk0"
+                storageAccountType: "Premium_LRS"
+            - lun: 1
+              name: "datadisk1"
+              vhd:
+                uri: "https://mystorage.blob.core.windows.net/vhds/datadisk1.vhd"
+    want_effect: "deny"
+
+  - note: vm_all_managed_disks_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            {
+              "count": {
+                "field": "Microsoft.Compute/virtualMachines/storageProfile.dataDisks[*]",
+                "where": {
+                  "field": "Microsoft.Compute/virtualMachines/storageProfile.dataDisks[*].managedDisk.id",
+                  "exists": false
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "myVM"
+      location: "eastus"
+      properties:
+        storageProfile:
+          dataDisks:
+            - lun: 0
+              name: "datadisk0"
+              managedDisk:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/disks/datadisk0"
+            - lun: 1
+              name: "datadisk1"
+              managedDisk:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/disks/datadisk1"
+    want_effect: ~
+
+  # =========================================================================
+  # Allowed resource types — deny everything not in allow-list
+  # =========================================================================
+
+  - note: allowed_resource_types_denied
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "field": "type",
+            "in": "[parameters('allowedTypes')]"
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      allowedTypes:
+        - "Microsoft.Compute/virtualMachines"
+        - "Microsoft.Storage/storageAccounts"
+        - "Microsoft.Network/networkSecurityGroups"
+        - "Microsoft.Network/virtualNetworks"
+    resource:
+      type: "Microsoft.Sql/servers"
+      name: "myserver"
+      location: "eastus"
+    want_effect: "deny"
+
+  - note: allowed_resource_types_allowed
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "field": "type",
+            "in": "[parameters('allowedTypes')]"
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      allowedTypes:
+        - "Microsoft.Compute/virtualMachines"
+        - "Microsoft.Storage/storageAccounts"
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "mystorage"
+      location: "eastus"
+    want_effect: ~
+
+  # =========================================================================
+  # Multi-tag requirement with value count + current() + concat
+  # =========================================================================
+
+  - note: multi_tag_requirement_missing_tags
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "notEquals": "Microsoft.Resources/subscriptions" },
+            {
+              "count": {
+                "value": "[parameters('requiredTags')]",
+                "name": "tagName",
+                "where": {
+                  "field": "[concat('tags[', current('tagName'), ']')]",
+                  "exists": true
+                }
+              },
+              "notEquals": "[length(parameters('requiredTags'))]"
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      requiredTags:
+        - "Environment"
+        - "CostCenter"
+        - "Owner"
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "mystorage"
+      location: "eastus"
+      tags:
+        Environment: "Production"
+        CostCenter: "12345"
+    want_effect: "deny"
+
+  - note: multi_tag_requirement_all_present
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "notEquals": "Microsoft.Resources/subscriptions" },
+            {
+              "count": {
+                "value": "[parameters('requiredTags')]",
+                "name": "tagName",
+                "where": {
+                  "field": "[concat('tags[', current('tagName'), ']')]",
+                  "exists": true
+                }
+              },
+              "notEquals": "[length(parameters('requiredTags'))]"
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      requiredTags:
+        - "Environment"
+        - "CostCenter"
+        - "Owner"
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "mystorage"
+      location: "eastus"
+      tags:
+        Environment: "Production"
+        CostCenter: "12345"
+        Owner: "teamA"
+    want_effect: ~
+
+  # =========================================================================
+  # Storage — Require minimum TLS version
+  # =========================================================================
+
+  - note: storage_min_tls_version_denied
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+            {
+              "anyOf": [
+                { "field": "Microsoft.Storage/storageAccounts/minimumTlsVersion", "exists": false },
+                { "field": "Microsoft.Storage/storageAccounts/minimumTlsVersion", "less": "TLS1_2" }
+              ]
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "mystorage"
+      location: "eastus"
+      sku:
+        name: "Standard_LRS"
+      properties:
+        minimumTlsVersion: "TLS1_0"
+        supportsHttpsTrafficOnly: true
+    want_effect: "deny"
+
+  - note: storage_min_tls_version_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+            {
+              "anyOf": [
+                { "field": "Microsoft.Storage/storageAccounts/minimumTlsVersion", "exists": false },
+                { "field": "Microsoft.Storage/storageAccounts/minimumTlsVersion", "less": "TLS1_2" }
+              ]
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "mystorage"
+      location: "eastus"
+      sku:
+        name: "Standard_LRS"
+      properties:
+        minimumTlsVersion: "TLS1_2"
+        supportsHttpsTrafficOnly: true
+    want_effect: ~
+
+  # =========================================================================
+  # SQL Server — Require TLS 1.2
+  # =========================================================================
+
+  - note: sql_server_min_tls_denied
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Sql/servers" },
+            { "field": "Microsoft.Sql/servers/minimalTlsVersion", "less": "1.2" }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Sql/servers"
+      name: "myserver"
+      location: "eastus"
+      kind: "v12.0"
+      properties:
+        minimalTlsVersion: "1.0"
+        administratorLogin: "sqladmin"
+    want_effect: "audit"
+
+  - note: sql_server_min_tls_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Sql/servers" },
+            { "field": "Microsoft.Sql/servers/minimalTlsVersion", "less": "1.2" }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Sql/servers"
+      name: "myserver"
+      location: "eastus"
+      kind: "v12.0"
+      properties:
+        minimalTlsVersion: "1.2"
+        administratorLogin: "sqladmin"
+    want_effect: ~
+
+  # =========================================================================
+  # Combined: type check + parameterized condition + expression
+  # Deny storage accounts with wrong naming convention
+  # =========================================================================
+
+  - note: storage_naming_convention_denied
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+            {
+              "not": {
+                "field": "name",
+                "like": "[concat(parameters('prefix'), '*')]"
+              }
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      prefix: "sa"
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "mystorageaccount"
+      location: "eastus"
+    want_effect: "deny"
+
+  - note: storage_naming_convention_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+            {
+              "not": {
+                "field": "name",
+                "like": "[concat(parameters('prefix'), '*')]"
+              }
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      prefix: "sa"
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "saprodeast01"
+      location: "eastus"
+    want_effect: ~
+
+  # =========================================================================
+  # NIC — Deny public IP association (count over ipConfigurations)
+  # =========================================================================
+
+  - note: nic_deny_public_ip
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Network/networkInterfaces" },
+            {
+              "count": {
+                "field": "Microsoft.Network/networkInterfaces/ipConfigurations[*]",
+                "where": {
+                  "field": "Microsoft.Network/networkInterfaces/ipConfigurations[*].publicIPAddress.id",
+                  "exists": true
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "myNic"
+      location: "eastus"
+      properties:
+        ipConfigurations:
+          - name: "ipconfig1"
+            properties:
+              privateIPAddress: "10.0.0.4"
+              privateIPAllocationMethod: "Dynamic"
+              subnet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/subnet1"
+              publicIPAddress:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/publicIPAddresses/pip1"
+    want_effect: "deny"
+
+  - note: nic_no_public_ip_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Network/networkInterfaces" },
+            {
+              "count": {
+                "field": "Microsoft.Network/networkInterfaces/ipConfigurations[*]",
+                "where": {
+                  "field": "Microsoft.Network/networkInterfaces/ipConfigurations[*].publicIPAddress.id",
+                  "exists": true
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkInterfaces"
+      name: "myNic"
+      location: "eastus"
+      properties:
+        ipConfigurations:
+          - name: "ipconfig1"
+            properties:
+              privateIPAddress: "10.0.0.4"
+              privateIPAllocationMethod: "Dynamic"
+              subnet:
+                id: "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/subnet1"
+    want_effect: ~
+
+  # =========================================================================
+  # API Version — Require minimum API version for storage accounts
+  # =========================================================================
+
+  - note: storage_require_min_api_version_denied
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+            { "field": "apiVersion", "less": "2019-06-01" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    api_version: "2018-11-01"
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "mystorage"
+      location: "eastus"
+      properties:
+        supportsHttpsTrafficOnly: true
+    want_effect: "deny"
+
+  - note: storage_require_min_api_version_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+            { "field": "apiVersion", "less": "2019-06-01" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    api_version: "2023-01-01"
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "mystorage"
+      location: "eastus"
+      properties:
+        supportsHttpsTrafficOnly: true
+    want_effect: ~
+
+  # =========================================================================
+  # API Version — Deny old SQL Server API versions
+  # =========================================================================
+
+  - note: sql_deny_old_api_version
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Sql/servers" },
+            { "field": "apiVersion", "less": "2020-01-01" }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    api_version: "2019-06-01-preview"
+    resource:
+      type: "Microsoft.Sql/servers"
+      name: "myserver"
+      location: "eastus"
+      kind: "v12.0"
+      properties:
+        minimalTlsVersion: "1.2"
+    want_effect: "audit"
+
+  - note: sql_deny_old_api_version_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Sql/servers" },
+            { "field": "apiVersion", "less": "2020-01-01" }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    api_version: "2023-05-01-preview"
+    resource:
+      type: "Microsoft.Sql/servers"
+      name: "myserver"
+      location: "eastus"
+      kind: "v12.0"
+      properties:
+        minimalTlsVersion: "1.2"
+    want_effect: ~
+
+  # =========================================================================
+  # API Version + properties — VM with api_version and nested check
+  # =========================================================================
+
+  - note: vm_old_api_with_encryption_denied
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            { "field": "apiVersion", "less": "2020-06-01" },
+            {
+              "field": "Microsoft.Compute/virtualMachines/storageProfile.osDisk.managedDisk.storageAccountType",
+              "notEquals": "Premium_LRS"
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    api_version: "2019-07-01"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "myVM"
+      location: "eastus"
+      sku:
+        name: "Standard_D4s_v3"
+      properties:
+        storageProfile:
+          osDisk:
+            osType: "Linux"
+            managedDisk:
+              storageAccountType: "Standard_LRS"
+    want_effect: "deny"
+
+  - note: vm_new_api_with_encryption_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            { "field": "apiVersion", "less": "2020-06-01" },
+            {
+              "field": "Microsoft.Compute/virtualMachines/storageProfile.osDisk.managedDisk.storageAccountType",
+              "notEquals": "Premium_LRS"
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    api_version: "2023-03-01"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      name: "myVM"
+      location: "eastus"
+      sku:
+        name: "Standard_D4s_v3"
+      properties:
+        storageProfile:
+          osDisk:
+            osType: "Linux"
+            managedDisk:
+              storageAccountType: "Standard_LRS"
+    want_effect: ~
+
+  # =========================================================================
+  # API Version — Key Vault require recent API version
+  # =========================================================================
+
+  - note: keyvault_require_recent_api_version_denied
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.KeyVault/vaults" },
+            {
+              "anyOf": [
+                { "field": "apiVersion", "exists": false },
+                { "field": "apiVersion", "less": "2021-06-01-preview" }
+              ]
+            }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    api_version: "2019-09-01"
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+      name: "myvault"
+      location: "eastus"
+      properties:
+        enableSoftDelete: true
+        enablePurgeProtection: true
+    want_effect: "audit"
+
+  - note: keyvault_require_recent_api_version_compliant
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.KeyVault/vaults" },
+            {
+              "anyOf": [
+                { "field": "apiVersion", "exists": false },
+                { "field": "apiVersion", "less": "2021-06-01-preview" }
+              ]
+            }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    api_version: "2023-07-01"
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+      name: "myvault"
+      location: "eastus"
+      properties:
+        enableSoftDelete: true
+        enablePurgeProtection: true
+    want_effect: ~
+
+  # =========================================================================
+  # API Version — Web app deny old API versions with TLS check
+  # =========================================================================
+
+  - note: webapp_old_api_tls_denied
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Web/sites" },
+            { "field": "apiVersion", "lessOrEquals": "2018-11-01" },
+            {
+              "field": "Microsoft.Web/sites/siteConfig.minTlsVersion",
+              "less": "1.2"
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    api_version: "2018-02-01"
+    resource:
+      type: "Microsoft.Web/sites"
+      name: "mywebapp"
+      location: "eastus"
+      kind: "app"
+      properties:
+        siteConfig:
+          minTlsVersion: "1.0"
+    want_effect: "deny"
+
+  - note: webapp_new_api_tls_skip
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Web/sites" },
+            { "field": "apiVersion", "lessOrEquals": "2018-11-01" },
+            {
+              "field": "Microsoft.Web/sites/siteConfig.minTlsVersion",
+              "less": "1.2"
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    api_version: "2023-01-01"
+    resource:
+      type: "Microsoft.Web/sites"
+      name: "mywebapp"
+      location: "eastus"
+      kind: "app"
+      properties:
+        siteConfig:
+          minTlsVersion: "1.0"
+    want_effect: ~

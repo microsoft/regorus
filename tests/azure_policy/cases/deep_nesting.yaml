@@ -1,0 +1,684 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Deep Nesting & Edge-Case Test Suite
+# Tests deeply nested logical combinators, nested ARM expressions,
+# nested count loops, and edge cases around condition-no-match paths.
+
+cases:
+  # =========================================================================
+  # Deep logical combinator nesting (4+ levels)
+  # =========================================================================
+
+  - note: four_level_nesting
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "anyOf": [
+                {
+                  "not": {
+                    "allOf": [
+                      { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+                      { "field": "location", "equals": "westus" }
+                    ]
+                  }
+                },
+                {
+                  "field": "kind", "equals": "linux"
+                }
+              ]
+            },
+            { "field": "name", "notEquals": "" }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      location: "eastus"
+      kind: "windows"
+      name: "my-vm"
+    want_effect: "audit"
+
+  - note: four_level_nesting_no_match
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "anyOf": [
+                {
+                  "not": {
+                    "allOf": [
+                      { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+                      { "field": "location", "equals": "eastus" }
+                    ]
+                  }
+                },
+                {
+                  "field": "kind", "equals": "linux"
+                }
+              ]
+            },
+            { "field": "name", "notEquals": "" }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      location: "eastus"
+      kind: "windows"
+      name: "my-vm"
+    want_undefined: true
+
+  - note: five_level_nesting
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "not": {
+                      "allOf": [
+                        { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+                        { "field": "properties.supportsHttpsTrafficOnly", "equals": true }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      properties:
+        supportsHttpsTrafficOnly: true
+    want_effect: "deny"
+
+  # =========================================================================
+  # Deeply nested ARM template expressions
+  # =========================================================================
+
+  - note: nested_toLower_concat
+    policy_rule: |
+      {
+        "if": {
+          "value": "[toLower(concat(parameters('prefix'), '-', field('name')))]",
+          "equals": "prod-myvm"
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      prefix: "PROD"
+    resource:
+      name: "MYVM"
+    want_effect: "audit"
+
+  - note: nested_if_equals_contains
+    policy_rule: |
+      {
+        "if": {
+          "value": "[if(contains(field('location'), 'us'), 'allowed', 'blocked')]",
+          "equals": "blocked"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "northeurope"
+    want_effect: "deny"
+
+  - note: nested_if_equals_allowed
+    policy_rule: |
+      {
+        "if": {
+          "value": "[if(contains(field('location'), 'us'), 'allowed', 'blocked')]",
+          "equals": "blocked"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "eastus"
+    want_undefined: true
+
+  - note: nested_length_of_concat
+    policy_rule: |
+      {
+        "if": {
+          "value": "[length(concat(parameters('a'), parameters('b')))]",
+          "greater": 6
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      a: "hello"
+      b: "world"
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: nested_add_length_length
+    policy_rule: |
+      {
+        "if": {
+          "value": "[add(length(parameters('list1')), length(parameters('list2')))]",
+          "equals": 5
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      list1: ["a", "b"]
+      list2: ["c", "d", "e"]
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: triple_nested_replace_toLower
+    policy_rule: |
+      {
+        "if": {
+          "value": "[replace(toLower(field('name')), '-', '_')]",
+          "equals": "my_vm"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      name: "My-VM"
+    want_effect: "audit"
+
+  - note: triple_nested_substring_concat
+    policy_rule: |
+      {
+        "if": {
+          "value": "[substring(concat(parameters('prefix'), '-', field('name')), 0, 4)]",
+          "equals": "prod"
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      prefix: "prod"
+    resource:
+      name: "myvm"
+    want_effect: "audit"
+
+  # =========================================================================
+  # Count inside anyOf (not just allOf)
+  # =========================================================================
+
+  - note: count_inside_anyOf
+    policy_rule: |
+      {
+        "if": {
+          "anyOf": [
+            {
+              "count": {
+                "field": "securityRules[*]",
+                "where": {
+                  "field": "securityRules[*].access",
+                  "equals": "Allow"
+                }
+              },
+              "greater": 5
+            },
+            {
+              "field": "type",
+              "equals": "something-else"
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      securityRules:
+        - { access: "Allow" }
+        - { access: "Allow" }
+        - { access: "Allow" }
+        - { access: "Allow" }
+        - { access: "Allow" }
+        - { access: "Allow" }
+    want_effect: "deny"
+
+  # =========================================================================
+  # Count edge cases
+  # =========================================================================
+
+  - note: field_count_empty_array
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]"
+          },
+          "equals": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      items: []
+    want_effect: "audit"
+
+  - note: field_count_where_matches_none
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "securityRules[*]",
+            "where": {
+              "field": "securityRules[*].access",
+              "equals": "SuperAllow"
+            }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      securityRules:
+        - { access: "Allow" }
+        - { access: "Deny" }
+    want_effect: "audit"
+
+  - note: field_count_where_matches_all
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "field": "items[*].enabled",
+              "equals": true
+            }
+          },
+          "equals": 3
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      items:
+        - { enabled: true }
+        - { enabled: true }
+        - { enabled: true }
+    want_effect: "audit"
+
+  - note: value_count_empty_parameter_array
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('emptyList')]"
+          },
+          "equals": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      emptyList: []
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: value_count_greater_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": ["a", "b"]
+          },
+          "greater": 5
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "any"
+    want_undefined: true
+
+  # =========================================================================
+  # Count with deeply nested where clauses
+  # =========================================================================
+
+  - note: count_where_allOf_nested_anyOf
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "rules[*]",
+            "where": {
+              "allOf": [
+                { "field": "rules[*].enabled", "equals": true },
+                {
+                  "anyOf": [
+                    { "field": "rules[*].priority", "equals": "high" },
+                    { "field": "rules[*].priority", "equals": "critical" }
+                  ]
+                }
+              ]
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      rules:
+        - { enabled: true, priority: "low" }
+        - { enabled: true, priority: "critical" }
+        - { enabled: false, priority: "high" }
+    want_effect: "deny"
+
+  - note: count_where_not_nested
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "not": {
+                "anyOf": [
+                  { "field": "items[*].status", "equals": "approved" },
+                  { "field": "items[*].status", "equals": "pending" }
+                ]
+              }
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { status: "approved" }
+        - { status: "rejected" }
+        - { status: "pending" }
+    want_effect: "deny"
+
+  # =========================================================================
+  # Operators with missing/null fields
+  # =========================================================================
+
+  - note: greater_on_missing_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.missingProp",
+          "greater": 10
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties: {}
+    want_undefined: true
+
+  - note: less_on_missing_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.missingProp",
+          "less": 100
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties: {}
+    want_undefined: true
+
+  - note: contains_on_missing_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.missingProp",
+          "contains": "anything"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties: {}
+    want_undefined: true
+
+  - note: in_on_missing_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.missingProp",
+          "in": ["a", "b", "c"]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties: {}
+    want_undefined: true
+
+  - note: like_on_missing_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.missingProp",
+          "like": "any*"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties: {}
+    want_undefined: true
+
+  - note: match_on_missing_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.missingProp",
+          "match": "test-##"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties: {}
+    want_undefined: true
+
+  - note: notEquals_on_missing_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.missingProp",
+          "notEquals": "something"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties: {}
+    want_effect: "audit"
+
+  - note: notIn_on_missing_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.missingProp",
+          "notIn": ["a", "b"]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties: {}
+    want_effect: "audit"
+
+  - note: exists_true_on_missing_field
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.missingProp",
+          "exists": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties: {}
+    want_undefined: true
+
+  # =========================================================================
+  # ARM expression functions: equals() and contains() as function calls
+  # =========================================================================
+
+  - note: expr_func_equals
+    policy_rule: |
+      {
+        "if": {
+          "value": "[if(equals(field('type'), 'Microsoft.Compute/virtualMachines'), 'vm', 'other')]",
+          "equals": "vm"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "audit"
+
+  - note: expr_func_contains_array
+    policy_rule: |
+      {
+        "if": {
+          "value": "[if(contains(parameters('allowedTypes'), field('type')), 'yes', 'no')]",
+          "equals": "no"
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      allowedTypes:
+        - "Microsoft.Storage/storageAccounts"
+        - "Microsoft.Compute/virtualMachines"
+    resource:
+      type: "Microsoft.Network/virtualNetworks"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Type coercion edge cases: greaterOrEquals, lessOrEquals, notEquals, notIn
+  # =========================================================================
+
+  - note: coercion_notEquals_string_number
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.port",
+          "notEquals": 443
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        port: "80"
+    want_effect: "deny"
+
+  - note: coercion_greaterOrEquals_string_number
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.port",
+          "greaterOrEquals": 80
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        port: "80"
+    want_effect: "deny"
+
+  - note: coercion_lessOrEquals_string_number
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.port",
+          "lessOrEquals": 443
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        port: "80"
+    want_effect: "deny"
+
+  - note: coercion_notIn_mixed_types
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.port",
+          "notIn": [80, 443]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        port: "8080"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Complex real-world: multiple count + combinator + expression
+  # =========================================================================
+
+  - note: complex_nsg_with_tag_and_count
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Network/networkSecurityGroups" },
+            {
+              "not": {
+                "field": "tags.exception",
+                "equals": "true"
+              }
+            },
+            {
+              "count": {
+                "field": "securityRules[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "securityRules[*].access", "equals": "Allow" },
+                    { "field": "securityRules[*].direction", "equals": "Inbound" },
+                    {
+                      "anyOf": [
+                        { "field": "securityRules[*].sourceAddressPrefix", "equals": "*" },
+                        { "field": "securityRules[*].sourceAddressPrefix", "equals": "Internet" }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups"
+      tags:
+        environment: "prod"
+      securityRules:
+        - { access: "Allow", direction: "Inbound", sourceAddressPrefix: "Internet" }
+        - { access: "Deny", direction: "Outbound", sourceAddressPrefix: "10.0.0.0/8" }
+    want_effect: "deny"
+
+  - note: complex_value_count_with_expr_where
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('requiredPorts')]",
+            "name": "port",
+            "where": {
+              "value": "[current('port')]",
+              "greater": 1024
+            }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "audit" }
+      }
+    parameters:
+      requiredPorts: [80, 8080, 9090]
+    resource:
+      type: "any"
+    want_effect: "audit"

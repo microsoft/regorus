@@ -1,0 +1,344 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Logical Combinators Test Suite
+# Tests allOf, anyOf, not, and nested combinations.
+
+cases:
+  # =========================================================================
+  # allOf
+  # =========================================================================
+
+  - note: allOf_two_conditions
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            { "field": "location", "equals": "eastus" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      location: "eastus"
+    want_effect: "deny"
+
+  - note: allOf_partial_match
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            { "field": "location", "equals": "westus" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      location: "eastus"
+    want_undefined: true
+
+  - note: allOf_three_conditions
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            { "field": "location", "equals": "eastus" },
+            { "field": "name", "contains": "prod" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      location: "eastus"
+      name: "my-prod-vm"
+    want_effect: "deny"
+
+  - note: allOf_single_condition
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "deny"
+
+  - note: allOf_empty_array
+    policy_rule: |
+      {
+        "if": {
+          "allOf": []
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "anything"
+    want_effect: "deny"
+
+  # =========================================================================
+  # anyOf
+  # =========================================================================
+
+  - note: anyOf_first_matches
+    policy_rule: |
+      {
+        "if": {
+          "anyOf": [
+            { "field": "location", "equals": "eastus" },
+            { "field": "location", "equals": "westus" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "eastus"
+    want_effect: "deny"
+
+  - note: anyOf_second_matches
+    policy_rule: |
+      {
+        "if": {
+          "anyOf": [
+            { "field": "location", "equals": "eastus" },
+            { "field": "location", "equals": "westus" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "westus"
+    want_effect: "deny"
+
+  - note: anyOf_no_match
+    policy_rule: |
+      {
+        "if": {
+          "anyOf": [
+            { "field": "location", "equals": "eastus" },
+            { "field": "location", "equals": "westus" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "northeurope"
+    want_undefined: true
+
+  - note: anyOf_three_options
+    policy_rule: |
+      {
+        "if": {
+          "anyOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachineScaleSets" },
+            { "field": "type", "equals": "Microsoft.Compute/disks" }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.Compute/disks"
+    want_effect: "audit"
+
+  # =========================================================================
+  # not
+  # =========================================================================
+
+  - note: not_condition
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "field": "type",
+            "equals": "Microsoft.Compute/virtualMachines"
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+    want_effect: "deny"
+
+  - note: not_condition_no_match
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "field": "type",
+            "equals": "Microsoft.Compute/virtualMachines"
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_undefined: true
+
+  - note: not_allOf
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "allOf": [
+              { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+              { "field": "location", "equals": "eastus" }
+            ]
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      location: "westus"
+    want_effect: "deny"
+
+  - note: not_anyOf
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "anyOf": [
+              { "field": "location", "equals": "eastus" },
+              { "field": "location", "equals": "westus" }
+            ]
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "northeurope"
+    want_effect: "deny"
+
+  # =========================================================================
+  # Nested combinations
+  # =========================================================================
+
+  - note: allOf_with_nested_anyOf
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            {
+              "anyOf": [
+                { "field": "location", "equals": "eastus" },
+                { "field": "location", "equals": "westus" }
+              ]
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      location: "westus"
+    want_effect: "deny"
+
+  - note: anyOf_with_nested_allOf
+    policy_rule: |
+      {
+        "if": {
+          "anyOf": [
+            {
+              "allOf": [
+                { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+                { "field": "location", "equals": "eastus" }
+              ]
+            },
+            {
+              "allOf": [
+                { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+                { "field": "location", "equals": "westus" }
+              ]
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+      location: "westus"
+    want_effect: "deny"
+
+  - note: allOf_with_not
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            {
+              "not": {
+                "field": "location",
+                "equals": "eastus"
+              }
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+      location: "westus"
+    want_effect: "deny"
+
+  - note: deeply_nested_combinators
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Network/networkSecurityGroups/securityRules" },
+            {
+              "not": {
+                "anyOf": [
+                  {
+                    "allOf": [
+                      { "field": "properties.protocol", "equals": "TCP" },
+                      { "field": "properties.destinationPortRange", "in": ["443", "8443"] }
+                    ]
+                  },
+                  {
+                    "allOf": [
+                      { "field": "properties.protocol", "equals": "UDP" },
+                      { "field": "properties.destinationPortRange", "equals": "53" }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Network/networkSecurityGroups/securityRules"
+      properties:
+        protocol: "TCP"
+        destinationPortRange: "80"
+    want_effect: "deny"
+
+  - note: double_negation
+    policy_rule: |
+      {
+        "if": {
+          "not": {
+            "not": {
+              "field": "type",
+              "equals": "Microsoft.Compute/virtualMachines"
+            }
+          }
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "deny"

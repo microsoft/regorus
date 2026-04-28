@@ -1,0 +1,364 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Date/Time ARM template functions + ipRangeContains tests
+#
+# Tests: utcNow, dateTimeAdd, dateTimeFromEpoch, dateTimeToEpoch, addDays,
+#        ipRangeContains
+
+cases:
+  # ── utcNow ───────────────────────────────────────────────────────────
+
+  - note: utcNow_returns_context_timestamp
+    policy_rule: |
+      {
+        "if": {
+          "value": "[utcNow()]",
+          "equals": "2025-02-20T12:00:00Z"
+        },
+        "then": { "effect": "audit" }
+      }
+    context:
+      utcNow: "2025-02-20T12:00:00Z"
+      resourceGroup:
+        name: myRG
+        location: eastus
+      subscription:
+        subscriptionId: "00000000-0000-0000-0000-000000000000"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "audit"
+
+  - note: utcNow_in_comparison
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+            { "value": "[utcNow()]", "greater": "2024-01-01T00:00:00Z" }
+          ]
+        },
+        "then": { "effect": "audit" }
+      }
+    context:
+      utcNow: "2025-02-20T12:00:00Z"
+      resourceGroup:
+        name: myRG
+        location: eastus
+      subscription:
+        subscriptionId: "00000000-0000-0000-0000-000000000000"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_effect: "audit"
+
+  # ── dateTimeAdd ──────────────────────────────────────────────────────
+
+  - note: dateTimeAdd_P1D
+    policy_rule: |
+      {
+        "if": {
+          "value": "[dateTimeAdd('2024-01-15T12:00:00Z', 'P1D')]",
+          "equals": "2024-01-16T12:00:00Z"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: dateTimeAdd_PT2H
+    policy_rule: |
+      {
+        "if": {
+          "value": "[dateTimeAdd('2024-01-15T10:00:00Z', 'PT2H')]",
+          "equals": "2024-01-15T12:00:00Z"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: dateTimeAdd_negative_duration
+    policy_rule: |
+      {
+        "if": {
+          "value": "[dateTimeAdd('2024-01-15T12:00:00Z', '-P1D')]",
+          "equals": "2024-01-14T12:00:00Z"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: dateTimeAdd_complex_P1DT2H30M
+    policy_rule: |
+      {
+        "if": {
+          "value": "[dateTimeAdd('2024-01-15T10:00:00Z', 'P1DT2H30M')]",
+          "equals": "2024-01-16T12:30:00Z"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # ── dateTimeFromEpoch ────────────────────────────────────────────────
+
+  - note: dateTimeFromEpoch_basic
+    policy_rule: |
+      {
+        "if": {
+          "value": "[dateTimeFromEpoch(1705312800)]",
+          "equals": "2024-01-15T10:00:00Z"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: dateTimeFromEpoch_zero
+    policy_rule: |
+      {
+        "if": {
+          "value": "[dateTimeFromEpoch(0)]",
+          "equals": "1970-01-01T00:00:00Z"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # ── dateTimeToEpoch ──────────────────────────────────────────────────
+
+  - note: dateTimeToEpoch_basic
+    policy_rule: |
+      {
+        "if": {
+          "value": "[dateTimeToEpoch('2024-01-15T10:00:00Z')]",
+          "equals": 1705312800
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: dateTimeToEpoch_zero
+    policy_rule: |
+      {
+        "if": {
+          "value": "[dateTimeToEpoch('1970-01-01T00:00:00Z')]",
+          "equals": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: dateTimeToEpoch_roundtrip
+    policy_rule: |
+      {
+        "if": {
+          "value": "[dateTimeToEpoch(dateTimeFromEpoch(1705312800))]",
+          "equals": 1705312800
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # ── addDays ──────────────────────────────────────────────────────────
+
+  - note: addDays_positive
+    policy_rule: |
+      {
+        "if": {
+          "value": "[addDays('2024-01-15T12:00:00Z', 5)]",
+          "equals": "2024-01-20T12:00:00Z"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: addDays_negative
+    policy_rule: |
+      {
+        "if": {
+          "value": "[addDays('2024-01-15T12:00:00Z', -3)]",
+          "equals": "2024-01-12T12:00:00Z"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: addDays_cross_month
+    policy_rule: |
+      {
+        "if": {
+          "value": "[addDays('2024-01-30T00:00:00Z', 5)]",
+          "equals": "2024-02-04T00:00:00Z"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: addDays_with_utcNow
+    policy_rule: |
+      {
+        "if": {
+          "value": "[addDays(utcNow(), -1)]",
+          "equals": "2025-02-19T12:00:00Z"
+        },
+        "then": { "effect": "audit" }
+      }
+    context:
+      utcNow: "2025-02-20T12:00:00Z"
+      resourceGroup:
+        name: myRG
+        location: eastus
+      subscription:
+        subscriptionId: "00000000-0000-0000-0000-000000000000"
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  # ── ipRangeContains ──────────────────────────────────────────────────
+
+  - note: ipRangeContains_ip_in_range
+    policy_rule: |
+      {
+        "if": {
+          "value": "[ipRangeContains('10.0.0.0/24', '10.0.0.5')]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+    want_effect: "audit"
+
+  - note: ipRangeContains_ip_not_in_range
+    policy_rule: |
+      {
+        "if": {
+          "value": "[ipRangeContains('10.0.0.0/24', '10.0.1.5')]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+    want_undefined: true
+
+  - note: ipRangeContains_subnet_contained
+    policy_rule: |
+      {
+        "if": {
+          "value": "[ipRangeContains('10.0.0.0/16', '10.0.1.0/24')]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+    want_effect: "audit"
+
+  - note: ipRangeContains_subnet_not_contained
+    policy_rule: |
+      {
+        "if": {
+          "value": "[ipRangeContains('10.0.0.0/24', '10.0.0.0/16')]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+    want_undefined: true
+
+  - note: ipRangeContains_exact_match_32
+    policy_rule: |
+      {
+        "if": {
+          "value": "[ipRangeContains('10.0.0.5/32', '10.0.0.5')]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+    want_effect: "audit"
+
+  - note: ipRangeContains_ipv6_in_range
+    policy_rule: |
+      {
+        "if": {
+          "value": "[ipRangeContains('2001:db8::/32', '2001:db8::1')]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+    want_effect: "audit"
+
+  - note: ipRangeContains_ipv6_not_in_range
+    policy_rule: |
+      {
+        "if": {
+          "value": "[ipRangeContains('2001:db8::/32', '2001:db9::1')]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "Microsoft.KeyVault/vaults"
+    want_undefined: true
+
+  # ── Composition tests ───────────────────────────────────────────────
+
+  - note: addDays_with_mul_negative_days
+    policy_rule: |
+      {
+        "if": {
+          "value": "[addDays(utcNow(), mul(int('30'), -1))]",
+          "less": "2025-02-20T12:00:00Z"
+        },
+        "then": { "effect": "audit" }
+      }
+    context:
+      utcNow: "2025-02-20T12:00:00Z"
+      resourceGroup:
+        name: myRG
+        location: eastus
+      subscription:
+        subscriptionId: "00000000-0000-0000-0000-000000000000"
+    resource:
+      type: "Microsoft.DocumentDB/databaseAccounts"
+    want_effect: "audit"
+
+  - note: dateTimeToEpoch_with_dateTimeAdd
+    policy_rule: |
+      {
+        "if": {
+          "value": "[dateTimeToEpoch(dateTimeAdd('2024-01-15T00:00:00Z', 'P7D'))]",
+          "greater": "[dateTimeToEpoch('2024-01-20T00:00:00Z')]"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
