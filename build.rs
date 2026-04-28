@@ -27,7 +27,13 @@ fn main() -> Result<()> {
                 .args(["rev-parse", "HEAD"])
                 .output()
                 .ok()
-                .and_then(|o| if o.status.success() { Some(o.stdout) } else { None })
+                .and_then(|o| {
+                    if o.status.success() {
+                        Some(o.stdout)
+                    } else {
+                        None
+                    }
+                })
                 .and_then(|bytes| String::from_utf8(bytes).ok())
                 .map(|s| s.trim().to_string())
                 .unwrap_or_else(|| "unknown".to_string())
