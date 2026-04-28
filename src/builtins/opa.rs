@@ -24,7 +24,7 @@ fn opa_runtime(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
 
     obj.insert(
         Value::String("commit".into()),
-        Value::String(env!("GIT_HASH").into()),
+        Value::String(option_env!("GIT_HASH").unwrap_or("").into()),
     );
 
     obj.insert(

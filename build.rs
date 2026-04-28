@@ -18,11 +18,16 @@ fn main() -> Result<()> {
     // Supply information as compile-time environment variables.
     #[cfg(feature = "opa-runtime")]
     {
-        let output = std::process::Command::new("git")
+        // Try to get the current git commit hash. This may fail when git is not
+        // available (e.g. vcpkg builds) or when building from a source tarball
+        // without a .git directory. In those cases we fall back to an empty string.
+        let git_hash = std::process::Command::new("git")
             .args(["rev-parse", "HEAD"])
             .output()
-            .expect("`git rev-parse HEAD` failed.");
-        let git_hash = String::from_utf8(output.stdout).unwrap();
+            .ok()
+            .and_then(|o| if o.status.success() { Some(o.stdout) } else { None })
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default();
         println!("cargo:rustc-env=GIT_HASH={git_hash}");
     }
 
