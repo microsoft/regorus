@@ -1,0 +1,358 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Type Coercion Test Suite
+# Tests string↔number coercion, null/undefined handling, and other
+# implicit type behaviors covered by this test suite.
+
+cases:
+  # =========================================================================
+  # String ↔ Number coercion
+  # =========================================================================
+
+  - note: coercion_string_number_equals
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.destinationPortRange",
+          "equals": 80
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        destinationPortRange: "80"
+    want_effect: "deny"
+
+  - note: coercion_number_string_equals
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.port",
+          "equals": "443"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        port: 443
+    want_effect: "deny"
+
+  - note: coercion_string_number_greater
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.destinationPortRange",
+          "greater": 1024
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        destinationPortRange: "8080"
+    want_effect: "deny"
+
+  - note: coercion_string_number_less
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.port",
+          "less": 100
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        port: "80"
+    want_effect: "deny"
+
+  - note: coercion_in_with_mixed_types
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.destinationPortRange",
+          "in": [80, 443, 8080]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        destinationPortRange: "443"
+    want_effect: "deny"
+
+  - note: coercion_non_numeric_string
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.port",
+          "equals": 80
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        port: "not-a-number"
+    want_undefined: true
+
+  # =========================================================================
+  # Null and undefined
+  # =========================================================================
+
+  - note: null_field_exists_false
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.optionalField",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties: {}
+    want_effect: "audit"
+
+  - note: null_field_equals_null
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.nullableField",
+          "equals": null
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        nullableField: null
+    want_effect: "audit"
+
+  - note: empty_string_not_undefined
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.emptyField",
+          "exists": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        emptyField: ""
+    want_effect: "audit"
+
+  # =========================================================================
+  # Boolean semantics
+  # =========================================================================
+
+  - note: bool_string_coercion_matches
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.enabled",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        enabled: "true"
+    want_effect: "audit"
+
+  - note: bool_equals_direct
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.httpsOnly",
+          "equals": false
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        httpsOnly: false
+    want_effect: "deny"
+
+  # =========================================================================
+  # Array values in conditions
+  # =========================================================================
+
+  - note: array_rhs_in_operator
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "in": ["eastus", "westus", "centralus"]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      location: "eastus"
+    want_effect: "deny"
+
+  - note: array_rhs_from_parameter
+    policy_rule: |
+      {
+        "if": {
+          "field": "location",
+          "in": "[parameters('allowedLocations')]"
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      allowedLocations:
+        - "eastus"
+        - "westus"
+    resource:
+      location: "northeurope"
+    want_undefined: true
+
+  # =========================================================================
+  # Negative numbers in conditions
+  # =========================================================================
+
+  - note: negative_number_rhs
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.offset",
+          "equals": -10
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        offset: -10
+    want_effect: "audit"
+
+  - note: fractional_number_rhs
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.threshold",
+          "greater": 0.5
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        threshold: 0.75
+    want_effect: "audit"
+
+  # =========================================================================
+  # String ↔ Bool coercion
+  # =========================================================================
+
+  - note: coercion_string_true_equals_bool_true
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.enabled",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        enabled: "true"
+    want_effect: "deny"
+
+  - note: coercion_string_false_equals_bool_false
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.enabled",
+          "equals": false
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        enabled: "false"
+    want_effect: "deny"
+
+  - note: coercion_bool_true_equals_string_true
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.enabled",
+          "equals": "True"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        enabled: true
+    want_effect: "deny"
+
+  - note: coercion_bool_false_notEquals_string_true
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.enabled",
+          "notEquals": "true"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        enabled: false
+    want_effect: "deny"
+
+  - note: coercion_string_TRUE_case_insensitive
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.flag",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        flag: "TRUE"
+    want_effect: "deny"
+
+  - note: coercion_string_random_not_bool
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.flag",
+          "equals": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        flag: "yes"
+    want_undefined: true
+
+  # =========================================================================
+  # Unicode case-insensitivity
+  # =========================================================================
+
+  - note: unicode_case_equals
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.city",
+          "equals": "MÜNCHEN"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        city: "münchen"
+    want_effect: "deny"
+
+  - note: unicode_case_contains
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.name",
+          "contains": "CAFÉ"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        name: "my-café-app"
+    want_effect: "deny"

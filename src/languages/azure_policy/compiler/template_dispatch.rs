@@ -302,9 +302,10 @@ impl Compiler {
             // -- JSON / misc functions --
             "json" => self.emit_builtin_call_from_args("azure.policy.fn.json", args, span)?,
             "join" => self.emit_builtin_call_from_args("azure.policy.fn.join", args, span)?,
-            "guid" => self.emit_builtin_call_from_args("azure.policy.fn.guid", args, span)?,
-            "uniquestring" => {
-                self.emit_builtin_call_from_args("azure.policy.fn.unique_string", args, span)?
+            "guid" | "uniquestring" => {
+                bail!(span.error(&alloc::format!(
+                    "unsupported template function '{function_name}' (only used in deployment templates)"
+                )));
             }
             "items" => self.emit_builtin_call_from_args("azure.policy.fn.items", args, span)?,
             "indexfromend" => {

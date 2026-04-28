@@ -3,6 +3,9 @@
 
 use anyhow::{anyhow, bail, Result};
 
+#[cfg(feature = "azure_policy")]
+mod azure_policy;
+
 #[allow(dead_code)]
 fn read_file(path: &String) -> Result<String> {
     std::fs::read_to_string(path).map_err(|_| anyhow!("could not read {path}"))
@@ -267,6 +270,42 @@ enum RegorusCommand {
         #[arg(long)]
         v0: bool,
     },
+
+    /// Evaluate an Azure Policy definition against a resource.
+    #[cfg(feature = "azure_policy")]
+    AzurePolicyEval {
+        /// Azure Policy definition JSON file.
+        #[arg(long)]
+        policy_definition: String,
+
+        /// ARM resource JSON file to evaluate.
+        #[arg(long)]
+        resource: String,
+
+        /// Aliases JSON file (provider aliases).
+        #[arg(long)]
+        aliases: String,
+
+        /// Policy parameters as a JSON string.
+        #[arg(long)]
+        parameters: Option<String>,
+
+        /// API version for alias path selection.
+        #[arg(long)]
+        api_version: Option<String>,
+    },
+
+    /// List aliases from an alias registry file.
+    #[cfg(feature = "azure_policy")]
+    AzurePolicyAliases {
+        /// Aliases JSON file (provider aliases).
+        #[arg(long)]
+        aliases: String,
+
+        /// Filter aliases by resource type prefix.
+        #[arg(long)]
+        resource_type: Option<String>,
+    },
 }
 
 #[derive(clap::Parser)]
@@ -306,5 +345,24 @@ fn main() -> Result<()> {
         RegorusCommand::Lex { file, verbose } => rego_lex(file, verbose),
         RegorusCommand::Parse { file, v0 } => rego_parse(file, v0),
         RegorusCommand::Ast { file } => rego_ast(file),
+        #[cfg(feature = "azure_policy")]
+        RegorusCommand::AzurePolicyEval {
+            policy_definition,
+            resource,
+            aliases,
+            parameters,
+            api_version,
+        } => azure_policy::azure_policy_eval(
+            policy_definition,
+            resource,
+            aliases,
+            parameters,
+            api_version,
+        ),
+        #[cfg(feature = "azure_policy")]
+        RegorusCommand::AzurePolicyAliases {
+            aliases,
+            resource_type,
+        } => azure_policy::azure_policy_aliases(aliases, resource_type),
     }
 }
