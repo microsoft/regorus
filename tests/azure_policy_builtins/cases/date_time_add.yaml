@@ -41,25 +41,29 @@ cases:
     args: ["2024-01-15T12:00:00Z", "invalid"]
     want_undefined: true
 
+  # Input without explicit timezone is treated as UTC; outputs are
+  # normalized to ISO 8601 with an explicit timezone (`Z` for UTC).
   - note: datetime_without_timezone
     args: ["2024-01-15T12:00:00", "P1D"]
-    want: "2024-01-16T12:00:00"
+    want: "2024-01-16T12:00:00Z"
 
   - note: add_one_week
     args: ["2024-01-15T00:00:00Z", "P1W"]
     want: "2024-01-22T00:00:00Z"
 
+  # Azure Policy normalizes all output to ISO 8601 T-separated format with
+  # explicit timezone, regardless of input format.
   - note: space_separated_datetime
     args: ["2020-04-07 14:55:59", "P3D"]
-    want: "2020-04-10 14:55:59"
+    want: "2020-04-10T14:55:59Z"
 
   - note: space_separated_datetime_with_z
     args: ["2020-04-07 14:55:59Z", "P3D"]
-    want: "2020-04-10 14:55:59Z"
+    want: "2020-04-10T14:55:59Z"
 
   - note: space_separated_datetime_with_offset
     args: ["2020-04-07 14:55:59+05:30", "P1D"]
-    want: "2020-04-08 14:55:59+05:30"
+    want: "2020-04-08T14:55:59+05:30"
 
   - note: output_format_date_only
     args: ["2020-04-07T14:55:59Z", "P3Y2M", "yyyy-MM-dd"]
@@ -98,30 +102,34 @@ cases:
     args: ["2024-01-15T12:00:00+05:30", "P0D", "u"]
     want: "2024-01-15 06:30:00Z"
 
-  # Fractional seconds preservation (default round-trip, no explicit format)
+  # When no explicit output format is provided, datetime output is normalized
+  # to ISO 8601 T-separated form with timezone, regardless of input format.
+  # Explicit third-argument formats may intentionally produce other forms
+  # (for example, space-separated output). Fractional seconds are preserved
+  # when non-zero.
   - note: roundtrip_iso_no_tz_with_frac
     args: ["2024-01-15T12:00:00.123", "P0D"]
-    want: "2024-01-15T12:00:00.123"
+    want: "2024-01-15T12:00:00.123Z"
 
   - note: roundtrip_iso_no_tz_with_frac_add
     args: ["2024-01-15T12:00:00.500", "P1D"]
-    want: "2024-01-16T12:00:00.500"
+    want: "2024-01-16T12:00:00.500Z"
 
   - note: roundtrip_space_no_tz_with_frac
     args: ["2024-01-15 12:00:00.456", "P0D"]
-    want: "2024-01-15 12:00:00.456"
+    want: "2024-01-15T12:00:00.456Z"
 
   - note: roundtrip_space_z_with_frac
     args: ["2024-01-15 12:00:00.789Z", "P0D"]
-    want: "2024-01-15 12:00:00.789Z"
+    want: "2024-01-15T12:00:00.789Z"
 
   - note: roundtrip_space_offset_with_frac
     args: ["2024-01-15 12:00:00.123+05:30", "P0D"]
-    want: "2024-01-15 12:00:00.123+05:30"
+    want: "2024-01-15T12:00:00.123+05:30"
 
   - note: roundtrip_no_frac_stays_clean
     args: ["2024-01-15T12:00:00", "P0D"]
-    want: "2024-01-15T12:00:00"
+    want: "2024-01-15T12:00:00Z"
 
   - note: roundtrip_rfc3339_utc_with_frac
     args: ["2024-01-15T12:00:00.123Z", "P0D"]
@@ -137,11 +145,11 @@ cases:
 
   - note: roundtrip_rfc3339_explicit_zero_offset
     args: ["2024-01-15T12:00:00+00:00", "P0D"]
-    want: "2024-01-15T12:00:00+00:00"
+    want: "2024-01-15T12:00:00Z"
 
   - note: roundtrip_rfc3339_explicit_zero_offset_with_frac
     args: ["2024-01-15T12:00:00.500+00:00", "P0D"]
-    want: "2024-01-15T12:00:00.500+00:00"
+    want: "2024-01-15T12:00:00.500Z"
 
   # Unknown single-char format specifier is a real error
   - note: unknown_format_specifier_q

@@ -50,8 +50,10 @@ pub(super) struct Compiler {
     pub(super) alias_modifiable: BTreeMap<String, bool>,
     /// Default values for policy parameters.
     pub(super) parameter_defaults: Option<Value>,
-    /// Cached register for the parameter defaults literal.
-    pub(super) cached_defaults_reg: Option<u8>,
+    /// Cached literal-table index for `parameter_defaults` (or an empty object
+    /// when no defaults exist). Populated on first `parameters()` call to avoid
+    /// repeated O(n) literal-table scans and deep `Value` clones.
+    pub(super) cached_defaults_literal_idx: Option<u16>,
     /// When set, field conditions resolve against this register instead of
     /// `input.resource`.  Used for `existenceCondition`.
     pub(super) resource_override_reg: Option<u8>,
@@ -124,9 +126,6 @@ impl Compiler {
             floor = floor.max(r.saturating_add(1));
         }
         if let Some(r) = self.cached_context_reg {
-            floor = floor.max(r.saturating_add(1));
-        }
-        if let Some(r) = self.cached_defaults_reg {
             floor = floor.max(r.saturating_add(1));
         }
         self.register_counter = floor;

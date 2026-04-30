@@ -28,9 +28,9 @@ pub(super) fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::Bui
         "azure.policy.fn.try_index_from_end",
         (fn_try_index_from_end, 2),
     );
-    // TODO: implement guid() and uniqueString() — need a SHA-2 based
-    // deterministic hash (FNV-1a could be used as a lighter alternative
-    // since these functions don't serve a security purpose).
+    // guid() and uniqueString() are not yet implemented. They are unsupported
+    // during template dispatch, and the compiler will raise a compile error if
+    // either function is encountered.
 }
 
 // ── json ──────────────────────────────────────────────────────────────

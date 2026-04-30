@@ -6,6 +6,7 @@
 use alloc::boxed::Box;
 use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
+use core::num::NonZeroU32;
 
 use crate::lexer::{Lexer, Source, Span, Token, TokenKind};
 
@@ -146,9 +147,22 @@ pub(super) struct Parser<'source> {
 }
 
 impl<'source> Parser<'source> {
+    /// Column-width limit for Azure Policy definitions.
+    ///
+    /// Azure Policy definitions are often serialized as single-line JSON with
+    /// deeply nested template expressions, requiring a much higher limit than
+    /// the standard Rego default.
+    pub const MAX_COL: u32 = 8192;
+
+    // Safety: 8192 != 0, so this is always `Some`.
+    const MAX_COL_NZ: Option<NonZeroU32> = NonZeroU32::new(Self::MAX_COL);
+
     /// Create a new parser for the given source.
+    ///
+    /// Uses [`Self::MAX_COL`] because Azure Policy definitions are often
+    /// serialized as single-line JSON with deeply nested template expressions.
     pub fn new(source: &'source Source) -> Result<Self, ParseError> {
-        Self::new_with_max_col(source, None)
+        Self::new_with_max_col(source, Self::MAX_COL_NZ)
     }
 
     /// Create a new parser with an optional column-width override.

@@ -537,3 +537,73 @@ cases:
     resource:
       type: "Microsoft.Storage/storageAccounts"
     want_undefined: true
+
+  # =========================================================================
+  # Bare effects — no details provided
+  # =========================================================================
+
+  - note: append_bare_effect_no_details
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Storage/storageAccounts"
+        },
+        "then": {
+          "effect": "append"
+        }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+    want_effect: "append"
+
+  - note: modify_bare_effect_no_details
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Storage/storageAccounts"
+        },
+        "then": {
+          "effect": "modify"
+        }
+      }
+    resource:
+      type: "Microsoft.Storage/storageAccounts"
+    want_effect: "modify"
+
+  # =========================================================================
+  # Parameterized cross-resource details.type (template expression)
+  # =========================================================================
+
+  - note: parameterized_cross_resource_type
+    policy_definition: |
+      {
+        "properties": {
+          "parameters": {
+            "resourceType": {
+              "type": "String",
+              "defaultValue": "Microsoft.Insights/diagnosticSettings"
+            }
+          },
+          "policyRule": {
+            "if": {
+              "field": "type",
+              "equals": "Microsoft.Compute/virtualMachines"
+            },
+            "then": {
+              "effect": "auditIfNotExists",
+              "details": {
+                "type": "[parameters('resourceType')]"
+              }
+            }
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    host_await:
+      - response: null
+    want_effect: "auditIfNotExists"
+    want_details:
+      type: "Microsoft.Insights/diagnosticSettings"

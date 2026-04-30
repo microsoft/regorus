@@ -21,11 +21,13 @@ use anyhow::{anyhow, bail, Result};
 use crate::languages::azure_policy::ast::{
     EffectKind, EffectNode, Expr, ExprLiteral, JsonValue, ObjectEntry, PolicyRule,
 };
+use crate::languages::azure_policy::compiler::utils::json_value_to_runtime;
 use crate::rvm::instructions::ObjectCreateParams;
 use crate::rvm::Instruction;
 use crate::Value;
 
 use super::core::Compiler;
+use super::expressions::check_json_depth;
 
 impl Compiler {
     // -- main dispatch ------------------------------------------------------
@@ -451,9 +453,11 @@ impl Compiler {
 
     /// Build cross-resource effect details for the returned result object.
     ///
-    /// Preserves all detail fields except `existenceCondition` (which is
-    /// compiled and evaluated inline).  Known Azure fields are emitted with
-    /// canonical casing regardless of source casing.
+    /// Only emits `roleDefinitionIds` and `type` into the structured result.
+    /// All other fields (`existenceCondition`, `deployment`, `name`,
+    /// `resourceGroupName`, etc.) are either evaluated inline during
+    /// compilation or are ARM deployment metadata that the policy evaluation
+    /// engine does not interpret.
     pub(super) fn compile_cross_resource_details(
         &mut self,
         effect_name_reg: u8,
@@ -467,17 +471,26 @@ impl Compiler {
         let mut detail_keys: Vec<(u16, u8)> = Vec::new();
 
         for ObjectEntry { key, value, .. } in entries {
-            // existenceCondition is evaluated inline — not included in result.
-            if key.eq_ignore_ascii_case("existenceCondition") {
-                continue;
+            // Only emit `roleDefinitionIds` and `type` into the structured
+            // result.  All other fields (existenceCondition, deployment,
+            // name, resourceGroupName, etc.) are either evaluated inline
+            // during compilation or are ARM deployment metadata that the
+            // policy evaluation engine does not interpret.
+            if key.eq_ignore_ascii_case("roleDefinitionIds") {
+                check_json_depth(value, 0).map_err(|_| {
+                    value
+                        .span()
+                        .error("JSON value nesting exceeds maximum depth")
+                })?;
+                let val = json_value_to_runtime(value)?;
+                let reg = self.load_literal(val, value.span())?;
+                let key_idx = self.add_literal_u16(Value::from("roleDefinitionIds"))?;
+                detail_keys.push((key_idx, reg));
+            } else if key.eq_ignore_ascii_case("type") {
+                let reg = self.compile_json_value(value, value.span())?;
+                let key_idx = self.add_literal_u16(Value::from("type"))?;
+                detail_keys.push((key_idx, reg));
             }
-
-            let reg = self.compile_json_value(value, value.span())?;
-
-            // Canonicalize known Azure field names.
-            let canonical_key = canonicalize_detail_key(key);
-            let key_idx = self.add_literal_u16(Value::from(canonical_key))?;
-            detail_keys.push((key_idx, reg));
         }
 
         if detail_keys.is_empty() {
@@ -576,21 +589,29 @@ impl Compiler {
         Some(effect_name.to_string())
     }
 
-    /// Map a lowercase effect name string to its `EffectKind`.
-    pub(super) fn effect_kind_from_string(effect_name: &str) -> Option<EffectKind> {
-        let normalized = effect_name.to_lowercase();
-        Some(match normalized.as_str() {
-            "deny" => EffectKind::Deny,
-            "audit" => EffectKind::Audit,
-            "append" => EffectKind::Append,
-            "auditifnotexists" => EffectKind::AuditIfNotExists,
-            "deployifnotexists" => EffectKind::DeployIfNotExists,
-            "disabled" => EffectKind::Disabled,
-            "modify" => EffectKind::Modify,
-            "denyaction" => EffectKind::DenyAction,
-            "manual" => EffectKind::Manual,
-            _ => return None,
-        })
+    /// Map an effect name string, matched case-insensitively, to its `EffectKind`.
+    pub(super) const fn effect_kind_from_string(effect_name: &str) -> Option<EffectKind> {
+        if effect_name.eq_ignore_ascii_case("deny") {
+            Some(EffectKind::Deny)
+        } else if effect_name.eq_ignore_ascii_case("audit") {
+            Some(EffectKind::Audit)
+        } else if effect_name.eq_ignore_ascii_case("append") {
+            Some(EffectKind::Append)
+        } else if effect_name.eq_ignore_ascii_case("auditIfNotExists") {
+            Some(EffectKind::AuditIfNotExists)
+        } else if effect_name.eq_ignore_ascii_case("deployIfNotExists") {
+            Some(EffectKind::DeployIfNotExists)
+        } else if effect_name.eq_ignore_ascii_case("disabled") {
+            Some(EffectKind::Disabled)
+        } else if effect_name.eq_ignore_ascii_case("modify") {
+            Some(EffectKind::Modify)
+        } else if effect_name.eq_ignore_ascii_case("denyAction") {
+            Some(EffectKind::DenyAction)
+        } else if effect_name.eq_ignore_ascii_case("manual") {
+            Some(EffectKind::Manual)
+        } else {
+            None
+        }
     }
 
     // -- host await request -------------------------------------------------
@@ -731,10 +752,10 @@ fn detect_effect_family_from_details(rule: &PolicyRule) -> EffectFamily {
             let mut has_operations = false;
 
             for entry in entries {
-                match entry.key.to_lowercase().as_str() {
-                    "type" => has_type = true,
-                    "operations" => has_operations = true,
-                    _ => {}
+                if entry.key.eq_ignore_ascii_case("type") {
+                    has_type = true;
+                } else if entry.key.eq_ignore_ascii_case("operations") {
+                    has_operations = true;
                 }
             }
 
@@ -748,8 +769,8 @@ fn detect_effect_family_from_details(rule: &PolicyRule) -> EffectFamily {
                 EffectFamily::Modify
             } else {
                 // Check for Append-shaped object: { "field": …, "value": … }
-                let has_field = entries.iter().any(|e| e.key.to_lowercase() == "field");
-                let has_value = entries.iter().any(|e| e.key.to_lowercase() == "value");
+                let has_field = entries.iter().any(|e| e.key.eq_ignore_ascii_case("field"));
+                let has_value = entries.iter().any(|e| e.key.eq_ignore_ascii_case("value"));
                 if has_field && has_value {
                     EffectFamily::Append
                 } else {
@@ -774,25 +795,6 @@ fn is_bracket_expression(s: &str) -> bool {
 fn unescape_arm_literal(s: &str) -> alloc::string::String {
     s.strip_prefix("[[")
         .map_or_else(|| s.into(), |rest| format!("[{rest}"))
-}
-
-/// Canonicalize known Azure Policy detail field names to their standard casing.
-///
-/// Case-insensitive matching produces the canonical form used by Azure;
-/// unknown keys are passed through unchanged.
-fn canonicalize_detail_key(key: &str) -> alloc::string::String {
-    match key.to_lowercase().as_str() {
-        "roledefinitionids" => "roleDefinitionIds".into(),
-        "type" => "type".into(),
-        "name" => "name".into(),
-        "kind" => "kind".into(),
-        "resourcegroupname" => "resourceGroupName".into(),
-        "existencescope" => "existenceScope".into(),
-        "deployment" => "deployment".into(),
-        "deploymentscope" => "deploymentScope".into(),
-        "evaluationdelay" => "evaluationDelay".into(),
-        _ => key.into(),
-    }
 }
 
 /// Build an RVM object from a set of `(literal_key_idx, value_reg)` pairs.
