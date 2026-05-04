@@ -10,7 +10,7 @@ use crate::value::Value;
 use crate::*;
 
 use anyhow::{bail, Result};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 
 // ---------------------------------------------------------------------------
 // Compiled-regex cache (feature = "cache")
@@ -20,6 +20,21 @@ use regex::Regex;
 // The capacity is configurable at runtime
 // via regorus::cache::configure().
 // ---------------------------------------------------------------------------
+
+/// Maximum compiled NFA size (in bytes) for a regex pattern.
+/// This bounds both compilation time and match-time cost by limiting the
+/// automaton's structural complexity. At 100 KiB, every real-world policy
+/// pattern (IPv4, hostname, semver, UUID, image-digest, CIDR, etc.) compiles
+/// comfortably, while adversarial patterns that would otherwise cause
+/// expensive DFA construction are rejected at compile time.
+const REGEX_SIZE_LIMIT: usize = 100 * 1024;
+
+/// Compile a regex pattern with a size limit to bound resource consumption.
+fn compile_regex(pattern: &str) -> core::result::Result<Regex, regex::Error> {
+    RegexBuilder::new(pattern)
+        .size_limit(REGEX_SIZE_LIMIT)
+        .build()
+}
 
 /// Compile a regex pattern, using the cache when the `cache` feature
 /// is enabled and falling back to direct compilation otherwise.
@@ -32,7 +47,7 @@ fn get_or_compile_regex(pattern: &str) -> core::result::Result<Regex, regex::Err
                 return Ok(re.clone());
             }
         }
-        let re = Regex::new(pattern)?;
+        let re = compile_regex(pattern)?;
         {
             let mut cache = crate::cache::REGEX_CACHE.lock();
             cache.put(alloc::string::String::from(pattern), re.clone());
@@ -41,8 +56,25 @@ fn get_or_compile_regex(pattern: &str) -> core::result::Result<Regex, regex::Err
     }
     #[cfg(not(feature = "cache"))]
     {
-        Regex::new(pattern)
+        compile_regex(pattern)
     }
+}
+
+/// Compile a regex for use in a builtin function.
+///
+/// - `CompiledTooBig` is raised as [`LimitError::RegexSizeLimitExceeded`] so
+///   that it propagates as a hard error even in non-strict mode.
+/// - Syntax errors produce a span-attached "invalid regex" error that the
+///   evaluator may swallow to `Undefined` in non-strict mode (OPA-compatible).
+fn compile_regex_for_builtin(span: &Span, pattern: &str) -> Result<Regex> {
+    get_or_compile_regex(pattern).map_err(|e| match e {
+        regex::Error::CompiledTooBig(_) => {
+            anyhow::Error::new(crate::utils::limits::LimitError::RegexSizeLimitExceeded {
+                limit: REGEX_SIZE_LIMIT,
+            })
+        }
+        _ => anyhow::anyhow!(span.error("invalid regex")),
+    })
 }
 
 pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
@@ -72,8 +104,7 @@ fn find_all_string_submatch_n(
     let value = ensure_string(name, &params[1], &args[1])?;
     let n = ensure_numeric(name, &params[2], &args[2])?;
 
-    let re = get_or_compile_regex(&pattern)
-        .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let re = compile_regex_for_builtin(params[0].span(), &pattern)?;
 
     if !n.is_integer() {
         bail!(params[2].span().error("n must be an integer"));
@@ -118,8 +149,7 @@ fn find_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     let value = ensure_string(name, &params[1], &args[1])?;
     let n = ensure_numeric(name, &params[2], &args[2])?;
 
-    let re = get_or_compile_regex(&pattern)
-        .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let re = compile_regex_for_builtin(params[0].span(), &pattern)?;
 
     if !n.is_integer() {
         bail!(params[2].span().error("n must be an integer"));
@@ -147,11 +177,21 @@ fn find_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
 fn is_valid(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "regex.is_valid";
     ensure_args_count(span, name, params, args, 1)?;
-    Ok(
-        ensure_string(name, &params[0], &args[0]).map_or(Value::Bool(false), |p| {
-            Value::Bool(get_or_compile_regex(&p).is_ok())
-        }),
-    )
+    let pattern = match ensure_string(name, &params[0], &args[0]) {
+        Ok(p) => p,
+        Err(_) => return Ok(Value::Bool(false)),
+    };
+    match get_or_compile_regex(&pattern) {
+        Ok(_) => Ok(Value::Bool(true)),
+        // Size-limit exceeded is a resource-limit violation; propagate as hard error.
+        Err(regex::Error::CompiledTooBig(_)) => Err(anyhow::Error::new(
+            crate::utils::limits::LimitError::RegexSizeLimitExceeded {
+                limit: REGEX_SIZE_LIMIT,
+            },
+        )),
+        // Syntax errors mean the pattern is genuinely invalid.
+        Err(_) => Ok(Value::Bool(false)),
+    }
 }
 
 pub fn regex_match(
@@ -165,8 +205,7 @@ pub fn regex_match(
     let pattern = ensure_string(name, &params[0], &args[0])?;
     let value = ensure_string(name, &params[1], &args[1])?;
 
-    let re = get_or_compile_regex(&pattern)
-        .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let re = compile_regex_for_builtin(params[0].span(), &pattern)?;
     Ok(Value::Bool(re.is_match(&value)))
 }
 
@@ -185,6 +224,13 @@ fn regex_replace(
 
     let re = match get_or_compile_regex(&pattern) {
         Ok(p) => p,
+        Err(regex::Error::CompiledTooBig(_)) => {
+            return Err(anyhow::Error::new(
+                crate::utils::limits::LimitError::RegexSizeLimitExceeded {
+                    limit: REGEX_SIZE_LIMIT,
+                },
+            ));
+        }
         // TODO: This behavior is due to OPA test not raising error. Should we raise error?
         _ => return Ok(Value::Undefined),
     };
@@ -198,8 +244,7 @@ fn regex_split(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
     let pattern = ensure_string(name, &params[0], &args[0])?;
     let value = ensure_string(name, &params[1], &args[1])?;
 
-    let re = get_or_compile_regex(&pattern)
-        .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+    let re = compile_regex_for_builtin(params[0].span(), &pattern)?;
     Ok(Value::from_array(
         re.split(&value)
             .map(|s| {
@@ -242,8 +287,10 @@ fn regex_template_match(
         }
 
         // Fetch pattern, excluding delimiters.
-        let re = get_or_compile_regex(&template[start + delimiter_start.len()..end])
-            .or_else(|_| bail!(params[0].span().error("invalid regex")))?;
+        let re = compile_regex_for_builtin(
+            params[0].span(),
+            &template[start + delimiter_start.len()..end],
+        )?;
 
         // Skip preceding literal in value.
         value = &value[start..];

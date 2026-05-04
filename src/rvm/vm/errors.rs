@@ -28,6 +28,9 @@ pub enum VmError {
     #[error("Execution exceeded memory limit (usage={usage} bytes, limit={limit} bytes, pc={pc})")]
     MemoryLimitExceeded { usage: u64, limit: u64, pc: usize },
 
+    #[error("Compiled regex exceeded size limit ({limit} bytes, pc={pc})")]
+    RegexSizeLimitExceeded { limit: usize, pc: usize },
+
     #[error("Literal index {index} out of bounds (pc={pc})")]
     LiteralIndexOutOfBounds { index: u16, pc: usize },
 
@@ -298,6 +301,32 @@ pub enum VmError {
 
 impl From<anyhow::Error> for VmError {
     fn from(err: anyhow::Error) -> Self {
+        // Preserve LimitError identity so that resource-limit violations are
+        // never silently swallowed to Undefined in non-strict mode.
+        // Note: pc is set to 0 because this conversion lacks instruction context.
+        // The error message itself (which includes the limit value) provides
+        // sufficient diagnostic information for users.
+        if let Some(limit_err) = err.downcast_ref::<crate::LimitError>() {
+            return match *limit_err {
+                crate::LimitError::TimeLimitExceeded { elapsed, limit } => {
+                    VmError::TimeLimitExceeded {
+                        elapsed,
+                        limit,
+                        pc: 0,
+                    }
+                }
+                crate::LimitError::MemoryLimitExceeded { usage, limit } => {
+                    VmError::MemoryLimitExceeded {
+                        usage,
+                        limit,
+                        pc: 0,
+                    }
+                }
+                crate::LimitError::RegexSizeLimitExceeded { limit } => {
+                    VmError::RegexSizeLimitExceeded { limit, pc: 0 }
+                }
+            };
+        }
         VmError::ArithmeticError {
             message: alloc::format!("{}", err),
             pc: 0,

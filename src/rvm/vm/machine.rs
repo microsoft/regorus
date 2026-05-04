@@ -443,6 +443,9 @@ impl RegoVM {
                     limit,
                     pc: self.pc,
                 },
+                LimitError::RegexSizeLimitExceeded { limit } => {
+                    VmError::RegexSizeLimitExceeded { limit, pc: self.pc }
+                }
             })
     }
 

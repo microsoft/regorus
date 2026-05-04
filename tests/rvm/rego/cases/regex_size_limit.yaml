@@ -1,0 +1,333 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+#
+# Tests that regex compilation enforces a size limit on the compiled NFA.
+# Patterns that produce an NFA exceeding the limit are rejected at compile
+# time. This prevents adversarial patterns from consuming excessive CPU
+# during DFA construction or matching.
+
+cases:
+  # -------------------------------------------------------------------------
+  # Legitimate policy patterns — must continue to work
+  # -------------------------------------------------------------------------
+  - note: legit-ipv4
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$`, "192.168.1.1")
+    query: data.test.main
+    want_result: true
+
+  - note: legit-hostname
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`, "my-host.example.com")
+    query: data.test.main
+    want_result: true
+
+  - note: legit-semver
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`^v?\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$`, "v1.2.3")
+    query: data.test.main
+    want_result: true
+
+  - note: legit-uuid
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, "550e8400-e29b-41d4-a716-446655440000")
+    query: data.test.main
+    want_result: true
+
+  - note: legit-email
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`, "user@example.com")
+    query: data.test.main
+    want_result: true
+
+  - note: legit-cidr
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$`, "10.0.0.0/8")
+    query: data.test.main
+    want_result: true
+
+  - note: legit-image-digest
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*@sha256:[a-f0-9]{64}$`, "myregistry/myimage@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+    query: data.test.main
+    want_result: true
+
+  - note: legit-rfc1123-label
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`, "my-resource-name")
+    query: data.test.main
+    want_result: true
+
+  - note: legit-tag-value
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`^[a-zA-Z0-9 _.:/=+@-]+$`, "env:production/v2")
+    query: data.test.main
+    want_result: true
+
+  - note: legit-naming-convention
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`^[a-z][a-z0-9-]{2,62}$`, "my-resource-group")
+    query: data.test.main
+    want_result: true
+
+  - note: legit-is-valid
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.is_valid(`^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$`)
+    query: data.test.main
+    want_result: true
+
+  - note: legit-find-n
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.find_n(`[0-9]+`, "abc123def456", 2)
+    query: data.test.main
+    want_result:
+      - "123"
+      - "456"
+
+  - note: legit-split
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.split(`[,;]+`, "a,b;;c,d")
+    query: data.test.main
+    want_result:
+      - "a"
+      - "b"
+      - "c"
+      - "d"
+
+  - note: legit-replace
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.replace("hello-world_foo", `[-_]`, ".")
+    query: data.test.main
+    want_result: "hello.world.foo"
+
+  - note: is-valid-syntax-error
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.is_valid(`[invalid`)
+    query: data.test.main
+    want_result: false
+
+  # -------------------------------------------------------------------------
+  # Adversarial patterns — must be rejected as hard errors.
+  #
+  # These patterns produce compiled NFAs exceeding the 100 KiB size limit.
+  # The error must propagate (not be swallowed to undefined) so that
+  # `not regex.match(...)` does not silently flip to true.
+  # -------------------------------------------------------------------------
+
+  - note: blocked-ascending-overlap-46
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`[a-f]{1,64}[a-g]{1,64}[a-h]{1,64}[a-i]{1,64}[a-j]{1,64}[a-k]{1,64}[a-l]{1,64}[a-m]{1,64}[a-n]{1,64}[a-o]{1,64}[a-p]{1,64}[a-q]{1,64}[a-r]{1,64}[a-s]{1,64}[a-t]{1,64}[a-u]{1,64}[a-v]{1,64}[a-w]{1,64}[a-x]{1,64}[a-y]{1,64}[a-z]{1,64}[a-f]{1,64}[a-g]{1,64}[a-h]{1,64}[a-i]{1,64}[a-j]{1,64}[a-k]{1,64}[a-l]{1,64}[a-m]{1,64}[a-n]{1,64}[a-o]{1,64}[a-p]{1,64}[a-q]{1,64}[a-r]{1,64}[a-s]{1,64}[a-t]{1,64}[a-u]{1,64}[a-v]{1,64}[a-f]{1,64}[d-k]{1,64}[h-p]{1,64}[m-u]{1,64}[r-z]{1,64}[a-h]{1,64}[e-n]{1,64}[k-z]{1,64}`, "test")
+    query: data.test.main
+    want_error: "size limit"
+
+  - note: blocked-lower-shift-16
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`[a-p]{1,64}[b-q]{1,64}[c-r]{1,64}[d-s]{1,64}[e-t]{1,64}[f-u]{1,64}[g-v]{1,64}[h-w]{1,64}[i-x]{1,64}[j-y]{1,64}[k-z]{1,64}[a-l]{1,64}[a-m]{1,64}[a-n]{1,64}[a-o]{1,64}[a-z]{1,64}`, "test")
+    query: data.test.main
+    want_error: "size limit"
+
+  - note: blocked-case-window-16
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`[A-Pa-p]{1,64}[B-Qb-q]{1,64}[C-Rc-r]{1,64}[D-Sd-s]{1,64}[E-Te-t]{1,64}[F-Uf-u]{1,64}[G-Vg-v]{1,64}[H-Wh-w]{1,64}[I-Xi-x]{1,64}[J-Yj-y]{1,64}[K-Zk-z]{1,64}[A-La-l]{1,64}[A-Ma-m]{1,64}[A-Na-n]{1,64}[A-Oa-o]{1,64}[A-Za-z]{1,64}`, "test")
+    query: data.test.main
+    want_error: "size limit"
+
+  - note: blocked-ascii-range-ladder-16
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`[ -~]{1,64}[!-~]{1,64}[ -}]{1,64}[!-}]{1,64}[ -z]{1,64}[!-z]{1,64}[#-~]{1,64}[$-}]{1,64}[%-|]{1,64}[&-{]{1,64}['-z]{1,64}[(~)]{1,64}[)-~]{1,64}[*-}]{1,64}[+-|]{1,64}[,-{]{1,64}`, "test")
+    query: data.test.main
+    want_error: "size limit"
+
+  - note: blocked-digit-letter-overlap-16
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`[A-Za-z0-9]{1,64}[A-Fa-f0-9]{1,64}[D-Kd-k3-9]{1,64}[H-Ph-p0-5]{1,64}[M-Tm-t2-8]{1,64}[Q-Zq-z1-7]{1,64}[A-Ma-m4-9]{1,64}[G-Zg-z0-6]{1,64}[A-Za-m0-9]{1,64}[A-Mn-z0-9]{1,64}[N-Za-z0-9]{1,64}[A-Zn-z0-9]{1,64}[A-Za-z_]{1,64}[A-Za-z-]{1,64}[A-Za-z.]{1,64}[A-Za-z0-9]{1,64}`, "test")
+    query: data.test.main
+    want_error: "size limit"
+
+  - note: blocked-ascii-opt-branch-16
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`(?:[A-p]{1,64}|)(?:[B-q]{1,64}|)(?:[C-r]{1,64}|)(?:[D-s]{1,64}|)(?:[E-t]{1,64}|)(?:[F-u]{1,64}|)(?:[G-v]{1,64}|)(?:[H-w]{1,64}|)(?:[I-x]{1,64}|)(?:[J-y]{1,64}|)(?:[K-z]{1,64}|)(?:[L-{]{1,64}|)(?:[M-|]{1,64}|)(?:[N-}]{1,64}|)(?:[O-~]{1,64}|)(?:[P-\x7f]{1,64}|)`, "test")
+    query: data.test.main
+    want_error: "size limit"
+
+  - note: blocked-ascii-two-way-16
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`(?:[A-p]{1,64}|[B-q]{1,64})(?:[B-q]{1,64}|[C-r]{1,64})(?:[C-r]{1,64}|[D-s]{1,64})(?:[D-s]{1,64}|[E-t]{1,64})(?:[E-t]{1,64}|[F-u]{1,64})(?:[F-u]{1,64}|[G-v]{1,64})(?:[G-v]{1,64}|[H-w]{1,64})(?:[H-w]{1,64}|[I-x]{1,64})(?:[I-x]{1,64}|[J-y]{1,64})(?:[J-y]{1,64}|[K-z]{1,64})(?:[K-z]{1,64}|[L-{]{1,64})(?:[L-{]{1,64}|[M-|]{1,64})(?:[M-|]{1,64}|[N-}]{1,64})(?:[N-}]{1,64}|[O-~]{1,64})(?:[O-~]{1,64}|[P-\x7f]{1,64})(?:[P-\x7f]{1,64}|[Q-\x80]{1,64})`, "test")
+    query: data.test.main
+    want_error: "size limit"
+
+  - note: blocked-paired-range-branches
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`(?:[A-p]{1,64}[B-q]{1,64}|[C-r]{1,64}[D-s]{1,64})(?:[E-t]{1,64}[F-u]{1,64}|[G-v]{1,64}[H-w]{1,64})(?:[I-x]{1,64}[J-y]{1,64}|[K-z]{1,64}[L-z]{1,64})(?:[M-z]{1,64}[N-z]{1,64}|[O-z]{1,64}[P-z]{1,64})(?:[A-p]{1,64}[B-q]{1,64}|[C-r]{1,64}[D-s]{1,64})(?:[E-t]{1,64}[F-u]{1,64}|[G-v]{1,64}[H-w]{1,64})(?:[I-x]{1,64}[J-y]{1,64}|[K-z]{1,64}[L-z]{1,64})(?:[M-z]{1,64}[N-z]{1,64}|[O-z]{1,64}[P-z]{1,64})`, "test")
+    query: data.test.main
+    want_error: "size limit"
+
+  - note: blocked-baseline-az-16
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}`, "test")
+    query: data.test.main
+    want_error: "size limit"
+
+  - note: blocked-nested-quantifiers
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.match(`(((\w{1,8}\d{1,8}){1,8}\s{1,8}){1,4}\D{1,4})+`, "test")
+    query: data.test.main
+    want_error: "size limit"
+
+  - note: blocked-is-valid-oversized
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.is_valid(`[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}`)
+    query: data.test.main
+    want_error: "size limit"
+
+  # -------------------------------------------------------------------------
+  # Negation — `not regex.match(...)` must error, not silently become true
+  # -------------------------------------------------------------------------
+  - note: blocked-not-regex-match-oversized
+    data: {}
+    modules:
+      - |
+        package test
+        main if {
+          not regex.match(`([a-z]{1,64}){1,64}`, "test")
+        }
+    query: data.test.main
+    want_error: "size limit"
+
+  # -------------------------------------------------------------------------
+  # regex.replace with oversized pattern must error
+  # -------------------------------------------------------------------------
+  - note: blocked-regex-replace-oversized
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.replace("hello", `([a-z]{1,64}){1,64}`, "x")
+    query: data.test.main
+    want_error: "size limit"
+
+  # -------------------------------------------------------------------------
+  # regex.find_all_string_submatch_n with oversized pattern must error
+  # -------------------------------------------------------------------------
+  - note: blocked-find-submatch-oversized
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.find_all_string_submatch_n(`([a-z]{1,64}){1,64}`, "hello", 1)
+    query: data.test.main
+    want_error: "size limit"
+
+  # -------------------------------------------------------------------------
+  # regex.find_n with oversized pattern must error
+  # -------------------------------------------------------------------------
+  - note: blocked-find-n-oversized
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.find_n(`([a-z]{1,64}){1,64}`, "hello", 1)
+    query: data.test.main
+    want_error: "size limit"
+
+  # -------------------------------------------------------------------------
+  # regex.split with oversized pattern must error
+  # -------------------------------------------------------------------------
+  - note: blocked-split-oversized
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.split(`([a-z]{1,64}){1,64}`, "hello-world")
+    query: data.test.main
+    want_error: "size limit"
+
+  # -------------------------------------------------------------------------
+  # regex.template_match with oversized embedded pattern must error
+  # -------------------------------------------------------------------------
+  - note: blocked-template-match-oversized
+    data: {}
+    modules:
+      - |
+        package test
+        main := regex.template_match(`<[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}[a-z]{1,64}>`, "hello", "<", ">")
+    query: data.test.main
+    want_error: "size limit"

@@ -122,7 +122,16 @@ impl RegoVM {
             self.strict_builtin_errors,
         ) {
             Ok(value) => value,
-            Err(_) if !self.strict_builtin_errors => Value::Undefined,
+            // Resource-limit errors must always propagate, even in non-strict
+            // mode, to prevent `not builtin(...)` from silently flipping to true.
+            Err(e) if !self.strict_builtin_errors => {
+                if e.downcast_ref::<crate::LimitError>().is_some() {
+                    self.dummy_exprs = dummy_exprs;
+                    self.cached_builtin_args = args;
+                    return Err(e.into());
+                }
+                Value::Undefined
+            }
             Err(err) => {
                 self.dummy_exprs = dummy_exprs;
                 self.cached_builtin_args = args;
