@@ -27,11 +27,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      # SECURITY: This checks out untrusted PR code at the EXACT commit that
+      # triggered the event (immutable SHA, not mutable branch ref) to avoid
+      # TOCTOU if the branch moves between event dispatch and checkout.
+      # ONLY cargo update and cargo metadata (which do NOT execute build
+      # scripts) may run against this checkout. Do NOT add cargo build/check/
+      # test/run steps.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v4.2.2
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Setup Rust toolchain
@@ -41,73 +47,75 @@ jobs:
           cargo --version
           rustc --version
 
-      - name: Refresh affected Cargo lockfiles
+      - name: Refresh all Cargo lockfiles
         shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
 
-          base_sha="${{ github.event.pull_request.base.sha }}"
-          head_sha="${{ github.event.pull_request.head.sha }}"
+          # Validate inputs (defense-in-depth against expression injection).
+          if ! git check-ref-format "refs/heads/$BASE_REF" > /dev/null 2>&1; then
+            echo "::error::Invalid base ref format: '$BASE_REF'"
+            exit 1
+          fi
+          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Invalid head SHA format: '$HEAD_SHA'"
+            exit 1
+          fi
 
-          mapfile -t changed_files < <(git diff --name-only "$base_sha" "$head_sha" -- ':(glob)**/Cargo.toml' ':(glob)**/Cargo.lock')
+          # Fetch the base branch into its remote-tracking ref so we can diff.
+          # fetch-depth: 0 on the head ref doesn't guarantee the base branch
+          # tip is reachable if it has diverged.
+          git fetch --no-tags --depth=1 origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+
+          # Diff against the base branch tip to detect Cargo changes.
+          # False positives (base advanced) are harmless — they just trigger
+          # a no-op refresh since we update ALL lockfiles unconditionally.
+          mapfile -t changed_files < <(git diff --name-only "origin/${BASE_REF}" "$HEAD_SHA" -- ':(glob)**/Cargo.toml' ':(glob)**/Cargo.lock')
 
           if [ "${#changed_files[@]}" -eq 0 ]; then
             echo "No Cargo manifest or lockfile changes detected."
             exit 0
           fi
 
-          declare -A manifests=()
-          for path in "${changed_files[@]}"; do
-            case "$path" in
-              bindings/ffi/*)
-                manifests["bindings/ffi/Cargo.toml"]=1
-                ;;
-              bindings/java/*)
-                manifests["bindings/java/Cargo.toml"]=1
-                ;;
-              bindings/python/*)
-                manifests["bindings/python/Cargo.toml"]=1
-                ;;
-              bindings/ruby/*)
-                manifests["bindings/ruby/Cargo.toml"]=1
-                ;;
-              bindings/wasm/*)
-                manifests["bindings/wasm/Cargo.toml"]=1
-                ;;
-              *)
-                manifests["Cargo.toml"]=1
-                ;;
-            esac
-          done
+          # Always refresh ALL lockfiles when any Cargo change is detected.
+          # Dependabot security updates bypass grouping and create per-directory
+          # PRs, causing version skew if we only refresh the affected directory.
+          # See: https://github.com/dependabot/dependabot-core/issues/7547
+          #
+          # We use `cargo update` (not `cargo metadata`) to actually propagate
+          # version bumps across lockfiles. `cargo update` only resolves
+          # dependencies and rewrites Cargo.lock — it does NOT execute build
+          # scripts, so it is safe to run on untrusted PR code.
+          all_manifests=(
+            "Cargo.toml"
+            "bindings/ffi/Cargo.toml"
+            "bindings/java/Cargo.toml"
+            "bindings/python/Cargo.toml"
+            "bindings/ruby/Cargo.toml"
+            "bindings/wasm/Cargo.toml"
+          )
 
-          for manifest in "${!manifests[@]}"; do
+          for manifest in "${all_manifests[@]}"; do
             echo "Refreshing lockfile for $manifest"
-            cargo metadata \
-              --config 'build.rustc="rustc"' \
-              --config 'build.rustc-wrapper=""' \
-              --config 'build.rustc-workspace-wrapper=""' \
-              --format-version 1 \
-              --all-features \
-              --manifest-path "$manifest" > /dev/null
+            cargo update --manifest-path "$manifest"
           done
-
-          if [[ -n "${manifests[Cargo.toml]+x}" ]]; then
-            echo "Refreshing lockfile for tests/ensure_no_std/Cargo.toml (thumbv7m-none-eabi)"
-            cargo metadata \
-              --config 'build.rustc="rustc"' \
-              --config 'build.rustc-wrapper=""' \
-              --config 'build.rustc-workspace-wrapper=""' \
-              --format-version 1 \
-              --manifest-path tests/ensure_no_std/Cargo.toml \
-              --filter-platform thumbv7m-none-eabi > /dev/null
-          fi
 
       - name: Commit lockfile refresh
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
+
+          # Validate ref format (defense-in-depth against expression injection).
+          if ! git check-ref-format "refs/heads/$HEAD_REF" > /dev/null 2>&1; then
+            echo "::error::Invalid head ref format: '$HEAD_REF'"
+            exit 1
+          fi
 
           mapfile -t lockfiles < <(git ls-files -m -o --exclude-standard -- ':(glob)**/Cargo.lock')
 
@@ -126,4 +134,4 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "build(deps): refresh Cargo lockfiles"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          git push origin "HEAD:refs/heads/${HEAD_REF}"
