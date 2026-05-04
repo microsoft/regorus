@@ -1,0 +1,78 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Advanced Function Test Suite
+# Tests recursive functions, function composition, and edge cases.
+# Covers known RVM runtime mismatches for advanced function patterns.
+# Basic function tests are in function_rules.yaml; these cover gaps.
+
+cases:
+  # Recursive factorial
+  # OPA rejects recursive rules (rego_recursion_error). Both the regorus
+  # interpreter and RVM currently evaluate this successfully, which is
+  # incorrect — recursion should be rejected to match OPA semantics.
+  - note: functions/recursive_factorial
+    skip: true
+    data: {}
+    modules:
+      - |
+        package test
+        factorial(0) := 1
+        factorial(n) := n * factorial(n - 1) if { n > 0 }
+        result := factorial(5)
+    query: data.test.result
+    want_result: 120
+
+  # Recursive fibonacci
+  # Same as above — OPA rejects this with rego_recursion_error.
+  - note: functions/recursive_fibonacci
+    skip: true
+    data: {}
+    modules:
+      - |
+        package test
+        fib(0) := 0
+        fib(1) := 1
+        fib(n) := fib(n - 1) + fib(n - 2) if { n > 1 }
+        result := fib(6)
+    query: data.test.result
+    want_result: 8
+
+  # Function returning a comprehension
+  - note: functions/function_returning_comprehension
+    data: {}
+    modules:
+      - |
+        package test
+        get_evens(arr) := [x | some x in arr; x % 2 == 0]
+        result := get_evens([1, 2, 3, 4, 5, 6])
+    query: data.test.result
+    want_result: [2, 4, 6]
+
+  # Function calling another function
+  - note: functions/function_calling_function
+    data: {}
+    modules:
+      - |
+        package test
+        double(x) := x * 2
+        inc(x) := x + 1
+        double_then_inc(x) := inc(double(x))
+        result := double_then_inc(5)
+    query: data.test.result
+    want_result: 11
+
+  # Function with data lookup in body
+  - note: functions/function_with_data_lookup
+    data:
+      rates:
+        usd: 1.0
+        eur: 0.85
+        gbp: 0.73
+    modules:
+      - |
+        package test
+        convert(amount, currency) := amount * data.rates[currency]
+        result := convert(100, "eur")
+    query: data.test.result
+    want_result: 85

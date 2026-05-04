@@ -1,0 +1,84 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Base and Virtual Document Interaction Test Suite
+# Tests how virtual documents (rules) interact with base documents (data),
+# including suffix lookup on rule results.
+# Covers known RVM runtime mismatches for base/virtual document merging.
+
+cases:
+  # Query a suffix path on a complete rule returning an object
+  - note: base_virtual/suffix_on_complete_rule
+    data: {}
+    modules:
+      - |
+        package test
+        user := {"name": "Alice", "role": "admin", "level": 5}
+    query: data.test.user.role
+    want_result: "admin"
+    skip: true
+
+  # Query a suffix path on a partial object rule
+  - note: base_virtual/suffix_on_partial_object
+    data:
+      people:
+        alice: {name: "Alice", role: "admin"}
+        bob: {name: "Bob", role: "viewer"}
+    modules:
+      - |
+        package test
+        users[name] := info if {
+          some name
+          info := data.people[name]
+        }
+    query: data.test.users.alice.role
+    want_result: "admin"
+    skip: true
+
+  # Virtual document overlays base data at same path
+  # (Note: rule-data conflicts are separately tested in rule_data_conflicts.yaml.
+  #  This tests the case where virtual _should_ take priority.)
+  - note: base_virtual/virtual_overlays_base_different_keys
+    data:
+      test:
+        config:
+          base_key: "from_data"
+    modules:
+      - |
+        package test.config
+        virtual_key := "from_rule"
+    query: data.test.config.virtual_key
+    want_result: "from_rule"
+    skip: true
+
+  # Multi-level suffix: rule returns nested object, query drills 3 levels
+  - note: base_virtual/multi_level_suffix
+    data: {}
+    modules:
+      - |
+        package test
+        settings := {
+          "database": {
+            "connection": {
+              "host": "localhost",
+              "port": 5432
+            }
+          }
+        }
+    query: data.test.settings.database.connection.host
+    want_result: "localhost"
+    skip: true
+
+  # Array index on a rule result
+  - note: base_virtual/array_index_on_rule_result
+    data: {}
+    modules:
+      - |
+        package test
+        employees := [
+          {"id": 1, "name": "Alice"},
+          {"id": 2, "name": "Bob"}
+        ]
+    query: data.test.employees[0].name
+    want_result: "Alice"
+    skip: true

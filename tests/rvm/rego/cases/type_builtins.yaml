@@ -1,0 +1,108 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Type Builtins Test Suite
+# Tests type_name() and is_*() type-checking builtins.
+# Covers known RVM runtime mismatches for type-checking builtins.
+
+cases:
+  # type_name on string
+  - note: type/type_name_string
+    data: {}
+    modules:
+      - |
+        package test
+        result := type_name("hello")
+    query: data.test.result
+    want_result: "string"
+
+  # type_name on number
+  - note: type/type_name_number
+    data: {}
+    modules:
+      - |
+        package test
+        result := type_name(42)
+    query: data.test.result
+    want_result: "number"
+
+  # type_name on boolean
+  - note: type/type_name_boolean
+    data: {}
+    modules:
+      - |
+        package test
+        result := type_name(true)
+    query: data.test.result
+    want_result: "boolean"
+
+  # type_name on null
+  - note: type/type_name_null
+    data: {}
+    modules:
+      - |
+        package test
+        result := type_name(null)
+    query: data.test.result
+    want_result: "null"
+
+  # type_name on array
+  - note: type/type_name_array
+    data: {}
+    modules:
+      - |
+        package test
+        result := type_name([1, 2, 3])
+    query: data.test.result
+    want_result: "array"
+
+  # type_name on object
+  - note: type/type_name_object
+    data: {}
+    modules:
+      - |
+        package test
+        result := type_name({"a": 1})
+    query: data.test.result
+    want_result: "object"
+
+  # type_name on set
+  - note: type/type_name_set
+    data: {}
+    modules:
+      - |
+        package test
+        result := type_name({1, 2, 3})
+    query: data.test.result
+    want_result: "set"
+
+  # is_number check
+  - note: type/is_number
+    data: {}
+    modules:
+      - |
+        package test
+        result := is_number(42)
+    query: data.test.result
+    want_result: true
+
+  # is_string check
+  - note: type/is_string
+    data: {}
+    modules:
+      - |
+        package test
+        result := is_string("hello")
+    query: data.test.result
+    want_result: true
+
+  # type_name on result of a complete rule
+  - note: type/type_name_on_rule_result
+    data: {}
+    modules:
+      - |
+        package test
+        config := {"timeout": 30}
+        result := type_name(config)
+    query: data.test.result
+    want_result: "object"

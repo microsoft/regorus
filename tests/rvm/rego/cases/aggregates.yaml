@@ -1,0 +1,92 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Aggregates on Rule Results Test Suite
+# Tests aggregate builtins (sum, max, min, count) applied to partial set/object rule results.
+# Covers known RVM runtime mismatches for aggregate builtins on rule results.
+
+cases:
+  # sum() on a partial set rule
+  - note: aggregates/sum_partial_set
+    data:
+      scores: [10, 20, 30, 40]
+    modules:
+      - |
+        package test
+        high_scores contains score if {
+          some score in data.scores
+          score >= 20
+        }
+        total := sum(high_scores)
+    query: data.test.total
+    want_result: 90
+
+  # count() on a partial set rule
+  - note: aggregates/count_partial_set
+    data:
+      users:
+        - {name: "alice", active: true}
+        - {name: "bob", active: false}
+        - {name: "carol", active: true}
+    modules:
+      - |
+        package test
+        active_users contains name if {
+          some user in data.users
+          user.active == true
+          name := user.name
+        }
+        num_active := count(active_users)
+    query: data.test.num_active
+    want_result: 2
+
+  # max() on values extracted from a partial object via comprehension
+  - note: aggregates/max_partial_object_values
+    data:
+      items:
+        apple: {price: 3}
+        banana: {price: 1}
+        cherry: {price: 5}
+    modules:
+      - |
+        package test
+        prices[name] := price if {
+          some name
+          price := data.items[name].price
+        }
+        most_expensive := max([v | some _, v in prices])
+    query: data.test.most_expensive
+    want_result: 5
+
+  # min() on a filtered partial set
+  - note: aggregates/min_filtered_set
+    data:
+      temps: [72, 65, 80, 55, 90]
+    modules:
+      - |
+        package test
+        cold_temps contains t if {
+          some t in data.temps
+          t < 70
+        }
+        coldest := min(cold_temps)
+    query: data.test.coldest
+    want_result: 55
+
+  # Aggregate on a comprehension that references a rule result
+  - note: aggregates/nested_aggregate_over_rule
+    data:
+      departments:
+        eng: {headcount: 10}
+        sales: {headcount: 5}
+        ops: {headcount: 8}
+    modules:
+      - |
+        package test
+        headcounts[dept] := hc if {
+          some dept
+          hc := data.departments[dept].headcount
+        }
+        total_headcount := sum([hc | some _, hc in headcounts])
+    query: data.test.total_headcount
+    want_result: 23

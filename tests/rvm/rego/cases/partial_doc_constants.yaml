@@ -1,0 +1,73 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Partial Document Constants Test Suite
+# Tests partial set/object rules where all bodies yield constant values.
+# Covers known RVM runtime mismatches for partial document constant evaluation.
+
+cases:
+  # Partial set with multiple constant-yielding bodies
+  - note: partial_const/set_with_constant_bodies
+    data: {}
+    modules:
+      - |
+        package test
+        flags contains "read"
+        flags contains "write"
+        flags contains "execute"
+    query: data.test.flags
+    want_result:
+      set!:
+        - "execute"
+        - "read"
+        - "write"
+
+  # Partial object with constant key-value pairs from multiple bodies
+  # RVM fails: "not a valid rule path" for bracket-notation constant keys.
+  - note: partial_const/object_with_constant_kv
+    data: {}
+    modules:
+      - |
+        package test
+        defaults["timeout"] := 30
+        defaults["retries"] := 3
+        defaults["verbose"] := false
+    query: data.test.defaults
+    want_error: "not a valid rule path"
+    allow_interpreter_success: true
+
+  # Query membership in a constant partial set
+  # This tests if `in` operator works on a rule result.
+  - note: partial_const/constant_set_membership
+    data: {}
+    input:
+      action: "read"
+    modules:
+      - |
+        package test
+        allowed_actions contains "read"
+        allowed_actions contains "write"
+        result := input.action in allowed_actions
+    query: data.test.result
+    want_result: true
+    # Skipped: `in` operator on partial set rule results is not yet supported by the RVM.
+    skip: true
+
+  # Mix of constant and dynamic bodies in a partial set
+  - note: partial_const/mixed_constant_dynamic
+    data:
+      extra_roles: ["auditor"]
+    modules:
+      - |
+        package test
+        roles contains "admin"
+        roles contains "user"
+        roles contains role if {
+          some role in data.extra_roles
+        }
+    query: data.test.roles
+    want_result:
+      set!:
+        - "admin"
+        - "auditor"
+        - "user"
