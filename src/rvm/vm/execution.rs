@@ -570,7 +570,15 @@ impl RegoVM {
         Ok(())
     }
 
-    fn handle_instruction_error(&mut self, _err: VmError, last_result: &mut Value) -> Result<bool> {
+    fn handle_instruction_error(&mut self, err: VmError, last_result: &mut Value) -> Result<bool> {
+        // Resource-limit errors must never be absorbed by rule evaluation.
+        // They represent engine-level constraints, not rule-level failures.
+        // Returning Ok(false) causes the caller to clear execution_stack and
+        // propagate the error, terminating the evaluation entirely.
+        if RegoVM::is_fatal_vm_error(&err) {
+            return Ok(false);
+        }
+
         if let Some(frame) = self.execution_stack.pop() {
             match frame.kind {
                 FrameKind::Rule(mut data) => {

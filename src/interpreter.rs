@@ -2405,8 +2405,14 @@ impl Interpreter {
             self.compiled_policy.strict_builtin_errors,
         ) {
             Ok(v) => v,
-            // Ignore errors if we are not evaluating in strict mode.
-            Err(_) if !self.compiled_policy.strict_builtin_errors => return Ok(Value::Undefined),
+            // Resource-limit errors must always propagate, even in non-strict
+            // mode, to prevent `not builtin(...)` from silently flipping to true.
+            Err(e) if !self.compiled_policy.strict_builtin_errors => {
+                if e.downcast_ref::<crate::LimitError>().is_some() {
+                    return Err(e);
+                }
+                return Ok(Value::Undefined);
+            }
             Err(e) => Err(e)?,
         };
 

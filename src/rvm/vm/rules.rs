@@ -17,6 +17,36 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
+    /// Returns true if the error represents a resource-limit violation that
+    /// must never be silently absorbed by rule evaluation.
+    pub(super) const fn is_fatal_vm_error(err: &VmError) -> bool {
+        matches!(
+            err,
+            VmError::TimeLimitExceeded { .. }
+                | VmError::MemoryLimitExceeded { .. }
+                | VmError::RegexSizeLimitExceeded { .. }
+                | VmError::InstructionLimitExceeded { .. }
+        )
+    }
+
+    /// Restore VM state that was swapped out for rule execution.
+    /// Must be called before returning an error from `execute_rule_definitions_common`
+    /// to avoid leaving the VM in an inconsistent state.
+    fn restore_rule_state(
+        &mut self,
+        previous_loop_stack: &mut Vec<super::context::LoopContext>,
+        previous_comprehension_stack: &mut Vec<super::context::ComprehensionContext>,
+    ) {
+        if let Some(restored_registers) = self.register_stack.pop() {
+            let mut current_register_window = Vec::default();
+            mem::swap(&mut current_register_window, &mut self.registers);
+            self.return_register_window(current_register_window);
+            self.registers = restored_registers;
+        }
+        mem::swap(&mut self.loop_stack, previous_loop_stack);
+        mem::swap(&mut self.comprehension_stack, previous_comprehension_stack);
+    }
+
     pub(super) fn execute_rule_definitions_common(
         &mut self,
         rule_definitions: &[Vec<u32>],
@@ -79,6 +109,13 @@ impl RegoVM {
                 {
                     match self.jump_to(destructuring_entry_point) {
                         Ok(_result) => {}
+                        Err(e) if Self::is_fatal_vm_error(&e) => {
+                            self.restore_rule_state(
+                                &mut previous_loop_stack,
+                                &mut previous_comprehension_stack,
+                            );
+                            return Err(e);
+                        }
                         Err(_e) => {
                             continue 'outer;
                         }
@@ -110,6 +147,13 @@ impl RegoVM {
                         // Once a body in this definition succeeds, remaining bodies
                         // are treated as else-branches and must not be evaluated.
                         break;
+                    }
+                    Err(e) if Self::is_fatal_vm_error(&e) => {
+                        self.restore_rule_state(
+                            &mut previous_loop_stack,
+                            &mut previous_comprehension_stack,
+                        );
+                        return Err(e);
                     }
                     Err(_e) => {}
                 }

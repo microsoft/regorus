@@ -23,6 +23,11 @@ pub enum LimitError {
         /// Configured memory ceiling in bytes.
         limit: u64,
     },
+    /// Reported when a compiled regex NFA exceeds the configured size limit.
+    RegexSizeLimitExceeded {
+        /// Configured compiled-NFA size ceiling in bytes.
+        limit: usize,
+    },
 }
 
 impl fmt::Debug for LimitError {
@@ -36,6 +41,10 @@ impl fmt::Debug for LimitError {
             Self::MemoryLimitExceeded { usage, limit } => f
                 .debug_struct("MemoryLimitExceeded")
                 .field("usage", usage)
+                .field("limit", limit)
+                .finish(),
+            Self::RegexSizeLimitExceeded { limit } => f
+                .debug_struct("RegexSizeLimitExceeded")
                 .field("limit", limit)
                 .finish(),
         }
@@ -60,6 +69,9 @@ impl fmt::Display for LimitError {
                     "execution exceeded memory limit (usage={} bytes, limit={} bytes)",
                     usage, limit
                 )
+            }
+            Self::RegexSizeLimitExceeded { limit } => {
+                write!(f, "compiled regex exceeded size limit ({} bytes)", limit)
             }
         }
     }
