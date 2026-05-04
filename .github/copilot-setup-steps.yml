@@ -1,0 +1,10 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+#
+# Environment setup for the Copilot coding agent.
+# This workflow prepares the VM so that Copilot can run skills and tools.
+
+steps:
+  - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    with:
+      fetch-depth: 0 # full history needed for git diff against main
