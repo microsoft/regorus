@@ -4,6 +4,9 @@
 #![allow(clippy::pattern_type_mismatch, clippy::unused_trait_names)]
 
 //! Shared helpers for YAML-driven integration tests.
+//!
+//! Enable `test-utils` to use these helpers without enabling `yaml`, `std`,
+//! or optional builtins. They also remain available with `yaml` and `std`.
 
 use crate::Value;
 use alloc::{vec, vec::Vec};
@@ -90,12 +93,12 @@ pub fn process_value(v: &Value) -> Result<Value> {
     }
 }
 
-/// Diff-friendly equality helper used by multiple YAML suites.
+/// Compare engine values for fixture suites, formatting mismatches as pretty JSON.
 pub fn match_values(computed: &Value, expected: &Value) -> Result<()> {
     if computed != expected {
-        let expected_yaml = yaml_serde::to_string(expected)?;
-        let computed_yaml = yaml_serde::to_string(computed)?;
-        bail!("expected:\n{}computed:\n{}", expected_yaml, computed_yaml);
+        let expected_json = serde_json::to_string_pretty(expected)?;
+        let computed_json = serde_json::to_string_pretty(computed)?;
+        bail!("expected:\n{expected_json}\ncomputed:\n{computed_json}");
     }
     Ok(())
 }

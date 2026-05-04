@@ -1,0 +1,51 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: regex syntax does not depend on full-opa features
+    data: {}
+    input:
+      - pattern: '^\d+$'
+        value: "123"
+      - pattern: '^\d+$'
+        value: "abc"
+      - pattern: '^\p{Greek}+$'
+        value: "\u03b1\u03b2"
+      - pattern: '(?i)^\x{03c3}$'
+        value: "\u03a3"
+      - pattern: '^\d+$'
+        value: "\u0661"
+      - pattern: '^\D+$'
+        value: "\u0661"
+      - pattern: '^\w+$'
+        value: "\u03b1"
+      - pattern: '^\W+$'
+        value: "\u03b1"
+      - pattern: '^\s+$'
+        value: "\u00a0"
+      - pattern: '^\S+$'
+        value: "\u00a0"
+      - pattern: '\b\x{03b1}\b'
+        value: "\u03b1"
+      - pattern: '\Ba\B'
+        value: "\u03b1a\u03b2"
+      - pattern: '^[0-9]+$'
+        value: "\u0661"
+      - pattern: '(?-u:^\w+$)'
+        value: "\u03b1"
+    modules:
+      - |
+        package test
+        main := [regex.match(item.pattern, item.value) | some item in input]
+    query: data.test.main
+    want_result: [true, false, true, true, true, false, true, false, true, false, true, true, false, false]
+
+  - note: regex.match preserves missing-input undefined
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        main := regex.match(input.pattern, input.value)
+    query: data.test.main
+    want_result: "#undefined"

@@ -1,0 +1,63 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: regex.match supports Perl digit classes
+    modules:
+      - |
+        package test
+        r := regex.match(`^\d+$`, "123")
+    query: data.test
+    want_result: {r: true}
+
+  - note: regex.match rejects non-digits
+    modules:
+      - |
+        package test
+        r := regex.match(`^\d+$`, "abc")
+    query: data.test
+    want_result: {r: false}
+
+  - note: regex.match supports Unicode script classes
+    modules:
+      - |
+        package test
+        r := regex.match(`^\p{Greek}+$`, "\u03b1\u03b2")
+    query: data.test
+    want_result: {r: true}
+
+  - note: regex.match supports Unicode case folding
+    modules:
+      - |
+        package test
+        r := regex.match(`(?i)^\x{03c3}$`, "\u03a3")
+    query: data.test
+    want_result: {r: true}
+
+  - note: regex.is_valid supports Unicode syntax
+    modules:
+      - |
+        package test
+        r := regex.is_valid(`^\p{Greek}+$`)
+    query: data.test
+    want_result: {r: true}
+
+  - note: Unicode classes and boundaries intentionally differ from OPA ASCII semantics
+    input:
+      - {pattern: '^\d+$', value: "\u0661"}
+      - {pattern: '^\D+$', value: "\u0661"}
+      - {pattern: '^\w+$', value: "\u03b1"}
+      - {pattern: '^\W+$', value: "\u03b1"}
+      - {pattern: '^\s+$', value: "\u00a0"}
+      - {pattern: '^\S+$', value: "\u00a0"}
+      - {pattern: '\b\x{03b1}\b', value: "\u03b1"}
+      - {pattern: '\Ba\B', value: "\u03b1a\u03b2"}
+      - {pattern: '^[0-9]+$', value: "\u0661"}
+      - {pattern: '(?-u:^\w+$)', value: "\u03b1"}
+    modules:
+      - |
+        package test
+        import future.keywords.in
+        r := [regex.match(item.pattern, item.value) | some item in input]
+    query: data.test
+    want_result: {r: [true, false, true, false, true, false, true, true, false, false]}

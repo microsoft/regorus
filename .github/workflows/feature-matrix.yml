@@ -32,6 +32,10 @@ jobs:
           - name: library (std + arc + rvm)
             features: std,arc,rvm
 
+          # Run the fixture harness as well, without enabling product YAML.
+          - name: library + fixture helpers
+            features: std,arc,rvm,test-utils
+
           # New default after removing mimalloc from full-opa.
           # Ensures all builtins compile without the allocator.
           - name: full-opa (no mimalloc)
@@ -45,16 +49,16 @@ jobs:
           # Selective builtins without full-opa: validates that popular
           # features can be cherry-picked independently.
           - name: cherry-picked builtins
-            features: std,arc,rvm,regex,time,semver,cache
+            features: std,arc,rvm,regex,time,semver,cache,test-utils
 
           # Observability features only: coverage + cache without the
           # heavier builtins (regex, time, etc.).
           - name: observability
-            features: std,arc,rvm,coverage,cache
+            features: std,arc,rvm,coverage,cache,test-utils
 
           # Default-off explanations (implies rvm) without full-opa.
           - name: explanations
-            features: std,arc,explanations
+            features: std,arc,explanations,test-utils
 
           # Azure Policy adds jsonschema + dashmap; test it compiles
           # and runs on top of full-opa.

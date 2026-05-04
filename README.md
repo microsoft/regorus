@@ -334,6 +334,29 @@ The commands mirror our GitHub Actions jobs, making it easy to dry-run CI steps 
 
 The workflows in `.github/workflows` invoke the same commands, so keeping local runs green is usually enough to satisfy the checks enforced on `main`.
 
+For non-default builds, enable `test-utils` to run the RVM YAML fixtures and
+explanation corpus without enabling the product `yaml` feature:
+
+```bash
+cargo test --no-default-features --features std,arc,rvm,test-utils --frozen
+```
+
+`test-utils` adds no dependencies or builtins and does not require `std`.
+The helpers remain available with `yaml` plus `std` for existing users.
+Without either combination, the helper-dependent suites are gated out;
+RVM compiler, standalone, and interpreter/RVM differential tests still run
+when `rvm` is enabled. The weekly `tests/feature-matrix` workflow covers RVM
+both with and without fixture helpers.
+
+The `regex` feature explicitly enables Unicode syntax support, including Perl
+character classes, Unicode properties, and case folding. Cherry-picked and
+`no_std` builds do not rely on `full-opa`'s transitive dependencies for these.
+Regorus intentionally uses Unicode-aware Perl classes and word boundaries,
+unlike OPA's ASCII Go/RE2 equivalents. For example, `^\d+$` accepts Arabic-Indic
+digits in Regorus; use `^[0-9]+$` for portable ASCII-only matching.
+See [regex compatibility notes](docs/builtins.md#regex-compatibility) before
+moving authorization patterns between engines.
+
 ## OPA Conformance
 
 Regorus has been verified to be compliant with [OPA v1.2.0](https://github.com/open-policy-agent/opa/releases/tag/v1.2.0)

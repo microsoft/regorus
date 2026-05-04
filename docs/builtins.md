@@ -118,6 +118,20 @@ In future, each builtin will be associated with a feature (many builtins could b
   plus the number of Unicode code points, not bytes or grapheme clusters.
 
 - [Regex](https://www.openpolicyagent.org/docs/latest/policy-reference/#regex)
+
+  <a id="regex-compatibility"></a>
+  Regorus intentionally retains Rust regex's Unicode-aware `\d`, `\w`, `\s`,
+  their complements, and `\b`/`\B` word boundaries. OPA's Go/RE2 equivalents
+  are ASCII-only. For example, `^\d+$` matches `"\u0661"` in Regorus but not
+  OPA, and `\b` recognizes Greek letters as word characters in Regorus.
+  These differences can change policy decisions for non-ASCII inputs.
+
+  For portable ASCII matching, use `[0-9]`, `[A-Za-z0-9_]`, and
+  `[\t\n\f\r ]`. Regorus also supports scoped ASCII mode such as `(?-u:\b)`.
+  Unicode properties and case folding remain available in default,
+  cherry-picked, and `no_std` builds. The 100 KiB compiled-regex size limit
+  still applies.
+
   | Builtin                                                                                                                                         | Feature |
   |-------------------------------------------------------------------------------------------------------------------------------------------------|---------|
   | [regex.find_all_string_submatch_n](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-regex-regexfind_all_string_submatch_n) | `regex` |

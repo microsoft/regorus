@@ -15,7 +15,10 @@ mod value;
 #[cfg(feature = "azure_policy")]
 mod azure_policy;
 
-#[cfg(feature = "rvm")]
+#[cfg(all(
+    feature = "rvm",
+    any(feature = "test-utils", all(feature = "yaml", feature = "std"))
+))]
 mod explanation_corpus;
 
 #[cfg(feature = "rvm")]
