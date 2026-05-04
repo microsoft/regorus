@@ -611,6 +611,61 @@ fn yaml_test_impl(file: &str) -> Result<()> {
             }
         }
     }
+    #[cfg(not(feature = "time"))]
+    {
+        let skip = [
+            "add_date.yaml",
+            "date.yaml",
+            "clock.yaml",
+            "diff.yaml",
+            "format.yaml",
+            "now_ns.yaml",
+            "parse_duration_ns.yaml",
+            "parse_ns.yaml",
+            "parse_rfc3339_ns.yaml",
+            "weekday.yaml",
+        ];
+        for s in skip {
+            if file.contains(s) {
+                std::println!("skipped {file} without time feature.");
+                return Ok(());
+            }
+        }
+    }
+    #[cfg(not(feature = "semver"))]
+    {
+        let skip = ["semver/compare.yaml", "semver/is_valid.yaml"];
+        for s in skip {
+            if file.contains(s) {
+                std::println!("skipped {file} without semver feature.");
+                return Ok(());
+            }
+        }
+    }
+    #[cfg(not(feature = "glob"))]
+    {
+        if file.contains("globmatch.yaml") {
+            std::println!("skipped {file} without glob feature.");
+            return Ok(());
+        }
+    }
+    #[cfg(not(feature = "uuid"))]
+    {
+        let skip = ["uuid/generate.yaml", "uuid/parse.yaml"];
+        for s in skip {
+            if file.contains(s) {
+                std::println!("skipped {file} without uuid feature.");
+                return Ok(());
+            }
+        }
+    }
+    #[cfg(not(feature = "regex"))]
+    {
+        if file.contains("regex/") {
+            std::println!("skipped {file} without regex feature.");
+            return Ok(());
+        }
+    }
     #[cfg(not(feature = "graph"))]
     {
         // Skip tests that depend on graph builtin that need graph feature.

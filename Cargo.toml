@@ -48,6 +48,7 @@ time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
 yaml = ["serde_yaml"]
+test-utils = []
 full-opa = [
     "base64",
     "base64url",
