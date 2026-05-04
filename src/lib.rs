@@ -152,7 +152,7 @@ mod scheduler;
 mod schema;
 #[cfg(feature = "azure_policy")]
 pub mod target;
-#[cfg(any(test, all(feature = "yaml", feature = "std")))]
+#[cfg(any(test, feature = "test-utils", all(feature = "yaml", feature = "std")))]
 pub mod test_utils;
 pub mod utils;
 mod value;
