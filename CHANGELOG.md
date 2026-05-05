@@ -6,6 +6,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-05
+
+### Added
+
+- *(copilot)* add multi-agent code review skills (#707)
+- *(azure_policy)* test runner, compiler fixes, and example program (#700)
+- *(azure-policy)* implement effect compilation and metadata population (#691)
+- *(azure-policy)* implement count/count.where compilation (#688)
+- *(azure-policy)* implement condition, expression, field, and template dispatch compilation (#686)
+- *(azure-policy)* add compiler skeleton with core types and stubs (#674)
+- *(rvm)* implement Azure Policy condition evaluation (#661)
+- *(rvm)* new instructions and loop semantics for Azure Policy support (#659)
+- *(azure-policy)* add policy rule and policy definition parsers (#660)
+- add Azure Policy constraint parser (#658)
+- *(rvm)* extend program metadata and bump serialization to v6 (#654)
+- add Azure Policy core JSON parser and expression parser (#655)
+- add Azure Policy AST types (#653)
+- *(azure-policy)* add alias normalization and denormalization (#635)
+- add Azure Policy builtins with YAML test suite (#630)
+- make policy length limits configurable per engine (#624)
+- implement add_extension in Python binding (#596)
+- *(rbac)* [**breaking**] add Azure RBAC engine, FFI API, and cross-language tests (#577)
+
+### Fixed
+
+- harden regex builtins with compiled-size limit (#705)
+- *(ci)* skip mimalloc FFI and disable isolation for Miri (#621)
+
+### Other
+
+- bump version to 0.10.0 across all bindings
+- *(deps)* update all Rust dependencies and fix lockfile refresh workflow (#704)
+- *(deps)* bump com.google.code.gson:gson (#702)
+- *(deps)* bump the github-actions group across 1 directory with 5 updates (#690)
+- *(deps)* bump the per-dependency group across 1 directory with 5 updates (#703)
+- Make `git rev-parse` in `build.rs` optional with graceful fallback (#701)
+- *(azure_policy)* add foundation test cases (#698)
+- *(azure_policy)* add end-to-end policy test cases (#699)
+- fix rand advisory and harden python CI caching (#675)
+- azure-policy parser: allow overriding the column-width limit (#673)
+- *(deps)* bump the rust-dependencies group across 5 directories with 6 updates (#671)
+- *(deps)* bump ruby/setup-ruby in the github-actions group (#670)
+- *(csharp)* prepare NuGet package for nuget.org publishing (#668)
+- Fix RVM evaluation of default-only rules (#664)
+- *(deps)* bump minitest in /bindings/ruby in the per-dependency group (#656)
+- *(deps)* bump the rust-dependencies group across 2 directories with 3 updates (#657)
+- consolidate RVM instruction variants and clean up VM internals (#651)
+- *(deps)* bump wasm-bindgen-test (#650)
+- *(deps)* bump rb_sys in /bindings/ruby in the per-dependency group (#649)
+- *(deps)* bump the rust-dependencies group across 3 directories with 4 updates (#647)
+- *(deps)* bump the github-actions group across 1 directory with 3 updates (#646)
+- *(dependabot)* restore cargo dependency grouping (#645)
+- Fix build break (#634)
+- *(deps)* bump the rust-dependencies group across 5 directories with 16 updates (#633)
+- *(dependabot)* fix cargo config quoting (#632)
+- *(dependabot)* fix cargo workspace updates and refresh lockfiles (#629)
+- *(deps)* bump rubocop in /bindings/ruby in the per-dependency group (#622)
+- *(deps)* bump the github-actions group with 11 updates (#628)
+- Consolidate Dependabot, fix #595 (mimalloc + indexmap), add feature-matrix CI (#627)
+- RVM compiler & runtime optimizations: caching, instruction fusion, constant hoisting, and correctness fixes (#626)
+- Rvm optimizations (#620)
+- *(deps)* bump rubocop in /bindings/ruby in the per-dependency group (#618)
+- *(ci)* add miri workflow (#581)
+- *(ci)* add cargo audit and deny (#580)
+- switch binary serialization to postcard (#582)
+- *(deps-dev)* bump org.apache.maven.plugins:maven-surefire-plugin (#605)
+- *(deps)* bump bytes (#569)
+- *(deps)* bump the per-dependency group with 2 updates (#603)
+- *(deps)* bump the per-dependency group across 1 directory with 3 updates (#607)
+- boolean mapping (#612)
+- Bump the per-dependency group with 1 update (#587)
+- *(deps)* bump the per-dependency group (#585)
+- *(deps)* bump the per-dependency group (#586)
+- *(deps-dev)* bump the per-dependency group (#583)
+- *(deps)* bump the per-dependency group with 12 updates (#593)
+- *(dependabot)* expand coverage and pin workflows (#579)
+
 ### Added
 - Azure RBAC condition interpreter with builtin evaluation coverage and YAML test suite, including quantifier (ForAnyOfAnyValues/ForAllOfAllValues), datetime (DateTimeEquals), IP (IpInRange), GUID (GuidEquals), list (ListContains), and string (StringEquals) semantics.
 - FFI surface for Azure RBAC condition evaluation (see bindings changelog for language-specific wrappers).
