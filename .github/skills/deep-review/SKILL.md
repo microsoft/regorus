@@ -40,21 +40,24 @@ Use `read_agent` with `wait: true` to wait for each background agent.
 ## Step 1: Get the Diff and Build Inventory
 
 ```bash
-BASE=$(git merge-base upstream/main HEAD 2>/dev/null \
-    || git merge-base origin/main HEAD 2>/dev/null)
-if [ -z "$BASE" ]; then
-  echo "ERROR: Cannot find upstream/main or origin/main."
-  exit 1
+# Primary: use gh pr diff (works in cloud agent + any PR context).
+# Fallback: git merge-base for local non-PR usage.
+if gh pr diff --name-only >/dev/null 2>&1; then
+  echo "---STAT---"
+  gh pr diff --name-only
+  echo "---DIFF---"
+  gh pr diff
+else
+  BASE=$(git merge-base upstream/main HEAD 2>/dev/null \
+      || git merge-base origin/main HEAD 2>/dev/null \
+      || git merge-base main HEAD 2>/dev/null)
+  echo "Reviewing changes since: $BASE"
+  git diff "$BASE"..HEAD --stat
+  git diff "$BASE"..HEAD
 fi
-echo "Reviewing changes since: $BASE"
-git diff "$BASE"..HEAD --stat
-git diff "$BASE"..HEAD -- '*.rs' '*.toml' 'examples/' | head -2000
 ```
 
 If the diff is empty, stop and report: "No changes found to review."
-
-**Scope rule:** Focus on code files (`*.rs`, `*.toml`, examples). Do NOT pass
-docs/config diffs to agents.
 
 **Build a risk-classified inventory.** List every changed function, struct,
 impl, trait, pub item, and significant code block. Number them and tag with
@@ -106,8 +109,10 @@ Use `model: "gpt-5.4"` in the task tool call (provides model diversity).
 > Get the diff:
 > ```
 > BASE=$(git merge-base upstream/main HEAD 2>/dev/null \
->     || git merge-base origin/main HEAD 2>/dev/null)
-> git diff "$BASE"..HEAD -- '*.rs' '*.toml' 'examples/'
+>     || git merge-base origin/main HEAD 2>/dev/null \
+>     || git merge-base main HEAD 2>/dev/null)
+> # If no merge-base, use: gh pr diff
+> git diff "$BASE"..HEAD  # or: gh pr diff
 > ```
 >
 > Key regorus constraints:
@@ -161,8 +166,10 @@ Use `model: "claude-opus-4.6"` in the task tool call.
 > Get the diff AND read full source files for context:
 > ```
 > BASE=$(git merge-base upstream/main HEAD 2>/dev/null \
->     || git merge-base origin/main HEAD 2>/dev/null)
-> git diff "$BASE"..HEAD -- '*.rs' '*.toml' 'examples/'
+>     || git merge-base origin/main HEAD 2>/dev/null \
+>     || git merge-base main HEAD 2>/dev/null)
+> # If no merge-base, use: gh pr diff
+> git diff "$BASE"..HEAD  # or: gh pr diff
 > ```
 > Then use `view` to read the full source files that were changed.
 >
@@ -219,8 +226,10 @@ Use the default model (no `model` parameter).
 > Get the diff:
 > ```
 > BASE=$(git merge-base upstream/main HEAD 2>/dev/null \
->     || git merge-base origin/main HEAD 2>/dev/null)
-> git diff "$BASE"..HEAD -- '*.rs' '*.toml' 'examples/'
+>     || git merge-base origin/main HEAD 2>/dev/null \
+>     || git merge-base main HEAD 2>/dev/null)
+> # If no merge-base, use: gh pr diff
+> git diff "$BASE"..HEAD  # or: gh pr diff
 > ```
 > Use `view` to read surrounding context.
 >
@@ -439,8 +448,10 @@ Launch **1 general-purpose agent in background mode**.
 > Get the diff:
 > ```
 > BASE=$(git merge-base upstream/main HEAD 2>/dev/null \
->     || git merge-base origin/main HEAD 2>/dev/null)
-> git diff "$BASE"..HEAD -- '*.rs' '*.toml' 'examples/'
+>     || git merge-base origin/main HEAD 2>/dev/null \
+>     || git merge-base main HEAD 2>/dev/null)
+> # If no merge-base, use: gh pr diff
+> git diff "$BASE"..HEAD  # or: gh pr diff
 > ```
 > Use `view` to read full source files.
 >
@@ -481,8 +492,8 @@ Launch **1 general-purpose agent in background mode**.
 
 ## Step 5: Synthesize and Report
 
-**IMPORTANT:** This is the primary output. Everything above was preparation.
-Keep the report COMPACT — one finding per block, no filler prose.
+**CRITICAL:** Write the report to `/tmp/deep-review-report.md` FIRST, then display it.
+Use a shell command to write the file before any other output in this step.
 
 Apply verdicts from the adversarial verifier:
 - **CONFIRMED**: keep at stated severity
@@ -522,3 +533,9 @@ would catch it. If not, name the minimal test that should exist.
 X findings (N critical, N high, N medium, N low). Y "likely" findings.
 Z dropped (one-line reasons).
 Risk assessment in one sentence.
+
+---
+
+**Remember:** The report above MUST be written to `/tmp/deep-review-report.md` at the
+START of Step 5 (before displaying it). Use shell: `cat > /tmp/deep-review-report.md << 'REPORT_EOF'`
+... report content ... `REPORT_EOF`
