@@ -9,7 +9,7 @@
        <LangVersion>10.0</LangVersion>
 
         <!-- See https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-pack -->
-        <VersionPrefix>0.9.1</VersionPrefix>
+        <VersionPrefix>$(RegorusPackageVersion)</VersionPrefix>
         <VersionSuffix>$(VersionSuffix)</VersionSuffix>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <PackageLicenseExpression>MIT AND Apache-2.0 AND BSD-3-Clause</PackageLicenseExpression>

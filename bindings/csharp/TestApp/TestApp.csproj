@@ -11,8 +11,6 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <!-- Allow CI to append the version suffix for locally built packages -->
-    <RegorusPackageVersionSuffix Condition="'$(VersionSuffix)' != ''">-$(VersionSuffix)</RegorusPackageVersionSuffix>
     <UsePackageReference Condition="'$(UsePackageReference)' == ''">false</UsePackageReference>
   </PropertyGroup>
 
