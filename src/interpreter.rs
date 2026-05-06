@@ -1757,6 +1757,8 @@ impl Interpreter {
 
         match expr.as_ref() {
             Expr::Var { span, .. } => {
+                // A variable that is not currently bound in local scope behaves like
+                // a stable global/package reference for this evaluation.
                 let scope = self
                     .scopes
                     .last()

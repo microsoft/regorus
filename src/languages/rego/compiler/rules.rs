@@ -56,6 +56,8 @@ impl<'a> Compiler<'a> {
                     match head {
                         RuleHead::Set { .. } => RuleType::PartialSet,
                         RuleHead::Compr { refr, assign, .. } => match refr.as_ref() {
+                            // Variable-key bracket heads emit one object entry per successful
+                            // binding, so they must compile as partial objects.
                             crate::ast::Expr::RefBrack { index, .. }
                                 if super::expressions::try_eval_const(index.as_ref()).is_none() =>
                             {

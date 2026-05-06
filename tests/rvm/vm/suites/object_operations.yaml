@@ -8,7 +8,7 @@
 cases:
   - note: object_key_collision_conflict
     description: Setting same key twice with different values should raise a rule output conflict
-    example_rego: "p[\"key\"] := value if { value := [1, 2][_] }"
+    example_rego: "p[\"key\"] = value { value := [1, 2][_] }"
     literals:
       - {}
       - "key"
