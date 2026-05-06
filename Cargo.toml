@@ -128,7 +128,7 @@ rand = { version = "0.10.0", default-features = false, features = ["thread_rng"]
 msvc_spectre_libs = { version = "0.1", features = ["error"], optional = true }
 dashmap = { version = "6.1", default-features = false, optional = true }
 lru = { version = "0.16", default-features = false, optional = true }
-mimalloc = { package = "regorus-mimalloc", path = "mimalloc", version = "2.2.6", optional = true }
+mimalloc = { package = "regorus-mimalloc", path = "mimalloc", version = "2.2.7", optional = true }
 
 # rvm related deps
 indexmap = { version = "2.13.1", default-features = false, features = ["serde"], optional = true }
