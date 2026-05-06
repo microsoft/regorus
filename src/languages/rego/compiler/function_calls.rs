@@ -17,6 +17,7 @@ use crate::lexer::Span;
 use crate::rvm::instructions::{BuiltinCallParams, FunctionCallParams};
 use crate::rvm::Instruction;
 use crate::utils::get_path_string;
+use crate::value::Value;
 use alloc::{format, string::ToString, vec::Vec};
 
 enum CallTarget {
@@ -127,21 +128,50 @@ impl<'a> Compiler<'a> {
                 self.emit_instruction(Instruction::BuiltinCall { params_index }, &span);
             }
             CallTarget::HostAwait { .. } => {
-                if arg_regs.len() != 2 {
-                    return Err(CompilerError::General {
-                        message: format!(
-                            "__builtin_host_await expects 2 arguments, got {}",
-                            arg_regs.len()
-                        ),
+                let (arg_reg, id_reg) = if original_fcn_path == "__builtin_host_await" {
+                    // Explicit __builtin_host_await(arg, id) — 2 arguments
+                    if arg_regs.len() != 2 {
+                        return Err(CompilerError::General {
+                            message: format!(
+                                "__builtin_host_await expects 2 arguments, got {}",
+                                arg_regs.len()
+                            ),
+                        }
+                        .at(&span));
                     }
-                    .at(&span));
-                }
+                    (arg_regs[0], arg_regs[1])
+                } else {
+                    // Registered host-awaitable builtin — identifier is the function name
+                    if arg_regs.len() != 1 {
+                        return Err(CompilerError::General {
+                            message: format!(
+                                "host-awaitable builtin '{}' expects exactly 1 argument, got {}",
+                                original_fcn_path,
+                                arg_regs.len()
+                            ),
+                        }
+                        .at(&span));
+                    }
+                    let id_reg = self.alloc_register();
+                    let literal_idx = self.add_literal(Value::String(original_fcn_path.into()));
+                    self.emit_instruction(
+                        Instruction::Load {
+                            dest: id_reg,
+                            literal_idx,
+                        },
+                        &span,
+                    );
+                    // HostAwait carries a single arg register; registered builtins
+                    // are restricted to arg_count == 1 at registration time, so
+                    // arg_regs[0] is the only argument.
+                    (arg_regs[0], id_reg)
+                };
 
                 self.emit_instruction(
                     Instruction::HostAwait {
                         dest,
-                        arg: arg_regs[0],
-                        id: arg_regs[1],
+                        arg: arg_reg,
+                        id: id_reg,
                     },
                     &span,
                 );
@@ -189,6 +219,13 @@ impl<'a> Compiler<'a> {
         if original_fcn_path == "__builtin_host_await" {
             return Ok(CallTarget::HostAwait {
                 expected_args: Some(2),
+            });
+        }
+
+        // Check registered host-awaitable builtins
+        if let Some(&arg_count) = self.host_await_builtins.get(original_fcn_path) {
+            return Ok(CallTarget::HostAwait {
+                expected_args: Some(arg_count),
             });
         }
 

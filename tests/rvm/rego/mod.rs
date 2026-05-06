@@ -41,6 +41,7 @@ struct TestCase {
     pub host_await_responses: Option<Vec<HostAwaitResponseSpec>>,
     pub host_await_responses_run_to_completion: Option<Vec<HostAwaitResponseSpec>>,
     pub host_await_responses_suspendable: Option<Vec<HostAwaitResponseSpec>>,
+    pub host_await_builtins: Option<Vec<HostAwaitBuiltinSpec>>,
 }
 
 fn default_strict() -> bool {
@@ -55,14 +56,24 @@ struct YamlTest {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 struct HostAwaitResponseSpec {
     pub id: Value,
+    pub args: Option<Value>,
     pub value: Value,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+struct HostAwaitBuiltinSpec {
+    pub name: String,
+    pub arg_count: usize,
+}
+
+type HostAwaitResponseMap = BTreeMap<Value, VecDeque<(Option<Value>, Value)>>;
 
 #[derive(Debug, Clone)]
 struct RvmExecutionOptions {
     execution_mode: ExecutionMode,
     host_await_responses_run_to_completion: Option<Vec<(Value, Vec<Value>)>>,
-    host_await_responses_suspendable: Option<BTreeMap<Value, VecDeque<Value>>>,
+    host_await_responses_suspendable: Option<HostAwaitResponseMap>,
+    host_await_builtins: Option<Vec<(String, usize)>>,
 }
 
 impl Default for RvmExecutionOptions {
@@ -71,6 +82,7 @@ impl Default for RvmExecutionOptions {
             execution_mode: ExecutionMode::RunToCompletion,
             host_await_responses_run_to_completion: None,
             host_await_responses_suspendable: None,
+            host_await_builtins: None,
         }
     }
 }
@@ -82,12 +94,13 @@ fn render_program_listing(program: &Program) -> String {
 
 fn build_host_await_response_map(
     responses: &[HostAwaitResponseSpec],
-) -> anyhow::Result<BTreeMap<Value, VecDeque<Value>>> {
-    let mut map: BTreeMap<Value, VecDeque<Value>> = BTreeMap::new();
+) -> anyhow::Result<HostAwaitResponseMap> {
+    let mut map: HostAwaitResponseMap = BTreeMap::new();
     for response in responses {
         let id = process_value(&response.id)?;
+        let expected_args = response.args.as_ref().map(process_value).transpose()?;
         let value = process_value(&response.value)?;
-        map.entry(id).or_default().push_back(value);
+        map.entry(id).or_default().push_back((expected_args, value));
     }
     Ok(map)
 }
@@ -98,7 +111,7 @@ fn build_host_await_response_vec(
     let map = build_host_await_response_map(responses)?;
     Ok(map
         .into_iter()
-        .map(|(id, values)| (id, values.into_iter().collect()))
+        .map(|(id, values)| (id, values.into_iter().map(|(_, output)| output).collect()))
         .collect())
 }
 
@@ -125,10 +138,18 @@ fn build_execution_options(case: &TestCase) -> anyhow::Result<RvmExecutionOption
         .map(|responses| build_host_await_response_map(responses))
         .transpose()?;
 
+    let ha_builtins = case.host_await_builtins.as_ref().map(|specs| {
+        specs
+            .iter()
+            .map(|s| (s.name.clone(), s.arg_count))
+            .collect()
+    });
+
     Ok(RvmExecutionOptions {
         execution_mode,
         host_await_responses_run_to_completion: rtc_responses,
         host_await_responses_suspendable: suspendable_responses,
+        host_await_builtins: ha_builtins,
     })
 }
 
@@ -227,7 +248,13 @@ fn compile_and_run_rvm_with_all_entry_points(
     listing_out: &mut Option<String>,
     execution_options: &RvmExecutionOptions,
 ) -> anyhow::Result<Vec<Value>> {
-    let program = Compiler::compile_from_policy(compiled_policy, entry_points)?;
+    let ha_builtins = execution_options
+        .host_await_builtins
+        .as_ref()
+        .map(|b| b.iter().map(|(n, a)| (n.as_str(), *a)).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let program =
+        Compiler::compile_from_policy_with_host_await(compiled_policy, entry_points, &ha_builtins)?;
 
     // Basic serialization sanity check keeps regressions visible in CI.
     test_round_trip_serialization(program.as_ref()).map_err(|e| anyhow::anyhow!(e))?;
@@ -269,8 +296,12 @@ fn compile_and_run_rvm_with_all_entry_points(
                         return Err(anyhow::anyhow!("{}", error));
                     }
                     ExecutionState::Suspended { reason, .. } => match reason {
-                        SuspendReason::HostAwait { identifier, .. } => {
-                            let response = suspendable_responses
+                        SuspendReason::HostAwait {
+                            identifier,
+                            argument,
+                            ..
+                        } => {
+                            let (expected_args, response) = suspendable_responses
                                 .get_mut(identifier)
                                 .and_then(|queue| queue.pop_front())
                                 .ok_or_else(|| {
@@ -279,6 +310,14 @@ fn compile_and_run_rvm_with_all_entry_points(
                                         identifier
                                     )
                                 })?;
+                            if let Some(expected) = expected_args {
+                                let actual = process_value(argument)?;
+                                assert_eq!(
+                                    actual, expected,
+                                    "HostAwait argument mismatch for {:?}: expected {:?}, got {:?}",
+                                    identifier, expected, actual
+                                );
+                            }
                             vm.resume(Some(response))?;
                         }
                         other => {

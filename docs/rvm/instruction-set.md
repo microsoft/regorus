@@ -177,6 +177,50 @@ Parameter tables:
 - Suspendable: emits `InstructionOutcome::Suspend` with `SuspendReason::HostAwait`.
   The host must resume with a value that will be written into `dest`.
 
+### Registered host-await builtins
+
+The compiler can be configured with a list of function names that map directly
+to `HostAwait` instructions. This allows policy authors to write natural
+function calls (e.g. `lookup(input.account_id)`) instead of the raw
+`__builtin_host_await(payload, identifier)` builtin.
+
+Registration is done at compile time via `Compiler::compile_from_policy_with_host_await`:
+
+```rust
+let builtins = [("lookup", 1), ("persist", 1)];
+let program = Compiler::compile_from_policy_with_host_await(
+    &compiled_policy, &entry_points, &builtins,
+)?;
+```
+
+Each registered name is a `(name, arg_count)` pair. When the compiler
+encounters a call to a registered name, it emits a `HostAwait` instruction
+with:
+- `arg` = the first argument register
+- `id` = a register loaded with a string literal containing the function name
+
+Both the explicit `__builtin_host_await(arg, id)` call and a registered
+builtin call produce the **same `HostAwait` bytecode instruction**. The only
+difference is how the `id` register is populated: explicit calls take it from
+the second user-supplied argument, while registered calls auto-generate a
+`Load` instruction for the function name string. The VM cannot distinguish
+between the two at runtime.
+
+**Resolution order** in `determine_call_target()`:
+1. `__builtin_host_await` (magic 2-argument form)
+2. Registered host-await builtins (matched by bare function name)
+3. User-defined functions (matched by package-qualified path)
+4. Standard builtins (matched by bare function name)
+
+Registered names shadow both user-defined functions and standard builtins.
+This means `time.parse_duration_ns` can be overridden to route through the
+host instead of the built-in Rust implementation.
+
+**Argument handling**: The `HostAwait` instruction carries a single `arg`
+register. Registered builtins must use `arg_count: 1`; the compiler rejects
+`arg_count > 1` at registration time. To pass multiple values, use object
+packing: `lookup({"user": x, "resource": y})`.
+
 ---
 
 ## Halt instruction
