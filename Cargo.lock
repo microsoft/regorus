@@ -1430,7 +1430,7 @@ dependencies = [
 
 [[package]]
 name = "regorus-mimalloc"
-version = "2.2.6"
+version = "2.2.7"
 dependencies = [
  "regorus-mimalloc-sys",
 ]
