@@ -6,9 +6,9 @@
 # Covers dynamic keys, collisions, non-string keys, and template validation
 
 cases:
-  - note: object_key_collision_overwrite
-    description: Setting same key twice should overwrite the value
-    example_rego: "{\"key\": 1, \"key\": 2}"
+  - note: object_key_collision_conflict
+    description: Setting same key twice with different values should raise a rule output conflict
+    example_rego: "p[key] := value if { value := [1, 2][_] }"
     literals:
       - {}
       - "key"
@@ -26,9 +26,9 @@ cases:
       - "Load { dest: 2, literal_idx: 2 }"  # value 1
       - "ObjectSet { obj: 0, key: 1, value: 2 }"
       - "Load { dest: 3, literal_idx: 3 }"  # value 2
-      - "ObjectSet { obj: 0, key: 1, value: 3 }"  # Overwrite
+      - "ObjectSet { obj: 0, key: 1, value: 3 }"  # Conflict
       - "Return { value: 0 }"
-    want_result: {"key": 2}
+    want_error: "multiple outputs"
 
   - note: object_dynamic_key_generation
     description: Generate object keys dynamically from loop iteration
