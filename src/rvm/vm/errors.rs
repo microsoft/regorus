@@ -209,6 +209,9 @@ pub enum VmError {
     #[error("Rule-data conflict: {message} (pc={pc})")]
     RuleDataConflict { message: String, pc: usize },
 
+    #[error("rules must not produce multiple outputs (pc={pc})")]
+    RuleMultipleOutputs { pc: usize },
+
     #[error("Arithmetic error: {message} (pc={pc})")]
     ArithmeticError { message: String, pc: usize },
 

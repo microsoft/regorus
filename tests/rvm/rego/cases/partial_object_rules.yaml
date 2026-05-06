@@ -1,0 +1,200 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: partial_object_iteration_some_in_object_v1
+    data: {}
+    input:
+      x:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        violations[k] if {
+          some k, _ in input.x
+        }
+    query: data.test.violations
+    want_result:
+      BAR: true
+      BAZ: true
+      FOO: true
+
+  - note: partial_object_iteration_some_in_array_v1
+    data: {}
+    input:
+      arr: ["FOO", "BAR", "BAZ"]
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        violations[v] if {
+          some _, v in input.arr
+        }
+    query: data.test.violations
+    want_result:
+      BAR: true
+      BAZ: true
+      FOO: true
+
+  - note: partial_object_iteration_with_filter_v1
+    data: {}
+    input:
+      x:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        violations[k] if {
+          some k, _ in input.x
+          k != "BAR"
+        }
+    query: data.test.violations
+    want_result:
+      BAZ: true
+      FOO: true
+
+  - note: partial_object_iteration_input_lookup_future_keywords
+    data: {}
+    input:
+      x:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+        import future.keywords.if
+
+        violations[k] if {
+          input.x[k]
+        }
+    query: data.test.violations
+    want_result:
+      BAR: true
+      BAZ: true
+      FOO: true
+
+  - note: partial_object_multiple_bodies_collect_all_keys_v1
+    data: {}
+    input:
+      primary:
+        FOO: 1
+        BAR: 2
+      secondary:
+        BAZ: 3
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        violations[k] if {
+          some k, _ in input.primary
+        }
+
+        violations[k] if {
+          some k, _ in input.secondary
+        }
+    query: data.test.violations
+    want_result:
+      BAR: true
+      BAZ: true
+      FOO: true
+
+  - note: partial_object_duplicate_keys_same_value_are_ok_v1
+    data: {}
+    input:
+      arr: ["FOO", "FOO", "BAR"]
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        violations[v] if {
+          some _, v in input.arr
+        }
+    query: data.test.violations
+    want_result:
+      BAR: true
+      FOO: true
+
+  - note: partial_object_duplicate_keys_different_values_error_v1
+    data: {}
+    input:
+      entries:
+        - k: "FOO"
+          v: 1
+        - k: "FOO"
+          v: 2
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        violations[k] := v if {
+          some entry in input.entries
+          k := entry.k
+          v := entry.v
+        }
+    query: data.test.violations
+    want_error: "multiple outputs"
+
+  - note: partial_object_and_partial_set_iteration_coexist_v1
+    data: {}
+    input:
+      x:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        violations[k] if {
+          some k, _ in input.x
+        }
+
+        seen contains k if {
+          some k, _ in input.x
+        }
+        
+        main := {
+          "seen": seen,
+          "violations": violations,
+        }
+    query: data.test.main
+    want_result:
+      seen:
+        set!: ["BAR", "BAZ", "FOO"]
+      violations:
+        BAR: true
+        BAZ: true
+        FOO: true
+
+  - note: complete_rule_same_value_definitions_still_work_v1
+    data: {}
+    input:
+      role: "superuser"
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        allowed if {
+          input.role == "admin"
+        }
+
+        allowed if {
+          input.role == "superuser"
+        }
+    query: data.test.allowed
+    want_result: true

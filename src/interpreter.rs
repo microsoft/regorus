@@ -1797,7 +1797,10 @@ impl Interpreter {
                     comps.pop();
                     output
                 } else {
-                    // Rule's constness is determined only by its ref.
+                    // Implicit-true partial object rules can vary with each successful key binding.
+                    if key_expr.is_some() && !is_old_style_set {
+                        is_const_rule = false;
+                    }
                     Value::Bool(true)
                 };
 

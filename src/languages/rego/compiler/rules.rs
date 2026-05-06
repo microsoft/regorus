@@ -55,11 +55,8 @@ impl<'a> Compiler<'a> {
                 if let Rule::Spec { head, .. } = def.as_ref() {
                     match head {
                         RuleHead::Set { .. } => RuleType::PartialSet,
-                        RuleHead::Compr { refr, assign, .. } => match refr.as_ref() {
-                            crate::ast::Expr::RefBrack { .. } if assign.is_some() => {
-                                RuleType::PartialObject
-                            }
-                            crate::ast::Expr::RefBrack { .. } => RuleType::PartialSet,
+                        RuleHead::Compr { refr, .. } => match refr.as_ref() {
+                            crate::ast::Expr::RefBrack { .. } => RuleType::PartialObject,
                             _ => RuleType::Complete,
                         },
                         _ => RuleType::Complete,

@@ -454,7 +454,19 @@ impl RegoVM {
                 let mut obj_value = self.take_register(obj)?;
 
                 if let Ok(obj_mut) = obj_value.as_object_mut() {
-                    obj_mut.insert(key_value, value_value);
+                    match obj_mut.get(&key_value) {
+                        Some(existing_value) if existing_value != &value_value => {
+                            self.set_register(obj, obj_value)?;
+                            return Err(VmError::RuleMultipleOutputs { pc: self.pc });
+                        }
+                        Some(_) => {
+                            self.set_register(obj, obj_value)?;
+                            return Ok(InstructionOutcome::Continue);
+                        }
+                        None => {
+                            obj_mut.insert(key_value, value_value);
+                        }
+                    }
                     self.set_register(obj, obj_value)?;
                 } else {
                     let offending = obj_value.clone();
