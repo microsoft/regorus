@@ -11,7 +11,7 @@
 )]
 
 use super::{CompilationContext, Compiler, CompilerError, ContextType, Result, WorklistEntry};
-use crate::ast::{Expr, ExprRef, Rule, RuleHead};
+use crate::ast::{AssignOp, Expr, ExprRef, Rule, RuleHead};
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
 use crate::rvm::program::{Program, RuleType};
@@ -52,13 +52,24 @@ impl<'a> Compiler<'a> {
         let rule_types: BTreeSet<RuleType> = definitions
             .iter()
             .map(|def| {
-                if let Rule::Spec { head, .. } = def.as_ref() {
+                if let Rule::Spec { head, bodies, .. } = def.as_ref() {
                     match head {
                         RuleHead::Set { .. } => RuleType::PartialSet,
-                        RuleHead::Compr { refr, .. } => match refr.as_ref() {
+                        RuleHead::Compr { refr, assign, .. } => match refr.as_ref() {
                             crate::ast::Expr::RefBrack { index, .. }
                                 if super::expressions::try_eval_const(index.as_ref()).is_none() =>
                             {
+                                RuleType::PartialObject
+                            }
+                            crate::ast::Expr::RefBrack { .. }
+                                if matches!(
+                                    assign.as_ref().map(|assign| &assign.op),
+                                    Some(AssignOp::Eq)
+                                ) =>
+                            {
+                                RuleType::PartialObject
+                            }
+                            crate::ast::Expr::RefBrack { .. } if bodies.is_empty() => {
                                 RuleType::PartialObject
                             }
                             crate::ast::Expr::RefBrack { .. } => RuleType::Complete,
