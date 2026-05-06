@@ -4,9 +4,9 @@
 
 use crate::ast::*;
 use crate::builtins::{self, BuiltinFcn};
-use crate::compiled_policy::CompiledPolicyData;
 #[cfg(feature = "azure_policy")]
 use crate::compiled_policy::TargetInfo;
+use crate::compiled_policy::{CompiledPolicyData, DefaultRuleInfo};
 use crate::compiler::destructuring_planner::{
     AssignmentPlan, BindingPlan, DestructuringPlan, WildcardSide,
 };
@@ -1724,6 +1724,9 @@ impl Interpreter {
     // For now, we restrict constant refs to those that contain only simple literals.
     fn is_constant_ref(mut expr: &Ref<Expr>) -> Result<bool> {
         loop {
+            if Self::is_simple_literal(expr)? {
+                return Ok(true);
+            }
             match expr.as_ref() {
                 Expr::Var { .. } => break,
                 Expr::RefDot { refr, .. } => expr = refr,
@@ -1745,6 +1748,27 @@ impl Interpreter {
                 | Expr::Null { .. }
                 | Expr::Number { .. }
         ))
+    }
+
+    fn is_constant_key_expr(&self, expr: &Ref<Expr>) -> Result<bool> {
+        if Self::is_simple_literal(expr)? {
+            return Ok(true);
+        }
+
+        match expr.as_ref() {
+            Expr::Var { span, .. } => {
+                let scope = self
+                    .scopes
+                    .last()
+                    .ok_or_else(|| anyhow!("internal error: no current scope"))?;
+                Ok(!scope.contains_key(&span.source_str()))
+            }
+            Expr::RefDot { refr, .. } => self.is_constant_key_expr(refr),
+            Expr::RefBrack { refr, index, .. } => {
+                Ok(self.is_constant_key_expr(refr)? && self.is_constant_key_expr(index)?)
+            }
+            _ => Ok(false),
+        }
     }
 
     // A rule's output expression is constant if it does not contain local variables.
@@ -1798,8 +1822,10 @@ impl Interpreter {
                     output
                 } else {
                     // Implicit-true partial object rules can vary with each successful key binding.
-                    if key_expr.is_some() && !is_old_style_set {
-                        is_const_rule = false;
+                    if let Some(ke) = &key_expr {
+                        if !is_old_style_set && !self.is_constant_key_expr(ke)? {
+                            is_const_rule = false;
+                        }
                     }
                     Value::Bool(true)
                 };
@@ -2945,6 +2971,41 @@ impl Interpreter {
         Ok(())
     }
 
+    fn default_rules_for_path(&self, path: &str) -> Option<Vec<DefaultRuleInfo>> {
+        if let Some(rules) = self.compiled_policy.default_rules.get(path) {
+            return Some(rules.clone());
+        }
+
+        let (parent_path, index) = path.rsplit_once('.')?;
+        let rules = self.compiled_policy.default_rules.get(parent_path)?;
+        let matches = rules
+            .iter()
+            .filter(|(_, rule_index)| Self::default_rule_index_matches(rule_index, index))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if matches.is_empty() {
+            None
+        } else {
+            Some(matches)
+        }
+    }
+
+    fn has_default_rules_for_path(&self, path: &str) -> bool {
+        self.default_rules_for_path(path).is_some()
+    }
+
+    fn default_rule_index_matches(index: &Option<String>, path_component: &str) -> bool {
+        match index.as_deref() {
+            Some(index) if index == path_component => true,
+            Some(index) => index
+                .strip_prefix('"')
+                .and_then(|index| index.strip_suffix('"'))
+                .is_some_and(|index| index == path_component),
+            None => false,
+        }
+    }
+
     fn ensure_rule_evaluated(&mut self, path: String) -> Result<()> {
         self.check_execution_time()?;
         let mut matched = false;
@@ -2959,9 +3020,9 @@ impl Interpreter {
         }
 
         // Evaluate the associated default rules after non-default rules
-        if let Some(rules) = self.compiled_policy.default_rules.get(&path) {
+        if let Some(rules) = self.default_rules_for_path(&path) {
             matched = true;
-            for (r, _) in rules.clone() {
+            for (r, _) in rules {
                 if !self.processed.contains(&r) {
                     let module = self.get_rule_module(&r)?;
                     let prev_module = self.set_current_module(Some(module))?;
@@ -3052,10 +3113,7 @@ impl Interpreter {
                 let prefix = fields.iter().take(i).copied().collect::<Vec<_>>();
                 let prefix_path = format!("data.{}", prefix.join("."));
                 if self.compiled_policy.rules.contains_key(&prefix_path)
-                    || self
-                        .compiled_policy
-                        .default_rules
-                        .contains_key(&prefix_path)
+                    || self.has_default_rules_for_path(&prefix_path)
                 {
                     self.ensure_rule_evaluated(prefix_path)?;
                     break;
@@ -3079,7 +3137,7 @@ impl Interpreter {
 
             if !no_error
                 && !self.compiled_policy.rules.contains_key(&rule_path)
-                && !self.compiled_policy.default_rules.contains_key(&rule_path)
+                && !self.has_default_rules_for_path(&rule_path)
                 && !self.compiled_policy.imports.contains_key(&rule_path)
             {
                 bail!(span.error(&format!(
@@ -3102,7 +3160,7 @@ impl Interpreter {
                 };
 
                 if self.compiled_policy.rules.contains_key(&path)
-                    || self.compiled_policy.default_rules.contains_key(&path)
+                    || self.has_default_rules_for_path(&path)
                 {
                     self.ensure_rule_evaluated(path)?;
                     found = true;
@@ -3649,7 +3707,7 @@ impl Interpreter {
         self.data = Value::Undefined;
         self.ensure_loop_var_values_capacity();
 
-        let default_rules = self.compiled_policy.default_rules.get(rule_path).cloned();
+        let default_rules = self.default_rules_for_path(rule_path);
 
         if let Some(rules) = default_rules {
             for (rule, _) in rules {

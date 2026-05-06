@@ -17,8 +17,9 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
-    /// Returns true if the error represents a resource-limit violation that
-    /// must never be silently absorbed by rule evaluation.
+    /// Returns true if the error must never be silently absorbed by rule
+    /// evaluation backtracking, including resource-limit failures and semantic
+    /// rule consistency errors.
     pub(super) const fn is_fatal_vm_error(err: &VmError) -> bool {
         matches!(
             err,

@@ -109,6 +109,26 @@ cases:
       BAZ: true
       FOO: true
 
+  - note: constant_key_implicit_true_rule_is_complete_v1
+    data: {}
+    input:
+      enabled: true
+      other: false
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        p["x"] if {
+          input.enabled
+        }
+
+        p["x"] if {
+          input.other
+        }
+    query: data.test.p.x
+    want_result: true
+
   - note: partial_object_duplicate_keys_same_value_are_ok_v1
     data: {}
     input:

@@ -341,6 +341,35 @@ cases:
       result: false
       reasons: []
 
+  - note: default_rule_with_object_key
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+        default config["timeout"] := 30
+        config["timeout"] := input.val if {
+          val := input.val
+        }
+    query: data.test.config.timeout
+    want_result: 30
+
+  - note: default_rule_with_object_key_override
+    data: {}
+    input:
+      val: 60
+    modules:
+      - |
+        package test
+        import rego.v1
+        default config["timeout"] := 30
+        config["timeout"] := input.val if {
+          val := input.val
+        }
+    query: data.test.config.timeout
+    want_result: 60
+
   - note: default_only_rule_with_package_query
     data: {}
     modules:

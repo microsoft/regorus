@@ -181,10 +181,6 @@ impl<'a> Compiler<'a> {
     }
 
     fn evaluate_default_rule(&mut self, rule_path: &str) -> Option<u16> {
-        if !self.policy.inner.default_rules.contains_key(rule_path) {
-            return None;
-        }
-
         let mut interpreter = Interpreter::new_from_compiled_policy(self.policy.inner.clone());
 
         match interpreter.eval_default_rule_for_compiler(rule_path) {

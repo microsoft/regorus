@@ -56,7 +56,12 @@ impl<'a> Compiler<'a> {
                     match head {
                         RuleHead::Set { .. } => RuleType::PartialSet,
                         RuleHead::Compr { refr, .. } => match refr.as_ref() {
-                            crate::ast::Expr::RefBrack { .. } => RuleType::PartialObject,
+                            crate::ast::Expr::RefBrack { index, .. }
+                                if super::expressions::try_eval_const(index.as_ref()).is_none() =>
+                            {
+                                RuleType::PartialObject
+                            }
+                            crate::ast::Expr::RefBrack { .. } => RuleType::Complete,
                             _ => RuleType::Complete,
                         },
                         _ => RuleType::Complete,

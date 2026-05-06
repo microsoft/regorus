@@ -8,7 +8,7 @@
 cases:
   - note: object_key_collision_conflict
     description: Setting same key twice with different values should raise a rule output conflict
-    example_rego: "p[key] := value if { value := [1, 2][_] }"
+    example_rego: "p[\"key\"] := value if { value := [1, 2][_] }"
     literals:
       - {}
       - "key"
@@ -29,6 +29,28 @@ cases:
       - "ObjectSet { obj: 0, key: 1, value: 3 }"  # Conflict
       - "Return { value: 0 }"
     want_error: "multiple outputs"
+
+  - note: object_key_duplicate_same_value
+    description: Setting same key twice with the same value should succeed
+    example_rego: "p[\"key\"] := 1 if { some _ in [0, 1] }"
+    literals:
+      - {}
+      - "key"
+      - 1
+    instruction_params:
+      object_create_params:
+        - dest: 0
+          template_literal_idx: 0
+          literal_key_fields: []
+          fields: []
+    instructions:
+      - "ObjectCreate { params_index: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"  # key
+      - "Load { dest: 2, literal_idx: 2 }"  # value
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"
+      - "Return { value: 0 }"
+    want_result: {"key": 1}
 
   - note: object_dynamic_key_generation
     description: Generate object keys dynamically from loop iteration

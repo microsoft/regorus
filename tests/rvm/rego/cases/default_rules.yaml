@@ -48,17 +48,33 @@ cases:
     want_result: true
 
   - note: default_rule_with_object_key
-    skip: true  # TODO: Fix rule type classification for config["timeout"] - should be Complete, not PartialObject
     data: {}
+    input: {}
     modules:
       - |
         package test
+        import rego.v1
         default config["timeout"] := 30
-        config["timeout"] := 60 if {
-          false  # This will fail
+        config["timeout"] := input.val if {
+          val := input.val
         }
     query: data.test.config.timeout
     want_result: 30
+
+  - note: default_rule_with_object_key_override
+    data: {}
+    input:
+      val: 60
+    modules:
+      - |
+        package test
+        import rego.v1
+        default config["timeout"] := 30
+        config["timeout"] := input.val if {
+          val := input.val
+        }
+    query: data.test.config.timeout
+    want_result: 60
 
   - note: default_rule_complex_value
     data: {}
