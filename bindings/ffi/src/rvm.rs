@@ -121,6 +121,54 @@ pub extern "C" fn regorus_program_compile_from_policy(
     })
 }
 
+/// Shared implementation for compiling an RVM program from data/modules/entry-points
+/// with optional host-await builtins.
+fn compile_from_modules_inner(
+    data_json: *const c_char,
+    modules: *const RegorusPolicyModule,
+    modules_len: usize,
+    entry_points: *const *const c_char,
+    entry_points_len: usize,
+    ha_builtins: Option<&[(&str, usize)]>,
+) -> Result<*mut RegorusProgram> {
+    if entry_points_len == 0 {
+        return Err(anyhow!("entry_points must contain at least one entry"));
+    }
+
+    let data_str = from_c_str(data_json)?;
+    let data = Value::from_json_str(&data_str)?;
+    let policy_modules = convert_c_modules_to_rust(modules, modules_len)?;
+    let entry_points_vec = convert_c_entry_points(entry_points, entry_points_len)?;
+    let entry_points_ref: Vec<&str> = entry_points_vec.iter().map(|s| s.as_str()).collect();
+
+    let entry_rule = entry_points_ref
+        .first()
+        .ok_or_else(|| anyhow!("entry_points must contain at least one entry"))?;
+
+    let compiled_policy =
+        regorus::compile_policy_with_entrypoint(data, &policy_modules, (*entry_rule).into())?;
+
+    let program = match ha_builtins {
+        Some(builtins) => Compiler::compile_from_policy_with_host_await(
+            &compiled_policy,
+            &entry_points_ref,
+            builtins,
+        )?,
+        None => Compiler::compile_from_policy(&compiled_policy, &entry_points_ref)?,
+    };
+    Ok(Box::into_raw(Box::new(RegorusProgram { program })))
+}
+
+fn compile_from_modules_result(output: Result<*mut RegorusProgram>) -> RegorusResult {
+    match output {
+        Ok(program) => RegorusResult::ok_pointer(program as *mut c_void),
+        Err(err) => RegorusResult::err_with_message(
+            RegorusStatus::CompilationFailed,
+            format!("RVM compilation failed: {err}"),
+        ),
+    }
+}
+
 /// Compile an RVM program from data/modules and entry points.
 ///
 /// * `data_json` - JSON string containing static data for policy evaluation
@@ -137,39 +185,14 @@ pub extern "C" fn regorus_program_compile_from_modules(
     entry_points_len: usize,
 ) -> RegorusResult {
     with_unwind_guard(|| {
-        let output = || -> Result<*mut RegorusProgram> {
-            if entry_points_len == 0 {
-                return Err(anyhow!("entry_points must contain at least one entry"));
-            }
-
-            let data_str = from_c_str(data_json)?;
-            let data = Value::from_json_str(&data_str)?;
-            let policy_modules = convert_c_modules_to_rust(modules, modules_len)?;
-
-            let entry_points_vec = convert_c_entry_points(entry_points, entry_points_len)?;
-            let entry_points_ref: Vec<&str> = entry_points_vec.iter().map(|s| s.as_str()).collect();
-
-            let entry_rule = entry_points_ref
-                .first()
-                .ok_or_else(|| anyhow!("entry_points must contain at least one entry"))?;
-
-            let compiled_policy = regorus::compile_policy_with_entrypoint(
-                data,
-                &policy_modules,
-                (*entry_rule).into(),
-            )?;
-
-            let program = Compiler::compile_from_policy(&compiled_policy, &entry_points_ref)?;
-            Ok(Box::into_raw(Box::new(RegorusProgram { program })))
-        }();
-
-        match output {
-            Ok(program) => RegorusResult::ok_pointer(program as *mut c_void),
-            Err(err) => RegorusResult::err_with_message(
-                RegorusStatus::CompilationFailed,
-                format!("RVM compilation failed: {err}"),
-            ),
-        }
+        compile_from_modules_result(compile_from_modules_inner(
+            data_json,
+            modules,
+            modules_len,
+            entry_points,
+            entry_points_len,
+            None,
+        ))
     })
 }
 
@@ -603,4 +626,158 @@ fn convert_c_modules_to_rust(
     }
 
     Ok(policy_modules)
+}
+
+/// A registered host-awaitable builtin passed via FFI.
+#[repr(C)]
+pub struct RegorusHostAwaitBuiltin {
+    /// Null-terminated UTF-8 builtin name.
+    pub name: *const c_char,
+    /// Expected number of arguments.
+    pub arg_count: usize,
+}
+
+/// Compile an RVM program from data/modules and entry points, with registered
+/// host-awaitable builtins.
+///
+/// * `data_json` - JSON string containing static data for policy evaluation
+/// * `modules` / `modules_len` - Policy modules to compile
+/// * `entry_points` / `entry_points_len` - Entry point rule paths
+/// * `host_await_builtins` / `host_await_builtins_len` - Builtins that compile to HostAwait
+#[no_mangle]
+pub extern "C" fn regorus_program_compile_from_modules_with_host_await(
+    data_json: *const c_char,
+    modules: *const RegorusPolicyModule,
+    modules_len: usize,
+    entry_points: *const *const c_char,
+    entry_points_len: usize,
+    host_await_builtins: *const RegorusHostAwaitBuiltin,
+    host_await_builtins_len: usize,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        let output = || -> Result<*mut RegorusProgram> {
+            let ha_builtins =
+                convert_c_host_await_builtins(host_await_builtins, host_await_builtins_len)?;
+            let ha_ref: Vec<(&str, usize)> =
+                ha_builtins.iter().map(|(n, a)| (n.as_str(), *a)).collect();
+            compile_from_modules_inner(
+                data_json,
+                modules,
+                modules_len,
+                entry_points,
+                entry_points_len,
+                Some(&ha_ref),
+            )
+        }();
+        compile_from_modules_result(output)
+    })
+}
+
+/// Pre-load HostAwait responses for run-to-completion mode.
+///
+/// Clears any previously configured responses, then queues the
+/// provided values for the given identifier.
+///
+/// * `vm` - RVM instance
+/// * `identifier` - Null-terminated UTF-8 identifier
+/// * `values_json` - Array of null-terminated UTF-8 JSON response strings
+/// * `values_len` - Number of responses
+#[no_mangle]
+pub extern "C" fn regorus_rvm_set_host_await_responses(
+    vm: *mut RegorusRvm,
+    identifier: *const c_char,
+    values_json: *const *const c_char,
+    values_len: usize,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        to_regorus_result(|| -> Result<()> {
+            let vm = to_ref(vm)?;
+            let mut guard = vm.try_write()?;
+            let id_str = from_c_str(identifier)?;
+            let id_value = Value::String(id_str.into());
+
+            let mut values = alloc::collections::VecDeque::with_capacity(values_len);
+            for i in 0..values_len {
+                unsafe {
+                    if values_json.is_null() {
+                        return Err(anyhow!("null values_json pointer"));
+                    }
+                    let ptr = *values_json.add(i);
+                    let json_str = from_c_str(ptr)?;
+                    let val = Value::from_json_str(&json_str)?;
+                    values.push_back(val);
+                }
+            }
+
+            guard.set_host_await_responses(core::iter::once((id_value, values)));
+            Ok(())
+        }())
+    })
+}
+
+/// Get the HostAwait argument as a JSON string.
+///
+/// Returns the argument value if the VM is suspended due to a HostAwait instruction,
+/// or None if the VM is not in a HostAwait-suspended state.
+#[no_mangle]
+pub extern "C" fn regorus_rvm_get_host_await_argument(vm: *mut RegorusRvm) -> RegorusResult {
+    with_unwind_guard(|| {
+        let output = || -> Result<Option<String>> {
+            let vm = to_ref(vm)?;
+            let guard = vm.try_read()?;
+            match guard.get_host_await_argument() {
+                Some(arg) => Ok(Some(arg.to_json_str()?)),
+                None => Ok(None),
+            }
+        }();
+
+        match output {
+            Ok(Some(json)) => RegorusResult::ok_string(json),
+            Ok(None) => RegorusResult::ok_void(),
+            Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
+        }
+    })
+}
+
+/// Get the HostAwait identifier as a JSON string.
+///
+/// Returns the identifier value if the VM is suspended due to a HostAwait instruction,
+/// or None if the VM is not in a HostAwait-suspended state.
+#[no_mangle]
+pub extern "C" fn regorus_rvm_get_host_await_identifier(vm: *mut RegorusRvm) -> RegorusResult {
+    with_unwind_guard(|| {
+        let output = || -> Result<Option<String>> {
+            let vm = to_ref(vm)?;
+            let guard = vm.try_read()?;
+            match guard.get_host_await_identifier() {
+                Some(id) => Ok(Some(id.to_json_str()?)),
+                None => Ok(None),
+            }
+        }();
+
+        match output {
+            Ok(Some(json)) => RegorusResult::ok_string(json),
+            Ok(None) => RegorusResult::ok_void(),
+            Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
+        }
+    })
+}
+
+pub fn convert_c_host_await_builtins(
+    builtins: *const RegorusHostAwaitBuiltin,
+    len: usize,
+) -> Result<Vec<(String, usize)>> {
+    if builtins.is_null() && len > 0 {
+        return Err(anyhow!("null host_await_builtins pointer"));
+    }
+    let mut result = Vec::with_capacity(len);
+    for i in 0..len {
+        unsafe {
+            let b = &*builtins.add(i);
+            let name = from_c_str(b.name)
+                .map_err(|e| anyhow!("invalid host-await builtin name at index {i}: {e}"))?;
+            result.push((name, b.arg_count));
+        }
+    }
+    Ok(result)
 }
