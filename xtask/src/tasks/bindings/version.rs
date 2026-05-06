@@ -124,7 +124,7 @@ struct Binding {
     manifest: Option<&'static str>,
     ruby_version: Option<&'static str>,
     pom_xml: Option<&'static str>,
-    csharp_project: Option<&'static str>,
+    csharp_version_file: Option<&'static str>,
     csharp_dependents: &'static [&'static str],
 }
 
@@ -139,7 +139,7 @@ const BINDINGS: &[Binding] = &[
         manifest: Some("bindings/ffi/Cargo.toml"),
         ruby_version: None,
         pom_xml: None,
-        csharp_project: None,
+        csharp_version_file: None,
         csharp_dependents: EMPTY,
     },
     Binding {
@@ -148,7 +148,7 @@ const BINDINGS: &[Binding] = &[
         manifest: Some("bindings/java/Cargo.toml"),
         ruby_version: None,
         pom_xml: Some("bindings/java/pom.xml"),
-        csharp_project: None,
+        csharp_version_file: None,
         csharp_dependents: EMPTY,
     },
     Binding {
@@ -157,7 +157,7 @@ const BINDINGS: &[Binding] = &[
         manifest: Some("bindings/python/Cargo.toml"),
         ruby_version: None,
         pom_xml: None,
-        csharp_project: None,
+        csharp_version_file: None,
         csharp_dependents: EMPTY,
     },
     Binding {
@@ -166,7 +166,7 @@ const BINDINGS: &[Binding] = &[
         manifest: Some("bindings/wasm/Cargo.toml"),
         ruby_version: None,
         pom_xml: None,
-        csharp_project: None,
+        csharp_version_file: None,
         csharp_dependents: EMPTY,
     },
     Binding {
@@ -175,7 +175,7 @@ const BINDINGS: &[Binding] = &[
         manifest: Some("bindings/ruby/ext/regorusrb/Cargo.toml"),
         ruby_version: Some("bindings/ruby/lib/regorus/version.rb"),
         pom_xml: None,
-        csharp_project: None,
+        csharp_version_file: None,
         csharp_dependents: EMPTY,
     },
     Binding {
@@ -184,14 +184,8 @@ const BINDINGS: &[Binding] = &[
         manifest: None,
         ruby_version: None,
         pom_xml: None,
-        csharp_project: Some("bindings/csharp/Regorus/Regorus.csproj"),
-        csharp_dependents: &[
-            "bindings/csharp/Directory.Packages.props",
-            "bindings/csharp/Regorus.Tests/Regorus.Tests.csproj",
-            "bindings/csharp/Benchmarks/Benchmarks.csproj",
-            "bindings/csharp/TargetExampleApp/TargetExampleApp.csproj",
-            "bindings/csharp/TestApp/TestApp.csproj",
-        ],
+        csharp_version_file: Some("bindings/csharp/Directory.Packages.props"),
+        csharp_dependents: EMPTY,
     },
 ];
 
@@ -335,7 +329,7 @@ fn read_binding_version(root: &Path, binding: &Binding) -> Result<Version> {
     if let Some(manifest) = binding.manifest {
         return read_manifest_version(&root.join(manifest));
     }
-    if let Some(project) = binding.csharp_project {
+    if let Some(project) = binding.csharp_version_file {
         return read_csharp_version(root.join(project));
     }
     bail!("binding '{}' missing version source", binding.name)
@@ -357,13 +351,18 @@ fn read_manifest_version(path: &Path) -> Result<Version> {
 fn read_csharp_version(path: PathBuf) -> Result<Version> {
     let contents =
         fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
-    let re = Regex::new(r#"(?s)<VersionPrefix>(?P<value>[^<]+)</VersionPrefix>"#)?;
+    let re = Regex::new(r#"(?s)<RegorusPackageVersion>(?P<value>[^<]+)</RegorusPackageVersion>"#)?;
     let caps = re
         .captures(&contents)
-        .ok_or_else(|| anyhow!("{} missing <VersionPrefix> entry", path.display()))?;
-    let version = caps.name("value").unwrap().as_str();
-    Version::parse(version)
-        .with_context(|| format!("invalid VersionPrefix '{}' in {}", version, path.display()))
+        .ok_or_else(|| anyhow!("{} missing <RegorusPackageVersion> entry", path.display()))?;
+    let version = caps.name("value").unwrap().as_str().trim();
+    Version::parse(version).with_context(|| {
+        format!(
+            "invalid RegorusPackageVersion '{}' in {}",
+            version,
+            path.display()
+        )
+    })
 }
 
 /// Calculates the version to write, bumping the minor release when the binding
@@ -420,8 +419,8 @@ fn apply_binding_version(
         }
     }
 
-    if let Some(project) = binding.csharp_project {
-        touched.extend(update_csharp_projects(
+    if let Some(project) = binding.csharp_version_file {
+        touched.extend(update_csharp_version_files(
             root,
             project,
             binding.csharp_dependents,
@@ -502,59 +501,54 @@ fn update_java_pom(root: &Path, pom_path: &str, version: &str, check: bool) -> R
 }
 
 /// Updates the NuGet packaging project and any sample/test consumers.
-fn update_csharp_projects(
+fn update_csharp_version_files(
     root: &Path,
-    package_project: &str,
+    version_file: &str,
     dependent_projects: &[&str],
     version: &str,
     check: bool,
 ) -> Result<Vec<String>> {
     let mut touched = Vec::new();
-    let version_prefix = Regex::new(
-        r#"(?s)(?P<prefix><VersionPrefix>)(?P<value>[^<]+)(?P<suffix></VersionPrefix>)"#,
-    )?;
-    let pkg_ref = Regex::new(
-        r#"(?i)(?P<prefix><Package(?:Reference|Version)[^>]*Include="microsoft\.regorus"[^>]*Version=")(?P<value>\d+\.\d+\.\d+)(?P<suffix>[^\"]*")"#,
+    let version_prop = Regex::new(
+        r#"(?s)(?P<prefix><RegorusPackageVersion>)(?P<value>[^<]+)(?P<suffix></RegorusPackageVersion>)"#,
     )?;
 
-    let package_path = root.join(package_project);
+    let package_path = root.join(version_file);
+    if !version_prop.is_match(
+        &fs::read_to_string(&package_path)
+            .with_context(|| format!("failed to read {}", package_path.display()))?,
+    ) {
+        anyhow::bail!(
+            "{} missing <RegorusPackageVersion> entry",
+            package_path.display()
+        );
+    }
     if edit_file(&package_path, check, |contents| {
         let mut changed = false;
-        let mut new_contents = contents.to_owned();
+        let new_contents = version_prop
+            .replace(contents, |caps: &regex::Captures| {
+                let current = caps.name("value").unwrap().as_str().trim();
+                if current == version {
+                    caps[0].to_string()
+                } else {
+                    changed = true;
+                    format!("{}{}{}", &caps["prefix"], version, &caps["suffix"])
+                }
+            })
+            .into_owned();
 
-        if version_prefix.is_match(&new_contents) {
-            new_contents = version_prefix
-                .replace(&new_contents, |caps: &regex::Captures| {
-                    let current = caps.name("value").unwrap().as_str();
-                    if current == version {
-                        caps[0].to_string()
-                    } else {
-                        changed = true;
-                        format!("{}{}{}", &caps["prefix"], version, &caps["suffix"])
-                    }
-                })
-                .into_owned();
-        }
-
-        let replaced = pkg_ref.replace_all(&new_contents, |caps: &regex::Captures| {
-            let current = caps.name("value").unwrap().as_str();
-            if current == version {
-                caps[0].to_string()
-            } else {
-                changed = true;
-                format!("{}{}{}", &caps["prefix"], version, &caps["suffix"])
-            }
-        });
-        let final_contents = replaced.into_owned();
-
-        if changed && final_contents != *contents {
-            Ok(Some(final_contents))
+        if changed && new_contents != *contents {
+            Ok(Some(new_contents))
         } else {
             Ok(None)
         }
     })? {
-        touched.push(package_project.to_string());
+        touched.push(version_file.to_string());
     }
+
+    let pkg_ref = Regex::new(
+        r#"(?i)(?P<prefix><Package(?:Reference|Version)[^>]*Include="microsoft\.regorus"[^>]*Version=")(?P<value>\d+\.\d+\.\d+)(?P<suffix>[^\"]*")"#,
+    )?;
 
     for rel_path in dependent_projects {
         let path = root.join(rel_path);
