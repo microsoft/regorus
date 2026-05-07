@@ -181,6 +181,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn evaluate_default_rule(&mut self, rule_path: &str) -> Option<u16> {
+        if !self.may_have_default_rule(rule_path) {
+            return None;
+        }
+
         let mut interpreter = Interpreter::new_from_compiled_policy(self.policy.inner.clone());
 
         match interpreter.eval_default_rule_for_compiler(rule_path) {
@@ -194,6 +198,33 @@ impl<'a> Compiler<'a> {
         }
 
         None
+    }
+
+    fn may_have_default_rule(&self, rule_path: &str) -> bool {
+        if self.policy.inner.default_rules.contains_key(rule_path) {
+            return true;
+        }
+
+        let Some((parent_path, index)) = rule_path.rsplit_once('.') else {
+            return false;
+        };
+
+        self.policy
+            .inner
+            .default_rules
+            .get(parent_path)
+            .is_some_and(|rules| {
+                rules
+                    .iter()
+                    .any(|(_, rule_index)| match rule_index.as_deref() {
+                        Some(rule_index) if rule_index == index => true,
+                        Some(rule_index) => rule_index
+                            .strip_prefix('"')
+                            .and_then(|rule_index| rule_index.strip_suffix('"'))
+                            .is_some_and(|rule_index| rule_index == index),
+                        None => false,
+                    })
+            })
     }
 
     fn extract_destructuring_blocks(&self, rule_index: u16) -> Vec<Option<u32>> {

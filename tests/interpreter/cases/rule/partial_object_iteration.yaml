@@ -201,6 +201,27 @@ cases:
         BAZ: true
         FOO: true
 
+  - note: partial_object_key_bound_in_outer_scope_v1
+    data: {}
+    input:
+      outer:
+        FOO: [1, 2]
+        BAR: [3]
+        BAZ: []
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        violations[k] if {
+          some k, arr in input.outer
+          some _ in arr
+        }
+    query: data.test.violations
+    want_result:
+      BAR: true
+      FOO: true
+
   - note: complete_rule_same_value_definitions_still_work_v1
     data: {}
     input:

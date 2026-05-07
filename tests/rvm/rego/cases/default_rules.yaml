@@ -55,7 +55,7 @@ cases:
         package test
         import rego.v1
         default config["timeout"] := 30
-        config["timeout"] := input.val if {
+        config["timeout"] := val if {
           val := input.val
         }
     query: data.test.config.timeout
@@ -70,7 +70,7 @@ cases:
         package test
         import rego.v1
         default config["timeout"] := 30
-        config["timeout"] := input.val if {
+        config["timeout"] := val if {
           val := input.val
         }
     query: data.test.config.timeout

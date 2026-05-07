@@ -1757,13 +1757,14 @@ impl Interpreter {
 
         match expr.as_ref() {
             Expr::Var { span, .. } => {
-                // A variable that is not currently bound in local scope behaves like
+                // A variable that is not currently bound in any active local scope behaves like
                 // a stable global/package reference for this evaluation.
-                let scope = self
+                let is_bound = self
                     .scopes
-                    .last()
-                    .ok_or_else(|| anyhow!("internal error: no current scope"))?;
-                Ok(!scope.contains_key(&span.source_str()))
+                    .iter()
+                    .rev()
+                    .any(|scope| scope.contains_key(&span.source_str()));
+                Ok(!is_bound)
             }
             Expr::RefDot { refr, .. } => self.is_constant_key_expr(refr),
             Expr::RefBrack { refr, index, .. } => {
