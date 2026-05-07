@@ -99,7 +99,7 @@ rand = ["dep:rand"]
 anyhow = { version = "1.0.102", default-features = false }
 serde = {version = "1.0.150", default-features = false, features = ["derive", "rc", "alloc"] }
 serde_json = { version = "1.0.89", default-features = false, features = ["alloc"] }
-hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"], optional = true }
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"], optional = true }
 lazy_static =  { version = "1.4.0", default-features = false }
 thiserror = { version = "2.0", default-features = false }
 
@@ -114,7 +114,7 @@ regex = {version = "1.12.3", optional = true, default-features = false }
 semver = {version = "1.0.28", optional = true, default-features = false }
 url = { version = "2.5.4", optional = true }
 uuid = { version = "1.22.0", default-features = false, features = ["v4", "fast-rng"], optional = true }
-jsonschema = { version = "0.45.1", default-features = false, optional = true }
+jsonschema = { version = "0.46.4", default-features = false, optional = true }
 chrono = { version = "0.4.44", optional = true }
 chrono-tz = { version = "0.10.1", optional = true }
 ipnet = { version = "2.12.0", optional = true, default-features = false }
@@ -127,7 +127,7 @@ rand = { version = "0.10.0", default-features = false, features = ["thread_rng"]
 # Causes the project to link with the Spectre-mitigated CRT and libs.
 msvc_spectre_libs = { version = "0.1", features = ["error"], optional = true }
 dashmap = { version = "6.1", default-features = false, optional = true }
-lru = { version = "0.16", default-features = false, optional = true }
+lru = { version = "0.18", default-features = false, optional = true }
 mimalloc = { package = "regorus-mimalloc", path = "mimalloc", version = "2.2.6", optional = true }
 
 # rvm related deps
