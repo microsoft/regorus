@@ -22,6 +22,13 @@ pub struct RegorusAliasRegistry {
     registry: AliasRegistry,
 }
 
+impl RegorusAliasRegistry {
+    /// Return an `Rc<AliasRegistry>` clone for use by the compiler.
+    pub(crate) fn clone_rc(&self) -> regorus::Rc<AliasRegistry> {
+        regorus::Rc::new(self.registry.clone())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------

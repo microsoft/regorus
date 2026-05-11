@@ -208,6 +208,117 @@ fn convert_c_modules_to_rust(
     Ok(policy_modules)
 }
 
+// ---------------------------------------------------------------------------
+// Azure Policy JSON compilation
+// ---------------------------------------------------------------------------
+
+/// Compile a full Azure Policy definition JSON into an RVM program.
+///
+/// Parses the JSON policy definition (which includes `policyRule`, `parameters`,
+/// `displayName`, etc.), resolves aliases using the provided registry, and
+/// compiles the result into an RVM [`Program`].
+///
+/// The definition JSON may be in either wrapped or unwrapped form:
+/// - **Wrapped**: `{ "properties": { "policyRule": ..., "parameters": ... }, "id": ... }`
+/// - **Unwrapped**: `{ "policyRule": ..., "parameters": ..., "displayName": ... }`
+///
+/// # Parameters
+/// * `registry` - Alias registry handle, or null.
+/// * `policy_definition_json` - JSON string containing the full policy definition
+///
+/// # Null registry behavior
+///
+/// When `registry` is null, compilation proceeds **without alias resolution**.
+/// Field references that correspond to Azure resource provider aliases will
+/// be compiled as raw property paths rather than being resolved.  This means:
+///
+/// - Policies that rely on aliases will **silently produce incorrect
+///   evaluation results**.
+/// - **Modify / Append** effect policies will **skip the modifiability
+///   validation** that normally rejects writes to non-modifiable aliases
+///   at compile time.
+///
+/// Pass null only when the policy is known to contain no alias references
+/// (e.g. simple `type` / `location` checks, or in unit-test scenarios).
+///
+/// # Returns
+/// Returns a `RegorusResult` containing a `RegorusProgram` pointer on success.
+///
+/// # Safety
+/// `policy_definition_json` must be a valid null-terminated UTF-8 string.
+/// If `registry` is non-null it must be a valid `RegorusAliasRegistry` pointer.
+/// The caller must eventually call `regorus_program_drop` on the returned handle.
+#[cfg(all(feature = "azure_policy", feature = "rvm"))]
+#[no_mangle]
+pub extern "C" fn regorus_compile_azure_policy_definition(
+    registry: *mut crate::alias_registry::RegorusAliasRegistry,
+    policy_definition_json: *const c_char,
+) -> RegorusResult {
+    use crate::alias_registry::RegorusAliasRegistry;
+    use crate::common::to_ref;
+    use crate::rvm::RegorusProgram;
+    use alloc::sync::Arc;
+    use regorus::languages::azure_policy::{compiler, parser};
+    use regorus::Rc;
+    use regorus::Source;
+
+    with_unwind_guard(|| {
+        let result = || -> Result<RegorusProgram, (RegorusStatus, alloc::string::String)> {
+            let json_str = from_c_str(policy_definition_json).map_err(|e| {
+                (
+                    RegorusStatus::InvalidDataFormat,
+                    format!("Invalid policy definition JSON string: {e}"),
+                )
+            })?;
+
+            let source =
+                Source::from_contents("policy_definition".into(), json_str).map_err(|e| {
+                    (
+                        RegorusStatus::InvalidDataFormat,
+                        format!("Failed to create source: {e}"),
+                    )
+                })?;
+
+            let defn = parser::parse_policy_definition(&source).map_err(|e| {
+                (
+                    RegorusStatus::InvalidPolicy,
+                    format!("Failed to parse policy definition: {e}"),
+                )
+            })?;
+
+            let program = if registry.is_null() {
+                compiler::compile_policy_definition(&defn)
+            } else {
+                let reg: &RegorusAliasRegistry = to_ref(registry).map_err(|e| {
+                    (
+                        RegorusStatus::InvalidArgument,
+                        format!("Invalid alias registry: {e}"),
+                    )
+                })?;
+                compiler::compile_policy_definition_with_aliases(&defn, reg.clone_rc())
+            };
+
+            program
+                .map(|p| RegorusProgram {
+                    program: Arc::new(Rc::try_unwrap(p).unwrap_or_else(|rc| (*rc).clone())),
+                })
+                .map_err(|e| {
+                    (
+                        RegorusStatus::CompilationFailed,
+                        format!("Failed to compile policy definition: {e}"),
+                    )
+                })
+        }();
+
+        match result {
+            Ok(program) => {
+                RegorusResult::ok_pointer(Box::into_raw(Box::new(program)) as *mut c_void)
+            }
+            Err((status, msg)) => RegorusResult::err_with_message(status, msg),
+        }
+    })
+}
+
 #[cfg(feature = "std")]
 fn report_module_error(index: usize, kind: &str, err: &anyhow::Error) {
     eprintln!("Invalid {} at index {}: {}", kind, index, err);
@@ -215,3 +326,426 @@ fn report_module_error(index: usize, kind: &str, err: &anyhow::Error) {
 
 #[cfg(not(feature = "std"))]
 fn report_module_error(_index: usize, _kind: &str, _err: &anyhow::Error) {}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::regorus_result_drop;
+    use core::ffi::CStr;
+    use std::ffi::CString;
+
+    fn c(s: &str) -> CString {
+        CString::new(s).expect("CString::new failed")
+    }
+
+    fn assert_ok_pointer(r: &RegorusResult) -> *mut c_void {
+        assert_eq!(
+            r.status,
+            RegorusStatus::Ok,
+            "expected Ok, got {:?}",
+            r.status
+        );
+        assert!(!r.pointer_value.is_null(), "expected non-null pointer");
+        r.pointer_value
+    }
+
+    #[cfg(all(feature = "azure_policy", feature = "rvm"))]
+    mod azure_policy_json {
+        use super::*;
+        use crate::alias_registry::{
+            regorus_alias_registry_drop, regorus_alias_registry_load_json,
+            regorus_alias_registry_new,
+        };
+        use crate::rvm::{
+            regorus_program_drop, regorus_rvm_drop, regorus_rvm_execute_entry_point_by_name,
+            regorus_rvm_load_program, regorus_rvm_new, regorus_rvm_set_context,
+            regorus_rvm_set_input, RegorusProgram,
+        };
+
+        const ALIASES: &str = r#"[{
+            "namespace": "Microsoft.Storage",
+            "resourceTypes": [{
+                "resourceType": "storageAccounts",
+                "aliases": [{
+                    "name": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+                    "defaultPath": "properties.supportsHttpsTrafficOnly",
+                    "paths": []
+                }, {
+                    "name": "Microsoft.Storage/storageAccounts/minimumTlsVersion",
+                    "defaultPath": "properties.minimumTlsVersion",
+                    "paths": []
+                }]
+            }]
+        }]"#;
+
+        /// Simple policy definition (no aliases, no parameters).
+        const SIMPLE_POLICY_DEFINITION: &str = r#"{
+            "policyRule": {
+                "if": {
+                    "field": "type",
+                    "equals": "Microsoft.Storage/storageAccounts"
+                },
+                "then": { "effect": "audit" }
+            }
+        }"#;
+
+        /// Policy definition that uses an alias (no parameters).
+        const ALIAS_POLICY_DEFINITION: &str = r#"{
+            "policyRule": {
+                "if": {
+                    "allOf": [
+                        { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+                        { "field": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly", "equals": false }
+                    ]
+                },
+                "then": { "effect": "deny" }
+            }
+        }"#;
+
+        /// Policy definition with parameters.
+        const POLICY_DEFINITION_WITH_PARAMS: &str = r#"{
+            "displayName": "Require HTTPS for storage accounts",
+            "policyType": "Custom",
+            "mode": "Indexed",
+            "parameters": {
+                "effect": {
+                    "type": "String",
+                    "defaultValue": "deny"
+                }
+            },
+            "policyRule": {
+                "if": {
+                    "allOf": [
+                        { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+                        { "field": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly", "equals": false }
+                    ]
+                },
+                "then": { "effect": "[parameters('effect')]" }
+            }
+        }"#;
+
+        /// Policy definition that uses a context function (subscription()).
+        const CONTEXT_POLICY_DEFINITION: &str = r#"{
+            "policyRule": {
+                "if": {
+                    "allOf": [
+                        { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+                        { "value": "[subscription().subscriptionId]", "equals": "sub-123" }
+                    ]
+                },
+                "then": { "effect": "deny" }
+            }
+        }"#;
+
+        /// Wrap a normalized resource JSON into the input envelope expected by
+        /// the compiled Azure Policy RVM program.
+        fn wrap_input(resource_json: &str, parameters_json: &str) -> String {
+            format!(r#"{{"resource": {resource_json}, "parameters": {parameters_json}}}"#)
+        }
+
+        /// Helper: compile a policy definition, execute it with input, and return the
+        /// result string.
+        unsafe fn compile_and_eval(
+            registry: *mut crate::alias_registry::RegorusAliasRegistry,
+            policy_definition: &str,
+            input_json: &str,
+        ) -> String {
+            let defn_c = c(policy_definition);
+            let r = regorus_compile_azure_policy_definition(registry, defn_c.as_ptr());
+            let program_ptr = assert_ok_pointer(&r) as *mut RegorusProgram;
+            regorus_result_drop(r);
+
+            let vm = regorus_rvm_new();
+            assert!(!vm.is_null());
+
+            let r = regorus_rvm_load_program(vm, program_ptr);
+            assert_eq!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+
+            let input_c = c(input_json);
+            let r = regorus_rvm_set_input(vm, input_c.as_ptr());
+            assert_eq!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+
+            let entry = c("main");
+            let r = regorus_rvm_execute_entry_point_by_name(vm, entry.as_ptr());
+            assert_eq!(r.status, RegorusStatus::Ok, "execute failed");
+            let output = CStr::from_ptr(r.output)
+                .to_str()
+                .expect("invalid UTF-8")
+                .to_string();
+            regorus_result_drop(r);
+
+            regorus_rvm_drop(vm);
+            regorus_program_drop(program_ptr);
+            output
+        }
+
+        #[test]
+        fn compile_simple_definition_no_aliases() {
+            let defn_c = c(SIMPLE_POLICY_DEFINITION);
+            let r = regorus_compile_azure_policy_definition(core::ptr::null_mut(), defn_c.as_ptr());
+            let ptr = assert_ok_pointer(&r);
+            regorus_result_drop(r);
+            regorus_program_drop(ptr as *mut RegorusProgram);
+        }
+
+        #[test]
+        fn compile_definition_with_aliases() {
+            let reg = regorus_alias_registry_new();
+            let aliases_c = c(ALIASES);
+            let r = regorus_alias_registry_load_json(reg, aliases_c.as_ptr());
+            assert_eq!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+
+            let defn_c = c(ALIAS_POLICY_DEFINITION);
+            let r = regorus_compile_azure_policy_definition(reg, defn_c.as_ptr());
+            let ptr = assert_ok_pointer(&r);
+            regorus_result_drop(r);
+
+            regorus_program_drop(ptr as *mut RegorusProgram);
+            regorus_alias_registry_drop(reg);
+        }
+
+        #[test]
+        fn compile_and_eval_simple_definition_matching() {
+            let input = wrap_input(r#"{"type":"microsoft.storage/storageaccounts"}"#, "{}");
+            let result = unsafe {
+                compile_and_eval(core::ptr::null_mut(), SIMPLE_POLICY_DEFINITION, &input)
+            };
+            let parsed: serde_json::Value =
+                serde_json::from_str(&result).expect("result should be valid JSON");
+            assert_eq!(
+                parsed["effect"], "audit",
+                "expected audit effect, got: {result}"
+            );
+        }
+
+        #[test]
+        fn compile_and_eval_simple_definition_not_matching() {
+            let input = wrap_input(r#"{"type":"microsoft.compute/virtualmachines"}"#, "{}");
+            let result = unsafe {
+                compile_and_eval(core::ptr::null_mut(), SIMPLE_POLICY_DEFINITION, &input)
+            };
+            assert!(
+                result.contains("undefined"),
+                "expected undefined for non-matching input, got: {result}"
+            );
+        }
+
+        #[test]
+        fn compile_and_eval_alias_definition_deny() {
+            let reg = regorus_alias_registry_new();
+            let aliases_c = c(ALIASES);
+            let r = regorus_alias_registry_load_json(reg, aliases_c.as_ptr());
+            assert_eq!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+
+            // Non-compliant resource: HTTPS not enabled (normalized form)
+            let input = wrap_input(
+                r#"{"type": "microsoft.storage/storageaccounts", "supportshttpstrafficonly": false}"#,
+                "{}",
+            );
+            let result = unsafe { compile_and_eval(reg, ALIAS_POLICY_DEFINITION, &input) };
+            let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid JSON");
+            assert_eq!(parsed["effect"], "deny", "expected deny, got: {result}");
+
+            regorus_alias_registry_drop(reg);
+        }
+
+        #[test]
+        fn compile_and_eval_alias_definition_compliant() {
+            let reg = regorus_alias_registry_new();
+            let aliases_c = c(ALIASES);
+            let r = regorus_alias_registry_load_json(reg, aliases_c.as_ptr());
+            assert_eq!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+
+            // Compliant resource: HTTPS enabled (normalized form)
+            let input = wrap_input(
+                r#"{"type": "microsoft.storage/storageaccounts", "supportshttpstrafficonly": true}"#,
+                "{}",
+            );
+            let result = unsafe { compile_and_eval(reg, ALIAS_POLICY_DEFINITION, &input) };
+            assert!(
+                result.contains("undefined"),
+                "expected undefined for compliant resource, got: {result}"
+            );
+
+            regorus_alias_registry_drop(reg);
+        }
+
+        #[test]
+        fn compile_definition_with_params_and_eval() {
+            let reg = regorus_alias_registry_new();
+            let aliases_c = c(ALIASES);
+            let r = regorus_alias_registry_load_json(reg, aliases_c.as_ptr());
+            assert_eq!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+
+            let defn_c = c(POLICY_DEFINITION_WITH_PARAMS);
+            let r = regorus_compile_azure_policy_definition(reg, defn_c.as_ptr());
+            let program_ptr = assert_ok_pointer(&r) as *mut RegorusProgram;
+            regorus_result_drop(r);
+
+            unsafe {
+                let vm = regorus_rvm_new();
+                let r = regorus_rvm_load_program(vm, program_ptr);
+                assert_eq!(r.status, RegorusStatus::Ok);
+                regorus_result_drop(r);
+
+                let input_json = wrap_input(
+                    r#"{"type": "microsoft.storage/storageaccounts", "supportshttpstrafficonly": false}"#,
+                    "{}",
+                );
+                let input = c(&input_json);
+                let r = regorus_rvm_set_input(vm, input.as_ptr());
+                assert_eq!(r.status, RegorusStatus::Ok);
+                regorus_result_drop(r);
+
+                let entry = c("main");
+                let r = regorus_rvm_execute_entry_point_by_name(vm, entry.as_ptr());
+                assert_eq!(r.status, RegorusStatus::Ok);
+                let result = CStr::from_ptr(r.output)
+                    .to_str()
+                    .expect("UTF-8")
+                    .to_string();
+                regorus_result_drop(r);
+
+                let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+                assert_eq!(parsed["effect"], "deny", "got: {result}");
+
+                regorus_rvm_drop(vm);
+                regorus_program_drop(program_ptr);
+            }
+
+            regorus_alias_registry_drop(reg);
+        }
+
+        #[test]
+        fn invalid_json_returns_error() {
+            let bad = c("not valid json");
+            let r = regorus_compile_azure_policy_definition(core::ptr::null_mut(), bad.as_ptr());
+            assert_ne!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+        }
+
+        #[test]
+        fn invalid_definition_returns_error() {
+            let bad = c(r#"{"not": "a policy definition"}"#);
+            let r = regorus_compile_azure_policy_definition(core::ptr::null_mut(), bad.as_ptr());
+            assert_ne!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+        }
+
+        #[test]
+        fn context_policy_evaluates_with_set_context() {
+            let defn_c = c(CONTEXT_POLICY_DEFINITION);
+            let r = regorus_compile_azure_policy_definition(core::ptr::null_mut(), defn_c.as_ptr());
+            let program = assert_ok_pointer(&r) as *mut RegorusProgram;
+            regorus_result_drop(r);
+
+            let vm = regorus_rvm_new();
+            assert!(!vm.is_null());
+
+            let r = regorus_rvm_load_program(vm, program);
+            assert_eq!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+
+            // Set the context with subscription info
+            let context = c(r#"{"subscription": {"subscriptionId": "sub-123"}}"#);
+            let r = regorus_rvm_set_context(vm, context.as_ptr());
+            assert_eq!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+
+            // Set matching input
+            let input = c(&wrap_input(
+                r#"{"type": "microsoft.storage/storageaccounts"}"#,
+                "{}",
+            ));
+            let r = regorus_rvm_set_input(vm, input.as_ptr());
+            assert_eq!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+
+            let entry = c("main");
+            let r = regorus_rvm_execute_entry_point_by_name(vm, entry.as_ptr());
+            assert_eq!(r.status, RegorusStatus::Ok);
+            let output = unsafe { CStr::from_ptr(r.output) }.to_str().unwrap();
+            assert!(
+                output.contains("deny"),
+                "expected deny effect with matching context, got: {output}"
+            );
+            regorus_result_drop(r);
+
+            regorus_rvm_drop(vm);
+            regorus_program_drop(program);
+        }
+
+        #[test]
+        fn context_policy_undefined_without_context() {
+            let defn_c = c(CONTEXT_POLICY_DEFINITION);
+            let r = regorus_compile_azure_policy_definition(core::ptr::null_mut(), defn_c.as_ptr());
+            let program = assert_ok_pointer(&r) as *mut RegorusProgram;
+            regorus_result_drop(r);
+
+            let vm = regorus_rvm_new();
+            assert!(!vm.is_null());
+
+            let r = regorus_rvm_load_program(vm, program);
+            assert_eq!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+
+            // No context set — subscription() will be undefined
+            let input = c(&wrap_input(
+                r#"{"type": "microsoft.storage/storageaccounts"}"#,
+                "{}",
+            ));
+            let r = regorus_rvm_set_input(vm, input.as_ptr());
+            assert_eq!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+
+            let entry = c("main");
+            let r = regorus_rvm_execute_entry_point_by_name(vm, entry.as_ptr());
+            assert_eq!(r.status, RegorusStatus::Ok);
+            let output = unsafe { CStr::from_ptr(r.output) }.to_str().unwrap();
+            assert!(
+                output.contains("undefined"),
+                "expected undefined without context, got: {output}"
+            );
+            regorus_result_drop(r);
+
+            regorus_rvm_drop(vm);
+            regorus_program_drop(program);
+        }
+
+        #[test]
+        fn set_context_rejects_non_object() {
+            let vm = regorus_rvm_new();
+            assert!(!vm.is_null());
+
+            // Array should be rejected with InvalidDataFormat
+            let array_json = c(r#"[1, 2, 3]"#);
+            let r = regorus_rvm_set_context(vm, array_json.as_ptr());
+            assert_eq!(r.status, RegorusStatus::InvalidDataFormat);
+            regorus_result_drop(r);
+
+            // String should be rejected with InvalidDataFormat
+            let str_json = c(r#""hello""#);
+            let r = regorus_rvm_set_context(vm, str_json.as_ptr());
+            assert_eq!(r.status, RegorusStatus::InvalidDataFormat);
+            regorus_result_drop(r);
+
+            // Object should succeed
+            let obj_json = c(r#"{"key": "value"}"#);
+            let r = regorus_rvm_set_context(vm, obj_json.as_ptr());
+            assert_eq!(r.status, RegorusStatus::Ok);
+            regorus_result_drop(r);
+
+            regorus_rvm_drop(vm);
+        }
+    }
+}

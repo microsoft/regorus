@@ -150,3 +150,79 @@ const string ContextJson = """
 var allowed = RbacEngine.EvaluateCondition(Condition, ContextJson);
 Console.WriteLine($"RBAC condition allowed: {allowed}");
 ```
+
+## Azure Policy JSON Evaluation
+
+Compile and evaluate Azure Policy JSON `policyRule` definitions directly — no Rego translation required.
+The `AzurePolicyCompiler` compiles JSON policy rules into RVM programs that can be executed with the `Rvm` engine.
+
+```csharp
+using Regorus;
+
+// 1. Load alias definitions for the resource provider
+const string AliasesJson = """
+[{
+    "namespace": "Microsoft.Storage",
+    "resourceTypes": [{
+        "resourceType": "storageAccounts",
+        "aliases": [{
+            "name": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly",
+            "defaultPath": "properties.supportsHttpsTrafficOnly",
+            "paths": []
+        }]
+    }]
+}]
+""";
+
+using var registry = new AliasRegistry();
+registry.LoadJson(AliasesJson);
+
+// 2. Compile a JSON policy definition (the native Azure Policy language)
+const string PolicyDefinition = """
+{
+    "policyRule": {
+        "if": {
+            "allOf": [
+                { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+                { "field": "Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly", "equals": false }
+            ]
+        },
+        "then": { "effect": "deny" }
+    }
+}
+""";
+
+using var program = AzurePolicyCompiler.CompilePolicyDefinition(registry, PolicyDefinition);
+
+// 3. Normalize an ARM resource and evaluate
+var armResource = """
+{
+    "type": "Microsoft.Storage/storageAccounts",
+    "name": "mystorage",
+    "properties": { "supportsHttpsTrafficOnly": false }
+}
+""";
+var envelope = registry.NormalizeAndWrap(armResource);
+
+using var vm = new Rvm();
+vm.LoadProgram(program);
+vm.SetInputJson(envelope!);
+
+var result = vm.ExecuteEntryPoint("main");
+// result: {"effect": "deny"} for non-compliant, "<undefined>" for compliant
+Console.WriteLine($"Policy result: {result}");
+```
+
+**Context-dependent policies:** If your policy uses context functions like
+`subscription()`, `resourceGroup()`, or `requestContext()`, you must also set
+the VM context separately:
+
+```csharp
+// The context JSON from NormalizeAndWrap is in the input envelope,
+// but must also be provided to the VM's ambient context:
+vm.SetContextJson(contextJson);
+```
+
+You can also compile full policy definitions (with parameters) using
+`AzurePolicyCompiler.CompilePolicyDefinition()`. See
+`bindings/csharp/Regorus.Tests/AzurePolicyCompilerTests.cs` for comprehensive examples.
