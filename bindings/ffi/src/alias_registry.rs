@@ -22,6 +22,22 @@ pub struct RegorusAliasRegistry {
     registry: AliasRegistry,
 }
 
+impl RegorusAliasRegistry {
+    /// Return a clone of the alias-to-short-name map for use by the compiler.
+    pub(crate) fn alias_map(
+        &self,
+    ) -> alloc::collections::BTreeMap<alloc::string::String, alloc::string::String> {
+        self.registry.alias_map()
+    }
+
+    /// Return a clone of the alias-to-modifiable map for use by the compiler.
+    pub(crate) fn alias_modifiable_map(
+        &self,
+    ) -> alloc::collections::BTreeMap<alloc::string::String, bool> {
+        self.registry.alias_modifiable_map()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
