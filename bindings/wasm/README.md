@@ -21,3 +21,6 @@ Run `cargo xtask build-wasm` to invoke wasm-pack with sensible defaults, or `car
 ## Usage
 
 See [test.js](https://github.com/microsoft/regorus/blob/main/bindings/wasm/test.js) for example usage.
+
+For best performance with large policies, call `engine.prepare()` after loading
+policy/data, then use `engine.clone()` to create per-request engines.

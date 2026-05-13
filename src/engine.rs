@@ -505,6 +505,34 @@ impl Engine {
         self.add_data(Value::from_json_str(data_json)?)
     }
 
+    /// Prepare the engine for evaluation without executing a query or rule.
+    ///
+    /// This parses and initializes internal evaluation data structures so that
+    /// subsequent evaluations (or cloned engines) can run without paying the
+    /// one-time preparation cost during the first evaluation call.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    /// engine.add_policy("test.rego".to_string(), r#"
+    ///   package test
+    ///   import rego.v1
+    ///   allow if input.user == "alice"
+    /// "#.to_string())?;
+    ///
+    /// engine.prepare()?;
+    /// let mut cloned = engine.clone();
+    ///
+    /// cloned.set_input_json(r#"{"user":"alice"}"#)?;
+    /// assert_eq!(cloned.eval_rule("data.test.allow".to_string())?, Value::from(true));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn prepare(&mut self) -> Result<()> {
+        self.prepare_for_eval(false, false)
+    }
+
     /// Set whether builtins should raise errors strictly or not.
     ///
     /// Regorus differs from OPA in that by default builtins will

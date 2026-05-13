@@ -103,6 +103,46 @@ fn extension_with_state() -> Result<()> {
 }
 
 #[test]
+fn prepare_then_clone_without_initial_eval() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"package test
+           import rego.v1
+
+           default allow := false
+
+           allow if {
+             input.user in data.allowed_users
+           }
+        "#
+        .to_string(),
+    )?;
+    engine.add_data(Value::from_json_str(
+        r#"{"allowed_users":["alice","bob"]}"#,
+    )?)?;
+
+    // Prepare once and clone without running an initial evaluation.
+    engine.prepare()?;
+
+    let mut alice_engine = engine.clone();
+    alice_engine.set_input_json(r#"{"user":"alice"}"#)?;
+    assert_eq!(
+        alice_engine.eval_rule("data.test.allow".to_string())?,
+        Value::from(true)
+    );
+
+    let mut mallory_engine = engine.clone();
+    mallory_engine.set_input_json(r#"{"user":"mallory"}"#)?;
+    assert_eq!(
+        mallory_engine.eval_rule("data.test.allow".to_string())?,
+        Value::from(false)
+    );
+
+    Ok(())
+}
+
+#[test]
 #[cfg(feature = "azure_policy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
 fn get_policy_package_names() -> Result<()> {
