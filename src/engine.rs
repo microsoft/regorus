@@ -1125,6 +1125,10 @@ impl Engine {
         limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
 
         self.interpreter.set_traces(enable_tracing);
+        #[cfg(feature = "azure_policy")]
+        let was_prepared = self.prepared;
+        #[cfg(not(feature = "azure_policy"))]
+        let _ = for_target;
 
         // if the data/policies have changed or the interpreter has never been prepared
         if !self.prepared {
@@ -1158,23 +1162,20 @@ impl Engine {
             // Set schedule after hoisting completes
             self.interpreter.set_schedule(Some(schedule));
 
-            #[cfg(feature = "azure_policy")]
-            if for_target {
-                // Resolve and validate target specifications across all modules
-                crate::interpreter::target::resolve::resolve_and_apply_target(
-                    &mut self.interpreter,
-                )?;
-                // Infer resource types
-                crate::interpreter::target::infer::infer_resource_type(&mut self.interpreter)?;
-            }
-
-            if !for_target {
-                // Check if any module specifies a target and warn if so
-                #[cfg(feature = "azure_policy")]
-                self.warn_if_targets_present();
-            }
-
             self.prepared = true;
+        }
+
+        #[cfg(feature = "azure_policy")]
+        if for_target {
+            // Resolve and validate target specifications across all modules.
+            // This must run for target-aware compilation even if generic prepare()
+            // was already called.
+            crate::interpreter::target::resolve::resolve_and_apply_target(&mut self.interpreter)?;
+            // Infer resource types
+            crate::interpreter::target::infer::infer_resource_type(&mut self.interpreter)?;
+        } else if !was_prepared {
+            // Check if any module specifies a target and warn if so.
+            self.warn_if_targets_present();
         }
 
         Ok(())
