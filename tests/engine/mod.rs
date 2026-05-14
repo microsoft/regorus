@@ -163,7 +163,7 @@ fn prepare_then_compile_for_target() -> Result<()> {
            default allow := false
 
            allow if {
-             input.type == "test_resource"
+               input.type == "test_resource"
            }
         "#
         .to_string(),
