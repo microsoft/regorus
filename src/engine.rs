@@ -507,9 +507,22 @@ impl Engine {
 
     /// Prepare the engine for evaluation without executing a query or rule.
     ///
-    /// This parses and initializes internal evaluation data structures so that
-    /// subsequent evaluations (or cloned engines) can run without paying the
-    /// one-time preparation cost during the first evaluation call.
+    /// The first evaluation on an unprepared engine performs one-time setup
+    /// (analysis, scheduling, imports/rules processing, and initialization of
+    /// internal evaluation structures). Calling this method performs that work
+    /// eagerly so a later call to [`Engine::eval_rule`] / [`Engine::eval_query`]
+    /// does not pay that startup cost.
+    ///
+    /// This method is optional for correctness. If omitted, the first
+    /// evaluation will implicitly prepare the engine.
+    ///
+    /// Preparation is invalidated when policy/data that affects evaluation is
+    /// changed (for example: [`Engine::add_policy`], [`Engine::add_policy_from_file`],
+    /// [`Engine::add_data`], [`Engine::clear_data`]). In those cases, the next
+    /// evaluation (or another explicit call to `prepare`) performs setup again.
+    ///
+    /// This is especially useful before cloning template engines used for
+    /// repeated evaluations.
     ///
     /// ```
     /// # use regorus::*;

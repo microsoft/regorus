@@ -199,6 +199,21 @@ pub extern "C" fn regorus_engine_clone(engine: *mut RegorusEngine) -> *mut Regor
     }
 }
 
+/// Prepare a [`RegorusEngine`] for evaluation without executing a query.
+///
+/// This is optional. If not called, first eval performs the same setup.
+/// If policy/data changes after preparation, setup is invalidated.
+#[no_mangle]
+pub extern "C" fn regorus_engine_prepare(engine: *mut RegorusEngine) -> RegorusResult {
+    with_unwind_guard(|| {
+        to_regorus_result(|| -> Result<()> {
+            let engine = to_ref(engine)?;
+            let mut guard = engine.try_write()?;
+            guard.prepare()
+        }())
+    })
+}
+
 #[no_mangle]
 pub extern "C" fn regorus_engine_drop(engine: *mut RegorusEngine) {
     if let Ok(e) = to_ref(engine) {

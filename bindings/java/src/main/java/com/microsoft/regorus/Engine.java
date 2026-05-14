@@ -21,6 +21,7 @@ public class Engine implements AutoCloseable, Cloneable {
     // if you update the native API.
     private static native long nativeNewEngine();
     private static native long nativeClone(long enginePtr);
+    private static native void nativePrepare(long enginePtr);
     private static native void nativeSetRegoV0(long enginePtr, boolean enable);
     private static native String nativeAddPolicy(long enginePtr, String path, String rego);
     private static native String nativeAddPolicyFromFile(long enginePtr, String path);
@@ -64,6 +65,14 @@ public class Engine implements AutoCloseable, Cloneable {
      */
     public Engine clone() {
 	return new Engine(nativeClone(enginePtr));
+    }
+
+    /**
+     * Prepares internal evaluation structures without executing a query.
+     * Optional: if skipped, first evaluation performs the same setup.
+     */
+    public void prepare() {
+        nativePrepare(enginePtr);
     }
     
      /**

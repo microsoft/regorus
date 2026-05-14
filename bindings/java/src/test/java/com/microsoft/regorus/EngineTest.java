@@ -22,6 +22,9 @@ public class EngineTest extends TestCase
                 "package test\nmessage = concat(\", \", [input.message, data.message])"
             );
             engine.addDataJson("{\"message\":\"World!\"}");
+            engine.prepare();
+            Engine template = engine.clone();
+            template.close();
             engine.setInputJson("{\"message\":\"Hello\"}");
             resJson = engine.evalQuery("data.test.message");
         }
