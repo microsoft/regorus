@@ -23,10 +23,18 @@ public class EngineTest extends TestCase
             );
             engine.addDataJson("{\"message\":\"World!\"}");
             engine.prepare();
-            Engine template = engine.clone();
-            template.close();
             engine.setInputJson("{\"message\":\"Hello\"}");
             resJson = engine.evalQuery("data.test.message");
+
+            try (Engine template = engine.clone()) {
+                template.setInputJson("{\"message\":\"Hi\"}");
+                String templateResJson = template.evalQuery("data.test.message");
+                Map templateRes = new Gson().fromJson(templateResJson, Map.class);
+                ArrayList templateResults = (ArrayList) templateRes.get("result");
+                ArrayList templateExpressions = (ArrayList) ((Map) templateResults.get(0)).get("expressions");
+                Map templateExpression = (Map) templateExpressions.get(0);
+                Assert.assertEquals("Hi, World!", templateExpression.get("value"));
+            }
         }
 
         Gson gson = new Gson();
