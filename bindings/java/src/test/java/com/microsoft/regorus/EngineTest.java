@@ -44,4 +44,28 @@ public class EngineTest extends TestCase
         Map expression = (Map) expressions.get(0);
         Assert.assertEquals("Hello, World!", expression.get("value"));
     }
+
+    public void test_closed_engine_operations_throw()
+    {
+        Engine engine = new Engine();
+        engine.close();
+
+        try {
+            engine.prepare();
+            fail("prepare should fail on closed engine");
+        } catch (IllegalStateException expected) {
+        }
+
+        try {
+            engine.clone();
+            fail("clone should fail on closed engine");
+        } catch (IllegalStateException expected) {
+        }
+
+        try {
+            engine.evalQuery("data");
+            fail("evalQuery should fail on closed engine");
+        } catch (IllegalStateException expected) {
+        }
+    }
 }

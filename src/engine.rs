@@ -1125,11 +1125,10 @@ impl Engine {
         limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
 
         self.interpreter.set_traces(enable_tracing);
-        #[cfg(feature = "azure_policy")]
-        let was_prepared = self.prepared;
+        let newly_prepared = !self.prepared;
 
         // if the data/policies have changed or the interpreter has never been prepared
-        if !self.prepared {
+        if newly_prepared {
             // Analyze the modules and determine how statements must be scheduled.
             let analyzer = Analyzer::new();
             let schedule = Rc::new(analyzer.analyze(&self.modules)?);
@@ -1159,8 +1158,6 @@ impl Engine {
 
             // Set schedule after hoisting completes
             self.interpreter.set_schedule(Some(schedule));
-
-            self.prepared = true;
         }
 
         #[cfg(feature = "azure_policy")]
@@ -1174,13 +1171,17 @@ impl Engine {
                 )?;
                 // Infer resource types
                 crate::interpreter::target::infer::infer_resource_type(&mut self.interpreter)?;
-            } else if !was_prepared {
+            } else if newly_prepared {
                 // Check if any module specifies a target and warn if so.
                 self.warn_if_targets_present();
             }
         }
         #[cfg(not(feature = "azure_policy"))]
         let _ = for_target;
+
+        if newly_prepared {
+            self.prepared = true;
+        }
 
         Ok(())
     }

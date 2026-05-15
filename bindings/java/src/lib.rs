@@ -27,13 +27,17 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeNewEngine(
 
 #[no_mangle]
 pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeClone(
-    _env: EnvUnowned,
+    env: EnvUnowned,
     _class: JClass,
     engine_ptr: jlong,
 ) -> jlong {
-    let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
-    let c = engine.clone();
-    Box::into_raw(Box::new(c)) as jlong
+    let res = throw_err(env, |_env| {
+        let engine = unsafe { &mut *get_engine_ptr(engine_ptr)? };
+        let c = engine.clone();
+        Ok(Box::into_raw(Box::new(c)) as jlong)
+    });
+
+    res.unwrap_or_default()
 }
 
 #[no_mangle]
@@ -43,7 +47,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativePrepare(
     engine_ptr: jlong,
 ) {
     let _ = throw_err(env, |_env| {
-        let engine = unsafe { &mut *(engine_ptr as *mut Engine) };
+        let engine = unsafe { &mut *get_engine_ptr(engine_ptr)? };
         engine.prepare()?;
         Ok(())
     });
@@ -450,6 +454,9 @@ pub extern "system" fn Java_com_microsoft_regorus_Engine_nativeDestroyEngine(
     _class: JClass,
     engine_ptr: jlong,
 ) {
+    if engine_ptr == 0 {
+        return;
+    }
     unsafe {
         let _engine = Box::from_raw(engine_ptr as *mut Engine);
     }
@@ -827,6 +834,13 @@ fn throw_err<T>(mut env: EnvUnowned, f: impl FnOnce(&mut Env) -> Result<T>) -> R
             Err(err)
         }
     }
+}
+
+fn get_engine_ptr(engine_ptr: jlong) -> Result<*mut Engine> {
+    if engine_ptr == 0 {
+        return Err(anyhow::anyhow!("Engine is closed"));
+    }
+    Ok(engine_ptr as *mut Engine)
 }
 
 fn get_string_array(env: &mut Env, array: jobjectArray) -> Result<Vec<String>> {
