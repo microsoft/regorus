@@ -287,7 +287,7 @@ pub extern "C" fn regorus_compile_azure_policy_rule(
             let program = if registry.is_null() {
                 compiler::compile_policy_rule(&ast)
             } else {
-                let reg: &RegorusAliasRegistry = to_ref(registry).map_err(|e| {
+                let reg: &mut RegorusAliasRegistry = to_ref(registry).map_err(|e| {
                     (
                         RegorusStatus::InvalidArgument,
                         format!("Invalid alias registry: {e}"),
@@ -398,7 +398,7 @@ pub extern "C" fn regorus_compile_azure_policy_definition(
             let program = if registry.is_null() {
                 compiler::compile_policy_definition(&defn)
             } else {
-                let reg: &RegorusAliasRegistry = to_ref(registry).map_err(|e| {
+                let reg: &mut RegorusAliasRegistry = to_ref(registry).map_err(|e| {
                     (
                         RegorusStatus::InvalidArgument,
                         format!("Invalid alias registry: {e}"),

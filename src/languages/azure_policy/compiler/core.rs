@@ -45,9 +45,9 @@ pub(super) struct Compiler {
     /// Cached register for `LoadContext` — allocated once on first use.
     pub(super) cached_context_reg: Option<u8>,
     /// Map from lowercase fully-qualified alias name → short name.
-    pub(super) alias_map: BTreeMap<String, String>,
+    pub(super) alias_map: Rc<BTreeMap<String, String>>,
     /// Map from lowercase fully-qualified alias name → modifiable flag.
-    pub(super) alias_modifiable: BTreeMap<String, bool>,
+    pub(super) alias_modifiable: Rc<BTreeMap<String, bool>>,
     /// Default values for policy parameters.
     pub(super) parameter_defaults: Option<Value>,
     /// Cached literal-table index for `parameter_defaults` (or an empty object

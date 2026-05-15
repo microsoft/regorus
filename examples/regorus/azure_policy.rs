@@ -138,7 +138,8 @@ pub fn azure_policy_aliases(aliases: String, resource_type: Option<String>) -> R
     if let Some(ref rt) = resource_type {
         let rt_lower = rt.to_lowercase();
         let mut found = false;
-        for (alias_name, _) in registry.alias_map() {
+        let alias_map = registry.alias_map();
+        for (alias_name, _) in alias_map.iter() {
             if alias_name.to_lowercase().starts_with(&rt_lower) {
                 println!("  {alias_name}");
                 found = true;
@@ -148,7 +149,8 @@ pub fn azure_policy_aliases(aliases: String, resource_type: Option<String>) -> R
             bail!("no aliases found for resource type '{rt}'");
         }
     } else {
-        for (alias_name, _) in registry.alias_map() {
+        let alias_map = registry.alias_map();
+        for (alias_name, _) in alias_map.iter() {
             println!("  {alias_name}");
         }
     }

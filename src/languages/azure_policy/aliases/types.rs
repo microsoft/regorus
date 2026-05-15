@@ -38,7 +38,11 @@ pub struct ProviderAliases {
     pub namespace: String,
 
     /// Resource types with their alias entries.
-    #[serde(default, rename = "resourceTypes")]
+    #[serde(
+        default,
+        rename = "resourceTypes",
+        deserialize_with = "deserialize_null_as_empty_vec"
+    )]
     pub resource_types: Vec<ResourceTypeAliases>,
 }
 
@@ -50,7 +54,7 @@ pub struct ResourceTypeAliases {
     pub resource_type: String,
 
     /// All alias entries for this resource type.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_empty_vec")]
     pub aliases: Vec<AliasEntry>,
 
     /// Resource capabilities as a comma-separated string
@@ -98,7 +102,7 @@ pub struct AliasEntry {
 
     /// Versioned path entries.  Empty for the vast majority of aliases that
     /// have only a `defaultPath`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_empty_vec")]
     pub paths: Vec<AliasPath>,
 }
 
@@ -115,7 +119,7 @@ pub struct AliasPath {
     pub path: String,
 
     /// API versions for which this path is valid.  Empty means all versions.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_empty_vec")]
     pub api_versions: Vec<String>,
 
     /// Optional per-version metadata.
@@ -186,6 +190,18 @@ where
         Some(RawDefaultPath::Str(s)) => Ok(Some(s)),
         Some(RawDefaultPath::Obj { path, .. }) => Ok(Some(path)),
     }
+}
+
+// ─── Custom deserializer: null → empty Vec ──────────────────────────────────
+
+/// Deserializes `null` as an empty `Vec<T>`.  The `az provider list` CLI output
+/// sometimes emits `"paths": null` instead of `"paths": []`.
+fn deserialize_null_as_empty_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 // ─── Data Policy Manifest types (data-plane aliases) ────────────────────────
