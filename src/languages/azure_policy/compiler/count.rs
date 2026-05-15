@@ -998,7 +998,13 @@ impl Compiler {
                     return Ok(result);
                 }
             }
-            Err(e) if !self.alias_map.is_empty() && !self.alias_fallback_to_raw => {
+            Err(e)
+                if self
+                    .alias_registry
+                    .as_ref()
+                    .is_some_and(|r| !r.alias_map().is_empty())
+                    && !self.alias_fallback_to_raw =>
+            {
                 return Err(e);
             }
             _ => {}

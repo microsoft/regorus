@@ -30,11 +30,11 @@ mod metadata;
 mod template_dispatch;
 mod utils;
 
-use alloc::collections::BTreeMap;
-use alloc::string::{String, ToString as _};
+use alloc::string::ToString as _;
 
 use anyhow::Result;
 
+use crate::languages::azure_policy::aliases::AliasRegistry;
 use crate::languages::azure_policy::ast::{PolicyDefinition, PolicyRule};
 use crate::rvm::program::Program;
 use crate::{Rc, Value};
@@ -69,17 +69,14 @@ pub fn compile_policy_rule(rule: &PolicyRule) -> Result<Rc<Program>> {
 
 /// Compile a parsed Azure Policy rule with alias resolution.
 ///
-/// The `alias_map` maps lowercase fully-qualified alias names to their short
-/// names.  Obtain it from
-/// [`AliasRegistry::alias_map()`](crate::languages::azure_policy::aliases::AliasRegistry::alias_map).
+/// The registry provides alias-to-short-name resolution and modifiability
+/// data.  Pass it as an `Rc` to avoid cloning the internal alias maps.
 pub fn compile_policy_rule_with_aliases(
     rule: &PolicyRule,
-    alias_map: BTreeMap<String, String>,
-    alias_modifiable: BTreeMap<String, bool>,
+    registry: Rc<AliasRegistry>,
 ) -> Result<Rc<Program>> {
     let mut compiler = Compiler::new();
-    compiler.alias_map = alias_map;
-    compiler.alias_modifiable = alias_modifiable;
+    compiler.alias_registry = Some(registry);
     init_effect_annotation(&mut compiler, rule);
     compiler.compile(rule)
 }
@@ -100,12 +97,10 @@ pub fn compile_policy_definition(defn: &PolicyDefinition) -> Result<Rc<Program>>
 /// Compile a parsed Azure Policy definition with alias resolution.
 pub fn compile_policy_definition_with_aliases(
     defn: &PolicyDefinition,
-    alias_map: BTreeMap<String, String>,
-    alias_modifiable: BTreeMap<String, bool>,
+    registry: Rc<AliasRegistry>,
 ) -> Result<Rc<Program>> {
     let mut compiler = Compiler::new();
-    compiler.alias_map = alias_map;
-    compiler.alias_modifiable = alias_modifiable;
+    compiler.alias_registry = Some(registry);
     compiler.parameter_defaults = Some(build_parameter_defaults(&defn.parameters)?);
     compiler.populate_definition_metadata(defn);
     init_effect_annotation(&mut compiler, &defn.policy_rule);
@@ -119,13 +114,11 @@ pub fn compile_policy_definition_with_aliases(
 /// a known alias are silently treated as raw property paths.
 pub fn compile_policy_definition_with_aliases_opts(
     defn: &PolicyDefinition,
-    alias_map: BTreeMap<String, String>,
-    alias_modifiable: BTreeMap<String, bool>,
+    registry: Rc<AliasRegistry>,
     alias_fallback_to_raw: bool,
 ) -> Result<Rc<Program>> {
     let mut compiler = Compiler::new();
-    compiler.alias_map = alias_map;
-    compiler.alias_modifiable = alias_modifiable;
+    compiler.alias_registry = Some(registry);
     compiler.alias_fallback_to_raw = alias_fallback_to_raw;
     compiler.parameter_defaults = Some(build_parameter_defaults(&defn.parameters)?);
     compiler.populate_definition_metadata(defn);

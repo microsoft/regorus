@@ -20,6 +20,20 @@ use serde::{Deserialize, Deserializer};
 
 use crate::Rc;
 
+// ---------------------------------------------------------------------------
+// Deserialization helpers
+// ---------------------------------------------------------------------------
+
+/// Deserialize a `Vec<T>` that tolerates JSON `null` by mapping it to an
+/// empty vector.
+fn deserialize_null_as_empty_vec<'de, T, D>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 // ─── Top-level response wrappers ────────────────────────────────────────────
 
 /// ARM API response envelope: `{ "value": [...] }`
@@ -100,7 +114,10 @@ pub struct AliasEntry {
 
     /// Versioned path entries.  Empty for the vast majority of aliases that
     /// have only a `defaultPath`.
-    #[serde(default)]
+    ///
+    /// In real Azure catalog data (~97% of aliases), `az provider list` emits
+    /// `"paths": null` rather than an empty array.
+    #[serde(default, deserialize_with = "deserialize_null_as_empty_vec")]
     pub paths: Vec<AliasPath>,
 }
 

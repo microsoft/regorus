@@ -23,8 +23,7 @@ use regorus::languages::azure_policy::aliases::AliasRegistry;
 use regorus::languages::azure_policy::compiler;
 use regorus::languages::azure_policy::parser;
 use regorus::rvm::RegoVM;
-use regorus::Source;
-use regorus::Value;
+use regorus::{Rc, Source, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -194,7 +193,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
     // Load alias registry if an aliases file is specified.
-    let alias_registry = if let Some(ref aliases_file) = test.aliases {
+    let alias_registry: Option<Rc<AliasRegistry>> = if let Some(ref aliases_file) = test.aliases {
         let aliases_dir = Path::new(file)
             .parent()
             .unwrap_or_else(|| Path::new("."))
@@ -209,7 +208,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
         })?;
         let mut registry = AliasRegistry::new();
         registry.load_from_json(&aliases_json)?;
-        Some(registry)
+        Some(Rc::new(registry))
     } else {
         None
     };
@@ -281,11 +280,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                         );
                     }
                     if let Some(ref registry) = alias_registry {
-                        compiler::compile_policy_definition_with_aliases(
-                            &defn,
-                            registry.alias_map(),
-                            registry.alias_modifiable_map(),
-                        )
+                        compiler::compile_policy_definition_with_aliases(&defn, Rc::clone(registry))
                     } else {
                         compiler::compile_policy_definition(&defn)
                     }
@@ -308,11 +303,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                         );
                     }
                     if let Some(ref registry) = alias_registry {
-                        compiler::compile_policy_rule_with_aliases(
-                            &ast,
-                            registry.alias_map(),
-                            registry.alias_modifiable_map(),
-                        )
+                        compiler::compile_policy_rule_with_aliases(&ast, Rc::clone(registry))
                     } else {
                         compiler::compile_policy_rule(&ast)
                     }
@@ -366,7 +357,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
 
         let mut vm = RegoVM::new();
         vm.load_program(program);
-        vm.set_input(make_input(case, alias_registry.as_ref())?);
+        vm.set_input(make_input(case, alias_registry.as_deref())?);
         vm.set_context(make_context(case)?);
 
         // Load host-await responses (for auditIfNotExists / deployIfNotExists policies).
@@ -391,7 +382,11 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                         if let Some(rt) = effective_type {
                             inject_type_field(&mut raw, rt);
                         }
-                        normalizer::normalize(&raw, Some(registry), case.api_version.as_deref())
+                        normalizer::normalize(
+                            &raw,
+                            Some(registry.as_ref()),
+                            case.api_version.as_deref(),
+                        )
                     } else {
                         raw
                     }
