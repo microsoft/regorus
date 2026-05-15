@@ -40,6 +40,13 @@ engine.addDataJson(`
  }
 `);
 
+// Prepare internal evaluation structures once.
+engine.prepare();
+
+// Clone a prepared template engine for reuse.
+var template = engine.clone();
+engine = template.clone();
+
 // Set policy input
 engine.setInputJson(`
  {

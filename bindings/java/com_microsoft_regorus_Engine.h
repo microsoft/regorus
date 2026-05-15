@@ -25,6 +25,14 @@ JNIEXPORT jlong JNICALL Java_com_microsoft_regorus_Engine_nativeClone
 
 /*
  * Class:     com_microsoft_regorus_Engine
+ * Method:    nativePrepare
+ * Signature: (J)V
+ */
+JNIEXPORT void JNICALL Java_com_microsoft_regorus_Engine_nativePrepare
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_microsoft_regorus_Engine
  * Method:    nativeAddPolicy
  * Signature: (JLjava/lang/String;Ljava/lang/String;)Ljava/lang/String;
  */
