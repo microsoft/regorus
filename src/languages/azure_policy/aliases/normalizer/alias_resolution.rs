@@ -4,14 +4,13 @@
 //! Per-alias path resolution: reads values from versioned ARM paths and places
 //! them at alias short name paths in the normalized output.
 
-use alloc::string::String;
-
+use crate::Rc;
 use crate::Value;
 
 use super::super::obj_map::remove_element_field;
 use super::super::obj_map::{
-    collision_safe_key, is_root_field_collision, obj_contains, obj_insert, obj_remove,
-    set_nested_lowercased, ObjMap,
+    collision_safe_key, is_root_field_collision, obj_contains, obj_insert, obj_insert_rc,
+    obj_remove, set_nested_lowercased, ObjMap,
 };
 use super::super::types::ResolvedAliases;
 use super::element_remap::apply_element_remap_precomputed;
@@ -48,12 +47,14 @@ pub fn apply_alias_entries(
         if let Some(value) = value {
             let value = normalize_value(&value, &entry.short_name, None);
 
-            let target = if is_root_field_collision(&entry.short_name, &entry.default_path) {
-                collision_safe_key(&entry.short_name)
+            if is_root_field_collision(&entry.short_name, &entry.default_path) {
+                let target = collision_safe_key(&entry.short_name);
+                set_nested_lowercased(result, &target, value);
+            } else if entry.short_name.contains('.') {
+                set_nested_lowercased(result, &entry.short_name, value);
             } else {
-                entry.short_name.clone()
-            };
-            set_nested_lowercased(result, &target, value);
+                obj_insert_rc(result, Rc::clone(&entry.short_name_lc), value);
+            }
         }
     }
 
@@ -84,13 +85,13 @@ pub fn apply_alias_entries(
 }
 
 /// Navigate an ARM path using precomputed segments (avoids per-call split).
-fn navigate_arm_path_segments(value: &Value, segments: &[String]) -> Option<Value> {
+fn navigate_arm_path_segments(value: &Value, segments: &[Rc<str>]) -> Option<Value> {
     let mut current = value;
     for segment in segments {
         current = current
             .as_object()
             .ok()?
-            .get(&Value::from(segment.as_str()))?;
+            .get(&Value::String(Rc::clone(segment)))?;
     }
     Some(current.clone())
 }
