@@ -172,11 +172,31 @@ impl AliasRegistry {
         let prefix = alloc::format!("{}/", fq_type);
 
         for alias in aliases {
+            // Skip aliases without a default_path — the normalizer's
+            // resolve_resource_type also skips these, so inserting them into
+            // compiler maps would cause a divergence where the compiler
+            // resolves the alias but normalized input never contains the field.
+            if alias.default_path.is_none() {
+                continue;
+            }
+
             // Derive the short name by stripping the resource type prefix.
             let raw_short = if alias.name.len() > prefix.len()
-                && alias.name[..prefix.len()].eq_ignore_ascii_case(&prefix)
+                && alias
+                    .name
+                    .get(..prefix.len())
+                    .is_some_and(|s| s.eq_ignore_ascii_case(&prefix))
             {
-                alias.name[prefix.len()..].to_string()
+                // Both slice boundaries are valid: prefix is ASCII
+                // (resource type + '/'), so if `..prefix.len()` succeeded
+                // above, `prefix.len()..` is guaranteed to be on a char
+                // boundary too.  The `unwrap_or` is a defensive fallback
+                // that can never trigger for well-formed Azure alias names.
+                alias
+                    .name
+                    .get(prefix.len()..)
+                    .unwrap_or(&alias.name)
+                    .to_string()
             } else if let Some(rest) = alias
                 .name
                 .rfind('/')
@@ -260,20 +280,19 @@ impl AliasRegistry {
             .map(String::as_str)
     }
 
-    /// Return a clone of the alias-to-short-name map for use by the compiler.
+    /// Return a reference to the alias-to-short-name map.
     ///
-    /// The compiler stores this map internally so it can resolve fully-qualified
-    /// alias names without holding a reference to the registry.
-    pub fn alias_map(&self) -> BTreeMap<String, String> {
-        self.alias_to_short.clone()
+    /// Keys are lowercase fully-qualified alias names; values are short names.
+    pub const fn alias_map(&self) -> &BTreeMap<String, String> {
+        &self.alias_to_short
     }
 
-    /// Return a clone of the alias-to-modifiable map for use by the compiler.
+    /// Return a reference to the alias-to-modifiable map.
     ///
-    /// Maps lowercase fully-qualified alias names to `true` when the alias
-    /// has `defaultMetadata.attributes = "Modifiable"`.
-    pub fn alias_modifiable_map(&self) -> BTreeMap<String, bool> {
-        self.alias_modifiable.clone()
+    /// Keys are lowercase fully-qualified alias names; values are `true` when
+    /// the alias has `defaultMetadata.attributes = "Modifiable"`.
+    pub const fn alias_modifiable_map(&self) -> &BTreeMap<String, bool> {
+        &self.alias_modifiable
     }
 
     /// Normalize a raw ARM resource and wrap it in the input envelope.

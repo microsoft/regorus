@@ -692,13 +692,18 @@ impl Compiler {
         field_path: &str,
         span: &crate::lexer::Span,
     ) -> Result<()> {
-        if self.alias_modifiable.is_empty() {
+        let modifiable_map = match &self.alias_registry {
+            Some(reg) => reg.alias_modifiable_map(),
+            None => return Ok(()),
+        };
+
+        if modifiable_map.is_empty() {
             return Ok(());
         }
 
         let lc = field_path.to_lowercase();
 
-        if let Some(&modifiable) = self.alias_modifiable.get(&lc) {
+        if let Some(&modifiable) = modifiable_map.get(&lc) {
             if !modifiable {
                 bail!(span.error(&format!(
                     "alias '{}' is not modifiable (defaultMetadata.attributes != 'Modifiable')",
@@ -803,7 +808,6 @@ fn unescape_arm_literal(s: &str) -> alloc::string::String {
 /// 1. Build a template `BTreeMap` with `Value::Undefined` placeholders.
 /// 2. Sort keys by their literal value (BTreeMap order).
 /// 3. Emit `ObjectCreate`.
-#[allow(clippy::indexing_slicing)]
 pub(super) fn build_object_from_keys(
     compiler: &mut Compiler,
     mut keys: Vec<(u16, u8)>,
@@ -812,17 +816,33 @@ pub(super) fn build_object_from_keys(
     // Build template: object with all keys set to Undefined.
     let mut template = BTreeMap::new();
     for &(key_idx, _) in &keys {
-        // SAFETY: key_idx was just returned by `add_literal_u16`, so the
-        // index is guaranteed to be in bounds.
-        let key_val = compiler.program.literals[usize::from(key_idx)].clone();
+        // key_idx was returned by `add_literal_u16` in the calling code,
+        // so it is always in bounds.  We use `.get()` + `?` instead of
+        // direct indexing to satisfy the crate-wide `deny(indexing_slicing)`.
+        let key_val = compiler
+            .program
+            .literals
+            .get(usize::from(key_idx))
+            .ok_or_else(|| {
+                anyhow!(
+                    "internal error in build_object_from_keys: \
+                     literal index {} out of bounds (literals len = {})",
+                    key_idx,
+                    compiler.program.literals.len()
+                )
+            })?
+            .clone();
         template.insert(key_val, Value::Undefined);
     }
     let template_idx = compiler.add_literal_u16(Value::Object(crate::Rc::new(template)))?;
 
-    // Sort keys by literal value (BTreeMap order).
+    // Sort keys by literal value (BTreeMap order).  All indices were
+    // validated in the loop above (which returns Err for out-of-bounds),
+    // so `.get()` always returns `Some` here — `None` is unreachable.
     keys.sort_by(|a, b| {
-        compiler.program.literals[usize::from(a.0)]
-            .cmp(&compiler.program.literals[usize::from(b.0)])
+        let a_val = compiler.program.literals.get(usize::from(a.0));
+        let b_val = compiler.program.literals.get(usize::from(b.0));
+        a_val.cmp(&b_val)
     });
 
     let dest = compiler.alloc_register()?;

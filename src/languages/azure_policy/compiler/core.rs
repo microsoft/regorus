@@ -18,6 +18,7 @@ use crate::rvm::program::{Program, SpanInfo};
 use crate::rvm::Instruction;
 use crate::{Rc, Value};
 
+use crate::languages::azure_policy::aliases::AliasRegistry;
 use crate::languages::azure_policy::ast::PolicyRule;
 
 // ---------------------------------------------------------------------------
@@ -44,10 +45,9 @@ pub(super) struct Compiler {
     pub(super) cached_input_reg: Option<u8>,
     /// Cached register for `LoadContext` — allocated once on first use.
     pub(super) cached_context_reg: Option<u8>,
-    /// Map from lowercase fully-qualified alias name → short name.
-    pub(super) alias_map: BTreeMap<String, String>,
-    /// Map from lowercase fully-qualified alias name → modifiable flag.
-    pub(super) alias_modifiable: BTreeMap<String, bool>,
+    /// Alias registry for resolving fully-qualified alias names.
+    /// Shared via `Rc` to avoid cloning the 73K-entry alias maps.
+    pub(super) alias_registry: Option<Rc<AliasRegistry>>,
     /// Default values for policy parameters.
     pub(super) parameter_defaults: Option<Value>,
     /// Cached literal-table index for `parameter_defaults` (or an empty object
@@ -338,8 +338,13 @@ impl Compiler {
         path: &str,
         span: &crate::lexer::Span,
     ) -> Result<String> {
+        let alias_map = match &self.alias_registry {
+            Some(reg) => reg.alias_map(),
+            None => return Ok(path.to_string()),
+        };
+
         let lc = path.to_ascii_lowercase();
-        if let Some(short) = self.alias_map.get(&lc) {
+        if let Some(short) = alias_map.get(&lc) {
             let resolved = short.clone();
             let result = Self::strip_fq_prefix(&resolved).to_ascii_lowercase();
             return Ok(result);
@@ -348,7 +353,7 @@ impl Compiler {
         // Fallback: derive array path from a corresponding `[*]` alias.
         if !lc.contains("[*]") {
             let wildcard_key = alloc::format!("{}[*]", lc);
-            if let Some(short) = self.alias_map.get(&wildcard_key) {
+            if let Some(short) = alias_map.get(&wildcard_key) {
                 let resolved = Self::strip_fq_prefix(short).to_ascii_lowercase();
                 if let Some(base) = resolved.strip_suffix("[*]") {
                     return Ok(base.to_string());
@@ -356,14 +361,14 @@ impl Compiler {
             }
         }
 
-        if !self.alias_map.is_empty() && !self.alias_fallback_to_raw {
+        if !alias_map.is_empty() && !self.alias_fallback_to_raw {
             bail!(span.error(&alloc::format!(
                 "unknown alias '{}': field references must use fully-qualified alias names when an alias catalog is loaded",
                 path
             )));
         }
 
-        if self.alias_map.is_empty() {
+        if alias_map.is_empty() {
             Ok(path.to_string())
         } else {
             let result = Self::strip_fq_prefix(path).to_ascii_lowercase();

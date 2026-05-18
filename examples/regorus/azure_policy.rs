@@ -23,8 +23,7 @@ use regorus::languages::azure_policy::aliases::AliasRegistry;
 use regorus::languages::azure_policy::compiler;
 use regorus::languages::azure_policy::parser;
 use regorus::rvm::RegoVM;
-use regorus::Source;
-use regorus::Value;
+use regorus::{Rc, Source, Value};
 
 /// Evaluate an Azure Policy definition against a resource.
 ///
@@ -60,11 +59,8 @@ pub fn azure_policy_eval(
     println!("Parsed policy definition from {policy_definition}");
 
     // 3. Compile to RVM bytecode.
-    let program = compiler::compile_policy_definition_with_aliases(
-        &defn,
-        registry.alias_map(),
-        registry.alias_modifiable_map(),
-    )?;
+    let registry = Rc::new(registry);
+    let program = compiler::compile_policy_definition_with_aliases(&defn, Rc::clone(&registry))?;
     println!("Compiled policy to RVM bytecode");
 
     // 4. Build normalized input.
@@ -138,7 +134,7 @@ pub fn azure_policy_aliases(aliases: String, resource_type: Option<String>) -> R
     if let Some(ref rt) = resource_type {
         let rt_lower = rt.to_lowercase();
         let mut found = false;
-        for (alias_name, _) in registry.alias_map() {
+        for alias_name in registry.alias_map().keys() {
             if alias_name.to_lowercase().starts_with(&rt_lower) {
                 println!("  {alias_name}");
                 found = true;
@@ -148,7 +144,7 @@ pub fn azure_policy_aliases(aliases: String, resource_type: Option<String>) -> R
             bail!("no aliases found for resource type '{rt}'");
         }
     } else {
-        for (alias_name, _) in registry.alias_map() {
+        for alias_name in registry.alias_map().keys() {
             println!("  {alias_name}");
         }
     }
