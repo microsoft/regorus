@@ -1,0 +1,150 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: constant_key_partial_object_v1
+    data: {}
+    input:
+      enabled: true
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        p["fixed"] if {
+          input.enabled
+        }
+    query: data.test
+    want_result:
+      p:
+        fixed: true
+
+  - note: multilevel_partial_object_v1
+    data: {}
+    input:
+      nested:
+        app:
+          read: 1
+          write: 2
+        ops:
+          deploy: 3
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        p[a][b] if {
+          some a, obj in input.nested
+          some b, _ in obj
+        }
+    query: data.test
+    want_result:
+      p:
+        app:
+          read: true
+          write: true
+        ops:
+          deploy: true
+
+  - note: constant_key_partial_object_explicit_value_v1
+    data: {}
+    input:
+      enabled: true
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        p["fixed"] := 7 if {
+          input.enabled
+        }
+    query: data.test
+    want_result:
+      p:
+        fixed: 7
+
+  - note: multilevel_partial_object_explicit_value_v1
+    data: {}
+    input:
+      nested:
+        app:
+          read: 1
+          write: 2
+        ops:
+          deploy: 3
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        p[a][b] := v if {
+          some a, obj in input.nested
+          some b, v in obj
+        }
+    query: data.test
+    want_result:
+      p:
+        app:
+          read: 1
+          write: 2
+        ops:
+          deploy: 3
+
+  - note: issue_712_reproducer_v0_partial_set
+    data: {}
+    input:
+      servers:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+        import future.keywords.in
+
+        violations[k] {
+          some k, _ in input.servers
+        }
+    query: data.test.violations
+    want_result:
+      set!: ["BAR", "BAZ", "FOO"]
+
+  - note: issue_712_reproducer_v1_partial_object
+    data: {}
+    input:
+      servers:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        violations[k] if {
+          some k, _ in input.servers
+        }
+    query: data.test.violations
+    want_result:
+      BAR: true
+      BAZ: true
+      FOO: true
+
+  - note: issue_712_reproducer_v1_contains_partial_set
+    data: {}
+    input:
+      servers:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        violations contains k if {
+          some k, _ in input.servers
+        }
+    query: data.test.violations
+    want_result:
+      set!: ["BAR", "BAZ", "FOO"]

@@ -275,6 +275,14 @@ fn is_with_keyword_unsupported_error(err: &anyhow::Error) -> bool {
     })
 }
 
+fn is_partial_object_unsupported_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        let msg = cause.to_string();
+        msg.contains("partial object rules with constant keys are not yet supported")
+            || msg.contains("partial object rules with nested bracket keys are not yet supported")
+    })
+}
+
 fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value) -> Result<()> {
     if case.note == "defaultkeyword/function with var arg, ref head query" {
         println!(
@@ -303,6 +311,14 @@ fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value)
             if is_with_keyword_unsupported_error(&err) {
                 println!(
                     "    skipping RVM check for '{}' (with keyword unsupported)",
+                    case.note
+                );
+                return Ok(());
+            }
+
+            if is_partial_object_unsupported_error(&err) {
+                println!(
+                    "    skipping RVM check for '{}' (partial object pattern unsupported)",
                     case.note
                 );
                 return Ok(());

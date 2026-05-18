@@ -59,7 +59,7 @@ impl<'a> Compiler<'a> {
                             crate::ast::Expr::RefBrack { .. } if assign.is_some() => {
                                 RuleType::PartialObject
                             }
-                            crate::ast::Expr::RefBrack { .. } => RuleType::PartialSet,
+                            crate::ast::Expr::RefBrack { .. } => RuleType::PartialObject,
                             _ => RuleType::Complete,
                         },
                         _ => RuleType::Complete,
@@ -86,6 +86,54 @@ impl<'a> Compiler<'a> {
             }
             .into()
         })
+    }
+
+    fn validate_partial_object_shape(&self, refr: &ExprRef) -> Result<()> {
+        let Expr::RefBrack {
+            refr: prefix,
+            index,
+            ..
+        } = refr.as_ref()
+        else {
+            return Ok(());
+        };
+
+        if Self::has_unsupported_bracket_prefix(prefix) {
+            return Err(CompilerError::PartialObjectNestedKeyUnsupported.at(refr.span()));
+        }
+
+        if Self::is_simple_literal(index) {
+            return Err(CompilerError::PartialObjectConstantKeyUnsupported.at(index.span()));
+        }
+
+        Ok(())
+    }
+
+    fn has_unsupported_bracket_prefix(expr: &ExprRef) -> bool {
+        match expr.as_ref() {
+            Expr::RefBrack { refr, index, .. } => {
+                !Self::is_string_literal(index) || Self::has_unsupported_bracket_prefix(refr)
+            }
+            Expr::RefDot { refr, .. } => Self::has_unsupported_bracket_prefix(refr),
+            _ => false,
+        }
+    }
+
+    fn is_string_literal(expr: &ExprRef) -> bool {
+        matches!(expr.as_ref(), Expr::String { .. } | Expr::RawString { .. })
+    }
+
+    fn is_simple_literal(expr: &ExprRef) -> bool {
+        match expr.as_ref() {
+            Expr::String { .. }
+            | Expr::RawString { .. }
+            | Expr::Number { .. }
+            | Expr::Bool { .. }
+            | Expr::Null { .. } => true,
+            // Unary expressions like `-1` are constant literals too.
+            Expr::UnaryExpr { expr, .. } => Self::is_simple_literal(expr),
+            _ => false,
+        }
     }
 
     pub(super) fn get_or_assign_rule_index(&mut self, rule_path: &str) -> Result<u16> {
@@ -345,6 +393,10 @@ impl<'a> Compiler<'a> {
 
                     let (key_expr, value_expr) = match head {
                         RuleHead::Compr { refr, assign, .. } => {
+                            if rule_type == RuleType::PartialObject {
+                                self.validate_partial_object_shape(refr)?;
+                            }
+
                             self.rule_definition_function_params[rule_index as usize].push(None);
                             self.rule_definition_destructuring_patterns[rule_index as usize]
                                 .push(None);

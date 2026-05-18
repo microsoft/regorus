@@ -1,0 +1,939 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: partial_object_variable_key_collects_all_bindings
+    data: {}
+    input:
+      items:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+
+        p[k] if {
+          some k, _ in input.items
+        }
+    query: data.test.p
+    want_result:
+      BAR: true
+      BAZ: true
+      FOO: true
+
+  - note: partial_object_explicit_value_collects_all_bindings
+    data: {}
+    input:
+      items:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+
+        p[k] := v if {
+          some k, v in input.items
+        }
+    query: data.test.p
+    want_result:
+      BAR: 2
+      BAZ: 3
+      FOO: 1
+
+  - note: partial_object_dynamic_expression_key_collects_all_bindings
+    data: {}
+    input:
+      items:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+      aliases:
+        FOO: alias-foo
+        BAR: alias-bar
+        BAZ: alias-baz
+    modules:
+      - |
+        package test
+
+        p[input.aliases[k]] := v if {
+          some k, v in input.items
+        }
+    query: data.test.p
+    want_result:
+      alias-bar: 2
+      alias-baz: 3
+      alias-foo: 1
+
+  - note: partial_object_undefined_key_skipped
+    # TODO(#719): RVM incorrectly materializes undefined keys instead of
+    # skipping iterations where the key is undefined.
+    skip: true
+    data: {}
+    input:
+      items:
+        FOO: 1
+        BAR: 2
+      aliases:
+        FOO: alias-foo
+    modules:
+      - |
+        package test
+
+        p[input.aliases[k]] := v if {
+          some k, v in input.items
+        }
+    query: data.test.p
+    want_result:
+      alias-foo: 1
+
+  - note: partial_object_duplicate_key_last_wins
+    # TODO(#719): regorus silently overwrites conflicting keys instead of
+    # erroring when the same key is produced with different values.
+    skip: true
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        p[k] := v if {
+          some k, v in {"a": 1}
+        }
+
+        p[k] := v if {
+          some k, v in {"a": 2}
+        }
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: partial_object_duplicate_key_same_value_ok
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        p[k] if {
+          some k, _ in {"a": 1}
+        }
+
+        p[k] if {
+          some k, _ in {"a": 2}
+        }
+    query: data.test.p
+    want_result:
+      a: true
+
+  - note: partial_object_single_element_input
+    data: {}
+    input:
+      items:
+        ONLY: 1
+    modules:
+      - |
+        package test
+
+        p[k] if {
+          some k, _ in input.items
+        }
+    query: data.test.p
+    want_result:
+      ONLY: true
+
+  - note: partial_object_static_bracket_prefix_collects_all_bindings
+    data: {}
+    input:
+      items:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+
+        p["a"][k] := v if {
+          some k, v in input.items
+        }
+    query: data.test.p.a
+    want_result:
+      BAR: 2
+      BAZ: 3
+      FOO: 1
+
+  - note: partial_object_constant_key_unsupported_in_rvm
+    data: {}
+    input:
+      enabled: true
+    modules:
+      - |
+        package test
+
+        p["fixed"] if {
+          input.enabled
+        }
+    query: data.test.p.fixed
+    want_error: "partial object rules with constant keys are not yet supported by the RVM compiler"
+    allow_interpreter_success: true
+
+  - note: partial_object_constant_key_explicit_value_unsupported_in_rvm
+    data: {}
+    input:
+      enabled: true
+    modules:
+      - |
+        package test
+
+        p["fixed"] := 7 if {
+          input.enabled
+        }
+    query: data.test.p.fixed
+    want_error: "partial object rules with constant keys are not yet supported by the RVM compiler"
+    allow_interpreter_success: true
+
+  - note: partial_object_multiple_bodies_collects_all_bindings
+    data: {}
+    input:
+      items:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+
+        p[k] if {
+          some k, _ in input.items
+          k in {"FOO", "BAR"}
+        }
+
+        p[k] if {
+          some k, _ in input.items
+          k == "BAZ"
+        }
+    query: data.test.p
+    want_result:
+      BAR: true
+      BAZ: true
+      FOO: true
+
+  - note: partial_set_contains_collects_all_bindings
+    data: {}
+    input:
+      items:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+
+        p contains k if {
+          some k, _ in input.items
+        }
+    query: data.test.p
+    want_result:
+      set!: ["BAR", "BAZ", "FOO"]
+
+  - note: issue_712_reproducer_v1_partial_object
+    data: {}
+    input:
+      servers:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        violations[k] if {
+          some k, _ in input.servers
+        }
+    query: data.test.violations
+    want_result:
+      BAR: true
+      BAZ: true
+      FOO: true
+
+  - note: issue_712_reproducer_v1_contains_partial_set
+    data: {}
+    input:
+      servers:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        violations contains k if {
+          some k, _ in input.servers
+        }
+    query: data.test.violations
+    want_result:
+      set!: ["BAR", "BAZ", "FOO"]
+
+  - note: partial_object_multilevel_key_unsupported_in_rvm
+    data: {}
+    input:
+      nested:
+        app:
+          read: 1
+          write: 2
+        ops:
+          deploy: 3
+    modules:
+      - |
+        package test
+
+        p[a][b] if {
+          some a, obj in input.nested
+          some b, _ in obj
+        }
+
+        main := p
+    query: data.test.main
+    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
+    allow_interpreter_success: true
+
+  - note: partial_object_multilevel_key_explicit_value_unsupported_in_rvm
+    data: {}
+    input:
+      nested:
+        app:
+          read: 1
+          write: 2
+        ops:
+          deploy: 3
+    modules:
+      - |
+        package test
+
+        p[a][b] := v if {
+          some a, obj in input.nested
+          some b, v in obj
+        }
+
+        main := p
+    query: data.test.main
+    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
+    allow_interpreter_success: true
+
+  - note: partial_object_hidden_dynamic_prefix_unsupported_in_rvm
+    data: {}
+    input:
+      nested:
+        app:
+          q:
+            read: 1
+            write: 2
+        ops:
+          q:
+            deploy: 3
+    modules:
+      - |
+        package test
+
+        p[a].q[b] if {
+          some a, obj in input.nested
+          some b, _ in obj.q
+        }
+
+        main := p
+    query: data.test.main
+    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
+    allow_interpreter_success: true
+
+  - note: partial_object_array_iteration_collects_all_bindings
+    data: {}
+    input:
+      items: ["FOO", "BAR", "BAZ"]
+    modules:
+      - |
+        package test
+
+        p[v] if {
+          some _, v in input.items
+        }
+    query: data.test.p
+    want_result:
+      BAR: true
+      BAZ: true
+      FOO: true
+
+  - note: partial_object_empty_input_is_empty_object
+    data: {}
+    input:
+      items: {}
+    modules:
+      - |
+        package test
+
+        p[k] if {
+          some k, _ in input.items
+        }
+    query: data.test.p
+    want_result: {}
+
+  - note: partial_object_duplicate_paths_same_key_same_value_deduplicates
+    data: {}
+    input:
+      pairs:
+        - alias: shared
+          value: 1
+        - alias: alpha
+          value: 10
+        - alias: shared
+          value: 1
+    modules:
+      - |
+        package test
+
+        p[entry.alias] := entry.value if {
+          some entry in input.pairs
+        }
+    query: data.test.p
+    want_result:
+      alpha: 10
+      shared: 1
+
+  - note: partial_object_duplicate_paths_same_key_different_values_conflict
+    # TODO(#719): regorus silently overwrites conflicting keys instead of
+    # erroring when the same key is produced with different values.
+    skip: true
+    data: {}
+    input:
+      pairs:
+        - alias: shared
+          value: 1
+        - alias: shared
+          value: 2
+    modules:
+      - |
+        package test
+
+        p[entry.alias] := entry.value if {
+          some entry in input.pairs
+        }
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: partial_object_undefined_key_skips_iteration
+    # TODO(#719): RVM incorrectly materializes undefined keys instead of
+    # skipping iterations where the key is undefined.
+    skip: true
+    data: {}
+    input:
+      items:
+        FOO: 1
+        BAR: 2
+        BAZ: 3
+      aliases:
+        FOO: alias-foo
+        BAZ: alias-baz
+    modules:
+      - |
+        package test
+
+        p[input.aliases[k]] := v if {
+          some k, v in input.items
+        }
+    query: data.test.p
+    want_result:
+      alias-baz: 3
+      alias-foo: 1
+
+  - note: partial_object_undefined_value_skips_iteration
+    # TODO(#719): RVM incorrectly materializes undefined values instead of
+    # skipping iterations where the value is undefined.
+    skip: true
+    data: {}
+    input:
+      keys: ["FOO", "BAR", "BAZ"]
+      values:
+        FOO: 1
+        BAZ: 3
+    modules:
+      - |
+        package test
+
+        p[k] := input.values[k] if {
+          some _, k in input.keys
+        }
+    query: data.test.p
+    want_result:
+      BAZ: 3
+      FOO: 1
+
+  - note: partial_object_mixed_undefined_key_value_cases_skip_bad_iterations
+    # TODO(#719): RVM incorrectly materializes undefined keys/values instead of
+    # skipping iterations where the key or value is undefined.
+    skip: true
+    data: {}
+    input:
+      rows:
+        - src: keep
+        - src: missing_alias
+        - src: missing_value
+        - src: missing_both
+      aliases:
+        keep: alias-keep
+        missing_value: alias-no-value
+      values:
+        keep: 1
+        missing_alias: 2
+    modules:
+      - |
+        package test
+
+        p[input.aliases[row.src]] := input.values[row.src] if {
+          some row in input.rows
+        }
+    query: data.test.p
+    want_result:
+      alias-keep: 1
+
+  - note: partial_object_and_partial_set_same_name_conflict
+    data: {}
+    input:
+      items:
+        FOO: 1
+    modules:
+      - |
+        package test
+
+        p[k] if {
+          some k, _ in input.items
+        }
+
+        p contains "shadow" if {
+          true
+        }
+    query: data.test.p
+    want_error: "has multiple types"
+
+  - note: partial_object_complete_rule_conflicts_with_partial_object
+    data: {}
+    input:
+      items:
+        a: 1
+    modules:
+      - |
+        package test
+
+        p := {"fixed": 1}
+
+        p[k] := v if {
+          some k, v in input.items
+        }
+    query: data.test.p
+    want_error: "multiple types"
+
+  - note: partial_object_partial_set_conflicts_with_partial_object
+    data: {}
+    input:
+      items:
+        a: 1
+    modules:
+      - |
+        package test
+
+        p contains k if {
+          some k, _ in input.items
+        }
+
+        p[k] := 1 if {
+          some k, _ in input.items
+        }
+    query: data.test.p
+    want_error: "multiple types"
+
+  - note: partial_object_large_range_counts_all_entries
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        p[key] := n if {
+          n := numbers.range(0, 255)[_]
+          key := sprintf("k-%d", [n])
+        }
+
+        main := count(p)
+    query: data.test.main
+    want_result: 256
+
+  - note: partial_object_rbac_duplicate_actions_deduplicate
+    data:
+      role_permissions:
+        reader: ["read", "list"]
+        writer: ["read", "write"]
+        auditor: ["read", "list"]
+    input:
+      user_roles: ["reader", "writer", "auditor"]
+    modules:
+      - |
+        package test
+
+        allowed_actions[action] if {
+          some role in input.user_roles
+          some action in data.role_permissions[role]
+        }
+    query: data.test.allowed_actions
+    want_result:
+      list: true
+      read: true
+      write: true
+
+  - note: partial_object_violations_real_world_pattern
+    data: {}
+    input:
+      spec:
+        containers:
+          - name: api
+            securityContext:
+              readOnlyRootFilesystem: false
+          - name: worker
+            securityContext:
+              readOnlyRootFilesystem: true
+          - name: sidecar
+    modules:
+      - |
+        package test
+
+        violations[msg] if {
+          some container in input.spec.containers
+          not container.securityContext.readOnlyRootFilesystem
+          msg := sprintf("Container %s must use readOnlyRootFilesystem", [container.name])
+        }
+    query: data.test.violations
+    want_result:
+      Container api must use readOnlyRootFilesystem: true
+      Container sidecar must use readOnlyRootFilesystem: true
+
+  - note: partial_object_resource_mapping_filters_valid_resources
+    data: {}
+    input:
+      resources:
+        svc-api:
+          cpu: 1
+        job-cleanup:
+          cpu: 2
+        svc-worker:
+          cpu: 4
+    modules:
+      - |
+        package test
+
+        valid_resource(name) if {
+          startswith(name, "svc-")
+        }
+
+        resources[name] := config if {
+          some name, config in input.resources
+          valid_resource(name)
+        }
+    query: data.test.resources
+    want_result:
+      svc-api:
+        cpu: 1
+      svc-worker:
+        cpu: 4
+
+  - note: partial_object_computed_concat_key_constant_body
+    data: {}
+    modules:
+      - |
+        package test
+
+        p[concat("", ["edge", "-", "key"])] if {
+          true
+        }
+    query: data.test.p
+    want_result:
+      edge-key: true
+
+  - note: partial_object_duplicate_computed_key_same_value_merges
+    data: {}
+    input:
+      items:
+        A: 0
+        a: 0
+    modules:
+      - |
+        package test
+
+        p[lower(k)] := 1 if {
+          some k, _ in input.items
+        }
+    query: data.test.p
+    want_result:
+      a: 1
+
+  - note: partial_object_function_key_and_object_value
+    data: {}
+    input:
+      items:
+        a: 1
+        b: 2
+    modules:
+      - |
+        package test
+
+        f(x) := concat(":", [x, "suffix"])
+
+        p[f(k)] := {"nested": v + 1} if {
+          some k, v in input.items
+        }
+    query: data.test.p
+    want_result:
+      "a:suffix":
+        nested: 2
+      "b:suffix":
+        nested: 3
+
+  - note: partial_object_array_index_key_uses_selected_elements
+    data: {}
+    input:
+      keys: ["alpha", "beta"]
+      values: [10, 20]
+    modules:
+      - |
+        package test
+
+        p[input.keys[i]] := v if {
+          some i, v in input.values
+        }
+    query: data.test.p
+    want_result:
+      alpha: 10
+      beta: 20
+
+  - note: partial_object_computed_empty_and_special_string_keys
+    data: {}
+    modules:
+      - |
+        package test
+
+        p[concat("", [""])] := "empty" if {
+          true
+        }
+
+        p[concat("", ["a/b?c#d"])] := "special" if {
+          true
+        }
+    query: data.test.p
+    want_result:
+      "": "empty"
+      a/b?c#d: "special"
+
+  - note: partial_object_not_filters_blocked_entries
+    data: {}
+    input:
+      items:
+        allowed: true
+        blocked: true
+      blocked:
+        blocked: true
+    modules:
+      - |
+        package test
+
+        p[k] if {
+          some k, _ in input.items
+          not input.blocked[k]
+        }
+    query: data.test.p
+    want_result:
+      allowed: true
+
+  - note: partial_object_dot_bracket_object_value_collects_all_bindings
+    data: {}
+    input:
+      items:
+        a: 1
+        b: 2
+    modules:
+      - |
+        package test
+
+        p.config[k] := {"nested": v} if {
+          some k, v in input.items
+        }
+    query: data.test.p.config
+    want_result:
+      a:
+        nested: 1
+      b:
+        nested: 2
+
+  - note: partial_object_dynamic_prefix_static_suffix_unsupported_in_rvm
+    data: {}
+    input:
+      items:
+        a: 1
+        b: 2
+    modules:
+      - |
+        package test
+
+        p[k]["fixed"] := upper(k) if {
+          some k, _ in input.items
+        }
+
+        main := p
+    query: data.test.main
+    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
+    allow_interpreter_success: true
+
+  - note: partial_object_literal_prefix_nested_unsupported_in_rvm
+    data: {}
+    input:
+      items:
+        a: 1
+        b: 2
+    modules:
+      - |
+        package test
+
+        p[1][k] := v if {
+          some k, v in input.items
+        }
+
+        main := p
+    query: data.test.main
+    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
+    allow_interpreter_success: true
+
+  - note: partial_object_three_level_nested_dynamic_unsupported_in_rvm
+    data: {}
+    input:
+      nested:
+        app:
+          read: 1
+          write: 2
+        ops:
+          deploy: 3
+    modules:
+      - |
+        package test
+
+        p["root"][a][b] := v if {
+          some a, obj in input.nested
+          some b, v in obj
+        }
+
+        main := p
+    query: data.test.main
+    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
+    allow_interpreter_success: true
+
+  - note: partial_object_with_body_unsupported_in_rvm
+    data: {}
+    input:
+      enabled: false
+      items:
+        a: 1
+    modules:
+      - |
+        package test
+
+        gate if {
+          input.enabled
+        }
+
+        p[k] := v if {
+          some k, v in input.items
+          data.test.gate with input as {"enabled": true}
+        }
+    query: data.test.p
+    want_error: "the `with` keyword is not supported by the compiler yet"
+    allow_interpreter_success: true
+
+  - note: partial_object_every_vacuous_truth_collects_empty_arrays
+    # TODO(#719): RVM currently includes the failing `bad` group here, while the
+    # interpreter returns only `empty` and `ok` (expected per vacuous truth
+    # semantics).
+    skip: true
+    data: {}
+    input:
+      groups:
+        ok: [1, 2]
+        bad: [1, 0]
+        empty: []
+    modules:
+      - |
+        package test
+
+        p[k] if {
+          some k, arr in input.groups
+          every v in arr {
+            v > 0
+          }
+        }
+    query: data.test.p
+    want_result:
+      empty: true
+      ok: true
+
+  - note: partial_object_join_var_multiple_bindings
+    data:
+      a: ["1", "2", "3", "4"]
+      g:
+        a: ["1", "0", "0", "0"]
+        b: ["0", "2", "0", "0"]
+        c: ["0", "0", "0", "4"]
+    modules:
+      - |
+        package test
+
+        p[k] := v if {
+          data.a[i] = v
+          data.g[k][i] = v
+        }
+    query: data.test.p
+    want_result:
+      a: "1"
+      b: "2"
+      c: "4"
+
+  - note: partial_object_composite_value
+    data:
+      g:
+        a: [1, 0, 0, 0]
+        b: [0, 2, 0, 0]
+        c: [0, 0, 0, 4]
+    modules:
+      - |
+        package test
+
+        p[k] := [i, {"v2": v}] if {
+          data.g[k] = x
+          x[i] = v
+          v != 0
+        }
+    query: data.test.p
+    want_result:
+      a: [0, {v2: 1}]
+      b: [1, {v2: 2}]
+      c: [3, {v2: 4}]
+
+  - note: partial_object_true_semantics_dedupes_duplicate_keys
+    data: {}
+    modules:
+      - |
+        package test
+
+        p[k] if {
+          ks := ["a", "b", "c", "a"]
+          ks[_] = k
+        }
+    query: data.test.p
+    want_result:
+      a: true
+      b: true
+      c: true
