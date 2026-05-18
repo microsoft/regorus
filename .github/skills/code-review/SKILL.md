@@ -25,15 +25,21 @@ Key constraints (details in copilot-instructions.md):
 ## Step 1: Get the Diff
 
 ```bash
-BASE=$(git merge-base upstream/main HEAD 2>/dev/null \
-    || git merge-base origin/main HEAD 2>/dev/null)
-if [ -z "$BASE" ]; then
-  echo "ERROR: Cannot find upstream/main or origin/main. Cannot determine review scope."
-  exit 1
+# Primary: use gh pr diff (works in cloud agent + any PR context).
+# Fallback: git merge-base for local non-PR usage.
+if gh pr diff --name-only >/dev/null 2>&1; then
+  echo "---STAT---"
+  gh pr diff --name-only
+  echo "---DIFF---"
+  gh pr diff
+else
+  BASE=$(git merge-base upstream/main HEAD 2>/dev/null \
+      || git merge-base origin/main HEAD 2>/dev/null \
+      || git merge-base main HEAD 2>/dev/null)
+  echo "Reviewing changes since: $BASE"
+  git diff "$BASE"..HEAD --stat
+  git diff "$BASE"..HEAD
 fi
-echo "Reviewing changes since: $BASE"
-git diff "$BASE"..HEAD --stat
-git diff "$BASE"..HEAD -- '*.rs' '*.toml' 'examples/'
 ```
 
 If the diff is empty, stop and report: "No changes found to review."
@@ -196,3 +202,9 @@ one pass. If any were skipped, note them and briefly assess.
 ### Summary
 
 X findings (N critical, N high, N medium, N low). One sentence overall assessment.
+
+### Output
+
+After generating the report above, write the COMPLETE report to `/tmp/code-review-report.md`
+using the `create` tool or shell. This ensures the full report is preserved even if
+display output is truncated.
