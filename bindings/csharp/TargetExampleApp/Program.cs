@@ -232,6 +232,9 @@ allow if {
 
         Console.WriteLine("\n8. RVM host await (suspend/resume):");
         DemonstrateRvmHostAwait();
+
+        Console.WriteLine("\n9. Azure Policy JSON compilation:");
+        DemonstrateAzurePolicyJsonCompilation();
     }
 
     static void DemonstrateConcurrentEvaluation(Regorus.CompiledPolicy compiledPolicy)
@@ -491,5 +494,82 @@ allow if {
 
         var resumed = vm.Resume("{\"tier\":\"gold\"}");
         Console.WriteLine($"HostAwait resumed result: {resumed}");
+    }
+
+    // Azure Policy JSON constants
+    private const string STORAGE_ALIASES_JSON = @"[{
+        ""namespace"": ""Microsoft.Storage"",
+        ""resourceTypes"": [{
+            ""resourceType"": ""storageAccounts"",
+            ""capabilities"": ""SupportsTags, SupportsLocation"",
+            ""aliases"": [
+                {
+                    ""name"": ""Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly"",
+                    ""defaultPath"": ""properties.supportsHttpsTrafficOnly"",
+                    ""paths"": []
+                }
+            ]
+        }]
+    }]";
+
+    private const string HTTPS_DENY_RULE = @"{
+        ""if"": {
+            ""allOf"": [
+                { ""field"": ""type"", ""equals"": ""Microsoft.Storage/storageAccounts"" },
+                { ""field"": ""Microsoft.Storage/storageAccounts/supportsHttpsTrafficOnly"", ""equals"": false }
+            ]
+        },
+        ""then"": { ""effect"": ""deny"" }
+    }";
+
+    static void DemonstrateAzurePolicyJsonCompilation()
+    {
+        // 1. Set up alias registry
+        using var registry = new Regorus.AliasRegistry();
+        registry.LoadJson(STORAGE_ALIASES_JSON);
+        Console.WriteLine("Loaded storage account aliases");
+
+        // 2. Compile the JSON policy rule directly (no Rego needed)
+        using var program = Regorus.AzurePolicyCompiler.CompilePolicyRule(registry, HTTPS_DENY_RULE);
+        Console.WriteLine("Compiled Azure Policy JSON rule to RVM program");
+
+        // 3. Normalize an ARM resource
+        var armResource = @"{
+            ""type"": ""Microsoft.Storage/storageAccounts"",
+            ""name"": ""insecurestorage"",
+            ""location"": ""eastus"",
+            ""properties"": { ""supportsHttpsTrafficOnly"": false }
+        }";
+        var envelope = registry.NormalizeAndWrap(armResource, apiVersion: null, contextJson: "{}", parametersJson: "{}");
+        Console.WriteLine($"Normalized ARM resource to evaluation envelope");
+
+        // 4. Execute in the RVM
+        //    Note: For policies using context functions (subscription(), resourceGroup()),
+        //    call vm.SetContextJson(contextJson) before execution. The context from
+        //    NormalizeAndWrap is in the envelope but must also be set on the VM separately.
+        using var vm = new Regorus.Rvm();
+        vm.LoadProgram(program);
+        vm.SetInputJson(envelope!);
+        // vm.SetContextJson(contextJson); // ← required for context-dependent policies
+        var result = vm.ExecuteEntryPoint("main");
+        Console.WriteLine($"Evaluation result (non-compliant): {result}");
+
+        // 5. Test with a compliant resource
+        var compliantResource = @"{
+            ""type"": ""Microsoft.Storage/storageAccounts"",
+            ""name"": ""securestorage"",
+            ""location"": ""eastus"",
+            ""properties"": { ""supportsHttpsTrafficOnly"": true }
+        }";
+        var compliantEnvelope = registry.NormalizeAndWrap(compliantResource, apiVersion: null, contextJson: "{}", parametersJson: "{}");
+        using var vm2 = new Regorus.Rvm();
+        vm2.LoadProgram(program);
+        vm2.SetInputJson(compliantEnvelope!);
+        var compliantResult = vm2.ExecuteEntryPoint("main");
+        Console.WriteLine($"Evaluation result (compliant): {compliantResult}");
+
+        // 6. Demonstrate program serialization
+        var binary = program.SerializeBinary();
+        Console.WriteLine($"Serialized program size: {binary.Length} bytes");
     }
 }

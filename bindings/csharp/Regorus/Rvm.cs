@@ -107,6 +107,31 @@ namespace Regorus
         }
 
         /// <summary>
+        /// Set the context document for the VM.
+        /// The context provides host-supplied ambient data (e.g. resourceGroup(),
+        /// subscription()) that Azure Policy functions can access via LoadContext
+        /// instructions.
+        /// </summary>
+        /// <remarks>
+        /// <para>The <paramref name="contextJson"/> must be a JSON object. Non-object
+        /// values (arrays, strings, numbers, etc.) will throw a <see cref="RegorusException"/>.</para>
+        /// <para><b>Persistence:</b> The context persists across multiple <c>Execute</c>
+        /// calls and is not cleared by loading a new program. Call again with <c>"{}"</c>
+        /// to clear it before evaluating policies with different ambient data.</para>
+        /// </remarks>
+        public void SetContextJson(string contextJson)
+        {
+            Utf8Marshaller.WithUtf8(contextJson, contextPtr =>
+            {
+                UseHandle(vmPtr =>
+                {
+                    CheckAndDropResult(API.regorus_rvm_set_context((RegorusRvm*)vmPtr, (byte*)contextPtr));
+                    return 0;
+                });
+            });
+        }
+
+        /// <summary>
         /// Set the execution mode (0 = run-to-completion, 1 = suspendable).
         /// </summary>
         public void SetExecutionMode(byte mode)

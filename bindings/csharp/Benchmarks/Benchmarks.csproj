@@ -18,6 +18,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="../../ffi/target/release/libregorus_ffi.dylib" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

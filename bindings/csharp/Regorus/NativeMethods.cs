@@ -179,6 +179,14 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_rvm_set_input(RegorusRvm* vm, byte* input_json);
 
         /// <summary>
+        /// Set the context document for the RVM.
+        /// The context provides host-supplied ambient data (e.g. resourceGroup(), subscription())
+        /// that Azure Policy functions can access.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_context", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_rvm_set_context(RegorusRvm* vm, byte* context_json);
+
+        /// <summary>
         /// Execute the program.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_rvm_execute", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -489,6 +497,20 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_compile_policy_for_target", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_compile_policy_for_target(byte* data_json, RegorusPolicyModule* modules, UIntPtr modules_len);
+
+        /// <summary>
+        /// Compile an Azure Policy JSON policy rule into an RVM program.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_compile_azure_policy_rule", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_compile_azure_policy_rule(
+            RegorusAliasRegistry* registry, byte* policy_rule_json);
+
+        /// <summary>
+        /// Compile a full Azure Policy definition JSON into an RVM program.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_compile_azure_policy_definition", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_compile_azure_policy_definition(
+            RegorusAliasRegistry* registry, byte* policy_definition_json);
 
         #endregion
 

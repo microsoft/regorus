@@ -74,8 +74,8 @@ pub fn compile_policy_rule(rule: &PolicyRule) -> Result<Rc<Program>> {
 /// [`AliasRegistry::alias_map()`](crate::languages::azure_policy::aliases::AliasRegistry::alias_map).
 pub fn compile_policy_rule_with_aliases(
     rule: &PolicyRule,
-    alias_map: BTreeMap<String, String>,
-    alias_modifiable: BTreeMap<String, bool>,
+    alias_map: Rc<BTreeMap<String, String>>,
+    alias_modifiable: Rc<BTreeMap<String, bool>>,
 ) -> Result<Rc<Program>> {
     let mut compiler = Compiler::new();
     compiler.alias_map = alias_map;
@@ -100,8 +100,8 @@ pub fn compile_policy_definition(defn: &PolicyDefinition) -> Result<Rc<Program>>
 /// Compile a parsed Azure Policy definition with alias resolution.
 pub fn compile_policy_definition_with_aliases(
     defn: &PolicyDefinition,
-    alias_map: BTreeMap<String, String>,
-    alias_modifiable: BTreeMap<String, bool>,
+    alias_map: Rc<BTreeMap<String, String>>,
+    alias_modifiable: Rc<BTreeMap<String, bool>>,
 ) -> Result<Rc<Program>> {
     let mut compiler = Compiler::new();
     compiler.alias_map = alias_map;
@@ -119,8 +119,8 @@ pub fn compile_policy_definition_with_aliases(
 /// a known alias are silently treated as raw property paths.
 pub fn compile_policy_definition_with_aliases_opts(
     defn: &PolicyDefinition,
-    alias_map: BTreeMap<String, String>,
-    alias_modifiable: BTreeMap<String, bool>,
+    alias_map: Rc<BTreeMap<String, String>>,
+    alias_modifiable: Rc<BTreeMap<String, bool>>,
     alias_fallback_to_raw: bool,
 ) -> Result<Rc<Program>> {
     let mut compiler = Compiler::new();

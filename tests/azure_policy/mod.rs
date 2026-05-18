@@ -194,7 +194,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
 
     // Load alias registry if an aliases file is specified.
-    let alias_registry = if let Some(ref aliases_file) = test.aliases {
+    let mut alias_registry = if let Some(ref aliases_file) = test.aliases {
         let aliases_dir = Path::new(file)
             .parent()
             .unwrap_or_else(|| Path::new("."))
@@ -280,7 +280,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                             case.note
                         );
                     }
-                    if let Some(ref registry) = alias_registry {
+                    if let Some(ref mut registry) = alias_registry {
                         compiler::compile_policy_definition_with_aliases(
                             &defn,
                             registry.alias_map(),
@@ -307,7 +307,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                             case.note
                         );
                     }
-                    if let Some(ref registry) = alias_registry {
+                    if let Some(ref mut registry) = alias_registry {
                         compiler::compile_policy_rule_with_aliases(
                             &ast,
                             registry.alias_map(),

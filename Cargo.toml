@@ -199,6 +199,11 @@ harness = false
 required-features = ["rvm"]
 
 [[bench]]
+name = "azure_policy_json_benchmark"
+harness = false
+required-features = ["azure_policy"]
+
+[[bench]]
 name = "normalization_benchmark"
 harness = false
 required-features = ["azure_policy"]

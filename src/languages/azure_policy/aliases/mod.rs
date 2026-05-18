@@ -29,6 +29,8 @@ use alloc::vec::Vec;
 
 use anyhow::Result;
 
+use crate::Rc;
+
 use types::{
     AliasEntry, AliasPath, DataPolicyManifest, PrecomputedRemap, PrecomputedReverseRemap,
     ProviderAliases, ResolvedAliases, ResolvedEntry, VersionedAggregates,
@@ -51,6 +53,9 @@ pub struct AliasRegistry {
     ///
     /// `true` when `defaultMetadata.attributes == "Modifiable"`, `false` otherwise.
     alias_modifiable: BTreeMap<String, bool>,
+    /// Cached `Rc` wrappers — invalidated on mutation.
+    cached_alias_map: Option<Rc<BTreeMap<String, String>>>,
+    cached_alias_modifiable: Option<Rc<BTreeMap<String, bool>>>,
 }
 
 impl AliasRegistry {
@@ -60,6 +65,8 @@ impl AliasRegistry {
             types: BTreeMap::new(),
             alias_to_short: BTreeMap::new(),
             alias_modifiable: BTreeMap::new(),
+            cached_alias_map: None,
+            cached_alias_modifiable: None,
         }
     }
 
@@ -169,6 +176,10 @@ impl AliasRegistry {
     /// [`load_data_policy_manifest`].  It updates the global lookup maps
     /// and merges resolved entries into the per-resource-type map.
     fn ingest_alias_entries(&mut self, fq_type: &str, aliases: &[AliasEntry]) {
+        // Invalidate cached Rc wrappers since we're mutating the maps.
+        self.cached_alias_map = None;
+        self.cached_alias_modifiable = None;
+
         let prefix = alloc::format!("{}/", fq_type);
 
         for alias in aliases {
@@ -260,20 +271,30 @@ impl AliasRegistry {
             .map(String::as_str)
     }
 
-    /// Return a clone of the alias-to-short-name map for use by the compiler.
+    /// Return a shared reference-counted alias-to-short-name map for the compiler.
     ///
-    /// The compiler stores this map internally so it can resolve fully-qualified
-    /// alias names without holding a reference to the registry.
-    pub fn alias_map(&self) -> BTreeMap<String, String> {
-        self.alias_to_short.clone()
+    /// The `Rc` is cached internally so repeated calls are O(1) (just an
+    /// `Rc::clone`).  The cache is invalidated automatically when new alias
+    /// data is loaded.
+    pub fn alias_map(&mut self) -> Rc<BTreeMap<String, String>> {
+        if let Some(ref cached) = self.cached_alias_map {
+            return Rc::clone(cached);
+        }
+        let rc = Rc::new(self.alias_to_short.clone());
+        self.cached_alias_map = Some(Rc::clone(&rc));
+        rc
     }
 
-    /// Return a clone of the alias-to-modifiable map for use by the compiler.
+    /// Return a shared reference-counted alias-to-modifiable map for the compiler.
     ///
-    /// Maps lowercase fully-qualified alias names to `true` when the alias
-    /// has `defaultMetadata.attributes = "Modifiable"`.
-    pub fn alias_modifiable_map(&self) -> BTreeMap<String, bool> {
-        self.alias_modifiable.clone()
+    /// Cheap after the first call (returns a cached `Rc::clone`).
+    pub fn alias_modifiable_map(&mut self) -> Rc<BTreeMap<String, bool>> {
+        if let Some(ref cached) = self.cached_alias_modifiable {
+            return Rc::clone(cached);
+        }
+        let rc = Rc::new(self.alias_modifiable.clone());
+        self.cached_alias_modifiable = Some(Rc::clone(&rc));
+        rc
     }
 
     /// Normalize a raw ARM resource and wrap it in the input envelope.

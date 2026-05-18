@@ -358,6 +358,68 @@ pub extern "C" fn regorus_rvm_set_input(
     })
 }
 
+/// Set the VM context document from JSON.
+///
+/// The context provides host-supplied ambient data (e.g. `resourceGroup()`,
+/// `subscription()`) that Azure Policy functions can access via `LoadContext`
+/// instructions. This must be called before `regorus_rvm_execute` when
+/// evaluating policies that reference context functions.
+///
+/// The `context_json` must be a JSON **object**. Non-object values (arrays,
+/// strings, numbers, booleans, null) are rejected with an `InvalidDataFormat`
+/// error because context functions expect named fields.
+///
+/// **Persistence:** The context persists across multiple `regorus_rvm_execute`
+/// calls — it is *not* cleared by execution or by loading a new program. This
+/// is the same behavior as `regorus_rvm_set_input`. Callers should call this
+/// function again (or pass `"{}"`) to update or clear the context before
+/// evaluating a different policy that requires different ambient data.
+///
+/// # Safety
+/// - `vm` must be a valid pointer to a `RegorusRvm` created by `regorus_rvm_new`.
+/// - `context_json` must be a valid null-terminated UTF-8 string.
+#[cfg(feature = "azure_policy")]
+#[no_mangle]
+pub extern "C" fn regorus_rvm_set_context(
+    vm: *mut RegorusRvm,
+    context_json: *const c_char,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        let result = || -> Result<(), (RegorusStatus, alloc::string::String)> {
+            let vm = to_ref(vm)
+                .map_err(|e| (RegorusStatus::InvalidArgument, format!("Invalid VM: {e}")))?;
+            let mut guard = vm
+                .try_write()
+                .map_err(|e| (RegorusStatus::Error, format!("VM lock failed: {e}")))?;
+            let context_value = Value::from_json_str(&from_c_str(context_json).map_err(|e| {
+                (
+                    RegorusStatus::InvalidDataFormat,
+                    format!("Invalid context JSON string: {e}"),
+                )
+            })?)
+            .map_err(|e| {
+                (
+                    RegorusStatus::InvalidDataFormat,
+                    format!("Invalid context JSON: {e}"),
+                )
+            })?;
+            if !matches!(context_value, Value::Object(_)) {
+                return Err((
+                    RegorusStatus::InvalidDataFormat,
+                    alloc::string::String::from("context must be a JSON object"),
+                ));
+            }
+            guard.set_context(context_value);
+            Ok(())
+        }();
+
+        match result {
+            Ok(()) => RegorusResult::ok_void(),
+            Err((status, msg)) => RegorusResult::err_with_message(status, msg),
+        }
+    })
+}
+
 /// Set the maximum number of instructions that can execute.
 #[no_mangle]
 pub extern "C" fn regorus_rvm_set_max_instructions(
