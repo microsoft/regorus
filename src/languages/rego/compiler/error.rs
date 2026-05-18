@@ -63,6 +63,14 @@ pub enum CompilerError {
     #[error("Invalid function expression with package")]
     InvalidFunctionExpressionWithPackage,
 
+    #[error("partial object rules with constant keys are not yet supported by the RVM compiler")]
+    PartialObjectConstantKeyUnsupported,
+
+    #[error(
+        "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
+    )]
+    PartialObjectNestedKeyUnsupported,
+
     #[error("Compilation error: {message}")]
     General { message: String },
 }

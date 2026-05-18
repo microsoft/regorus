@@ -1782,6 +1782,7 @@ impl Interpreter {
 
                 let mut comps = self.eval_rule_ref(&rule_ref)?;
                 if let Some(ke) = &key_expr {
+                    is_const_rule = is_const_rule && Self::is_simple_literal(ke)?;
                     comps.push(self.eval_expr(ke)?);
                 }
                 let output = if let Some(oe) = &output_expr {
