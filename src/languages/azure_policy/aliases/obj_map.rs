@@ -7,7 +7,7 @@
 //! then converts to `Value::Object` (a `BTreeMap<Value, Value>`) only at
 //! the output boundary via [`make_value`].
 
-use alloc::string::{String, ToString as _};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use hashbrown::HashMap;
@@ -39,6 +39,33 @@ pub fn obj_get_mut<'a>(map: &'a mut ObjMap, key: &str) -> Option<&'a mut Value> 
 /// Insert a key-value pair.
 pub fn obj_insert(map: &mut ObjMap, key: &str, val: Value) {
     map.insert(Rc::from(key), val);
+}
+
+/// Insert a key-value pair using a pre-allocated `Rc<str>` key.
+///
+/// Avoids the `Rc::from(key)` heap allocation that [`obj_insert`] performs.
+pub fn obj_insert_rc(map: &mut ObjMap, key: Rc<str>, val: Value) {
+    map.insert(key, val);
+}
+
+/// Lowercase a string, returning an `Rc<str>`.
+///
+/// Both paths allocate an `Rc<str>` (header + string bytes).  The fast-path
+/// avoids creating an intermediate lowercased `String` when the input is
+/// already all-lowercase ASCII.
+pub fn rc_lowercase(s: &str) -> Rc<str> {
+    if s.bytes().all(|b| !b.is_ascii_uppercase()) {
+        Rc::from(s)
+    } else {
+        Rc::from(s.to_ascii_lowercase())
+    }
+}
+
+/// Insert a key-value pair with the key lowercased, using [`rc_lowercase`]
+/// for the allocation fast-path.
+pub fn obj_insert_lc(map: &mut ObjMap, key: &str, val: Value) {
+    let lc = rc_lowercase(key);
+    map.insert(lc, val);
 }
 
 /// Check whether a key exists.
@@ -112,7 +139,7 @@ pub fn set_nested_lowercased(result: &mut ObjMap, path: &str, value: Value) {
     }
     if segments.len() == 1 {
         if let Some(&seg) = segments.first() {
-            obj_insert(result, &seg.to_ascii_lowercase(), value);
+            obj_insert_lc(result, seg, value);
         }
         return;
     }
@@ -144,28 +171,28 @@ fn set_nested_inner(obj: &mut ObjMap, segments: &[&str], value: Value, lowercase
     };
 
     if segments.len() == 1 {
-        let key = if lowercase {
-            first.to_ascii_lowercase()
+        let key: Rc<str> = if lowercase {
+            rc_lowercase(first)
         } else {
-            first.to_string()
+            Rc::from(first)
         };
-        obj_insert(obj, &key, value);
+        obj_insert_rc(obj, key, value);
         return;
     }
 
-    let seg = if lowercase {
-        first.to_ascii_lowercase()
+    let seg: Rc<str> = if lowercase {
+        rc_lowercase(first)
     } else {
-        first.to_string()
+        Rc::from(first)
     };
 
     // Ensure an intermediate object exists at `seg`.
-    if !obj_contains(obj, &seg) {
-        obj_insert(obj, &seg, make_value(new_map()));
+    if !obj.contains_key(&*seg) {
+        obj_insert_rc(obj, Rc::clone(&seg), make_value(new_map()));
     }
 
     // Descend directly into the BTreeMap, avoiding ObjMap round-trip.
-    if let Some(Value::Object(inner_rc)) = obj_get_mut(obj, &seg) {
+    if let Some(Value::Object(inner_rc)) = obj.get_mut(&*seg) {
         let inner_btree = Rc::make_mut(inner_rc);
         set_nested_in_btree(
             inner_btree,
@@ -191,12 +218,12 @@ pub fn set_nested_in_btree(
         return;
     };
 
-    let key_str: String = if lowercase {
-        first.to_ascii_lowercase()
+    let key_rc: Rc<str> = if lowercase {
+        rc_lowercase(first)
     } else {
-        first.to_string()
+        Rc::from(first)
     };
-    let key_val = Value::String(Rc::from(key_str.as_str()));
+    let key_val = Value::String(Rc::clone(&key_rc));
 
     if segments.len() == 1 {
         btree.insert(key_val, value);
@@ -243,13 +270,24 @@ pub const ROOT_FIELDS: &[&str] = &[
     "extendedLocation",
 ];
 
+const PROPERTIES_DOT: &[u8] = b"properties.";
+
 /// Check whether an alias short name collides with a reserved ARM root field
 /// and needs a collision-safe key.
 pub fn is_root_field_collision(short_name: &str, default_path: &str) -> bool {
     ROOT_FIELDS
         .iter()
         .any(|f| f.eq_ignore_ascii_case(short_name))
-        && default_path.to_ascii_lowercase().starts_with("properties.")
+        && default_path.len() > PROPERTIES_DOT.len()
+        && default_path
+            .as_bytes()
+            .get(..PROPERTIES_DOT.len())
+            .is_some_and(|prefix| {
+                prefix
+                    .iter()
+                    .zip(PROPERTIES_DOT)
+                    .all(|(a, b)| a.to_ascii_lowercase() == *b)
+            })
 }
 
 /// Return a collision-safe key for an alias whose short name collides with a
