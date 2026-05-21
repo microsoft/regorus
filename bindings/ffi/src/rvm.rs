@@ -367,6 +367,33 @@ pub extern "C" fn regorus_rvm_set_input(
     })
 }
 
+/// Set the VM context document from JSON.
+///
+/// The context provides host-supplied ambient data (e.g. `resourceGroup()`,
+/// `subscription()`) that Azure Policy functions can access via `LoadContext`
+/// instructions. This must be called before `regorus_rvm_execute` when
+/// evaluating policies that reference context functions.
+///
+/// # Safety
+/// - `vm` must be a valid pointer to a `RegorusRvm` created by `regorus_rvm_new`.
+/// - `context_json` must be a valid null-terminated UTF-8 string.
+#[cfg(feature = "azure_policy")]
+#[no_mangle]
+pub extern "C" fn regorus_rvm_set_context(
+    vm: *mut RegorusRvm,
+    context_json: *const c_char,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        to_regorus_result(|| -> Result<()> {
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
+            let mut guard = vm.try_write()?;
+            let context_value = Value::from_json_str(&from_c_str(context_json)?)?;
+            guard.set_context(context_value);
+            Ok(())
+        }())
+    })
+}
+
 /// Set the maximum number of instructions that can execute.
 #[no_mangle]
 pub extern "C" fn regorus_rvm_set_max_instructions(

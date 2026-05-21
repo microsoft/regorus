@@ -15,7 +15,7 @@ namespace Regorus
     /// </summary>
     public unsafe sealed class Program : SafeHandleWrapper
     {
-        private Program(RegorusProgramHandle handle)
+        internal Program(RegorusProgramHandle handle)
             : base(handle, nameof(Program))
         {
         }

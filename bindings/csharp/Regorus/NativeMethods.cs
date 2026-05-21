@@ -179,6 +179,14 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_rvm_set_input(RegorusRvm* vm, byte* input_json);
 
         /// <summary>
+        /// Set the context document for the RVM.
+        /// The context provides host-supplied ambient data (e.g. resourceGroup(), subscription())
+        /// that Azure Policy functions can access.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_context", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_rvm_set_context(RegorusRvm* vm, byte* context_json);
+
+        /// <summary>
         /// Execute the program.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_rvm_execute", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -490,6 +498,20 @@ namespace Regorus.Internal
         [DllImport(LibraryName, EntryPoint = "regorus_compile_policy_for_target", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_compile_policy_for_target(byte* data_json, RegorusPolicyModule* modules, UIntPtr modules_len);
 
+        /// <summary>
+        /// Compile an Azure Policy JSON policy rule into an RVM program.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_compile_azure_policy_rule", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_compile_azure_policy_rule(
+            RegorusAliasRegistry* registry, byte* policy_rule_json);
+
+        /// <summary>
+        /// Compile a full Azure Policy definition JSON into an RVM program.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_compile_azure_policy_definition", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_compile_azure_policy_definition(
+            RegorusAliasRegistry* registry, byte* policy_definition_json);
+
         #endregion
 
         #region Compiled Policy Methods
@@ -673,28 +695,40 @@ namespace Regorus.Internal
         #region Alias Registry Methods
 
         /// <summary>
-        /// Create a new, empty AliasRegistry.
+        /// Create a new alias registry builder.
         /// </summary>
-        [DllImport(LibraryName, EntryPoint = "regorus_alias_registry_new", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern RegorusAliasRegistry* regorus_alias_registry_new();
+        [DllImport(LibraryName, EntryPoint = "regorus_alias_registry_builder_new", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusAliasRegistryBuilder* regorus_alias_registry_builder_new();
+
+        /// <summary>
+        /// Drop an alias registry builder.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_alias_registry_builder_drop", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void regorus_alias_registry_builder_drop(RegorusAliasRegistryBuilder* builder);
+
+        /// <summary>
+        /// Load control-plane alias data into the builder.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_alias_registry_builder_load_json", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_alias_registry_builder_load_json(RegorusAliasRegistryBuilder* builder, byte* json);
+
+        /// <summary>
+        /// Load a data-plane policy manifest into the builder.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_alias_registry_builder_load_manifest", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_alias_registry_builder_load_manifest(RegorusAliasRegistryBuilder* builder, byte* json);
+
+        /// <summary>
+        /// Freeze a builder into an immutable alias registry.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_alias_registry_builder_build", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_alias_registry_builder_build(RegorusAliasRegistryBuilder* builder);
 
         /// <summary>
         /// Drop an AliasRegistry.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_alias_registry_drop", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void regorus_alias_registry_drop(RegorusAliasRegistry* registry);
-
-        /// <summary>
-        /// Load control-plane alias data (array of ProviderAliases) into the registry.
-        /// </summary>
-        [DllImport(LibraryName, EntryPoint = "regorus_alias_registry_load_json", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern RegorusResult regorus_alias_registry_load_json(RegorusAliasRegistry* registry, byte* json);
-
-        /// <summary>
-        /// Load a data-plane policy manifest into the registry.
-        /// </summary>
-        [DllImport(LibraryName, EntryPoint = "regorus_alias_registry_load_manifest", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern RegorusResult regorus_alias_registry_load_manifest(RegorusAliasRegistry* registry, byte* json);
 
         /// <summary>
         /// Return the number of resource types loaded in the alias registry.
@@ -921,6 +955,14 @@ namespace Regorus.Internal
     {
         public byte* id;
         public byte* content;
+    }
+
+    /// <summary>
+    /// Wrapper for AliasRegistryBuilder.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct RegorusAliasRegistryBuilder
+    {
     }
 
     /// <summary>

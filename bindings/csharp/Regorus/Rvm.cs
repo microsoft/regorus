@@ -107,6 +107,24 @@ namespace Regorus
         }
 
         /// <summary>
+        /// Set the context document for the VM.
+        /// The context provides host-supplied ambient data (e.g. resourceGroup(),
+        /// subscription()) that Azure Policy functions can access via LoadContext
+        /// instructions.
+        /// </summary>
+        public void SetContextJson(string contextJson)
+        {
+            Utf8Marshaller.WithUtf8(contextJson, contextPtr =>
+            {
+                UseHandle(vmPtr =>
+                {
+                    CheckAndDropResult(API.regorus_rvm_set_context((RegorusRvm*)vmPtr, (byte*)contextPtr));
+                    return 0;
+                });
+            });
+        }
+
+        /// <summary>
         /// Set the execution mode (0 = run-to-completion, 1 = suspendable).
         /// </summary>
         public void SetExecutionMode(byte mode)

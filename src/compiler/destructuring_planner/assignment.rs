@@ -314,7 +314,7 @@ fn order_element_pairs<T: VariableBindingContext>(
 
             if ready {
                 let (value_expr, plan, _deps, binds) = remaining.remove(idx);
-                scheduled.extend(binds.into_iter());
+                scheduled.extend(binds);
                 ordered.push((value_expr, plan));
                 progress = true;
                 break;

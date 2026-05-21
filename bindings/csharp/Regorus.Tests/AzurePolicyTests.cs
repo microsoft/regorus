@@ -62,8 +62,7 @@ public class AzurePolicyTests
     [TestMethod]
     public void AliasRegistry_NormalizeAndWrap_produces_input_envelope()
     {
-        using var registry = new AliasRegistry();
-        registry.LoadJson(StorageAliasesJson);
+        using var registry = AliasRegistry.FromJson(StorageAliasesJson);
 
         var result = registry.NormalizeAndWrap(
             StorageResourceJson,
@@ -84,8 +83,7 @@ public class AzurePolicyTests
     [TestMethod]
     public void AliasRegistry_NormalizeAndWrap_flattens_properties()
     {
-        using var registry = new AliasRegistry();
-        registry.LoadJson(StorageAliasesJson);
+        using var registry = AliasRegistry.FromJson(StorageAliasesJson);
 
         var result = registry.NormalizeAndWrap(StorageResourceJson);
         Assert.IsNotNull(result);
@@ -107,8 +105,7 @@ public class AzurePolicyTests
     [TestMethod]
     public void AliasRegistry_NormalizeAndWrap_preserves_type_field()
     {
-        using var registry = new AliasRegistry();
-        registry.LoadJson(StorageAliasesJson);
+        using var registry = AliasRegistry.FromJson(StorageAliasesJson);
 
         var result = registry.NormalizeAndWrap(StorageResourceJson);
         var doc = JsonNode.Parse(result!);
@@ -125,8 +122,7 @@ public class AzurePolicyTests
     [TestMethod]
     public void AliasRegistry_NormalizeAndWrap_includes_parameters()
     {
-        using var registry = new AliasRegistry();
-        registry.LoadJson(StorageAliasesJson);
+        using var registry = AliasRegistry.FromJson(StorageAliasesJson);
 
         var parametersJson = @"{ ""effect"": ""Deny"" }";
         var result = registry.NormalizeAndWrap(
@@ -143,8 +139,7 @@ public class AzurePolicyTests
     [TestMethod]
     public void AliasRegistry_Denormalize_roundtrips_correctly()
     {
-        using var registry = new AliasRegistry();
-        registry.LoadJson(StorageAliasesJson);
+        using var registry = AliasRegistry.FromJson(StorageAliasesJson);
 
         // Normalize the ARM resource.
         var envelope = registry.NormalizeAndWrap(StorageResourceJson);
@@ -177,8 +172,7 @@ public class AzurePolicyTests
         }
 
         var aliasesJson = File.ReadAllText(aliasesPath);
-        using var registry = new AliasRegistry();
-        registry.LoadJson(aliasesJson);
+        using var registry = AliasRegistry.FromJson(aliasesJson);
 
         // The test_aliases.json file contains multiple providers.
         Assert.IsTrue(registry.Length > 0,

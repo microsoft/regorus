@@ -69,5 +69,29 @@ namespace Regorus.Internal
                 API.regorus_result_drop(result);
             }
         }
+
+
+        internal static IntPtr GetPointerResult(RegorusResult result)
+        {
+            try
+            {
+                if (result.status != RegorusStatus.Ok)
+                {
+                    var message = Utf8Marshaller.FromUtf8(result.error_message);
+                    throw result.status.CreateException(message);
+                }
+
+                if (result.data_type != RegorusDataType.Pointer || result.pointer_value == null)
+                {
+                    throw new InvalidOperationException("Expected pointer result.");
+                }
+
+                return (IntPtr)result.pointer_value;
+            }
+            finally
+            {
+                API.regorus_result_drop(result);
+            }
+        }
     }
 }

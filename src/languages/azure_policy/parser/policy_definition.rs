@@ -264,18 +264,17 @@ impl<'source> Parser<'source> {
             "metadata" => {
                 *metadata = Some(self.parse_json_value()?);
             }
-            "parameters" => {
+            "parameters" if self.token_text() == "{" => {
                 // Parameters must be a JSON object; if not, push to extra.
-                if self.token_text() == "{" {
-                    *parameters = self.parse_parameter_definitions()?;
-                } else {
-                    let value = self.parse_json_value()?;
-                    extra.push(ObjectEntry {
-                        key_span,
-                        key: key.into(),
-                        value,
-                    });
-                }
+                *parameters = self.parse_parameter_definitions()?;
+            }
+            "parameters" => {
+                let value = self.parse_json_value()?;
+                extra.push(ObjectEntry {
+                    key_span,
+                    key: key.into(),
+                    value,
+                });
             }
             "policyrule" => {
                 // Parse the policyRule directly from the token stream!

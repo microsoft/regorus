@@ -88,7 +88,7 @@ fn analyze_file(regos: &[String], expected_scopes: &[Scope]) -> Result<()> {
         }
     }
 
-    scopes.sort_by(|a, b| a.0.span.line.cmp(&b.0.span.line));
+    scopes.sort_by_key(|a| a.0.span.line);
     for (idx, (_, scope)) in scopes.iter().enumerate() {
         if idx > expected_scopes.len() {
             bail!("extra scope generated.")
