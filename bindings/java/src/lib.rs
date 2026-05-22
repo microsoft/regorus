@@ -462,7 +462,7 @@ pub extern "system" fn Java_com_microsoft_regorus_Program_nativeCompileFromModul
         }
 
         let mut modules = Vec::with_capacity(ids.len());
-        for (id, content) in ids.into_iter().zip(contents.into_iter()) {
+        for (id, content) in ids.into_iter().zip(contents) {
             modules.push(PolicyModule {
                 id: Rc::from(id.as_str()),
                 content: Rc::from(content.as_str()),

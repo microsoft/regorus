@@ -5,66 +5,108 @@
 
 #![cfg(feature = "azure_policy")]
 
-use crate::common::{from_c_str, to_ref, RegorusResult, RegorusStatus};
+use crate::common::{from_c_str, to_ref, to_shared_ref, RegorusResult, RegorusStatus};
 use crate::panic_guard::with_unwind_guard;
 
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
-use anyhow::Result;
-use core::ffi::c_char;
-use core::ptr;
+use alloc::sync::Arc;
+use anyhow::{anyhow, Result};
+use core::ffi::{c_char, c_void};
+use core::{mem, ptr};
 
 use regorus::languages::azure_policy::aliases::AliasRegistry;
 
-/// Opaque wrapper for `AliasRegistry`.
-pub struct RegorusAliasRegistry {
-    registry: AliasRegistry,
-}
-
-// ---------------------------------------------------------------------------
-// Lifecycle
-// ---------------------------------------------------------------------------
-
-/// Create a new, empty `AliasRegistry`.
+/// Mutable builder for `AliasRegistry`.
 ///
-/// The caller must eventually call `regorus_alias_registry_drop` to free the handle.
-#[no_mangle]
-pub extern "C" fn regorus_alias_registry_new() -> *mut RegorusAliasRegistry {
-    let wrapper = RegorusAliasRegistry {
-        registry: AliasRegistry::new(),
-    };
-    Box::into_raw(Box::new(wrapper))
+/// This handle is intentionally single-threaded and must not be used
+/// concurrently. Callers should finish loading alias data and then freeze it
+/// into a `RegorusAliasRegistry` via `regorus_alias_registry_builder_build`.
+pub struct RegorusAliasRegistryBuilder {
+    registry: AliasRegistry,
+    built: bool,
 }
 
-/// Drop a `RegorusAliasRegistry`.
+impl RegorusAliasRegistryBuilder {
+    fn new() -> Self {
+        Self {
+            registry: AliasRegistry::new(),
+            built: false,
+        }
+    }
+
+    fn registry_mut(&mut self) -> Result<&mut AliasRegistry> {
+        if self.built {
+            return Err(anyhow!("alias registry builder has already been built"));
+        }
+        Ok(&mut self.registry)
+    }
+
+    fn build(&mut self) -> Result<RegorusAliasRegistry> {
+        if self.built {
+            return Err(anyhow!("alias registry builder has already been built"));
+        }
+
+        self.built = true;
+        Ok(RegorusAliasRegistry {
+            registry: Arc::new(mem::replace(&mut self.registry, AliasRegistry::new())),
+        })
+    }
+}
+
+/// Frozen, immutable alias registry.
+pub struct RegorusAliasRegistry {
+    registry: Arc<AliasRegistry>,
+}
+
+impl RegorusAliasRegistry {
+    /// Return a shared reference to the inner registry for use by the compiler.
+    pub(crate) fn inner(&self) -> Arc<AliasRegistry> {
+        Arc::clone(&self.registry)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Builder lifecycle
+// ---------------------------------------------------------------------------
+
+/// Create a new, empty `AliasRegistry` builder.
+///
+/// The caller must eventually call `regorus_alias_registry_builder_drop`.
 #[no_mangle]
-pub extern "C" fn regorus_alias_registry_drop(registry: *mut RegorusAliasRegistry) {
-    if let Ok(r) = to_ref(registry) {
+pub extern "C" fn regorus_alias_registry_builder_new() -> *mut RegorusAliasRegistryBuilder {
+    Box::into_raw(Box::new(RegorusAliasRegistryBuilder::new()))
+}
+
+/// Drop a `RegorusAliasRegistryBuilder`.
+#[no_mangle]
+pub extern "C" fn regorus_alias_registry_builder_drop(builder: *mut RegorusAliasRegistryBuilder) {
+    if let Ok(builder) = to_ref(builder) {
         unsafe {
-            let _ = Box::from_raw(ptr::from_mut(r));
+            let _ = Box::from_raw(ptr::from_mut(builder));
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Loading
+// Builder loading
 // ---------------------------------------------------------------------------
 
-/// Load control-plane alias data (array of `ProviderAliases`) into the registry.
+/// Load control-plane alias data (array of `ProviderAliases`) into the builder.
 ///
 /// `json` must be a valid null-terminated UTF-8 string containing the JSON
 /// array returned by `Get-AzPolicyAlias` or the static
 /// `ResourceTypesAndAliases.json` file.
 #[no_mangle]
-pub extern "C" fn regorus_alias_registry_load_json(
-    registry: *mut RegorusAliasRegistry,
+pub extern "C" fn regorus_alias_registry_builder_load_json(
+    builder: *mut RegorusAliasRegistryBuilder,
     json: *const c_char,
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<()> {
             let json_str = from_c_str(json)?;
-            to_ref(registry)?.registry.load_from_json(&json_str)?;
+            to_ref(builder)?.registry_mut()?.load_from_json(&json_str)?;
             Ok(())
         }();
 
@@ -78,20 +120,20 @@ pub extern "C" fn regorus_alias_registry_load_json(
     })
 }
 
-/// Load a data-plane policy manifest into the registry.
+/// Load a data-plane policy manifest into the builder.
 ///
 /// `json` must be a valid null-terminated UTF-8 string containing a single
 /// `DataPolicyManifest` JSON object.
 #[no_mangle]
-pub extern "C" fn regorus_alias_registry_load_manifest(
-    registry: *mut RegorusAliasRegistry,
+pub extern "C" fn regorus_alias_registry_builder_load_manifest(
+    builder: *mut RegorusAliasRegistryBuilder,
     json: *const c_char,
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<()> {
             let json_str = from_c_str(json)?;
-            to_ref(registry)?
-                .registry
+            to_ref(builder)?
+                .registry_mut()?
                 .load_data_policy_manifest_json(&json_str)?;
             Ok(())
         }();
@@ -106,16 +148,52 @@ pub extern "C" fn regorus_alias_registry_load_manifest(
     })
 }
 
+/// Freeze a builder into an immutable `RegorusAliasRegistry`.
+#[no_mangle]
+pub extern "C" fn regorus_alias_registry_builder_build(
+    builder: *mut RegorusAliasRegistryBuilder,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        let output = || -> Result<*mut RegorusAliasRegistry> {
+            let registry = to_ref(builder)?.build()?;
+            Ok(Box::into_raw(Box::new(registry)))
+        }();
+
+        match output {
+            Ok(registry) => RegorusResult::ok_pointer(registry as *mut c_void),
+            Err(e) => {
+                RegorusResult::err_with_message(RegorusStatus::InvalidArgument, format!("{e}"))
+            }
+        }
+    })
+}
+
 // ---------------------------------------------------------------------------
-// Queries
+// Frozen registry lifecycle
+// ---------------------------------------------------------------------------
+
+/// Drop a `RegorusAliasRegistry`.
+#[no_mangle]
+pub extern "C" fn regorus_alias_registry_drop(registry: *mut RegorusAliasRegistry) {
+    if let Ok(registry) = to_ref(registry) {
+        unsafe {
+            let _ = Box::from_raw(ptr::from_mut(registry));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Frozen registry queries
 // ---------------------------------------------------------------------------
 
 /// Return the number of resource types loaded in the alias registry.
 #[no_mangle]
-pub extern "C" fn regorus_alias_registry_len(registry: *mut RegorusAliasRegistry) -> RegorusResult {
+pub extern "C" fn regorus_alias_registry_len(
+    registry: *const RegorusAliasRegistry,
+) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<i64> {
-            let len = to_ref(registry)?.registry.len();
+            let len = to_shared_ref(registry)?.registry.len();
             Ok(len as i64)
         }();
 
@@ -134,15 +212,9 @@ pub extern "C" fn regorus_alias_registry_len(registry: *mut RegorusAliasRegistry
 ///
 /// Returns a JSON string:
 /// `{ "resource": <normalized>, "context": <context>, "parameters": <params> }`.
-///
-/// * `resource_json` – raw ARM resource JSON
-/// * `api_version` – API version string (e.g. `"2023-01-01"`), or null to use
-///   the default alias paths
-/// * `context_json` – JSON object for additional context (pass `"{}"` if none)
-/// * `parameters_json` – JSON object of policy parameter values (pass `"{}"` if none)
 #[no_mangle]
 pub extern "C" fn regorus_alias_registry_normalize_and_wrap(
-    registry: *mut RegorusAliasRegistry,
+    registry: *const RegorusAliasRegistry,
     resource_json: *const c_char,
     api_version: *const c_char,
     context_json: *const c_char,
@@ -168,7 +240,7 @@ pub extern "C" fn regorus_alias_registry_normalize_and_wrap(
             let context = regorus::Value::from_json_str(&context_str)?;
             let params = regorus::Value::from_json_str(&params_str)?;
 
-            let wrapped = to_ref(registry)?.registry.normalize_and_wrap(
+            let wrapped = to_shared_ref(registry)?.registry.normalize_and_wrap(
                 &resource,
                 api_ver.as_deref(),
                 Some(context),
@@ -185,14 +257,9 @@ pub extern "C" fn regorus_alias_registry_normalize_and_wrap(
 }
 
 /// Denormalize a previously-normalized resource JSON back to ARM format.
-///
-/// * `normalized_json` – the normalized resource JSON
-/// * `api_version` – API version string, or null to use the default alias paths
-///
-/// Returns the denormalized ARM JSON string.
 #[no_mangle]
 pub extern "C" fn regorus_alias_registry_denormalize(
-    registry: *mut RegorusAliasRegistry,
+    registry: *const RegorusAliasRegistry,
     normalized_json: *const c_char,
     api_version: *const c_char,
 ) -> RegorusResult {
@@ -212,7 +279,7 @@ pub extern "C" fn regorus_alias_registry_denormalize(
 
             let normalized = regorus::Value::from_json_str(&normalized_str)?;
 
-            let result = to_ref(registry)?
+            let result = to_shared_ref(registry)?
                 .registry
                 .denormalize(&normalized, api_ver.as_deref());
             result.to_json_str()
@@ -232,12 +299,10 @@ mod tests {
     use core::ffi::CStr;
     use std::ffi::CString;
 
-    /// Helper: create a C string from a Rust &str.
     fn c(s: &str) -> CString {
         CString::new(s).expect("CString::new failed")
     }
 
-    /// Helper: assert a RegorusResult has Ok status and extract string output.
     fn assert_ok_string(r: &RegorusResult) -> String {
         assert_eq!(r.status, RegorusStatus::Ok, "expected Ok status");
         assert!(!r.output.is_null(), "expected non-null output");
@@ -248,10 +313,49 @@ mod tests {
         s
     }
 
-    /// Helper: assert a RegorusResult has Ok status with integer output.
     fn assert_ok_int(r: &RegorusResult) -> i64 {
         assert_eq!(r.status, RegorusStatus::Ok, "expected Ok status");
         r.int_value
+    }
+
+    fn assert_ok_pointer(r: &RegorusResult) -> *mut c_void {
+        assert_eq!(r.status, RegorusStatus::Ok, "expected Ok status");
+        assert!(matches!(
+            r.data_type,
+            crate::common::RegorusDataType::Pointer
+        ));
+        assert!(!r.pointer_value.is_null());
+        r.pointer_value
+    }
+
+    fn build_registry_with_json(json: &str) -> *mut RegorusAliasRegistry {
+        let builder = regorus_alias_registry_builder_new();
+        let json = c(json);
+
+        let r = regorus_alias_registry_builder_load_json(builder, json.as_ptr());
+        assert_eq!(r.status, RegorusStatus::Ok);
+        regorus_result_drop(r);
+
+        let r = regorus_alias_registry_builder_build(builder);
+        let registry = assert_ok_pointer(&r) as *mut RegorusAliasRegistry;
+        regorus_result_drop(r);
+        regorus_alias_registry_builder_drop(builder);
+        registry
+    }
+
+    fn build_registry_with_manifest(json: &str) -> *mut RegorusAliasRegistry {
+        let builder = regorus_alias_registry_builder_new();
+        let json = c(json);
+
+        let r = regorus_alias_registry_builder_load_manifest(builder, json.as_ptr());
+        assert_eq!(r.status, RegorusStatus::Ok);
+        regorus_result_drop(r);
+
+        let r = regorus_alias_registry_builder_build(builder);
+        let registry = assert_ok_pointer(&r) as *mut RegorusAliasRegistry;
+        regorus_result_drop(r);
+        regorus_alias_registry_builder_drop(builder);
+        registry
     }
 
     const ALIASES: &str = r#"[{
@@ -279,20 +383,21 @@ mod tests {
     }"#;
 
     #[test]
-    fn lifecycle_new_and_drop() {
-        let reg = regorus_alias_registry_new();
-        assert!(!reg.is_null());
-        regorus_alias_registry_drop(reg);
+    fn lifecycle_builder_build_and_drop() {
+        let builder = regorus_alias_registry_builder_new();
+        assert!(!builder.is_null());
+
+        let r = regorus_alias_registry_builder_build(builder);
+        let registry = assert_ok_pointer(&r) as *mut RegorusAliasRegistry;
+        regorus_result_drop(r);
+
+        regorus_alias_registry_builder_drop(builder);
+        regorus_alias_registry_drop(registry);
     }
 
     #[test]
     fn load_json_and_check_len() {
-        let reg = regorus_alias_registry_new();
-        let json = c(ALIASES);
-
-        let r = regorus_alias_registry_load_json(reg, json.as_ptr());
-        assert_eq!(r.status, RegorusStatus::Ok);
-        regorus_result_drop(r);
+        let reg = build_registry_with_json(ALIASES);
 
         let r = regorus_alias_registry_len(reg);
         assert_eq!(assert_ok_int(&r), 1);
@@ -303,12 +408,7 @@ mod tests {
 
     #[test]
     fn load_manifest_and_check_len() {
-        let reg = regorus_alias_registry_new();
-        let json = c(MANIFEST);
-
-        let r = regorus_alias_registry_load_manifest(reg, json.as_ptr());
-        assert_eq!(r.status, RegorusStatus::Ok);
-        regorus_result_drop(r);
+        let reg = build_registry_with_manifest(MANIFEST);
 
         let r = regorus_alias_registry_len(reg);
         assert_eq!(assert_ok_int(&r), 1);
@@ -319,23 +419,39 @@ mod tests {
 
     #[test]
     fn load_invalid_json_returns_error() {
-        let reg = regorus_alias_registry_new();
+        let builder = regorus_alias_registry_builder_new();
         let bad = c("not valid json");
 
-        let r = regorus_alias_registry_load_json(reg, bad.as_ptr());
+        let r = regorus_alias_registry_builder_load_json(builder, bad.as_ptr());
         assert_ne!(r.status, RegorusStatus::Ok);
         regorus_result_drop(r);
 
-        regorus_alias_registry_drop(reg);
+        regorus_alias_registry_builder_drop(builder);
+    }
+
+    #[test]
+    fn builder_cannot_be_reused_after_build() {
+        let builder = regorus_alias_registry_builder_new();
+        let r = regorus_alias_registry_builder_build(builder);
+        let registry = assert_ok_pointer(&r) as *mut RegorusAliasRegistry;
+        regorus_result_drop(r);
+
+        let aliases = c(ALIASES);
+        let r = regorus_alias_registry_builder_load_json(builder, aliases.as_ptr());
+        assert_ne!(r.status, RegorusStatus::Ok);
+        regorus_result_drop(r);
+
+        let r = regorus_alias_registry_builder_build(builder);
+        assert_ne!(r.status, RegorusStatus::Ok);
+        regorus_result_drop(r);
+
+        regorus_alias_registry_builder_drop(builder);
+        regorus_alias_registry_drop(registry);
     }
 
     #[test]
     fn normalize_and_wrap_round_trip() {
-        let reg = regorus_alias_registry_new();
-        let aliases = c(ALIASES);
-        let r = regorus_alias_registry_load_json(reg, aliases.as_ptr());
-        assert_eq!(r.status, RegorusStatus::Ok);
-        regorus_result_drop(r);
+        let reg = build_registry_with_json(ALIASES);
 
         let resource = c(r#"{
             "name": "acct1",
@@ -346,7 +462,6 @@ mod tests {
         let ctx = c(r#"{"resourceGroup": {"name": "rg1"}}"#);
         let params = c(r#"{"env": "prod"}"#);
 
-        // Normalize
         let r = regorus_alias_registry_normalize_and_wrap(
             reg,
             resource.as_ptr(),
@@ -357,7 +472,6 @@ mod tests {
         let envelope_json = assert_ok_string(&r);
         regorus_result_drop(r);
 
-        // Parse and verify structure
         let envelope: serde_json::Value =
             serde_json::from_str(&envelope_json).expect("invalid JSON output");
         assert!(
@@ -373,16 +487,13 @@ mod tests {
             "envelope missing 'context'"
         );
 
-        // The normalized resource should have lowercased alias fields
         let res = &envelope["resource"];
         assert_eq!(res["supportshttpstrafficonly"], true);
         assert_eq!(res["name"], "acct1");
 
-        // Context and parameters should be passed through
         assert_eq!(envelope["context"]["resourceGroup"]["name"], "rg1");
         assert_eq!(envelope["parameters"]["env"], "prod");
 
-        // Denormalize the resource portion
         let resource_json = serde_json::to_string(&res).expect("serialize resource");
         let norm_cstr = c(&resource_json);
 
@@ -392,7 +503,6 @@ mod tests {
 
         let denorm: serde_json::Value =
             serde_json::from_str(&denorm_json).expect("invalid denorm JSON");
-        // Should be back under properties with restored casing
         assert_eq!(
             denorm["properties"]["supportsHttpsTrafficOnly"], true,
             "expected restored casing under properties"
@@ -403,11 +513,7 @@ mod tests {
 
     #[test]
     fn denormalize_invalid_json_returns_error() {
-        let reg = regorus_alias_registry_new();
-        let aliases = c(ALIASES);
-        let r = regorus_alias_registry_load_json(reg, aliases.as_ptr());
-        assert_eq!(r.status, RegorusStatus::Ok);
-        regorus_result_drop(r);
+        let reg = build_registry_with_json(ALIASES);
 
         let bad = c("not json");
         let api = c("2023-01-01");
@@ -420,11 +526,7 @@ mod tests {
 
     #[test]
     fn normalize_data_plane_manifest() {
-        let reg = regorus_alias_registry_new();
-        let manifest = c(MANIFEST);
-        let r = regorus_alias_registry_load_manifest(reg, manifest.as_ptr());
-        assert_eq!(r.status, RegorusStatus::Ok);
-        regorus_result_drop(r);
+        let reg = build_registry_with_manifest(MANIFEST);
 
         let resource = c(r#"{
             "type": "Microsoft.KeyVault.Data/vaults/certificates",
@@ -453,7 +555,12 @@ mod tests {
 
     #[test]
     fn empty_registry_normalize() {
-        let reg = regorus_alias_registry_new();
+        let builder = regorus_alias_registry_builder_new();
+        let r = regorus_alias_registry_builder_build(builder);
+        let reg = assert_ok_pointer(&r) as *mut RegorusAliasRegistry;
+        regorus_result_drop(r);
+        regorus_alias_registry_builder_drop(builder);
+
         let resource = c(r#"{"name": "test", "type": "Unknown/type", "properties": {"foo": 1}}"#);
         let api = c("");
         let ctx = c("{}");
@@ -470,7 +577,6 @@ mod tests {
         regorus_result_drop(r);
 
         let envelope: serde_json::Value = serde_json::from_str(&json).expect("invalid JSON");
-        // Without aliases, properties should still be flattened
         assert_eq!(envelope["resource"]["foo"], 1);
         assert_eq!(envelope["resource"]["name"], "test");
 

@@ -2,7 +2,8 @@
 // Licensed under the MIT License.
 
 use crate::common::{
-    from_c_str, to_ref, to_regorus_result, to_regorus_string_result, RegorusResult, RegorusStatus,
+    from_c_str, to_ref, to_regorus_result, to_regorus_string_result, to_shared_ref, RegorusResult,
+    RegorusStatus,
 };
 use crate::compiled_policy::RegorusCompiledPolicy;
 use crate::limits::RegorusExecutionTimerConfig;
@@ -193,7 +194,7 @@ pub extern "C" fn regorus_engine_new() -> *mut RegorusEngine {
 ///
 #[no_mangle]
 pub extern "C" fn regorus_engine_clone(engine: *mut RegorusEngine) -> *mut RegorusEngine {
-    match to_ref(engine) {
+    match to_shared_ref(engine as *const RegorusEngine) {
         Ok(e) => Box::into_raw(Box::new(e.clone())),
         _ => ptr::null_mut(),
     }
@@ -223,7 +224,7 @@ pub extern "C" fn regorus_engine_add_policy(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_string_result(|| -> Result<String> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.add_policy(from_c_str(path)?, from_c_str(rego)?)
         }())
@@ -238,7 +239,7 @@ pub extern "C" fn regorus_engine_add_policy_from_file(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_string_result(|| -> Result<String> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.add_policy_from_file(from_c_str(path)?)
         }())
@@ -256,7 +257,7 @@ pub extern "C" fn regorus_engine_add_data_json(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.add_data(regorus::Value::from_json_str(&from_c_str(data)?)?)
         }())
@@ -270,7 +271,7 @@ pub extern "C" fn regorus_engine_add_data_json(
 pub extern "C" fn regorus_engine_get_packages(engine: *mut RegorusEngine) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_string_result(|| -> Result<String> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let guard = engine.try_read()?;
             serde_json::to_string_pretty(&guard.get_packages()?).map_err(anyhow::Error::msg)
         }())
@@ -284,7 +285,7 @@ pub extern "C" fn regorus_engine_get_packages(engine: *mut RegorusEngine) -> Reg
 pub extern "C" fn regorus_engine_get_policies(engine: *mut RegorusEngine) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_string_result(|| -> Result<String> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let guard = engine.try_read()?;
             guard.get_policies_as_json()
         }())
@@ -299,7 +300,7 @@ pub extern "C" fn regorus_engine_add_data_from_json_file(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.add_data(regorus::Value::from_json_file(from_c_str(path)?)?)
         }())
@@ -313,7 +314,7 @@ pub extern "C" fn regorus_engine_add_data_from_json_file(
 pub extern "C" fn regorus_engine_clear_data(engine: *mut RegorusEngine) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.clear_data();
             Ok(())
@@ -332,7 +333,7 @@ pub extern "C" fn regorus_engine_set_input_json(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.set_input(regorus::Value::from_json_str(&from_c_str(input)?)?);
             Ok(())
@@ -348,7 +349,7 @@ pub extern "C" fn regorus_engine_set_input_from_json_file(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.set_input(regorus::Value::from_json_file(from_c_str(path)?)?);
             Ok(())
@@ -367,7 +368,7 @@ pub extern "C" fn regorus_engine_eval_query(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             let results = guard.eval_query(from_c_str(query)?, false)?;
             Ok(serde_json::to_string_pretty(&results)?)
@@ -390,7 +391,7 @@ pub extern "C" fn regorus_engine_eval_rule(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.eval_rule(from_c_str(rule)?)?.to_json_str()
         }();
@@ -413,7 +414,7 @@ pub extern "C" fn regorus_engine_set_enable_coverage(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.set_enable_coverage(enable);
             Ok(())
@@ -429,7 +430,7 @@ pub extern "C" fn regorus_engine_set_enable_coverage(
 pub extern "C" fn regorus_engine_get_coverage_report(engine: *mut RegorusEngine) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let guard = engine.try_read()?;
             Ok(serde_json::to_string_pretty(&guard.get_coverage_report()?)?)
         }();
@@ -451,7 +452,7 @@ pub extern "C" fn regorus_engine_set_strict_builtin_errors(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.set_strict_builtin_errors(strict);
             Ok(())
@@ -465,18 +466,20 @@ pub extern "C" fn regorus_engine_set_execution_timer_config(
     engine: *mut RegorusEngine,
     config: *const RegorusExecutionTimerConfig,
 ) -> RegorusResult {
-    to_regorus_result(|| -> Result<()> {
-        let engine = to_ref(engine)?;
-        let config = unsafe {
-            config
-                .as_ref()
-                .copied()
-                .ok_or_else(|| anyhow!("execution timer config pointer is null"))?
-        };
-        let mut guard = engine.try_write()?;
-        guard.set_execution_timer_config(config.to_execution_timer_config()?);
-        Ok(())
-    }())
+    with_unwind_guard(|| {
+        to_regorus_result(|| -> Result<()> {
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
+            let config = unsafe {
+                config
+                    .as_ref()
+                    .copied()
+                    .ok_or_else(|| anyhow!("execution timer config pointer is null"))?
+            };
+            let mut guard = engine.try_write()?;
+            guard.set_execution_timer_config(config.to_execution_timer_config()?);
+            Ok(())
+        }())
+    })
 }
 
 #[no_mangle]
@@ -484,12 +487,14 @@ pub extern "C" fn regorus_engine_set_execution_timer_config(
 pub extern "C" fn regorus_engine_clear_execution_timer_config(
     engine: *mut RegorusEngine,
 ) -> RegorusResult {
-    to_regorus_result(|| -> Result<()> {
-        let engine = to_ref(engine)?;
-        let mut guard = engine.try_write()?;
-        guard.clear_execution_timer_config();
-        Ok(())
-    }())
+    with_unwind_guard(|| {
+        to_regorus_result(|| -> Result<()> {
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
+            let mut guard = engine.try_write()?;
+            guard.clear_execution_timer_config();
+            Ok(())
+        }())
+    })
 }
 
 /// Set the policy length limits used when loading policies.
@@ -500,7 +505,7 @@ pub extern "C" fn regorus_engine_set_policy_length_config(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.set_policy_length_config(config.to_policy_length_config()?);
             Ok(())
@@ -515,7 +520,7 @@ pub extern "C" fn regorus_engine_clear_policy_length_config(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.clear_policy_length_config();
             Ok(())
@@ -533,7 +538,7 @@ pub extern "C" fn regorus_engine_get_coverage_report_pretty(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let guard = engine.try_read()?;
             guard.get_coverage_report()?.to_string_pretty()
         }();
@@ -552,7 +557,7 @@ pub extern "C" fn regorus_engine_get_coverage_report_pretty(
 pub extern "C" fn regorus_engine_clear_coverage_data(engine: *mut RegorusEngine) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.clear_coverage_data();
             Ok(())
@@ -571,7 +576,7 @@ pub extern "C" fn regorus_engine_set_gather_prints(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.set_gather_prints(enable);
             Ok(())
@@ -586,7 +591,7 @@ pub extern "C" fn regorus_engine_set_gather_prints(
 pub extern "C" fn regorus_engine_take_prints(engine: *mut RegorusEngine) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             Ok(serde_json::to_string_pretty(&guard.take_prints()?)?)
         }();
@@ -605,7 +610,7 @@ pub extern "C" fn regorus_engine_take_prints(engine: *mut RegorusEngine) -> Rego
 pub extern "C" fn regorus_engine_get_ast_as_json(engine: *mut RegorusEngine) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let guard = engine.try_read()?;
             guard.get_ast_as_json()
         }();
@@ -626,7 +631,7 @@ pub extern "C" fn regorus_engine_get_policy_package_names(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let guard = engine.try_read()?;
             serde_json::to_string_pretty(&guard.get_policy_package_names()?)
                 .map_err(anyhow::Error::msg)
@@ -648,7 +653,7 @@ pub extern "C" fn regorus_engine_get_policy_parameters(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let guard = engine.try_read()?;
             serde_json::to_string_pretty(&guard.get_policy_parameters()?)
                 .map_err(anyhow::Error::msg)
@@ -670,7 +675,7 @@ pub extern "C" fn regorus_engine_set_rego_v0(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<()> {
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.set_rego_v0(enable);
             Ok(())
@@ -692,7 +697,7 @@ pub extern "C" fn regorus_engine_set_rego_v0(
 #[cfg(feature = "azure_policy")]
 pub extern "C" fn regorus_engine_compile_for_target(engine: *mut RegorusEngine) -> RegorusResult {
     with_unwind_guard(|| {
-        let engine = match to_ref(engine) {
+        let engine = match to_shared_ref(engine as *const RegorusEngine) {
             Ok(engine) => engine,
             Err(e) => {
                 return RegorusResult::err_with_message(
@@ -741,7 +746,7 @@ pub extern "C" fn regorus_engine_compile_with_entrypoint(
         let result = || -> Result<RegorusCompiledPolicy> {
             let rule_str = from_c_str(rule)?;
             let rule_rc: regorus::Rc<str> = rule_str.into();
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             let compiled_policy = guard.compile_with_entrypoint(&rule_rc)?;
             Ok(RegorusCompiledPolicy { compiled_policy })
@@ -800,7 +805,7 @@ pub extern "C" fn regorus_engine_compile_program_with_entrypoints(
                 .ok_or_else(|| anyhow!("entry_points must contain at least one entry"))?;
             let rule_rc: regorus::Rc<str> = (*rule).into();
 
-            let engine = to_ref(engine)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             let compiled_policy = guard.compile_with_entrypoint(&rule_rc)?;
 

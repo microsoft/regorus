@@ -184,26 +184,46 @@ namespace Regorus
         }
     }
 
+    internal sealed class RegorusAliasRegistryBuilderHandle : SafeHandleZeroOrMinusOneIsInvalid
+    {
+        private RegorusAliasRegistryBuilderHandle() : base(ownsHandle: true)
+        {
+        }
+
+        internal static RegorusAliasRegistryBuilderHandle Create()
+        {
+            unsafe
+            {
+                var raw = Internal.API.regorus_alias_registry_builder_new();
+                if (raw is null)
+                {
+                    throw new InvalidOperationException("Failed to create Regorus alias registry builder.");
+                }
+
+                var handle = new RegorusAliasRegistryBuilderHandle();
+                handle.SetHandle((IntPtr)raw);
+                return handle;
+            }
+        }
+
+        protected override bool ReleaseHandle()
+        {
+            if (!IsInvalid)
+            {
+                unsafe
+                {
+                    Internal.API.regorus_alias_registry_builder_drop((Internal.RegorusAliasRegistryBuilder*)handle);
+                }
+                SetHandle(IntPtr.Zero);
+            }
+            return true;
+        }
+    }
+
     internal sealed class RegorusAliasRegistryHandle : SafeHandleZeroOrMinusOneIsInvalid
     {
         private RegorusAliasRegistryHandle() : base(ownsHandle: true)
         {
-        }
-
-        internal static RegorusAliasRegistryHandle Create()
-        {
-            unsafe
-            {
-                var raw = Internal.API.regorus_alias_registry_new();
-                if (raw is null)
-                {
-                    throw new InvalidOperationException("Failed to create Regorus alias registry.");
-                }
-
-                var handle = new RegorusAliasRegistryHandle();
-                handle.SetHandle((IntPtr)raw);
-                return handle;
-            }
         }
 
         internal static RegorusAliasRegistryHandle FromPointer(IntPtr pointer)

@@ -236,6 +236,10 @@ pub(crate) fn to_ref<'a, T>(t: *mut T) -> Result<&'a mut T> {
     unsafe { t.as_mut().ok_or_else(|| anyhow!("null pointer")) }
 }
 
+pub(crate) fn to_shared_ref<'a, T>(t: *const T) -> Result<&'a T> {
+    unsafe { t.as_ref().ok_or_else(|| anyhow!("null pointer")) }
+}
+
 pub(crate) fn to_regorus_result(r: Result<()>) -> RegorusResult {
     match r {
         Ok(()) => RegorusResult::ok_void(),

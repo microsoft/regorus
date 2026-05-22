@@ -43,31 +43,28 @@ public class AliasRegistryTests
     [TestMethod]
     public void Create_and_dispose_succeeds()
     {
-        using var registry = new AliasRegistry();
+        using var registry = AliasRegistry.Empty();
         Assert.AreEqual(0, registry.Length);
     }
 
     [TestMethod]
     public void LoadJson_populates_registry()
     {
-        using var registry = new AliasRegistry();
-        registry.LoadJson(AliasesJson);
+        using var registry = AliasRegistry.FromJson(AliasesJson);
         Assert.AreEqual(1, registry.Length);
     }
 
     [TestMethod]
     public void LoadManifest_populates_registry()
     {
-        using var registry = new AliasRegistry();
-        registry.LoadManifest(ManifestJson);
+        using var registry = AliasRegistry.FromManifest(ManifestJson);
         Assert.AreEqual(1, registry.Length);
     }
 
     [TestMethod]
     public void NormalizeAndWrap_produces_envelope()
     {
-        using var registry = new AliasRegistry();
-        registry.LoadJson(AliasesJson);
+        using var registry = AliasRegistry.FromJson(AliasesJson);
 
         var resource = @"{
             ""name"": ""acct1"",
@@ -93,8 +90,7 @@ public class AliasRegistryTests
     [TestMethod]
     public void NormalizeAndWrap_with_context_and_parameters()
     {
-        using var registry = new AliasRegistry();
-        registry.LoadJson(AliasesJson);
+        using var registry = AliasRegistry.FromJson(AliasesJson);
 
         var resource = @"{
             ""name"": ""acct1"",
@@ -115,8 +111,7 @@ public class AliasRegistryTests
     [TestMethod]
     public void Denormalize_restores_properties()
     {
-        using var registry = new AliasRegistry();
-        registry.LoadJson(AliasesJson);
+        using var registry = AliasRegistry.FromJson(AliasesJson);
 
         var normalized = @"{
             ""name"": ""acct1"",
@@ -137,8 +132,7 @@ public class AliasRegistryTests
     [TestMethod]
     public void Round_trip_normalize_then_denormalize()
     {
-        using var registry = new AliasRegistry();
-        registry.LoadJson(AliasesJson);
+        using var registry = AliasRegistry.FromJson(AliasesJson);
 
         var resource = @"{
             ""name"": ""acct1"",
@@ -166,8 +160,7 @@ public class AliasRegistryTests
     [TestMethod]
     public void DataPlane_manifest_normalize()
     {
-        using var registry = new AliasRegistry();
-        registry.LoadManifest(ManifestJson);
+        using var registry = AliasRegistry.FromManifest(ManifestJson);
 
         var resource = @"{
             ""type"": ""Microsoft.KeyVault.Data/vaults/certificates"",
@@ -185,7 +178,7 @@ public class AliasRegistryTests
     [ExpectedException(typeof(InvalidOperationException))]
     public void LoadJson_invalid_throws()
     {
-        using var registry = new AliasRegistry();
-        registry.LoadJson("not valid json");
+        using var builder = new AliasRegistryBuilder();
+        builder.LoadJson("not valid json");
     }
 }

@@ -2,7 +2,8 @@
 // Licensed under the MIT License.
 
 use crate::common::{
-    from_c_str, to_ref, to_regorus_result, RegorusBuffer, RegorusResult, RegorusStatus,
+    from_c_str, to_ref, to_regorus_result, to_shared_ref, RegorusBuffer, RegorusResult,
+    RegorusStatus,
 };
 use crate::compile::RegorusPolicyModule;
 use crate::compiled_policy::RegorusCompiledPolicy;
@@ -106,7 +107,8 @@ pub extern "C" fn regorus_program_compile_from_policy(
 
             let entry_points_ref: Vec<&str> = entry_points_vec.iter().map(|s| s.as_str()).collect();
 
-            let compiled_policy = &to_ref(compiled_policy)?.compiled_policy;
+            let compiled_policy =
+                &to_shared_ref(compiled_policy as *const RegorusCompiledPolicy)?.compiled_policy;
             let program = Compiler::compile_from_policy(compiled_policy, &entry_points_ref)?;
             Ok(Box::into_raw(Box::new(RegorusProgram { program })))
         }();
@@ -187,7 +189,7 @@ pub extern "C" fn regorus_program_new() -> *mut RegorusProgram {
 pub extern "C" fn regorus_program_serialize_binary(program: *mut RegorusProgram) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<*mut RegorusBuffer> {
-            let program = &to_ref(program)?.program;
+            let program = &to_shared_ref(program as *const RegorusProgram)?.program;
             let bytes = program.serialize_binary().map_err(|e| anyhow!(e))?;
             Ok(RegorusBuffer::from_vec(bytes))
         }();
@@ -211,7 +213,10 @@ pub extern "C" fn regorus_program_deserialize_binary(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<(*mut RegorusProgram, bool)> {
-            if data.is_null() && len > 0 {
+            if data.is_null() {
+                if len > 0 {
+                    return Err(anyhow!("null data pointer with non-zero length"));
+                }
                 return Err(anyhow!("null data pointer"));
             }
             let data = unsafe { core::slice::from_raw_parts(data, len) };
@@ -249,7 +254,7 @@ pub extern "C" fn regorus_program_deserialize_binary(
 pub extern "C" fn regorus_program_generate_listing(program: *mut RegorusProgram) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let program = &to_ref(program)?.program;
+            let program = &to_shared_ref(program as *const RegorusProgram)?.program;
             Ok(generate_assembly_listing(
                 program,
                 &AssemblyListingConfig::default(),
@@ -270,7 +275,7 @@ pub extern "C" fn regorus_program_generate_tabular_listing(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let program = &to_ref(program)?.program;
+            let program = &to_shared_ref(program as *const RegorusProgram)?.program;
             Ok(generate_tabular_assembly_listing(
                 program,
                 &AssemblyListingConfig::default(),
@@ -297,7 +302,9 @@ pub extern "C" fn regorus_rvm_new_with_policy(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<*mut RegorusRvm> {
-            let policy = to_ref(compiled_policy)?.compiled_policy.clone();
+            let policy = to_shared_ref(compiled_policy as *const RegorusCompiledPolicy)?
+                .compiled_policy
+                .clone();
             Ok(Box::into_raw(Box::new(RegorusRvm::new(
                 RegoVM::new_with_policy(policy),
             ))))
@@ -318,9 +325,11 @@ pub extern "C" fn regorus_rvm_load_program(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
-            let program = to_ref(program)?.program.clone();
+            let program = to_shared_ref(program as *const RegorusProgram)?
+                .program
+                .clone();
             guard.load_program(program);
             Ok(())
         }())
@@ -332,7 +341,7 @@ pub extern "C" fn regorus_rvm_load_program(
 pub extern "C" fn regorus_rvm_set_data(vm: *mut RegorusRvm, data: *const c_char) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
             let data_value = Value::from_json_str(&from_c_str(data)?)?;
             guard.set_data(data_value)?;
@@ -349,10 +358,37 @@ pub extern "C" fn regorus_rvm_set_input(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
             let input_value = Value::from_json_str(&from_c_str(input)?)?;
             guard.set_input(input_value);
+            Ok(())
+        }())
+    })
+}
+
+/// Set the VM context document from JSON.
+///
+/// The context provides host-supplied ambient data (e.g. `resourceGroup()`,
+/// `subscription()`) that Azure Policy functions can access via `LoadContext`
+/// instructions. This must be called before `regorus_rvm_execute` when
+/// evaluating policies that reference context functions.
+///
+/// # Safety
+/// - `vm` must be a valid pointer to a `RegorusRvm` created by `regorus_rvm_new`.
+/// - `context_json` must be a valid null-terminated UTF-8 string.
+#[cfg(feature = "azure_policy")]
+#[no_mangle]
+pub extern "C" fn regorus_rvm_set_context(
+    vm: *mut RegorusRvm,
+    context_json: *const c_char,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        to_regorus_result(|| -> Result<()> {
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
+            let mut guard = vm.try_write()?;
+            let context_value = Value::from_json_str(&from_c_str(context_json)?)?;
+            guard.set_context(context_value);
             Ok(())
         }())
     })
@@ -366,7 +402,7 @@ pub extern "C" fn regorus_rvm_set_max_instructions(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
             guard.set_max_instructions(max_instructions);
             Ok(())
@@ -382,7 +418,7 @@ pub extern "C" fn regorus_rvm_set_strict_builtin_errors(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
             guard.set_strict_builtin_errors(strict);
             Ok(())
@@ -395,7 +431,7 @@ pub extern "C" fn regorus_rvm_set_strict_builtin_errors(
 pub extern "C" fn regorus_rvm_set_execution_mode(vm: *mut RegorusRvm, mode: u8) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
             let mode = match mode {
                 0 => ExecutionMode::RunToCompletion,
@@ -413,7 +449,7 @@ pub extern "C" fn regorus_rvm_set_execution_mode(vm: *mut RegorusRvm, mode: u8) 
 pub extern "C" fn regorus_rvm_set_step_mode(vm: *mut RegorusRvm, enabled: bool) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
             guard.set_step_mode(enabled);
             Ok(())
@@ -430,7 +466,7 @@ pub extern "C" fn regorus_rvm_set_execution_timer_config(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
             if has_config {
                 guard.set_execution_timer_config(Some(config.to_execution_timer_config()?));
@@ -447,7 +483,7 @@ pub extern "C" fn regorus_rvm_set_execution_timer_config(
 pub extern "C" fn regorus_rvm_execute(vm: *mut RegorusRvm) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
             let result = guard.execute()?;
             result.to_json_str()
@@ -468,7 +504,7 @@ pub extern "C" fn regorus_rvm_execute_entry_point_by_name(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
             let name = from_c_str(entry_point)?;
             let result = guard.execute_entry_point_by_name(&name)?;
@@ -490,7 +526,7 @@ pub extern "C" fn regorus_rvm_execute_entry_point_by_index(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
             let result = guard.execute_entry_point_by_index(index)?;
             result.to_json_str()
@@ -512,7 +548,7 @@ pub extern "C" fn regorus_rvm_resume(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
             let value = if has_value {
                 Some(Value::from_json_str(&from_c_str(resume_value_json)?)?)
@@ -535,7 +571,7 @@ pub extern "C" fn regorus_rvm_resume(
 pub extern "C" fn regorus_rvm_get_execution_state(vm: *mut RegorusRvm) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let guard = vm.try_read()?;
             let state: ExecutionState = guard.execution_state().clone();
             Ok(format!("{:?}", state))

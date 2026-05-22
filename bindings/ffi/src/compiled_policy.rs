@@ -39,7 +39,7 @@ pub extern "C" fn regorus_compiled_policy_eval_with_input(
     with_unwind_guard(|| {
         let output = || -> Result<String> {
             let input_value = regorus::Value::from_json_str(&from_c_str(input)?)?;
-            let result = to_ref(compiled_policy)?
+            let result = to_shared_ref(compiled_policy as *const RegorusCompiledPolicy)?
                 .compiled_policy
                 .eval_with_input(input_value)?;
             result.to_json_str()
@@ -65,7 +65,9 @@ pub extern "C" fn regorus_compiled_policy_get_policy_info(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<String> {
-            let info = to_ref(compiled_policy)?.compiled_policy.get_policy_info()?;
+            let info = to_shared_ref(compiled_policy as *const RegorusCompiledPolicy)?
+                .compiled_policy
+                .get_policy_info()?;
             serde_json::to_string(&info)
                 .map_err(|e| anyhow::anyhow!("Failed to serialize policy info: {}", e))
         }();
