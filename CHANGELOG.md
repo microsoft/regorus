@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1](https://github.com/microsoft/regorus/compare/regorus-v0.10.0...regorus-v0.10.1) - 2026-05-22
+
+### Fixed
+
+- *(ffi)* eliminate aliasing UB + add Azure Policy JSON compilation FFI ([#727](https://github.com/microsoft/regorus/pull/727))
+- *(interpreter,rvm)* correct partial object rule iteration and classification ([#718](https://github.com/microsoft/regorus/pull/718))
+- *(copilot)* robust diff computation for cloud agent environments ([#709](https://github.com/microsoft/regorus/pull/709))
+
+### Other
+
+- *(azure_policy)* reduce AliasRegistry allocations via Rc sharing ([#725](https://github.com/microsoft/regorus/pull/725))
+- *(normalizer)* use Rc<str> interning to reduce alias resolution allocations ([#726](https://github.com/microsoft/regorus/pull/726))
+- *(deps)* bump the rust-dependencies group across 5 directories with 2 updates ([#724](https://github.com/microsoft/regorus/pull/724))
+- *(deps)* bump the rust-dependencies group across 5 directories with 4 updates ([#717](https://github.com/microsoft/regorus/pull/717))
+
 ## [0.10.0] - 2026-05-05
 
 ### Added
