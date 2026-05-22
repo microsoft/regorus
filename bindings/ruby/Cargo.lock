@@ -1040,7 +1040,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "regorus"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1071,7 +1071,7 @@ dependencies = [
 
 [[package]]
 name = "regorus-mimalloc"
-version = "2.2.6"
+version = "2.2.7"
 dependencies = [
  "regorus-mimalloc-sys",
 ]
@@ -1085,7 +1085,7 @@ dependencies = [
 
 [[package]]
 name = "regorusrb"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "magnus",
  "regorus",
