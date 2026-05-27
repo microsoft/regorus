@@ -6,6 +6,27 @@ use anyhow::{anyhow, bail, Result};
 #[cfg(feature = "azure_policy")]
 mod azure_policy;
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
+enum EvalEngine {
+    #[value(alias = "interp", alias = "int")]
+    Interpreter,
+    #[value(alias = "vm")]
+    Rvm,
+}
+
+fn single_value_query_results(query: String, value: regorus::Value) -> regorus::QueryResults {
+    regorus::QueryResults {
+        result: vec![regorus::QueryResult {
+            expressions: vec![regorus::Expression {
+                value,
+                text: query.into(),
+                location: regorus::Location { row: 1, col: 1 },
+            }],
+            bindings: regorus::Value::new_object(),
+        }],
+    }
+}
+
 #[cfg(feature = "explanations")]
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
 enum WhyScopeArg {

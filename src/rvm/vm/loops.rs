@@ -116,6 +116,7 @@ impl RegoVM {
                     }
                 }
                 IterationState::Object { .. } => return,
+                IterationState::Single { .. } => return,
             }
         };
         self.provenance

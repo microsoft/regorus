@@ -486,7 +486,9 @@ fn analyze_instruction(
         | LoadTrue { dest }
         | LoadFalse { dest }
         | LoadNull { dest }
-        | LoadBool { dest, .. } => {
+        | LoadBool { dest, .. }
+        | LoadContext { dest }
+        | LoadMetadata { dest } => {
             clear_provenance(reg_prov, dest);
         }
         Add { dest, .. }
@@ -567,6 +569,7 @@ fn analyze_instruction(
         ObjectSet { .. }
         | ObjectDeepSet { .. }
         | ArrayPush { .. }
+        | ArrayPushDefined { .. }
         | SetAdd { .. }
         | LoopNext { .. }
         | RuleReturn {}
@@ -574,7 +577,18 @@ fn analyze_instruction(
         | DestructuringSuccess {}
         | ComprehensionYield { .. }
         | ComprehensionEnd {}
+        | ReturnUndefinedIfNotTrue { .. }
+        | CoalesceUndefinedToNull { .. }
+        | LogicalBlockStart { .. }
+        | AllOfNext { .. }
+        | AnyOfNext { .. }
+        | LogicalBlockEnd { .. }
         | NegationBegin {} => {}
+
+        // Azure Policy condition op writes its result into `dest`.
+        PolicyCondition { dest, .. } => {
+            clear_provenance(reg_prov, dest);
+        }
     }
 }
 
