@@ -225,9 +225,10 @@ deny contains msg if {
     let rule = report
         .get("rules")
         .and_then(|r| r.as_array())
-        .and_then(|r| r.iter().find(|r| {
-            r.get("name").and_then(|n| n.as_str()) == Some("data.bicep.deny")
-        }))
+        .and_then(|r| {
+            r.iter()
+                .find(|r| r.get("name").and_then(|n| n.as_str()) == Some("data.bicep.deny"))
+        })
         .unwrap_or_else(|| panic!("missing data.bicep.deny rule in report: {report:#?}"));
 
     let defs = rule

@@ -893,16 +893,9 @@ impl RegoVM {
         // (e.g. multi-body definitions) collapse into the single outcome
         // for the definition.
         let def_idx = u16::try_from(frame_data.current_definition_index).unwrap_or(u16::MAX);
-        if !self
-            .trace
-            .rule_outcomes
-            .iter()
-            .any(|o| {
-                !o.is_summary
-                    && o.rule_index == frame_data.rule_index
-                    && o.definition_index == def_idx
-            })
-        {
+        if !self.trace.rule_outcomes.iter().any(|o| {
+            !o.is_summary && o.rule_index == frame_data.rule_index && o.definition_index == def_idx
+        }) {
             self.trace.record_rule_outcome(
                 frame_data.rule_index,
                 def_idx,
