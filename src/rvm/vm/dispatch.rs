@@ -495,6 +495,12 @@ impl RegoVM {
 
                 if a == &Value::Undefined || b == &Value::Undefined {
                     self.set_register(dest, Value::Undefined)?;
+                    // Even though the comparison short-circuits to Undefined,
+                    // propagate the input-rooted operand's provenance so a
+                    // downstream Guard / causality frame can attribute the
+                    // failure to the correct iterator index (Causality-4).
+                    #[cfg(feature = "explanations")]
+                    self.provenance.copy_first_available(dest, left, right);
                     return Ok(InstructionOutcome::Continue);
                 }
 
@@ -509,6 +515,8 @@ impl RegoVM {
 
                 if a == &Value::Undefined || b == &Value::Undefined {
                     self.set_register(dest, Value::Undefined)?;
+                    #[cfg(feature = "explanations")]
+                    self.provenance.copy_first_available(dest, left, right);
                     return Ok(InstructionOutcome::Continue);
                 }
 
@@ -523,6 +531,8 @@ impl RegoVM {
 
                 if a == &Value::Undefined || b == &Value::Undefined {
                     self.set_register(dest, Value::Undefined)?;
+                    #[cfg(feature = "explanations")]
+                    self.provenance.copy_first_available(dest, left, right);
                     return Ok(InstructionOutcome::Continue);
                 }
 
@@ -536,6 +546,8 @@ impl RegoVM {
                 }
 
                 self.set_register(dest, Value::Bool(a < b))?;
+                #[cfg(feature = "explanations")]
+                self.provenance.copy_first_available(dest, left, right);
                 Ok(InstructionOutcome::Continue)
             }
             Le { dest, left, right } => {
@@ -544,6 +556,8 @@ impl RegoVM {
 
                 if a == &Value::Undefined || b == &Value::Undefined {
                     self.set_register(dest, Value::Undefined)?;
+                    #[cfg(feature = "explanations")]
+                    self.provenance.copy_first_available(dest, left, right);
                     return Ok(InstructionOutcome::Continue);
                 }
 
@@ -557,6 +571,8 @@ impl RegoVM {
                 }
 
                 self.set_register(dest, Value::Bool(a <= b))?;
+                #[cfg(feature = "explanations")]
+                self.provenance.copy_first_available(dest, left, right);
                 Ok(InstructionOutcome::Continue)
             }
             Gt { dest, left, right } => {
@@ -565,6 +581,8 @@ impl RegoVM {
 
                 if a == &Value::Undefined || b == &Value::Undefined {
                     self.set_register(dest, Value::Undefined)?;
+                    #[cfg(feature = "explanations")]
+                    self.provenance.copy_first_available(dest, left, right);
                     return Ok(InstructionOutcome::Continue);
                 }
 
@@ -578,6 +596,8 @@ impl RegoVM {
                 }
 
                 self.set_register(dest, Value::Bool(a > b))?;
+                #[cfg(feature = "explanations")]
+                self.provenance.copy_first_available(dest, left, right);
                 Ok(InstructionOutcome::Continue)
             }
             Ge { dest, left, right } => {
@@ -586,6 +606,8 @@ impl RegoVM {
 
                 if a == &Value::Undefined || b == &Value::Undefined {
                     self.set_register(dest, Value::Undefined)?;
+                    #[cfg(feature = "explanations")]
+                    self.provenance.copy_first_available(dest, left, right);
                     return Ok(InstructionOutcome::Continue);
                 }
 
@@ -599,6 +621,8 @@ impl RegoVM {
                 }
 
                 self.set_register(dest, Value::Bool(a >= b))?;
+                #[cfg(feature = "explanations")]
+                self.provenance.copy_first_available(dest, left, right);
                 Ok(InstructionOutcome::Continue)
             }
             And { dest, left, right } => {

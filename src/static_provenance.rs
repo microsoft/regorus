@@ -661,65 +661,64 @@ fn peek_preceding_comparison(
     reg_prov: &[Option<Provenance>],
     program: &Program,
 ) -> Option<(Operator, ConditionOperands)> {
-    if pc == 0 {
-        return None;
-    }
-    let prev_pc = pc.saturating_sub(1);
-    let prev = program.instructions.get(prev_pc)?;
-    match *prev {
-        Instruction::Eq { dest, left, right } | Instruction::Ge { dest, left, right }
-            if dest == get_guard_register_at(pc, program)? =>
-        {
-            // Re-match to get exact operator
-            let op = match *prev {
-                Instruction::Eq { .. } => Operator::Eq,
-                _ => Operator::Ge,
-            };
-            Some((
-                op,
-                ConditionOperands {
-                    left_reg: left,
-                    right_reg: right,
-                    left_provenance: get_provenance(reg_prov, left).cloned(),
-                    right_provenance: get_provenance(reg_prov, right).cloned(),
-                },
-            ))
-        }
-        _ => {
-            // Try to match all comparison variants.
-            match *prev {
-                Instruction::Eq { dest, left, right }
-                | Instruction::Ne { dest, left, right }
-                | Instruction::Lt { dest, left, right }
-                | Instruction::Le { dest, left, right }
-                | Instruction::Gt { dest, left, right }
-                | Instruction::Ge { dest, left, right }
-                    if Some(dest) == get_guard_register_at(pc, program) =>
-                {
-                    let op = match *prev {
-                        Instruction::Eq { .. } => Operator::Eq,
-                        Instruction::Ne { .. } => Operator::Ne,
-                        Instruction::Lt { .. } => Operator::Lt,
-                        Instruction::Le { .. } => Operator::Le,
-                        Instruction::Gt { .. } => Operator::Gt,
-                        Instruction::Ge { .. } => Operator::Ge,
-                        _ => return None,
-                    };
-                    Some((
-                        op,
-                        ConditionOperands {
-                            left_reg: left,
-                            right_reg: right,
-                            left_provenance: get_provenance(reg_prov, left).cloned(),
-                            right_provenance: get_provenance(reg_prov, right).cloned(),
-                        },
-                    ))
-                }
-                Instruction::Contains {
-                    dest,
-                    collection,
-                    value,
-                } if Some(dest) == get_guard_register_at(pc, program) => Some((
+    let target_dest = get_guard_register_at(pc, program)?;
+    find_comparison_writing_to(pc, target_dest, reg_prov, program)
+}
+
+/// Scan backward from `pc` (exclusive) looking for a comparison-like
+/// instruction whose `dest` register matches `target_dest`.  Stops at the
+/// nearest such instruction.  Used both for direct comparisons preceding a
+/// `Guard`, and (indirectly via [`peek_through_negation`]) for the operand
+/// of a `Not` instruction in `not <comparison>` patterns.
+fn find_comparison_writing_to(
+    pc: usize,
+    target_dest: u8,
+    reg_prov: &[Option<Provenance>],
+    program: &Program,
+) -> Option<(Operator, ConditionOperands)> {
+    // Walk back a short window — comparisons that feed a Guard are emitted
+    // adjacent in the same basic block, so a small bound suffices and keeps
+    // the analysis cheap.
+    const LOOKBACK: usize = 8;
+    let start = pc.saturating_sub(LOOKBACK).max(1);
+    let mut cur = pc;
+    while cur > start {
+        cur = cur.saturating_sub(1);
+        let instr = program.instructions.get(cur)?;
+        match *instr {
+            Instruction::Eq { dest, left, right }
+            | Instruction::Ne { dest, left, right }
+            | Instruction::Lt { dest, left, right }
+            | Instruction::Le { dest, left, right }
+            | Instruction::Gt { dest, left, right }
+            | Instruction::Ge { dest, left, right }
+                if dest == target_dest =>
+            {
+                let op = match *instr {
+                    Instruction::Eq { .. } => Operator::Eq,
+                    Instruction::Ne { .. } => Operator::Ne,
+                    Instruction::Lt { .. } => Operator::Lt,
+                    Instruction::Le { .. } => Operator::Le,
+                    Instruction::Gt { .. } => Operator::Gt,
+                    Instruction::Ge { .. } => Operator::Ge,
+                    _ => return None,
+                };
+                return Some((
+                    op,
+                    ConditionOperands {
+                        left_reg: left,
+                        right_reg: right,
+                        left_provenance: get_provenance(reg_prov, left).cloned(),
+                        right_provenance: get_provenance(reg_prov, right).cloned(),
+                    },
+                ));
+            }
+            Instruction::Contains {
+                dest,
+                collection,
+                value,
+            } if dest == target_dest => {
+                return Some((
                     Operator::Contains,
                     ConditionOperands {
                         left_reg: value,
@@ -727,11 +726,91 @@ fn peek_preceding_comparison(
                         left_provenance: get_provenance(reg_prov, value).cloned(),
                         right_provenance: get_provenance(reg_prov, collection).cloned(),
                     },
-                )),
-                _ => None,
+                ));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// If the instruction immediately preceding `pc` is `Not { dest, operand }`
+/// where `dest` is the register being guarded at `pc`, look further back to
+/// the comparison/contains/builtin call that produced `operand`.
+///
+/// Returns the inner condition's structure plus the provenance of the
+/// inner operand (used for `not <builtin>(...)` style negations where there
+/// is no structured operator but we still want input attribution).
+fn peek_through_negation(
+    pc: usize,
+    reg_prov: &[Option<Provenance>],
+    program: &Program,
+) -> Option<NegationLookThrough> {
+    if pc == 0 {
+        return None;
+    }
+    let guard_reg = get_guard_register_at(pc, program)?;
+    let prev = program.instructions.get(pc.saturating_sub(1))?;
+    let (not_dest, not_operand) = match *prev {
+        Instruction::Not { dest, operand } if dest == guard_reg => (dest, operand),
+        _ => return None,
+    };
+    let _ = not_dest; // already validated above
+
+    // Case A: `not <comparison>` — inner is a comparison writing to `not_operand`.
+    if let Some((op, operands)) =
+        find_comparison_writing_to(pc.saturating_sub(1), not_operand, reg_prov, program)
+    {
+        return Some(NegationLookThrough {
+            operator: Some(op),
+            operands: Some(operands),
+            inner_provenance: get_provenance(reg_prov, not_operand).cloned(),
+        });
+    }
+
+    // Case B: `not <builtin>(...)` — inner is a BuiltinCall.  We can't surface
+    // a structured operator, but we can still attach the input-rooted
+    // provenance of the first input-rooted argument so callers can attribute
+    // the failure to the right input path.
+    let lookback_start = pc.saturating_sub(8).max(1);
+    let mut cur = pc.saturating_sub(1);
+    while cur > lookback_start {
+        cur = cur.saturating_sub(1);
+        let candidate = program.instructions.get(cur)?;
+        if let Instruction::BuiltinCall { params_index } = *candidate {
+            if let Some(params) = program
+                .instruction_data
+                .builtin_call_params
+                .get(usize::from(params_index))
+            {
+                if params.dest == not_operand {
+                    let inner_prov = params
+                        .arg_registers()
+                        .iter()
+                        .find_map(|reg| {
+                            get_provenance(reg_prov, *reg)
+                                .filter(|p| p.is_input_rooted())
+                                .cloned()
+                        })
+                        .or_else(|| get_provenance(reg_prov, not_operand).cloned());
+                    return Some(NegationLookThrough {
+                        operator: None,
+                        operands: None,
+                        inner_provenance: inner_prov,
+                    });
+                }
             }
         }
     }
+
+    None
+}
+
+/// Result of looking through a `Not` instruction at the source condition.
+struct NegationLookThrough {
+    operator: Option<Operator>,
+    operands: Option<ConditionOperands>,
+    inner_provenance: Option<Provenance>,
 }
 
 /// Get the register being checked by the Guard instruction at `pc`.
@@ -787,6 +866,71 @@ fn build_guard_condition_info(
                     text,
                     kind: ConditionKind::Comparison,
                     operator: Some(op),
+                    has_input_operand: has_input,
+                    binding_name: None,
+                }
+            } else if let Some(neg) = peek_through_negation(pc, reg_prov, program) {
+                // `not <expr>` — Guard fires on `Not(inner)`.  Surface the
+                // inner expression's operator / operand provenance so the
+                // condition carries the same structured attribution as the
+                // un-negated form, but marked as Negation so consumers know
+                // the outcome is inverted.
+                let has_input = neg
+                    .operands
+                    .as_ref()
+                    .map(|ops| {
+                        ops.left_provenance
+                            .as_ref()
+                            .is_some_and(Provenance::is_input_rooted)
+                            || ops
+                                .right_provenance
+                                .as_ref()
+                                .is_some_and(Provenance::is_input_rooted)
+                    })
+                    .unwrap_or_else(|| {
+                        neg.inner_provenance
+                            .as_ref()
+                            .is_some_and(Provenance::is_input_rooted)
+                    });
+                let effective_provenance = if has_input {
+                    neg.operands
+                        .as_ref()
+                        .and_then(|ops| {
+                            ops.left_provenance
+                                .as_ref()
+                                .filter(|p| p.is_input_rooted())
+                                .or(ops
+                                    .right_provenance
+                                    .as_ref()
+                                    .filter(|p| p.is_input_rooted()))
+                                .cloned()
+                        })
+                        .or_else(|| neg.inner_provenance.clone())
+                } else {
+                    neg.inner_provenance.clone().or(checked_provenance)
+                };
+
+                // For `not <builtin>(...)` (operator is None) the look-through
+                // doesn't synthesize structured operands; fall back to a
+                // single-operand frame that still carries the inner
+                // provenance so the rendered `left` operand can attribute
+                // the failure to the right input path.
+                let operands = neg.operands.or_else(|| {
+                    neg.inner_provenance.clone().map(|prov| ConditionOperands {
+                        left_reg: register,
+                        right_reg: register,
+                        left_provenance: Some(prov),
+                        right_provenance: None,
+                    })
+                });
+
+                StaticConditionInfo {
+                    checked_register: register,
+                    checked_provenance: effective_provenance,
+                    operands,
+                    text,
+                    kind: ConditionKind::Negation,
+                    operator: neg.operator,
                     has_input_operand: has_input,
                     binding_name: None,
                 }

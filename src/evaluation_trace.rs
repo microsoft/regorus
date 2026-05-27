@@ -185,6 +185,11 @@ pub struct RuleOutcome {
     pub succeeded: bool,
     /// Index of the result value in `captured_values`, if captured.
     pub result_value_idx: Option<ValueIdx>,
+    /// Whether this is a rule-level summary outcome (recorded once at
+    /// `finalize_rule_frame_data`) rather than a per-definition outcome.
+    /// Materializers use this to surface a per-rule `result` while keeping
+    /// per-definition entries distinct.
+    pub is_summary: bool,
 }
 
 /// A single emitted result value for a partial-set rule.
@@ -444,6 +449,29 @@ impl EvaluationTrace {
             definition_index,
             succeeded,
             result_value_idx: result_idx,
+            is_summary: false,
+        });
+    }
+
+    /// Record a rule-level summary outcome (per-rule rather than per-definition).
+    ///
+    /// This is recorded once at the end of a rule's evaluation, carrying the
+    /// final accumulated result value.  Per-definition outcomes are recorded
+    /// separately via `record_rule_outcome` so that `rule.definitions[]`
+    /// contains one entry per definition body that ran.
+    pub fn record_rule_summary(
+        &mut self,
+        rule_index: u16,
+        succeeded: bool,
+        result_value: Option<Value>,
+    ) {
+        let result_idx = result_value.and_then(|v| self.capture_value(v));
+        self.rule_outcomes.push(RuleOutcome {
+            rule_index,
+            definition_index: 0,
+            succeeded,
+            result_value_idx: result_idx,
+            is_summary: true,
         });
     }
 

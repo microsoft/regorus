@@ -597,7 +597,7 @@ fn materialize_definitions(
     let def_outcomes: Vec<&RuleOutcome> = trace
         .rule_outcomes
         .iter()
-        .filter(|o| o.rule_index == rule_idx)
+        .filter(|o| o.rule_index == rule_idx && !o.is_summary)
         .collect();
 
     for outcome in &def_outcomes {
