@@ -262,6 +262,21 @@ pub struct ResidualCondition {
     /// wraps.  Semantics: "NOT (all of negated_conditions hold simultaneously)".
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub negated_conditions: Vec<ResidualCondition>,
+    /// Fully-qualified rule name that produced this residual condition,
+    /// e.g. `"data.bicep.deny"`.  Lets consumers attribute a disjunct back
+    /// to the rule (and rule definition) that contributed it without
+    /// re-running PE per rule.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_rule: Option<String>,
+    /// Source file where the condition appears, e.g. `"policy.rego"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_file: Option<String>,
+    /// 1-based source line for the condition.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_row: Option<u32>,
+    /// 1-based source column for the condition.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_col: Option<u32>,
 }
 
 /// Result of partial evaluation.
@@ -278,7 +293,7 @@ pub struct PartialEvalResult {
 
 /// Produce a [`PartialEvalResult`] from a program and its evaluation trace.
 pub fn materialize_pe(
-    _program: &Program,
+    program: &Program,
     trace: &EvaluationTrace,
     query_result: Value,
 ) -> PartialEvalResult {
@@ -314,7 +329,7 @@ pub fn materialize_pe(
     // First pass: collect inner-negation assumptions into negation_inner.
     for a in &trace.assumptions {
         if let Some(neg_scope) = a.negation_scope_id {
-            let cond = assumption_to_residual(a);
+            let cond = assumption_to_residual(a, program);
             negation_inner.entry(neg_scope).or_default().push(cond);
         }
     }
@@ -331,7 +346,7 @@ pub fn materialize_pe(
 
         // For NegationHolds: single condition with inner children.
         if a.kind == AssumptionKind::NegationHolds {
-            let mut cond = assumption_to_residual(a);
+            let mut cond = assumption_to_residual(a, program);
             if let Some(scope_id) = a.owned_negation_scope_id {
                 if let Some(mut inner) = negation_inner.remove(&scope_id) {
                     attach_nested_negation_inner(&mut inner, &mut negation_inner);
@@ -343,7 +358,7 @@ pub fn materialize_pe(
         }
 
         // Try data-key inversion (may produce multiple conditions).
-        let inverted = assumption_to_residual_conditions(a);
+        let inverted = assumption_to_residual_conditions(a, program);
         if inverted.len() > 1 {
             // Multiple matching keys → each becomes a separate disjunct
             // so the overall result is OR(key1, key2, ...).
@@ -368,11 +383,21 @@ pub fn materialize_pe(
     }
 
     // Deduplicate conditions within each disjunct.
+    // Also drop empty `negation_holds` placeholders (PE-2): when a rule
+    // fires concretely the recorded NegationHolds assumption may carry no
+    // input path, no operator, and no inner conditions.  Such a placeholder
+    // provides no information to consumers and prevents the disjunct from
+    // collapsing to an empty (always-true) clause.
     let residual_queries: Vec<Vec<ResidualCondition>> = disjunct_map
         .into_values()
-        .map(|mut conds| {
+        .filter_map(|mut conds| {
             conds.dedup_by(|a, b| a.condition == b.condition && a.operator == b.operator);
-            conds
+            conds.retain(|c| !is_empty_placeholder(c));
+            if conds.is_empty() {
+                None
+            } else {
+                Some(conds)
+            }
         })
         .collect();
 
@@ -405,7 +430,10 @@ fn format_value(v: &Value) -> alloc::string::String {
 /// conditions like `input.role == "admin"`.
 fn assumption_to_residual_conditions(
     a: &crate::evaluation_trace::Assumption,
+    program: &Program,
 ) -> Vec<ResidualCondition> {
+    let (source_rule, source_file, source_row, source_col) = source_attribution(a, program);
+
     // Check for data-key inversion.
     if let (Some(ref ctx), Some(ref cmp_value), Some(ref op)) =
         (&a.data_lookup_context, &a.assumed_value, &a.operator)
@@ -441,6 +469,10 @@ fn assumption_to_residual_conditions(
                             value: Some(key.clone()),
                             kind: "condition_holds".to_string(),
                             negated_conditions: Vec::new(),
+                            source_rule: source_rule.clone(),
+                            source_file: source_file.clone(),
+                            source_row,
+                            source_col,
                         }
                     })
                     .collect();
@@ -449,19 +481,23 @@ fn assumption_to_residual_conditions(
     }
 
     // Default: no inversion, return single condition.
-    alloc::vec![assumption_to_residual(a)]
+    alloc::vec![assumption_to_residual(a, program)]
 }
 
 /// Convert an `Assumption` to a single `ResidualCondition` (no inversion).
-fn assumption_to_residual(a: &crate::evaluation_trace::Assumption) -> ResidualCondition {
+fn assumption_to_residual(
+    a: &crate::evaluation_trace::Assumption,
+    program: &Program,
+) -> ResidualCondition {
     let kind_str = match a.kind {
         AssumptionKind::Exists => "exists",
         AssumptionKind::ConditionHolds => "condition_holds",
         AssumptionKind::CollectionExists => "collection_exists",
         AssumptionKind::NegationHolds => "negation_holds",
     };
+    let (source_rule, source_file, source_row, source_col) = source_attribution(a, program);
     ResidualCondition {
-        condition: a.condition_text.clone(),
+        condition: strip_trailing_comment(&a.condition_text),
         operator: a.operator.clone(),
         input_path: if a.input_path.is_empty() {
             None
@@ -471,7 +507,87 @@ fn assumption_to_residual(a: &crate::evaluation_trace::Assumption) -> ResidualCo
         value: a.assumed_value.clone(),
         kind: kind_str.to_string(),
         negated_conditions: Vec::new(),
+        source_rule,
+        source_file,
+        source_row,
+        source_col,
     }
+}
+
+/// Look up (rule_name, source_file, row, col) for an assumption.
+fn source_attribution(
+    a: &crate::evaluation_trace::Assumption,
+    program: &Program,
+) -> (Option<String>, Option<String>, Option<u32>, Option<u32>) {
+    let rule_name = program
+        .rule_infos
+        .get(usize::from(a.rule_index))
+        .map(|info| info.name.clone());
+    let pc_usize: usize = a.pc.try_into().unwrap_or(0);
+    let (file, row, col) = program
+        .instruction_spans
+        .get(pc_usize)
+        .and_then(Option::as_ref)
+        .map(|span| {
+            let file = program
+                .sources
+                .get(span.source_index)
+                .map(|s| s.name.clone())
+                .unwrap_or_default();
+            (
+                Some(file),
+                Some(u32::try_from(span.line).unwrap_or(u32::MAX)),
+                Some(u32::try_from(span.column).unwrap_or(u32::MAX)),
+            )
+        })
+        .unwrap_or((None, None, None));
+    (rule_name, file, row, col)
+}
+
+/// Strip a trailing Rego comment (`# ...`) from a rendered condition string,
+/// preserving the meaningful expression text.  Defensive against quoted
+/// `#` characters: only strips if the `#` is outside any string literal.
+fn strip_trailing_comment(text: &str) -> String {
+    let mut in_string: Option<char> = None;
+    let mut escape = false;
+    let bytes = text.as_bytes();
+    for (i, ch) in text.char_indices() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        match in_string {
+            Some(q) => {
+                if ch == '\\' {
+                    escape = true;
+                } else if ch == q {
+                    in_string = None;
+                }
+            }
+            None => {
+                if ch == '"' || ch == '\'' {
+                    in_string = Some(ch);
+                } else if ch == '#' {
+                    let _ = bytes;
+                    return text[..i].trim_end().to_string();
+                }
+            }
+        }
+    }
+    text.to_string()
+}
+
+/// Returns true if `cond` is an information-free placeholder that should be
+/// dropped from the DNF output.  Today this matches a `negation_holds` entry
+/// with no condition text, no input path, no operator, and no inner negated
+/// conditions — i.e. a frame recorded for a `not <expr>` whose inner body
+/// either resolved concretely or had no input dependency to attribute (PE-2).
+fn is_empty_placeholder(cond: &ResidualCondition) -> bool {
+    cond.kind == "negation_holds"
+        && cond.condition.is_empty()
+        && cond.input_path.is_none()
+        && cond.operator.is_none()
+        && cond.negated_conditions.is_empty()
 }
 
 /// Recursively attach inner negation conditions to any `negation_holds`

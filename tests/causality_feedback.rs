@@ -330,3 +330,213 @@ deny contains msg if {
         );
     }
 }
+
+// ===========================================================================
+// PE test helpers
+// ===========================================================================
+fn run_pe(policy: &str, input_json: &str, entrypoint_str: &str) -> serde_json::Value {
+    let mut engine = Engine::new();
+    engine
+        .add_policy("policy.rego".into(), policy.into())
+        .unwrap();
+
+    let entrypoint: Rc<str> = entrypoint_str.into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint).unwrap();
+    let program =
+        languages::rego::compiler::Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()])
+            .unwrap();
+
+    let mut vm = rvm::RegoVM::new_with_policy(compiled);
+    vm.load_program(program);
+    vm.set_explanation_settings(evaluation_trace::ExplanationSettings {
+        enabled: true,
+        value_mode: evaluation_trace::ValueMode::Full,
+        condition_mode: evaluation_trace::ConditionMode::AllContributing,
+        scope: evaluation_trace::ExplanationScope::AllEmissions,
+        detail: evaluation_trace::ExplanationDetail::Full,
+        emission_index: None,
+        emission_value: None,
+        assume_unknown_input: true,
+        eval_mode: evaluation_trace::EvaluationMode::PartialEval,
+        unknowns: vec!["input.deployment".into()],
+    });
+
+    let input: Value = serde_json::from_str(input_json).unwrap();
+    vm.set_input(input);
+
+    let value = vm.execute_entry_point_by_name(entrypoint_str).unwrap();
+    let report = vm.take_partial_eval_result(value).unwrap();
+    serde_json::from_str(&report).unwrap()
+}
+
+// ===========================================================================
+// PE-1: residual conditions carry source attribution (rule name + location).
+// ===========================================================================
+#[test]
+fn pe_1_residual_conditions_carry_source_attribution() {
+    let policy = r#"
+package bicep
+import rego.v1
+
+deny contains msg if {
+    some r in input.resources
+    r.type == "Microsoft.Storage/storageAccounts"
+    input.deployment.resourceGroupName == "prod-rg"
+    r.properties.supportsHttpsTrafficOnly == false
+    msg := sprintf("[https] Storage '%s' in prod-rg must enable HTTPS", [r.name])
+}
+
+deny contains msg if {
+    some r in input.resources
+    r.type == "Microsoft.Storage/storageAccounts"
+    input.deployment.location == "eastus"
+    r.properties.allowBlobPublicAccess == true
+    msg := sprintf("[blob] Storage '%s' in eastus must not allow public blobs", [r.name])
+}
+"#;
+    let input = r#"{
+        "resources": [{
+            "type": "Microsoft.Storage/storageAccounts",
+            "name": "demoissue1",
+            "location": "eastus",
+            "properties": {
+                "supportsHttpsTrafficOnly": false,
+                "allowBlobPublicAccess": true
+            }
+        }]
+    }"#;
+
+    let result = run_pe(policy, input, "data.bicep.deny");
+    let queries = result["residual_queries"]
+        .as_array()
+        .unwrap_or_else(|| panic!("missing residual_queries; got: {result:#?}"));
+
+    assert!(
+        !queries.is_empty(),
+        "expected at least one residual disjunct; got: {result:#?}"
+    );
+
+    // Every condition in every disjunct must carry source attribution.
+    for (i, disjunct) in queries.iter().enumerate() {
+        for (j, cond) in disjunct.as_array().unwrap().iter().enumerate() {
+            assert!(
+                cond.get("source_rule")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| s == "data.bicep.deny"),
+                "disjunct {i}, condition {j}: source_rule missing or wrong; got: {cond:#?}"
+            );
+            assert!(
+                cond.get("source_file")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| s == "policy.rego"),
+                "disjunct {i}, condition {j}: source_file missing or wrong; got: {cond:#?}"
+            );
+            assert!(
+                cond.get("source_row").and_then(|v| v.as_u64()).is_some(),
+                "disjunct {i}, condition {j}: source_row missing; got: {cond:#?}"
+            );
+        }
+    }
+}
+
+// ===========================================================================
+// PE-2: a concretely-firing rule no longer emits an empty negation_holds
+// placeholder.
+// ===========================================================================
+#[test]
+fn pe_2_concrete_rule_omits_empty_negation_placeholder() {
+    let policy = r#"
+package bicep
+import rego.v1
+
+deny contains msg if {
+    some r in input.resources
+    r.type == "Microsoft.DocumentDB/databaseAccounts"
+    not r.properties.disableLocalAuth == true
+    msg := sprintf("Cosmos '%s' must disable local auth", [r.name])
+}
+"#;
+    let input = r#"{
+        "resources": [{
+            "type": "Microsoft.DocumentDB/databaseAccounts",
+            "name": "demoissue2",
+            "location": "eastus",
+            "properties": {
+                "databaseAccountOfferType": "Standard"
+            }
+        }]
+    }"#;
+
+    let result = run_pe(policy, input, "data.bicep.deny");
+    let queries = result["residual_queries"].as_array().unwrap();
+
+    // None of the disjuncts may contain an empty negation_holds placeholder
+    // (kind=negation_holds with no condition text, no input_path, no inner).
+    for (i, disjunct) in queries.iter().enumerate() {
+        for cond in disjunct.as_array().unwrap() {
+            let kind = cond.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            if kind == "negation_holds" {
+                let has_condition = cond
+                    .get("condition")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.is_empty());
+                let has_path = cond.get("input_path").is_some();
+                let has_inner = cond
+                    .get("negated_conditions")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|a| !a.is_empty());
+                assert!(
+                    has_condition || has_path || has_inner,
+                    "disjunct {i} contains an empty negation_holds placeholder: {cond:#?}"
+                );
+            }
+        }
+    }
+}
+
+// ===========================================================================
+// PE-3: trailing Rego comments are stripped from rendered condition strings.
+// ===========================================================================
+#[test]
+fn pe_3_inline_comments_stripped_from_rendered_condition() {
+    let policy = r#"
+package bicep
+import rego.v1
+
+deny contains msg if {
+    some r in input.resources
+    r.type == "Microsoft.Storage/storageAccounts"
+    input.deployment.location == "eastus"   # forces residual to remain (unknown)
+    msg := sprintf("Storage '%s' violates", [r.name])
+}
+"#;
+    let input = r#"{
+        "resources": [{
+            "type": "Microsoft.Storage/storageAccounts",
+            "name": "demoissue3comment",
+            "location": "eastus",
+            "properties": {}
+        }]
+    }"#;
+
+    let result = run_pe(policy, input, "data.bicep.deny");
+    let queries = result["residual_queries"].as_array().unwrap();
+
+    let mut found_location_cond = false;
+    for disjunct in queries {
+        for cond in disjunct.as_array().unwrap() {
+            let text = cond.get("condition").and_then(|v| v.as_str()).unwrap_or("");
+            if text.contains("input.deployment.location") {
+                found_location_cond = true;
+                assert!(
+                    !text.contains('#'),
+                    "rendered condition still contains trailing comment: '{text}' in {cond:#?}"
+                );
+            }
+        }
+    }
+    assert!(
+        found_location_cond,
+        "expected a residual condition referencing input.deployment.location; got: {result:#?}"
+    );
+}
