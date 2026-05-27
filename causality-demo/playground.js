@@ -1,5 +1,11 @@
 import { evaluateCustom, formatJson, initRuntime, renderConditionCards, renderAssumptionCards, renderResidualQueries } from "./demo-core.js";
 import { createCodeEditor } from "./code-editor.js";
+import {
+  buildShareUrl,
+  loadStateFromLocation,
+  writeShareTokenToLocation,
+  encodeShareToken,
+} from "./share.js";
 
 const samplePolicy = `package demo
 import rego.v1
@@ -44,6 +50,7 @@ const assumptionPanel = document.querySelector("#playground-assumption-panel");
 const runtimeChip = document.querySelector("#playground-runtime");
 const runButton = document.querySelector("#run-playground");
 const loadSampleButton = document.querySelector("#load-sample");
+const shareButton = document.querySelector("#share-playground");
 const analysisPanel = document.querySelector("#playground-analysis-panel");
 const evalModeSelect = document.querySelector("#eval-mode-select");
 const unknownsRow = document.querySelector("#pg-unknowns-row");
@@ -172,8 +179,118 @@ evalModeSelect?.addEventListener("change", () => {
   }
 });
 
+function captureShareState() {
+  // Make sure the in-memory request draft reflects whatever is in the editor
+  // for the currently-active tab before snapshotting.
+  syncRequestDraft();
+  return {
+    policy: policyEditor.getValue(),
+    input: requestState.input,
+    data: requestState.data,
+    query: queryText?.value ?? "",
+    evalMode: evalModeSelect?.value ?? "causality",
+    unknowns: unknownsText?.value ?? "input",
+    whyBindings: !!whyBindings?.checked,
+    whyFullValues: !!whyFullValues?.checked,
+    whyAllConditions: !!whyAllConditions?.checked,
+    whyAssumeUnknown: !!whyAssumeUnknown?.checked,
+    detail: detailSelect?.value ?? "standard",
+  };
+}
+
+function applyShareState(state) {
+  if (!state || typeof state !== "object") return;
+  if (typeof state.policy === "string") policyEditor.setValue(state.policy);
+  if (typeof state.input === "string") requestState.input = state.input;
+  if (typeof state.data === "string") requestState.data = state.data;
+  requestState.activeTab = "input";
+  renderRequestTabs();
+  if (queryText && typeof state.query === "string") queryText.value = state.query;
+  if (evalModeSelect && typeof state.evalMode === "string") {
+    evalModeSelect.value = state.evalMode;
+    evalModeSelect.dispatchEvent(new Event("change"));
+  }
+  if (unknownsText && typeof state.unknowns === "string") {
+    unknownsText.value = state.unknowns;
+  }
+  if (whyBindings && typeof state.whyBindings === "boolean") whyBindings.checked = state.whyBindings;
+  if (whyFullValues && typeof state.whyFullValues === "boolean") whyFullValues.checked = state.whyFullValues;
+  if (whyAllConditions && typeof state.whyAllConditions === "boolean") whyAllConditions.checked = state.whyAllConditions;
+  if (whyAssumeUnknown && typeof state.whyAssumeUnknown === "boolean" && !whyAssumeUnknown.disabled) {
+    whyAssumeUnknown.checked = state.whyAssumeUnknown;
+  }
+  if (detailSelect && typeof state.detail === "string") detailSelect.value = state.detail;
+}
+
+function showShareFeedback(message, kind = "ok") {
+  // Lightweight transient feedback that doesn't require new CSS.  Reuses
+  // the runtime chip slot so the message is visible without layout shift.
+  if (!runtimeChip) return;
+  const prev = runtimeChip.textContent;
+  runtimeChip.textContent = message;
+  runtimeChip.dataset.shareFeedback = kind;
+  setTimeout(() => {
+    if (runtimeChip.dataset.shareFeedback === kind) {
+      runtimeChip.textContent = prev;
+      delete runtimeChip.dataset.shareFeedback;
+    }
+  }, 2000);
+}
+
+async function copyShareLink() {
+  try {
+    const state = captureShareState();
+    const url = await buildShareUrl(state);
+    // Also reflect the token in the address bar so a manual copy works too.
+    const token = await encodeShareToken(state);
+    writeShareTokenToLocation(token);
+
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+      showShareFeedback("link copied");
+    } else {
+      // Final fallback: select the URL in a temp textarea so the user can
+      // copy manually.  Required on insecure contexts where clipboard is
+      // not available.
+      const ta = document.createElement("textarea");
+      ta.value = url;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+        showShareFeedback("link copied");
+      } finally {
+        document.body.removeChild(ta);
+      }
+    }
+  } catch (err) {
+    showShareFeedback("share failed", "err");
+    console.error("share failed", err);
+  }
+}
+
+shareButton?.addEventListener("click", copyShareLink);
+
 async function bootstrap() {
+  // Start from sample so all DOM has a value (in case the share decode
+  // doesn't populate every field — e.g. older link versions or partial
+  // state).
   loadSampleButton.click();
+
+  // If the URL fragment carries shared state, apply it over the sample.
+  try {
+    const shared = await loadStateFromLocation();
+    if (shared) {
+      applyShareState(shared);
+    }
+  } catch (err) {
+    console.warn("failed to load shared state from URL:", err);
+    showShareFeedback("bad link", "err");
+  }
+
   try {
     await initRuntime();
     runtimeChip.textContent = "ready";
