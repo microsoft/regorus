@@ -569,7 +569,7 @@ impl Analyzer {
                         }
                         Ok(false)
                     }
-                    Array { .. } | Object { .. } => Ok(true),
+                    Expr::Array { .. } | Expr::Object { .. } => Ok(true),
                     _ => Ok(false),
                 })?;
                 Ok(true)
@@ -666,7 +666,7 @@ impl Analyzer {
                 Ok(false)
             }
             // TODO: key vs value for object binding
-            Array { .. } | Object { .. } => Ok(true),
+            Expr::Array { .. } | Expr::Object { .. } => Ok(true),
             _ => Ok(false),
         })?;
         Ok(vars)
@@ -853,7 +853,7 @@ impl Analyzer {
                 Ok(false)
             }
             // TODO: Object key/value
-            Array { .. } | Object { .. } => Ok(true),
+            Expr::Array { .. } | Expr::Object { .. } => Ok(true),
             _ => {
                 non_vars.push(e.clone());
                 Ok(false)
