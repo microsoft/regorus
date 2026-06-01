@@ -272,7 +272,7 @@ impl Compiler {
 fn insert_string_set_annotation(
     annot: &mut alloc::collections::BTreeMap<String, Value>,
     key: &str,
-    observed: &BTreeSet<String>,
+    observed: &alloc::collections::BTreeSet<String>,
 ) {
     if !observed.is_empty() {
         let set: BTreeSet<Value> = observed

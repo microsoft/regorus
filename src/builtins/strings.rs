@@ -207,7 +207,7 @@ fn to_string(v: &Value, unescape: bool) -> String {
         }
         Value::Object(o) => {
             "{".to_owned()
-                + &o.iter()
+                + &o.iter_sorted()
                     .map(|(k, v)| to_string(k, true) + ": " + &to_string(v, true))
                     .collect::<Vec<String>>()
                     .join(", ")
@@ -568,7 +568,7 @@ fn replace_n(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -
     let mut s = ensure_string(name, &params[1], &args[1])?;
 
     let span = params[0].span();
-    for item in obj.as_ref().iter() {
+    for item in obj.as_ref().iter_sorted() {
         match item {
             (Value::String(k), Value::String(v)) => {
                 s = s.replace(k.as_ref(), v.as_ref()).into();

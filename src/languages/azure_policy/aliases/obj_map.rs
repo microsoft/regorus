@@ -4,7 +4,7 @@
 //! Lightweight string-keyed map used during normalization/denormalization.
 //!
 //! Internally uses `hashbrown::HashMap<Rc<str>, Value>` for O(1) lookups,
-//! then converts to `Value::Object` (a `BTreeMap<Value, Value>`) only at
+//! then converts to `Value::Object` (an `Object`) only at
 //! the output boundary via [`make_value`].
 
 use alloc::string::String;
@@ -12,6 +12,7 @@ use alloc::vec::Vec;
 
 use hashbrown::HashMap;
 
+use crate::value::Object;
 use crate::Rc;
 use crate::Value;
 
@@ -81,14 +82,13 @@ pub fn obj_remove(map: &mut ObjMap, key: &str) -> Option<Value> {
 /// Convert an [`ObjMap`] into a [`Value::Object`].
 ///
 /// Keys are converted from `Rc<str>` to `Value::String` and inserted into
-/// a `BTreeMap` to match the `Value::Object` representation.
+/// an `Object` to match the `Value::Object` representation.
 pub fn make_value(map: ObjMap) -> Value {
-    use alloc::collections::BTreeMap;
-    let mut btree = BTreeMap::new();
-    for (k, v) in map {
-        btree.insert(Value::String(k), v);
-    }
-    Value::Object(Rc::new(btree))
+    let obj: Object = map
+        .into_iter()
+        .map(|(k, v)| (Value::String(k), v))
+        .collect();
+    Value::Object(Rc::new(obj))
 }
 
 /// Convert a `Vec<Value>` into a `Value::Array`.
@@ -115,14 +115,14 @@ pub fn extract_type_field(resource: &Value) -> Option<&str> {
     })
 }
 
-/// Convert a `Value::Object` (BTreeMap<Value, Value>) into an [`ObjMap`].
+/// Convert a `Value::Object` (Object) into an [`ObjMap`].
 ///
 /// Non-string keys are silently skipped.
 #[allow(dead_code)]
 pub fn value_to_obj_map(value: &Value) -> Option<ObjMap> {
-    let btree = value.as_object().ok()?;
-    let mut map = ObjMap::with_capacity(btree.len());
-    for (k, v) in btree.iter() {
+    let obj = value.as_object().ok()?;
+    let mut map = ObjMap::with_capacity(obj.len());
+    for (k, v) in obj.iter() {
         if let Value::String(s) = k {
             map.insert(Rc::clone(s), v.clone());
         }
@@ -194,7 +194,7 @@ fn set_nested_inner(obj: &mut ObjMap, segments: &[&str], value: Value, lowercase
     // Descend directly into the BTreeMap, avoiding ObjMap round-trip.
     if let Some(Value::Object(inner_rc)) = obj.get_mut(&*seg) {
         let inner_btree = Rc::make_mut(inner_rc);
-        set_nested_in_btree(
+        set_nested(
             inner_btree,
             segments.get(1..).unwrap_or_default(),
             value,
@@ -203,17 +203,12 @@ fn set_nested_inner(obj: &mut ObjMap, segments: &[&str], value: Value, lowercase
     }
 }
 
-/// Set a value at a path directly in a `BTreeMap<Value, Value>`, creating
+/// Set a value at a path directly in an `Object`, creating
 /// intermediate `Value::Object` nodes as needed.
 ///
 /// This avoids the `btree_to_obj_map` / `obj_map_to_btree` round-trip that
 /// would clone every sibling entry at each nesting level.
-pub fn set_nested_in_btree(
-    btree: &mut alloc::collections::BTreeMap<Value, Value>,
-    segments: &[&str],
-    value: Value,
-    lowercase: bool,
-) {
+pub fn set_nested(obj: &mut Object, segments: &[&str], value: Value, lowercase: bool) {
     let Some(&first) = segments.first() else {
         return;
     };
@@ -226,18 +221,18 @@ pub fn set_nested_in_btree(
     let key_val = Value::String(Rc::clone(&key_rc));
 
     if segments.len() == 1 {
-        btree.insert(key_val, value);
+        obj.insert(key_val, value);
         return;
     }
 
     // Ensure an intermediate object exists.
-    if !btree.contains_key(&key_val) {
-        btree.insert(key_val.clone(), make_value(new_map()));
+    if !obj.contains_key(&key_val) {
+        obj.insert(key_val.clone(), make_value(new_map()));
     }
 
-    if let Some(Value::Object(inner_rc)) = btree.get_mut(&key_val) {
+    if let Some(Value::Object(inner_rc)) = obj.get_mut(&key_val) {
         let inner = Rc::make_mut(inner_rc);
-        set_nested_in_btree(
+        set_nested(
             inner,
             segments.get(1..).unwrap_or_default(),
             value,
@@ -352,20 +347,15 @@ fn remove_field_at_depth(obj: &mut ObjMap, array_chain: &[Vec<String>], depth: u
         for elem in inner.iter_mut() {
             if let Value::Object(obj_rc) = elem {
                 let inner_btree = Rc::make_mut(obj_rc);
-                remove_field_at_depth_in_btree(
-                    inner_btree,
-                    array_chain,
-                    depth.saturating_add(1),
-                    field,
-                );
+                remove_field_at_depth_obj(inner_btree, array_chain, depth.saturating_add(1), field);
             }
         }
     }
 }
 
-/// BTreeMap-native recursion for element-level field removal.
-fn remove_field_at_depth_in_btree(
-    btree: &mut alloc::collections::BTreeMap<Value, Value>,
+/// Object-native recursion for element-level field removal.
+fn remove_field_at_depth_obj(
+    obj: &mut Object,
     array_chain: &[Vec<String>],
     depth: usize,
     field: &str,
@@ -374,10 +364,10 @@ fn remove_field_at_depth_in_btree(
         let segments: Vec<&str> = field.split('.').collect();
         if segments.len() == 1 {
             if let Some(&seg) = segments.first() {
-                btree.remove(&Value::from(seg));
+                obj.remove(&Value::from(seg));
             }
         } else if segments.len() > 1 {
-            remove_at_dotted_path_in_btree(btree, &segments);
+            remove_at_dotted_path_obj(obj, &segments);
         }
         return;
     };
@@ -389,12 +379,12 @@ fn remove_field_at_depth_in_btree(
 
     let key_val = Value::from(first);
     let arr_val = if nav.len() == 1 {
-        match btree.get_mut(&key_val) {
+        match obj.get_mut(&key_val) {
             Some(v) => v,
             None => return,
         }
     } else {
-        let mut cur: &mut Value = match btree.get_mut(&key_val) {
+        let mut cur: &mut Value = match obj.get_mut(&key_val) {
             Some(v) => v,
             None => return,
         };
@@ -415,27 +405,19 @@ fn remove_field_at_depth_in_btree(
         for elem in inner.iter_mut() {
             if let Value::Object(obj_rc) = elem {
                 let inner_btree = Rc::make_mut(obj_rc);
-                remove_field_at_depth_in_btree(
-                    inner_btree,
-                    array_chain,
-                    depth.saturating_add(1),
-                    field,
-                );
+                remove_field_at_depth_obj(inner_btree, array_chain, depth.saturating_add(1), field);
             }
         }
     }
 }
 
-/// Remove the leaf segment at a dotted path directly in a BTreeMap.
-fn remove_at_dotted_path_in_btree(
-    btree: &mut alloc::collections::BTreeMap<Value, Value>,
-    segments: &[&str],
-) {
+/// Remove the leaf segment at a dotted path directly in an Object.
+fn remove_at_dotted_path_obj(obj: &mut Object, segments: &[&str]) {
     let Some((&leaf, parent_segs)) = segments.split_last() else {
         return;
     };
     if parent_segs.is_empty() {
-        btree.remove(&Value::from(leaf));
+        obj.remove(&Value::from(leaf));
         return;
     }
 
@@ -443,7 +425,7 @@ fn remove_at_dotted_path_in_btree(
         return;
     };
     let first_key = Value::from(first);
-    let parent_val = match btree.get_mut(&first_key) {
+    let parent_val = match obj.get_mut(&first_key) {
         Some(v) => v,
         None => return,
     };

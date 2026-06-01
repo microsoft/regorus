@@ -319,7 +319,7 @@ pub fn resolve_path(root: &Value, path: &str) -> Value {
         match &current {
             Value::Object(map) => {
                 let mut next = None;
-                for (key, value) in map.iter() {
+                for (key, value) in map.iter_sorted() {
                     if let Value::String(ref key_str) = *key {
                         if strings::keys::eq(key_str, &segment) {
                             next = Some(value.clone());

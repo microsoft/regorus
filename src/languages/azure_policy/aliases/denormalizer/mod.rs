@@ -213,10 +213,10 @@ pub fn denormalize_with_aliases(
     // Phase 4: Attach properties to result.
     if !properties.is_empty() {
         if let Some(Value::Object(existing_rc)) = result.get_mut("properties") {
-            // Merge directly into the BTreeMap, avoiding full ObjMap round-trip.
+            // Merge directly into the Object, avoiding full ObjMap round-trip.
             let existing = Rc::make_mut(existing_rc);
             for (k, v) in properties {
-                existing.entry(Value::String(k)).or_insert(v);
+                existing.get_or_insert_with(Value::String(k), || v);
             }
         } else {
             obj_insert(&mut result, "properties", make_value(properties));

@@ -544,16 +544,14 @@ fn make_context(case: &TestCase) -> Result<Value> {
         let map = ctx.as_object_mut()?;
         // Only inject if the caller didn't already provide requestContext
         // in the context object, to avoid clobbering custom test setups.
-        map.entry(Value::from("requestContext")).or_insert(rc_val);
+        map.get_or_insert_with(Value::from("requestContext"), || rc_val);
     } else if let Some(ref api_ver) = case.api_version {
         let map = ctx.as_object_mut()?;
-        if let std::collections::btree_map::Entry::Vacant(e) =
-            map.entry(Value::from("requestContext"))
-        {
+        if !map.contains_key(&Value::from("requestContext")) {
             let mut req_ctx = Value::new_object();
             let rc_map = req_ctx.as_object_mut()?;
             rc_map.insert(Value::from("apiVersion"), Value::from(api_ver.clone()));
-            e.insert(req_ctx);
+            map.insert(Value::from("requestContext"), req_ctx);
         }
     }
 

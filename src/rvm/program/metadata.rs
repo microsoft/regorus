@@ -11,9 +11,9 @@
 //! values are converted through [`MetadataValue`] — a postcard/bincode-safe
 //! enum that avoids `deserialize_any`.
 
+use crate::value::Object;
 use crate::Rc;
-use alloc::collections::BTreeMap;
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
@@ -52,7 +52,7 @@ impl ProgramMetadata {
     pub fn to_value(&self) -> crate::value::Value {
         use crate::value::Value;
 
-        let mut obj = BTreeMap::new();
+        let mut obj = Object::new();
         obj.insert(
             Value::String("compiler_version".into()),
             Value::String(self.compiler_version.as_str().into()),
@@ -75,7 +75,7 @@ impl ProgramMetadata {
         );
 
         if !self.annotations.is_empty() {
-            let mut annotations_obj = BTreeMap::new();
+            let mut annotations_obj = Object::new();
             for (k, v) in &self.annotations {
                 annotations_obj.insert(Value::String(k.as_str().into()), v.clone());
             }
@@ -198,7 +198,7 @@ impl MetadataValue {
         match *self {
             MetadataValue::String(ref s) => Value::String(s.as_str().into()),
             MetadataValue::StringSet(ref set) => {
-                let mut bset = alloc::collections::BTreeSet::new();
+                let mut bset = BTreeSet::new();
                 for s in set {
                     bset.insert(Value::String(s.as_str().into()));
                 }
@@ -211,7 +211,7 @@ impl MetadataValue {
                 Value::Array(Rc::new(values))
             }
             MetadataValue::Map(ref map) => {
-                let mut obj = BTreeMap::new();
+                let mut obj = Object::new();
                 for (k, v) in map {
                     obj.insert(Value::String(k.as_str().into()), v.to_value());
                 }
@@ -257,7 +257,6 @@ mod metadata_serde {
 mod tests {
     use super::*;
     use crate::value::Value;
-    use alloc::collections::BTreeSet;
 
     /// Round-trip: Value → MetadataValue → Value must be equivalent for
     /// all lossless variants (strings, bools, integers, arrays, objects).

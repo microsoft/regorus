@@ -308,7 +308,7 @@ fn urlquery_encode_object(
 
     {
         let mut pairs = url.query_pairs_mut();
-        for (key, value) in obj.iter() {
+        for (key, value) in obj.iter_sorted() {
             let key = ensure_string(name, &params[0], key)?;
             match value {
                 Value::String(v) => {

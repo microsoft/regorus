@@ -137,3 +137,45 @@ cases:
       - "Return { value: 7 }"               # Return result set
     want_result:
       set!: [1, null, 2]
+
+  # Set iteration resumes from `Bound::Excluded(current_item)`, so the
+  # ComprehensionAdd path must snapshot the current value into
+  # `IterationState::Set.current_item` before advancing — otherwise
+  # iteration stops after the first element. This case exercises
+  # Set-source comprehension end-to-end to lock that requirement in.
+  - note: set_source_visits_all_elements
+    description: Comprehension over a Set source must yield every element, not just the first
+    example_rego: |
+      src := {1, 2, 3, 4}
+      {x | x := src[_]}  # {1, 2, 3, 4}
+    literals:
+      - 1
+      - 2
+      - 3
+      - 4
+    instruction_params:
+      comprehension_start_params:
+        - mode: "Set"
+          collection_reg: 0
+          key_reg: 4
+          value_reg: 5
+          result_reg: 7
+          body_start: 11
+          comprehension_end: 13
+    instructions:
+      - "SetNew { dest: 0 }"                # Build source set {1,2,3,4} in register 0
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "SetAdd { set: 0, value: 1 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "SetAdd { set: 0, value: 2 }"
+      - "Load { dest: 3, literal_idx: 2 }"
+      - "SetAdd { set: 0, value: 3 }"
+      - "Load { dest: 6, literal_idx: 3 }"
+      - "SetAdd { set: 0, value: 6 }"
+      - "SetNew { dest: 7 }"                # Initialize result set
+      - "ComprehensionStart { params_index: 0 }"   # Iterate over Set source
+      - "ComprehensionAdd { value_reg: 5 }" # Add current value to result
+      - "Halt"
+      - "Return { value: 7 }"
+    want_result:
+      set!: [1, 2, 3, 4]

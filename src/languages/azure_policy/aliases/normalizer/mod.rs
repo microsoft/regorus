@@ -13,6 +13,7 @@ mod flatten;
 // Re-export items used by the denormalizer.
 pub(crate) use element_remap::{apply_element_remap, ElementRemap};
 
+use crate::value::Object;
 use crate::Value;
 
 use super::obj_map::{
@@ -109,7 +110,7 @@ pub fn normalize_with_aliases(
 /// Merge `properties` fields into the result map, skipping keys that already
 /// exist.
 fn merge_properties(
-    obj: &alloc::collections::BTreeMap<Value, Value>,
+    obj: &Object,
     result: &mut ObjMap,
     sub_arrays: Option<&alloc::collections::BTreeSet<alloc::string::String>>,
 ) {
