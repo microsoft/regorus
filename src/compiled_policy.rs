@@ -217,7 +217,7 @@ pub(crate) struct CompiledPolicyData {
     pub(crate) default_rules: Map<String, Vec<DefaultRuleInfo>>,
     pub(crate) imports: BTreeMap<String, Ref<Expr>>,
     pub(crate) functions: FunctionTable,
-    pub(crate) rule_paths: Set<String>,
+    pub(crate) rule_paths: MapSet<String>,
     #[cfg(feature = "azure_policy")]
     pub(crate) target_info: Option<TargetInfo>,
     #[cfg(feature = "azure_policy")]
