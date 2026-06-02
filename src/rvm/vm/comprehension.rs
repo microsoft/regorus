@@ -528,7 +528,6 @@ impl RegoVM {
             Ok(false)
         }
     }
-
     pub(super) fn handle_comprehension_condition_failure_suspendable(&mut self) -> Result<bool> {
         if let Some(mut frame) = self.execution_stack.pop() {
             let handled = if let &mut FrameKind::Comprehension {
@@ -606,6 +605,9 @@ impl RegoVM {
     }
 
     fn execute_comprehension_end_run_to_completion(&mut self) -> Result<()> {
+        // `ComprehensionEnd` is reached from a loaded program; an empty stack
+        // here means malformed user-supplied bytecode, which must still surface
+        // as a typed error rather than a panic — including in debug builds.
         self.comprehension_stack.pop().map_or_else(
             || {
                 Err(VmError::InvalidIteration {

@@ -117,6 +117,10 @@ impl RegoVM {
         let target = self.convert_pc(target, "jump target")?;
         self.pc = target;
         while self.pc < program.instructions.len() {
+            // Per-instruction sanity check: every iteration of the dispatch
+            // loop must re-enter with the VM in a Running/Ready state and the
+            // working data structures coherent.
+            self.assert_vm_invariants();
             self.memory_check()?;
             if self.executed_instructions >= self.max_instructions {
                 return Err(VmError::InstructionLimitExceeded {
@@ -189,6 +193,9 @@ impl RegoVM {
     }
 
     fn execute_suspendable_entry(&mut self, entry_point_pc: usize) -> Result<Value> {
+        // Precondition: callers (execute_entry_point_by_{index,name}) reset the
+        // VM before invoking this method, so the VM must be in a clean state.
+        self.debug_assert_state_is_clean();
         self.execution_state = ExecutionState::Running;
         self.reset_execution_timer_state();
         match self.run_stackless_from(entry_point_pc) {
@@ -201,6 +208,10 @@ impl RegoVM {
     }
 
     pub fn resume(&mut self, resume_value: Option<Value>) -> Result<Value> {
+        // Precondition is enforced below by returning `VmError::InvalidResumeState`
+        // for any non-`Suspended` state. A `debug_assert!` here would diverge
+        // debug vs release behavior and, when invoked via FFI, would trip the
+        // unwind guard and poison the engine on a recoverable misuse.
         let (reason, mut last_result) = match self.execution_state.clone() {
             ExecutionState::Suspended {
                 reason,
@@ -289,6 +300,9 @@ impl RegoVM {
 
     fn run_stackless_loop(&mut self, program: &Program, last_result: &mut Value) -> Result<()> {
         while !self.execution_stack.is_empty() {
+            // Per-instruction sanity check: see `assert_vm_invariants` for the
+            // exact contract. Compiled out in release.
+            self.assert_vm_invariants();
             self.memory_check()?;
             self.frame_pc_overridden = false;
             let should_finalize_rule = self.execution_stack.last().is_some_and(|frame| {
