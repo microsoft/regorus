@@ -277,6 +277,19 @@ impl RegoVM {
             .call_rule_stack
             .pop()
             .ok_or(VmError::CallRuleStackUnderflow { pc: self.pc })?;
+        // Stack discipline: the context we just popped must belong to the
+        // rule we are finalizing. A mismatch indicates a missing push or an
+        // extra pop somewhere in this rule's execution and would otherwise
+        // silently restore the wrong return_pc / rule_type. Surface as a
+        // typed VmError so the contract holds the same in debug and release
+        // builds (avoiding FFI poisoning via a debug-only panic).
+        if rule_index != call_context.rule_index {
+            return Err(VmError::CallRuleStackMismatch {
+                expected: rule_index,
+                actual: call_context.rule_index,
+                pc: self.pc,
+            });
+        }
         self.pc = call_context.return_pc;
 
         let result_from_rule = if !rule_failed_due_to_inconsistency {
@@ -831,6 +844,9 @@ impl RegoVM {
 
         self.registers = parent_registers;
 
+        // Underflow here means malformed/poisoned program state; surface as a
+        // typed error rather than a debug-only panic so the public load_program
+        // contract holds the same in debug and release.
         if self.call_rule_stack.pop().is_none() {
             return Err(VmError::CallRuleStackUnderflow { pc: self.pc });
         }

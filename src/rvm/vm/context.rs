@@ -54,6 +54,14 @@ impl IterationState {
     pub(super) const fn advance(&mut self) {
         match *self {
             Self::Array { ref mut index, .. } => {
+                // Array iteration uses `usize` as the cursor and advances via
+                // `saturating_add(1)`. A cursor already at `usize::MAX` here
+                // means a stuck (non-progressing) iteration was emitted by
+                // malformed bytecode; assert in debug to surface it loudly.
+                debug_assert!(
+                    *index < usize::MAX,
+                    "IterationState::Array index already at usize::MAX on advance"
+                );
                 *index = index.saturating_add(1);
             }
             Self::Object {
@@ -69,6 +77,12 @@ impl IterationState {
             Self::Single {
                 ref mut consumed, ..
             } => {
+                // `Single` yields exactly once; advancing a consumed Single
+                // means the compiler emitted a redundant LoopNext.
+                debug_assert!(
+                    !*consumed,
+                    "IterationState::Single advanced after consumption"
+                );
                 *consumed = true;
             }
         }

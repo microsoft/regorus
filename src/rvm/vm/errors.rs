@@ -295,6 +295,13 @@ pub enum VmError {
     #[error("Call rule stack underflow during rule finalization (pc={pc})")]
     CallRuleStackUnderflow { pc: usize },
 
+    #[error("Call rule stack mismatch during rule finalization: expected rule_index {expected}, popped {actual} (pc={pc})")]
+    CallRuleStackMismatch {
+        expected: u16,
+        actual: u16,
+        pc: usize,
+    },
+
     #[error("Internal VM error: {message} (pc={pc})")]
     Internal { message: String, pc: usize },
 }
