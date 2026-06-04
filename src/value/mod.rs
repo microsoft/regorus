@@ -11,6 +11,18 @@
     clippy::as_conversions
 )] // value helpers index paths directly for performance
 
+mod object;
+
+#[cfg(test)]
+mod tests;
+
+#[allow(unused_imports)] // surface for downstream PRs
+pub use object::{IntoIter, Iter, IterMut, Object};
+
+#[cfg(feature = "rvm")]
+#[allow(unused_imports)] // surface for downstream PRs
+pub use object::ObjectCursor;
+
 use crate::number::Number;
 
 use alloc::collections::{BTreeMap, BTreeSet};
