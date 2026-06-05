@@ -18,8 +18,19 @@ use crate::rvm::instructions::{BuiltinCallParams, FunctionCallParams};
 use crate::rvm::Instruction;
 use crate::utils::get_path_string;
 use crate::value::Value;
-use alloc::{format, string::ToString, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
+/// Resolved destination of a Rego function-call expression. Produced by
+/// [`Compiler::determine_call_target`] and consumed by
+/// [`Compiler::compile_function_call`] to choose which instruction to emit.
+/// Carrying the discrimination in the type (rather than re-matching on a
+/// magic name at the emit site) keeps the host-await handling honest under
+/// future refactors — the compiler will refuse to build if a new variant is
+/// added without updating every match site.
 enum CallTarget {
     User {
         rule_index: u16,
@@ -29,9 +40,14 @@ enum CallTarget {
         builtin_index: u16,
         expected_args: Option<usize>,
     },
-    HostAwait {
-        expected_args: Option<usize>,
-    },
+    /// Explicit `__builtin_host_await(arg, id)` call form (2 user args).
+    /// The identifier is supplied by the policy author at runtime via the
+    /// second argument register.
+    ExplicitHostAwait,
+    /// A registered host-awaitable builtin invoked by its registered name
+    /// (1 user arg). The identifier is the registered name itself and is
+    /// baked into the bytecode as a string literal at compile time.
+    RegisteredHostAwait { identifier: String },
 }
 
 impl<'a> Compiler<'a> {
@@ -60,7 +76,11 @@ impl<'a> Compiler<'a> {
         let expected_args = match &call_target {
             CallTarget::User { expected_args, .. } => *expected_args,
             CallTarget::Builtin { expected_args, .. } => *expected_args,
-            CallTarget::HostAwait { expected_args } => *expected_args,
+            // Both host-await variants have a known fixed arity; carrying it
+            // in the variant lets the rest of the compiler depend on the type
+            // rather than re-matching on the magic name `__builtin_host_await`.
+            CallTarget::ExplicitHostAwait => Some(2),
+            CallTarget::RegisteredHostAwait { .. } => Some(1),
         };
 
         if let Some(expected) = expected_args {
@@ -127,50 +147,52 @@ impl<'a> Compiler<'a> {
                 });
                 self.emit_instruction(Instruction::BuiltinCall { params_index }, &span);
             }
-            CallTarget::HostAwait { .. } => {
-                let (arg_reg, id_reg) = if original_fcn_path == "__builtin_host_await" {
-                    // Explicit __builtin_host_await(arg, id) — 2 arguments
-                    if arg_regs.len() != 2 {
-                        return Err(CompilerError::General {
-                            message: format!(
-                                "__builtin_host_await expects 2 arguments, got {}",
-                                arg_regs.len()
-                            ),
-                        }
-                        .at(&span));
+            CallTarget::ExplicitHostAwait => {
+                // Explicit __builtin_host_await(arg, id) — 2 arguments
+                if arg_regs.len() != 2 {
+                    return Err(CompilerError::General {
+                        message: format!(
+                            "__builtin_host_await expects 2 arguments, got {}",
+                            arg_regs.len()
+                        ),
                     }
-                    (arg_regs[0], arg_regs[1])
-                } else {
-                    // Registered host-awaitable builtin — identifier is the function name
-                    if arg_regs.len() != 1 {
-                        return Err(CompilerError::General {
-                            message: format!(
-                                "host-awaitable builtin '{}' expects exactly 1 argument, got {}",
-                                original_fcn_path,
-                                arg_regs.len()
-                            ),
-                        }
-                        .at(&span));
-                    }
-                    let id_reg = self.alloc_register();
-                    let literal_idx = self.add_literal(Value::String(original_fcn_path.into()));
-                    self.emit_instruction(
-                        Instruction::Load {
-                            dest: id_reg,
-                            literal_idx,
-                        },
-                        &span,
-                    );
-                    // HostAwait carries a single arg register; registered builtins
-                    // are restricted to arg_count == 1 at registration time, so
-                    // arg_regs[0] is the only argument.
-                    (arg_regs[0], id_reg)
-                };
-
+                    .at(&span));
+                }
                 self.emit_instruction(
                     Instruction::HostAwait {
                         dest,
-                        arg: arg_reg,
+                        arg: arg_regs[0],
+                        id: arg_regs[1],
+                    },
+                    &span,
+                );
+            }
+            CallTarget::RegisteredHostAwait { identifier } => {
+                // Registered host-awaitable builtin — the identifier is the
+                // registered name and is baked into the bytecode as a literal.
+                if arg_regs.len() != 1 {
+                    return Err(CompilerError::General {
+                        message: format!(
+                            "host-awaitable builtin '{}' expects exactly 1 argument, got {}",
+                            identifier,
+                            arg_regs.len()
+                        ),
+                    }
+                    .at(&span));
+                }
+                let id_reg = self.alloc_register();
+                let literal_idx = self.add_literal(Value::String(identifier.into()));
+                self.emit_instruction(
+                    Instruction::Load {
+                        dest: id_reg,
+                        literal_idx,
+                    },
+                    &span,
+                );
+                self.emit_instruction(
+                    Instruction::HostAwait {
+                        dest,
+                        arg: arg_regs[0],
                         id: id_reg,
                     },
                     &span,
@@ -217,15 +239,16 @@ impl<'a> Compiler<'a> {
         span: &Span,
     ) -> Result<CallTarget> {
         if original_fcn_path == "__builtin_host_await" {
-            return Ok(CallTarget::HostAwait {
-                expected_args: Some(2),
-            });
+            return Ok(CallTarget::ExplicitHostAwait);
         }
 
-        // Check registered host-awaitable builtins
-        if let Some(&arg_count) = self.host_await_builtins.get(original_fcn_path) {
-            return Ok(CallTarget::HostAwait {
-                expected_args: Some(arg_count),
+        // Check registered host-awaitable builtins. Registered builtins are
+        // restricted to arg_count == 1 at registration time (see
+        // `Compiler::register_host_await_builtin`), so the variant doesn't
+        // need to carry an arity — it's fixed at 1.
+        if self.host_await_builtins.contains_key(original_fcn_path) {
+            return Ok(CallTarget::RegisteredHostAwait {
+                identifier: original_fcn_path.to_string(),
             });
         }
 
