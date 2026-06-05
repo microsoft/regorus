@@ -7,6 +7,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::value::Object;
 use crate::Value;
 
 use super::super::obj_map::{make_value, new_map, obj_insert, val_str, ObjMap};
@@ -141,7 +142,7 @@ fn rewrap_nested_array(
 /// BTreeMap-native recursion for nested sub-resource array re-wrapping,
 /// avoiding ObjMap round-trips on each array element.
 fn rewrap_nested_array_in_btree(
-    btree: &mut alloc::collections::BTreeMap<Value, Value>,
+    btree: &mut Object,
     parent_parts: &[&str],
     array_name: &str,
     envelope_fields: &BTreeSet<String>,
@@ -187,10 +188,7 @@ fn rewrap_nested_array_in_btree(
 }
 
 /// Find a key in a BTreeMap using case-insensitive comparison.
-fn find_key_ci_btree(
-    btree: &alloc::collections::BTreeMap<Value, Value>,
-    key: &str,
-) -> Option<Value> {
+fn find_key_ci_btree(btree: &Object, key: &str) -> Option<Value> {
     btree
         .keys()
         .find(|k| val_str(k).is_some_and(|s| s.eq_ignore_ascii_case(key)))

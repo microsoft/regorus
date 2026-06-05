@@ -8,10 +8,10 @@
 use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::lexer::Span;
+use crate::value::Object;
 use crate::value::Value;
 use crate::Rc;
 
-use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 use anyhow::Result;
@@ -84,8 +84,8 @@ fn fn_items(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) 
         return Ok(Value::Undefined);
     };
     let mut result = Vec::with_capacity(obj.len());
-    for (k, v) in obj.as_ref() {
-        let mut entry = BTreeMap::<Value, Value>::new();
+    for (k, v) in obj.iter_sorted() {
+        let mut entry = Object::new();
         entry.insert(Value::from("key"), k.clone());
         entry.insert(Value::from("value"), v.clone());
         result.push(Value::Object(Rc::new(entry)));

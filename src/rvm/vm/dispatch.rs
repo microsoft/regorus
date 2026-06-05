@@ -4,7 +4,6 @@
 use crate::rvm::instructions::{GuardMode, Instruction, LiteralOrRegister};
 use crate::rvm::program::Program;
 use crate::value::Value;
-use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 use core::mem;
 
@@ -670,7 +669,7 @@ impl RegoVM {
                 }
             }
             SetNew { dest } => {
-                let empty_set = Value::Set(crate::Rc::new(BTreeSet::new()));
+                let empty_set = Value::new_set();
                 self.set_register(dest, empty_set)?;
                 Ok(InstructionOutcome::Continue)
             }
@@ -707,7 +706,7 @@ impl RegoVM {
                     if any_undefined {
                         self.set_register(params.dest, Value::Undefined)?;
                     } else {
-                        let mut set = BTreeSet::new();
+                        let mut set = alloc::collections::BTreeSet::new();
                         for &reg in params.element_registers() {
                             set.insert(self.get_register(reg)?.clone());
                         }

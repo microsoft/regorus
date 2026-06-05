@@ -8,10 +8,10 @@
 use crate::ast::{Expr, Ref};
 use crate::builtins;
 use crate::lexer::Span;
+use crate::value::Object;
 use crate::value::Value;
 use crate::Rc;
 
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use anyhow::Result;
 
@@ -72,7 +72,7 @@ fn fn_intersection(
             // Intersection of objects: keep key-value pairs from the first
             // object only when the key exists in every other object AND
             // the value is equal across all of them.
-            let mut result: BTreeMap<Value, Value> = first.as_ref().clone();
+            let mut result: Object = first.as_ref().clone();
             for arg in rest {
                 let Value::Object(ref other) = *arg else {
                     return Ok(Value::Undefined);
@@ -114,7 +114,7 @@ fn fn_union(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) 
         Value::Object(_) => {
             // Union of objects: recursive merge. Nested objects are merged
             // recursively; all other types (including arrays) use last-writer-wins.
-            let mut result = BTreeMap::<Value, Value>::new();
+            let mut result = Object::new();
             for arg in args {
                 let Value::Object(ref obj) = *arg else {
                     return Ok(Value::Undefined);
@@ -264,7 +264,7 @@ fn fn_create_object(
         );
     }
 
-    let mut map = BTreeMap::<Value, Value>::new();
+    let mut map = Object::new();
 
     for pair in args.chunks(2) {
         #[allow(clippy::pattern_type_mismatch)]
@@ -280,9 +280,9 @@ fn fn_create_object(
 
 /// Recursively merge two objects.  Nested objects are merged; everything
 /// else (including arrays) uses the value from `incoming`.
-fn merge_objects(base: &BTreeMap<Value, Value>, overlay: &BTreeMap<Value, Value>) -> Value {
+fn merge_objects(base: &Object, overlay: &Object) -> Value {
     let mut result = base.clone();
-    for (k, v) in overlay {
+    for (k, v) in overlay.iter() {
         #[allow(clippy::needless_borrowed_reference)]
         let merged = match (result.get(k), v) {
             (Some(&Value::Object(ref prev)), &Value::Object(ref next)) => merge_objects(prev, next),

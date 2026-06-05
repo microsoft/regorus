@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -11,6 +11,7 @@ use serde::ser::{SerializeSeq as _, SerializeTuple as _};
 use serde::{Deserialize, Serialize};
 
 use crate::number::Number;
+use crate::value::Object;
 use crate::value::Value;
 
 const VARIANT_NULL: u32 = 0;
@@ -132,7 +133,7 @@ impl<'a> Serialize for BinarySetRef<'a> {
     }
 }
 
-struct BinaryObjectRef<'a>(&'a BTreeMap<Value, Value>);
+struct BinaryObjectRef<'a>(&'a Object);
 
 impl<'a> Serialize for BinaryObjectRef<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -140,7 +141,7 @@ impl<'a> Serialize for BinaryObjectRef<'a> {
         S: serde::Serializer,
     {
         let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
-        for (key, value) in self.0.iter() {
+        for (key, value) in self.0.iter_sorted() {
             seq.serialize_element(&BinaryEntryRef(key, value))?;
         }
         seq.end()
@@ -261,11 +262,11 @@ impl<'de> Visitor<'de> for BinaryValueVisitor {
             }
             (BinaryVariant::Object, variant) => {
                 let entries: Vec<(BinaryValue, BinaryValue)> = variant.newtype_variant()?;
-                let mut map = BTreeMap::new();
+                let mut map = Object::new();
                 for (key, value) in entries {
                     map.insert(key.into_value(), value.into_value());
                 }
-                Ok(BinaryValue(Value::from(map)))
+                Ok(BinaryValue(Value::Object(crate::Rc::new(map))))
             }
             (BinaryVariant::Undefined, variant) => {
                 variant.unit_variant()?;

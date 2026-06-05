@@ -6,11 +6,12 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::value::Object;
 use crate::Value;
 
 use super::super::obj_map::{
-    obj_get, obj_get_mut, obj_insert, set_nested_in_btree, set_nested_lowercased,
-    set_nested_verbatim, ObjMap,
+    obj_get, obj_get_mut, obj_insert, set_nested, set_nested_lowercased, set_nested_verbatim,
+    ObjMap,
 };
 use super::super::types::PrecomputedRemap;
 
@@ -118,7 +119,7 @@ fn apply_remap_at_depth(
 /// BTreeMap-native recursion for element-level remap, avoiding ObjMap
 /// round-trips on each array element.
 fn remap_at_depth_in_btree(
-    btree: &mut alloc::collections::BTreeMap<Value, Value>,
+    btree: &mut Object,
     array_chain: &[Vec<String>],
     depth: usize,
     source_field: &str,
@@ -177,12 +178,7 @@ fn remap_at_depth_in_btree(
 }
 
 /// Remap a value between dotted paths directly in a BTreeMap.
-fn remap_deep_field_in_btree(
-    btree: &mut alloc::collections::BTreeMap<Value, Value>,
-    source: &str,
-    target: &str,
-    lowercase: bool,
-) {
+fn remap_deep_field_in_btree(btree: &mut Object, source: &str, target: &str, lowercase: bool) {
     let val = match read_dotted_path_btree(btree, source) {
         Some(v) => v,
         None => return,
@@ -198,14 +194,11 @@ fn remap_deep_field_in_btree(
         }
         return;
     }
-    set_nested_in_btree(btree, &segments, val, lowercase);
+    set_nested(btree, &segments, val, lowercase);
 }
 
 /// Read a value at a dotted path from a BTreeMap.
-fn read_dotted_path_btree(
-    btree: &alloc::collections::BTreeMap<Value, Value>,
-    path: &str,
-) -> Option<Value> {
+fn read_dotted_path_btree(btree: &Object, path: &str) -> Option<Value> {
     let segments: Vec<&str> = path.split('.').collect();
     let first = segments.first()?;
     let mut cur: &Value = btree.get(&Value::from(*first))?;

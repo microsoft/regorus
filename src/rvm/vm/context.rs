@@ -3,8 +3,9 @@
 
 use crate::rvm::instructions::{ComprehensionMode, LoopMode};
 use crate::value::Value;
+use crate::value::{Object, ObjectCursor};
 use crate::Rc;
-use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 
 /// Loop execution context for managing iteration state
@@ -24,7 +25,18 @@ pub struct LoopContext {
     pub current_iteration_failed: bool, // Track if current iteration had condition failures
 }
 
-/// Iterator state for different collection types
+/// Iterator state for different collection types.
+///
+/// Snapshot independence for `Object` is provided by the shared
+/// `Rc<Object>` — `Rc::make_mut` on an aliased Rc allocates a new
+/// collection, leaving the iterator's Rc pointing at the original
+/// pre-mutation state. The `ObjectCursor` is opaque and resumes in
+/// O(log n) for the BTree backend.
+///
+/// `Set` continues to use the pre-existing snapshot-by-cloned-key
+/// approach (`current_item` + `first_iteration`); migration of `Set`
+/// to a cursor-based iterator ships with the `Set` storage abstraction
+/// in a follow-up PR.
 #[derive(Debug, Clone)]
 pub enum IterationState {
     Array {
@@ -32,9 +44,8 @@ pub enum IterationState {
         index: usize,
     },
     Object {
-        obj: Rc<BTreeMap<Value, Value>>,
-        current_key: Option<Value>,
-        first_iteration: bool,
+        obj: Rc<Object>,
+        cursor: ObjectCursor,
     },
     Set {
         items: Rc<BTreeSet<Value>>,
@@ -64,11 +75,11 @@ impl IterationState {
                 );
                 *index = index.saturating_add(1);
             }
-            Self::Object {
-                ref mut first_iteration,
-                ..
-            }
-            | Self::Set {
+            // For Object the cursor advances inside `setup_next_iteration`
+            // when it pulls the next item via `Object::next`, so `advance`
+            // is a no-op for the cursor-backed Object variant.
+            Self::Object { .. } => {}
+            Self::Set {
                 ref mut first_iteration,
                 ..
             } => {
@@ -120,4 +131,72 @@ pub(super) struct ComprehensionContext {
     pub(super) iteration_state: Option<IterationState>,
     /// Resume location for the parent frame once this comprehension completes
     pub(super) resume_pc: usize,
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::unreachable,
+    clippy::pattern_type_mismatch,
+    clippy::shadow_unrelated,
+    clippy::panic
+)]
+mod tests {
+    use super::*;
+    use crate::value::Object;
+
+    /// IterationState::Object holds an `Rc<Object>` plus an opaque cursor.
+    /// Mutating an aliased Rc via `Rc::make_mut` allocates a new collection
+    /// (CoW) so the in-flight iterator's source is unaffected.
+    #[test]
+    fn iteration_state_object_is_snapshot_independent_of_source() {
+        let mut obj = Object::new();
+        obj.insert(Value::from("a"), Value::from(1));
+        obj.insert(Value::from("b"), Value::from(2));
+        obj.insert(Value::from("c"), Value::from(3));
+
+        let source = Value::Object(Rc::new(obj));
+
+        let snapshot_obj = match &source {
+            Value::Object(o) => Rc::clone(o),
+            _ => unreachable!(),
+        };
+        let state = IterationState::Object {
+            obj: Rc::clone(&snapshot_obj),
+            cursor: snapshot_obj.cursor(),
+        };
+
+        // Mutate a clone of the source mid-iteration.
+        let mut alias = source.clone();
+        let inner = alias.as_object_mut().expect("object");
+        inner.insert(Value::from("a"), Value::from(999));
+        inner.insert(Value::from("d"), Value::from(4));
+        inner.remove(&Value::from("b"));
+
+        // Drain the snapshot via the cursor — must still report the original
+        // 3 entries with original values.
+        let mut collected: Vec<(Value, Value)> = Vec::new();
+        if let IterationState::Object {
+            ref obj,
+            mut cursor,
+        } = state
+        {
+            while let Some((k, v)) = obj.next(&mut cursor) {
+                collected.push((k.clone(), v.clone()));
+            }
+        } else {
+            unreachable!();
+        }
+        assert_eq!(collected.len(), 3);
+        assert!(collected.contains(&(Value::from("a"), Value::from(1))));
+        assert!(collected.contains(&(Value::from("b"), Value::from(2))));
+        assert!(collected.contains(&(Value::from("c"), Value::from(3))));
+        assert!(!collected.iter().any(|kv| kv.0 == Value::from("d")));
+
+        // The original source Value (untouched) is also unchanged.
+        let src_obj = source.as_object().expect("object");
+        assert_eq!(src_obj.len(), 3);
+        assert_eq!(src_obj.get(&Value::from("a")), Some(&Value::from(1)));
+    }
 }

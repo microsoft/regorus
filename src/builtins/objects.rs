@@ -205,7 +205,7 @@ fn merge_filters(
                     let vref = match f {
                         Value::Object(obj) => {
                             let obj = Rc::make_mut(obj);
-                            let entry = obj.entry(p.clone()).or_insert_with(Value::new_object);
+                            let entry = obj.get_or_insert_with(p.clone(), Value::new_object);
                             // Guard filter map growth when creating nested objects.
                             enforce_limit()?;
                             entry

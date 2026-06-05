@@ -153,6 +153,12 @@ impl Object {
         self.inner.entry(key).or_insert_with(default)
     }
 
+    /// Wrap into a `Value::Object`.
+    #[inline]
+    pub fn into_value(self) -> Value {
+        Value::Object(crate::Rc::new(self))
+    }
+
     /// Create a resumable cursor over entries in implementation-defined
     /// order. Stable for the lifetime of `&self`. O(1).
     ///
@@ -248,5 +254,12 @@ impl From<BTreeMap<Value, Value>> for Object {
     #[inline]
     fn from(map: BTreeMap<Value, Value>) -> Self {
         Self { inner: map }
+    }
+}
+
+impl From<Object> for Value {
+    #[inline]
+    fn from(o: Object) -> Self {
+        o.into_value()
     }
 }

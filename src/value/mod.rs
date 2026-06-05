@@ -35,7 +35,7 @@ use core::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
 use serde::de::{self, Deserializer, Error as DeError, MapAccess, SeqAccess, Visitor};
-use serde::ser::{SerializeMap, Serializer};
+use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 
 use crate::*;
@@ -75,7 +75,7 @@ pub enum Value {
 
     /// An object.
     /// Unlike JSON, keys can be any value, not just string.
-    Object(Rc<BTreeMap<Value, Value>>),
+    Object(Rc<Object>),
 
     /// Undefined value.
     /// Used to indicate the absence of a value.
@@ -98,26 +98,15 @@ impl Serialize for Value {
     where
         S: Serializer,
     {
-        use serde::ser::Error;
         match self {
             Value::Null => serializer.serialize_unit(),
             Value::Bool(b) => serializer.serialize_bool(*b),
             Value::String(s) => serializer.serialize_str(s.as_ref()),
             Value::Number(n) => n.serialize(serializer),
             Value::Array(a) => a.serialize(serializer),
-            Value::Object(fields) => {
-                let mut map = serializer.serialize_map(Some(fields.len()))?;
-                for (k, v) in fields.iter() {
-                    match k {
-                        Value::String(_) => map.serialize_entry(k, v)?,
-                        _ => {
-                            let key_str = serde_json::to_string(k).map_err(Error::custom)?;
-                            map.serialize_entry(&key_str, v)?
-                        }
-                    }
-                }
-                map.end()
-            }
+            // Delegate to the Object/Set serializers — single canonical path,
+            // handles non-string-key stringification internally.
+            Value::Object(fields) => fields.serialize(serializer),
 
             // display set as an array
             Value::Set(s) => s.serialize(serializer),
@@ -357,7 +346,7 @@ impl Value {
     /// assert_eq!(array[4], Value::from(12345u64));
     /// let obj = array[5].as_object().expect("not an object");
     /// assert_eq!(obj.len(), 1);
-    /// assert_eq!(obj[&Value::from("name")], Value::from("regorus"));
+    /// assert_eq!(obj.get(&Value::from("name")).expect("missing name"), &Value::from("regorus"));
     /// # Ok(())
     /// # }
     /// ```
@@ -812,7 +801,7 @@ impl From<BTreeMap<Value, Value>> for Value {
     /// # Ok(())
     /// # }
     fn from(s: BTreeMap<Value, Value>) -> Self {
-        Value::Object(Rc::new(s))
+        Value::Object(Rc::new(Object::from(s)))
     }
 }
 
@@ -1291,16 +1280,16 @@ impl Value {
         }
     }
 
-    /// Cast value to [`& BTreeMap<Value, Value>`] if [`Value::Object`].
+    /// Cast value to [`&Object`] if [`Value::Object`].
     /// ```
     /// # use regorus::*;
-    /// # use std::collections::BTreeMap;
+    /// # use regorus::value::Object;
     /// # fn main() -> anyhow::Result<()> {
     /// let v = Value::from(
     ///    [(Value::from("Hello"), Value::from("World"))]
     ///        .iter()
     ///        .cloned()
-    ///        .collect::<BTreeMap<Value, Value>>(),
+    ///        .collect::<Object>(),
     /// );
     /// assert_eq!(
     ///    v.as_object()?.iter().next(),
@@ -1308,28 +1297,28 @@ impl Value {
     /// );
     /// # Ok(())
     /// # }
-    pub fn as_object(&self) -> Result<&BTreeMap<Value, Value>> {
+    pub fn as_object(&self) -> Result<&Object> {
         match self {
             Value::Object(m) => Ok(m),
             _ => Err(anyhow!("not an object")),
         }
     }
 
-    /// Cast value to [`&mut BTreeMap<Value, Value>`] if [`Value::Object`].
+    /// Cast value to [`&mut Object`] if [`Value::Object`].
     /// ```
     /// # use regorus::*;
-    /// # use std::collections::BTreeMap;
+    /// # use regorus::value::Object;
     /// # fn main() -> anyhow::Result<()> {
     /// let mut v = Value::from(
     ///    [(Value::from("Hello"), Value::from("World"))]
     ///        .iter()
     ///        .cloned()
-    ///        .collect::<BTreeMap<Value, Value>>(),
+    ///        .collect::<Object>(),
     /// );
     /// v.as_object_mut()?.insert(Value::from("Good"), Value::from("Bye"));
     /// # Ok(())
     /// # }
-    pub fn as_object_mut(&mut self) -> Result<&mut BTreeMap<Value, Value>> {
+    pub fn as_object_mut(&mut self) -> Result<&mut Object> {
         match self {
             Value::Object(m) => Ok(Rc::make_mut(m)),
             _ => Err(anyhow!("not an object")),
