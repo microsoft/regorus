@@ -380,7 +380,11 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         }
         let path = Path::new(&path_str);
         let path_dir = path.strip_prefix(tests_path)?.parent().unwrap();
-        let path_dir_str = path_dir.to_string_lossy().to_string();
+        // Normalize to forward slashes so the folder filter at the
+        // `folders.iter().any(|f| &path_dir_str == f)` check below matches
+        // CLI arguments like `v0/aggregates` on Windows, where
+        // `to_string_lossy` yields backslash separators by default.
+        let path_dir_str = path_dir.to_string_lossy().replace('\\', "/");
         let folder_name = folder_name_from_path(path_dir);
         let skip_rvm_for_folder = folder_name
             .as_deref()
