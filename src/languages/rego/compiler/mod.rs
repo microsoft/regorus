@@ -192,11 +192,33 @@ impl<'a> Compiler<'a> {
     /// `arg_count` must be exactly 1. The `HostAwait` instruction carries a
     /// single argument register; use object packing to pass multiple values
     /// (e.g. `name({"key1": v1, "key2": v2})`).
+    ///
+    /// Returns `Err` when:
+    /// - `name` is the reserved identifier `__builtin_host_await`,
+    /// - `name` is empty or only whitespace,
+    /// - `name` is already registered (duplicate registration is rejected
+    ///   rather than silently overwritten),
+    /// - `arg_count` is not exactly 1.
     pub fn register_host_await_builtin(&mut self, name: &str, arg_count: usize) -> Result<()> {
         if name == "__builtin_host_await" {
             return Err(CompilerError::General {
                 message: "__builtin_host_await is a reserved name and cannot be registered as a host-await builtin"
                     .to_string(),
+            }
+            .into());
+        }
+        if name.trim().is_empty() {
+            return Err(CompilerError::General {
+                message: "host-await builtin name must not be empty or whitespace".to_string(),
+            }
+            .into());
+        }
+        if self.host_await_builtins.contains_key(name) {
+            return Err(CompilerError::General {
+                message: format!(
+                    "host-await builtin '{name}' is already registered; \
+                     duplicate registration is not allowed"
+                ),
             }
             .into());
         }

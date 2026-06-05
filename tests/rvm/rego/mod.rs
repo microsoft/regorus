@@ -312,11 +312,14 @@ fn compile_and_run_rvm_with_all_entry_points(
                                 })?;
                             if let Some(expected) = expected_args {
                                 let actual = process_value(argument)?;
-                                assert_eq!(
-                                    actual, expected,
-                                    "HostAwait argument mismatch for {:?}: expected {:?}, got {:?}",
-                                    identifier, expected, actual
-                                );
+                                if actual != expected {
+                                    return Err(anyhow::anyhow!(
+                                        "HostAwait argument mismatch for {:?}: expected {:?}, got {:?}",
+                                        identifier,
+                                        expected,
+                                        actual
+                                    ));
+                                }
                             }
                             vm.resume(Some(response))?;
                         }
