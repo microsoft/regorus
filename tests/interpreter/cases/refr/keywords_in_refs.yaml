@@ -219,7 +219,7 @@ cases:
       contains:
         key: present
     query: data.test.x
-    want_result: [true, member, each, present]
+    want_result: [true, "member", "each", "present"]
 
   - note: keywords_in_refs/package path keywords
     modules:
