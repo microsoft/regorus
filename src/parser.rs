@@ -354,9 +354,20 @@ impl<'source> Parser<'source> {
         }
     }
 
-    // Parse a field name after `.` in a ref expression.
-    // Keywords are allowed as field names in dot-notation (e.g. `input.package.name`),
-    // matching OPA's `keywords_in_refs` behavior which is enabled by default.
+    /// Parse a field name after `.` in a ref expression.
+    ///
+    /// Unlike [`Self::parse_var`] and [`Self::parse_ident`], this method accepts **any**
+    /// `TokenKind::Ident` token, including reserved keywords (e.g. `as`, `default`, `else`,
+    /// `false`, `if`, `import`, `in`, `not`, `null`, `package`, `some`, `true`, `with`).
+    ///
+    /// The position immediately after `.` is unambiguously a field name, so there is no
+    /// syntactic ambiguity with statement-level keywords. This matches OPA's
+    /// `keywords_in_refs` capability, which is enabled by default in standard OPA builds.
+    ///
+    /// # Example
+    /// ```rego
+    /// allow if { input.v0.package.format == "npm" }  # `package` is a keyword but valid here
+    /// ```
     fn parse_ref_field(&mut self) -> Result<Span> {
         let span = self.tok.1.clone();
         match self.tok.0 {

@@ -3,7 +3,6 @@
 #
 # Tests for keywords-as-field-names in dot-notation refs.
 # Matches OPA's `keywords_in_refs` behavior, enabled by default.
-# See: https://github.com/microsoft/regorus/issues/XXX
 cases:
   - note: keywords_in_refs/package field
     modules:
