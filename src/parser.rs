@@ -354,6 +354,22 @@ impl<'source> Parser<'source> {
         }
     }
 
+    // Parse a field name after `.` in a ref expression.
+    // Keywords are allowed as field names in dot-notation (e.g. `input.package.name`),
+    // matching OPA's `keywords_in_refs` behavior which is enabled by default.
+    fn parse_ref_field(&mut self) -> Result<Span> {
+        let span = self.tok.1.clone();
+        match self.tok.0 {
+            TokenKind::Ident => {
+                self.next_token()?;
+                Ok(span)
+            }
+            _ => Err(self
+                .source
+                .error(self.tok.1.line, self.tok.1.col, "expecting identifier")),
+        }
+    }
+
     fn read_number(&mut self, span: Span) -> Result<Expr> {
         match Number::from_str(span.text()) {
             Ok(v) => Ok(Expr::Number {
@@ -743,9 +759,10 @@ impl<'source> Parser<'source> {
                     );
                 }
                 "." => {
-                    // Read identifier.
+                    // Read identifier. Keywords are allowed as field names in
+                    // dot-notation refs (e.g. `input.package.name`).
                     self.next_token()?;
-                    let field = self.parse_var()?;
+                    let field = self.parse_ref_field()?;
                     span.end = self.end;
 
                     // Disallow any whitespace between . and identifier.
@@ -1418,9 +1435,10 @@ impl<'source> Parser<'source> {
                     );
                 }
                 "." => {
-                    // Read identifier.
+                    // Read identifier. Keywords are allowed as field names in
+                    // dot-notation refs (e.g. `import data.my.package`).
                     self.next_token()?;
-                    let field = self.parse_ident()?;
+                    let field = self.parse_ref_field()?;
                     span.end = self.end;
 
                     // Disallow any whitespace between . and identifier.
@@ -1523,7 +1541,8 @@ impl<'source> Parser<'source> {
                 "." => {
                     let sep_pos = self.tok.1.start;
                     self.next_token()?;
-                    let field = self.parse_var()?;
+                    // Keywords are allowed as field names in dot-notation refs.
+                    let field = self.parse_ref_field()?;
                     span.end = self.end;
 
                     // Disallow any whitespace between . and identifier.

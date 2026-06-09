@@ -315,3 +315,42 @@ cases:
         }
     query: data.test.main
     want_result: "/api/v1/users"
+
+  - note: keywords_in_refs/package_field
+    data: {}
+    input:
+      v0:
+        package:
+          format: npm
+    modules:
+      - |
+        package test
+        allow := true if {
+          input.v0.package.format == "npm"
+        }
+    query: data.test.allow
+    want_result: true
+
+  - note: keywords_in_refs/multiple_keywords
+    data: {}
+    input:
+      default:
+        value: 42
+      import:
+        name: foo
+      not:
+        allowed: false
+      with:
+        config: ok
+    modules:
+      - |
+        package test
+        import rego.v1
+        result if {
+          input.default.value == 42
+          input.import.name == "foo"
+          input.not.allowed == false
+          input.with.config == "ok"
+        }
+    query: data.test.result
+    want_result: true

@@ -1,0 +1,206 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+#
+# Tests for keywords-as-field-names in dot-notation refs.
+# Matches OPA's `keywords_in_refs` behavior, enabled by default.
+# See: https://github.com/microsoft/regorus/issues/XXX
+cases:
+  - note: keywords_in_refs/package field
+    modules:
+      - |
+        package test
+        allow if {
+          input.v0.package.format == "npm"
+        }
+    input:
+      v0:
+        package:
+          format: npm
+    query: data.test.allow
+    want_result: true
+
+  - note: keywords_in_refs/as field
+    modules:
+      - |
+        package test
+        x = input.as.type
+    input:
+      as:
+        type: string
+    query: data.test.x
+    want_result: string
+
+  - note: keywords_in_refs/default field
+    modules:
+      - |
+        package test
+        x = input.default.value
+    input:
+      default:
+        value: 42
+    query: data.test.x
+    want_result: 42
+
+  - note: keywords_in_refs/else field
+    modules:
+      - |
+        package test
+        x = input.else.value
+    input:
+      else:
+        value: hello
+    query: data.test.x
+    want_result: hello
+
+  - note: keywords_in_refs/import field
+    modules:
+      - |
+        package test
+        x = input.import.name
+    input:
+      import:
+        name: foo
+    query: data.test.x
+    want_result: foo
+
+  - note: keywords_in_refs/not field
+    modules:
+      - |
+        package test
+        x = input.not.allowed
+    input:
+      not:
+        allowed: false
+    query: data.test.x
+    want_result: false
+
+  - note: keywords_in_refs/null field
+    modules:
+      - |
+        package test
+        x = input.null.value
+    input:
+      "null":
+        value: 1
+    query: data.test.x
+    want_result: 1
+
+  - note: keywords_in_refs/some field
+    modules:
+      - |
+        package test
+        x = input.some.field
+    input:
+      some:
+        field: bar
+    query: data.test.x
+    want_result: bar
+
+  - note: keywords_in_refs/true field
+    modules:
+      - |
+        package test
+        x = input.true.x
+    input:
+      "true":
+        x: 2
+    query: data.test.x
+    want_result: 2
+
+  - note: keywords_in_refs/false field
+    modules:
+      - |
+        package test
+        x = input.false.x
+    input:
+      "false":
+        x: 3
+    query: data.test.x
+    want_result: 3
+
+  - note: keywords_in_refs/with field
+    modules:
+      - |
+        package test
+        x = input.with.config
+    input:
+      with:
+        config: test
+    query: data.test.x
+    want_result: test
+
+  - note: keywords_in_refs/future keywords (if, in, every, contains)
+    modules:
+      - |
+        package test
+        import future.keywords
+        x if {
+          input.if.condition == true
+          input.in.set == "member"
+          input.every.item == "x"
+          input.contains.key == "val"
+        }
+    input:
+      if:
+        condition: true
+      in:
+        set: member
+      every:
+        item: x
+      contains:
+        key: val
+    query: data.test.x
+    want_result: true
+
+  - note: keywords_in_refs/chained keywords
+    modules:
+      - |
+        package test
+        x = input.package.import.default
+    input:
+      package:
+        import:
+          default: chained
+    query: data.test.x
+    want_result: chained
+
+  - note: keywords_in_refs/data path with keyword
+    modules:
+      - |
+        package test
+        x = data.mydata.package.name
+    data:
+      mydata:
+        package:
+          name: mypackage
+    query: data.test.x
+    want_result: mypackage
+
+  - note: keywords_in_refs/rego v1 all keywords
+    modules:
+      - |
+        package test
+        import rego.v1
+        allow if {
+          input.package.format == "npm"
+          input.default.value == 1
+          input.if.enabled == true
+          input.in.set == "member"
+          input.not.flag == false
+          input.with.config == "ok"
+        }
+    input:
+      package:
+        format: npm
+      default:
+        value: 1
+      if:
+        enabled: true
+      in:
+        set: member
+      not:
+        flag: false
+      with:
+        config: ok
+    query: data.test.allow
+    want_result: true
