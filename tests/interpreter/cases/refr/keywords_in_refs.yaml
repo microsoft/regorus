@@ -203,3 +203,66 @@ cases:
         config: ok
     query: data.test.allow
     want_result: true
+
+  - note: keywords_in_refs/future keywords without import
+    modules:
+      - |
+        package test
+        x = [input.if.flag, input.in.value, input.every.item, input.contains.key]
+    input:
+      if:
+        flag: true
+      in:
+        value: member
+      every:
+        item: each
+      contains:
+        key: present
+    query: data.test.x
+    want_result: [true, member, each, present]
+
+  - note: keywords_in_refs/package path keywords
+    modules:
+      - |
+        package words.if.default
+        value = 7
+      - |
+        package test
+        x = data.words.if.default.value
+    query: data.test.x
+    want_result: 7
+
+  - note: keywords_in_refs/import path keywords
+    modules:
+      - |
+        package test
+        import data.catalog.if.default as kw
+        x = kw.value
+    data:
+      catalog:
+        if:
+          default:
+            value: 99
+    query: data.test.x
+    want_result: 99
+
+  - note: keywords_in_refs/rule head keyword path
+    modules:
+      - |
+        package test
+        policy.default.level := 3
+    query: data.test.policy.default.level
+    want_result: 3
+
+  - note: keywords_in_refs/mixed dot keyword and dynamic bracket
+    modules:
+      - |
+        package test
+        x = input.package[segment].value
+        segment = "import"
+    input:
+      package:
+        import:
+          value: from_dynamic
+    query: data.test.x
+    want_result: from_dynamic

@@ -354,3 +354,70 @@ cases:
         }
     query: data.test.result
     want_result: true
+
+  - note: keywords_in_refs/future_keywords_without_import
+    data: {}
+    input:
+      if:
+        flag: true
+      in:
+        value: member
+      every:
+        item: each
+      contains:
+        key: present
+    modules:
+      - |
+        package test
+        result := [input.if.flag, input.in.value, input.every.item, input.contains.key]
+    query: data.test.result
+    want_result: [true, "member", "each", "present"]
+
+  - note: keywords_in_refs/package_path_keywords
+    data: {}
+    modules:
+      - |
+        package words.if.default
+        value := 7
+      - |
+        package test
+        result := data.words.if.default.value
+    query: data.test.result
+    want_result: 7
+
+  - note: keywords_in_refs/import_path_keywords
+    data:
+      catalog:
+        if:
+          default:
+            value: 99
+    modules:
+      - |
+        package test
+        import data.catalog.if.default as kw
+        result := kw.value
+    query: data.test.result
+    want_result: 99
+
+  - note: keywords_in_refs/rule_head_keyword_path
+    data: {}
+    modules:
+      - |
+        package test
+        policy.default.level := 3
+    query: data.test.policy.default.level
+    want_result: 3
+
+  - note: keywords_in_refs/mixed_dot_keyword_and_dynamic_bracket
+    data: {}
+    input:
+      package:
+        import:
+          value: from_dynamic
+    modules:
+      - |
+        package test
+        segment := "import"
+        result := input.package[segment].value
+    query: data.test.result
+    want_result: "from_dynamic"
