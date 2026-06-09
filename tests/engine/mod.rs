@@ -197,3 +197,34 @@ fn get_policy_parameters() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn cross_package_import_lookup_does_not_false_cycle() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "registry.rego".to_string(),
+        r#"package registry
+           import data.registry.packages.package_a
+           import rego.v1
+
+           allow_stage1 if package_a.allow_stage1
+         "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "package_a.rego".to_string(),
+        r#"package registry.packages.package_a
+           import data.registry
+           import rego.v1
+
+           allow_stage2 if registry.allow_stage1
+           allow_stage1 := true
+         "#
+        .to_string(),
+    )?;
+
+    let result = engine.eval_rule("data.registry.packages.package_a.allow_stage2".to_string())?;
+    assert_eq!(result, Value::Bool(true));
+
+    Ok(())
+}

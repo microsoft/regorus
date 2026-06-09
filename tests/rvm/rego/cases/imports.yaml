@@ -95,3 +95,37 @@ cases:
         }
     query: data.rules.present
     want_result: true
+  - note: import_cross_package_no_false_cycle
+    modules:
+      - |
+        package registry
+        import data.registry.packages.package_a
+        import rego.v1
+
+        allow_stage1 if package_a.allow_stage1
+      - |
+        package registry.packages.package_a
+        import data.registry
+        import rego.v1
+
+        allow_stage2 if registry.allow_stage1
+        allow_stage1 := true
+    query: data.registry.packages.package_a.allow_stage2
+    want_result: true
+  - note: dynamic_data_index_evaluates_matching_rules
+    modules:
+      - |
+        package registry
+        import rego.v1
+
+        allow_stage1 if {
+          name := "package_a"
+          data.registry.packages[name].allow_stage2
+        }
+      - |
+        package registry.packages.package_a
+        import rego.v1
+
+        allow_stage2 := true
+    query: data.registry.allow_stage1
+    want_result: true
