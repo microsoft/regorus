@@ -2993,6 +2993,12 @@ impl Interpreter {
         }
     }
 
+    /// Returns `true` when `prefix` matches `path` on segment boundaries.
+    ///
+    /// Examples:
+    /// - `path_is_prefix("data.auth", "data.auth") == true`
+    /// - `path_is_prefix("data.auth", "data.auth.allow") == true`
+    /// - `path_is_prefix("data.auth", "data.authorization") == false`
     fn path_is_prefix(prefix: &str, path: &str) -> bool {
         if path == prefix {
             return true;
@@ -3001,13 +3007,39 @@ impl Interpreter {
             .is_some_and(|suffix| suffix.starts_with('.'))
     }
 
+    /// Checks whether a `requested_path` can contain values produced by an active rule.
+    ///
+    /// The active rule path is logically `module_path.rule_path`, but this check avoids
+    /// allocating that joined string in tight evaluation loops.
+    ///
+    /// Examples:
+    /// - request `data` matches module `data.authz` (module expansion needed)
+    /// - request `data.authz` matches rule `allow`
+    /// - request `data.authz.allow` matches rule `allow`
+    /// - request `data.auth` does not match module `data.authz`
+    fn request_matches_active_rule_path(
+        requested_path: &str,
+        module_path: &str,
+        rule_path: &str,
+    ) -> bool {
+        if Self::path_is_prefix(requested_path, module_path) {
+            return true;
+        }
+
+        requested_path
+            .strip_prefix(module_path)
+            .and_then(|suffix| suffix.strip_prefix('.'))
+            .is_some_and(|requested_rule_prefix| {
+                Self::path_is_prefix(requested_rule_prefix, rule_path)
+            })
+    }
+
     fn should_defer_module_eval_for_path(&self, requested_path: &str) -> Result<bool> {
         for active_rule in &self.active_rules {
             let module = self.get_rule_module(active_rule)?;
             let module_path = get_path_string(&module.package.refr, Some("data"))?;
             let rule_path = get_path_string(Self::get_rule_refr(active_rule), None)?;
-            let full_rule_path = format!("{}.{}", module_path, rule_path);
-            if Self::path_is_prefix(requested_path, &full_rule_path) {
+            if Self::request_matches_active_rule_path(requested_path, &module_path, &rule_path) {
                 return Ok(true);
             }
         }
