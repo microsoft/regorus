@@ -2993,6 +2993,27 @@ impl Interpreter {
         }
     }
 
+    fn path_is_prefix(prefix: &str, path: &str) -> bool {
+        if path == prefix {
+            return true;
+        }
+        path.get(prefix.len()..)
+            .is_some_and(|suffix| suffix.starts_with('.'))
+    }
+
+    fn should_defer_module_eval_for_path(&self, requested_path: &str) -> Result<bool> {
+        for active_rule in &self.active_rules {
+            let module = self.get_rule_module(active_rule)?;
+            let module_path = get_path_string(&module.package.refr, Some("data"))?;
+            let rule_path = get_path_string(Self::get_rule_refr(active_rule), None)?;
+            let full_rule_path = format!("{}.{}", module_path, rule_path);
+            if Self::path_is_prefix(requested_path, &full_rule_path) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Resolves `data.<fields...>` while preserving correct rule semantics.
     /// When a rule is already active, this avoids eager module-wide evaluation to prevent
     /// false-positive recursion detection and only evaluates matching rule paths.
@@ -3013,7 +3034,9 @@ impl Interpreter {
         // While a rule is active, avoid eagerly evaluating all matching modules.
         // This prevents sibling/module re-entry from being misclassified as cyclic recursion.
         let requested_path = Self::build_data_path(fields);
-        if self.active_rules.is_empty() {
+        if self.active_rules.is_empty()
+            || !self.should_defer_module_eval_for_path(&requested_path)?
+        {
             self.ensure_module_evaluated(requested_path.clone())?;
         }
 
