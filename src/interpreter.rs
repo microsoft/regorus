@@ -2961,7 +2961,7 @@ impl Interpreter {
     }
 
     /// Ensures all rule/default-rule paths matching a dynamic data lookup are evaluated.
-    /// Matches both exact path (`data.a.b`) and descendants (`data.a.b.*`).
+    /// Matches both exact path (`data.a.b`) and descendants with the `data.a.b.` prefix.
     fn ensure_matching_rules_for_dynamic_data_index(&mut self, path: &str) -> Result<()> {
         self.check_execution_time()?;
         let path_prefix = format!("{path}.");
@@ -3047,14 +3047,14 @@ impl Interpreter {
     }
 
     /// Resolves `data.<fields...>` while preserving correct rule semantics.
-    /// When a rule is already active, this avoids eager module-wide evaluation to prevent
-    /// false-positive recursion detection and only evaluates matching rule paths.
+    /// When a rule is already active, this avoids eager module-wide evaluation so legitimate
+    /// cross-package references are not misidentified as cyclic recursion.
     fn lookup_data_path(&mut self, fields: &[&str]) -> Result<Value> {
         if self.is_processed(fields)? {
             return Ok(Self::get_value_chained(self.data.clone(), fields));
         }
 
-        // If "data" is used in a query, without any fields, then evaluate all the modules.
+        // If "data" is used in a query without any fields, then evaluate all modules.
         if fields.is_empty() && self.active_rules.is_empty() {
             for module in self.compiled_policy.modules.clone().iter() {
                 for rule in &module.policy {
@@ -3064,7 +3064,8 @@ impl Interpreter {
         }
 
         // While a rule is active, avoid eagerly evaluating all matching modules.
-        // This prevents sibling/module re-entry from being misclassified as cyclic recursion.
+        // This prevents re-entry through sibling rules or other modules from being
+        // misclassified as cyclic recursion.
         let requested_path = Self::build_data_path(fields);
         if self.active_rules.is_empty()
             || !self.should_defer_module_eval_for_path(&requested_path)?
