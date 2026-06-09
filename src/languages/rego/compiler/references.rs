@@ -118,6 +118,56 @@ pub(super) fn parse_reference_chain(expr: &ExprRef) -> Result<ReferenceChain> {
 }
 
 impl<'a> Compiler<'a> {
+    // Worklist ancestry alone misses back-edges to already assigned rule indices.
+    // Walk memoized-rule dependencies iteratively, without using the Rust stack.
+    pub(super) fn validate_rule_dependencies(&self) -> Result<()> {
+        let empty = BTreeSet::new();
+        let mut complete = BTreeSet::new();
+        let mut active = BTreeSet::new();
+
+        for &root in self.rule_dependencies.keys() {
+            if complete.contains(&root) {
+                continue;
+            }
+            active.insert(root);
+            let mut stack = vec![(
+                root,
+                self.rule_dependencies.get(&root).unwrap_or(&empty).iter(),
+            )];
+            while let Some((node, children)) = stack.last_mut() {
+                if let Some(&child) = children.next() {
+                    if active.contains(&child) {
+                        let (path, _) = self
+                            .rule_index_map
+                            .iter()
+                            .find(|(_, &index)| index == child)
+                            .ok_or_else(|| CompilerError::General {
+                                message: "internal: missing rule in dependency graph".to_string(),
+                            })?;
+                        return Err(CompilerError::General {
+                            message: alloc::format!(
+                                "Compile-time recursion detected in rule dependency graph at {path}"
+                            ),
+                        }
+                        .into());
+                    }
+                    if !complete.contains(&child) {
+                        active.insert(child);
+                        stack.push((
+                            child,
+                            self.rule_dependencies.get(&child).unwrap_or(&empty).iter(),
+                        ));
+                    }
+                } else {
+                    active.remove(node);
+                    complete.insert(*node);
+                    stack.pop();
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Compile chained reference expressions (Var, RefDot, RefBrack chains)
     /// Uses ReferenceChain to analyze and optimize the access pattern
     pub(super) fn compile_chained_ref(&mut self, expr: &ExprRef, span: &Span) -> Result<Register> {
@@ -218,6 +268,8 @@ impl<'a> Compiler<'a> {
                         WorklistEntry::new(rule_path.clone(), self.current_call_stack.clone());
                     self.rule_worklist.push(entry);
                 }
+                let rule_index = self.get_or_assign_rule_index(rule_path)?;
+                self.record_rule_dependency(rule_index);
             }
 
             return self.compile_data_virtual_lookup(&chain.components, span);
@@ -334,6 +386,18 @@ impl<'a> Compiler<'a> {
         let import_key =
             append_path_component(&self.current_package, root).map_err(CompilerError::from)?;
         if let Some(import_expr) = self.policy.inner.imports.get(&import_key) {
+            // Compile the alias target and suffix as one data reference. Loading the
+            // imported package first would pull unrelated rules into the call graph,
+            // creating false recursion; components also preserve literal dotted keys.
+            let mut import_chain = parse_reference_chain(import_expr)?;
+            if matches!(&import_chain.root, ReferenceRoot::Variable(import_root) if import_root == "data")
+            {
+                import_chain
+                    .components
+                    .extend(chain.components.iter().cloned());
+                return self.compile_data_chain(&import_chain, span);
+            }
+
             let import_reg =
                 self.compile_rego_expr_with_span(import_expr, import_expr.span(), false)?;
             if chain.components.is_empty() {
