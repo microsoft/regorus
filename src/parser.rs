@@ -354,6 +354,33 @@ impl<'source> Parser<'source> {
         }
     }
 
+    /// Parse a field name after `.` in a ref expression.
+    ///
+    /// Unlike [`Self::parse_var`] and [`Self::parse_ident`], this method accepts **any**
+    /// `TokenKind::Ident` token, including reserved keywords (e.g. `as`, `default`, `else`,
+    /// `false`, `if`, `import`, `in`, `not`, `null`, `package`, `some`, `true`, `with`).
+    ///
+    /// The position immediately after `.` is unambiguously a field name, so there is no
+    /// syntactic ambiguity with statement-level keywords. This matches OPA's
+    /// `keywords_in_refs` capability, which is enabled by default in standard OPA builds.
+    ///
+    /// # Example
+    /// ```rego
+    /// allow if { input.v0.package.format == "npm" }  # `package` is a keyword but valid here
+    /// ```
+    fn parse_ref_field(&mut self) -> Result<Span> {
+        let span = self.tok.1.clone();
+        match self.tok.0 {
+            TokenKind::Ident => {
+                self.next_token()?;
+                Ok(span)
+            }
+            _ => Err(self
+                .source
+                .error(self.tok.1.line, self.tok.1.col, "expecting identifier")),
+        }
+    }
+
     fn read_number(&mut self, span: Span) -> Result<Expr> {
         match Number::from_str(span.text()) {
             Ok(v) => Ok(Expr::Number {
@@ -743,9 +770,10 @@ impl<'source> Parser<'source> {
                     );
                 }
                 "." => {
-                    // Read identifier.
+                    // Read identifier. Keywords are allowed as field names in
+                    // dot-notation refs (e.g. `input.package.name`).
                     self.next_token()?;
-                    let field = self.parse_var()?;
+                    let field = self.parse_ref_field()?;
                     span.end = self.end;
 
                     // Disallow any whitespace between . and identifier.
@@ -1418,9 +1446,10 @@ impl<'source> Parser<'source> {
                     );
                 }
                 "." => {
-                    // Read identifier.
+                    // Read identifier. Keywords are allowed as field names in
+                    // dot-notation refs (e.g. `import data.my.package`).
                     self.next_token()?;
-                    let field = self.parse_ident()?;
+                    let field = self.parse_ref_field()?;
                     span.end = self.end;
 
                     // Disallow any whitespace between . and identifier.
@@ -1523,7 +1552,8 @@ impl<'source> Parser<'source> {
                 "." => {
                     let sep_pos = self.tok.1.start;
                     self.next_token()?;
-                    let field = self.parse_var()?;
+                    // Keywords are allowed as field names in dot-notation refs.
+                    let field = self.parse_ref_field()?;
                     span.end = self.end;
 
                     // Disallow any whitespace between . and identifier.
