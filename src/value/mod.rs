@@ -12,16 +12,22 @@
 )] // value helpers index paths directly for performance
 
 mod object;
+mod set;
 
 #[cfg(test)]
 mod tests;
 
 #[allow(unused_imports)] // surface for downstream PRs
 pub use object::{IntoIter, Iter, IterMut, Object};
+#[allow(unused_imports)] // surface for downstream PRs
+pub use set::Set;
 
 #[cfg(feature = "rvm")]
 #[allow(unused_imports)] // surface for downstream PRs
 pub use object::ObjectCursor;
+#[cfg(feature = "rvm")]
+#[allow(unused_imports)] // surface for downstream PRs
+pub use set::SetCursor;
 
 use crate::number::Number;
 

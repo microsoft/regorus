@@ -13,11 +13,11 @@
     clippy::pattern_type_mismatch
 )]
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::vec::Vec;
 
-use super::Object;
+use super::{Object, Set};
 use crate::value::Value;
 
 fn val(i: u64) -> Value {
@@ -561,4 +561,195 @@ fn object_insert_returns_previous_value() {
     assert_eq!(obj.insert(val(0), val(1)), None);
     assert_eq!(obj.insert(val(0), val(2)), Some(val(1)));
     assert_eq!(obj.get(&val(0)), Some(&val(2)));
+}
+
+// =========================================================================
+// Set tests
+// =========================================================================
+
+const SET_SIZES: &[u64] = &[0, 1, 2, 4, 8, 64, 256, 1024];
+
+#[test]
+fn set_iter_sorted_matches_btreeset_oracle() {
+    for &n in SET_SIZES {
+        let values: Vec<Value> = (0..n).map(val).collect();
+        let oracle: BTreeSet<Value> = values.iter().cloned().collect();
+        let s: Set = values.into_iter().collect();
+        let actual: Vec<&Value> = s.iter_sorted().collect();
+        let expected: Vec<&Value> = oracle.iter().collect();
+        assert_eq!(actual, expected, "size {n}");
+    }
+}
+
+#[test]
+fn set_iter_multiset_equality_with_oracle() {
+    for &n in SET_SIZES {
+        let values: Vec<Value> = (0..n).map(val).collect();
+        let oracle: BTreeSet<Value> = values.iter().cloned().collect();
+        let s: Set = values.into_iter().collect();
+        let mut a: Vec<Value> = s.iter().cloned().collect();
+        let mut b: Vec<Value> = oracle.iter().cloned().collect();
+        a.sort();
+        b.sort();
+        assert_eq!(a, b);
+    }
+}
+
+#[test]
+fn set_algebra_matches_btreeset() {
+    let a_vals: Vec<Value> = (0..32_u64).map(val).collect();
+    let b_vals: Vec<Value> = (16..48_u64).map(val).collect();
+    let a_btree: BTreeSet<Value> = a_vals.iter().cloned().collect();
+    let b_btree: BTreeSet<Value> = b_vals.iter().cloned().collect();
+    let a: Set = a_vals.into_iter().collect();
+    let b: Set = b_vals.into_iter().collect();
+
+    fn sorted<'a, I: Iterator<Item = &'a Value>>(it: I) -> Vec<&'a Value> {
+        let mut v: Vec<&Value> = it.collect();
+        v.sort();
+        v
+    }
+
+    let inter_set = a.intersection(&b);
+    assert_eq!(
+        sorted(inter_set.iter_sorted()),
+        sorted(a_btree.intersection(&b_btree))
+    );
+
+    let union_set = a.union(&b);
+    assert_eq!(
+        sorted(union_set.iter_sorted()),
+        sorted(a_btree.union(&b_btree))
+    );
+
+    let diff_set = a.difference(&b);
+    assert_eq!(
+        sorted(diff_set.iter_sorted()),
+        sorted(a_btree.difference(&b_btree))
+    );
+
+    // Subset: trivial + non-trivial cases.
+    let proper_subset: Set = (0..16_u64).map(val).collect();
+    let non_subset: Set = (30..50_u64).map(val).collect();
+    assert!(a.is_subset(&a));
+    assert!(proper_subset.is_subset(&a));
+    assert!(!non_subset.is_subset(&a));
+}
+
+#[test]
+fn set_first_last() {
+    let s: Set = (0..16_u64).map(val).collect();
+    assert_eq!(s.first(), Some(&val(0)));
+    assert_eq!(s.last(), Some(&val(15)));
+    assert!(Set::new().first().is_none());
+}
+
+#[test]
+fn set_serde_roundtrip() {
+    for &n in &[0_u64, 1, 8, 64] {
+        let s: Set = (0..n).map(val).collect();
+        let json = serde_json::to_string(&s).expect("ser");
+        let back: Set = serde_json::from_str(&json).expect("de");
+        assert_eq!(s, back, "size {n}");
+    }
+}
+
+#[test]
+fn set_append_drains_other() {
+    let mut a: Set = (0..4_u64).map(val).collect();
+    let mut b: Set = (4..8_u64).map(val).collect();
+    a.append(&mut b);
+    assert_eq!(a.len(), 8);
+    assert!(b.is_empty());
+}
+
+#[test]
+fn set_value_cow_make_mut_isolates_clones() {
+    let a = Value::new_set();
+    let b = a.clone();
+    let mut b_owned = b;
+    b_owned.as_set_mut().expect("set").insert(Value::from("x"));
+    assert_eq!(a.as_set().expect("set").len(), 0);
+    assert_eq!(b_owned.as_set().expect("set").len(), 1);
+}
+
+#[test]
+fn set_from_iter_dedups_duplicates() {
+    let s: Set = [val(1), val(1), val(2), val(2), val(2)]
+        .into_iter()
+        .collect();
+    assert_eq!(s.len(), 2);
+    assert!(s.contains(&val(1)));
+    assert!(s.contains(&val(2)));
+}
+
+#[test]
+fn set_accessor_coverage() {
+    let mut s: Set = (0..4_u64).map(val).collect();
+
+    assert!(s.contains(&val(2)));
+    assert!(!s.contains(&val(100)));
+
+    assert_eq!(s.get(&val(2)), Some(&val(2)));
+    assert!(s.get(&val(100)).is_none());
+
+    assert!(s.remove(&val(2)));
+    assert!(!s.remove(&val(2)));
+    assert_eq!(s.len(), 3);
+
+    s.retain(|v| v != &val(0));
+    assert!(!s.contains(&val(0)));
+    assert_eq!(s.len(), 2);
+
+    s.clear();
+    assert!(s.is_empty());
+    assert!(!s.contains(&val(1)));
+}
+
+#[test]
+fn set_into_iterator_ref() {
+    let s: Set = (0..4_u64).map(val).collect();
+    let mut count = 0;
+    for _v in &s {
+        count += 1;
+    }
+    assert_eq!(count, 4);
+}
+
+#[test]
+fn set_cursor_yields_every_element_once() {
+    for &n in SET_SIZES {
+        let vals: Vec<Value> = (0..n).map(val).collect();
+        let s: Set = vals.clone().into_iter().collect();
+        let mut cursor = s.cursor();
+        let mut collected: Vec<Value> = Vec::new();
+        while let Some(v) = s.next(&mut cursor) {
+            collected.push(v.clone());
+        }
+        let mut a = collected;
+        a.sort();
+        let mut b = vals;
+        b.sort();
+        assert_eq!(a, b, "size {n}");
+    }
+}
+
+#[test]
+fn set_cursor_empty_returns_none_immediately() {
+    let s = Set::new();
+    let mut c = s.cursor();
+    assert!(s.next(&mut c).is_none());
+}
+
+#[test]
+fn set_ord_invariant_to_insertion_order() {
+    let mut a = Set::new();
+    let mut b = Set::new();
+    for i in 0..16_u64 {
+        a.insert(val(i));
+    }
+    for i in (0..16_u64).rev() {
+        b.insert(val(i));
+    }
+    assert_eq!(a.cmp(&b), core::cmp::Ordering::Equal);
 }
