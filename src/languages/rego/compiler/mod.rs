@@ -203,7 +203,10 @@ impl<'a> Compiler<'a> {
     ///
     /// Returns `Err` when:
     /// - `name` is the reserved identifier `__builtin_host_await`,
-    /// - `name` is empty or only whitespace,
+    /// - `name` is empty, only whitespace, or has leading/trailing
+    ///   whitespace (whitespace-padded names would never match the
+    ///   trimmed identifier produced by the Rego parser, creating dead
+    ///   registrations),
     /// - `name` is already registered (duplicate registration is rejected
     ///   rather than silently overwritten),
     /// - `arg_count` is not exactly 1.
@@ -215,9 +218,11 @@ impl<'a> Compiler<'a> {
             }
             .into());
         }
-        if name.trim().is_empty() {
+        if name.is_empty() || name != name.trim() {
             return Err(CompilerError::General {
-                message: "host-await builtin name must not be empty or whitespace".to_string(),
+                message: format!(
+                    "host-await builtin name {name:?} must not be empty or contain leading/trailing whitespace"
+                ),
             }
             .into());
         }
