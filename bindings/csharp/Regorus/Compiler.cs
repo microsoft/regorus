@@ -42,30 +42,28 @@ namespace Regorus
     /// rather than regular function calls.
     /// </summary>
     /// <remarks>
-    /// Host-await builtins are only supported via the <c>CompileFromModules</c> path.
-    /// The <c>CompileFromEngine</c> path does not support host-await registration.
+    /// Registered builtins are restricted to exactly one argument at the compiler
+    /// level (use object packing to pass multiple values). The argument count is
+    /// therefore not exposed here.
+    ///
+    /// Host-await builtins are not yet supported via the <c>CompileFromEngine</c>
+    /// path; only <c>CompileFromModules</c> accepts them today.
     /// </remarks>
     public readonly struct HostAwaitBuiltin
     {
         /// <summary>
-        /// Gets the function name.
+        /// Gets the function name to register as host-awaitable.
         /// </summary>
         public string Name { get; }
-
-        /// <summary>
-        /// Gets the expected argument count.
-        /// </summary>
-        public int ArgCount { get; }
 
         /// <summary>
         /// Initializes a new instance of the HostAwaitBuiltin struct.
         /// </summary>
         /// <param name="name">The function name to register as host-awaitable.</param>
-        /// <param name="argCount">The expected number of arguments.</param>
-        public HostAwaitBuiltin(string name, int argCount)
+        /// <exception cref="ArgumentNullException">Thrown when <paramref name="name"/> is null.</exception>
+        public HostAwaitBuiltin(string name)
         {
-            Name = name;
-            ArgCount = argCount;
+            Name = name ?? throw new ArgumentNullException(nameof(name));
         }
     }
 
