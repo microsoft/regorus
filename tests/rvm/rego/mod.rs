@@ -311,13 +311,20 @@ fn compile_and_run_rvm_with_all_entry_points(
                                     )
                                 })?;
                             if let Some(expected) = expected_args {
-                                let actual = process_value(argument)?;
-                                if actual != expected {
+                                // `argument` is already a runtime `Value`; the
+                                // expected side has been through `process_value`
+                                // once at YAML decode time (see
+                                // `build_host_await_response_map`). Comparing
+                                // raw runtime values keeps fixture sentinels like
+                                // "#undefined" from coercing a runtime string
+                                // payload into a different shape, which would
+                                // otherwise let tests pass for the wrong reason.
+                                if argument != &expected {
                                     return Err(anyhow::anyhow!(
                                         "HostAwait argument mismatch for {:?}: expected {:?}, got {:?}",
                                         identifier,
                                         expected,
-                                        actual
+                                        argument
                                     ));
                                 }
                             }

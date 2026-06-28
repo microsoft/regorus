@@ -517,3 +517,30 @@ cases:
         result := data.demo.count([10, 20, 30])
     query: data.demo.result
     want_error: "Unknown function"
+
+  - note: registered_builtin_suspendable_set_argument
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Regression pin for the host-await argument comparison: the policy passes
+    # a *set* as the payload. The runtime argument is already a `Value::Set`,
+    # and the expected `args` decodes (via the `set!` helper) to the same set.
+    # The harness must compare them directly -- re-running `process_value` on the
+    # runtime argument would bail with "unexpected set in value read from
+    # json/yaml" and fail the case for the wrong reason.
+    host_await_builtins:
+      - name: lookup
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := lookup({1, 2, 3})
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "lookup"
+        args:
+          set!: [1, 2, 3]
+        value: "found"
+    want_result: "found"
