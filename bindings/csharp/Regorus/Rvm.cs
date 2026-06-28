@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Collections.Generic;
 using Regorus.Internal;
 
 #nullable enable
@@ -239,34 +240,36 @@ namespace Regorus
 
         /// <summary>
         /// Pre-load HostAwait responses for run-to-completion mode.
-        /// Clears any previously configured responses, then queues the
-        /// provided values for the given identifier.
         /// </summary>
-        /// <param name="identifier">The builtin identifier.</param>
-        /// <param name="valuesJson">Array of JSON strings to queue as responses.</param>
-        public void SetHostAwaitResponses(string identifier, string[] valuesJson)
+        /// <remarks>
+        /// Atomically replaces all previously configured responses for every
+        /// identifier. Pass all identifiers the policy may invoke in a single
+        /// call; calling this method again discards the prior configuration
+        /// in full.
+        /// </remarks>
+        /// <param name="responsesByIdentifier">
+        /// Per-identifier queues of JSON-encoded response values, consumed in
+        /// FIFO order when the corresponding host-await builtin is invoked.
+        /// </param>
+        public void SetHostAwaitResponses(IReadOnlyDictionary<string, IReadOnlyList<string>> responsesByIdentifier)
         {
-            if (valuesJson is null)
+            if (responsesByIdentifier is null)
             {
-                throw new ArgumentNullException(nameof(valuesJson));
+                throw new ArgumentNullException(nameof(responsesByIdentifier));
             }
 
-            using var pinnedValues = ModuleMarshalling.PinUtf8Strings(valuesJson);
+            using var pinnedSets = ModuleMarshalling.PinHostAwaitResponseSets(responsesByIdentifier);
 
-            Utf8Marshaller.WithUtf8(identifier, idPtr =>
+            UseHandle(vmPtr =>
             {
-                UseHandle(vmPtr =>
+                fixed (RegorusHostAwaitResponseSet* setsPtr = pinnedSets.Buffer)
                 {
-                    fixed (IntPtr* arrPtr = pinnedValues.Buffer)
-                    {
-                        CheckAndDropResult(API.regorus_rvm_set_host_await_responses(
-                            (RegorusRvm*)vmPtr,
-                            (byte*)idPtr,
-                            (byte**)arrPtr,
-                            (UIntPtr)pinnedValues.Length));
-                    }
-                    return 0;
-                });
+                    CheckAndDropResult(API.regorus_rvm_set_host_await_responses(
+                        (RegorusRvm*)vmPtr,
+                        setsPtr,
+                        (UIntPtr)pinnedSets.Length));
+                }
+                return 0;
             });
         }
 

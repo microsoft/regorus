@@ -408,8 +408,11 @@ public sealed class Rvm : IDisposable
     public string? GetHostAwaitIdentifier();
     public string? GetHostAwaitArgument();
 
-    // Run-to-completion-mode host-await pre-loading
-    public void SetHostAwaitResponses(string identifier, string[] valuesJson);
+    // Run-to-completion-mode host-await pre-loading. Atomically replaces all
+    // previously configured responses for every identifier; pass every
+    // identifier the policy may invoke in a single call.
+    public void SetHostAwaitResponses(
+        IReadOnlyDictionary<string, IReadOnlyList<string>> responsesByIdentifier);
 
     public void Dispose();
 }
@@ -421,13 +424,16 @@ Declares a function name that the compiler should treat as a host-await call.
 When the VM encounters a call to this function, it suspends (suspendable mode)
 or consumes a pre-loaded response (run-to-completion mode).
 
+Registered builtins are restricted to exactly one argument at the compiler
+level (use object packing to pass multiple values), so the C# struct does not
+expose an `argCount` parameter.
+
 ```csharp
 public readonly struct HostAwaitBuiltin
 {
     public string Name { get; }
-    public int ArgCount { get; }
 
-    public HostAwaitBuiltin(string name, int argCount);
+    public HostAwaitBuiltin(string name);
 }
 ```
 
