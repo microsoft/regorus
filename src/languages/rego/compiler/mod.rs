@@ -185,9 +185,17 @@ impl<'a> Compiler<'a> {
 
     /// Register a function name as a host-awaitable builtin.
     ///
-    /// When the compiler encounters a call to `name(arg)`, it will emit a
-    /// `HostAwait` instruction with the argument and `name` as the identifier,
-    /// instead of treating it as a user-defined or standard builtin function.
+    /// When the compiler encounters an **unqualified** call to `name(arg)`
+    /// (i.e. `name(arg)` from inside the policy's own package, not
+    /// `data.pkg.name(arg)` or any other package-qualified form), it will
+    /// emit a `HostAwait` instruction with the argument and `name` as the
+    /// identifier, instead of treating it as a user-defined or standard
+    /// builtin function.
+    ///
+    /// Package-qualified calls (e.g. `data.other.name(arg)`) are **not**
+    /// intercepted by registration. Those resolve through the normal
+    /// user-defined / builtin lookup against their fully-qualified path
+    /// (`data.other.name`).
     ///
     /// `arg_count` must be exactly 1. The `HostAwait` instruction carries a
     /// single argument register; use object packing to pass multiple values

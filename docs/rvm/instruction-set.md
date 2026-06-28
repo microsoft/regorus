@@ -208,13 +208,38 @@ between the two at runtime.
 
 **Resolution order** in `determine_call_target()`:
 1. `__builtin_host_await` (magic 2-argument form)
-2. Registered host-await builtins (matched by bare function name)
+2. Registered host-await builtins (matched by **bare** function name only)
 3. User-defined functions (matched by package-qualified path)
 4. Standard builtins (matched by bare function name)
 
 Registered names shadow both user-defined functions and standard builtins.
 This means `time.parse_duration_ns` can be overridden to route through the
 host instead of the built-in Rust implementation.
+
+**Only unqualified calls are intercepted.** Registration matches a call by
+the name *as written in the policy*. A bare call — `lookup(x)` — is
+intercepted and compiled to a `HostAwait`. A package-qualified call —
+`data.pkg.lookup(x)` — is **not** intercepted; it is resolved normally, as
+if the name were never registered.
+
+```rego
+# "lookup" is registered as a host-await builtin.
+
+package other
+import rego.v1
+lookup(k) := k            # an ordinary rule that happens to share the name
+
+package demo
+import rego.v1
+a := lookup(input.k)             # intercepted     -> HostAwait
+b := data.other.lookup(input.k)  # NOT intercepted -> calls other.lookup
+```
+
+The qualified form is resolved exactly as it would be without registration:
+if a rule exists at that path it is called, otherwise compilation fails with
+`Unknown function`. (A standard builtin like `count` has no qualified form at
+all, so `data.pkg.count(x)` is always an `Unknown function` error, registered
+or not.)
 
 **Argument handling**: The `HostAwait` instruction carries a single `arg`
 register. Registered builtins must use `arg_count: 1`; the compiler rejects

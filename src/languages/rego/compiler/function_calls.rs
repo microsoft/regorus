@@ -246,6 +246,16 @@ impl<'a> Compiler<'a> {
         // restricted to arg_count == 1 at registration time (see
         // `Compiler::register_host_await_builtin`), so the variant doesn't
         // need to carry an arity — it's fixed at 1.
+        //
+        // We deliberately match against `original_fcn_path` only, not
+        // `full_fcn_path`. Registration intercepts the *unqualified* call
+        // form (e.g. `lookup(x)` inside the policy's own package). A
+        // package-qualified call like `data.other.lookup(x)` is left to
+        // resolve through the normal user-defined / builtin path, so a
+        // registered name does not leak into unrelated packages that
+        // happen to expose a rule with the same identifier. This is
+        // documented on `register_host_await_builtin`; the
+        // `registered_host_await.yaml` suite pins the behavior.
         if self.host_await_builtins.contains_key(original_fcn_path) {
             return Ok(CallTarget::RegisteredHostAwait {
                 identifier: original_fcn_path.to_string(),

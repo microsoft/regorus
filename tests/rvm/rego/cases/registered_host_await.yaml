@@ -371,3 +371,149 @@ cases:
     want_result:
       registered: "from_registered"
       explicit:   "from_explicit"
+
+  - note: registered_builtin_does_not_intercept_qualified_calls
+    data: {}
+    input:
+      key: "alpha"
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Pins the documented FQN behavior: a registered name (`resolve`) only
+    # intercepts the unqualified call form (`resolve(x)`) inside the
+    # registering package. A package-qualified call (`data.other.resolve(x)`)
+    # resolves through the normal user-defined function path. The other
+    # package's `resolve` is invoked and returns its own value — the host
+    # never sees the call. The test asserts both: the registered intercept
+    # is consumed once (from the unqualified call), and the qualified call
+    # returns the user-rule output without registering as a host-await.
+    host_await_builtins:
+      - name: resolve
+        arg_count: 1
+    modules:
+      - |
+        package other
+        import rego.v1
+        resolve(k) := result if {
+          result := sprintf("user-rule-handled:%s", [k])
+        }
+      - |
+        package demo
+        import rego.v1
+        intercepted := resolve(input.key)
+        bypassed    := data.other.resolve(input.key)
+        result := {
+          "intercepted": intercepted,
+          "bypassed":    bypassed,
+        }
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "resolve"
+        args: "alpha"
+        value: "from_host"
+    want_result:
+      intercepted: "from_host"
+      bypassed: "user-rule-handled:alpha"
+
+  - note: registered_builtin_same_package_qualified_reaches_local_rule
+    data: {}
+    input:
+      key: "alpha"
+    skip_interpreter: true
+    execution_mode: suspendable
+    # When a registered name *also* exists as a rule in the registering
+    # package, the bare call is intercepted (HostAwait) while the
+    # same-package qualified call reaches the local rule. Registration is a
+    # bare-name intercept only; the qualified path resolves as it normally
+    # would. This gives a policy a deliberate escape hatch: register `resolve`
+    # for host interception, yet still reach the local rule via
+    # `data.demo.resolve` when the host should be bypassed.
+    host_await_builtins:
+      - name: resolve
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        resolve(k) := sprintf("local-rule:%s", [k])
+        intercepted := resolve(input.key)
+        bypassed    := data.demo.resolve(input.key)
+        result := {
+          "intercepted": intercepted,
+          "bypassed":    bypassed,
+        }
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "resolve"
+        args: "alpha"
+        value: "from_host"
+    want_result:
+      intercepted: "from_host"
+      bypassed: "local-rule:alpha"
+
+  - note: registered_builtin_shadows_standard_builtin_by_bare_name
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Registering a name that collides with a standard builtin (`count`)
+    # intercepts the bare call form: `count([...])` compiles to a HostAwait
+    # instead of invoking the built-in implementation. The qualified form
+    # `data.demo.count([...])` has no meaning for a builtin (builtins are
+    # callable only by bare name) and would fail to compile with
+    # `Unknown function` whether or not `count` is registered, so it is not
+    # exercised here.
+    host_await_builtins:
+      - name: count
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := count([10, 20, 30])
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "count"
+        args: [10, 20, 30]
+        value: "from_host"
+    want_result: "from_host"
+
+  - note: registered_builtin_qualified_unknown_function_when_no_rule
+    data: {}
+    input:
+      key: "alpha"
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Registration is a bare-name intercept and creates no rule. A qualified
+    # call to the registered name therefore has nothing to resolve to (no rule
+    # exists at `data.demo.resolve`) and fails to compile with
+    # `Unknown function` — the same outcome as without registration. Pins the
+    # documented "otherwise compilation fails with Unknown function" case.
+    host_await_builtins:
+      - name: resolve
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := data.demo.resolve(input.key)
+    query: data.demo.result
+    want_error: "Unknown function"
+
+  - note: registered_builtin_qualified_builtin_name_is_unknown_function
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # A standard builtin has no package-qualified form: `data.demo.count([...])`
+    # fails with `Unknown function` whether or not `count` is registered as a
+    # host-await builtin. Pins the parenthetical in the docs.
+    host_await_builtins:
+      - name: count
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := data.demo.count([10, 20, 30])
+    query: data.demo.result
+    want_error: "Unknown function"
