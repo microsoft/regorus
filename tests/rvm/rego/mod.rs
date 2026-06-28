@@ -108,6 +108,20 @@ fn build_host_await_response_map(
 fn build_host_await_response_vec(
     responses: &[HostAwaitResponseSpec],
 ) -> anyhow::Result<Vec<(Value, Vec<Value>)>> {
+    // Run-to-completion responses are pre-loaded into the VM, which consumes
+    // them internally without surfacing each call's argument to the harness.
+    // There is therefore no point at which an `args:` expectation could be
+    // checked, so silently dropping it would let a case "assert" a payload
+    // that is never verified. Reject `args:` up front instead, pointing the
+    // author at suspendable mode where argument validation is supported.
+    if let Some(response) = responses.iter().find(|response| response.args.is_some()) {
+        return Err(anyhow::anyhow!(
+            "`args:` payload validation is not supported in run-to-completion mode \
+             (response for id {:?}); drop the `args:` field or move the case to \
+             execution_mode: suspendable",
+            response.id
+        ));
+    }
     let map = build_host_await_response_map(responses)?;
     Ok(map
         .into_iter()
@@ -124,12 +138,20 @@ fn build_execution_options(case: &TestCase) -> anyhow::Result<RvmExecutionOption
         }
     };
 
-    let rtc_responses = case
-        .host_await_responses_run_to_completion
-        .as_ref()
-        .or(case.host_await_responses.as_ref())
-        .map(|responses| build_host_await_response_vec(responses))
-        .transpose()?;
+    // Only build the run-to-completion response vec when the case actually
+    // runs in RTC mode. A suspendable case may legitimately use the shared
+    // `host_await_responses` field with `args:` expectations (validated via
+    // the suspendable map below); building the RTC vec for it would wrongly
+    // trip the RTC-only `args:` rejection in `build_host_await_response_vec`.
+    let rtc_responses = if execution_mode == ExecutionMode::RunToCompletion {
+        case.host_await_responses_run_to_completion
+            .as_ref()
+            .or(case.host_await_responses.as_ref())
+            .map(|responses| build_host_await_response_vec(responses))
+            .transpose()?
+    } else {
+        None
+    };
 
     let suspendable_responses = case
         .host_await_responses_suspendable
@@ -414,7 +436,34 @@ fn yaml_test_impl(file: &str) -> Result<()> {
             Some(engine.eval_rule(case.query.clone()))
         };
 
-        let execution_options = build_execution_options(&case)?;
+        let execution_options = match build_execution_options(&case) {
+            Ok(options) => options,
+            Err(options_error) => {
+                // A malformed host-await fixture (e.g. an `args:` expectation on
+                // a run-to-completion response, which can never be validated) is
+                // reported here. Mirror the compilation-error handling below: if
+                // the case expects an error, match it; otherwise fail hard.
+                if let (None, Some(expected_error)) = (&case.want_result, &case.want_error) {
+                    let error_str = options_error.to_string();
+                    if error_str.contains(expected_error) {
+                        println!(
+                            "✓ Execution-options error matches expected for case '{}'",
+                            case.note
+                        );
+                        println!("passed");
+                        continue;
+                    }
+                    panic_with_listing!(
+                        &last_listing,
+                        &case.note,
+                        "Execution-options error does not match expected for case '{}':\nExpected: '{expected_error}'\nActual: '{error_str}'",
+                        case.note
+                    );
+                }
+                dump_rvm_listing(&case.note, &last_listing);
+                return Err(options_error);
+            }
+        };
 
         if let Err(compilation_error) = &compilation_result {
             if let (None, Some(expected_error)) = (&case.want_result, &case.want_error) {

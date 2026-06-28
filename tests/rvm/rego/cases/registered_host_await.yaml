@@ -50,6 +50,35 @@ cases:
         value: "hola"
     want_result: "hola"
 
+  - note: registered_builtin_run_to_completion_rejects_args
+    data: {}
+    input:
+      lang: "es"
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    # `args:` payload validation is only meaningful in suspendable mode, where
+    # the harness sees each call's argument. In run-to-completion mode the VM
+    # consumes pre-loaded responses internally, so an `args:` expectation can
+    # never be checked. Rather than silently ignore it (which would let a case
+    # "assert" a payload that is never verified), the harness rejects it.
+    host_await_builtins:
+      - name: translate
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        greeting := msg if {
+          msg := translate(input.lang)
+        }
+    query: data.demo.greeting
+    host_await_responses:
+      - id: "translate"
+        args: "es"
+        value: "hola"
+    want_error: "not supported in run-to-completion mode"
+
   - note: registered_builtin_multiple_names
     data: {}
     input:
