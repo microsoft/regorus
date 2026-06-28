@@ -130,7 +130,7 @@ allow if {
 
 var modules = new[] { new PolicyModule("demo.rego", Policy) };
 var entryPoints = new[] { "data.demo.allow" };
-var builtins = new[] { new HostAwaitBuiltin("get_account", 1) };
+var builtins = new[] { new HostAwaitBuiltin("get_account") };
 
 using var program = Program.CompileFromModules("{}", modules, entryPoints, builtins);
 using var vm = new Rvm();
@@ -168,7 +168,7 @@ greeting := msg if {
 
 var modules = new[] { new PolicyModule("demo.rego", Policy) };
 var entryPoints = new[] { "data.demo.greeting" };
-var builtins = new[] { new HostAwaitBuiltin("translate", 1) };
+var builtins = new[] { new HostAwaitBuiltin("translate") };
 
 using var program = Program.CompileFromModules("{}", modules, entryPoints, builtins);
 using var vm = new Rvm();
@@ -176,8 +176,13 @@ vm.SetExecutionMode(ExecutionMode.RunToCompletion);
 vm.LoadProgram(program);
 vm.SetInputJson("""{"lang": "es"}""");
 
-// Queue responses before execution
-vm.SetHostAwaitResponses("translate", new[] { "\"hola\"" });
+// Queue responses before execution. SetHostAwaitResponses atomically replaces
+// ALL prior responses for every identifier — pass every identifier the policy
+// may invoke in a single call.
+vm.SetHostAwaitResponses(new Dictionary<string, IReadOnlyList<string>>
+{
+    ["translate"] = new[] { "\"hola\"" },
+});
 
 var result = vm.Execute();
 Console.WriteLine($"greeting: {result}");  // "hola"

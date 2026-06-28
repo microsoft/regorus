@@ -52,9 +52,7 @@ namespace Regorus
         public static Program CompileFromModules(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints)
         {
             return CompileFromModulesInner(dataJson, modules, entryPoints, hostAwaitBuiltins: null);
-        }
-
-        /// <summary>
+        }        /// <summary>
         /// Compile an RVM program from an engine instance and entry points.
         /// </summary>
         public static Program CompileFromEngine(Engine engine, IEnumerable<string> entryPoints)
@@ -139,40 +137,28 @@ namespace Regorus
 
             using var pinnedModules = ModuleMarshalling.PinPolicyModules(modules);
             using var pinnedEntryPoints = ModuleMarshalling.PinUtf8Strings(entryPoints);
+            // Always route through the _with_host_await FFI entry point; the FFI
+            // treats a null/empty builtins array as equivalent to the non-host-await
+            // codepath, so we don't need to switch on builtin presence here.
+            using var pinnedBuiltins = ModuleMarshalling.PinHostAwaitBuiltins(
+                hostAwaitBuiltins ?? Array.Empty<HostAwaitBuiltin>());
 
             return Utf8Marshaller.WithUtf8(dataJson, dataPtr =>
             {
                 fixed (RegorusPolicyModule* modulesPtr = pinnedModules.Buffer)
                 fixed (IntPtr* entryPtr = pinnedEntryPoints.Buffer)
+                fixed (RegorusHostAwaitBuiltin* builtinsPtr = pinnedBuiltins.Buffer)
                 {
-                    if (hostAwaitBuiltins is { Count: > 0 })
-                    {
-                        using var pinnedBuiltins = ModuleMarshalling.PinHostAwaitBuiltins(hostAwaitBuiltins);
-                        fixed (RegorusHostAwaitBuiltin* builtinsPtr = pinnedBuiltins.Buffer)
-                        {
-                            var result = API.regorus_program_compile_from_modules_with_host_await(
-                                (byte*)dataPtr,
-                                modulesPtr,
-                                (UIntPtr)pinnedModules.Length,
-                                (byte**)entryPtr,
-                                (UIntPtr)pinnedEntryPoints.Length,
-                                builtinsPtr,
-                                (UIntPtr)pinnedBuiltins.Length);
+                    var result = API.regorus_program_compile_from_modules_with_host_await(
+                        (byte*)dataPtr,
+                        modulesPtr,
+                        (UIntPtr)pinnedModules.Length,
+                        (byte**)entryPtr,
+                        (UIntPtr)pinnedEntryPoints.Length,
+                        builtinsPtr,
+                        (UIntPtr)pinnedBuiltins.Length);
 
-                            return GetProgramResult(result);
-                        }
-                    }
-
-                    {
-                        var result = API.regorus_program_compile_from_modules(
-                            (byte*)dataPtr,
-                            modulesPtr,
-                            (UIntPtr)pinnedModules.Length,
-                            (byte**)entryPtr,
-                            (UIntPtr)pinnedEntryPoints.Length);
-
-                        return GetProgramResult(result);
-                    }
+                    return GetProgramResult(result);
                 }
             });
         }
