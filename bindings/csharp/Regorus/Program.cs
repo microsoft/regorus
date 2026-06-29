@@ -51,42 +51,8 @@ namespace Regorus
         /// </summary>
         public static Program CompileFromModules(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints)
         {
-            if (modules is null)
-            {
-                throw new ArgumentNullException(nameof(modules));
-            }
-
-            if (entryPoints is null)
-            {
-                throw new ArgumentNullException(nameof(entryPoints));
-            }
-
-            if (entryPoints.Count == 0)
-            {
-                throw new ArgumentException("At least one entry point is required.", nameof(entryPoints));
-            }
-
-            using var pinnedModules = ModuleMarshalling.PinPolicyModules(modules);
-            using var pinnedEntryPoints = ModuleMarshalling.PinEntryPoints(entryPoints);
-
-            return Utf8Marshaller.WithUtf8(dataJson, dataPtr =>
-            {
-                fixed (RegorusPolicyModule* modulesPtr = pinnedModules.Buffer)
-                fixed (IntPtr* entryPtr = pinnedEntryPoints.Buffer)
-                {
-                    var result = API.regorus_program_compile_from_modules(
-                        (byte*)dataPtr,
-                        modulesPtr,
-                        (UIntPtr)pinnedModules.Length,
-                        (byte**)entryPtr,
-                        (UIntPtr)pinnedEntryPoints.Length);
-
-                    return GetProgramResult(result);
-                }
-            });
-        }
-
-        /// <summary>
+            return CompileFromModulesInner(dataJson, modules, entryPoints, hostAwaitBuiltins: null);
+        }        /// <summary>
         /// Compile an RVM program from an engine instance and entry points.
         /// </summary>
         public static Program CompileFromEngine(Engine engine, IEnumerable<string> entryPoints)
@@ -123,7 +89,7 @@ namespace Regorus
                 throw new ArgumentException("At least one entry point is required.", nameof(entryPoints));
             }
 
-            using var pinnedEntryPoints = ModuleMarshalling.PinEntryPoints(entryPoints);
+            using var pinnedEntryPoints = ModuleMarshalling.PinUtf8Strings(entryPoints);
 
             return engine.UseHandleForInterop(enginePtr =>
             {
@@ -133,6 +99,64 @@ namespace Regorus
                         (RegorusEngine*)enginePtr,
                         (byte**)entryPtr,
                         (UIntPtr)pinnedEntryPoints.Length);
+
+                    return GetProgramResult(result);
+                }
+            });
+        }
+
+        /// <summary>
+        /// Compile an RVM program from modules, entry points, and registered host-awaitable builtins.
+        /// </summary>
+        public static Program CompileFromModules(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints, IReadOnlyList<HostAwaitBuiltin> hostAwaitBuiltins)
+        {
+            if (hostAwaitBuiltins is null)
+            {
+                throw new ArgumentNullException(nameof(hostAwaitBuiltins));
+            }
+
+            return CompileFromModulesInner(dataJson, modules, entryPoints, hostAwaitBuiltins);
+        }
+
+        private static Program CompileFromModulesInner(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints, IReadOnlyList<HostAwaitBuiltin>? hostAwaitBuiltins)
+        {
+            if (modules is null)
+            {
+                throw new ArgumentNullException(nameof(modules));
+            }
+
+            if (entryPoints is null)
+            {
+                throw new ArgumentNullException(nameof(entryPoints));
+            }
+
+            if (entryPoints.Count == 0)
+            {
+                throw new ArgumentException("At least one entry point is required.", nameof(entryPoints));
+            }
+
+            using var pinnedModules = ModuleMarshalling.PinPolicyModules(modules);
+            using var pinnedEntryPoints = ModuleMarshalling.PinUtf8Strings(entryPoints);
+            // Always route through the _with_host_await FFI entry point; the FFI
+            // treats a null/empty builtins array as equivalent to the non-host-await
+            // codepath, so we don't need to switch on builtin presence here.
+            using var pinnedBuiltins = ModuleMarshalling.PinHostAwaitBuiltins(
+                hostAwaitBuiltins ?? Array.Empty<HostAwaitBuiltin>());
+
+            return Utf8Marshaller.WithUtf8(dataJson, dataPtr =>
+            {
+                fixed (RegorusPolicyModule* modulesPtr = pinnedModules.Buffer)
+                fixed (IntPtr* entryPtr = pinnedEntryPoints.Buffer)
+                fixed (RegorusHostAwaitBuiltin* builtinsPtr = pinnedBuiltins.Buffer)
+                {
+                    var result = API.regorus_program_compile_from_modules_with_host_await(
+                        (byte*)dataPtr,
+                        modulesPtr,
+                        (UIntPtr)pinnedModules.Length,
+                        (byte**)entryPtr,
+                        (UIntPtr)pinnedEntryPoints.Length,
+                        builtinsPtr,
+                        (UIntPtr)pinnedBuiltins.Length);
 
                     return GetProgramResult(result);
                 }

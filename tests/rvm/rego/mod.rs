@@ -41,6 +41,7 @@ struct TestCase {
     pub host_await_responses: Option<Vec<HostAwaitResponseSpec>>,
     pub host_await_responses_run_to_completion: Option<Vec<HostAwaitResponseSpec>>,
     pub host_await_responses_suspendable: Option<Vec<HostAwaitResponseSpec>>,
+    pub host_await_builtins: Option<Vec<HostAwaitBuiltinSpec>>,
 }
 
 fn default_strict() -> bool {
@@ -55,14 +56,24 @@ struct YamlTest {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 struct HostAwaitResponseSpec {
     pub id: Value,
+    pub args: Option<Value>,
     pub value: Value,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+struct HostAwaitBuiltinSpec {
+    pub name: String,
+    pub arg_count: usize,
+}
+
+type HostAwaitResponseMap = BTreeMap<Value, VecDeque<(Option<Value>, Value)>>;
 
 #[derive(Debug, Clone)]
 struct RvmExecutionOptions {
     execution_mode: ExecutionMode,
     host_await_responses_run_to_completion: Option<Vec<(Value, Vec<Value>)>>,
-    host_await_responses_suspendable: Option<BTreeMap<Value, VecDeque<Value>>>,
+    host_await_responses_suspendable: Option<HostAwaitResponseMap>,
+    host_await_builtins: Option<Vec<(String, usize)>>,
 }
 
 impl Default for RvmExecutionOptions {
@@ -71,6 +82,7 @@ impl Default for RvmExecutionOptions {
             execution_mode: ExecutionMode::RunToCompletion,
             host_await_responses_run_to_completion: None,
             host_await_responses_suspendable: None,
+            host_await_builtins: None,
         }
     }
 }
@@ -82,12 +94,13 @@ fn render_program_listing(program: &Program) -> String {
 
 fn build_host_await_response_map(
     responses: &[HostAwaitResponseSpec],
-) -> anyhow::Result<BTreeMap<Value, VecDeque<Value>>> {
-    let mut map: BTreeMap<Value, VecDeque<Value>> = BTreeMap::new();
+) -> anyhow::Result<HostAwaitResponseMap> {
+    let mut map: HostAwaitResponseMap = BTreeMap::new();
     for response in responses {
         let id = process_value(&response.id)?;
+        let expected_args = response.args.as_ref().map(process_value).transpose()?;
         let value = process_value(&response.value)?;
-        map.entry(id).or_default().push_back(value);
+        map.entry(id).or_default().push_back((expected_args, value));
     }
     Ok(map)
 }
@@ -95,10 +108,24 @@ fn build_host_await_response_map(
 fn build_host_await_response_vec(
     responses: &[HostAwaitResponseSpec],
 ) -> anyhow::Result<Vec<(Value, Vec<Value>)>> {
+    // Run-to-completion responses are pre-loaded into the VM, which consumes
+    // them internally without surfacing each call's argument to the harness.
+    // There is therefore no point at which an `args:` expectation could be
+    // checked, so silently dropping it would let a case "assert" a payload
+    // that is never verified. Reject `args:` up front instead, pointing the
+    // author at suspendable mode where argument validation is supported.
+    if let Some(response) = responses.iter().find(|response| response.args.is_some()) {
+        return Err(anyhow::anyhow!(
+            "`args:` payload validation is not supported in run-to-completion mode \
+             (response for id {:?}); drop the `args:` field or move the case to \
+             execution_mode: suspendable",
+            response.id
+        ));
+    }
     let map = build_host_await_response_map(responses)?;
     Ok(map
         .into_iter()
-        .map(|(id, values)| (id, values.into_iter().collect()))
+        .map(|(id, values)| (id, values.into_iter().map(|(_, output)| output).collect()))
         .collect())
 }
 
@@ -111,12 +138,20 @@ fn build_execution_options(case: &TestCase) -> anyhow::Result<RvmExecutionOption
         }
     };
 
-    let rtc_responses = case
-        .host_await_responses_run_to_completion
-        .as_ref()
-        .or(case.host_await_responses.as_ref())
-        .map(|responses| build_host_await_response_vec(responses))
-        .transpose()?;
+    // Only build the run-to-completion response vec when the case actually
+    // runs in RTC mode. A suspendable case may legitimately use the shared
+    // `host_await_responses` field with `args:` expectations (validated via
+    // the suspendable map below); building the RTC vec for it would wrongly
+    // trip the RTC-only `args:` rejection in `build_host_await_response_vec`.
+    let rtc_responses = if execution_mode == ExecutionMode::RunToCompletion {
+        case.host_await_responses_run_to_completion
+            .as_ref()
+            .or(case.host_await_responses.as_ref())
+            .map(|responses| build_host_await_response_vec(responses))
+            .transpose()?
+    } else {
+        None
+    };
 
     let suspendable_responses = case
         .host_await_responses_suspendable
@@ -125,10 +160,18 @@ fn build_execution_options(case: &TestCase) -> anyhow::Result<RvmExecutionOption
         .map(|responses| build_host_await_response_map(responses))
         .transpose()?;
 
+    let ha_builtins = case.host_await_builtins.as_ref().map(|specs| {
+        specs
+            .iter()
+            .map(|s| (s.name.clone(), s.arg_count))
+            .collect()
+    });
+
     Ok(RvmExecutionOptions {
         execution_mode,
         host_await_responses_run_to_completion: rtc_responses,
         host_await_responses_suspendable: suspendable_responses,
+        host_await_builtins: ha_builtins,
     })
 }
 
@@ -227,7 +270,13 @@ fn compile_and_run_rvm_with_all_entry_points(
     listing_out: &mut Option<String>,
     execution_options: &RvmExecutionOptions,
 ) -> anyhow::Result<Vec<Value>> {
-    let program = Compiler::compile_from_policy(compiled_policy, entry_points)?;
+    let ha_builtins = execution_options
+        .host_await_builtins
+        .as_ref()
+        .map(|b| b.iter().map(|(n, a)| (n.as_str(), *a)).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let program =
+        Compiler::compile_from_policy_with_host_await(compiled_policy, entry_points, &ha_builtins)?;
 
     // Basic serialization sanity check keeps regressions visible in CI.
     test_round_trip_serialization(program.as_ref()).map_err(|e| anyhow::anyhow!(e))?;
@@ -269,8 +318,12 @@ fn compile_and_run_rvm_with_all_entry_points(
                         return Err(anyhow::anyhow!("{}", error));
                     }
                     ExecutionState::Suspended { reason, .. } => match reason {
-                        SuspendReason::HostAwait { identifier, .. } => {
-                            let response = suspendable_responses
+                        SuspendReason::HostAwait {
+                            identifier,
+                            argument,
+                            ..
+                        } => {
+                            let (expected_args, response) = suspendable_responses
                                 .get_mut(identifier)
                                 .and_then(|queue| queue.pop_front())
                                 .ok_or_else(|| {
@@ -279,6 +332,24 @@ fn compile_and_run_rvm_with_all_entry_points(
                                         identifier
                                     )
                                 })?;
+                            if let Some(expected) = expected_args {
+                                // `argument` is already a runtime `Value`; the
+                                // expected side has been through `process_value`
+                                // once at YAML decode time (see
+                                // `build_host_await_response_map`). Comparing
+                                // raw runtime values keeps fixture sentinels like
+                                // "#undefined" from coercing a runtime string
+                                // payload into a different shape, which would
+                                // otherwise let tests pass for the wrong reason.
+                                if argument != &expected {
+                                    return Err(anyhow::anyhow!(
+                                        "HostAwait argument mismatch for {:?}: expected {:?}, got {:?}",
+                                        identifier,
+                                        expected,
+                                        argument
+                                    ));
+                                }
+                            }
                             vm.resume(Some(response))?;
                         }
                         other => {
@@ -365,7 +436,34 @@ fn yaml_test_impl(file: &str) -> Result<()> {
             Some(engine.eval_rule(case.query.clone()))
         };
 
-        let execution_options = build_execution_options(&case)?;
+        let execution_options = match build_execution_options(&case) {
+            Ok(options) => options,
+            Err(options_error) => {
+                // A malformed host-await fixture (e.g. an `args:` expectation on
+                // a run-to-completion response, which can never be validated) is
+                // reported here. Mirror the compilation-error handling below: if
+                // the case expects an error, match it; otherwise fail hard.
+                if let (None, Some(expected_error)) = (&case.want_result, &case.want_error) {
+                    let error_str = options_error.to_string();
+                    if error_str.contains(expected_error) {
+                        println!(
+                            "✓ Execution-options error matches expected for case '{}'",
+                            case.note
+                        );
+                        println!("passed");
+                        continue;
+                    }
+                    panic_with_listing!(
+                        &last_listing,
+                        &case.note,
+                        "Execution-options error does not match expected for case '{}':\nExpected: '{expected_error}'\nActual: '{error_str}'",
+                        case.note
+                    );
+                }
+                dump_rvm_listing(&case.note, &last_listing);
+                return Err(options_error);
+            }
+        };
 
         if let Err(compilation_error) = &compilation_result {
             if let (None, Some(expected_error)) = (&case.want_result, &case.want_error) {
