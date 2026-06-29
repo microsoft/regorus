@@ -26,7 +26,9 @@ use crate::rvm::program::{Program, RuleType, SpanInfo};
 use crate::CompiledPolicy;
 use crate::Value;
 use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::format;
 use alloc::string::String;
+use alloc::string::ToString as _;
 use alloc::vec;
 use alloc::vec::Vec;
 use indexmap::IndexMap;
@@ -139,6 +141,10 @@ pub struct Compiler<'a> {
     current_call_stack: Vec<u16>,
     entry_points: IndexMap<String, usize>,
     soft_assert_mode: bool,
+    /// Registered host-awaitable builtins: name → expected arg count.
+    /// When the compiler encounters a call to one of these names, it emits a
+    /// `HostAwait` instruction instead of a regular function or builtin call.
+    host_await_builtins: BTreeMap<String, usize>,
 }
 
 impl<'a> Compiler<'a> {
@@ -173,7 +179,73 @@ impl<'a> Compiler<'a> {
             current_call_stack: Vec::new(),
             entry_points: IndexMap::new(),
             soft_assert_mode: false,
+            host_await_builtins: BTreeMap::new(),
         }
+    }
+
+    /// Register a function name as a host-awaitable builtin.
+    ///
+    /// When the compiler encounters an **unqualified** call to `name(arg)`
+    /// (i.e. `name(arg)` from inside the policy's own package, not
+    /// `data.pkg.name(arg)` or any other package-qualified form), it will
+    /// emit a `HostAwait` instruction with the argument and `name` as the
+    /// identifier, instead of treating it as a user-defined or standard
+    /// builtin function.
+    ///
+    /// Package-qualified calls (e.g. `data.other.name(arg)`) are **not**
+    /// intercepted by registration. Those resolve through the normal
+    /// user-defined / builtin lookup against their fully-qualified path
+    /// (`data.other.name`).
+    ///
+    /// `arg_count` must be exactly 1. The `HostAwait` instruction carries a
+    /// single argument register; use object packing to pass multiple values
+    /// (e.g. `name({"key1": v1, "key2": v2})`).
+    ///
+    /// Returns `Err` when:
+    /// - `name` is the reserved identifier `__builtin_host_await`,
+    /// - `name` is empty, only whitespace, or has leading/trailing
+    ///   whitespace (whitespace-padded names would never match the
+    ///   trimmed identifier produced by the Rego parser, creating dead
+    ///   registrations),
+    /// - `name` is already registered (duplicate registration is rejected
+    ///   rather than silently overwritten),
+    /// - `arg_count` is not exactly 1.
+    pub fn register_host_await_builtin(&mut self, name: &str, arg_count: usize) -> Result<()> {
+        if name == "__builtin_host_await" {
+            return Err(CompilerError::General {
+                message: "__builtin_host_await is a reserved name and cannot be registered as a host-await builtin"
+                    .to_string(),
+            }
+            .into());
+        }
+        if name.is_empty() || name != name.trim() {
+            return Err(CompilerError::General {
+                message: format!(
+                    "host-await builtin name {name:?} must not be empty or contain leading/trailing whitespace"
+                ),
+            }
+            .into());
+        }
+        if self.host_await_builtins.contains_key(name) {
+            return Err(CompilerError::General {
+                message: format!(
+                    "host-await builtin '{name}' is already registered; \
+                     duplicate registration is not allowed"
+                ),
+            }
+            .into());
+        }
+        if arg_count != 1 {
+            return Err(CompilerError::General {
+                message: format!(
+                    "registered host-await builtin '{name}' must have arg_count == 1, got {arg_count}. \
+                     Use object packing to pass multiple values."
+                ),
+            }
+            .into());
+        }
+        self.host_await_builtins.insert(name.to_string(), arg_count);
+        Ok(())
     }
 
     pub(super) fn with_soft_assert_mode<F, R>(&mut self, enabled: bool, f: F) -> R

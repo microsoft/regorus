@@ -1,0 +1,610 @@
+cases:
+  - note: registered_builtin_suspendable
+    data: {}
+    input:
+      account_id: "acct-42"
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: get_account
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        allow if {
+          account := get_account({"id": input.account_id})
+          account.status == "active"
+        }
+    query: data.demo.allow
+    host_await_responses_suspendable:
+      - id: "get_account"
+        args:
+          id: "acct-42"
+        value:
+          status: "active"
+          name: "Alice"
+    want_result: true
+
+  - note: registered_builtin_run_to_completion
+    data: {}
+    input:
+      lang: "es"
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    host_await_builtins:
+      - name: translate
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        greeting := msg if {
+          msg := translate(input.lang)
+        }
+    query: data.demo.greeting
+    host_await_responses:
+      - id: "translate"
+        value: "hola"
+    want_result: "hola"
+
+  - note: registered_builtin_run_to_completion_rejects_args
+    data: {}
+    input:
+      lang: "es"
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    # `args:` payload validation is only meaningful in suspendable mode, where
+    # the harness sees each call's argument. In run-to-completion mode the VM
+    # consumes pre-loaded responses internally, so an `args:` expectation can
+    # never be checked. Rather than silently ignore it (which would let a case
+    # "assert" a payload that is never verified), the harness rejects it.
+    host_await_builtins:
+      - name: translate
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        greeting := msg if {
+          msg := translate(input.lang)
+        }
+    query: data.demo.greeting
+    host_await_responses:
+      - id: "translate"
+        args: "es"
+        value: "hola"
+    want_error: "not supported in run-to-completion mode"
+
+  - note: registered_builtin_multiple_names
+    data: {}
+    input:
+      user_id: "user-7"
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: lookup
+        arg_count: 1
+      - name: persist
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        result := {"data": fetched, "stored": saved} if {
+          fetched := lookup(input.user_id)
+          saved := persist({"id": input.user_id, "action": "audit"})
+        }
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "lookup"
+        args: "user-7"
+        value:
+          name: "Charlie"
+      - id: "persist"
+        args:
+          id: "user-7"
+          action: "audit"
+        value: true
+    want_result:
+      data:
+        name: "Charlie"
+      stored: true
+
+  - note: registered_builtin_suspendable_queue
+    data: {}
+    input:
+      items: ["alpha", "beta", "gamma"]
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: enrich
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        results := [r |
+          item := input.items[_]
+          r := enrich(item)
+        ]
+    query: data.demo.results
+    host_await_responses_suspendable:
+      - id: "enrich"
+        args: "alpha"
+        value: "enriched-alpha"
+      - id: "enrich"
+        args: "beta"
+        value: "enriched-beta"
+      - id: "enrich"
+        args: "gamma"
+        value: "enriched-gamma"
+    want_result: ["enriched-alpha", "enriched-beta", "enriched-gamma"]
+
+  - note: registered_builtin_shadows_user_function
+    data: {}
+    input:
+      key: "test-key"
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: resolve
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        # This user-defined function should be shadowed by the registered builtin
+        resolve(x) := {"local": true, "key": x}
+
+        result := resolve(input.key)
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "resolve"
+        args: "test-key"
+        value: "from-host"
+    # The registered builtin takes precedence — result is the host response, not the user function
+    want_result: "from-host"
+
+  - note: registered_builtin_multi_arg_object_packing
+    data: {}
+    input:
+      user: "alice"
+      resource: "/api/data"
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: check_access
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        # Multi-value calls pack arguments into a single object
+        allowed if {
+          result := check_access({"user": input.user, "resource": input.resource})
+          result.granted == true
+        }
+    query: data.demo.allowed
+    host_await_responses_suspendable:
+      - id: "check_access"
+        args:
+          user: "alice"
+          resource: "/api/data"
+        value:
+          granted: true
+          reason: "admin"
+    want_result: true
+
+  - note: registered_builtin_rejects_arg_count_greater_than_one
+    data: {}
+    input:
+      key: "k1"
+      value: "v1"
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: kv_store
+        arg_count: 2
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        result := kv_store(input.key, input.value)
+    query: data.demo.result
+    # Registration fails with an error because arg_count must be 1.
+    # Use object packing instead: kv_store({"key": input.key, "value": input.value})
+    want_error: "arg_count == 1"
+
+  - note: registered_builtin_overrides_standard_builtin
+    data: {}
+    input:
+      duration: "2h30m"
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: time.parse_duration_ns
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        # time.parse_duration_ns is a standard Rego builtin (1 arg, returns nanoseconds).
+        # Registering it as a host-await builtin shadows the standard implementation.
+        duration_ns := time.parse_duration_ns(input.duration)
+    query: data.demo.duration_ns
+    host_await_responses_suspendable:
+      - id: "time.parse_duration_ns"
+        args: "2h30m"
+        value: 9000000000000
+    # Host returns 9000000000000 (custom value) instead of the real parse result.
+    # This proves the registered builtin shadows the standard one.
+    want_result: 9000000000000
+
+  - note: registered_builtin_rejects_reserved_name
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: __builtin_host_await
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := true
+    query: data.demo.result
+    # __builtin_host_await is a reserved name handled by the explicit code path;
+    # registering it as a host-await builtin is rejected at compile time.
+    want_error: "__builtin_host_await is a reserved name"
+
+  - note: registered_builtin_empty_list_is_noop
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Empty registration list: nothing is registered, the policy compiles
+    # normally and no HostAwait machinery fires.
+    host_await_builtins: []
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := 42
+    query: data.demo.result
+    want_result: 42
+
+  - note: registered_builtin_rejects_duplicate_name
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Registering the same name twice is rejected (rather than silently
+    # overwritten) so the host can't accidentally clobber its own registration.
+    host_await_builtins:
+      - name: lookup
+        arg_count: 1
+      - name: lookup
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := lookup("anything")
+    query: data.demo.result
+    want_error: "already registered"
+
+  - note: registered_builtin_rejects_empty_name
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # The empty identifier is meaningless; reject at registration time.
+    host_await_builtins:
+      - name: ""
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := true
+    query: data.demo.result
+    want_error: "must not be empty"
+
+  - note: registered_builtin_rejects_whitespace_name
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Whitespace-only names are equivalent to empty for registration purposes.
+    host_await_builtins:
+      - name: "   "
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := true
+    query: data.demo.result
+    want_error: "leading/trailing whitespace"
+
+  - note: registered_builtin_rejects_leading_whitespace_name
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Whitespace-padded names would never match the trimmed identifier produced
+    # by the Rego parser, creating an unreachable registration. Reject at
+    # registration time so misconfiguration is loud, not silent.
+    host_await_builtins:
+      - name: " lookup"
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := true
+    query: data.demo.result
+    want_error: "leading/trailing whitespace"
+
+  - note: registered_builtin_rejects_trailing_whitespace_name
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: "lookup "
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := true
+    query: data.demo.result
+    want_error: "leading/trailing whitespace"
+
+  - note: registered_builtin_out_param_syntax
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Rego's "output-param" calling form: `f(in, out)` desugars to `f(in)`
+    # with the return value unified with `out`. With a registered arg_count=1
+    # builtin, only the first positional argument (input) reaches the host;
+    # the second positional is the output binding, not a second host-await
+    # argument. The host returns the response, which is then unified with the
+    # output binding (here, `out`).
+    host_await_builtins:
+      - name: lookup
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := out if {
+          lookup("ping", out)
+        }
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "lookup"
+        args: "ping"
+        value: "pong"
+    want_result: "pong"
+
+  - note: registered_builtin_mixed_with_explicit_builtin_host_await
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Both invocation forms in the same policy. The explicit
+    # __builtin_host_await call uses the user-supplied identifier ("kv_get"),
+    # while the registered "lookup" name resolves to a HostAwait with the
+    # registered identifier. Both are emitted as HostAwait instructions and
+    # consume from their respective identifier queues.
+    host_await_builtins:
+      - name: lookup
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        registered_value := lookup("alpha")
+        explicit_value   := __builtin_host_await("beta", "kv_get")
+        result := {
+          "registered": registered_value,
+          "explicit":   explicit_value,
+        }
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "lookup"
+        args: "alpha"
+        value: "from_registered"
+      - id: "kv_get"
+        args: "beta"
+        value: "from_explicit"
+    want_result:
+      registered: "from_registered"
+      explicit:   "from_explicit"
+
+  - note: registered_builtin_does_not_intercept_qualified_calls
+    data: {}
+    input:
+      key: "alpha"
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Pins the documented FQN behavior: a registered name (`resolve`) only
+    # intercepts the unqualified call form (`resolve(x)`) inside the
+    # registering package. A package-qualified call (`data.other.resolve(x)`)
+    # resolves through the normal user-defined function path. The other
+    # package's `resolve` is invoked and returns its own value — the host
+    # never sees the call. The test asserts both: the registered intercept
+    # is consumed once (from the unqualified call), and the qualified call
+    # returns the user-rule output without registering as a host-await.
+    host_await_builtins:
+      - name: resolve
+        arg_count: 1
+    modules:
+      - |
+        package other
+        import rego.v1
+        resolve(k) := result if {
+          result := sprintf("user-rule-handled:%s", [k])
+        }
+      - |
+        package demo
+        import rego.v1
+        intercepted := resolve(input.key)
+        bypassed    := data.other.resolve(input.key)
+        result := {
+          "intercepted": intercepted,
+          "bypassed":    bypassed,
+        }
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "resolve"
+        args: "alpha"
+        value: "from_host"
+    want_result:
+      intercepted: "from_host"
+      bypassed: "user-rule-handled:alpha"
+
+  - note: registered_builtin_same_package_qualified_reaches_local_rule
+    data: {}
+    input:
+      key: "alpha"
+    skip_interpreter: true
+    execution_mode: suspendable
+    # When a registered name *also* exists as a rule in the registering
+    # package, the bare call is intercepted (HostAwait) while the
+    # same-package qualified call reaches the local rule. Registration is a
+    # bare-name intercept only; the qualified path resolves as it normally
+    # would. This gives a policy a deliberate escape hatch: register `resolve`
+    # for host interception, yet still reach the local rule via
+    # `data.demo.resolve` when the host should be bypassed.
+    host_await_builtins:
+      - name: resolve
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        resolve(k) := sprintf("local-rule:%s", [k])
+        intercepted := resolve(input.key)
+        bypassed    := data.demo.resolve(input.key)
+        result := {
+          "intercepted": intercepted,
+          "bypassed":    bypassed,
+        }
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "resolve"
+        args: "alpha"
+        value: "from_host"
+    want_result:
+      intercepted: "from_host"
+      bypassed: "local-rule:alpha"
+
+  - note: registered_builtin_shadows_standard_builtin_by_bare_name
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Registering a name that collides with a standard builtin (`count`)
+    # intercepts the bare call form: `count([...])` compiles to a HostAwait
+    # instead of invoking the built-in implementation. The qualified form
+    # `data.demo.count([...])` has no meaning for a builtin (builtins are
+    # callable only by bare name) and would fail to compile with
+    # `Unknown function` whether or not `count` is registered, so it is not
+    # exercised here.
+    host_await_builtins:
+      - name: count
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := count([10, 20, 30])
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "count"
+        args: [10, 20, 30]
+        value: "from_host"
+    want_result: "from_host"
+
+  - note: registered_builtin_qualified_unknown_function_when_no_rule
+    data: {}
+    input:
+      key: "alpha"
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Registration is a bare-name intercept and creates no rule. A qualified
+    # call to the registered name therefore has nothing to resolve to (no rule
+    # exists at `data.demo.resolve`) and fails to compile with
+    # `Unknown function` — the same outcome as without registration. Pins the
+    # documented "otherwise compilation fails with Unknown function" case.
+    host_await_builtins:
+      - name: resolve
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := data.demo.resolve(input.key)
+    query: data.demo.result
+    want_error: "Unknown function"
+
+  - note: registered_builtin_qualified_builtin_name_is_unknown_function
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # A standard builtin has no package-qualified form: `data.demo.count([...])`
+    # fails with `Unknown function` whether or not `count` is registered as a
+    # host-await builtin. Pins the parenthetical in the docs.
+    host_await_builtins:
+      - name: count
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := data.demo.count([10, 20, 30])
+    query: data.demo.result
+    want_error: "Unknown function"
+
+  - note: registered_builtin_suspendable_set_argument
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Regression pin for the host-await argument comparison: the policy passes
+    # a *set* as the payload. The runtime argument is already a `Value::Set`,
+    # and the expected `args` decodes (via the `set!` helper) to the same set.
+    # The harness must compare them directly -- re-running `process_value` on the
+    # runtime argument would bail with "unexpected set in value read from
+    # json/yaml" and fail the case for the wrong reason.
+    host_await_builtins:
+      - name: lookup
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := lookup({1, 2, 3})
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "lookup"
+        args:
+          set!: [1, 2, 3]
+        value: "found"
+    want_result: "found"
