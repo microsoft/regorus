@@ -87,6 +87,7 @@ report = engine.get_coverage_report_pretty()
 print(report)
 
 # Clone engine
+engine.prepare()
 engine1 = engine.clone()
 
 

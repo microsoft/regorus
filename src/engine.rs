@@ -505,6 +505,47 @@ impl Engine {
         self.add_data(Value::from_json_str(data_json)?)
     }
 
+    /// Prepare the engine for evaluation without executing a query or rule.
+    ///
+    /// The first evaluation on an unprepared engine performs one-time setup
+    /// (analysis, scheduling, imports/rules processing, and initialization of
+    /// internal evaluation structures). Calling this method performs that work
+    /// eagerly so a later call to [`Engine::eval_rule`] / [`Engine::eval_query`]
+    /// does not pay that startup cost.
+    ///
+    /// This method is optional for correctness. If omitted, the first
+    /// evaluation will implicitly prepare the engine.
+    ///
+    /// Preparation is invalidated when policy/data that affects evaluation is
+    /// changed (for example: [`Engine::add_policy`], [`Engine::add_policy_from_file`],
+    /// [`Engine::add_data`], [`Engine::clear_data`]). In those cases, the next
+    /// evaluation (or another explicit call to `prepare`) performs setup again.
+    ///
+    /// This is especially useful before cloning template engines used for
+    /// repeated evaluations.
+    ///
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = Engine::new();
+    /// engine.add_policy("test.rego".to_string(), r#"
+    ///   package test
+    ///   import rego.v1
+    ///   allow if input.user == "alice"
+    /// "#.to_string())?;
+    ///
+    /// engine.prepare()?;
+    /// let mut cloned = engine.clone();
+    ///
+    /// cloned.set_input_json(r#"{"user":"alice"}"#)?;
+    /// assert_eq!(cloned.eval_rule("data.test.allow".to_string())?, Value::from(true));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn prepare(&mut self) -> Result<()> {
+        self.prepare_for_eval(false, false)
+    }
+
     /// Set whether builtins should raise errors strictly or not.
     ///
     /// Regorus differs from OPA in that by default builtins will
@@ -1084,9 +1125,10 @@ impl Engine {
         limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
 
         self.interpreter.set_traces(enable_tracing);
+        let newly_prepared = !self.prepared;
 
         // if the data/policies have changed or the interpreter has never been prepared
-        if !self.prepared {
+        if newly_prepared {
             // Analyze the modules and determine how statements must be scheduled.
             let analyzer = Analyzer::new();
             let schedule = Rc::new(analyzer.analyze(&self.modules)?);
@@ -1116,23 +1158,28 @@ impl Engine {
 
             // Set schedule after hoisting completes
             self.interpreter.set_schedule(Some(schedule));
+        }
 
-            #[cfg(feature = "azure_policy")]
+        #[cfg(feature = "azure_policy")]
+        {
             if for_target {
-                // Resolve and validate target specifications across all modules
+                // Resolve and validate target specifications across all modules.
+                // This must run for target-aware compilation even if generic prepare()
+                // was already called.
                 crate::interpreter::target::resolve::resolve_and_apply_target(
                     &mut self.interpreter,
                 )?;
                 // Infer resource types
                 crate::interpreter::target::infer::infer_resource_type(&mut self.interpreter)?;
-            }
-
-            if !for_target {
-                // Check if any module specifies a target and warn if so
-                #[cfg(feature = "azure_policy")]
+            } else if newly_prepared {
+                // Check if any module specifies a target and warn if so.
                 self.warn_if_targets_present();
             }
+        }
+        #[cfg(not(feature = "azure_policy"))]
+        let _ = for_target;
 
+        if newly_prepared {
             self.prepared = true;
         }
 
