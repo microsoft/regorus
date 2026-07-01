@@ -586,7 +586,7 @@ impl Interpreter {
                                 } else {
                                     format!("{ref_path}.{index}.{}", path.join("."))
                                 };
-                                self.ensure_rule_evaluated(ref_path)?;
+                                self.ensure_matching_rules_for_dynamic_data_index(&ref_path)?;
                             }
                         }
 
@@ -2960,6 +2960,136 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Ensures all rule/default-rule paths matching a dynamic data lookup are evaluated.
+    /// Matches both exact path (`data.a.b`) and descendants with the `data.a.b.` prefix.
+    fn ensure_matching_rules_for_dynamic_data_index(&mut self, path: &str) -> Result<()> {
+        self.check_execution_time()?;
+        let path_prefix = format!("{path}.");
+        let mut matching_paths: Vec<String> = self
+            .compiled_policy
+            .default_rules
+            .keys()
+            .chain(self.compiled_policy.rules.keys())
+            .filter(|rule_path| *rule_path == path || rule_path.starts_with(&path_prefix))
+            .cloned()
+            .collect();
+        matching_paths.sort();
+        matching_paths.dedup();
+
+        for rule_path in matching_paths {
+            self.ensure_rule_evaluated(rule_path)?;
+        }
+
+        Ok(())
+    }
+
+    /// Builds a canonical `data` path from field components.
+    /// For an empty field list, returns `"data"`.
+    fn build_data_path(fields: &[&str]) -> String {
+        if fields.is_empty() {
+            "data".to_string()
+        } else {
+            format!("data.{}", fields.join("."))
+        }
+    }
+
+    /// Returns `true` when `prefix` matches `path` on segment boundaries.
+    ///
+    /// Examples:
+    /// - `path_is_prefix("data.auth", "data.auth") == true`
+    /// - `path_is_prefix("data.auth", "data.auth.allow") == true`
+    /// - `path_is_prefix("data.auth", "data.authorization") == false`
+    fn path_is_prefix(prefix: &str, path: &str) -> bool {
+        if path == prefix {
+            return true;
+        }
+        path.get(prefix.len()..)
+            .is_some_and(|suffix| suffix.starts_with('.'))
+    }
+
+    /// Checks whether a `requested_path` can contain values produced by an active rule.
+    ///
+    /// The active rule path is logically `module_path.rule_path`, but this check avoids
+    /// allocating that joined string in tight evaluation loops.
+    ///
+    /// Examples:
+    /// - request `data` matches module `data.authz` (module expansion needed)
+    /// - request `data.authz` matches rule `allow`
+    /// - request `data.authz.allow` matches rule `allow`
+    /// - request `data.auth` does not match module `data.authz`
+    fn request_matches_active_rule_path(
+        requested_path: &str,
+        module_path: &str,
+        rule_path: &str,
+    ) -> bool {
+        if Self::path_is_prefix(requested_path, module_path) {
+            return true;
+        }
+
+        requested_path
+            .strip_prefix(module_path)
+            .and_then(|suffix| suffix.strip_prefix('.'))
+            .is_some_and(|requested_rule_prefix| {
+                Self::path_is_prefix(requested_rule_prefix, rule_path)
+            })
+    }
+
+    fn should_defer_module_eval_for_path(&self, requested_path: &str) -> Result<bool> {
+        for active_rule in &self.active_rules {
+            let module = self.get_rule_module(active_rule)?;
+            let module_path = get_path_string(&module.package.refr, Some("data"))?;
+            let rule_path = get_path_string(Self::get_rule_refr(active_rule), None)?;
+            if Self::request_matches_active_rule_path(requested_path, &module_path, &rule_path) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Resolves `data.<fields...>` while preserving correct rule semantics.
+    /// When a rule is already active, this avoids eager module-wide evaluation so legitimate
+    /// cross-package references are not misidentified as cyclic recursion.
+    fn lookup_data_path(&mut self, fields: &[&str]) -> Result<Value> {
+        if self.is_processed(fields)? {
+            return Ok(Self::get_value_chained(self.data.clone(), fields));
+        }
+
+        // If "data" is used in a query without any fields, then evaluate all modules.
+        if fields.is_empty() && self.active_rules.is_empty() {
+            for module in self.compiled_policy.modules.clone().iter() {
+                for rule in &module.policy {
+                    self.eval_rule(module, rule)?;
+                }
+            }
+        }
+
+        // While a rule is active, avoid eagerly evaluating all matching modules.
+        // This prevents re-entry through sibling rules or other modules from being
+        // misclassified as cyclic recursion.
+        let requested_path = Self::build_data_path(fields);
+        if self.active_rules.is_empty()
+            || !self.should_defer_module_eval_for_path(&requested_path)?
+        {
+            self.ensure_module_evaluated(requested_path.clone())?;
+        }
+
+        for i in (1..=fields.len()).rev() {
+            let prefix = fields.iter().take(i).copied().collect::<Vec<_>>();
+            let prefix_path = Self::build_data_path(&prefix);
+            if self.compiled_policy.rules.contains_key(&prefix_path)
+                || self
+                    .compiled_policy
+                    .default_rules
+                    .contains_key(&prefix_path)
+            {
+                self.ensure_rule_evaluated(prefix_path)?;
+                break;
+            }
+        }
+
+        Ok(Self::get_value_chained(self.data.clone(), fields))
+    }
+
     fn is_processed(&self, path: &[&str]) -> Result<bool> {
         let mut obj = &self.processed_paths;
         for p in path {
@@ -3010,39 +3140,7 @@ impl Interpreter {
 
         // Ensure that rules are evaluated
         if name.text() == "data" {
-            if self.is_processed(fields)? {
-                return Ok(Self::get_value_chained(self.data.clone(), fields));
-            }
-
-            // If "data" is used in a query, without any fields, then evaluate all the modules.
-            if fields.is_empty() && self.active_rules.is_empty() {
-                for module in self.compiled_policy.modules.clone().iter() {
-                    for rule in &module.policy {
-                        self.eval_rule(module, rule)?;
-                    }
-                }
-            }
-
-            // With modifiers may be used to specify part of a module that that not yet been
-            // evaluated. Therefore ensure that module is evaluated first.
-            let requested_path = format!("data.{}", fields.join("."));
-            self.ensure_module_evaluated(requested_path.clone())?;
-
-            for i in (1..=fields.len()).rev() {
-                let prefix = fields.iter().take(i).copied().collect::<Vec<_>>();
-                let prefix_path = format!("data.{}", prefix.join("."));
-                if self.compiled_policy.rules.contains_key(&prefix_path)
-                    || self
-                        .compiled_policy
-                        .default_rules
-                        .contains_key(&prefix_path)
-                {
-                    self.ensure_rule_evaluated(prefix_path)?;
-                    break;
-                }
-            }
-
-            Ok(Self::get_value_chained(self.data.clone(), fields))
+            self.lookup_data_path(fields)
         } else if !self.compiled_policy.modules.is_empty() {
             let module = self.current_module()?;
             let parsed_path = Parser::get_path_ref_components(&module.package.refr)?;
@@ -3092,6 +3190,17 @@ impl Interpreter {
 
             if !found {
                 if let Some(imported_var) = self.compiled_policy.imports.get(&rule_path).cloned() {
+                    if let Ok(import_path) = get_path_string(&imported_var, None) {
+                        if import_path == "data" || import_path.starts_with("data.") {
+                            let combined_path = if fields.is_empty() {
+                                import_path
+                            } else {
+                                format!("{}.{}", import_path, fields.join("."))
+                            };
+                            let data_fields: Vec<&str> = combined_path.split('.').skip(1).collect();
+                            return self.lookup_data_path(&data_fields);
+                        }
+                    }
                     return Ok(Self::get_value_chained(
                         self.eval_expr(&imported_var)?,
                         fields,

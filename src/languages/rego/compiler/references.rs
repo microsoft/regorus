@@ -338,6 +338,15 @@ impl<'a> Compiler<'a> {
         // No rule found; fall back to module-level imports.
         let import_key = format!("{}.{}", &self.current_package, root);
         if let Some(import_expr) = self.policy.inner.imports.get(&import_key) {
+            if let Ok(mut import_chain) = parse_reference_chain(import_expr) {
+                if let ReferenceRoot::Variable(import_root) = &import_chain.root {
+                    if import_root == "data" {
+                        import_chain.components.extend(chain.components.clone());
+                        return self.compile_data_chain(&import_chain, span);
+                    }
+                }
+            }
+
             let import_reg =
                 self.compile_rego_expr_with_span(import_expr, import_expr.span(), false)?;
             if chain.components.is_empty() {
