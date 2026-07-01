@@ -205,6 +205,29 @@ impl VirtualDataDocumentLookupParams {
     }
 }
 
+/// Deep object set parameters for multi-key partial object/set rules.
+/// Handles patterns like `foo[a][b] := c` and `foo[a] contains v`.
+#[repr(C)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObjectDeepSetParams {
+    /// Root object register
+    pub obj: u8,
+    /// Key registers in order (one per nesting level)
+    pub keys: Vec<u8>,
+    /// Value register to insert/assign at the leaf
+    pub value: u8,
+    /// If true, the leaf is a set and value is inserted into it.
+    /// If false, the leaf is a plain value that is overwritten.
+    pub multi_value: bool,
+}
+
+impl ObjectDeepSetParams {
+    /// Get the depth (number of key levels)
+    pub const fn depth(&self) -> usize {
+        self.keys.len()
+    }
+}
+
 /// Chained index parameters for multi-level object access (input, locals, non-rule data paths)
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,6 +318,8 @@ pub struct InstructionData {
     pub chained_index_params: Vec<ChainedIndexParams>,
     /// Comprehension parameter table for ComprehensionBegin instructions
     pub comprehension_begin_params: Vec<ComprehensionBeginParams>,
+    /// Object deep set parameter table for ObjectDeepSet instructions
+    pub object_deep_set_params: Vec<ObjectDeepSetParams>,
 }
 
 impl InstructionData {
@@ -315,6 +340,7 @@ impl InstructionData {
             virtual_data_document_lookup_params: Vec::new(),
             chained_index_params: Vec::new(),
             comprehension_begin_params: Vec::new(),
+            object_deep_set_params: Vec::new(),
         }
     }
 
@@ -444,6 +470,18 @@ impl InstructionData {
         index: u16,
     ) -> Option<&mut ComprehensionBeginParams> {
         self.comprehension_begin_params.get_mut(usize::from(index))
+    }
+
+    /// Add object deep set parameters and return the index
+    pub fn add_object_deep_set_params(&mut self, params: ObjectDeepSetParams) -> u16 {
+        let index = Self::ensure_u16_index(self.object_deep_set_params.len());
+        self.object_deep_set_params.push(params);
+        index
+    }
+
+    /// Get object deep set parameters by index
+    pub fn get_object_deep_set_params(&self, index: u16) -> Option<&ObjectDeepSetParams> {
+        self.object_deep_set_params.get(usize::from(index))
     }
 }
 

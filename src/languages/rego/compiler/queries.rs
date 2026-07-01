@@ -96,20 +96,34 @@ impl<'a> Compiler<'a> {
             }
         }
 
-        let (key_expr, value_expr) = match self.context_stack.last_mut() {
-            Some(context) => {
-                if context.key_value_loops_hoisted {
-                    return self.emit_context_yield();
+        let (key_expr, _extra_key_exprs, value_expr, is_partial_object_rule) =
+            match self.context_stack.last_mut() {
+                Some(context) => {
+                    if context.key_value_loops_hoisted {
+                        return self.emit_context_yield();
+                    }
+                    let is_po = matches!(
+                        context.context_type,
+                        ContextType::Rule(RuleType::PartialObject)
+                    );
+                    (
+                        context.key_expr.clone(),
+                        context.extra_key_exprs.clone(),
+                        context.value_expr.clone(),
+                        is_po,
+                    )
                 }
-                (context.key_expr.clone(), context.value_expr.clone())
-            }
-            None => return Ok(()),
-        };
+                None => return Ok(()),
+            };
 
         let mut key_value_loops = Vec::new();
 
-        if let Some(expr) = key_expr.as_ref() {
-            key_value_loops.extend(self.get_expr_loops(expr)?);
+        // Key expressions from rule head ref chains (partial object rules) are NOT hoisted.
+        // They reference variables bound in the body and are compiled directly in emit_context_yield.
+        if !is_partial_object_rule {
+            if let Some(expr) = key_expr.as_ref() {
+                key_value_loops.extend(self.get_expr_loops(expr)?);
+            }
         }
 
         if let Some(expr) = value_expr.as_ref() {
@@ -188,14 +202,37 @@ impl<'a> Compiler<'a> {
                     );
                 }
                 ContextType::Rule(RuleType::PartialObject) => {
-                    self.emit_instruction(
-                        Instruction::ObjectSet {
+                    // Check if we need ObjectDeepSet (multi-key or multi-value)
+                    if !context.extra_key_exprs.is_empty() || context.multi_value {
+                        let mut key_registers = Vec::new();
+                        // First key is already compiled as key_register
+                        key_registers.push(key_register);
+                        // Compile additional key expressions
+                        for extra_key_expr in &context.extra_key_exprs {
+                            let extra_reg = self.compile_rego_expr(extra_key_expr)?;
+                            key_registers.push(extra_reg);
+                        }
+                        let params = crate::rvm::instructions::ObjectDeepSetParams {
                             obj: dest_register,
-                            key: key_register,
+                            keys: key_registers,
                             value: value_register,
-                        },
-                        span,
-                    );
+                            multi_value: context.multi_value,
+                        };
+                        let params_index = self
+                            .program
+                            .instruction_data
+                            .add_object_deep_set_params(params);
+                        self.emit_instruction(Instruction::ObjectDeepSet { params_index }, span);
+                    } else {
+                        self.emit_instruction(
+                            Instruction::ObjectSet {
+                                obj: dest_register,
+                                key: key_register,
+                                value: value_register,
+                            },
+                            span,
+                        );
+                    }
                 }
                 ContextType::Rule(RuleType::Complete) => {
                     self.emit_instruction(
