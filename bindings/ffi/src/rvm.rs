@@ -743,7 +743,7 @@ pub extern "C" fn regorus_rvm_set_host_await_responses(
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
 
             if response_sets.is_null() && response_sets_len > 0 {
@@ -796,7 +796,7 @@ pub extern "C" fn regorus_rvm_set_host_await_responses(
 pub extern "C" fn regorus_rvm_get_host_await_argument(vm: *mut RegorusRvm) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<Option<String>> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let guard = vm.try_read()?;
             match guard.get_host_await_argument() {
                 Some(arg) => Ok(Some(arg.to_json_str()?)),
@@ -820,7 +820,7 @@ pub extern "C" fn regorus_rvm_get_host_await_argument(vm: *mut RegorusRvm) -> Re
 pub extern "C" fn regorus_rvm_get_host_await_identifier(vm: *mut RegorusRvm) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<Option<String>> {
-            let vm = to_ref(vm)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let guard = vm.try_read()?;
             match guard.get_host_await_identifier() {
                 Some(id) => Ok(Some(id.to_json_str()?)),
