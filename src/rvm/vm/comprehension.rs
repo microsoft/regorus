@@ -226,6 +226,7 @@ impl RegoVM {
         }
     }
 
+    #[allow(clippy::if_then_some_else_none)]
     fn execute_comprehension_yield_run_to_completion(
         &mut self,
         value_reg: u8,
@@ -332,6 +333,7 @@ impl RegoVM {
         Ok(())
     }
 
+    #[allow(clippy::if_then_some_else_none)]
     fn execute_comprehension_yield_suspendable(
         &mut self,
         value_reg: u8,
