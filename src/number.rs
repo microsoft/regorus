@@ -27,10 +27,16 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use serde::ser::Serializer;
 use serde::Serialize;
 
+#[cfg(verus_keep_ghost)]
+use vstd::float::*;
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
+
 use crate::*;
 
 pub type BigInt = NumBigInt;
 
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 const F64_SAFE_INTEGER: f64 = 9_007_199_254_740_992.0; // 2^53
 
 #[derive(Clone)]
@@ -145,8 +151,8 @@ impl Number {
     }
 
     fn normalize_float(value: f64) -> Number {
-        if let Some(int) = Self::float_to_small_bigint(value) {
-            return Self::from_bigint_owned(int);
+        if let Some(i) = Self::float_to_small_bigint(value) {
+            return Self::from_bigint_owned(i);
         }
         Number::Float(value)
     }
@@ -685,6 +691,7 @@ impl Number {
         }
     }
 
+    #[allow(clippy::if_then_some_else_none)]
     fn ensure_integers(a: &Number, b: &Number) -> Option<(BigInt, BigInt)> {
         if a.is_integer() && b.is_integer() {
             Some((a.to_bigint_owned()?, b.to_bigint_owned()?))
