@@ -1,9 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// Unsafe code should not be used (except for verification).
-// Hard to reason about correctness, and maintainability.
-#![cfg_attr(not(verus_keep_ghost), forbid(unsafe_code))]
+// Unsafe code should not be used.
+#![forbid(unsafe_code)]
 // Ensure that all lint names are valid.
 #![deny(unknown_lints)]
 // Fail-fast lints: correctness, safety, and API surface
