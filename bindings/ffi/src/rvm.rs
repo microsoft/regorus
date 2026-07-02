@@ -750,7 +750,12 @@ pub extern "C" fn regorus_rvm_set_host_await_responses(
                 return Err(anyhow!("null response_sets pointer"));
             }
 
-            let mut all = Vec::with_capacity(response_sets_len);
+            let mut all = Vec::new();
+            all.try_reserve(response_sets_len).map_err(|_| {
+                anyhow!(
+                    "failed to reserve capacity for {response_sets_len} host-await response sets"
+                )
+            })?;
             for i in 0..response_sets_len {
                 // SAFETY: caller guarantees `response_sets` points to a
                 // contiguous array of `response_sets_len` `RegorusHostAwaitResponseSet`
@@ -767,7 +772,13 @@ pub extern "C" fn regorus_rvm_set_host_await_responses(
                     ));
                 }
 
-                let mut values = alloc::collections::VecDeque::with_capacity(set.values_len);
+                let mut values = alloc::collections::VecDeque::new();
+                values.try_reserve(set.values_len).map_err(|_| {
+                    anyhow!(
+                        "failed to reserve capacity for {} response values at index {i}",
+                        set.values_len
+                    )
+                })?;
                 for j in 0..set.values_len {
                     let ptr = unsafe { *set.values_json.add(j) };
                     let json_str = from_c_str(ptr).map_err(|e| {
@@ -843,7 +854,10 @@ pub(crate) fn convert_c_host_await_builtins(
     if builtins.is_null() && len > 0 {
         return Err(anyhow!("null host_await_builtins pointer"));
     }
-    let mut result = Vec::with_capacity(len);
+    let mut result = Vec::new();
+    result
+        .try_reserve(len)
+        .map_err(|_| anyhow!("failed to reserve capacity for {len} host-await builtins"))?;
     for i in 0..len {
         unsafe {
             let b = &*builtins.add(i);
