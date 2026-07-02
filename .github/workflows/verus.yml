@@ -46,4 +46,4 @@ jobs:
     - name: Fetch dependencies
       run: cargo fetch --locked
     - name: Run Verus verification
-      run: cargo verus verify --locked --features verus
+      run: cargo verus verify --locked

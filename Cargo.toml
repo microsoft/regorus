@@ -48,7 +48,7 @@ cache = ["dep:lru"]
 rvm = ["dep:postcard", "dep:indexmap"]
 semver = ["dep:semver"]
 allocator-memory-limits = ["std", "mimalloc", "mimalloc/allocator-memory-limits"]
-std = ["rand/std", "rand/std_rng", "serde_json/std", "indexmap?/std", "msvc_spectre_libs", "dep:parking_lot" ]
+std = ["rand/std", "rand/std_rng", "serde_json/std", "indexmap?/std", "msvc_spectre_libs", "dep:parking_lot", "vstd/std" ]
 time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
@@ -99,7 +99,6 @@ rego-extensions = []
 # This feature enables some testing utils for OPA tests.
 opa-testutil = []
 rand = ["dep:rand"]
-verus = ["dep:vstd"]
 
 [dependencies]
 anyhow = { version = "1.0.102", default-features = false }
@@ -140,8 +139,10 @@ mimalloc = { package = "regorus-mimalloc", path = "mimalloc", version = "2.2.7",
 indexmap = { version = "2.13.1", default-features = false, features = ["serde"], optional = true }
 postcard = { version = "1.1.3", default-features = false, features = ["alloc"], optional = true }
 
-# Verus-related dependencies
-vstd = { git = "https://github.com/verus-lang/verus.git", optional = true }
+# Verus-related dependencies.
+# vstd is always enabled. In no_std builds only the `alloc` feature is used; the
+# crate's `std` feature enables `vstd/std` (which matches vstd's default features).
+vstd = { git = "https://github.com/verus-lang/verus.git", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 anyhow = "1.0.102"
