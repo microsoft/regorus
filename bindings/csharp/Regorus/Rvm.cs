@@ -227,7 +227,7 @@ namespace Regorus
         }
 
         /// <summary>
-        /// Get the HostAwait identifier as a JSON string.
+        /// Get the HostAwait identifier as a raw UTF-8 string (not JSON-quoted).
         /// Returns null if the VM is not in a HostAwait-suspended state.
         /// </summary>
         public string? GetHostAwaitIdentifier()

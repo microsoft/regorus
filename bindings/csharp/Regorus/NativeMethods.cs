@@ -259,7 +259,7 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_rvm_get_host_await_argument(RegorusRvm* vm);
 
         /// <summary>
-        /// Get the HostAwait identifier as a JSON string.
+        /// Get the HostAwait identifier as a raw UTF-8 string.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_rvm_get_host_await_identifier", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_rvm_get_host_await_identifier(RegorusRvm* vm);

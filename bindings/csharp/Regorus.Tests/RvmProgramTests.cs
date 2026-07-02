@@ -147,10 +147,8 @@ allow if {
         vm.Execute();
 
         // Verify we're suspended due to HostAwait with identifier "get_account".
-        // GetHostAwaitIdentifier returns the JSON-encoded Value, so the identifier
-        // string itself includes the surrounding JSON quotes.
         var identifier = vm.GetHostAwaitIdentifier();
-        Assert.AreEqual("\"get_account\"", identifier, "expected identifier to be get_account");
+        Assert.AreEqual("get_account", identifier, "expected identifier to be get_account");
 
         var argument = vm.GetHostAwaitArgument();
         Assert.IsNotNull(argument, "expected non-null argument");

@@ -823,8 +823,10 @@ pub extern "C" fn regorus_rvm_get_host_await_argument(vm: *mut RegorusRvm) -> Re
     })
 }
 
-/// Get the HostAwait identifier as a JSON string.
+/// Get the HostAwait identifier as a raw UTF-8 string.
 ///
+/// The returned string is the identifier itself (not JSON-quoted), so it can be
+/// passed directly as an identifier to `regorus_rvm_set_host_await_responses`.
 /// Returns the identifier value if the VM is suspended due to a HostAwait instruction,
 /// or None if the VM is not in a HostAwait-suspended state.
 #[no_mangle]
@@ -834,13 +836,14 @@ pub extern "C" fn regorus_rvm_get_host_await_identifier(vm: *mut RegorusRvm) -> 
             let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let guard = vm.try_read()?;
             match guard.get_host_await_identifier() {
-                Some(id) => Ok(Some(id.to_json_str()?)),
+                Some(Value::String(s)) => Ok(Some(s.as_ref().to_string())),
+                Some(_) => Err(anyhow!("host-await identifier must be a string")),
                 None => Ok(None),
             }
         }();
 
         match output {
-            Ok(Some(json)) => RegorusResult::ok_string(json),
+            Ok(Some(identifier)) => RegorusResult::ok_string(identifier),
             Ok(None) => RegorusResult::ok_void(),
             Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
         }
