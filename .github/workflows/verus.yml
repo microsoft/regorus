@@ -43,8 +43,7 @@ jobs:
         echo "$verus_dir" >> "$GITHUB_PATH"
 
         cargo verus --help
-        cargo verus toolchain install
     - name: Fetch dependencies
       run: cargo fetch --locked
     - name: Run Verus verification
-      run: cargo verus verify --locked
+      run: cargo verus verify --locked --features verus
