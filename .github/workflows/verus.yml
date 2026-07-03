@@ -36,8 +36,28 @@ jobs:
 
         verus_bin="$(find verus-dist -type f -name verus -perm -u+x | head -n1)"
         cargo_verus_bin="$(find verus-dist -type f -name cargo-verus -perm -u+x | head -n1)"
+        version_json="$(find verus-dist -type f -name version.json | head -n1)"
         test -n "$verus_bin"
         test -n "$cargo_verus_bin"
+        test -n "$version_json"
+
+        # Verus is built against a specific Rust toolchain and refuses to run
+        # against any other version. Read the required toolchain from the
+        # release metadata so we track it automatically instead of hardcoding.
+        required_toolchain="$(sed -n 's/.*"toolchain"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$version_json")"
+        test -n "$required_toolchain"
+        echo "Verus requires Rust toolchain: $required_toolchain"
+
+        # Install the exact toolchain Verus expects, including the extra
+        # components (rustc-dev, llvm-tools) that Verus links against and that
+        # are not part of the default rustup profile.
+        rustup toolchain install "$required_toolchain" \
+          --profile minimal \
+          --component rustc-dev --component llvm-tools --component rustfmt
+
+        # Force cargo/rustc to resolve to the Verus toolchain for the commands
+        # below, overriding any repository/directory toolchain override.
+        export RUSTUP_TOOLCHAIN="$required_toolchain"
 
         # Put cargo-verus on PATH for the commands below.
         export PATH="$(cd "$(dirname "$verus_bin")" && pwd):$PATH"
