@@ -25,7 +25,7 @@ jobs:
       uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       with:
         shared-key: ${{ runner.os }}-regorus-verus
-    - name: Install Verus from GitHub releases
+    - name: Install Verus and run verification
       shell: bash
       run: |
         set -euxo pipefail
@@ -39,11 +39,9 @@ jobs:
         test -n "$verus_bin"
         test -n "$cargo_verus_bin"
 
-        verus_dir="$(dirname "$verus_bin")"
-        echo "$verus_dir" >> "$GITHUB_PATH"
-
+        # Put cargo-verus on PATH for the commands below.
+        export PATH="$(cd "$(dirname "$verus_bin")" && pwd):$PATH"
         cargo verus --help
-    - name: Fetch dependencies
-      run: cargo fetch --locked
-    - name: Run Verus verification
-      run: cargo verus verify --locked
+
+        cargo fetch --locked
+        cargo verus verify --locked
