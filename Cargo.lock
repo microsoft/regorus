@@ -152,9 +152,9 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "bstr"
-version = "1.12.2"
+version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4e308e67087593070530a666f7fe8815cbd2e61d8f5b7313b71b7d721d1dfde"
+checksum = "5cee35f73844aa3014bb606320a6c1f010249dbdf43342fe54b5a4f6a8ed4b79"
 dependencies = [
  "memchr",
  "serde_core",
@@ -873,9 +873,9 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
-version = "0.46.6"
+version = "0.46.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8374249b1bdce1c1773a09fa294347e19e4bfeb86d845c2d8ebaf8a8dbf11233"
+checksum = "1d865ca7ca04445fcaa1d751fda3dc43b0113ba2fcddc65d5a0fcb474a7c3bba"
 dependencies = [
  "ahash",
  "bytecount",
@@ -886,16 +886,25 @@ dependencies = [
  "getrandom 0.3.4",
  "idna",
  "itoa",
+ "jsonschema-regex",
  "num-cmp",
  "num-traits",
  "percent-encoding",
  "referencing",
  "regex",
- "regex-syntax",
  "serde",
  "serde_json",
  "unicode-general-category",
  "uuid-simd",
+]
+
+[[package]]
+name = "jsonschema-regex"
+version = "0.46.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b7fc96cd6677cc81b00607d43477327d719419937ef1c44b3556a40f517d54c"
+dependencies = [
+ "regex-syntax",
 ]
 
 [[package]]
@@ -987,9 +996,9 @@ dependencies = [
 
 [[package]]
 name = "num-bigint"
-version = "0.4.6"
+version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
+checksum = "c863e9ab5e7bf9c99ba75e1050f1e4d624ae87ed3532d6238ffbdc7b585dbbe6"
 dependencies = [
  "num-integer",
  "num-traits",
@@ -1263,9 +1272,9 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
+checksum = "c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80"
 dependencies = [
  "chacha20",
  "getrandom 0.4.3",
@@ -1329,9 +1338,9 @@ dependencies = [
 
 [[package]]
 name = "referencing"
-version = "0.46.6"
+version = "0.46.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65a910f9d63351f9c9d7dc3053d02b214ea3a005917140c70087d7b59cbc5bb1"
+checksum = "77954d81b2e1c5e8ab889f9f597a92f852ab073255de9e37ee3fb443efd57051"
 dependencies = [
  "ahash",
  "fluent-uri",
@@ -1779,12 +1788,12 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "verus_builtin"
 version = "0.0.0-2026-05-17-0151"
-source = "git+https://github.com/verus-lang/verus.git#1f4a5b0d4b7c83e6d4f501db9f73f2ffc561fc53"
+source = "git+https://github.com/verus-lang/verus.git#60c8383d70074f6c00d754b4fb47438995fcb79a"
 
 [[package]]
 name = "verus_builtin_macros"
 version = "0.0.0-2026-06-14-0213"
-source = "git+https://github.com/verus-lang/verus.git#1f4a5b0d4b7c83e6d4f501db9f73f2ffc561fc53"
+source = "git+https://github.com/verus-lang/verus.git#60c8383d70074f6c00d754b4fb47438995fcb79a"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.46",
@@ -1797,7 +1806,7 @@ dependencies = [
 [[package]]
 name = "verus_prettyplease"
 version = "0.0.0-2026-05-31-0205"
-source = "git+https://github.com/verus-lang/verus.git#1f4a5b0d4b7c83e6d4f501db9f73f2ffc561fc53"
+source = "git+https://github.com/verus-lang/verus.git#60c8383d70074f6c00d754b4fb47438995fcb79a"
 dependencies = [
  "proc-macro2 1.0.106",
  "verus_syn",
@@ -1806,7 +1815,7 @@ dependencies = [
 [[package]]
 name = "verus_state_machines_macros"
 version = "0.0.0-2026-06-14-0213"
-source = "git+https://github.com/verus-lang/verus.git#1f4a5b0d4b7c83e6d4f501db9f73f2ffc561fc53"
+source = "git+https://github.com/verus-lang/verus.git#60c8383d70074f6c00d754b4fb47438995fcb79a"
 dependencies = [
  "indexmap 1.9.3",
  "proc-macro2 1.0.106",
@@ -1817,7 +1826,7 @@ dependencies = [
 [[package]]
 name = "verus_syn"
 version = "0.0.0-2026-05-31-0205"
-source = "git+https://github.com/verus-lang/verus.git#1f4a5b0d4b7c83e6d4f501db9f73f2ffc561fc53"
+source = "git+https://github.com/verus-lang/verus.git#60c8383d70074f6c00d754b4fb47438995fcb79a"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.46",
@@ -1833,7 +1842,7 @@ checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 [[package]]
 name = "vstd"
 version = "0.0.0-2026-06-14-0213"
-source = "git+https://github.com/verus-lang/verus.git#1f4a5b0d4b7c83e6d4f501db9f73f2ffc561fc53"
+source = "git+https://github.com/verus-lang/verus.git#60c8383d70074f6c00d754b4fb47438995fcb79a"
 dependencies = [
  "verus_builtin",
  "verus_builtin_macros",
@@ -2161,9 +2170,9 @@ dependencies = [
 
 [[package]]
 name = "zlib-rs"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "977347db8caa080403f6b6b7c1cda9479a8e869316f7e13a59b19076a40f94e3"
+checksum = "5431d5661c32445236631278f27946e444ddafe4684cac70b185272d4f9c52d5"
 
 [[package]]
 name = "zmij"
