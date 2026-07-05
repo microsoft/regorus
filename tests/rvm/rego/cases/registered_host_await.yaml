@@ -268,6 +268,28 @@ cases:
     # registering it as a host-await builtin is rejected at compile time.
     want_error: "__builtin_host_await is a reserved name"
 
+  - note: registered_builtin_rejects_data_qualified_name
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    # Package-qualified `data.*` names are rejected at registration. Matching on
+    # the as-written call path, such a name would intercept a qualified call like
+    # `data.other.lookup(x)` and silently shadow the user-defined rule/function
+    # at that path, contradicting the documented contract that package-qualified
+    # calls are never intercepted. (Builtin-namespace names such as
+    # `time.parse_duration_ns` are still allowed — they do not start with `data.`.)
+    host_await_builtins:
+      - name: data.other.lookup
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := true
+    query: data.demo.result
+    want_error: "package-qualified"
+
   - note: registered_builtin_empty_list_is_noop
     data: {}
     input: {}
