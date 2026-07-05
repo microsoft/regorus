@@ -125,6 +125,7 @@ pub extern "C" fn regorus_program_compile_from_policy(
 
 /// Shared implementation for compiling an RVM program from data/modules/entry-points
 /// with optional host-await builtins.
+#[allow(clippy::too_many_arguments)]
 fn compile_from_modules_inner(
     data_json: *const c_char,
     modules: *const RegorusPolicyModule,
@@ -133,6 +134,7 @@ fn compile_from_modules_inner(
     entry_points_len: usize,
     host_await_builtins: *const RegorusHostAwaitBuiltin,
     host_await_builtins_len: usize,
+    host_await_builtin_size: usize,
 ) -> Result<*mut RegorusProgram> {
     if entry_points_len == 0 {
         return Err(anyhow!("entry_points must contain at least one entry"));
@@ -155,7 +157,11 @@ fn compile_from_modules_inner(
     // slice is equivalent to `compile_from_policy`, so both FFI entry points
     // route through this single path. A null `host_await_builtins` pointer
     // with `len == 0` is the canonical "no builtins" shape.
-    let ha_builtins = convert_c_host_await_builtins(host_await_builtins, host_await_builtins_len)?;
+    let ha_builtins = convert_c_host_await_builtins(
+        host_await_builtins,
+        host_await_builtins_len,
+        host_await_builtin_size,
+    )?;
     let ha_ref: Vec<(&str, usize)> = ha_builtins.iter().map(|(n, a)| (n.as_str(), *a)).collect();
 
     let program = Compiler::compile_from_policy_with_host_await(
@@ -200,6 +206,7 @@ pub extern "C" fn regorus_program_compile_from_modules(
             entry_points_len,
             core::ptr::null(),
             0,
+            core::mem::size_of::<RegorusHostAwaitBuiltin>(),
         ))
     })
 }
@@ -690,6 +697,10 @@ pub struct RegorusHostAwaitBuiltin {
 /// * `modules` / `modules_len` - Policy modules to compile
 /// * `entry_points` / `entry_points_len` - Entry point rule paths
 /// * `host_await_builtins` / `host_await_builtins_len` - Builtins that compile to HostAwait
+/// * `host_await_builtin_size` - `sizeof(RegorusHostAwaitBuiltin)` as seen by the
+///   caller; used as the array stride so callers built against a different struct
+///   layout still walk the array correctly (forward-compatible ABI)
+#[allow(clippy::too_many_arguments)]
 #[no_mangle]
 pub extern "C" fn regorus_program_compile_from_modules_with_host_await(
     data_json: *const c_char,
@@ -699,6 +710,7 @@ pub extern "C" fn regorus_program_compile_from_modules_with_host_await(
     entry_points_len: usize,
     host_await_builtins: *const RegorusHostAwaitBuiltin,
     host_await_builtins_len: usize,
+    host_await_builtin_size: usize,
 ) -> RegorusResult {
     with_unwind_guard(|| {
         compile_from_modules_result(compile_from_modules_inner(
@@ -709,6 +721,7 @@ pub extern "C" fn regorus_program_compile_from_modules_with_host_await(
             entry_points_len,
             host_await_builtins,
             host_await_builtins_len,
+            host_await_builtin_size,
         ))
     })
 }
@@ -735,11 +748,14 @@ pub struct RegorusHostAwaitResponseSet {
 /// * `vm` - RVM instance
 /// * `response_sets` - Array of per-identifier response sets
 /// * `response_sets_len` - Number of entries in `response_sets`
+/// * `response_set_size` - `sizeof(RegorusHostAwaitResponseSet)` as seen by the
+///   caller; used as the array stride for forward-compatible ABI
 #[no_mangle]
 pub extern "C" fn regorus_rvm_set_host_await_responses(
     vm: *mut RegorusRvm,
     response_sets: *const RegorusHostAwaitResponseSet,
     response_sets_len: usize,
+    response_set_size: usize,
 ) -> RegorusResult {
     with_unwind_guard(|| {
         to_regorus_result(|| -> Result<()> {
@@ -750,17 +766,33 @@ pub extern "C" fn regorus_rvm_set_host_await_responses(
                 return Err(anyhow!("null response_sets pointer"));
             }
 
+            // `response_set_size` is `sizeof(RegorusHostAwaitResponseSet)` as the
+            // caller compiled it, which is also the array stride. Validate and use
+            // it so a caller built against a different struct layout still walks
+            // the array correctly.
+            let min_size = core::mem::size_of::<RegorusHostAwaitResponseSet>();
+            if response_sets_len > 0 && response_set_size < min_size {
+                return Err(anyhow!(
+                    "response_set_size ({response_set_size}) is smaller than the expected \
+                     RegorusHostAwaitResponseSet layout ({min_size} bytes); ABI mismatch"
+                ));
+            }
+
             let mut all = Vec::new();
             all.try_reserve(response_sets_len).map_err(|_| {
                 anyhow!(
                     "failed to reserve capacity for {response_sets_len} host-await response sets"
                 )
             })?;
+            let base = response_sets as *const u8;
             for i in 0..response_sets_len {
-                // SAFETY: caller guarantees `response_sets` points to a
-                // contiguous array of `response_sets_len` `RegorusHostAwaitResponseSet`
-                // values, and the inner pointers reference valid C strings.
-                let set = unsafe { &*response_sets.add(i) };
+                let offset = i.checked_mul(response_set_size).ok_or_else(|| {
+                    anyhow!("host-await response set array offset overflow at index {i}")
+                })?;
+                // SAFETY: caller guarantees `response_sets` points to a contiguous
+                // array of `response_sets_len` elements each `response_set_size`
+                // bytes wide, and the inner pointers reference valid C strings.
+                let set = unsafe { &*(base.add(offset) as *const RegorusHostAwaitResponseSet) };
 
                 let id_str = from_c_str(set.identifier)
                     .map_err(|e| anyhow!("invalid identifier in response set at index {i}: {e}"))?;
@@ -853,23 +885,138 @@ pub extern "C" fn regorus_rvm_get_host_await_identifier(vm: *mut RegorusRvm) -> 
 pub(crate) fn convert_c_host_await_builtins(
     builtins: *const RegorusHostAwaitBuiltin,
     len: usize,
+    struct_size: usize,
 ) -> Result<Vec<(String, usize)>> {
     if builtins.is_null() && len > 0 {
         return Err(anyhow!("null host_await_builtins pointer"));
+    }
+    // `struct_size` is `sizeof(RegorusHostAwaitBuiltin)` as the caller compiled it,
+    // which is also the array stride. Validate it covers the fields this build
+    // reads, then index by that stride so a caller built against a different
+    // (older/newer) struct layout still walks the array correctly.
+    let min_size = core::mem::size_of::<RegorusHostAwaitBuiltin>();
+    if len > 0 && struct_size < min_size {
+        return Err(anyhow!(
+            "host_await_builtin_size ({struct_size}) is smaller than the expected \
+             RegorusHostAwaitBuiltin layout ({min_size} bytes); ABI mismatch"
+        ));
     }
     let mut result = Vec::new();
     result
         .try_reserve(len)
         .map_err(|_| anyhow!("failed to reserve capacity for {len} host-await builtins"))?;
+    let base = builtins as *const u8;
     for i in 0..len {
-        unsafe {
-            let b = &*builtins.add(i);
-            let name = from_c_str(b.name)
-                .map_err(|e| anyhow!("invalid host-await builtin name at index {i}: {e}"))?;
-            // Arg count is fixed to 1 by the compiler — see the doc comment
-            // on `RegorusHostAwaitBuiltin` and `Compiler::register_host_await_builtin`.
-            result.push((name, 1));
-        }
+        let offset = i
+            .checked_mul(struct_size)
+            .ok_or_else(|| anyhow!("host-await builtin array offset overflow at index {i}"))?;
+        // SAFETY: caller guarantees `len` elements each `struct_size` bytes wide
+        // starting at `builtins`, with valid C-string `name` pointers.
+        let b = unsafe { &*(base.add(offset) as *const RegorusHostAwaitBuiltin) };
+        let name = from_c_str(b.name)
+            .map_err(|e| anyhow!("invalid host-await builtin name at index {i}: {e}"))?;
+        // Arg count is fixed to 1 by the compiler — see the doc comment
+        // on `RegorusHostAwaitBuiltin` and `Compiler::register_host_await_builtin`.
+        result.push((name, 1));
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+
+    fn c(s: &str) -> CString {
+        CString::new(s).expect("CString::new failed")
+    }
+
+    /// Simulates a *future* `RegorusHostAwaitBuiltin` that has grown a trailing
+    /// field. It shares the same `name: *const c_char` at offset 0, so a caller
+    /// built against this wider layout must still be walked correctly as long as
+    /// it reports its own (larger) element size as the stride.
+    #[repr(C)]
+    struct WiderBuiltin {
+        name: *const c_char,
+        _appended: u64,
+    }
+
+    // A caller-supplied array laid out at the exact native element size parses fine.
+    #[test]
+    fn convert_builtins_native_size_parses_names() {
+        let names = [c("translate"), c("fetch")];
+        let builtins: Vec<RegorusHostAwaitBuiltin> = names
+            .iter()
+            .map(|n| RegorusHostAwaitBuiltin { name: n.as_ptr() })
+            .collect();
+        let size = core::mem::size_of::<RegorusHostAwaitBuiltin>();
+
+        let result =
+            convert_c_host_await_builtins(builtins.as_ptr(), builtins.len(), size).unwrap();
+
+        assert_eq!(
+            result,
+            vec![("translate".to_string(), 1), ("fetch".to_string(), 1)]
+        );
+    }
+
+    // A caller whose element size is smaller than the native layout is rejected
+    // loudly (clean error) instead of walked with a bad stride.
+    #[test]
+    fn convert_builtins_undersized_stride_is_rejected() {
+        let name = c("translate");
+        let builtins = [RegorusHostAwaitBuiltin {
+            name: name.as_ptr(),
+        }];
+        let too_small = core::mem::size_of::<RegorusHostAwaitBuiltin>() - 1;
+
+        let err = convert_c_host_await_builtins(builtins.as_ptr(), builtins.len(), too_small)
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("ABI mismatch"),
+            "expected an ABI mismatch error, got: {err}"
+        );
+    }
+
+    // A *newer* caller whose struct has an appended field (larger stride) is still
+    // walked correctly: the native side honors the caller-supplied stride and reads
+    // `name` at offset 0 of each element. This is the forward-compatible
+    // mixed-version direction (new caller + older native library).
+    #[test]
+    fn convert_builtins_oversized_stride_uses_caller_stride() {
+        let names = [c("translate"), c("fetch")];
+        let wide: Vec<WiderBuiltin> = names
+            .iter()
+            .map(|n| WiderBuiltin {
+                name: n.as_ptr(),
+                _appended: 0,
+            })
+            .collect();
+        let wider_size = core::mem::size_of::<WiderBuiltin>();
+        assert!(wider_size > core::mem::size_of::<RegorusHostAwaitBuiltin>());
+
+        // SAFETY: `WiderBuiltin` begins with the same `name: *const c_char` field
+        // at offset 0 as `RegorusHostAwaitBuiltin`, and we pass the true element
+        // stride (`wider_size`), so every read stays in bounds.
+        let result = convert_c_host_await_builtins(
+            wide.as_ptr() as *const RegorusHostAwaitBuiltin,
+            wide.len(),
+            wider_size,
+        )
+        .unwrap();
+
+        assert_eq!(
+            result,
+            vec![("translate".to_string(), 1), ("fetch".to_string(), 1)]
+        );
+    }
+
+    // The no-host-await path passes null/0; the size argument must be ignored
+    // (no array is walked, so any size — including 0 — is accepted).
+    #[test]
+    fn convert_builtins_zero_len_ignores_size() {
+        let result = convert_c_host_await_builtins(core::ptr::null(), 0, 0).unwrap();
+        assert!(result.is_empty());
+    }
 }

@@ -250,7 +250,7 @@ namespace Regorus.Internal
         /// Pre-load HostAwait responses for run-to-completion mode.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_host_await_responses", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern RegorusResult regorus_rvm_set_host_await_responses(RegorusRvm* vm, RegorusHostAwaitResponseSet* response_sets, UIntPtr response_sets_len);
+        internal static extern RegorusResult regorus_rvm_set_host_await_responses(RegorusRvm* vm, RegorusHostAwaitResponseSet* response_sets, UIntPtr response_sets_len, UIntPtr response_set_size);
 
         /// <summary>
         /// Get the HostAwait argument as a JSON string.
@@ -268,7 +268,7 @@ namespace Regorus.Internal
         /// Compile an RVM program from data/modules/entry-points with registered host-awaitable builtins.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_program_compile_from_modules_with_host_await", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern RegorusResult regorus_program_compile_from_modules_with_host_await(byte* data_json, RegorusPolicyModule* modules, UIntPtr modules_len, byte** entry_points, UIntPtr entry_points_len, RegorusHostAwaitBuiltin* host_await_builtins, UIntPtr host_await_builtins_len);
+        internal static extern RegorusResult regorus_program_compile_from_modules_with_host_await(byte* data_json, RegorusPolicyModule* modules, UIntPtr modules_len, byte** entry_points, UIntPtr entry_points_len, RegorusHostAwaitBuiltin* host_await_builtins, UIntPtr host_await_builtins_len, UIntPtr host_await_builtin_size);
 
         /// Add a policy.
         /// The policy is parsed into AST.
