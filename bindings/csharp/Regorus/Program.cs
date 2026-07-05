@@ -156,7 +156,8 @@ namespace Regorus
                         (byte**)entryPtr,
                         (UIntPtr)pinnedEntryPoints.Length,
                         builtinsPtr,
-                        (UIntPtr)pinnedBuiltins.Length);
+                        (UIntPtr)pinnedBuiltins.Length,
+                        (UIntPtr)sizeof(RegorusHostAwaitBuiltin));
 
                     return GetProgramResult(result);
                 }

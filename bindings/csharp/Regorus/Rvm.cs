@@ -267,7 +267,8 @@ namespace Regorus
                     CheckAndDropResult(API.regorus_rvm_set_host_await_responses(
                         (RegorusRvm*)vmPtr,
                         setsPtr,
-                        (UIntPtr)pinnedSets.Length));
+                        (UIntPtr)pinnedSets.Length,
+                        (UIntPtr)sizeof(RegorusHostAwaitResponseSet)));
                 }
                 return 0;
             });
