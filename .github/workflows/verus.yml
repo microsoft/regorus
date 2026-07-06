@@ -11,6 +11,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# This workflow only checks out code, downloads a pinned Verus release asset,
+# and runs verification. It never writes to the repository, so restrict the
+# GITHUB_TOKEN to read-only access to repository contents.
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
