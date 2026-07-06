@@ -29,9 +29,14 @@ jobs:
       shell: bash
       run: |
         set -euxo pipefail
-        asset_url="$(curl -fsSL https://api.github.com/repos/verus-lang/verus/releases/latest | grep '"browser_download_url":' | cut -d '"' -f 4 | grep -E 'x86-linux\.zip$' | head -n1)"
+        asset_url=https://github.com/verus-lang/verus/releases/download/release%2F0.2026.07.05.49b8806/verus-0.2026.07.05.49b8806-x86-linux.zip
+        asset_sha256=cb4fe7db423fdda5e9aa77b2c3e632f8a618b6a991509283aae591f0a914d34c
         test -n "$asset_url"
         curl -fsSL "$asset_url" -o verus.zip
+
+        # Verify the download integrity before trusting/executing its contents.
+        echo "${asset_sha256}  verus.zip" | sha256sum --check --strict
+
         unzip -q verus.zip -d verus-dist
 
         verus_bin="$(find verus-dist -type f -name verus -perm -u+x | head -n1)"
@@ -60,8 +65,7 @@ jobs:
         export RUSTUP_TOOLCHAIN="$required_toolchain"
 
         # Put cargo-verus on PATH for the commands below.
-        export PATH="$(cd "$(dirname "$verus_bin")" && pwd):$PATH"
+        export PATH="$(cd "$(dirname "$cargo_verus_bin")" && pwd):$(cd "$(dirname "$verus_bin")" && pwd):$PATH"
         cargo verus --help
-
         cargo fetch --locked
         cargo verus verify --locked
