@@ -74,4 +74,4 @@ jobs:
         export PATH="$(cd "$(dirname "$cargo_verus_bin")" && pwd):$(cd "$(dirname "$verus_bin")" && pwd):$PATH"
         cargo verus --help
         cargo fetch --locked
-        cargo verus verify --locked
+        cargo verus verify --locked --features verus
