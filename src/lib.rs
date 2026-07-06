@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 // Unsafe code should not be used.
+// Hard to reason about correctness, and maintainability.
 #![forbid(unsafe_code)]
 // Ensure that all lint names are valid.
 #![deny(unknown_lints)]
