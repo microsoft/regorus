@@ -45,9 +45,12 @@ jobs:
 
         unzip -q verus.zip -d verus-dist
 
-        verus_bin="$(find verus-dist -type f -name verus -perm -u+x | head -n1)"
-        cargo_verus_bin="$(find verus-dist -type f -name cargo-verus -perm -u+x | head -n1)"
-        version_json="$(find verus-dist -type f -name version.json | head -n1)"
+        # Search under an absolute path so that `find` yields absolute paths;
+        # this keeps the PATH entries below valid regardless of the working
+        # directory.
+        verus_bin="$(find "$PWD/verus-dist" -type f -name verus -perm -u+x | head -n1)"
+        cargo_verus_bin="$(find "$PWD/verus-dist" -type f -name cargo-verus -perm -u+x | head -n1)"
+        version_json="$(find "$PWD/verus-dist" -type f -name version.json | head -n1)"
         test -n "$verus_bin"
         test -n "$cargo_verus_bin"
         test -n "$version_json"
@@ -71,7 +74,7 @@ jobs:
         export RUSTUP_TOOLCHAIN="$required_toolchain"
 
         # Put cargo-verus on PATH for the commands below.
-        export PATH="$(cd "$(dirname "$cargo_verus_bin")" && pwd):$(cd "$(dirname "$verus_bin")" && pwd):$PATH"
+        export PATH="$(dirname "$cargo_verus_bin"):$(dirname "$verus_bin"):$PATH"
         cargo verus --help
         cargo fetch --locked
         cargo verus verify --locked --features verus
