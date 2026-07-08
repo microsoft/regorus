@@ -434,7 +434,10 @@ impl Engine {
 
     /// Add data document.
     ///
-    /// The specified data document is merged into existing data document.
+    /// The specified data document is deep-merged into the existing data document. Nested
+    /// objects are merged recursively (matching OPA's data-document merge), so adding
+    /// `{ "a": { "x": 1 } }` and then `{ "a": { "y": 2 } }` yields `{ "a": { "x": 1, "y": 2 } }`.
+    /// A conflict — the same path holding two different values — is an error.
     ///
     /// ```
     /// # use regorus::*;
@@ -453,9 +456,13 @@ impl Engine {
     /// // Merge { "z" : 3 }. Conflict error.
     /// assert!(engine.add_data(Value::from_json_str(r#"{ "z" : 3 }"#)?).is_err());
     ///
+    /// // Nested objects are deep-merged. Merge { "y" : { "a" : 10 } } then { "y" : { "b" : 20 } }.
+    /// assert!(engine.add_data(Value::from_json_str(r#"{ "y" : { "a" : 10 } }"#)?).is_ok());
+    /// assert!(engine.add_data(Value::from_json_str(r#"{ "y" : { "b" : 20 } }"#)?).is_ok());
+    ///
     /// assert_eq!(
     ///   engine.eval_query("data".to_string(), false)?.result[0].expressions[0].value,
-    ///   Value::from_json_str(r#"{ "x": 1, "y": {}, "z": 2}"#)?
+    ///   Value::from_json_str(r#"{ "x": 1, "y": { "a": 10, "b": 20 }, "z": 2}"#)?
     /// );
     /// # Ok(())
     /// # }

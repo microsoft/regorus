@@ -1365,6 +1365,16 @@ impl Value {
         }
     }
 
+    /// Recursively merge `new` into `self`.
+    ///
+    /// Objects are deep-merged: keys present on only one side are kept, keys present on both
+    /// whose values are both objects are merged recursively, and keys whose values are both
+    /// sets are unioned. This matches OPA's data-document merge semantics for objects (see
+    /// `Engine::add_data`); set-union is a regorus extension, since OPA data documents are
+    /// JSON and cannot contain sets. A genuine leaf conflict — the same path holding two
+    /// *different* non-container values — is an error. Equal values are tolerated as a no-op;
+    /// the rule-evaluation path (`Interpreter::merge_rule_value`) shares this method and relies
+    /// on that leniency, since a rule may legally produce the same value more than once.
     pub(crate) fn merge(&mut self, mut new: Value) -> Result<()> {
         if self == &new {
             return Ok(());
@@ -1377,18 +1387,35 @@ impl Value {
                 enforce_limit_anyhow()?;
             }
             (Value::Object(map), Value::Object(new)) => {
+                let map = Rc::make_mut(map);
                 for (k, v) in new.iter() {
-                    match map.get(k) {
-                        Some(pv) if *pv != *v => {
-                            bail!(
-                                "value for key `{}` generated multiple times: `{}` and `{}`",
-                                serde_json::to_string_pretty(&k).map_err(anyhow::Error::msg)?,
-                                serde_json::to_string_pretty(&pv).map_err(anyhow::Error::msg)?,
-                                serde_json::to_string_pretty(&v).map_err(anyhow::Error::msg)?,
-                            )
+                    match map.get_mut(k) {
+                        Some(existing) => {
+                            // Deep-merge: when both sides are containers, recurse so that
+                            // nested objects are merged rather than the whole subtree being
+                            // replaced (matches OPA's data document merge semantics).
+                            let both_mergeable = matches!(
+                                (&*existing, v),
+                                (Value::Object(_), Value::Object(_))
+                                    | (Value::Set(_), Value::Set(_))
+                            );
+                            if both_mergeable {
+                                existing.merge(v.clone())?;
+                            } else if *existing != *v {
+                                // A genuine leaf conflict: the same path holds two different
+                                // values. (Equal values are tolerated as a no-op, which the
+                                // shared rule-evaluation path relies on.)
+                                bail!(
+                                    "value for key `{}` generated multiple times: `{}` and `{}`",
+                                    serde_json::to_string_pretty(&k).map_err(anyhow::Error::msg)?,
+                                    serde_json::to_string_pretty(&existing)
+                                        .map_err(anyhow::Error::msg)?,
+                                    serde_json::to_string_pretty(&v).map_err(anyhow::Error::msg)?,
+                                )
+                            }
                         }
-                        _ => {
-                            Rc::make_mut(map).insert(k.clone(), v.clone());
+                        None => {
+                            map.insert(k.clone(), v.clone());
                             // Enforce allocator limit after merging object entries.
                             enforce_limit_anyhow()?;
                         }
