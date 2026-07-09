@@ -1383,7 +1383,15 @@ impl Value {
         match (self, &mut new) {
             (v @ Value::Undefined, _) => *v = new,
             (Value::Set(ref mut set), Value::Set(new)) => {
-                Rc::make_mut(set).append(Rc::make_mut(new));
+                // Union without deep-cloning the RHS set. If we uniquely own it, move its
+                // elements out; if it is shared (e.g. reached via `existing.merge(v.clone())`
+                // in the object arm below), clone only the element handles (`Rc` bumps),
+                // never the whole `BTreeSet`.
+                let dst = Rc::make_mut(set);
+                match Rc::try_unwrap(core::mem::take(new)) {
+                    Ok(owned) => dst.extend(owned),
+                    Err(shared) => dst.extend(shared.iter().cloned()),
+                }
                 // Enforce allocator limit after merging set entries.
                 enforce_limit_anyhow()?;
             }
