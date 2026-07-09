@@ -1371,8 +1371,9 @@ impl Value {
     /// whose values are both objects are merged recursively, and keys whose values are both
     /// sets are unioned. This matches OPA's data-document merge semantics for objects (see
     /// `Engine::add_data`); set-union is a regorus extension, since OPA data documents are
-    /// JSON and cannot contain sets. A genuine leaf conflict — the same path holding two
-    /// *different* non-container values — is an error. Equal values are tolerated as a no-op;
+    /// JSON and cannot contain sets. Any other differing pair — values that are not both
+    /// objects or both sets, such as two unequal scalars or two arrays — is a genuine
+    /// conflict and is an error. Equal values are tolerated as a no-op;
     /// the rule-evaluation path (`Interpreter::merge_rule_value`) shares this method and relies
     /// on that leniency, since a rule may legally produce the same value more than once.
     pub(crate) fn merge(&mut self, mut new: Value) -> Result<()> {
