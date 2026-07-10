@@ -983,6 +983,77 @@ fn test_add_data_equal_set_is_noop() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_add_data_failed_merge_is_atomic() -> Result<()> {
+    let mut engine = Engine::new();
+
+    engine.add_data(Value::from_json_str(r#"{ "a" : { "z" : 1 } }"#)?)?;
+
+    // Mixes a new key `m` with a conflicting leaf `z` (1 vs 3). Because `m` sorts
+    // before `z`, a naive in-place merge would insert `m` and only then hit the `z`
+    // conflict. add_data must be all-or-nothing: the whole call fails AND leaves the
+    // existing data untouched — `m` must not leak in.
+    assert!(engine
+        .add_data(Value::from_json_str(r#"{ "a" : { "m" : 2, "z" : 3 } }"#)?)
+        .is_err());
+
+    assert_eq!(
+        engine.get_data(),
+        Value::from_json_str(r#"{ "a" : { "z" : 1 } }"#)?
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_data_failed_set_merge_is_atomic() -> Result<()> {
+    let mut engine = Engine::new();
+
+    // Existing data: a set `s` alongside a scalar `z` under `a`.
+    engine.add_data(Value::from(BTreeMap::from([(
+        Value::from("a"),
+        Value::from(BTreeMap::from([
+            (
+                Value::from("s"),
+                Value::from(BTreeSet::from([Value::from(1_u64), Value::from(2_u64)])),
+            ),
+            (Value::from("z"), Value::from(1_u64)),
+        ])),
+    )])))?;
+
+    // This add would union `s` with {3} but conflicts on `z` (1 vs 2). Since `s`
+    // sorts before `z`, a naive in-place merge would union the set *before* failing
+    // on `z`, leaking {3} into `s`. The atomic add must reject the whole call and
+    // leave `s` as {1, 2}.
+    assert!(engine
+        .add_data(Value::from(BTreeMap::from([(
+            Value::from("a"),
+            Value::from(BTreeMap::from([
+                (
+                    Value::from("s"),
+                    Value::from(BTreeSet::from([Value::from(3_u64)])),
+                ),
+                (Value::from("z"), Value::from(2_u64)),
+            ])),
+        )])))
+        .is_err());
+
+    // `s` must be unchanged ({1, 2}, not {1, 2, 3}) and `z` must still be 1.
+    let expected = Value::from(BTreeMap::from([(
+        Value::from("a"),
+        Value::from(BTreeMap::from([
+            (
+                Value::from("s"),
+                Value::from(BTreeSet::from([Value::from(1_u64), Value::from(2_u64)])),
+            ),
+            (Value::from("z"), Value::from(1_u64)),
+        ])),
+    )]));
+    assert_eq!(engine.get_data(), expected);
+
+    Ok(())
+}
+
 // The `Value::merge` used by `add_data` is shared with the rule-evaluation path
 // (`Interpreter::merge_rule_value`, reached via `with data.* as ...` and rule-value
 // materialization). The tests below pin down that making `merge` recursive changed only the

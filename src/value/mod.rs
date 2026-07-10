@@ -1435,6 +1435,53 @@ impl Value {
         };
         Ok(())
     }
+
+    /// Read-only check that merging `other` into `self` via [`Value::merge`] would
+    /// not conflict, without mutating `self` or allocating.
+    ///
+    /// This mirrors `merge`'s conflict rule exactly — objects are deep-merged, sets
+    /// union (never conflict), equal values are a tolerated no-op, and any other
+    /// differing pair is a conflict — but only *reads*. [`Engine::add_data`] runs this
+    /// before `merge` so a rejected add is all-or-nothing: a conflict deep in a nested
+    /// document cannot leave earlier keys of the same document partially written.
+    /// Keeping the check separate preserves `merge`'s in-place (uniquely-owned) fast
+    /// path — no candidate copy of the data document is made just to validate it.
+    ///
+    /// [`Engine::add_data`]: crate::Engine::add_data
+    pub(crate) fn check_mergeable(&self, other: &Value) -> Result<()> {
+        if self == other {
+            return Ok(());
+        }
+        match (self, other) {
+            (Value::Undefined, _) => Ok(()),
+            // Set union never conflicts (matches the `(Set, Set)` merge arm).
+            (Value::Set(_), Value::Set(_)) => Ok(()),
+            (Value::Object(dst), Value::Object(src)) => {
+                for (k, sv) in src.iter() {
+                    // Only overlapping keys can conflict; keys unique to `src` are
+                    // pure insertions.
+                    if let Some(dv) = dst.get(k) {
+                        let both_mergeable = matches!(
+                            (dv, sv),
+                            (Value::Object(_), Value::Object(_)) | (Value::Set(_), Value::Set(_))
+                        );
+                        if both_mergeable {
+                            dv.check_mergeable(sv)?;
+                        } else if dv != sv {
+                            bail!(
+                                "value for key `{}` generated multiple times: `{}` and `{}`",
+                                serde_json::to_string_pretty(&k).map_err(anyhow::Error::msg)?,
+                                serde_json::to_string_pretty(&dv).map_err(anyhow::Error::msg)?,
+                                serde_json::to_string_pretty(&sv).map_err(anyhow::Error::msg)?,
+                            )
+                        }
+                    }
+                }
+                Ok(())
+            }
+            _ => bail!("error: could not merge value"),
+        }
+    }
 }
 
 impl ops::Index<&Value> for Value {

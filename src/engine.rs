@@ -439,6 +439,9 @@ impl Engine {
     /// `{ "a": { "x": 1 } }` and then `{ "a": { "y": 2 } }` yields `{ "a": { "x": 1, "y": 2 } }`.
     /// A conflict — the same path holding two different values — is an error.
     ///
+    /// The merge is atomic: if any conflict is detected (including one deep in a nested
+    /// document), the call fails and the existing data document is left unchanged.
+    ///
     /// ```
     /// # use regorus::*;
     /// # fn main() -> anyhow::Result<()> {
@@ -471,6 +474,11 @@ impl Engine {
         if data.as_object().is_err() {
             bail!("data must be object");
         }
+        // Validate that the merge cannot conflict *before* mutating, so a rejected
+        // add_data is a no-op (all-or-nothing) and never leaves the data document
+        // partially merged. This read-only check allocates nothing and preserves the
+        // in-place merge fast path (no candidate copy of the data document is made).
+        self.interpreter.get_init_data().check_mergeable(&data)?;
         self.prepared = false;
         self.interpreter.get_init_data_mut().merge(data)
     }
