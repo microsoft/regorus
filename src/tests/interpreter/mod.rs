@@ -1054,6 +1054,30 @@ fn test_add_data_failed_set_merge_is_atomic() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_add_data_failed_array_merge_is_atomic() -> Result<()> {
+    let mut engine = Engine::new();
+
+    engine.add_data(Value::from_json_str(r#"{ "a" : { "arr" : [1, 2] } }"#)?)?;
+
+    // Arrays are atomic leaves (never element-merged), so a differing array at the
+    // same path is a conflict. The new key `aa` sorts before `arr`, so a naive
+    // in-place merge would insert `aa` and only then hit the `arr` conflict. add_data
+    // must reject the whole call and leave the data untouched — `aa` must not leak in.
+    assert!(engine
+        .add_data(Value::from_json_str(
+            r#"{ "a" : { "aa" : 5, "arr" : [3] } }"#
+        )?)
+        .is_err());
+
+    assert_eq!(
+        engine.get_data(),
+        Value::from_json_str(r#"{ "a" : { "arr" : [1, 2] } }"#)?
+    );
+
+    Ok(())
+}
+
 // The `Value::merge` used by `add_data` is shared with the rule-evaluation path
 // (`Interpreter::merge_rule_value`, reached via `with data.* as ...` and rule-value
 // materialization). The tests below pin down that making `merge` recursive changed only the
