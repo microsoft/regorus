@@ -52,6 +52,11 @@ type State = (
     Value,
     BTreeMap<String, FunctionModifier>,
     RuleValues,
+    // Number of partial-sweep readers recorded before entering a `with` scope.
+    // Readers recorded inside the scope refer to values computed under the
+    // modified input/data and cannot be meaningfully re-verified after the
+    // scope's state is restored, so they are dropped on restore.
+    usize,
 );
 
 #[derive(Debug, Clone)]
@@ -102,7 +107,15 @@ pub struct Interpreter {
     // in which another rule was still being evaluated (and was therefore
     // skipped). These are re-evaluated once evaluation settles to verify that
     // the partially materialized value did not affect their result.
-    partial_sweep_readers: Vec<(Ref<Module>, Ref<Rule>)>,
+    // The bool is true for "fixup" readers: rules whose evaluation was deferred
+    // because they referenced a rule that was mid-flight due to a module sweep;
+    // they are re-evaluated (not just consistency-checked) once evaluation settles.
+    partial_sweep_readers: Vec<(Ref<Module>, Ref<Rule>, bool)>,
+    // Parallel to active_rules: whether each rule's evaluation was initiated by a
+    // wholesale module sweep.
+    active_rules_via_sweep: Vec<bool>,
+    rule_via_sweep: bool,
+    partial_sweep_deferred: bool,
     verify_pass: bool,
     verify_rule_produced: bool,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
@@ -149,6 +162,9 @@ impl Clone for Interpreter {
             builtins_cache: BTreeMap::default(),
             active_rules: Vec::default(),
             partial_sweep_readers: Vec::default(),
+            active_rules_via_sweep: Vec::default(),
+            rule_via_sweep: false,
+            partial_sweep_deferred: false,
             verify_pass: false,
             verify_rule_produced: false,
             contexts: Vec::default(),
@@ -228,6 +244,9 @@ impl Interpreter {
             rule_values: BTreeMap::default(),
             active_rules: Vec::default(),
             partial_sweep_readers: Vec::default(),
+            active_rules_via_sweep: Vec::default(),
+            rule_via_sweep: false,
+            partial_sweep_deferred: false,
             verify_pass: false,
             verify_rule_produced: false,
             builtins_cache: BTreeMap::default(),
@@ -269,6 +288,9 @@ impl Interpreter {
             rule_values: BTreeMap::default(),
             active_rules: Vec::default(),
             partial_sweep_readers: Vec::default(),
+            active_rules_via_sweep: Vec::default(),
+            rule_via_sweep: false,
+            partial_sweep_deferred: false,
             verify_pass: false,
             verify_rule_produced: false,
             builtins_cache: BTreeMap::default(),
@@ -414,6 +436,12 @@ impl Interpreter {
         self.contexts = vec![];
         self.rule_values.clear();
         self.builtins_cache.clear();
+        self.partial_sweep_readers.clear();
+        self.active_rules_via_sweep.clear();
+        self.rule_via_sweep = false;
+        self.partial_sweep_deferred = false;
+        self.verify_pass = false;
+        self.verify_rule_produced = false;
         self.reset_execution_timer_state();
     }
 
@@ -1356,6 +1384,7 @@ impl Interpreter {
                     processed_paths,
                     with_functions,
                     rule_values,
+                    self.partial_sweep_readers.len(),
                 )),
                 skip_exec,
             ))
@@ -1366,6 +1395,7 @@ impl Interpreter {
 
     fn restore_state(&mut self, saved_state: Option<State>) -> Result<()> {
         if let Some(s) = saved_state {
+            let n_partial_sweep_readers;
             (
                 self.with_document,
                 self.input,
@@ -1374,7 +1404,22 @@ impl Interpreter {
                 self.processed_paths,
                 self.with_functions,
                 self.rule_values,
+                n_partial_sweep_readers,
             ) = s;
+            // Readers recorded inside the `with` scope were evaluated under the
+            // modified input/data and cannot be meaningfully re-verified after the
+            // restore — unless the reader is still being evaluated (it is the rule
+            // containing the `with` statement); re-verifying it re-applies its own
+            // modifiers, so it is kept.
+            if self.partial_sweep_readers.len() > n_partial_sweep_readers {
+                let active_rules = self.active_rules.clone();
+                let mut idx = 0;
+                self.partial_sweep_readers.retain(|(_, r, _)| {
+                    let keep = idx < n_partial_sweep_readers || active_rules.contains(r);
+                    idx = idx.saturating_add(1);
+                    keep
+                });
+            }
         }
         Ok(())
     }
@@ -1672,11 +1717,6 @@ impl Interpreter {
         mut value: Value,
         is_set: bool,
     ) -> Result<()> {
-        // During the partial-sweep consistency check, note that the rule being
-        // re-evaluated (the only rule at stack depth 1) produced a value.
-        if self.verify_pass && self.active_rules.len() == 1 && value != Value::Undefined {
-            self.verify_rule_produced = true;
-        }
         // If rule's value already exists in initial document, prefer it.
         {
             let mut init_obj = &self.init_data;
@@ -2957,14 +2997,27 @@ impl Interpreter {
                                      rule depends on the entire package containing it",
                                 ));
                             }
-                            if !self.partial_sweep_readers.iter().any(|(_, r)| r == reader) {
+                            if !self
+                                .partial_sweep_readers
+                                .iter()
+                                .any(|(_, r, _)| r == reader)
+                            {
                                 let reader = reader.clone();
                                 let reader_module = self.get_rule_module(&reader)?;
-                                self.partial_sweep_readers.push((reader_module, reader));
+                                self.partial_sweep_readers
+                                    .push((reader_module, reader, false));
                             }
                         }
                     } else if !self.processed.contains(rule) {
-                        self.eval_rule(&module, rule)?;
+                        self.rule_via_sweep = true;
+                        let r = self.eval_rule(&module, rule);
+                        self.rule_via_sweep = false;
+                        r?;
+                        // A rule beneath this sweep deferred its evaluation; the
+                        // module's value is not final yet.
+                        if core::mem::take(&mut self.partial_sweep_deferred) {
+                            skipped_active_rule = true;
+                        }
                     }
                 }
 
@@ -3812,6 +3865,13 @@ impl Interpreter {
                         let package_components = self.eval_rule_ref(&module.package.refr)?;
 
                         if value != Value::Undefined {
+                            // During the partial-sweep consistency check, note that the
+                            // rule being re-evaluated (the only rule at stack depth 1)
+                            // produced output. Placeholder writes for failed set/object
+                            // rules below must not count as produced output.
+                            if self.verify_pass && self.active_rules.len() == 1 {
+                                self.verify_rule_produced = true;
+                            }
                             for (path, value_in_map) in value.as_object()? {
                                 let mut full_path = package_components.clone();
                                 full_path.append(&mut path.as_array()?.clone());
@@ -3897,7 +3957,49 @@ impl Interpreter {
         }
 
         self.active_rules.push(rule.clone());
+        self.active_rules_via_sweep
+            .push(core::mem::take(&mut self.rule_via_sweep));
         if self.active_rules.iter().filter(|&r| r == rule).count() == 2 {
+            // If the cycle passes through a rule whose evaluation was initiated by a
+            // wholesale module sweep, this is not necessarily a genuine rule-level
+            // cycle: the sweep coarsely evaluates every rule of the module. Defer the
+            // reference instead of erroring: the referencing rule (the one whose body
+            // performed this lookup) is recorded for re-evaluation (fixup) and the
+            // referenced in-flight rule for a consistency check once evaluation
+            // settles.
+            let first = self
+                .active_rules
+                .iter()
+                .position(|r| r == rule)
+                .unwrap_or(0);
+            let via_sweep = self
+                .active_rules_via_sweep
+                .iter()
+                .take(self.active_rules_via_sweep.len().saturating_sub(1))
+                .skip(first.saturating_add(1))
+                .any(|b| *b);
+            if via_sweep {
+                self.active_rules.pop();
+                self.active_rules_via_sweep.pop();
+                if let Some(reader) = self.active_rules.last().cloned() {
+                    if reader != *rule
+                        && !self
+                            .partial_sweep_readers
+                            .iter()
+                            .any(|(_, r, _)| *r == reader)
+                    {
+                        let reader_module = self.get_rule_module(&reader)?;
+                        self.partial_sweep_readers
+                            .push((reader_module, reader, true));
+                    }
+                }
+                if !self.partial_sweep_readers.iter().any(|(_, r, _)| r == rule) {
+                    self.partial_sweep_readers
+                        .push((module.clone(), rule.clone(), false));
+                }
+                self.partial_sweep_deferred = true;
+                return Ok(());
+            }
             let mut msg = String::default();
             for r in &self.active_rules {
                 let refr = Self::get_rule_refr(r);
@@ -3910,6 +4012,7 @@ impl Interpreter {
             }
             msg.push_str("cyclic evaluation");
             self.active_rules.pop();
+            self.active_rules_via_sweep.pop();
             let refr = Self::get_rule_refr(rule);
             let span = refr.span();
             return Err(span.source.error(
@@ -3928,6 +4031,7 @@ impl Interpreter {
 
         self.set_current_module(prev_module)?;
         self.scopes = scopes;
+        self.active_rules_via_sweep.pop();
         let res = match self.active_rules.pop() {
             Some(ref r) if r == rule => res,
             _ => bail!("internal error: current rule not active"),
@@ -3962,7 +4066,7 @@ impl Interpreter {
     fn verify_partial_sweep_readers_impl(&mut self) -> Result<()> {
         let mut verified: Vec<Ref<Rule>> = Vec::new();
         while !self.partial_sweep_readers.is_empty() {
-            for (module, rule) in core::mem::take(&mut self.partial_sweep_readers) {
+            for (module, rule, fixup) in core::mem::take(&mut self.partial_sweep_readers) {
                 let refr = Self::get_rule_refr(&rule);
                 let span = refr.span();
                 let recursion_error = |detail: &str| {
@@ -4001,6 +4105,14 @@ impl Interpreter {
                 if let Err(e) = self.eval_rule(&module, &rule) {
                     return Err(recursion_error(&format!(":\n{e}")));
                 }
+
+                // Fixup readers were deferred during the initial evaluation; their
+                // value legitimately appears or changes now. A rule conflict above
+                // is still an error, but no consistency check applies.
+                if fixup {
+                    continue;
+                }
+
                 if before != value_at_path(&self.data) {
                     return Err(recursion_error(""));
                 }
@@ -4010,7 +4122,14 @@ impl Interpreter {
                 // have been derived from the partially materialized module.
                 if !self.verify_rule_produced {
                     if let (Some(comps), Some(before)) = (&path_comps, &before) {
-                        if *before != Value::Undefined {
+                        // An empty collection is consistent with a rule that produced
+                        // no output (e.g. a set rule whose body never succeeded).
+                        let is_empty_collection = match before {
+                            Value::Set(s) => s.is_empty(),
+                            Value::Object(o) => o.is_empty(),
+                            _ => false,
+                        };
+                        if *before != Value::Undefined && !is_empty_collection {
                             let path = format!(
                                 "data.{}",
                                 comps.iter().map(|s| s.text()).collect::<Vec<_>>().join(".")

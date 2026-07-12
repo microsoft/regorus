@@ -128,6 +128,162 @@ cases:
     query: data
     error: recursion detected
 
+  # Like cross-module-non-cyclic-rules-no-import, but the sweeping rule is the
+  # outermost one, so the swept rule's back-reference hits an in-flight rule
+  # via a direct path: evaluation is deferred and fixed up, not rejected.
+  - note: cross-module-non-cyclic-rules-swept-back-reference
+    data: {}
+    modules:
+      - |
+        package registry
+        import rego.v1
+        allow_stage1 if data.registry.packages[_].allow_stage1
+      - |
+        package registry.packages.package_a
+        import rego.v1
+        allow_stage2 if data.registry.allow_stage1
+        allow_stage1 := true
+    query: data
+    want_result:
+      registry:
+        allow_stage1: true
+        packages:
+          package_a:
+            allow_stage1: true
+            allow_stage2: true
+
+  # Genuine cycle mediated through a function call.
+  - note: cross-module-package-cycle-via-function
+    data: {}
+    modules:
+      - |
+        package p
+        import rego.v1
+        a if data.q.f(1) > 0
+      - |
+        package q
+        import rego.v1
+        f(x) := count(data.p) + x
+    query: data
+    error: recursion detected
+
+  # Genuine cycle through a partial set rule: the set element exists only
+  # while the referenced package is partially materialized.
+  - note: cross-module-package-cycle-partial-set
+    data: {}
+    modules:
+      - |
+        package p
+        import rego.v1
+        a if "sentinel" in data.q.names
+      - |
+        package q
+        import rego.v1
+        names contains "sentinel" if count(data.p) == 0
+    query: data
+    error: recursion detected
+
+  # Genuine cycle where the package read happens inside a `with` scope.
+  - note: cross-module-package-cycle-inside-with
+    data: {}
+    modules:
+      - |
+        package p
+        import rego.v1
+        a if data.q.trigger
+      - |
+        package q
+        import rego.v1
+        trigger if {
+          count(data.p) == 0 with input as {}
+        }
+    query: data
+    error: recursion detected
+
+  # Three packages referencing each other cyclically while the rules stay
+  # acyclic: must evaluate like OPA does.
+  - note: cross-module-three-package-chain
+    data: {}
+    modules:
+      - |
+        package tri.a
+        import rego.v1
+        x if data.tri.b[_].y1
+        y1 := true
+      - |
+        package tri.b.inner
+        import rego.v1
+        y1 if data.tri.c[_].z1
+        y2 := true
+      - |
+        package tri.c.inner
+        import rego.v1
+        z1 if data.tri.a.y1
+        z2 if data.tri.b[_].y2
+    query: data.tri
+    want_result:
+      a:
+        x: true
+        y1: true
+      b:
+        inner:
+          y1: true
+          y2: true
+      c:
+        inner:
+          z1: true
+          z2: true
+
+  # Non-cyclic partial set and dynamic-key object rules reading across
+  # cyclically referencing packages.
+  - note: cross-module-non-cyclic-set-and-object-readers
+    data: {}
+    modules:
+      - |
+        package registry
+        import rego.v1
+        allow_stage1 if data.registry.packages[_].allow_stage1
+      - |
+        package registry.packages.package_a
+        import rego.v1
+        allow_stage2 if data.registry.allow_stage1
+        allow_stage1 := true
+      - |
+        package readers
+        import rego.v1
+        names contains n if data.registry.packages[n].allow_stage1
+        items[n] := true if data.registry.packages[n].allow_stage2
+    query: data.readers
+    want_result:
+      names:
+        set!: [package_a]
+      items:
+        package_a: true
+
+  # Non-cyclic package read performed under a `with` modifier.
+  - note: cross-module-non-cyclic-read-under-with
+    data: {}
+    modules:
+      - |
+        package registry
+        import rego.v1
+        allow_stage1 if data.registry.packages[_].allow_stage1
+      - |
+        package registry.packages.package_a
+        import rego.v1
+        allow_stage2 if data.registry.allow_stage1
+        allow_stage1 := true
+      - |
+        package w
+        import rego.v1
+        result if {
+          some name
+          data.registry.packages[name].allow_stage1 with input as {}
+        }
+    query: data.w
+    want_result:
+      result: true
+
   - note: inter
     data: {}
     modules:

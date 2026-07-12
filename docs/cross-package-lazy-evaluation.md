@@ -154,9 +154,61 @@ matching OPA's verdict, while the valid issue #743 policies re-evaluate
 to identical values and pass. The check only runs when a partial sweep
 actually occurred, so well-behaved policies pay no cost.
 
-Regression tests: `cross-module-package-cycle` and
-`cross-module-package-cycle-vanishing` in
-`tests/interpreter/cases/rule/dependency.yaml`.
+### Deferred back-references through a sweep
+
+A swept rule may itself directly reference the rule that initiated the
+sweep. With only one rule in the registry package:
+
+```rego
+package registry
+allow_stage1 if data.registry.packages[_].allow_stage1
+```
+
+`allow_stage1` is the outermost evaluation, its sweep evaluates
+`package_a.allow_stage2`, and that rule's direct reference to
+`data.registry.allow_stage1` hits a rule that is already on the
+evaluation stack. This is not a genuine rule-level cycle either (OPA
+accepts it), so when a direct reference reaches an in-flight rule *and*
+the cycle passes through a sweep-initiated evaluation, the reference is
+**deferred** instead of rejected: the referencing rule momentarily sees
+`undefined`, is recorded as a *fixup* reader (tracked per entry in
+`partial_sweep_readers`), and is re-evaluated once evaluation settles —
+its value legitimately appears then. The sweeping rule is recorded for
+the strict consistency check described above, so a genuine cycle hiding
+behind this pattern still errors (typically as a rule conflict during
+fixup). A cycle that does not pass through any sweep (e.g. `a = b`,
+`b = c`, `c = a`) is still rejected immediately with the classic
+recursion error.
+
+### Interaction with `with` scopes and engine reuse
+
+`with` modifiers save and restore evaluation state around a statement.
+Readers recorded *inside* a `with` scope were computed under modified
+input/data and are dropped when the scope's state is restored — except
+when the reader is the still-active rule containing the `with`
+statement itself, which is kept: re-verifying it re-applies its own
+modifiers, so genuine cycles whose package read happens under a `with`
+modifier are still detected. All partial-sweep bookkeeping is also
+cleared in `clean_internal_evaluation_state`, so a reused `Engine`
+cannot carry stale readers from one evaluation into the next.
+
+### Regression tests
+
+All scenarios live in `tests/interpreter/cases/rule/dependency.yaml`:
+
+| case | kind |
+|---|---|
+| `cross-module-non-cyclic-rules` | valid (issue #743, import alias) |
+| `cross-module-non-cyclic-rules-no-import` | valid (issue #743, direct refs) |
+| `cross-module-non-cyclic-rules-swept-back-reference` | valid (deferred back-reference) |
+| `cross-module-three-package-chain` | valid (three packages, acyclic rules) |
+| `cross-module-non-cyclic-set-and-object-readers` | valid (partial set + dynamic-key object readers) |
+| `cross-module-non-cyclic-read-under-with` | valid (package read under `with`) |
+| `cross-module-package-cycle` | error (count over cyclic package) |
+| `cross-module-package-cycle-vanishing` | error (vanishing value) |
+| `cross-module-package-cycle-via-function` | error (cycle through a function) |
+| `cross-module-package-cycle-partial-set` | error (cycle through a partial set) |
+| `cross-module-package-cycle-inside-with` | error (cycle read inside `with`) |
 
 ### Remaining differences from OPA
 
@@ -172,3 +224,30 @@ Regression tests: `cross-module-package-cycle` and
   produce a different value on re-evaluation and trigger a spurious
   recursion error; the interpreter's builtin cache makes this unlikely
   in practice.
+- A reader that ran to completion entirely inside a `with` scope (i.e.
+  a rule evaluated under modified input/data from another rule's body)
+  is dropped when the scope's state is restored, so a cycle confined to
+  such a scope goes undetected rather than erroring. Example:
+
+  ```rego
+  package p
+  a if data.q.trigger with input as {}
+  ```
+
+  ```rego
+  package q
+  trigger if count(data.p) == 0
+  ```
+
+  OPA rejects this as recursive; regorus returns
+  `{"p": {"a": true}, "q": {}}`. The reader `q.trigger` completes
+  inside `p.a`'s `with` scope and its record is discarded on restore,
+  because re-verifying it later against *unmodified* input would be a
+  meaningless comparison and would produce spurious recursion errors
+  for valid policies. (If the `with` statement is inside the reader's
+  own body, the reader is still active at restore time, is kept, and
+  the cycle is detected — see `cross-module-package-cycle-inside-with`.)
+  A precise fix would require re-verifying the reader under the same
+  scope at scope exit, but its ancestors are still mid-flight then and
+  the partial-materialization problem recurses; closing this gap for
+  good needs static rule-level cycle detection as in OPA.
