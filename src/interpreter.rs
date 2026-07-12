@@ -118,6 +118,9 @@ pub struct Interpreter {
     partial_sweep_deferred: bool,
     verify_pass: bool,
     verify_rule_produced: bool,
+    // Stack depth at which the rule under verification runs; writes at this
+    // depth count as the rule producing output.
+    verify_rule_depth: usize,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
     execution_timer: ExecutionTimer,
@@ -167,6 +170,7 @@ impl Clone for Interpreter {
             partial_sweep_deferred: false,
             verify_pass: false,
             verify_rule_produced: false,
+            verify_rule_depth: 0,
             contexts: Vec::default(),
             current_module_path: String::default(),
             current_module_index: 0,
@@ -249,6 +253,7 @@ impl Interpreter {
             partial_sweep_deferred: false,
             verify_pass: false,
             verify_rule_produced: false,
+            verify_rule_depth: 0,
             builtins_cache: BTreeMap::default(),
             no_rules_lookup: false,
             traces: None,
@@ -293,6 +298,7 @@ impl Interpreter {
             partial_sweep_deferred: false,
             verify_pass: false,
             verify_rule_produced: false,
+            verify_rule_depth: 0,
             builtins_cache: BTreeMap::default(),
             no_rules_lookup: false,
             traces: None,
@@ -442,6 +448,7 @@ impl Interpreter {
         self.partial_sweep_deferred = false;
         self.verify_pass = false;
         self.verify_rule_produced = false;
+        self.verify_rule_depth = 0;
         self.reset_execution_timer_state();
     }
 
@@ -1395,6 +1402,17 @@ impl Interpreter {
 
     fn restore_state(&mut self, saved_state: Option<State>) -> Result<()> {
         if let Some(s) = saved_state {
+            // Verify readers recorded inside this `with` scope before its state is
+            // restored: they were computed under the modified input/data and cannot
+            // be meaningfully checked afterwards. A reader that re-verifies cleanly
+            // proves consistent; one that is still ambiguous (its swept module still
+            // contains an in-flight rule) or inconsistent yields a recursion error.
+            let verify_result = if !self.verify_pass && self.partial_sweep_readers.len() > s.7 {
+                self.verify_partial_sweep_readers_from(s.7)
+            } else {
+                Ok(())
+            };
+
             let n_partial_sweep_readers;
             (
                 self.with_document,
@@ -1420,6 +1438,7 @@ impl Interpreter {
                     keep
                 });
             }
+            verify_result?;
         }
         Ok(())
     }
@@ -3797,8 +3816,8 @@ impl Interpreter {
             return Ok(());
         }
         // During the partial-sweep consistency check, note that the rule being
-        // re-evaluated (the only rule at stack depth 1) produced a value.
-        if self.verify_pass && self.active_rules.len() == 1 {
+        // re-evaluated produced a value.
+        if self.verify_pass && self.active_rules.len() == self.verify_rule_depth {
             self.verify_rule_produced = true;
         }
         // Ensure that path is created.
@@ -3866,10 +3885,11 @@ impl Interpreter {
 
                         if value != Value::Undefined {
                             // During the partial-sweep consistency check, note that the
-                            // rule being re-evaluated (the only rule at stack depth 1)
-                            // produced output. Placeholder writes for failed set/object
-                            // rules below must not count as produced output.
-                            if self.verify_pass && self.active_rules.len() == 1 {
+                            // rule being re-evaluated produced output. Placeholder writes
+                            // for failed set/object rules below must not count as
+                            // produced output.
+                            if self.verify_pass && self.active_rules.len() == self.verify_rule_depth
+                            {
                                 self.verify_rule_produced = true;
                             }
                             for (path, value_in_map) in value.as_object()? {
@@ -4057,16 +4077,27 @@ impl Interpreter {
     // granularity and an error is reported, matching OPA's rejection of such
     // policies. Prints are suppressed during re-evaluation to avoid duplicates.
     fn verify_partial_sweep_readers(&mut self) -> Result<()> {
+        self.verify_partial_sweep_readers_from(0)
+    }
+
+    // Verify readers recorded at or after index `start`. Readers that are still
+    // being evaluated are left recorded for verification once they settle.
+    fn verify_partial_sweep_readers_from(&mut self, start: usize) -> Result<()> {
         self.verify_pass = true;
-        let result = self.verify_partial_sweep_readers_impl();
+        let result = self.verify_partial_sweep_readers_impl(start);
         self.verify_pass = false;
         result
     }
 
-    fn verify_partial_sweep_readers_impl(&mut self) -> Result<()> {
+    fn verify_partial_sweep_readers_impl(&mut self, start: usize) -> Result<()> {
         let mut verified: Vec<Ref<Rule>> = Vec::new();
-        while !self.partial_sweep_readers.is_empty() {
-            for (module, rule, fixup) in core::mem::take(&mut self.partial_sweep_readers) {
+        let mut still_active: Vec<(Ref<Module>, Ref<Rule>, bool)> = Vec::new();
+        while self.partial_sweep_readers.len() > start {
+            for (module, rule, fixup) in self.partial_sweep_readers.split_off(start) {
+                if self.active_rules.contains(&rule) {
+                    still_active.push((module, rule, fixup));
+                    continue;
+                }
                 let refr = Self::get_rule_refr(&rule);
                 let span = refr.span();
                 let recursion_error = |detail: &str| {
@@ -4102,6 +4133,7 @@ impl Interpreter {
                 let before = value_at_path(&self.data);
                 self.processed.remove(&rule);
                 self.verify_rule_produced = false;
+                self.verify_rule_depth = self.active_rules.len().saturating_add(1);
                 if let Err(e) = self.eval_rule(&module, &rule) {
                     return Err(recursion_error(&format!(":\n{e}")));
                 }
@@ -4148,6 +4180,7 @@ impl Interpreter {
                 }
             }
         }
+        self.partial_sweep_readers.append(&mut still_active);
         Ok(())
     }
 

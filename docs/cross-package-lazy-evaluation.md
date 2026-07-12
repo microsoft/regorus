@@ -184,13 +184,39 @@ recursion error.
 
 `with` modifiers save and restore evaluation state around a statement.
 Readers recorded *inside* a `with` scope were computed under modified
-input/data and are dropped when the scope's state is restored — except
-when the reader is the still-active rule containing the `with`
-statement itself, which is kept: re-verifying it re-applies its own
-modifiers, so genuine cycles whose package read happens under a `with`
-modifier are still detected. All partial-sweep bookkeeping is also
-cleared in `clean_internal_evaluation_state`, so a reused `Engine`
-cannot carry stale readers from one evaluation into the next.
+input/data and cannot be meaningfully checked after the scope's state
+is restored. They are therefore verified **at scope exit**, while the
+scoped data is still in place:
+
+- A reader that re-verifies cleanly proves the result consistent and no
+  error is raised.
+- A reader that is still ambiguous — its swept module still contains a
+  rule that is mid-flight further up the stack, so re-evaluation
+  re-records it — or that produces a different value yields a recursion
+  error. This errs on the side of rejecting: such a policy cannot be
+  proven consistent at this point, even though OPA's finer-grained
+  static analysis might accept it.
+- A reader that is itself still active (it is the rule containing the
+  `with` statement) is kept across the restore and verified once its
+  own evaluation settles; re-verifying it re-applies its own modifiers.
+
+Example of a genuine cycle whose package read completes inside another
+rule's `with` scope, rejected at scope exit
+(`cross-module-package-cycle-completed-inside-with`):
+
+```rego
+package p
+a if data.q.trigger with input as {}
+```
+
+```rego
+package q
+trigger if count(data.p) == 0
+```
+
+All partial-sweep bookkeeping is also cleared in
+`clean_internal_evaluation_state`, so a reused `Engine` cannot carry
+stale readers from one evaluation into the next.
 
 ### Regression tests
 
@@ -209,6 +235,7 @@ All scenarios live in `tests/interpreter/cases/rule/dependency.yaml`:
 | `cross-module-package-cycle-via-function` | error (cycle through a function) |
 | `cross-module-package-cycle-partial-set` | error (cycle through a partial set) |
 | `cross-module-package-cycle-inside-with` | error (cycle read inside `with`) |
+| `cross-module-package-cycle-completed-inside-with` | error (cycle completed inside another rule's `with`) |
 
 ### Remaining differences from OPA
 
@@ -224,30 +251,11 @@ All scenarios live in `tests/interpreter/cases/rule/dependency.yaml`:
   produce a different value on re-evaluation and trigger a spurious
   recursion error; the interpreter's builtin cache makes this unlikely
   in practice.
-- A reader that ran to completion entirely inside a `with` scope (i.e.
-  a rule evaluated under modified input/data from another rule's body)
-  is dropped when the scope's state is restored, so a cycle confined to
-  such a scope goes undetected rather than erroring. Example:
-
-  ```rego
-  package p
-  a if data.q.trigger with input as {}
-  ```
-
-  ```rego
-  package q
-  trigger if count(data.p) == 0
-  ```
-
-  OPA rejects this as recursive; regorus returns
-  `{"p": {"a": true}, "q": {}}`. The reader `q.trigger` completes
-  inside `p.a`'s `with` scope and its record is discarded on restore,
-  because re-verifying it later against *unmodified* input would be a
-  meaningless comparison and would produce spurious recursion errors
-  for valid policies. (If the `with` statement is inside the reader's
-  own body, the reader is still active at restore time, is kept, and
-  the cycle is detected — see `cross-module-package-cycle-inside-with`.)
-  A precise fix would require re-verifying the reader under the same
-  scope at scope exit, but its ancestors are still mid-flight then and
-  the partial-materialization problem recurses; closing this gap for
-  good needs static rule-level cycle detection as in OPA.
+- A reader that completed inside another rule's `with` scope is
+  verified at scope exit. If its swept module still contains a rule
+  that is mid-flight outside the scope, consistency cannot be proven
+  there and a recursion error is raised **even if the policy is
+  acyclic at rule granularity** — a deliberate err-on-the-side-of-
+  rejecting choice for a case OPA's static analysis could disambiguate.
+  Eliminating both false positives and false negatives here would
+  require static rule-level cycle detection as in OPA.

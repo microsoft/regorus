@@ -200,6 +200,23 @@ cases:
     query: data
     error: recursion detected
 
+  # Genuine cycle where the cyclic package read completes inside another
+  # rule's `with` scope: verified at scope exit, before the scope's state is
+  # restored.
+  - note: cross-module-package-cycle-completed-inside-with
+    data: {}
+    modules:
+      - |
+        package p
+        import rego.v1
+        a if data.q.trigger with input as {}
+      - |
+        package q
+        import rego.v1
+        trigger if count(data.p) == 0
+    query: data
+    error: recursion detected
+
   # Three packages referencing each other cyclically while the rules stay
   # acyclic: must evaluate like OPA does.
   - note: cross-module-three-package-chain
