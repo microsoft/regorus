@@ -2905,20 +2905,30 @@ impl Interpreter {
                     *vref = Value::new_object();
                 }
 
+                // Rules that are currently being evaluated are skipped instead of
+                // reported as recursion: this module is being materialized wholesale
+                // (e.g. due to a ref like data.pkg[name].x), so an in-flight rule here
+                // is not necessarily a genuine dependency cycle. Its value will be
+                // written into data when its evaluation completes.
+                let mut skipped_active_rule = false;
                 for rule in &module.policy {
-                    if !self.processed.contains(rule) {
+                    if self.active_rules.contains(rule) {
+                        skipped_active_rule = true;
+                    } else if !self.processed.contains(rule) {
                         self.eval_rule(&module, rule)?;
                     }
                 }
 
                 let prev_module = self.set_current_module(Some(module.clone()))?;
                 for rule in &module.policy {
-                    if !self.processed.contains(rule) {
+                    if !self.processed.contains(rule) && !self.active_rules.contains(rule) {
                         self.eval_default_rule(rule)?;
                     }
                 }
                 self.set_current_module(prev_module)?;
-                self.mark_processed(&module_path_components)?;
+                if !skipped_active_rule {
+                    self.mark_processed(&module_path_components)?;
+                }
             }
         }
 
@@ -2987,6 +2997,35 @@ impl Interpreter {
         Ok(())
     }
 
+    // Look up a path under data, evaluating only the rules and modules needed
+    // to materialize the value at the given path.
+    fn lookup_data_path(&mut self, fields: &[&str]) -> Result<Value> {
+        if self.is_processed(fields)? {
+            return Ok(Self::get_value_chained(self.data.clone(), fields));
+        }
+
+        // With modifiers may be used to specify part of a module that that not yet been
+        // evaluated. Therefore ensure that module is evaluated first.
+        let requested_path = format!("data.{}", fields.join("."));
+        self.ensure_module_evaluated(requested_path)?;
+
+        for i in (1..=fields.len()).rev() {
+            let prefix = fields.iter().take(i).copied().collect::<Vec<_>>();
+            let prefix_path = format!("data.{}", prefix.join("."));
+            if self.compiled_policy.rules.contains_key(&prefix_path)
+                || self
+                    .compiled_policy
+                    .default_rules
+                    .contains_key(&prefix_path)
+            {
+                self.ensure_rule_evaluated(prefix_path)?;
+                break;
+            }
+        }
+
+        Ok(Self::get_value_chained(self.data.clone(), fields))
+    }
+
     fn lookup_var(&mut self, span: &Span, fields: &[&str], no_error: bool) -> Result<Value> {
         let name = span.source_str();
 
@@ -3010,12 +3049,8 @@ impl Interpreter {
 
         // Ensure that rules are evaluated
         if name.text() == "data" {
-            if self.is_processed(fields)? {
-                return Ok(Self::get_value_chained(self.data.clone(), fields));
-            }
-
             // If "data" is used in a query, without any fields, then evaluate all the modules.
-            if fields.is_empty() && self.active_rules.is_empty() {
+            if fields.is_empty() && self.active_rules.is_empty() && !self.is_processed(fields)? {
                 for module in self.compiled_policy.modules.clone().iter() {
                     for rule in &module.policy {
                         self.eval_rule(module, rule)?;
@@ -3023,26 +3058,7 @@ impl Interpreter {
                 }
             }
 
-            // With modifiers may be used to specify part of a module that that not yet been
-            // evaluated. Therefore ensure that module is evaluated first.
-            let requested_path = format!("data.{}", fields.join("."));
-            self.ensure_module_evaluated(requested_path.clone())?;
-
-            for i in (1..=fields.len()).rev() {
-                let prefix = fields.iter().take(i).copied().collect::<Vec<_>>();
-                let prefix_path = format!("data.{}", prefix.join("."));
-                if self.compiled_policy.rules.contains_key(&prefix_path)
-                    || self
-                        .compiled_policy
-                        .default_rules
-                        .contains_key(&prefix_path)
-                {
-                    self.ensure_rule_evaluated(prefix_path)?;
-                    break;
-                }
-            }
-
-            Ok(Self::get_value_chained(self.data.clone(), fields))
+            self.lookup_data_path(fields)
         } else if !self.compiled_policy.modules.is_empty() {
             let module = self.current_module()?;
             let parsed_path = Parser::get_path_ref_components(&module.package.refr)?;
@@ -3092,6 +3108,17 @@ impl Interpreter {
 
             if !found {
                 if let Some(imported_var) = self.compiled_policy.imports.get(&rule_path).cloned() {
+                    // If the import is a data ref, resolve it with the chained fields so that
+                    // only the rules needed for the accessed path are evaluated, instead of
+                    // materializing the entire imported subtree.
+                    if let Ok(comps) = Parser::get_path_ref_components(&imported_var) {
+                        if comps.first().map(|s| s.text()) == Some("data") {
+                            let comps: Vec<&str> = comps.iter().skip(1).map(|s| s.text()).collect();
+                            let mut full_path = comps;
+                            full_path.extend(fields);
+                            return self.lookup_data_path(&full_path);
+                        }
+                    }
                     return Ok(Self::get_value_chained(
                         self.eval_expr(&imported_var)?,
                         fields,

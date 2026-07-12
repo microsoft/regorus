@@ -40,6 +40,61 @@ cases:
         y: 10
         z: 25
 
+  # https://github.com/microsoft/regorus/issues/743
+  # Non-cyclic rules across cyclically referencing packages must not be
+  # reported as recursion.
+  - note: cross-module-non-cyclic-rules
+    data: {}
+    modules:
+      - |
+        package registry
+        import rego.v1
+        allow if allow_stage2
+        allow_stage1 if data.registry.packages[_].allow_stage1
+        allow_stage2 if data.registry.packages[_].allow_stage2
+      - |
+        package registry.packages.package_a
+        import data.registry
+        import rego.v1
+        allow_stage2 if registry.allow_stage1
+        allow_stage1 := true
+    query: data
+    want_result:
+      registry:
+        allow: true
+        allow_stage1: true
+        allow_stage2: true
+        packages:
+          package_a:
+            allow_stage1: true
+            allow_stage2: true
+
+  # Same as above but without the import alias.
+  - note: cross-module-non-cyclic-rules-no-import
+    data: {}
+    modules:
+      - |
+        package registry
+        import rego.v1
+        allow if allow_stage2
+        allow_stage1 if data.registry.packages[_].allow_stage1
+        allow_stage2 if data.registry.packages[_].allow_stage2
+      - |
+        package registry.packages.package_a
+        import rego.v1
+        allow_stage2 if data.registry.allow_stage1
+        allow_stage1 := true
+    query: data
+    want_result:
+      registry:
+        allow: true
+        allow_stage1: true
+        allow_stage2: true
+        packages:
+          package_a:
+            allow_stage1: true
+            allow_stage2: true
+
   - note: inter
     data: {}
     modules:
