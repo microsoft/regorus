@@ -95,6 +95,39 @@ cases:
             allow_stage1: true
             allow_stage2: true
 
+  # A genuine cycle at package granularity: q.trigger depends on all of
+  # data.p (including p.a), and p.a depends on q.trigger. OPA rejects this
+  # statically; regorus detects it via the partial-sweep consistency check.
+  - note: cross-module-package-cycle
+    data: {}
+    modules:
+      - |
+        package p
+        import rego.v1
+        a if data.q.trigger >= 0
+      - |
+        package q
+        import rego.v1
+        trigger := count(data.p)
+    query: data
+    error: recursion detected
+
+  # Genuine package-granularity cycle where the reader's body would no longer
+  # succeed once the package is fully materialized ("vanishing value").
+  - note: cross-module-package-cycle-vanishing
+    data: {}
+    modules:
+      - |
+        package p
+        import rego.v1
+        a if data.q.trigger
+      - |
+        package q
+        import rego.v1
+        trigger if count(data.p) == 0
+    query: data
+    error: recursion detected
+
   - note: inter
     data: {}
     modules:

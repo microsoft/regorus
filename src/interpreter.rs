@@ -98,6 +98,13 @@ pub struct Interpreter {
     processed_paths: Value,
     rule_values: RuleValues,
     active_rules: Vec<Ref<Rule>>,
+    // Rules that, while being evaluated, read a wholesale-materialized module
+    // in which another rule was still being evaluated (and was therefore
+    // skipped). These are re-evaluated once evaluation settles to verify that
+    // the partially materialized value did not affect their result.
+    partial_sweep_readers: Vec<(Ref<Module>, Ref<Rule>)>,
+    verify_pass: bool,
+    verify_rule_produced: bool,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
     execution_timer: ExecutionTimer,
@@ -141,6 +148,9 @@ impl Clone for Interpreter {
 
             builtins_cache: BTreeMap::default(),
             active_rules: Vec::default(),
+            partial_sweep_readers: Vec::default(),
+            verify_pass: false,
+            verify_rule_produced: false,
             contexts: Vec::default(),
             current_module_path: String::default(),
             current_module_index: 0,
@@ -217,6 +227,9 @@ impl Interpreter {
             processed_paths: Value::new_object(),
             rule_values: BTreeMap::default(),
             active_rules: Vec::default(),
+            partial_sweep_readers: Vec::default(),
+            verify_pass: false,
+            verify_rule_produced: false,
             builtins_cache: BTreeMap::default(),
             no_rules_lookup: false,
             traces: None,
@@ -255,6 +268,9 @@ impl Interpreter {
             processed_paths: Value::new_object(),
             rule_values: BTreeMap::default(),
             active_rules: Vec::default(),
+            partial_sweep_readers: Vec::default(),
+            verify_pass: false,
+            verify_rule_produced: false,
             builtins_cache: BTreeMap::default(),
             no_rules_lookup: false,
             traces: None,
@@ -1656,6 +1672,11 @@ impl Interpreter {
         mut value: Value,
         is_set: bool,
     ) -> Result<()> {
+        // During the partial-sweep consistency check, note that the rule being
+        // re-evaluated (the only rule at stack depth 1) produced a value.
+        if self.verify_pass && self.active_rules.len() == 1 && value != Value::Undefined {
+            self.verify_rule_produced = true;
+        }
         // If rule's value already exists in initial document, prefer it.
         {
             let mut init_obj = &self.init_data;
@@ -2468,6 +2489,11 @@ impl Interpreter {
     }
 
     fn eval_print(&mut self, span: &Span, params: &[ExprRef], args: Vec<Value>) -> Result<Value> {
+        // Suppress duplicate output while re-evaluating rules for the
+        // partial-sweep consistency check.
+        if self.verify_pass {
+            return Ok(Value::Bool(true));
+        }
         const MAX_ARGS: u8 = 100;
         if args.len() > usize::from(MAX_ARGS) {
             bail!(span.error(&format!("print supports upto {MAX_ARGS} arguments")));
@@ -2914,6 +2940,29 @@ impl Interpreter {
                 for rule in &module.policy {
                     if self.active_rules.contains(rule) {
                         skipped_active_rule = true;
+                        // Record the innermost active rule (the reader that triggered
+                        // this sweep). Once evaluation settles, it is re-evaluated to
+                        // verify that the partially materialized module did not affect
+                        // its value; if it did, a recursion error is reported.
+                        if let Some(reader) = self.active_rules.last() {
+                            if reader == rule {
+                                // The rule being evaluated reads the entire module
+                                // containing itself: a genuine cycle.
+                                let refr = Self::get_rule_refr(rule);
+                                let span = refr.span();
+                                bail!(span.source.error(
+                                    span.line,
+                                    span.col,
+                                    "recursion detected when evaluating rule: \
+                                     rule depends on the entire package containing it",
+                                ));
+                            }
+                            if !self.partial_sweep_readers.iter().any(|(_, r)| r == reader) {
+                                let reader = reader.clone();
+                                let reader_module = self.get_rule_module(&reader)?;
+                                self.partial_sweep_readers.push((reader_module, reader));
+                            }
+                        }
                     } else if !self.processed.contains(rule) {
                         self.eval_rule(&module, rule)?;
                     }
@@ -3694,6 +3743,11 @@ impl Interpreter {
         if value == Value::Undefined {
             return Ok(());
         }
+        // During the partial-sweep consistency check, note that the rule being
+        // re-evaluated (the only rule at stack depth 1) produced a value.
+        if self.verify_pass && self.active_rules.len() == 1 {
+            self.verify_rule_produced = true;
+        }
         // Ensure that path is created.
         let vref = Self::make_or_get_value_mut(&mut self.data, path)?;
         if Self::get_value_chained(self.init_data.clone(), path) == Value::Undefined {
@@ -3874,10 +3928,108 @@ impl Interpreter {
 
         self.set_current_module(prev_module)?;
         self.scopes = scopes;
-        match self.active_rules.pop() {
+        let res = match self.active_rules.pop() {
             Some(ref r) if r == rule => res,
             _ => bail!("internal error: current rule not active"),
+        };
+
+        // Once evaluation has settled (no rule is in-flight), verify rules that
+        // read a partially materialized module while it contained in-flight rules.
+        if res.is_ok()
+            && !self.verify_pass
+            && self.active_rules.is_empty()
+            && !self.partial_sweep_readers.is_empty()
+        {
+            self.verify_partial_sweep_readers()?;
         }
+        res
+    }
+
+    // Re-evaluate rules that read a wholesale-materialized module while another
+    // rule of that module was still being evaluated (and hence skipped). At this
+    // point evaluation has settled and all rule values are final. If re-evaluating
+    // such a reader produces a different value (or a rule conflict), its result
+    // genuinely depended on the in-flight rule: the policy is cyclic at rule
+    // granularity and an error is reported, matching OPA's rejection of such
+    // policies. Prints are suppressed during re-evaluation to avoid duplicates.
+    fn verify_partial_sweep_readers(&mut self) -> Result<()> {
+        self.verify_pass = true;
+        let result = self.verify_partial_sweep_readers_impl();
+        self.verify_pass = false;
+        result
+    }
+
+    fn verify_partial_sweep_readers_impl(&mut self) -> Result<()> {
+        let mut verified: Vec<Ref<Rule>> = Vec::new();
+        while !self.partial_sweep_readers.is_empty() {
+            for (module, rule) in core::mem::take(&mut self.partial_sweep_readers) {
+                let refr = Self::get_rule_refr(&rule);
+                let span = refr.span();
+                let recursion_error = |detail: &str| {
+                    span.source.error(
+                        span.line,
+                        span.col,
+                        &format!(
+                            "recursion detected when evaluating rule: \
+                             rule reads a package that depends on this rule{detail}"
+                        ),
+                    )
+                };
+
+                if verified.contains(&rule) {
+                    return Err(recursion_error(""));
+                }
+                verified.push(rule.clone());
+
+                // Snapshot the value at the rule's path, when the path is static.
+                let path_comps = Parser::get_path_ref_components(&module.package.refr)
+                    .and_then(|mut comps| {
+                        Parser::get_path_ref_components_into(refr, &mut comps)?;
+                        Ok(comps)
+                    })
+                    .ok();
+                let value_at_path = |data: &Value| {
+                    path_comps.as_ref().map(|comps| {
+                        let comps: Vec<&str> = comps.iter().map(|s| s.text()).collect();
+                        Self::get_value_chained(data.clone(), &comps)
+                    })
+                };
+
+                let before = value_at_path(&self.data);
+                self.processed.remove(&rule);
+                self.verify_rule_produced = false;
+                if let Err(e) = self.eval_rule(&module, &rule) {
+                    return Err(recursion_error(&format!(":\n{e}")));
+                }
+                if before != value_at_path(&self.data) {
+                    return Err(recursion_error(""));
+                }
+
+                // The re-evaluated rule produced no value. If a value exists at its
+                // path and this is the only rule defining that path, the value must
+                // have been derived from the partially materialized module.
+                if !self.verify_rule_produced {
+                    if let (Some(comps), Some(before)) = (&path_comps, &before) {
+                        if *before != Value::Undefined {
+                            let path = format!(
+                                "data.{}",
+                                comps.iter().map(|s| s.text()).collect::<Vec<_>>().join(".")
+                            );
+                            let single_rule = self
+                                .compiled_policy
+                                .rules
+                                .get(&path)
+                                .is_some_and(|rules| rules.len() == 1)
+                                && !self.compiled_policy.default_rules.contains_key(&path);
+                            if single_rule {
+                                return Err(recursion_error(""));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn eval_user_query(

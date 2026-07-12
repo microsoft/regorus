@@ -93,16 +93,14 @@ Regression tests: `tests/interpreter/cases/rule/dependency.yaml`, cases
 `cross-module-non-cyclic-rules` and
 `cross-module-non-cyclic-rules-no-import`.
 
-## Caveat: package-granularity cycles are no longer always rejected
+## Detecting genuine package-granularity cycles
 
 OPA detects recursion **statically** over rule dependencies, where a
 ref to a whole package depends on every rule in it. Regorus detects
 recursion **dynamically**, while evaluating. Skipping in-flight rules
-during module materialization means a policy that is genuinely cyclic
-at package granularity may now evaluate to an order-dependent (and
-internally inconsistent) result instead of producing an error.
-
-Concrete example:
+during module materialization on its own would mean that a policy that
+is genuinely cyclic at package granularity could silently evaluate to
+an order-dependent, internally inconsistent result. Example:
 
 ```rego
 # p.rego
@@ -121,24 +119,56 @@ trigger := count(data.p)
 ```
 
 `q.trigger` depends on *all* of `data.p`, including `p.a`, which in
-turn depends on `q.trigger` — a real cycle. Behavior:
+turn depends on `q.trigger` — a real cycle. OPA rejects this policy at
+compile time (`rule data.p.a is recursive: data.p.a -> data.q.trigger
+-> data.p.a`). With skipping alone, regorus would return
+`{"p": {"a": true}, "q": {"trigger": 0}}` — self-contradictory, since
+with `p.a` present `count(data.p)` is `1`, not `0`.
 
-- **OPA** rejects the policy at compile time:
-  `rule data.p.a is recursive: data.p.a -> data.q.trigger -> data.p.a`.
-- **Regorus before the fix** failed at evaluation time with
-  `recursion detected when evaluating rule`.
-- **Regorus after the fix** evaluates successfully and returns
-  `{"p": {"a": true}, "q": {"trigger": 0}}`.
+To close this hole, the interpreter performs a **partial-sweep
+consistency check** (a one-round fixpoint verification):
 
-The post-fix result is self-contradictory: `trigger` was computed as
-`count(data.p)` while `p.a` was still in flight and skipped, so it saw
-an empty package and produced `0`; afterwards `p.a` completed and was
-written into `data.p`, where `count(data.p)` would now be `1`.
+1. Whenever a wholesale module sweep skips an in-flight rule, the rule
+   that triggered the sweep (the innermost active rule, the "reader")
+   is recorded in `partial_sweep_readers`. If the skipped in-flight
+   rule *is* the reader itself — a rule reading the entire package that
+   contains it — a recursion error is raised immediately.
+2. Once evaluation settles (the active-rule stack becomes empty), each
+   recorded reader is re-evaluated with prints suppressed. All rule
+   values are final at this point, so the re-evaluation sees the fully
+   materialized data.
+3. A recursion error (`recursion detected when evaluating rule: rule
+   reads a package that depends on this rule`) is reported if the
+   re-evaluation:
+   - produces a conflicting value (surfaces as a rule conflict), or
+   - changes the value at the rule's path, or
+   - produces **no** value even though the rule is the only one
+     defining its path and a value exists there (the "vanishing value"
+     case, e.g. `trigger if count(data.p) == 0`, which held while the
+     package was partially materialized but no longer holds), or
+   - triggers another partial sweep naming an already-verified reader.
 
-This trade-off was accepted because rejecting valid, OPA-accepted
-policies (the issue #743 pattern is common for plugin/registry style
-policy layouts) is worse than producing a value for policies OPA would
-reject as recursive. Matching OPA exactly would require rule-level
-virtual-document evaluation (per-rule lazy resolution of refs with
-variable path segments) or static rule-level cycle detection, both of
-which are larger changes to the interpreter's evaluation model.
+With this check, both `trigger := count(data.p)` and
+`trigger if count(data.p) == 0` are rejected with a recursion error,
+matching OPA's verdict, while the valid issue #743 policies re-evaluate
+to identical values and pass. The check only runs when a partial sweep
+actually occurred, so well-behaved policies pay no cost.
+
+Regression tests: `cross-module-package-cycle` and
+`cross-module-package-cycle-vanishing` in
+`tests/interpreter/cases/rule/dependency.yaml`.
+
+### Remaining differences from OPA
+
+- Detection happens at evaluation time, not compile time, and the error
+  message and location differ from OPA's (regorus points at the reader
+  rule; OPA lists the static cycle).
+- The vanishing-value check is limited to rules that are the sole
+  definition of their path. If several rules define the same path and
+  the final merged value is unchanged, no error is raised — the result
+  is still consistent, but OPA would have rejected the policy
+  statically.
+- A reader whose body calls a nondeterministic builtin could in theory
+  produce a different value on re-evaluation and trigger a spurious
+  recursion error; the interpreter's builtin cache makes this unlikely
+  in practice.
