@@ -474,13 +474,31 @@ impl Engine {
         if data.as_object().is_err() {
             bail!("data must be object");
         }
-        // Validate that the merge cannot conflict *before* mutating, so a rejected
-        // add_data is a no-op (all-or-nothing) and never leaves the data document
-        // partially merged. This read-only check allocates nothing and preserves the
-        // in-place merge fast path (no candidate copy of the data document is made).
-        self.interpreter.get_init_data().check_mergeable(&data)?;
-        self.prepared = false;
-        self.interpreter.get_init_data_mut().merge(data)
+
+        // add_data is all-or-nothing. A merge can fail two ways, and the atomic strategy
+        // differs by build:
+        //  - conflict (same path, two different values): possible on every build.
+        //  - allocator-limit failure mid-merge: only when `allocator-memory-limits` is on;
+        //    otherwise the limit check is a compile-time no-op.
+        #[cfg(not(feature = "allocator-memory-limits"))]
+        {
+            // Conflict is the only failure mode, and `check_mergeable` catches it up front
+            // without allocating — so validate, then merge in place (zero-copy fast path).
+            self.interpreter.get_init_data().check_mergeable(&data)?;
+            self.prepared = false;
+            self.interpreter.get_init_data_mut().merge(data)
+        }
+        #[cfg(feature = "allocator-memory-limits")]
+        {
+            // A limit failure can strike mid-merge and `check_mergeable` can't predict it,
+            // so merge into a candidate and commit only on success — atomic for both failure
+            // modes. `Value` is Rc/copy-on-write, so only touched subtrees are cloned.
+            let mut candidate = self.interpreter.get_init_data().clone();
+            candidate.merge(data)?;
+            *self.interpreter.get_init_data_mut() = candidate;
+            self.prepared = false;
+            Ok(())
+        }
     }
 
     /// Get the data document.

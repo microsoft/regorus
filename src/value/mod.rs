@@ -1448,6 +1448,7 @@ impl Value {
     /// path — no candidate copy of the data document is made just to validate it.
     ///
     /// [`Engine::add_data`]: crate::Engine::add_data
+    #[cfg(not(feature = "allocator-memory-limits"))]
     pub(crate) fn check_mergeable(&self, other: &Value) -> Result<()> {
         if self == other {
             return Ok(());

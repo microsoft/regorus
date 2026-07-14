@@ -185,3 +185,75 @@ fn vm_memory_limit_during_large_allocation() {
         Ok(value) => panic!("expected VM memory limit error, got value {value:?}"),
     }
 }
+
+/// On the `allocator-memory-limits` build, an `add_data` whose merge trips the memory limit
+/// mid-way must leave the data document unchanged — no partial insertions may leak. Atomicity
+/// here relies on the candidate-copy commit (`check_mergeable` models conflicts, not limits).
+#[test]
+fn add_data_memory_limit_partial_merge_is_atomic() {
+    let mut guard = LimitGuard::lock();
+    let mut engine = Engine::new();
+
+    // Seed existing data while the limit is relaxed.
+    engine
+        .add_data(Value::from_json_str(r#"{ "a": { "existing": 1 } }"#).expect("valid JSON"))
+        .expect("seed add_data");
+
+    // Merge `{ "a": { "k0": 0, ... } }` into `a` as pure insertions. The count is sized to
+    // beat the limit check's throttling — a check only fires every MEMORY_CHECK_STRIDE (16)
+    // insertions or per MEMORY_CHECK_DELTA_BYTES (32 KiB), and mimalloc's usage snapshot lags
+    // small allocations — so the trip lands mid-merge rather than after it completes.
+    let elements = 20_000;
+    let mut payload = String::with_capacity(elements * 16);
+    payload.push_str("{\"a\":{");
+    for i in 0..elements {
+        if i > 0 {
+            payload.push(',');
+        }
+        payload.push_str("\"k");
+        payload.push_str(&i.to_string());
+        payload.push_str("\":");
+        payload.push_str(&i.to_string());
+    }
+    payload.push_str("}}");
+    let big = Value::from_json_str(&payload).expect("valid JSON");
+
+    // What the engine must still hold if the add is rejected.
+    let pristine = Value::from_json_str(r#"{ "a": { "existing": 1 } }"#).expect("valid JSON");
+
+    // Budget 0: the merge's insertions trip the limit mid-way.
+    guard.set_with_additional_budget(0);
+
+    let err = engine
+        .add_data(big)
+        .expect_err("expected memory limit error during add_data merge");
+    assert_memory_limit_error(&err);
+
+    // Atomicity: the rejected add must leave data untouched — no `k*` keys leaked.
+    assert_eq!(engine.get_data(), pristine);
+}
+
+/// Companion for the candidate-copy build: a *conflict* must also be atomic (the candidate is
+/// discarded before commit). Default-build conflict atomicity is covered in
+/// `src/tests/interpreter/mod.rs`; this exercises the distinct candidate-copy branch.
+#[test]
+fn add_data_conflict_is_atomic_on_allocator_build() {
+    // Hold the lock (no budget set) so the conflict — not a limit — is the sole failure.
+    let _guard = LimitGuard::lock();
+    let mut engine = Engine::new();
+
+    engine
+        .add_data(Value::from_json_str(r#"{ "a": { "z": 1 } }"#).expect("valid JSON"))
+        .expect("seed add_data");
+
+    // `m` sorts before `z`, so a naive in-place merge inserts `m` then hits the `z` conflict
+    // (1 vs 3). The whole call must be rejected with `m` left out.
+    assert!(engine
+        .add_data(Value::from_json_str(r#"{ "a": { "m": 2, "z": 3 } }"#).expect("valid JSON"))
+        .is_err());
+
+    assert_eq!(
+        engine.get_data(),
+        Value::from_json_str(r#"{ "a": { "z": 1 } }"#).expect("valid JSON")
+    );
+}
