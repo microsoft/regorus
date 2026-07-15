@@ -52,7 +52,9 @@ namespace Regorus
         public static Program CompileFromModules(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints)
         {
             return CompileFromModulesInner(dataJson, modules, entryPoints, hostAwaitBuiltins: null);
-        }        /// <summary>
+        }
+
+        /// <summary>
         /// Compile an RVM program from an engine instance and entry points.
         /// </summary>
         public static Program CompileFromEngine(Engine engine, IEnumerable<string> entryPoints)
