@@ -475,26 +475,24 @@ impl Engine {
             bail!("data must be object");
         }
 
-        // add_data is all-or-nothing. A merge can fail two ways, and the atomic strategy
-        // differs by build:
-        //  - conflict (same path, two different values): possible on every build.
-        //  - allocator-limit failure mid-merge: only when `allocator-memory-limits` is on;
-        //    otherwise the limit check is a compile-time no-op.
+        // add_data is all-or-nothing; the atomic strategy differs by build because the failure
+        // modes do: a conflict (same path, differing values) is possible everywhere, an
+        // allocator-limit failure mid-merge only under `allocator-memory-limits`.
         #[cfg(not(feature = "allocator-memory-limits"))]
         {
-            // Conflict is the only failure mode, and `check_mergeable` catches it up front
-            // without allocating — so validate, then merge in place (zero-copy fast path).
+            // Conflict is the only failure mode; `check_mergeable` catches it up front without
+            // allocating, so validate then deep-merge in place (zero-copy fast path).
             self.interpreter.get_init_data().check_mergeable(&data)?;
             self.prepared = false;
-            self.interpreter.get_init_data_mut().merge(data)
+            self.interpreter.get_init_data_mut().deep_merge(data)
         }
         #[cfg(feature = "allocator-memory-limits")]
         {
-            // A limit failure can strike mid-merge and `check_mergeable` can't predict it,
-            // so merge into a candidate and commit only on success — atomic for both failure
-            // modes. `Value` is Rc/copy-on-write, so only touched subtrees are cloned.
+            // A limit failure can strike mid-merge and can't be predicted, so merge into a
+            // candidate and commit only on success. `Value` is copy-on-write, so only touched
+            // subtrees are cloned.
             let mut candidate = self.interpreter.get_init_data().clone();
-            candidate.merge(data)?;
+            candidate.deep_merge(data)?;
             *self.interpreter.get_init_data_mut() = candidate;
             self.prepared = false;
             Ok(())

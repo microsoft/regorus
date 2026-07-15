@@ -1365,17 +1365,11 @@ impl Value {
         }
     }
 
-    /// Recursively merge `new` into `self`.
+    /// Shallow-merge `new` into `self` with strict rule-output semantics.
     ///
-    /// Objects are deep-merged: keys present on only one side are kept, keys present on both
-    /// whose values are both objects are merged recursively, and keys whose values are both
-    /// sets are unioned. This matches OPA's data-document merge semantics for objects (see
-    /// `Engine::add_data`); set-union is a regorus extension, since OPA data documents are
-    /// JSON and cannot contain sets. Any other differing pair — values that are not both
-    /// objects or both sets, such as two unequal scalars or two arrays — is a genuine
-    /// conflict and is an error. Equal values are tolerated as a no-op;
-    /// the rule-evaluation path (`Interpreter::merge_rule_value`) shares this method and relies
-    /// on that leniency, since a rule may legally produce the same value more than once.
+    /// Objects merge one level deep: a key on both sides must hold the *same* value or it is a
+    /// conflict; sets union; equal values are a no-op. Non-recursive by design — data documents
+    /// use [`Value::deep_merge`] instead.
     pub(crate) fn merge(&mut self, mut new: Value) -> Result<()> {
         if self == &new {
             return Ok(());
@@ -1383,16 +1377,58 @@ impl Value {
         match (self, &mut new) {
             (v @ Value::Undefined, _) => *v = new,
             (Value::Set(ref mut set), Value::Set(new)) => {
-                // Union without deep-cloning the RHS set. If we uniquely own it, move its
-                // elements out; if it is shared (e.g. reached via `existing.merge(v.clone())`
-                // in the object arm below), clone only the element handles (`Rc` bumps),
-                // never the whole `BTreeSet`.
+                // Union without deep-cloning the RHS set (see `deep_merge`).
                 let dst = Rc::make_mut(set);
                 match Rc::try_unwrap(core::mem::take(new)) {
                     Ok(owned) => dst.extend(owned),
                     Err(shared) => dst.extend(shared.iter().cloned()),
                 }
-                // Enforce allocator limit after merging set entries.
+                enforce_limit_anyhow()?;
+            }
+            (Value::Object(map), Value::Object(new)) => {
+                for (k, v) in new.iter() {
+                    match map.get(k) {
+                        // Same key, different value: the rule produced two outputs for one path.
+                        Some(pv) if *pv != *v => bail!(
+                            "value for key `{}` generated multiple times: `{}` and `{}`",
+                            serde_json::to_string_pretty(&k).map_err(anyhow::Error::msg)?,
+                            serde_json::to_string_pretty(&pv).map_err(anyhow::Error::msg)?,
+                            serde_json::to_string_pretty(&v).map_err(anyhow::Error::msg)?,
+                        ),
+                        _ => {
+                            Rc::make_mut(map).insert(k.clone(), v.clone());
+                            enforce_limit_anyhow()?;
+                        }
+                    };
+                }
+            }
+            _ => bail!("error: could not merge value"),
+        };
+        Ok(())
+    }
+
+    /// Recursively deep-merge `new` into `self` — the data-document merge behind [`Engine::add_data`].
+    ///
+    /// Objects recurse per-key, sets union, equal values are a no-op, any other differing pair
+    /// conflicts. Set-union is a regorus extension (OPA data is JSON, which has no sets). Distinct
+    /// from the strict, non-recursive [`Value::merge`] used for rule outputs — use deep-merge ONLY
+    /// for data documents.
+    ///
+    /// [`Engine::add_data`]: crate::Engine::add_data
+    pub(crate) fn deep_merge(&mut self, mut new: Value) -> Result<()> {
+        if self == &new {
+            return Ok(());
+        }
+        match (self, &mut new) {
+            (v @ Value::Undefined, _) => *v = new,
+            (Value::Set(ref mut set), Value::Set(new)) => {
+                // Union without deep-cloning the RHS set: move elements if uniquely owned,
+                // else clone only the element handles (`Rc` bumps), never the whole `BTreeSet`.
+                let dst = Rc::make_mut(set);
+                match Rc::try_unwrap(core::mem::take(new)) {
+                    Ok(owned) => dst.extend(owned),
+                    Err(shared) => dst.extend(shared.iter().cloned()),
+                }
                 enforce_limit_anyhow()?;
             }
             (Value::Object(map), Value::Object(new)) => {
@@ -1400,20 +1436,16 @@ impl Value {
                 for (k, v) in new.iter() {
                     match map.get_mut(k) {
                         Some(existing) => {
-                            // Deep-merge: when both sides are containers, recurse so that
-                            // nested objects are merged rather than the whole subtree being
-                            // replaced (matches OPA's data document merge semantics).
+                            // When both sides are containers, recurse so nested objects merge
+                            // rather than the subtree being replaced (OPA data-merge semantics).
                             let both_mergeable = matches!(
                                 (&*existing, v),
                                 (Value::Object(_), Value::Object(_))
                                     | (Value::Set(_), Value::Set(_))
                             );
                             if both_mergeable {
-                                existing.merge(v.clone())?;
+                                existing.deep_merge(v.clone())?;
                             } else if *existing != *v {
-                                // A genuine leaf conflict: the same path holds two different
-                                // values. (Equal values are tolerated as a no-op, which the
-                                // shared rule-evaluation path relies on.)
                                 bail!(
                                     "value for key `{}` generated multiple times: `{}` and `{}`",
                                     serde_json::to_string_pretty(&k).map_err(anyhow::Error::msg)?,
@@ -1425,7 +1457,6 @@ impl Value {
                         }
                         None => {
                             map.insert(k.clone(), v.clone());
-                            // Enforce allocator limit after merging object entries.
                             enforce_limit_anyhow()?;
                         }
                     };
@@ -1436,16 +1467,14 @@ impl Value {
         Ok(())
     }
 
-    /// Read-only check that merging `other` into `self` via [`Value::merge`] would
-    /// not conflict, without mutating `self` or allocating.
+    /// Read-only check that [`deep_merge`](Value::deep_merge)-ing `other` into `self` would not
+    /// conflict, without mutating or allocating.
     ///
-    /// This mirrors `merge`'s conflict rule exactly — objects are deep-merged, sets
-    /// union (never conflict), equal values are a tolerated no-op, and any other
-    /// differing pair is a conflict — but only *reads*. [`Engine::add_data`] runs this
-    /// before `merge` so a rejected add is all-or-nothing: a conflict deep in a nested
-    /// document cannot leave earlier keys of the same document partially written.
-    /// Keeping the check separate preserves `merge`'s in-place (uniquely-owned) fast
-    /// path — no candidate copy of the data document is made just to validate it.
+    /// Lets [`Engine::add_data`] validate before merging in place. Since a conflict is the only
+    /// way the default-build merge can fail and it depends only on the inputs, a passing scan
+    /// guarantees the in-place `deep_merge` won't fail — avoiding the alternative of cloning the
+    /// whole document into a candidate just to validate. Only overlapping keys are walked, so
+    /// disjoint additions are near-free.
     ///
     /// [`Engine::add_data`]: crate::Engine::add_data
     #[cfg(not(feature = "allocator-memory-limits"))]
@@ -1455,12 +1484,11 @@ impl Value {
         }
         match (self, other) {
             (Value::Undefined, _) => Ok(()),
-            // Set union never conflicts (matches the `(Set, Set)` merge arm).
+            // Set union never conflicts.
             (Value::Set(_), Value::Set(_)) => Ok(()),
             (Value::Object(dst), Value::Object(src)) => {
                 for (k, sv) in src.iter() {
-                    // Only overlapping keys can conflict; keys unique to `src` are
-                    // pure insertions.
+                    // Only overlapping keys can conflict.
                     if let Some(dv) = dst.get(k) {
                         let both_mergeable = matches!(
                             (dv, sv),

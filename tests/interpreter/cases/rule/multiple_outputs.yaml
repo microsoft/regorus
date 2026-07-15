@@ -1,0 +1,223 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# How multiple rule definitions writing to the same path combine vs. conflict.
+# Cross-checked against OPA v1.2.0 (`opa eval`); modules use `rego.v1` to match it.
+#
+#   * Zero-arg `f()` materializes as a COMPLETE document: any two differing outputs
+#     conflict, even disjoint objects (OPA does NOT deep-merge).
+#   * Partial-object `p[k]` and ref-head `p.q.r` COMBINE across disjoint keys/paths,
+#     but conflict on the same key/leaf with a different value (no deep-merge).
+#   * Equal re-definitions (same value twice) are tolerated in every family.
+
+cases:
+  # ----------------------------------------------------------------------------
+  # Zero-arg functions: materialize as a complete document.
+  # ----------------------------------------------------------------------------
+  - note: fn_single_output
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        f() := {"a": 1}
+    query: data.test.f
+    want_result:
+      a: 1
+
+  - note: fn_identical_outputs_tolerated
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        f() := {"a": 1}
+
+        f() := {"a": 1}
+    query: data.test.f
+    want_result:
+      a: 1
+
+  - note: fn_toplevel_disjoint_conflict
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        f() := {"a": 1}
+
+        f() := {"b": 2}
+    query: data.test.f
+    error: "rules should not produce multiple outputs"
+
+  - note: fn_nested_object_conflict_no_deep_merge
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        f() := {"a": {"x": 1}}
+
+        f() := {"a": {"y": 2}}
+    query: data.test.f
+    error: "rules should not produce multiple outputs"
+
+  # ----------------------------------------------------------------------------
+  # Partial-object rules with static keys: combine across disjoint keys.
+  # ----------------------------------------------------------------------------
+  - note: partial_object_disjoint_keys_combine
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        p["a"] := 1
+
+        p["b"] := 2
+    query: data.test.p
+    want_result:
+      a: 1
+      b: 2
+
+  - note: partial_object_same_key_same_value_tolerated
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        p["a"] := 1
+
+        p["a"] := 1
+    query: data.test.p
+    want_result:
+      a: 1
+
+  - note: partial_object_same_key_diff_scalar_conflict
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        p["a"] := 1
+
+        p["a"] := 2
+    query: data.test.p
+    error: "rule conflicts with the following rule"
+
+  - note: partial_object_same_key_object_values_conflict_no_deep_merge
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        p["a"] := {"x": 1}
+
+        p["a"] := {"y": 2}
+    query: data.test.p
+    error: "rule conflicts with the following rule"
+
+  # ----------------------------------------------------------------------------
+  # Ref-head rules: combine across disjoint sub-paths.
+  # ----------------------------------------------------------------------------
+  - note: refhead_disjoint_subpaths_combine
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        p.q.r := 1
+
+        p.q.s := 2
+    query: data.test.p
+    want_result:
+      q:
+        r: 1
+        s: 2
+
+  - note: refhead_same_leaf_diff_value_conflict
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        p.q.r := 1
+
+        p.q.r := 2
+    query: data.test.p
+    error: "rule conflicts with the following rule"
+
+  - note: refhead_same_node_object_values_conflict_no_deep_merge
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        p.q := {"r": 1}
+
+        p.q := {"s": 2}
+    query: data.test.p
+    error: "rule conflicts with the following rule"
+
+  # ----------------------------------------------------------------------------
+  # Dynamic partial objects (keys computed at eval time).
+  # ----------------------------------------------------------------------------
+  - note: dynamic_partial_disjoint_keys_combine
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        m := {"a": 1, "b": 2}
+
+        p[k] := v if {
+          some k, v in m
+        }
+    query: data.test.p
+    want_result:
+      a: 1
+      b: 2
+
+  - note: dynamic_partial_same_key_same_value_tolerated
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        vals := [7, 7]
+
+        p[k] := v if {
+          some v in vals
+          k := "a"
+        }
+    query: data.test.p
+    want_result:
+      a: 7
+
+  - note: dynamic_partial_same_key_diff_value_conflict
+    data: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        vals := [1, 2]
+
+        p[k] := v if {
+          some v in vals
+          k := "a"
+        }
+    query: data.test.p
+    error: "rules must not produce multiple outputs"
