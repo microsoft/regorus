@@ -1432,34 +1432,57 @@ impl Value {
                 enforce_limit_anyhow()?;
             }
             (Value::Object(map), Value::Object(new)) => {
-                let map = Rc::make_mut(map);
+                // What each incoming key requires of the target map. Decided from a read-only
+                // probe so a no-op or a conflict never triggers `Rc::make_mut` (and never clones
+                // a shared map); `make_mut` is taken lazily, only when a key actually mutates.
+                enum Step {
+                    Skip,
+                    Insert,
+                    Recurse,
+                    Conflict,
+                }
                 for (k, v) in new.iter() {
-                    match map.get_mut(k) {
-                        Some(existing) => {
-                            // When both sides are containers, recurse so nested objects merge
-                            // rather than the subtree being replaced (OPA data-merge semantics).
-                            let both_mergeable = matches!(
-                                (&*existing, v),
+                    let step = match map.get(k) {
+                        None => Step::Insert,
+                        Some(existing) if existing == v => Step::Skip,
+                        Some(existing)
+                            if matches!(
+                                (existing, v),
                                 (Value::Object(_), Value::Object(_))
                                     | (Value::Set(_), Value::Set(_))
-                            );
-                            if both_mergeable {
-                                existing.deep_merge(v.clone())?;
-                            } else if *existing != *v {
-                                bail!(
-                                    "value for key `{}` generated multiple times: `{}` and `{}`",
-                                    serde_json::to_string_pretty(&k).map_err(anyhow::Error::msg)?,
-                                    serde_json::to_string_pretty(&existing)
-                                        .map_err(anyhow::Error::msg)?,
-                                    serde_json::to_string_pretty(&v).map_err(anyhow::Error::msg)?,
-                                )
-                            }
+                            ) =>
+                        {
+                            Step::Recurse
                         }
-                        None => {
-                            map.insert(k.clone(), v.clone());
+                        Some(_) => Step::Conflict,
+                    };
+                    match step {
+                        Step::Skip => {}
+                        Step::Insert => {
+                            Rc::make_mut(map).insert(k.clone(), v.clone());
                             enforce_limit_anyhow()?;
                         }
-                    };
+                        // Both sides are containers: recurse so nested objects merge rather than
+                        // the subtree being replaced (OPA data-merge semantics).
+                        Step::Recurse => {
+                            let existing = Rc::make_mut(map)
+                                .get_mut(k)
+                                .ok_or_else(|| anyhow!("internal error: key vanished during merge"))?;
+                            existing.deep_merge(v.clone())?;
+                        }
+                        Step::Conflict => {
+                            let existing = map.get(k).ok_or_else(|| {
+                                anyhow!("internal error: key vanished during merge")
+                            })?;
+                            bail!(
+                                "value for key `{}` generated multiple times: `{}` and `{}`",
+                                serde_json::to_string_pretty(&k).map_err(anyhow::Error::msg)?,
+                                serde_json::to_string_pretty(&existing)
+                                    .map_err(anyhow::Error::msg)?,
+                                serde_json::to_string_pretty(&v).map_err(anyhow::Error::msg)?,
+                            )
+                        }
+                    }
                 }
             }
             _ => bail!("error: could not merge value"),
