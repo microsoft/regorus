@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `Engine::add_data` now deep-merges nested data documents instead of only merging top-level keys. Adding `{ "a": { "x": 1 } }` followed by `{ "a": { "y": 2 } }` now yields `{ "a": { "x": 1, "y": 2 } }` (matching OPA's data-document merge). Nested sets under a shared key are unioned. Only genuine leaf conflicts (the same path holding two different values) are reported as errors.
+- A zero-arg function producing two different complete values (e.g. `f() := { "a": 1 }` and `f() := { "b": 2 }`) is now reported as a conflict, matching OPA's complete-rule semantics, instead of silently combining the outputs.
+
+### Security
+
+- `Engine::add_data` now rejects data nested beyond 128 levels instead of risking a stack overflow on adversarially deep input.
 
 ## [0.10.1](https://github.com/microsoft/regorus/compare/regorus-v0.10.0...regorus-v0.10.1) - 2026-05-22
 
