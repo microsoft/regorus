@@ -821,3 +821,48 @@ fn deep_merge_conflict_does_not_clone_object() {
         "a conflict must not clone the shared object map"
     );
 }
+
+/// Nest `depth` objects `{"k": {"k": ... leaf}}` iteratively, so building the value can't itself
+/// overflow and there's no parser to cap depth first.
+fn nest(depth: usize, leaf: Value) -> Value {
+    let mut v = leaf;
+    for _ in 0..depth {
+        let mut m = BTreeMap::new();
+        m.insert(Value::from("k"), v);
+        v = Value::from(m);
+    }
+    v
+}
+
+/// Over-deep data must fail with a clean `Err`, not overflow the stack. A `Value` can be built
+/// without serde_json's parse-time cap (the native bindings), so `deep_merge` must guard itself.
+#[test]
+fn deep_merge_rejects_excessive_depth() {
+    let depth = super::MAX_MERGE_DEPTH + 50;
+    // Shared key `k` on both sides forces full-depth recursion; distinct leaves keep the trees
+    // unequal so the equality short-circuit never fires.
+    let mut a = nest(depth, Value::from_json_str(r#"{"a": 1}"#).unwrap());
+    let b = nest(depth, Value::from_json_str(r#"{"b": 2}"#).unwrap());
+
+    let err = a.deep_merge(b).unwrap_err();
+    assert!(
+        format!("{err}").contains("nesting depth"),
+        "expected a depth-limit error, got: {err}"
+    );
+}
+
+/// The pre-scan carries the same guard, so the default build rejects over-deep input up front
+/// (leaving the live document untouched) instead of overflowing during validation.
+#[cfg(not(feature = "allocator-memory-limits"))]
+#[test]
+fn check_mergeable_rejects_excessive_depth() {
+    let depth = super::MAX_MERGE_DEPTH + 50;
+    let a = nest(depth, Value::from_json_str(r#"{"a": 1}"#).unwrap());
+    let b = nest(depth, Value::from_json_str(r#"{"b": 2}"#).unwrap());
+
+    let err = a.check_mergeable(&b).unwrap_err();
+    assert!(
+        format!("{err}").contains("nesting depth"),
+        "expected a depth-limit error, got: {err}"
+    );
+}

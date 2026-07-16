@@ -1332,6 +1332,13 @@ impl Value {
     }
 }
 
+/// Depth cap for `deep_merge`/`check_mergeable`, set at serde_json's default recursion limit.
+///
+/// Prevents a stack overflow from adversarially nested data — an uncatchable abort that poisons
+/// every engine in an FFI process. At serde_json's limit it only backstops `Value`s built without
+/// a parse-time cap: the Python/Ruby native bindings, or programmatic construction.
+const MAX_MERGE_DEPTH: usize = 128;
+
 impl Value {
     pub(crate) fn make_or_get_value_mut<'a>(&'a mut self, paths: &[&str]) -> Result<&'a mut Value> {
         if paths.is_empty() {
@@ -1415,7 +1422,15 @@ impl Value {
     /// for data documents.
     ///
     /// [`Engine::add_data`]: crate::Engine::add_data
-    pub(crate) fn deep_merge(&mut self, mut new: Value) -> Result<()> {
+    pub(crate) fn deep_merge(&mut self, new: Value) -> Result<()> {
+        self.deep_merge_at(new, 0)
+    }
+
+    /// Depth-tracked worker for [`deep_merge`](Value::deep_merge). See [`MAX_MERGE_DEPTH`].
+    fn deep_merge_at(&mut self, mut new: Value, depth: usize) -> Result<()> {
+        if depth >= MAX_MERGE_DEPTH {
+            bail!("data merge exceeds maximum nesting depth of {MAX_MERGE_DEPTH}");
+        }
         if self == &new {
             return Ok(());
         }
@@ -1465,10 +1480,10 @@ impl Value {
                         // Both sides are containers: recurse so nested objects merge rather than
                         // the subtree being replaced (OPA data-merge semantics).
                         Step::Recurse => {
-                            let existing = Rc::make_mut(map)
-                                .get_mut(k)
-                                .ok_or_else(|| anyhow!("internal error: key vanished during merge"))?;
-                            existing.deep_merge(v.clone())?;
+                            let existing = Rc::make_mut(map).get_mut(k).ok_or_else(|| {
+                                anyhow!("internal error: key vanished during merge")
+                            })?;
+                            existing.deep_merge_at(v.clone(), depth.saturating_add(1))?;
                         }
                         Step::Conflict => {
                             let existing = map.get(k).ok_or_else(|| {
@@ -1502,6 +1517,15 @@ impl Value {
     /// [`Engine::add_data`]: crate::Engine::add_data
     #[cfg(not(feature = "allocator-memory-limits"))]
     pub(crate) fn check_mergeable(&self, other: &Value) -> Result<()> {
+        self.check_mergeable_at(other, 0)
+    }
+
+    /// Depth-tracked worker for [`check_mergeable`](Value::check_mergeable). See [`MAX_MERGE_DEPTH`].
+    #[cfg(not(feature = "allocator-memory-limits"))]
+    fn check_mergeable_at(&self, other: &Value, depth: usize) -> Result<()> {
+        if depth >= MAX_MERGE_DEPTH {
+            bail!("data merge exceeds maximum nesting depth of {MAX_MERGE_DEPTH}");
+        }
         if self == other {
             return Ok(());
         }
@@ -1518,7 +1542,7 @@ impl Value {
                             (Value::Object(_), Value::Object(_)) | (Value::Set(_), Value::Set(_))
                         );
                         if both_mergeable {
-                            dv.check_mergeable(sv)?;
+                            dv.check_mergeable_at(sv, depth.saturating_add(1))?;
                         } else if dv != sv {
                             bail!(
                                 "value for key `{}` generated multiple times: `{}` and `{}`",
