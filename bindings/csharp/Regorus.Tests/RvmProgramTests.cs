@@ -237,6 +237,116 @@ greeting := msg if {
             "expected compilation to reject reserved __builtin_host_await identifier");
     }
 
+    public static IEnumerable<object[]> EmbeddedNulIdentifierScenarios()
+    {
+        // Identifiers (registration name + response key) are raw C strings with
+        // no downstream parser to catch truncation, so an embedded NUL would
+        // silently mis-route. Both write-points reject it.
+        yield return new object[]
+        {
+            "builtin name",
+            (Action)(() => _ = new HostAwaitBuiltin("bad\0name")),
+        };
+        yield return new object[]
+        {
+            "response identifier",
+            (Action)(() =>
+            {
+                using var vm = new Rvm();
+                vm.SetHostAwaitResponses(new Dictionary<string, IReadOnlyList<string>>
+                {
+                    ["bad\0id"] = new[] { "\"v\"" },
+                });
+            }),
+        };
+    }
+
+    // A raw NUL in an identifier is rejected loudly at the public surface,
+    // before Rust's CStr can silently truncate it.
+    [DataTestMethod]
+    [DynamicData(nameof(EmbeddedNulIdentifierScenarios), DynamicDataSourceType.Method)]
+    public void RegisteredHostAwait_RejectsEmbeddedNulInIdentifier(string description, Action action)
+    {
+        Assert.ThrowsException<ArgumentException>(
+            action,
+            $"expected embedded NUL in {description} to be rejected before crossing the FFI boundary");
+    }
+
+    // A JSON-escaped null (\u0000) is six ASCII chars, not a raw NUL, so it
+    // round-trips faithfully. Response values are not NUL-validated (client
+    // responsibility, consistent with other JSON inputs).
+    [TestMethod]
+    public void RegisteredHostAwait_ResponseValueWithEscapedNul_RoundTrips()
+    {
+        var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
+        var entryPoints = new[] { "data.demo.greeting" };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate") };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.RunToCompletion);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"lang\": \"es\"}");
+
+        vm.SetHostAwaitResponses(new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["translate"] = new[] { "\"a\\u0000b\"" },
+        });
+
+        var result = vm.Execute();
+
+        Assert.AreEqual("\"a\\u0000b\"", result);
+    }
+
+    // Same escaped-null round-trip on the resume path (customer-controlled JSON,
+    // not NUL-validated).
+    [TestMethod]
+    public void RegisteredHostAwait_ResumeValueWithEscapedNul_RoundTrips()
+    {
+        var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
+        var entryPoints = new[] { "data.demo.greeting" };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate") };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"lang\": \"es\"}");
+
+        vm.Execute();
+        Assert.AreEqual("translate", vm.GetHostAwaitIdentifier());
+
+        var result = vm.Resume("\"a\\u0000b\"");
+
+        Assert.AreEqual("\"a\\u0000b\"", result);
+    }
+
+    // Failing scenario: a raw NUL in the resume value is not validated, but
+    // Rust's CStr truncates at it and the truncated text ("a) is invalid JSON,
+    // so it surfaces as a loud parse error. (A raw NUL that truncates to *valid*
+    // JSON — e.g. "123\0456" -> 123 — is silently accepted, the accepted
+    // binding-wide value contract shared with AddDataJson/SetInputJson.)
+    [TestMethod]
+    public void RegisteredHostAwait_ResumeValueWithRawNul_ThrowsFromParse()
+    {
+        var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
+        var entryPoints = new[] { "data.demo.greeting" };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate") };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"lang\": \"es\"}");
+
+        vm.Execute();
+        Assert.AreEqual("translate", vm.GetHostAwaitIdentifier());
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => vm.Resume("\"a\0b\""),
+            "expected a raw NUL that truncates to invalid JSON to surface as a parse error");
+    }
+
     [TestMethod]
     public void RegisteredHostAwait_GetAccessorsReturnNullWhenVmIsNotSuspended()
     {

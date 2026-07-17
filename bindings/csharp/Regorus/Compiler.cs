@@ -61,9 +61,11 @@ namespace Regorus
         /// </summary>
         /// <param name="name">The function name to register as host-awaitable.</param>
         /// <exception cref="ArgumentNullException">Thrown when <paramref name="name"/> is null.</exception>
+        /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> contains an embedded NUL ('\0').</exception>
         public HostAwaitBuiltin(string name)
         {
             Name = name ?? throw new ArgumentNullException(nameof(name));
+            Utf8Marshaller.ThrowIfContainsNul(name, nameof(name));
         }
     }
 

@@ -311,6 +311,8 @@ namespace Regorus.Internal
                             nameof(responsesByIdentifier));
                     }
 
+                    Utf8Marshaller.ThrowIfContainsNul(kvp.Key, nameof(responsesByIdentifier));
+
                     var idPinned = Utf8Marshaller.Pin(kvp.Key);
                     pins.Add(idPinned);
 

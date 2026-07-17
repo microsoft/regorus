@@ -151,6 +151,21 @@ namespace Regorus.Internal
             return new PinnedUtf8(value);
         }
 
+        /// <summary>
+        /// Throws if <paramref name="value"/> contains an embedded NUL ('\0'),
+        /// which would silently truncate the string when passed to native code
+        /// as a null-terminated C string. A null value is left to the caller.
+        /// </summary>
+        internal static void ThrowIfContainsNul(string value, string paramName)
+        {
+            if (value != null && value.IndexOf('\0') >= 0)
+            {
+                throw new ArgumentException(
+                    "Value must not contain an embedded NUL ('\\0'); it would be silently truncated when passed to native code.",
+                    paramName);
+            }
+        }
+
         internal static unsafe string? FromUtf8(byte* pointer)
         {
             if (pointer is null)
