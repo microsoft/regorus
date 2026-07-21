@@ -13,7 +13,7 @@ use crate::ast::{self, ExprRef, LiteralStmt, Query};
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::compiler::hoist::{HoistedLoop, LoopType};
 use crate::lexer::Span;
-use crate::rvm::instructions::{LoopMode, LoopStartParams};
+use crate::rvm::instructions::{GuardMode, LoopMode, LoopStartParams};
 use crate::rvm::Instruction;
 use crate::Value;
 use alloc::format;
@@ -197,6 +197,19 @@ impl<'a> Compiler<'a> {
             *end = loop_end;
         }
 
+        // The loop writes its overall pass/fail into `result_reg`
+        // (`success_count == total_iterations` for `Every`). The enclosing query
+        // must fail (evaluate to undefined) when the quantifier does not hold, so
+        // guard on `result_reg` here. Without this the `every` result is computed
+        // but discarded, leaving the surrounding rule to always succeed.
+        self.emit_instruction(
+            Instruction::Guard {
+                register: result_reg,
+                mode: GuardMode::Condition,
+            },
+            span,
+        );
+
         Ok(())
     }
 
@@ -310,6 +323,25 @@ impl<'a> Compiler<'a> {
         } = &mut self.program.instructions[loop_next_idx]
         {
             *end = loop_end;
+        }
+
+        // A hoisted index-iteration loop inside an `every` body acts as a
+        // condition on the current iteration: if the indexed reference matches
+        // nothing the iteration must fail. The `every` body emits no context
+        // yield, so the loop result register is otherwise discarded (same
+        // situation as `some ... in`). Guard on it so a non-matching indexed
+        // reference fails the enclosing `every` iteration.
+        if matches!(
+            self.context_stack.last().map(|c| &c.context_type),
+            Some(ContextType::Every)
+        ) {
+            self.emit_instruction(
+                Instruction::Guard {
+                    register: result_reg,
+                    mode: GuardMode::Condition,
+                },
+                collection.span(),
+            );
         }
 
         Ok(())

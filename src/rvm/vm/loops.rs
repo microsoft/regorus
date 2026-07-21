@@ -495,8 +495,15 @@ impl RegoVM {
                     // over a virtual null element.
                     Ok(Some(IterationState::Single { consumed: false }))
                 } else {
-                    // Standard Rego or count/forEach: non-collection → immediate result.
-                    let result = non_collection_result(mode);
+                    // Standard Rego: iterating a non-collection scalar (number,
+                    // string, bool, null, undefined) yields no iterations. For
+                    // `every` this makes the quantifier undefined (it fails) — it
+                    // is NOT vacuously true, which only applies to a genuinely
+                    // empty collection. `any`/`forEach` remain false.
+                    let result = match *mode {
+                        LoopMode::Every => Value::Undefined,
+                        LoopMode::Any | LoopMode::ForEach => Value::Bool(false),
+                    };
                     self.set_register(params.result_reg, result)?;
                     self.pc = usize::from(params.loop_end).saturating_sub(1);
                     Ok(None)
