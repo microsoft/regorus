@@ -6,14 +6,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/microsoft/regorus/compare/regorus-v0.10.1...regorus-v0.11.0) - 2026-07-21
+
+### Added
+
+- *(compiler)* support registered host-await builtins for natural function call syntax ([#667](https://github.com/microsoft/regorus/pull/667))
+- *(value)* introduce Set storage abstraction ([#740](https://github.com/microsoft/regorus/pull/740))
+
 ### Fixed
 
-- `Engine::add_data` now deep-merges nested data documents instead of only merging top-level keys. Adding `{ "a": { "x": 1 } }` followed by `{ "a": { "y": 2 } }` now yields `{ "a": { "x": 1, "y": 2 } }` (matching OPA's data-document merge). Nested sets under a shared key are unioned. Only genuine leaf conflicts (the same path holding two different values) are reported as errors.
+- *(rvm)* assert every-quantifier results so failing cases don't pass ([#765](https://github.com/microsoft/regorus/pull/765))
+- `Engine::add_data` now deep-merges nested data documents instead of only merging top-level keys. Adding `{ "a": { "x": 1 } }` followed by `{ "a": { "y": 2 } }` now yields `{ "a": { "x": 1, "y": 2 } }` (matching OPA's data-document merge). Nested sets under a shared key are unioned. Only genuine leaf conflicts (the same path holding two different values) are reported as errors. ([#760](https://github.com/microsoft/regorus/pull/760))
 - A zero-arg function producing two different complete values (e.g. `f() := { "a": 1 }` and `f() := { "b": 2 }`) is now reported as a conflict, matching OPA's complete-rule semantics, instead of silently combining the outputs.
 
 ### Security
 
 - `Engine::add_data` now rejects data nested beyond 128 levels instead of risking a stack overflow on adversarially deep input.
+
+### Other
+
+- *(deps)* bump the rust-dependencies group across 5 directories with 11 updates ([#764](https://github.com/microsoft/regorus/pull/764))
+- Expand keyword-in-ref coverage for complex parser edge cases (interpreter + RVM) ([#744](https://github.com/microsoft/regorus/pull/744))
+- *(deps)* bump the rust-dependencies group across 5 directories with 4 updates ([#754](https://github.com/microsoft/regorus/pull/754))
+- *(deps)* bump the rust-dependencies group across 5 directories with 6 updates ([#750](https://github.com/microsoft/regorus/pull/750))
+- *(value)* migrate Value::Object to Object storage abstraction ([#736](https://github.com/microsoft/regorus/pull/736))
+- normalize path separators in folder filter on Windows ([#742](https://github.com/microsoft/regorus/pull/742))
+- Introduce Object storage abstraction ([#735](https://github.com/microsoft/regorus/pull/735))
+- *(rvm)* add debug-mode invariant assertions ([#737](https://github.com/microsoft/regorus/pull/737))
+- *(deps)* bump the rust-dependencies group across 5 directories with 5 updates ([#734](https://github.com/microsoft/regorus/pull/734))
 
 ## [0.10.1](https://github.com/microsoft/regorus/compare/regorus-v0.10.0...regorus-v0.10.1) - 2026-05-22
 
