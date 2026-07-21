@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #![allow(
+    clippy::panic,
     clippy::expect_used,
     clippy::unwrap_used,
     clippy::indexing_slicing,
@@ -752,4 +753,116 @@ fn set_ord_invariant_to_insertion_order() {
         b.insert(val(i));
     }
     assert_eq!(a.cmp(&b), core::cmp::Ordering::Equal);
+}
+
+fn top_object_rc(v: &Value) -> crate::Rc<Object> {
+    match v {
+        Value::Object(rc) => crate::Rc::clone(rc),
+        other => panic!("expected object, got {other:?}"),
+    }
+}
+
+/// A no-op deep-merge (every incoming key already present with an equal value) must not clone
+/// the target map. `deep_merge` acquires mutable access lazily, so when nothing changes at a
+/// level the shared `Rc` is left untouched.
+#[test]
+fn deep_merge_noop_subset_does_not_clone_object() {
+    let mut a = Value::from_json_str(r#"{"x": {"deep": 1}, "y": 2}"#).unwrap();
+    // Keep a second reference so the map's refcount > 1: eager `make_mut` would clone here.
+    let shared = a.clone();
+    let before = top_object_rc(&a);
+
+    // Strict subset with identical values: no insert, no recurse, no conflict at any level.
+    a.deep_merge(Value::from_json_str(r#"{"y": 2}"#).unwrap())
+        .unwrap();
+
+    let after = top_object_rc(&a);
+    assert!(
+        crate::Rc::ptr_eq(&before, &after),
+        "no-op merge must not clone the shared object map"
+    );
+    assert_eq!(a, shared, "value must be unchanged by a no-op merge");
+}
+
+/// An equal nested object under a shared key is a no-op too — the equality short-circuit runs
+/// before any mutable access, so the map is not cloned.
+#[test]
+fn deep_merge_equal_nested_object_does_not_clone() {
+    let mut a = Value::from_json_str(r#"{"cfg": {"a": 1, "b": 2}, "n": 5}"#).unwrap();
+    let _shared = a.clone();
+    let before = top_object_rc(&a);
+
+    a.deep_merge(Value::from_json_str(r#"{"cfg": {"a": 1, "b": 2}}"#).unwrap())
+        .unwrap();
+
+    let after = top_object_rc(&a);
+    assert!(
+        crate::Rc::ptr_eq(&before, &after),
+        "merging an equal nested object must not clone the map"
+    );
+}
+
+/// A conflict on the first overlapping key is reported without cloning the target map: the
+/// read-only probe detects the conflict before any mutable access is taken.
+#[test]
+fn deep_merge_conflict_does_not_clone_object() {
+    let mut a = Value::from_json_str(r#"{"x": 1, "y": 2}"#).unwrap();
+    let _shared = a.clone();
+    let before = top_object_rc(&a);
+
+    let err = a
+        .deep_merge(Value::from_json_str(r#"{"x": 999}"#).unwrap())
+        .unwrap_err();
+    assert!(format!("{err}").contains("generated multiple times"));
+
+    let after = top_object_rc(&a);
+    assert!(
+        crate::Rc::ptr_eq(&before, &after),
+        "a conflict must not clone the shared object map"
+    );
+}
+
+/// Nest `depth` objects `{"k": {"k": ... leaf}}` iteratively, so building the value can't itself
+/// overflow and there's no parser to cap depth first.
+fn nest(depth: usize, leaf: Value) -> Value {
+    let mut v = leaf;
+    for _ in 0..depth {
+        let mut m = BTreeMap::new();
+        m.insert(Value::from("k"), v);
+        v = Value::from(m);
+    }
+    v
+}
+
+/// Over-deep data must fail with a clean `Err`, not overflow the stack. A `Value` can be built
+/// without serde_json's parse-time cap (the native bindings), so `deep_merge` must guard itself.
+#[test]
+fn deep_merge_rejects_excessive_depth() {
+    let depth = super::MAX_MERGE_DEPTH + 50;
+    // Shared key `k` on both sides forces full-depth recursion; distinct leaves keep the trees
+    // unequal so the equality short-circuit never fires.
+    let mut a = nest(depth, Value::from_json_str(r#"{"a": 1}"#).unwrap());
+    let b = nest(depth, Value::from_json_str(r#"{"b": 2}"#).unwrap());
+
+    let err = a.deep_merge(b).unwrap_err();
+    assert!(
+        format!("{err}").contains("nesting depth"),
+        "expected a depth-limit error, got: {err}"
+    );
+}
+
+/// The pre-scan carries the same guard, so the default build rejects over-deep input up front
+/// (leaving the live document untouched) instead of overflowing during validation.
+#[cfg(not(feature = "allocator-memory-limits"))]
+#[test]
+fn check_mergeable_rejects_excessive_depth() {
+    let depth = super::MAX_MERGE_DEPTH + 50;
+    let a = nest(depth, Value::from_json_str(r#"{"a": 1}"#).unwrap());
+    let b = nest(depth, Value::from_json_str(r#"{"b": 2}"#).unwrap());
+
+    let err = a.check_mergeable(&b).unwrap_err();
+    assert!(
+        format!("{err}").contains("nesting depth"),
+        "expected a depth-limit error, got: {err}"
+    );
 }

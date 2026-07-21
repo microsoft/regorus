@@ -60,6 +60,17 @@ enum FunctionModifier {
     Value(Value),
 }
 
+/// How [`Interpreter::update_data`] merges a rule's value into the data document.
+#[derive(Debug, Clone, Copy)]
+enum RuleValueMerge {
+    /// Shallow-merge keeping disjoint keys, so rules sharing a path prefix scaffold into one
+    /// object (`a.foo` + `a.bar` → one `a`) instead of conflicting.
+    Combine,
+    /// Complete-rule semantics: existing value must be absent or exactly equal, else conflict.
+    /// Used for zero-arg function outputs (`f() := …`), which OPA treats like complete rules.
+    Strict,
+}
+
 type RuleValues = BTreeMap<Vec<Value>, (Value, Ref<Expr>)>;
 
 #[derive(Debug)]
@@ -3408,6 +3419,23 @@ impl Interpreter {
         }
     }
 
+    /// Materialize a complete-rule value: the existing value must be absent or *exactly equal*
+    /// to `new`, else it is a conflict.
+    ///
+    /// Unlike the shallow [`Self::merge_rule_value`], differing outputs conflict instead of
+    /// combining — `f() := {"a": 1}` and `f() := {"b": 2}` conflict — matching OPA's semantics
+    /// for zero-arg functions.
+    fn merge_rule_value_strict(span: &Span, value: &mut Value, new: Value) -> Result<()> {
+        if *value == Value::Undefined {
+            *value = new;
+            Ok(())
+        } else if *value == new {
+            Ok(())
+        } else {
+            Err(span.error("rules should not produce multiple outputs."))
+        }
+    }
+
     pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
         let mut comps = vec![];
         let mut expr_opt = Some(refr);
@@ -3663,6 +3691,7 @@ impl Interpreter {
         _refr: &Expr,
         path: &[&str],
         value: Value,
+        merge: RuleValueMerge,
     ) -> Result<()> {
         if value == Value::Undefined {
             return Ok(());
@@ -3670,7 +3699,10 @@ impl Interpreter {
         // Ensure that path is created.
         let vref = Self::make_or_get_value_mut(&mut self.data, path)?;
         if Self::get_value_chained(self.init_data.clone(), path) == Value::Undefined {
-            Self::merge_rule_value(span, vref, value)
+            match merge {
+                RuleValueMerge::Strict => Self::merge_rule_value_strict(span, vref, value),
+                RuleValueMerge::Combine => Self::merge_rule_value(span, vref, value),
+            }
         } else {
             // Retain specified value.
             Ok(())
@@ -3778,7 +3810,13 @@ impl Interpreter {
                         // `a` is created as an empty object.
                         if let Some((_, prefix)) = path.split_last() {
                             if !prefix.is_empty() {
-                                self.update_data(span, refr, prefix, Value::new_object())?;
+                                self.update_data(
+                                    span,
+                                    refr,
+                                    prefix,
+                                    Value::new_object(),
+                                    RuleValueMerge::Combine,
+                                )?;
                             }
                         }
 
@@ -3790,7 +3828,13 @@ impl Interpreter {
                             };
 
                             let value = self.eval_rule_bodies(ctx, span, rule_body)?;
-                            self.update_data(refr.span(), refr, &path[..], value)?;
+                            self.update_data(
+                                refr.span(),
+                                refr,
+                                &path[..],
+                                value,
+                                RuleValueMerge::Strict,
+                            )?;
                         }
                     }
                 }
@@ -4037,6 +4081,7 @@ impl Interpreter {
                         rule_refr,
                         &prefix_path,
                         Value::new_object(),
+                        RuleValueMerge::Combine,
                     )?;
                 }
             }

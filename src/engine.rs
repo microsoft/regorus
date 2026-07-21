@@ -434,7 +434,13 @@ impl Engine {
 
     /// Add data document.
     ///
-    /// The specified data document is merged into existing data document.
+    /// The specified data document is deep-merged into the existing data document. Nested
+    /// objects are merged recursively (matching OPA's data-document merge), so adding
+    /// `{ "a": { "x": 1 } }` and then `{ "a": { "y": 2 } }` yields `{ "a": { "x": 1, "y": 2 } }`.
+    /// A conflict — the same path holding two different values — is an error.
+    ///
+    /// The merge is atomic: if any conflict is detected (including one deep in a nested
+    /// document), the call fails and the existing data document is left unchanged.
     ///
     /// ```
     /// # use regorus::*;
@@ -453,9 +459,13 @@ impl Engine {
     /// // Merge { "z" : 3 }. Conflict error.
     /// assert!(engine.add_data(Value::from_json_str(r#"{ "z" : 3 }"#)?).is_err());
     ///
+    /// // Nested objects are deep-merged. Merge { "y" : { "a" : 10 } } then { "y" : { "b" : 20 } }.
+    /// assert!(engine.add_data(Value::from_json_str(r#"{ "y" : { "a" : 10 } }"#)?).is_ok());
+    /// assert!(engine.add_data(Value::from_json_str(r#"{ "y" : { "b" : 20 } }"#)?).is_ok());
+    ///
     /// assert_eq!(
     ///   engine.eval_query("data".to_string(), false)?.result[0].expressions[0].value,
-    ///   Value::from_json_str(r#"{ "x": 1, "y": {}, "z": 2}"#)?
+    ///   Value::from_json_str(r#"{ "x": 1, "y": { "a": 10, "b": 20 }, "z": 2}"#)?
     /// );
     /// # Ok(())
     /// # }
@@ -464,8 +474,29 @@ impl Engine {
         if data.as_object().is_err() {
             bail!("data must be object");
         }
-        self.prepared = false;
-        self.interpreter.get_init_data_mut().merge(data)
+
+        // add_data is all-or-nothing; the atomic strategy differs by build because the failure
+        // modes do: a conflict (same path, differing values) is possible everywhere, an
+        // allocator-limit failure mid-merge only under `allocator-memory-limits`.
+        #[cfg(not(feature = "allocator-memory-limits"))]
+        {
+            // Conflict is the only failure mode; `check_mergeable` catches it up front without
+            // allocating, so validate then deep-merge in place (zero-copy fast path).
+            self.interpreter.get_init_data().check_mergeable(&data)?;
+            self.prepared = false;
+            self.interpreter.get_init_data_mut().deep_merge(data)
+        }
+        #[cfg(feature = "allocator-memory-limits")]
+        {
+            // A limit failure can strike mid-merge and can't be predicted, so merge into a
+            // candidate and commit only on success. `Value` is copy-on-write, so only touched
+            // subtrees are cloned.
+            let mut candidate = self.interpreter.get_init_data().clone();
+            candidate.deep_merge(data)?;
+            *self.interpreter.get_init_data_mut() = candidate;
+            self.prepared = false;
+            Ok(())
+        }
     }
 
     /// Get the data document.
