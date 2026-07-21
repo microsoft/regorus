@@ -70,12 +70,31 @@ impl<'a> Compiler<'a> {
                     ..
                 } = &stmt.literal
                 {
-                    self.compile_some_in_loop_with_remaining_statements(
+                    let some_result_reg = self.compile_some_in_loop_with_remaining_statements(
                         key,
                         value,
                         collection,
                         &stmts[idx..],
                     )?;
+                    // Inside an `every` body a `some ... in` acts as a condition
+                    // on the current iteration: if it matches nothing the
+                    // iteration must fail. Unlike a top-level rule body (where
+                    // per-iteration context yields produce the results), the
+                    // `every` body has no yield, so the loop result register is
+                    // otherwise discarded. Guard on it so a `some` that matches
+                    // nothing fails the enclosing `every` iteration.
+                    if matches!(
+                        self.context_stack.last().map(|c| &c.context_type),
+                        Some(ContextType::Every)
+                    ) {
+                        self.emit_instruction(
+                            Instruction::Guard {
+                                register: some_result_reg,
+                                mode: GuardMode::Condition,
+                            },
+                            &stmt.span,
+                        );
+                    }
                     return Ok(());
                 }
             }

@@ -26,7 +26,6 @@ const OPA_TODO_FOLDERS: &[&str] = &[
     "baseandvirtualdocs",
     "dataderef",
     "defaultkeyword",
-    "every",
     "fix1863",
     "functions",
     "partialdocconstants",
@@ -99,6 +98,20 @@ fn log_rvm_skip(case_note: &str, folder_name: Option<&str>) {
             "    skipping RVM check for '{}' (tracked in OPA_TODO_FOLDERS)",
             case_note
         );
+    }
+}
+
+/// Allows temporarily enabling RVM verification for folders otherwise listed in
+/// `OPA_TODO_FOLDERS`, without editing the source. Set `OPA_UNSKIP_FOLDERS` to a
+/// comma-separated list of folder names (e.g. `every,functions`) or `all`.
+/// Intended for auditing latent RVM bugs in currently-skipped constructs.
+fn folder_rvm_unskipped(folder: &str) -> bool {
+    match std::env::var("OPA_UNSKIP_FOLDERS") {
+        Ok(list) => {
+            let list = list.trim();
+            list.eq_ignore_ascii_case("all") || list.split(',').any(|f| f.trim() == folder)
+        }
+        Err(_) => false,
     }
 }
 
@@ -388,7 +401,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         let folder_name = folder_name_from_path(path_dir);
         let skip_rvm_for_folder = folder_name
             .as_deref()
-            .map(|folder| OPA_TODO_FOLDERS.contains(&folder))
+            .map(|folder| OPA_TODO_FOLDERS.contains(&folder) && !folder_rvm_unskipped(folder))
             .unwrap_or(false);
 
         if path.is_dir() {
