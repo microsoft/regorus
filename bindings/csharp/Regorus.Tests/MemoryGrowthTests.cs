@@ -115,6 +115,10 @@ public class MemoryGrowthTests
 
                 if (i % LogEvery == 0)
                 {
+                    // Collect transient managed garbage so the working-set delta reflects
+                    // retained (leaked) memory rather than uncollected allocations. A real
+                    // native leak from a missed Dispose() would survive GC and still be caught.
+                    ForceFullGc();
                     process.Refresh();
                     var workingSet = process.WorkingSet64;
                     var managed = GC.GetTotalMemory(false);
@@ -228,6 +232,10 @@ public class MemoryGrowthTests
 
                 if (i % LogEvery == 0)
                 {
+                    // Collect transient managed garbage so the working-set delta reflects
+                    // retained (leaked) memory rather than uncollected allocations. A real
+                    // native leak from a missed Dispose() would survive GC and still be caught.
+                    ForceFullGc();
                     process.Refresh();
                     var workingSet = process.WorkingSet64;
                     var managed = GC.GetTotalMemory(false);
