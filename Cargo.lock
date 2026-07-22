@@ -864,15 +864,9 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
-<<<<<<< HEAD
 version = "0.47.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "281c43ff06dcb331e9356d30e38853d559ce3d0a3f693e0b0e102667dec14fb1"
-=======
-version = "0.46.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d865ca7ca04445fcaa1d751fda3dc43b0113ba2fcddc65d5a0fcb474a7c3bba"
->>>>>>> 1a40595 (Fix Verus path issue in workflow)
 dependencies = [
  "ahash",
  "bytecount",
@@ -897,15 +891,9 @@ dependencies = [
 
 [[package]]
 name = "jsonschema-regex"
-<<<<<<< HEAD
 version = "0.47.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee0b351864e7ffbc5db9273daf7fa1b4d5177b0946713d667ca571b83c0b4045"
-=======
-version = "0.46.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b7fc96cd6677cc81b00607d43477327d719419937ef1c44b3556a40f517d54c"
->>>>>>> 1a40595 (Fix Verus path issue in workflow)
 dependencies = [
  "regex-syntax",
 ]
@@ -999,7 +987,6 @@ dependencies = [
 
 [[package]]
 name = "num-bigint"
-<<<<<<< HEAD
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
@@ -1013,11 +1000,6 @@ name = "num-bigint"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93e7820bc0a80a0238e650327316f929ba18d5be054b647490a3a6a339f3e7c0"
-=======
-version = "0.4.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c863e9ab5e7bf9c99ba75e1050f1e4d624ae87ed3532d6238ffbdc7b585dbbe6"
->>>>>>> 1a40595 (Fix Verus path issue in workflow)
 dependencies = [
  "num-integer",
  "num-traits",
@@ -1356,15 +1338,9 @@ dependencies = [
 
 [[package]]
 name = "referencing"
-<<<<<<< HEAD
 version = "0.47.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "348e860aeb0b7bd035778fd11dd9cd5290d32e4aed3b8f2274a00287a9fd362b"
-=======
-version = "0.46.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77954d81b2e1c5e8ab889f9f597a92f852ab073255de9e37ee3fb443efd57051"
->>>>>>> 1a40595 (Fix Verus path issue in workflow)
 dependencies = [
  "ahash",
  "fluent-uri",
@@ -1812,16 +1788,18 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "verus_builtin"
 version = "0.0.0-2026-05-17-0151"
-source = "git+https://github.com/verus-lang/verus.git#60c8383d70074f6c00d754b4fb47438995fcb79a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab9266bfb5cf45a080f425c560b0e0be2bf81194f0e80258990c49c1829d8b9"
 
 [[package]]
 name = "verus_builtin_macros"
-version = "0.0.0-2026-06-14-0213"
-source = "git+https://github.com/verus-lang/verus.git#60c8383d70074f6c00d754b4fb47438995fcb79a"
+version = "0.0.0-2026-07-12-0122"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fb60e3a141ababe618fbdb759f14aa8544f6346a98a44c1e3a7dbe20b1f2892"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.46",
- "syn 2.0.118",
+ "syn 2.0.119",
  "synstructure",
  "verus_prettyplease",
  "verus_syn",
@@ -1830,7 +1808,8 @@ dependencies = [
 [[package]]
 name = "verus_prettyplease"
 version = "0.0.0-2026-05-31-0205"
-source = "git+https://github.com/verus-lang/verus.git#60c8383d70074f6c00d754b4fb47438995fcb79a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ffdc94c89109a67c59646f6b6e71b49de394020f45294247dd716470523245b"
 dependencies = [
  "proc-macro2 1.0.106",
  "verus_syn",
@@ -1839,7 +1818,8 @@ dependencies = [
 [[package]]
 name = "verus_state_machines_macros"
 version = "0.0.0-2026-06-14-0213"
-source = "git+https://github.com/verus-lang/verus.git#60c8383d70074f6c00d754b4fb47438995fcb79a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6704a9ce586a5027f87933d9a84817411c937804090a9585c28bf335ac37eefc"
 dependencies = [
  "indexmap 1.9.3",
  "proc-macro2 1.0.106",
@@ -1850,7 +1830,8 @@ dependencies = [
 [[package]]
 name = "verus_syn"
 version = "0.0.0-2026-05-31-0205"
-source = "git+https://github.com/verus-lang/verus.git#60c8383d70074f6c00d754b4fb47438995fcb79a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "030b774330d5ec618691c2cd6fba8bbb13bd538f3884a1143450baec25749706"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.46",
@@ -1865,8 +1846,9 @@ checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 
 [[package]]
 name = "vstd"
-version = "0.0.0-2026-06-14-0213"
-source = "git+https://github.com/verus-lang/verus.git#60c8383d70074f6c00d754b4fb47438995fcb79a"
+version = "0.0.0-2026-07-12-0122"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd0a0d328e1d6382af99a65f71677cf4b9200ec24e09fcafa7b1a3af8c8f5111"
 dependencies = [
  "verus_builtin",
  "verus_builtin_macros",
@@ -2194,15 +2176,9 @@ dependencies = [
 
 [[package]]
 name = "zlib-rs"
-<<<<<<< HEAD
 version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b142a20ec14a91d5bc708c1dc21b080c550113d8aa77afa29635673a65dd02c5"
-=======
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5431d5661c32445236631278f27946e444ddafe4684cac70b185272d4f9c52d5"
->>>>>>> 1a40595 (Fix Verus path issue in workflow)
 
 [[package]]
 name = "zmij"
