@@ -605,3 +605,18 @@ cases:
         }
     query: data.rules.main
     want_result: [100, "RIGHT"]
+  - note: with target through dotted bracket key import
+    data:
+      "a.b":
+        x: 1
+    modules:
+      - |
+        package rules
+        import rego.v1
+        import data["a.b"] as ab
+
+        main := x if {
+          x := data["a.b"].x with ab.x as 2
+        }
+    query: data.rules.main
+    want_result: 2

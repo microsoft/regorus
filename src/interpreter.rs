@@ -1267,12 +1267,18 @@ impl Interpreter {
                 // survive the rewrite.
                 let rewritten: Option<Vec<String>> = match path.split_first() {
                     Some((head, rest)) if head.as_str() != "data" => {
-                        self.lookup_import_alias(head).map(|import_target| {
-                            import_target
-                                .split('.')
-                                .map(str::to_string)
-                                .chain(rest.iter().cloned())
-                                .collect()
+                        self.lookup_import(head).and_then(|import_expr| {
+                            // Use the import target's parsed components, not
+                            // its dot-joined string, so bracketed keys
+                            // containing dots survive in the import path too.
+                            let comps = Parser::get_path_ref_components(import_expr).ok()?;
+                            Some(
+                                comps
+                                    .iter()
+                                    .map(|s| s.text().to_string())
+                                    .chain(rest.iter().cloned())
+                                    .collect(),
+                            )
                         })
                     }
                     _ => None,
@@ -2398,15 +2404,20 @@ impl Interpreter {
         }
     }
 
-    /// Look up the target path of an import of the current module with the
-    /// given alias, e.g. `data.a.b` for `b` after `import data.a.b`.
-    fn lookup_import_alias(&self, alias: &str) -> Option<String> {
+    /// Look up the import of the current module with the given alias, e.g.
+    /// the `data.a.b` import expression for `b` after `import data.a.b`.
+    fn lookup_import(&self, alias: &str) -> Option<&Ref<Expr>> {
         if self.compiled_policy.imports.is_empty() {
             return None;
         }
         let import_key = format!("{}.{}", self.current_module_path, alias);
-        let import_expr = self.compiled_policy.imports.get(&import_key)?;
-        get_path_string(import_expr, None).ok()
+        self.compiled_policy.imports.get(&import_key)
+    }
+
+    /// Look up the dot-joined target path of an import of the current module
+    /// with the given alias, e.g. `data.a.b` for `b` after `import data.a.b`.
+    fn lookup_import_alias(&self, alias: &str) -> Option<String> {
+        get_path_string(self.lookup_import(alias)?, None).ok()
     }
 
     /// Rewrite a path whose leading component is an import alias of the
