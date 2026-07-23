@@ -14,10 +14,10 @@
     clippy::pattern_type_mismatch
 )]
 
-#[cfg(feature = "verus")]
+#[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
-#[cfg(feature = "verus")]
+#[cfg(verus_keep_ghost)]
 verus! {
 
 use vstd::float::*;
@@ -71,6 +71,13 @@ pub axiom fn axiom_f64_ops_deterministic()
         forall|n: u128, f: f64| float_cast_spec::<f64, u128>(f, n) ==> n == ieee_float_cast::<f64, u128>(f),
 ;
 
+// The executable test below validates these casts and justifies this axiom.
+pub axiom fn axiom_f64_safe_integer_casts()
+    ensures
+        ieee_float_cast::<f64, u64>(9_007_199_254_740_992.0f64) == 9_007_199_254_740_992u64,
+        ieee_float_cast::<f64, i128>(9_007_199_254_740_992.0f64) == 9_007_199_254_740_992i128,
+;
+
 pub assume_specification [ f64::is_finite ](f: f64) -> (res: bool)
     ensures
         res == f.is_finite_spec(),
@@ -88,15 +95,46 @@ pub assume_specification [ f64::fract ](f: f64) -> (res: f64)
 pub uninterp spec fn spec_f64_abs(f: f64) -> f64;
 
 pub assume_specification [ f64::abs ](f: f64) -> (res: f64)
-    requires
-        f.is_finite_spec(),
     ensures
         res == spec_f64_abs(f),
+;
+
+pub assume_specification [ <f64 as num_traits::Signed>::abs ](f: &f64) -> (res: f64)
+    ensures
+        res == spec_f64_abs(*f),
+;
+
+pub uninterp spec fn spec_f64_floor(f: f64) -> f64;
+
+pub assume_specification [ f64::floor ](f: f64) -> (res: f64)
+    ensures
+        res == spec_f64_floor(f),
+;
+
+pub uninterp spec fn spec_f64_ceil(f: f64) -> f64;
+
+pub assume_specification [ f64::ceil ](f: f64) -> (res: f64)
+    ensures
+        res == spec_f64_ceil(f),
+;
+
+pub uninterp spec fn spec_f64_round(f: f64) -> f64;
+
+pub assume_specification [ f64::round ](f: f64) -> (res: f64)
+    ensures
+        res == spec_f64_round(f),
 ;
 
 pub assume_specification [ f64::is_nan ](f: f64) -> (res: bool)
     ensures
         res == f.is_nan_spec(),
+;
+
+pub uninterp spec fn spec_f64_is_sign_positive(f: f64) -> bool;
+
+pub assume_specification [ f64::is_sign_positive ](f: f64) -> (res: bool)
+    ensures
+        res == spec_f64_is_sign_positive(f),
 ;
 
 pub uninterp spec fn spec_f64_neg_infinity() -> f64;
@@ -114,3 +152,14 @@ pub assume_specification[ f64::INFINITY ] -> (res: f64)
 ;
 
 } // end verus!
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn f64_safe_integer_casts_match_runtime() {
+        let safe_integer = 9_007_199_254_740_992.0f64;
+
+        assert_eq!(safe_integer as u64, 9_007_199_254_740_992u64);
+        assert_eq!(safe_integer as i128, 9_007_199_254_740_992i128);
+    }
+}

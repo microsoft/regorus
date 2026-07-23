@@ -127,7 +127,7 @@ mod compiler;
 mod engine;
 mod indexchecker;
 mod interpreter;
-#[cfg(verus_keep_ghost)]
+#[cfg(any(verus_keep_ghost, test))]
 mod verify;
 
 pub mod languages {

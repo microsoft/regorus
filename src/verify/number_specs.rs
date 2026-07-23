@@ -33,6 +33,22 @@ pub assume_specification[ <Number as Clone>::clone ](n: &Number) -> (res: Number
         res == n,
 ;
 
+pub assume_specification[ i128::abs ](value: i128) -> (res: i128)
+    requires
+        value != i128::MIN,
+    ensures
+        res as int == if value < 0 { -(value as int) } else { value as int },
+;
+
+pub assume_specification[ i64::checked_abs ](value: i64) -> (res: Option<i64>)
+    ensures
+        if value == i64::MIN {
+            res is None
+        } else {
+            res matches Some(abs) && abs as int == if value < 0 { -(value as int) } else { value as int }
+        },
+;
+
 pub enum NumberView {
     Integer(int),
     Float(f64),
@@ -78,7 +94,39 @@ pub open spec fn float_to_small_int(value: f64) -> Option<int>
     }
 }
 
+pub open spec fn normalize_float(value: f64) -> NumberView
+{
+    match float_to_small_int(value) {
+        Some(n) => NumberView::Integer(n),
+        None => NumberView::Float(value),
+    }
+}
+
 impl NumberView {
+    pub open spec fn integer_value(&self) -> Option<int>
+    {
+        match *self {
+            Self::Integer(n) => Some(n),
+            Self::Float(_) => None,
+        }
+    }
+
+    pub open spec fn is_integer(&self) -> bool
+    {
+        match *self {
+            Self::Integer(_) => true,
+            Self::Float(f) => f.is_finite_spec() && spec_f64_fract(f).eq_spec(&0.0f64),
+        }
+    }
+
+    pub open spec fn is_zero(&self) -> bool
+    {
+        match *self {
+            Self::Integer(n) => n == 0,
+            Self::Float(f) => f.eq_spec(&0.0f64),
+        }
+    }
+
     pub open spec fn to_int(&self) -> Option<int>
     {
         match *self {
@@ -105,7 +153,72 @@ impl NumberView {
             NumberView::Float(v) => f == v,
         }
     }
+
+    pub open spec fn add_ensures(self: Self, rhs: Self, result: Self) -> bool
+    {
+        match (self.integer_value(), rhs.integer_value()) {
+            (Some(lhs), Some(rhs)) => result matches NumberView::Integer(sum) && sum == lhs + rhs,
+            _ => exists|lhs_float: f64, rhs_float: f64| {
+                &&& self.to_f64_lossy_ensures(lhs_float)
+                &&& rhs.to_f64_lossy_ensures(rhs_float)
+                &&& match result {
+                    NumberView::Integer(sum) => float_to_small_int(lhs_float + rhs_float) == Some(sum),
+                    NumberView::Float(sum) => {
+                        float_to_small_int(lhs_float + rhs_float) is None && sum == lhs_float + rhs_float
+                    },
+                }
+            },
+        }
+    }
+
+    pub open spec fn sub_ensures(self: Self, rhs: Self, result: Self) -> bool
+    {
+        match (self.integer_value(), rhs.integer_value()) {
+            (Some(lhs), Some(rhs)) => result matches NumberView::Integer(diff) && diff == lhs - rhs,
+            _ => exists|lhs_float: f64, rhs_float: f64| {
+                &&& self.to_f64_lossy_ensures(lhs_float)
+                &&& rhs.to_f64_lossy_ensures(rhs_float)
+                &&& match result {
+                    NumberView::Integer(diff) => float_to_small_int(lhs_float - rhs_float) == Some(diff),
+                    NumberView::Float(diff) => {
+                        float_to_small_int(lhs_float - rhs_float) is None && diff == lhs_float - rhs_float
+                    },
+                }
+            },
+        }
+    }
+
+    pub open spec fn mul_ensures(self: Self, rhs: Self, result: Self) -> bool
+    {
+        match (self.integer_value(), rhs.integer_value()) {
+            (Some(lhs), Some(rhs)) => result matches NumberView::Integer(product) && product == lhs * rhs,
+            _ => exists|lhs_float: f64, rhs_float: f64| {
+                &&& self.to_f64_lossy_ensures(lhs_float)
+                &&& rhs.to_f64_lossy_ensures(rhs_float)
+                &&& match result {
+                    NumberView::Integer(product) => float_to_small_int(lhs_float * rhs_float) == Some(product),
+                    NumberView::Float(product) => {
+                        float_to_small_int(lhs_float * rhs_float) is None && product == lhs_float * rhs_float
+                    },
+                }
+            },
+        }
+    }
 }
+
+pub assume_specification[ Number::two_pow ](e: i32) -> (result: anyhow::Result<Number>)
+    ensures
+        result is Ok,
+        e >= 0 ==> (result matches Ok(value) && value@ is Integer),
+        e < 0 ==> (result matches Ok(value) && value@ is Float),
+;
+
+pub assume_specification[ Number::ten_pow ](e: i32) -> (result: anyhow::Result<Number>)
+    ensures
+        result is Ok,
+        e >= 0 ==> (result matches Ok(value) && value@ is Integer),
+        e < 0 ==> (result matches Ok(value) && value@ is Float),
+;
 
 impl FromSpecImpl<BigInt> for Number {
     open spec fn obeys_from_spec() -> bool

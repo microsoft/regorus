@@ -23,6 +23,7 @@ verus! {
 
 use core::cmp::Ordering;
 use num_bigint::BigInt;
+use vstd::arithmetic::power2::pow2;
 use vstd::std_specs::cmp::OrdSpec;
 
 #[verifier::external_type_specification]
@@ -42,7 +43,62 @@ impl BigIntAdditionalSpecFns for BigInt {
     uninterp spec fn view(&self) -> int;
 }
 
+pub uninterp spec fn spec_bigint_bitand(lhs: int, rhs: int) -> int;
+
+pub axiom fn axiom_bigint_obeys_bitand_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::BitAndSpec>::obeys_bitand_spec(),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::BitAndSpec>::bitand_req(lhs, rhs),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::BitAndSpec>::bitand_spec(lhs, rhs)@
+                == spec_bigint_bitand(lhs@, rhs@),
+;
+
+pub uninterp spec fn spec_bigint_bitor(lhs: int, rhs: int) -> int;
+
+pub axiom fn axiom_bigint_obeys_bitor_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::BitOrSpec>::obeys_bitor_spec(),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::BitOrSpec>::bitor_req(lhs, rhs),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::BitOrSpec>::bitor_spec(lhs, rhs)@
+                == spec_bigint_bitor(lhs@, rhs@),
+;
+
+pub uninterp spec fn spec_bigint_bitxor(lhs: int, rhs: int) -> int;
+
+pub axiom fn axiom_bigint_obeys_bitxor_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::BitXorSpec>::obeys_bitxor_spec(),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::BitXorSpec>::bitxor_req(lhs, rhs),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::BitXorSpec>::bitxor_spec(lhs, rhs)@
+                == spec_bigint_bitxor(lhs@, rhs@),
+;
+
+pub axiom fn axiom_bigint_not_spec(value: BigInt)
+    ensures
+    <BigInt as vstd::std_specs::ops::NotSpec>::obeys_not_spec(),
+    <BigInt as vstd::std_specs::ops::NotSpec>::not_req(value),
+    <BigInt as vstd::std_specs::ops::NotSpec>::not_spec(value)@ == -(value@) - 1,
+;
+
 // Conditions
+
+pub open spec fn bigint_bits_ensures(value: int, bits: nat) -> bool
+{
+    &&& -(pow2(bits) as int) < value < pow2(bits)
+    &&& forall|n: nat| #![trigger pow2(n)] n < bits ==>
+        !( -(pow2(n) as int) < value < pow2(n) )
+}
+
+pub assume_specification[ BigInt::bits ](x: &BigInt) -> (res: u64)
+    ensures
+        bigint_bits_ensures(x@, res as nat),
+;
 
 pub assume_specification[ <BigInt as num_traits::Zero>::is_zero ](x: &BigInt) -> (res: bool)
     ensures
@@ -52,6 +108,11 @@ pub assume_specification[ <BigInt as num_traits::Zero>::is_zero ](x: &BigInt) ->
 pub assume_specification[ <BigInt as num_traits::Signed>::is_negative ](x: &BigInt) -> (res: bool)
     ensures
         res == (x@ < 0),
+;
+
+pub assume_specification[ <BigInt as num_traits::Signed>::abs ](x: &BigInt) -> (res: BigInt)
+    ensures
+        res@ == if x@ < 0 { -x@ } else { x@ },
 ;
 
 // PartialEq
@@ -698,6 +759,14 @@ impl ToPrimitiveSpecImpl for num_bigint::BigInt
 
     uninterp spec fn spec_to_f64(&self) -> Option<f64>;
 }
+
+pub axiom fn axiom_safe_bigints_to_f64()
+    ensures
+        forall|x: &BigInt| {
+            -9_007_199_254_740_992 < x@ < 9_007_199_254_740_992 ==>
+                <BigInt as ToPrimitiveSpec>::spec_to_f64(x) is Some
+        },
+;
 
 // These are the methods of ToPrimitive that BigInt implements because there is no default in ToPrimitive
 pub assume_specification[ <num_bigint::BigInt as num_traits::ToPrimitive>::to_i64 ](x: &BigInt) -> (res: Option<i64>);

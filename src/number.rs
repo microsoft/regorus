@@ -35,9 +35,13 @@ use vstd::prelude::*;
 #[cfg(verus_keep_ghost)]
 use crate::verify::bigint_assumptions::*;
 #[cfg(verus_keep_ghost)]
+use crate::verify::bigint_proofs::*;
+#[cfg(verus_keep_ghost)]
 use crate::verify::f64_assumptions::*;
 #[cfg(verus_keep_ghost)]
 use crate::verify::number_specs::*;
+#[cfg(verus_keep_ghost)]
+use vstd::arithmetic::power2::pow2;
 #[cfg(verus_keep_ghost)]
 use vstd::float::*;
 #[cfg(verus_keep_ghost)]
@@ -224,10 +228,7 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            match result@ {
-                NumberView::Integer(n) => float_to_small_int(value) == Some(n),
-                NumberView::Float(f) => float_to_small_int(value) is None && f == value,
-            }
+            result@ == normalize_float(value),
     )]
     fn normalize_float(value: f64) -> Number {
         if let Some(i) = Self::float_to_small_bigint(value) {
@@ -483,7 +484,36 @@ impl PartialOrd for Number {
 }
 
 impl Number {
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(n) => {
+                    if 0 <= n <= u128::MAX {
+                        result matches Some(value) && value as int == n
+                    } else {
+                        result is None
+                    }
+                },
+                NumberView::Float(f) => {
+                    let convertible = f.is_finite_spec()
+                        && f.ieee_ge(0.0f64)
+                        && spec_f64_fract(f).eq_spec(&0.0f64)
+                        && ieee_float_cast::<u128, f64>(ieee_float_cast::<f64, u128>(f)).eq_spec(&f);
+                    match result {
+                        Some(value) => convertible && value == ieee_float_cast::<f64, u128>(f),
+                        None => !convertible,
+                    }
+                },
+            },
+    )]
     pub fn as_u128(&self) -> Option<u128> {
+        proof! {
+            axiom_f64_obeys_eq_spec();
+            axiom_f64_obeys_partial_cmp_spec();
+            axiom_f64_ops_deterministic();
+            axiom_f64_comparisons_match_ieee();
+        }
         match self {
             Number::UInt(v) => Some(*v as u128),
             Number::Int(v) if *v >= 0 => Some(*v as u128),
@@ -501,7 +531,33 @@ impl Number {
         }
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(n) => {
+                    if i128::MIN <= n <= i128::MAX {
+                        result matches Some(value) && value as int == n
+                    } else {
+                        result is None
+                    }
+                },
+                NumberView::Float(f) => {
+                    let convertible = f.is_finite_spec()
+                        && spec_f64_fract(f).eq_spec(&0.0f64)
+                        && ieee_float_cast::<i128, f64>(ieee_float_cast::<f64, i128>(f)).eq_spec(&f);
+                    match result {
+                        Some(value) => convertible && value == ieee_float_cast::<f64, i128>(f),
+                        None => !convertible,
+                    }
+                },
+            },
+    )]
     pub fn as_i128(&self) -> Option<i128> {
+        proof! {
+            axiom_f64_obeys_eq_spec();
+            axiom_f64_ops_deterministic();
+        }
         match self {
             Number::UInt(v) => Some(*v as i128),
             Number::Int(v) => Some(*v as i128),
@@ -518,7 +574,37 @@ impl Number {
         }
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(n) => {
+                    if 0 <= n <= u64::MAX {
+                        result matches Some(value) && value as int == n
+                    } else {
+                        result is None
+                    }
+                },
+                NumberView::Float(f) => {
+                    let convertible = f.is_finite_spec()
+                        && f.ieee_ge(0.0f64)
+                        && spec_f64_fract(f).eq_spec(&0.0f64)
+                        && f.ieee_le(ieee_float_cast::<u64, f64>(u64::MAX))
+                        && ieee_float_cast::<u64, f64>(ieee_float_cast::<f64, u64>(f)).eq_spec(&f);
+                    match result {
+                        Some(value) => convertible && value == ieee_float_cast::<f64, u64>(f),
+                        None => !convertible,
+                    }
+                },
+            },
+    )]
     pub fn as_u64(&self) -> Option<u64> {
+        proof! {
+            axiom_f64_obeys_eq_spec();
+            axiom_f64_obeys_partial_cmp_spec();
+            axiom_f64_ops_deterministic();
+            axiom_f64_comparisons_match_ieee();
+        }
         match self {
             Number::UInt(v) => Some(*v),
             Number::Int(v) if *v >= 0 => Some(*v as u64),
@@ -536,7 +622,37 @@ impl Number {
         }
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(n) => {
+                    if i64::MIN <= n <= i64::MAX {
+                        result matches Some(value) && value as int == n
+                    } else {
+                        result is None
+                    }
+                },
+                NumberView::Float(f) => {
+                    let convertible = f.is_finite_spec()
+                        && spec_f64_fract(f).eq_spec(&0.0f64)
+                        && f.ieee_ge(ieee_float_cast::<i64, f64>(i64::MIN))
+                        && f.ieee_le(ieee_float_cast::<i64, f64>(i64::MAX))
+                        && ieee_float_cast::<i64, f64>(ieee_float_cast::<f64, i64>(f)).eq_spec(&f);
+                    match result {
+                        Some(value) => convertible && value == ieee_float_cast::<f64, i64>(f),
+                        None => !convertible,
+                    }
+                },
+            },
+    )]
     pub fn as_i64(&self) -> Option<i64> {
+        proof! {
+            axiom_f64_obeys_eq_spec();
+            axiom_f64_obeys_partial_cmp_spec();
+            axiom_f64_ops_deterministic();
+            axiom_f64_comparisons_match_ieee();
+        }
         match self {
             Number::UInt(v) if *v <= i64::MAX as u64 => Some(*v as i64),
             Number::Int(v) => Some(*v),
@@ -558,7 +674,30 @@ impl Number {
         }
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            match (self@, result) {
+                (NumberView::Float(f), Some(value)) => f.is_finite_spec() && value == f,
+                (NumberView::Float(f), None) => !f.is_finite_spec(),
+                (NumberView::Integer(n), Some(value)) => {
+                    &&& -9_007_199_254_740_992 <= n <= 9_007_199_254_740_992
+                    &&& self@.to_f64_lossy_ensures(value)
+                },
+                // The bounds intentionally overlap at +/-2^53: primitive variants return
+                // Some there, while a BigInt variant with the same NumberView returns None.
+                (NumberView::Integer(n), None) => {
+                    n <= -9_007_199_254_740_992 || 9_007_199_254_740_992 <= n
+                },
+            },
+    )]
     pub fn as_f64(&self) -> Option<f64> {
+        proof! {
+            axiom_f64_ops_deterministic();
+            axiom_f64_safe_integer_casts();
+            axiom_safe_bigints_to_f64();
+            lemma_bigint_bits_le_53();
+        }
         match self {
             Number::Float(f) if f.is_finite() => Some(*f),
             Number::UInt(v) if *v <= F64_SAFE_INTEGER as u64 => Some(*v as f64),
@@ -574,20 +713,57 @@ impl Number {
         }
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(n) => result matches Some(bi) && bi@ == n,
+                NumberView::Float(f) => {
+                    match result {
+                        Some(bi) => float_to_small_int(f) == Some(bi@),
+                        None => float_to_small_int(f) is None,
+                    }
+                },
+            },
+    )]
     pub fn as_big(&self) -> Option<Rc<BigInt>> {
         self.to_bigint_rc()
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(n) => result matches Ok(bi) && bi@ == n,
+                NumberView::Float(f) => {
+                    match result {
+                        Ok(bi) => float_to_small_int(f) == Some(bi@),
+                        Err(_) => float_to_small_int(f) is None,
+                    }
+                },
+            },
+    )]
     pub fn to_big(&self) -> Result<Rc<BigInt>> {
         self.as_big()
             .ok_or_else(|| anyhow!("Number::to_big failed"))
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            result is Ok,
+            old(self)@.add_ensures(rhs@, final(self)@),
+    )]
     pub fn add_assign(&mut self, rhs: &Self) -> Result<()> {
         *self = self.add(rhs)?;
         Ok(())
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            result matches Ok(value) && self@.add_ensures(rhs@, value@),
+    )]
     pub fn add(&self, rhs: &Self) -> Result<Number> {
         if matches!(self, Number::Float(_)) || matches!(rhs, Number::Float(_)) {
             return Ok(Number::normalize_float(
@@ -629,11 +805,22 @@ impl Number {
         }
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            result is Ok,
+            old(self)@.sub_ensures(rhs@, final(self)@),
+    )]
     pub fn sub_assign(&mut self, rhs: &Self) -> Result<()> {
         *self = self.sub(rhs)?;
         Ok(())
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            result matches Ok(value) && self@.sub_ensures(rhs@, value@),
+    )]
     pub fn sub(&self, rhs: &Self) -> Result<Number> {
         if matches!(self, Number::Float(_)) || matches!(rhs, Number::Float(_)) {
             return Ok(Number::normalize_float(
@@ -677,11 +864,22 @@ impl Number {
         }
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            result is Ok,
+            old(self)@.mul_ensures(rhs@, final(self)@),
+    )]
     pub fn mul_assign(&mut self, rhs: &Self) -> Result<()> {
         *self = self.mul(rhs)?;
         Ok(())
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            result matches Ok(value) && self@.mul_ensures(rhs@, value@),
+    )]
     pub fn mul(&self, rhs: &Self) -> Result<Number> {
         if matches!(self, Number::Float(_)) || matches!(rhs, Number::Float(_)) {
             return Ok(Number::normalize_float(
@@ -729,6 +927,26 @@ impl Number {
         }
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            match (self@, rhs@, result) {
+                (NumberView::Integer(lhs), NumberView::Integer(divisor), Ok(value)) => {
+                    &&& divisor != 0
+                    &&& if vstd::arithmetic::div_mod::rust_rem(lhs, divisor) == 0 {
+                        value@ == NumberView::Integer(vstd::arithmetic::div_mod::rust_div(lhs, divisor))
+                    } else {
+                        value@ == NumberView::Float(self.spec_to_f64_lossy() / rhs.spec_to_f64_lossy())
+                    }
+                },
+                (NumberView::Float(_), _, Ok(value))
+                | (NumberView::Integer(_), NumberView::Float(_), Ok(value)) => {
+                    &&& !rhs@.is_zero()
+                    &&& value@ == NumberView::Float(self.spec_to_f64_lossy() / rhs.spec_to_f64_lossy())
+                },
+                (_, _, Err(_)) => rhs@.is_zero(),
+            },
+    )]
     pub fn divide(self, rhs: &Self) -> Result<Number> {
         if rhs.is_zero() {
             bail!("division by zero");
@@ -819,6 +1037,17 @@ impl Number {
         }
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            match (self@.to_int(), rhs@.to_int(), result) {
+                (Some(a), Some(b), Ok(value)) => {
+                    b != 0 && value@ == NumberView::Integer(vstd::arithmetic::div_mod::rust_rem(a, b))
+                },
+                (_, _, Ok(_)) => false,
+                (_, _, Err(_)) => rhs@.is_zero() || !self@.is_integer() || !rhs@.is_integer(),
+            },
+    )]
     pub fn modulo(self, rhs: &Self) -> Result<Number> {
         // Conversion fails for a non-integral float, and also for an integral
         // one whose magnitude exceeds 2^53, which cannot be represented exactly.
@@ -835,13 +1064,27 @@ impl Number {
         Ok(Number::from_bigint_owned(rem))
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            result == self@.is_integer(),
+    )]
     pub fn is_integer(&self) -> bool {
+        proof! { axiom_f64_obeys_eq_spec(); }
         match self {
             Number::Float(f) => f.is_finite() && f.fract() == 0.0,
             _ => true,
         }
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(n) => result == (n >= 0),
+                NumberView::Float(f) => result == spec_f64_is_sign_positive(f),
+            },
+    )]
     pub fn is_positive(&self) -> bool {
         match self {
             Number::UInt(_) => true,
@@ -850,7 +1093,21 @@ impl Number {
             Number::Float(f) => f.is_sign_positive(),
         }
     }
+}
 
+#[verus_verify]
+impl Number {
+    #[verus_spec(result =>
+        ensures
+            match (a@.to_int(), b@.to_int(), result) {
+                (Some(lhs), Some(rhs), Some((lhs_big, rhs_big))) => {
+                    lhs_big@ == lhs && rhs_big@ == rhs
+                },
+                (Some(_), Some(_), None) => false,
+                (_, _, Some(_)) => false,
+                (_, _, None) => true,
+            },
+    )]
     #[allow(clippy::if_then_some_else_none)]
     fn ensure_integers(a: &Number, b: &Number) -> Option<(BigInt, BigInt)> {
         if a.is_integer() && b.is_integer() {
@@ -860,6 +1117,13 @@ impl Number {
         }
     }
 
+    #[verus_spec(result =>
+        ensures
+            match self@.to_int() {
+                Some(value) => result matches Some(big) && big@ == value,
+                None => result is None,
+            },
+    )]
     fn ensure_integer(&self) -> Option<BigInt> {
         if self.is_integer() {
             self.to_bigint_owned()
@@ -868,21 +1132,72 @@ impl Number {
         }
     }
 
+    #[verus_spec(result =>
+        ensures
+            match (self@.to_int(), rhs@.to_int(), result) {
+                (Some(lhs), Some(rhs), Some(value)) => {
+                    value@ == NumberView::Integer(spec_bigint_bitand(lhs, rhs))
+                },
+                (Some(_), Some(_), None) => false,
+                (_, _, Some(_)) => false,
+                (_, _, None) => true,
+            },
+    )]
     pub fn and(&self, rhs: &Self) -> Option<Number> {
+        proof! { axiom_bigint_obeys_bitand_spec(); }
         let (a, b) = Self::ensure_integers(self, rhs)?;
         Some(Number::from_bigint_owned(a & b))
     }
 
+    #[verus_spec(result =>
+        ensures
+            match (self@.to_int(), rhs@.to_int(), result) {
+                (Some(lhs), Some(rhs), Some(value)) => {
+                    value@ == NumberView::Integer(spec_bigint_bitor(lhs, rhs))
+                },
+                (Some(_), Some(_), None) => false,
+                (_, _, Some(_)) => false,
+                (_, _, None) => true,
+            },
+    )]
     pub fn or(&self, rhs: &Self) -> Option<Number> {
+        proof! { axiom_bigint_obeys_bitor_spec(); }
         let (a, b) = Self::ensure_integers(self, rhs)?;
         Some(Number::from_bigint_owned(a | b))
     }
 
+    #[verus_spec(result =>
+        ensures
+            match (self@.to_int(), rhs@.to_int(), result) {
+                (Some(lhs), Some(rhs), Some(value)) => {
+                    value@ == NumberView::Integer(spec_bigint_bitxor(lhs, rhs))
+                },
+                (Some(_), Some(_), None) => false,
+                (_, _, Some(_)) => false,
+                (_, _, None) => true,
+            },
+    )]
     pub fn xor(&self, rhs: &Self) -> Option<Number> {
+        proof! { axiom_bigint_obeys_bitxor_spec(); }
         let (a, b) = Self::ensure_integers(self, rhs)?;
         Some(Number::from_bigint_owned(a ^ b))
     }
+}
 
+impl Number {
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            match (self@.to_int(), rhs@.to_int(), result) {
+                (Some(value), Some(shift), Some(result)) => {
+                    &&& 0 <= shift <= u32::MAX
+                    &&& result@ == NumberView::Integer(value * pow2(shift as nat) as int)
+                },
+                (Some(_), Some(shift), None) => !(0 <= shift <= u32::MAX),
+                (_, _, Some(_)) => false,
+                (_, _, None) => true,
+            },
+    )]
     pub fn lsh(&self, rhs: &Self) -> Option<Number> {
         let shift = rhs.as_u32()? as usize;
         let mut value = self.ensure_integer()?;
@@ -890,6 +1205,19 @@ impl Number {
         Some(Number::from_bigint_owned(value))
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            match (self@.to_int(), rhs@.to_int(), result) {
+                (Some(value), Some(shift), Some(result)) => {
+                    &&& 0 <= shift <= u32::MAX
+                    &&& result@ == NumberView::Integer(value / (pow2(shift as nat) as int))
+                },
+                (Some(_), Some(shift), None) => !(0 <= shift <= u32::MAX),
+                (_, _, Some(_)) => false,
+                (_, _, None) => true,
+            },
+    )]
     pub fn rsh(&self, rhs: &Self) -> Option<Number> {
         let shift = rhs.as_u32()? as usize;
         let mut value = self.ensure_integer()?;
@@ -897,12 +1225,42 @@ impl Number {
         Some(Number::from_bigint_owned(value))
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            match (self@.to_int(), result) {
+                (Some(value), Some(result)) => {
+                    result@ == NumberView::Integer(-value - 1)
+                },
+                (Some(_), None) => false,
+                (None, Some(_)) => false,
+                (None, None) => true,
+            },
+    )]
     pub fn neg(&self) -> Option<Number> {
         let mut value = self.ensure_integer()?;
-        value = !value;
+        proof! { axiom_bigint_not_spec(value); }
+        #[cfg(feature = "verus")]
+        {
+            value = core::ops::Not::not(value);
+        }
+        #[cfg(not(feature = "verus"))]
+        {
+            value = !value;
+        }
         Some(Number::from_bigint_owned(value))
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(value) => {
+                    result@ matches NumberView::Integer(abs) && abs == if value < 0 { -value } else { value }
+                },
+                NumberView::Float(value) => result@ == NumberView::Float(spec_f64_abs(value)),
+            },
+    )]
     pub fn abs(&self) -> Number {
         match self {
             Number::UInt(_) => self.clone(),
@@ -918,6 +1276,14 @@ impl Number {
         }
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(_) => result@ == self@,
+                NumberView::Float(value) => result@ == normalize_float(spec_f64_floor(value)),
+            },
+    )]
     pub fn floor(&self) -> Number {
         match self {
             Number::Float(f) => Number::normalize_float(f.floor()),
@@ -925,6 +1291,14 @@ impl Number {
         }
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(_) => result@ == self@,
+                NumberView::Float(value) => result@ == normalize_float(spec_f64_ceil(value)),
+            },
+    )]
     pub fn ceil(&self) -> Number {
         match self {
             Number::Float(f) => Number::normalize_float(f.ceil()),
@@ -932,6 +1306,14 @@ impl Number {
         }
     }
 
+    #[verus_verify]
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(_) => result@ == self@,
+                NumberView::Float(value) => result@ == normalize_float(spec_f64_round(value)),
+            },
+    )]
     pub fn round(&self) -> Number {
         match self {
             Number::Float(f) => Number::normalize_float(f.round()),
@@ -959,18 +1341,33 @@ impl Number {
         }
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            (result@.len() == 0) == self@.to_int() is None,
+    )]
     pub fn format_bin(&self) -> String {
         self.ensure_integer()
             .map(|v| v.to_str_radix(2))
             .unwrap_or_default()
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            (result@.len() == 0) == self@.to_int() is None,
+    )]
     pub fn format_octal(&self) -> String {
         self.ensure_integer()
             .map(|v| v.to_str_radix(8))
             .unwrap_or_default()
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            result@.len() > 0,
+    )]
     pub fn format_scientific(&self) -> String {
         match self {
             Number::Float(f) => format!("{:e}", f),
@@ -981,6 +1378,11 @@ impl Number {
         }
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            result@.len() > 0,
+    )]
     pub fn format_decimal(&self) -> String {
         match self {
             Number::UInt(v) => v.to_string(),
@@ -996,6 +1398,11 @@ impl Number {
         }
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            result@.len() > 0,
+    )]
     pub fn format_decimal_with_width(&self, d: u32) -> String {
         match self {
             Number::Float(f) => {
@@ -1007,12 +1414,22 @@ impl Number {
         }
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            (result@.len() == 0) == self@.to_int() is None,
+    )]
     pub fn format_hex(&self) -> String {
         self.ensure_integer()
             .map(|v| v.to_str_radix(16))
             .unwrap_or_default()
     }
 
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            (result@.len() == 0) == self@.to_int() is None,
+    )]
     pub fn format_big_hex(&self) -> String {
         self.ensure_integer()
             .map(|v| v.to_str_radix(16).to_ascii_uppercase())
@@ -1020,6 +1437,11 @@ impl Number {
     }
 }
 
+#[verus_verify(external_body)]
+#[verus_spec(result =>
+    ensures
+        result@ matches NumberView::Integer(value) && value > 0,
+)]
 fn two_pow_positive(exp: u32) -> Number {
     if exp < 64 {
         Number::UInt(1u64 << exp)
@@ -1030,6 +1452,11 @@ fn two_pow_positive(exp: u32) -> Number {
     }
 }
 
+#[verus_verify(external_body)]
+#[verus_spec(result =>
+    ensures
+        result@ > 0,
+)]
 fn pow10_bigint(exp: u32) -> BigInt {
     if exp == 0 {
         return BigInt::one();
@@ -1052,6 +1479,11 @@ fn pow10_bigint(exp: u32) -> BigInt {
     result
 }
 
+#[verus_verify(external_body)]
+#[verus_spec(result =>
+    ensures
+        result@ matches NumberView::Integer(value) && value > 0,
+)]
 fn ten_pow_positive(exp: u32) -> Number {
     if let Some(value) = 10u64.checked_pow(exp) {
         Number::UInt(value)
@@ -1060,6 +1492,11 @@ fn ten_pow_positive(exp: u32) -> Number {
     }
 }
 
+#[verus_verify(external_body)]
+#[verus_spec(result =>
+    ensures
+        result@.len() > 0,
+)]
 fn bigint_to_scientific(value: &BigInt) -> String {
     let s = value.to_string();
     let (sign, digits) = if let Some(rest) = s.strip_prefix('-') {
@@ -1076,12 +1513,18 @@ fn bigint_to_scientific(value: &BigInt) -> String {
     format!("{}{}.{}e{}", sign, &digits[0..1], &digits[1..], exponent)
 }
 
+#[verus_verify(external_body)]
 fn parse_scientific_bigint(input: &str) -> Option<BigInt> {
     let (mantissa, exponent_part) = split_scientific_parts(input)?;
     let exponent = exponent_part.parse::<i32>().ok()?;
     scientific_parts_to_bigint(mantissa, exponent)
 }
 
+#[verus_verify(external_body)]
+#[verus_spec(result =>
+    ensures
+        result matches Some((_, exponent)) ==> exponent@.len() > 0,
+)]
 fn split_scientific_parts(input: &str) -> Option<(&str, &str)> {
     let idx = input.find(['e', 'E'])?;
     let mantissa = &input[..idx];
@@ -1093,6 +1536,7 @@ fn split_scientific_parts(input: &str) -> Option<(&str, &str)> {
     }
 }
 
+#[verus_verify(external_body)]
 fn scientific_parts_to_bigint(mantissa: &str, exponent: i32) -> Option<BigInt> {
     let (sign, unsigned) = if let Some(rest) = mantissa.strip_prefix('-') {
         (-1, rest)
