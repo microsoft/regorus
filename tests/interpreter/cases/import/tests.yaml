@@ -188,3 +188,420 @@ cases:
         import input
     query: data.test
     want_result: {}
+  - note: function call through import
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        result := lib.double(21)
+    query: data.rules.result
+    want_result: 42
+  - note: function call through import alias
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import rego.v1
+        import data.lib as l
+
+        result := l.double(21)
+    query: data.rules.result
+    want_result: 42
+  - note: function imported directly
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import rego.v1
+        import data.lib.double
+
+        result := double(21)
+    query: data.rules.result
+    want_result: 42
+  - note: function call through import, nested package
+    modules:
+      - |
+        package a.b.c
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import rego.v1
+        import data.a
+
+        result := a.b.c.double(21)
+    query: data.rules.result
+    want_result: 42
+  - note: default function value via import
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        default pick(_) := "fallback"
+
+        pick(x) := x if x == "a"
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        a := lib.pick("a")
+        b := lib.pick("z")
+    query: data.rules
+    want_result:
+      a: a
+      b: fallback
+  - note: with override applies to function call through import
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package lib2
+        import rego.v1
+
+        fake(x) := 1000 + x
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        result := lib.double(5)
+
+        main := x if {
+          x := result with data.lib.double as data.lib2.fake
+        }
+    query: data.rules.main
+    want_result: 1005
+  - note: with override target written through import alias
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package lib2
+        import rego.v1
+
+        fake(x) := 1000 + x
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        result := data.lib.double(5)
+
+        main := x if {
+          x := result with lib.double as data.lib2.fake
+        }
+    query: data.rules.main
+    want_result: 1005
+  - note: with override replacement written through import alias
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package lib2
+        import rego.v1
+
+        fake(x) := 1000 + x
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+        import data.lib2
+
+        result := data.lib.double(5)
+
+        main := x if {
+          x := result with data.lib.double as lib2.fake
+        }
+    query: data.rules.main
+    want_result: 1005
+  - note: import alias shadows builtin namespace
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        unmarshal(_) := {"from": "lib"}
+      - |
+        package rules
+        import rego.v1
+        import data.lib as json
+
+        result := json.unmarshal(`[1,2]`)
+    query: data.rules.result
+    want_result:
+      from: lib
+  - note: with override target written through builtin-shadowing alias
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        unmarshal(_) := {"from": "lib"}
+      - |
+        package lib2
+        import rego.v1
+
+        unmarshal(_) := {"from": "lib2"}
+      - |
+        package rules
+        import rego.v1
+        import data.lib as json
+
+        result := json.unmarshal(`[1]`)
+
+        main := x if {
+          x := result with json.unmarshal as data.lib2.unmarshal
+        }
+    query: data.rules.main
+    want_result:
+      from: lib2
+  - note: with override replacement written through builtin-shadowing alias
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package lib2
+        import rego.v1
+
+        unmarshal(_) := {"from": "lib2"}
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+        import data.lib2 as json
+
+        result := lib.double(5)
+
+        main := x if {
+          x := result with data.lib.double as json.unmarshal
+        }
+    query: data.rules.main
+    want_result:
+      from: lib2
+  - note: with override target aliasing a non-function rule overrides the value
+    modules:
+      - |
+        package flib
+        import rego.v1
+
+        default flag := false
+
+        flag := true if input.x == 1
+      - |
+        package rules
+        import rego.v1
+        import data.flib as fl
+
+        result := data.flib.flag
+
+        main := x if {
+          x := result with fl.flag as 5
+        }
+    query: data.rules.main
+    want_result: 5
+  - note: import shadows module-local rule for function calls
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        lib.double(x) := 100 * x
+
+        main := lib.double(3)
+    query: data.rules.main
+    want_result: 6
+  - note: import shadows module-local value rule for function calls
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        lib.double := 7
+
+        main := lib.double(3)
+    query: data.rules.main
+    want_result: 6
+  - note: fully qualified function call with import present
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        result := data.lib.double(21)
+    query: data.rules.result
+    want_result: 42
+  - note: unknown function through import is an error
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        result := lib.missing(1)
+    query: data.rules.result
+    error: could not find function
+  - note: function call in module without imports
+    modules:
+      - |
+        package rules
+
+        double(x) := 2 * x
+
+        result := double(21)
+    query: data.rules.result
+    want_result: 42
+  - note: call to non-function value rule through import is an error
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        x := 5
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        result := lib.x(1)
+    query: data.rules.result
+    error: could not find function
+  - note: call to rule path prefix through import is an error
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        a.c := 9
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        result := lib.a(7)
+    query: data.rules.result
+    error: could not find function
+  - note: call to prefix of default function through import is an error
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        default a.b(_) := 1
+
+        a.b(x) := x * 2 if x > 10
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        result := lib.a(7)
+    query: data.rules.result
+    error: could not find function
+  - note: default-only function call through import
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        default dfl(_) := 42
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        result := lib.dfl(5)
+    query: data.rules.result
+    want_result: 42
+  - note: overload error does not leak callee module imports
+    strict: false
+    modules:
+      - |
+        package libx
+        import rego.v1
+
+        h(_) := "WRONG"
+      - |
+        package liby
+        import rego.v1
+
+        h(_) := "RIGHT"
+      - |
+        package lib
+        import rego.v1
+        import data.libx as ali
+
+        m(_) := 1
+
+        m(_) := 2
+
+        f(x) := 100 if x == 1
+
+        f(x) := y if {
+          x == 1
+          y := m(1)
+        }
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+        import data.liby as ali
+
+        main := [v, w] if {
+          v := lib.f(1)
+          w := ali.h(1)
+        }
+    query: data.rules.main
+    want_result: [100, "RIGHT"]

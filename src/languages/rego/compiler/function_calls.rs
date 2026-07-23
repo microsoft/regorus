@@ -63,6 +63,9 @@ impl<'a> Compiler<'a> {
         let original_fcn_path = fcn_path.clone();
         let full_fcn_path = if self.policy.inner.rules.contains_key(&fcn_path) {
             fcn_path
+        } else if let Some(resolved) = self.resolve_fcn_path_through_imports(&original_fcn_path) {
+            // Resolve a leading import alias before module-prefixing and builtins.
+            resolved
         } else {
             get_path_string(fcn, Some(&self.current_package))
                 .map_err(|_| CompilerError::InvalidFunctionExpressionWithPackage.at(&span))?
@@ -218,6 +221,37 @@ impl<'a> Compiler<'a> {
         }
 
         Ok(dest)
+    }
+
+    /// Rewrite an import-aliased call path to its target, e.g. `b.f(1)` to
+    /// `data.a.b.f` after `import data.a.b`. Resolves only when the target is
+    /// a known function (the `rules` map cannot be used here: it also indexes
+    /// value rules and every rule-path prefix, which must not become callable
+    /// through an alias), so an alias whose target defines the called
+    /// function shadows a like-named builtin namespace, while other spellings
+    /// keep their prior meaning (e.g. a builtin call). OPA instead rewrites
+    /// aliases unconditionally and rejects calls to a missing target at
+    /// compile time.
+    fn resolve_fcn_path_through_imports(&self, path: &str) -> Option<String> {
+        if self.policy.inner.imports.is_empty() || path.starts_with("data.") {
+            return None;
+        }
+        let (alias, rest) = match path.split_once('.') {
+            Some((alias, rest)) => (alias, Some(rest)),
+            None => (path, None),
+        };
+        let import_key = format!("{}.{}", self.current_package, alias);
+        let import_expr = self.policy.inner.imports.get(&import_key)?;
+        let target = get_path_string(import_expr, None).ok()?;
+        let candidate = match rest {
+            Some(rest) => format!("{target}.{rest}"),
+            None => target,
+        };
+        self.policy
+            .inner
+            .functions
+            .contains_key(&candidate)
+            .then_some(candidate)
     }
 
     fn lookup_builtin_arity(&self, name: &str) -> Option<usize> {

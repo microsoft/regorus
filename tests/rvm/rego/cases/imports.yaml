@@ -95,3 +95,204 @@ cases:
         }
     query: data.rules.present
     want_result: true
+  - note: import_function_call
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import data.lib
+        import rego.v1
+
+        result := lib.double(21)
+    query: data.rules.result
+    want_result: 42
+  - note: import_function_call_alias
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import data.lib as mylib
+        import rego.v1
+
+        result := mylib.double(21)
+    query: data.rules.result
+    want_result: 42
+  - note: import_function_directly
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import data.lib.double
+        import rego.v1
+
+        result := double(21)
+    query: data.rules.result
+    want_result: 42
+  - note: import_function_call_nested_package
+    modules:
+      - |
+        package a.b.c
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import data.a
+        import rego.v1
+
+        result := a.b.c.double(21)
+    query: data.rules.result
+    want_result: 42
+  - note: import_alias_shadows_builtin_namespace
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        unmarshal(_) := {"from": "lib"}
+      - |
+        package rules
+        import rego.v1
+        import data.lib as json
+
+        result := json.unmarshal(`[1,2]`)
+    query: data.rules.result
+    want_result:
+      from: lib
+  - note: default_function_value_via_import
+    skip: true  # TODO: cross-package calls to functions with default values fail to compile ("not a valid rule path"), even with fully-qualified paths
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        default pick(_) := "fallback"
+
+        pick(x) := x if x == "a"
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        a := lib.pick("a")
+        b := lib.pick("z")
+    query: data.rules
+    want_result:
+      a: a
+      b: fallback
+  - note: import_shadows_module_local_rule_for_function_calls
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        lib.double(x) := 100 * x
+
+        main := lib.double(3)
+    query: data.rules.main
+    want_result: 6
+  - note: import_shadows_module_local_value_rule_for_function_calls
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        lib.double := 7
+
+        main := lib.double(3)
+    query: data.rules.main
+    want_result: 6
+  - note: import_fully_qualified_function_call
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        result := data.lib.double(21)
+    query: data.rules.result
+    want_result: 42
+  - note: unknown_function_through_import
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        double(x) := 2 * x
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        result := lib.missing(1)
+    query: data.rules.result
+    want_error: "Unknown function"
+  - note: function_call_without_imports
+    modules:
+      - |
+        package rules
+
+        double(x) := 2 * x
+
+        result := double(21)
+    query: data.rules.result
+    want_result: 42
+  - note: non_function_value_rule_through_import
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        x := 5
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        result := lib.x(1)
+    query: data.rules.result
+    want_error: "Unknown function"
+  - note: rule_path_prefix_through_import
+    modules:
+      - |
+        package lib
+        import rego.v1
+
+        a.c := 9
+      - |
+        package rules
+        import rego.v1
+        import data.lib
+
+        result := lib.a(7)
+    query: data.rules.result
+    want_error: "Unknown function"
