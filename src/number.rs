@@ -27,25 +27,29 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use serde::ser::Serializer;
 use serde::Serialize;
 
+#[cfg(not(feature = "verus"))]
+use regorus_verus_shim::{proof, verus_spec, verus_verify};
+#[cfg(feature = "verus")]
 use vstd::prelude::*;
-#[cfg(feature = "verus")]
+
+#[cfg(verus_keep_ghost)]
+use crate::verify::bigint_assumptions::*;
+#[cfg(verus_keep_ghost)]
+use crate::verify::f64_assumptions::*;
+#[cfg(verus_keep_ghost)]
+use crate::verify::number_specs::*;
+#[cfg(verus_keep_ghost)]
 use vstd::float::*;
-#[cfg(feature = "verus")]
+#[cfg(verus_keep_ghost)]
 use vstd::std_specs::cmp::*;
-#[cfg(feature = "verus")]
+#[cfg(verus_keep_ghost)]
 use vstd::std_specs::convert::*;
 
 use crate::*;
-#[cfg(feature = "verus")]
-use crate::verify::bigint_assumptions::*;
-#[cfg(feature = "verus")]
-use crate::verify::f64_assumptions::*;
-#[cfg(feature = "verus")]
-use crate::verify::number_specs::*;
 
 pub type BigInt = NumBigInt;
 
-#[cfg_attr(feature = "verus", verus_verify)]
+#[verus_verify]
 const F64_SAFE_INTEGER: f64 = 9_007_199_254_740_992.0; // 2^53
 
 #[verus_verify]
@@ -463,12 +467,16 @@ impl Ord for Number {
             axiom_bigint_obeys_cmp_spec();
         }
         if let (Some(a), Some(b)) = (self.to_bigint_owned(), other.to_bigint_owned()) {
+            proof! {
+                assert(self@.to_int() == Some(a@));
+                assert(other@.to_int() == Some(b@));
+            }
             return a.cmp(&b);
         }
 
-        self.to_f64_lossy()
-            .partial_cmp(&other.to_f64_lossy())
-            .unwrap_or(Ordering::Equal)
+        let f1 = self.to_f64_lossy();
+        let f2 = other.to_f64_lossy();
+        f1.partial_cmp(&f2).unwrap_or(Ordering::Equal)
     }
 }
 

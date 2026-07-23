@@ -3,6 +3,7 @@
 members = [
     "tests/ensure_no_std",
   "xtask",
+  "verus-shim",
 ]
 
 [package]
@@ -144,6 +145,11 @@ postcard = { version = "1.1.3", default-features = false, features = ["alloc"], 
 # vstd is enabled via the `verus` feature. In no_std builds only the `alloc` feature is used;
 # the crate's `std` feature additionally enables `vstd/std` (matching vstd's default features).
 vstd = { version = "=0.0.0-2026-07-12-0122", optional = true, default-features = false, features = ["alloc"] }
+
+# No-op stand-ins for verus_verify/verus_spec/proof, used when the `verus` feature
+# is disabled so the annotated source still compiles as ordinary Rust. This is a
+# compile-time-only proc-macro crate and pulls in no runtime/verus dependencies.
+regorus-verus-shim = { path = "verus-shim", version = "0.0.0" }
 
 [dev-dependencies]
 anyhow = "1.0.102"

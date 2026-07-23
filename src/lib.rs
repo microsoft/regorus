@@ -127,7 +127,7 @@ mod compiler;
 mod engine;
 mod indexchecker;
 mod interpreter;
-#[cfg(feature = "verus")]
+#[cfg(verus_keep_ghost)]
 mod verify;
 
 pub mod languages {
