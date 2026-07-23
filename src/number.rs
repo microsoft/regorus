@@ -467,16 +467,12 @@ impl Ord for Number {
             axiom_bigint_obeys_cmp_spec();
         }
         if let (Some(a), Some(b)) = (self.to_bigint_owned(), other.to_bigint_owned()) {
-            proof! {
-                assert(self@.to_int() == Some(a@));
-                assert(other@.to_int() == Some(b@));
-            }
             return a.cmp(&b);
         }
 
-        let f1 = self.to_f64_lossy();
-        let f2 = other.to_f64_lossy();
-        f1.partial_cmp(&f2).unwrap_or(Ordering::Equal)
+        self.to_f64_lossy()
+            .partial_cmp(&other.to_f64_lossy())
+            .unwrap_or(Ordering::Equal)
     }
 }
 
