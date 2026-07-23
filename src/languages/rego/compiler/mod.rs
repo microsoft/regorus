@@ -185,17 +185,19 @@ impl<'a> Compiler<'a> {
 
     /// Register a function name as a host-awaitable builtin.
     ///
-    /// When the compiler encounters an **unqualified** call to `name(arg)`
-    /// (i.e. `name(arg)` from inside the policy's own package, not
-    /// `data.pkg.name(arg)` or any other package-qualified form), it will
-    /// emit a `HostAwait` instruction with the argument and `name` as the
-    /// identifier, instead of treating it as a user-defined or standard
-    /// builtin function.
-    ///
-    /// Package-qualified calls (e.g. `data.other.name(arg)`) are **not**
-    /// intercepted by registration. Those resolve through the normal
-    /// user-defined / builtin lookup against their fully-qualified path
-    /// (`data.other.name`).
+    /// When the compiler encounters an **unqualified** call `name(arg)` from
+    /// inside the policy's own package (not `data.pkg.name(arg)` or any other
+    /// package-qualified form), it emits a `HostAwait` instruction carrying the
+    /// argument and `name` as the identifier, instead of treating it as a
+    /// user-defined or standard builtin function. Registering a bare name thus
+    /// adds a host function, and registering a builtin's name (e.g.
+    /// `time.parse_duration_ns`) overrides that standard builtin — both are
+    /// supported. A package-qualified call (e.g. `data.other.name(arg)`), by
+    /// contrast, always resolves to the user-defined rule/function at that path
+    /// — even when the bare name is registered — so it stays a reliable way to
+    /// bypass host interception. A `data.*`-qualified name is therefore rejected
+    /// at registration: it would intercept the qualified call too and silently
+    /// shadow that rule/function.
     ///
     /// `arg_count` must be exactly 1. The `HostAwait` instruction carries a
     /// single argument register; use object packing to pass multiple values
@@ -207,6 +209,9 @@ impl<'a> Compiler<'a> {
     ///   whitespace (whitespace-padded names would never match the
     ///   trimmed identifier produced by the Rego parser, creating dead
     ///   registrations),
+    /// - `name` is package-qualified (starts with `data.`) — a `data.*` name
+    ///   would intercept the package-qualified call and silently shadow the
+    ///   user-defined rule/function at that path,
     /// - `name` is already registered (duplicate registration is rejected
     ///   rather than silently overwritten),
     /// - `arg_count` is not exactly 1.
@@ -222,6 +227,16 @@ impl<'a> Compiler<'a> {
             return Err(CompilerError::General {
                 message: format!(
                     "host-await builtin name {name:?} must not be empty or contain leading/trailing whitespace"
+                ),
+            }
+            .into());
+        }
+        if name.starts_with("data.") {
+            return Err(CompilerError::General {
+                message: format!(
+                    "host-await builtin name {name:?} must not be package-qualified \
+                     (start with 'data.'); it would silently shadow the user-defined \
+                     rule/function at that path"
                 ),
             }
             .into());

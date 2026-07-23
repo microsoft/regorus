@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Collections.Generic;
 using Regorus.Internal;
 
 #nullable enable
@@ -210,6 +211,66 @@ namespace Regorus
             return UseHandle(vmPtr =>
             {
                 return CheckAndDropResult(API.regorus_rvm_get_execution_state((RegorusRvm*)vmPtr));
+            });
+        }
+
+        /// <summary>
+        /// Get the HostAwait argument as a JSON string.
+        /// Returns null if the VM is not in a HostAwait-suspended state.
+        /// </summary>
+        public string? GetHostAwaitArgument()
+        {
+            return UseHandle(vmPtr =>
+            {
+                return CheckAndDropResult(API.regorus_rvm_get_host_await_argument((RegorusRvm*)vmPtr));
+            });
+        }
+
+        /// <summary>
+        /// Get the HostAwait identifier as a raw UTF-8 string (not JSON-quoted).
+        /// Returns null if the VM is not in a HostAwait-suspended state.
+        /// </summary>
+        public string? GetHostAwaitIdentifier()
+        {
+            return UseHandle(vmPtr =>
+            {
+                return CheckAndDropResult(API.regorus_rvm_get_host_await_identifier((RegorusRvm*)vmPtr));
+            });
+        }
+
+        /// <summary>
+        /// Pre-load HostAwait responses for run-to-completion mode.
+        /// </summary>
+        /// <remarks>
+        /// Atomically replaces all previously configured responses for every
+        /// identifier. Pass all identifiers the policy may invoke in a single
+        /// call; calling this method again discards the prior configuration
+        /// in full.
+        /// </remarks>
+        /// <param name="responsesByIdentifier">
+        /// Per-identifier queues of JSON-encoded response values, consumed in
+        /// FIFO order when the corresponding host-await builtin is invoked.
+        /// </param>
+        public void SetHostAwaitResponses(IReadOnlyDictionary<string, IReadOnlyList<string>> responsesByIdentifier)
+        {
+            if (responsesByIdentifier is null)
+            {
+                throw new ArgumentNullException(nameof(responsesByIdentifier));
+            }
+
+            using var pinnedSets = ModuleMarshalling.PinHostAwaitResponseSets(responsesByIdentifier);
+
+            UseHandle(vmPtr =>
+            {
+                fixed (RegorusHostAwaitResponseSet* setsPtr = pinnedSets.Buffer)
+                {
+                    CheckAndDropResult(API.regorus_rvm_set_host_await_responses(
+                        (RegorusRvm*)vmPtr,
+                        setsPtr,
+                        (UIntPtr)pinnedSets.Length,
+                        (UIntPtr)sizeof(RegorusHostAwaitResponseSet)));
+                }
+                return 0;
             });
         }
 

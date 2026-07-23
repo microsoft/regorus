@@ -37,6 +37,39 @@ namespace Regorus
     }
 
     /// <summary>
+    /// Represents a host-awaitable builtin registration for RVM compilation.
+    /// When registered, calls to the named function compile to HostAwait instructions
+    /// rather than regular function calls.
+    /// </summary>
+    /// <remarks>
+    /// Registered builtins are restricted to exactly one argument at the compiler
+    /// level (use object packing to pass multiple values). The argument count is
+    /// therefore not exposed here.
+    ///
+    /// Host-await builtins are not yet supported via the <c>CompileFromEngine</c>
+    /// path; only <c>CompileFromModules</c> accepts them today.
+    /// </remarks>
+    public readonly struct HostAwaitBuiltin
+    {
+        /// <summary>
+        /// Gets the function name to register as host-awaitable.
+        /// </summary>
+        public string Name { get; }
+
+        /// <summary>
+        /// Initializes a new instance of the HostAwaitBuiltin struct.
+        /// </summary>
+        /// <param name="name">The function name to register as host-awaitable.</param>
+        /// <exception cref="ArgumentNullException">Thrown when <paramref name="name"/> is null.</exception>
+        /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> contains an embedded NUL ('\0').</exception>
+        public HostAwaitBuiltin(string name)
+        {
+            Name = name ?? throw new ArgumentNullException(nameof(name));
+            Utf8Marshaller.ThrowIfContainsNul(name, nameof(name));
+        }
+    }
+
+    /// <summary>
     /// Provides static methods for compiling policies into efficient compiled representations.
     /// These are convenience methods that create an engine internally and perform compilation.
     /// </summary>
