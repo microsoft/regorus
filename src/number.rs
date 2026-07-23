@@ -28,8 +28,20 @@ use serde::ser::Serializer;
 use serde::Serialize;
 
 use vstd::prelude::*;
+#[cfg(feature = "verus")]
+use vstd::float::*;
+#[cfg(feature = "verus")]
+use vstd::std_specs::cmp::*;
+#[cfg(feature = "verus")]
+use vstd::std_specs::convert::*;
 
 use crate::*;
+#[cfg(feature = "verus")]
+use crate::verify::bigint_assumptions::*;
+#[cfg(feature = "verus")]
+use crate::verify::f64_assumptions::*;
+#[cfg(feature = "verus")]
+use crate::verify::number_specs::*;
 
 pub type BigInt = NumBigInt;
 
@@ -46,7 +58,12 @@ pub enum Number {
     BigInt(Rc<BigInt>),
 }
 
+#[verus_verify]
 impl Number {
+    #[verus_spec(result =>
+        ensures
+            result@ == NumberView::Integer(value@),
+    )]
     fn from_bigint_owned(value: BigInt) -> Self {
         if value.is_zero() {
             return Number::Int(0);
@@ -65,6 +82,10 @@ impl Number {
         Number::BigInt(Rc::new(value))
     }
 
+    #[verus_spec(result =>
+        ensures
+            result@ == NumberView::Integer(value as int),
+    )]
     fn from_i128(value: i128) -> Self {
         if value >= 0 {
             if let Ok(u) = u64::try_from(value) {
@@ -79,6 +100,19 @@ impl Number {
         }
     }
 
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(n) => result matches Some(bi) && bi@ == n,
+                NumberView::Float(f) =>
+                {
+                    match result {
+                        Some(bi) => float_to_small_int(f) == Some(bi@),
+                        None => float_to_small_int(f) is None,
+                    }
+                },
+            },
+    )]
     fn to_bigint_owned(&self) -> Option<BigInt> {
         match self {
             Number::UInt(v) => Some(BigInt::from(*v)),
@@ -88,7 +122,21 @@ impl Number {
         }
     }
 
+    #[verus_spec(result =>
+        ensures
+            match result {
+                Some(bi) => float_to_small_int(value) == Some(bi@),
+                None => float_to_small_int(value) is None,
+            },
+    )]
     fn float_to_small_bigint(value: f64) -> Option<BigInt> {
+        proof! {
+            axiom_f64_obeys_eq_spec();
+            axiom_f64_obeys_partial_cmp_spec();
+            axiom_f64_ops_deterministic();
+            axiom_f64_comparisons_match_ieee();
+        }
+
         if !value.is_finite() || value.fract() != 0.0 {
             return None;
         }
@@ -112,6 +160,17 @@ impl Number {
         None
     }
 
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(n) => result matches Some(bi) && bi@ == n,
+                NumberView::Float(f) =>
+                    match result {
+                        Some(bi) => float_to_small_int(f) == Some(bi@),
+                        None => float_to_small_int(f) is None,
+                    },
+            },
+    )]
     fn to_bigint_rc(&self) -> Option<Rc<BigInt>> {
         match self {
             Number::BigInt(v) => Some(v.clone()),
@@ -119,7 +178,13 @@ impl Number {
         }
     }
 
+    #[verus_spec(result =>
+        ensures
+            self@.to_f64_lossy_ensures(result),
+            result == self.spec_to_f64_lossy(),
+    )]
     fn to_f64_lossy(&self) -> f64 {
+        proof! { axiom_f64_ops_deterministic(); }
         match self {
             Number::UInt(v) => *v as f64,
             Number::Int(v) => *v as f64,
@@ -136,7 +201,15 @@ impl Number {
         }
     }
 
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(n) => result == (n == 0),
+                NumberView::Float(f) => result == f.eq_spec(&0.0f64),
+            },
+    )]
     fn is_zero(&self) -> bool {
+        proof! { axiom_f64_obeys_eq_spec(); }
         match self {
             Number::UInt(0) | Number::Int(0) => true,
             Number::Float(f) => *f == 0.0,
@@ -145,6 +218,13 @@ impl Number {
         }
     }
 
+    #[verus_spec(result =>
+        ensures
+            match result@ {
+                NumberView::Integer(n) => float_to_small_int(value) == Some(n),
+                NumberView::Float(f) => float_to_small_int(value) is None && f == value,
+            }
+    )]
     fn normalize_float(value: f64) -> Number {
         if let Some(i) = Self::float_to_small_bigint(value) {
             return Self::from_bigint_owned(i);
@@ -152,6 +232,13 @@ impl Number {
         Number::Float(value)
     }
 
+    #[verus_spec(result =>
+        ensures
+            match self@ {
+                NumberView::Integer(v) => if 0 <= v <= u32::MAX { result == Some(v as u32) } else { result is None },
+                NumberView::Float(_) => result is None,
+            },
+    )]
     fn as_u32(&self) -> Option<u32> {
         match self {
             Number::UInt(v) if *v <= u32::MAX as u64 => Some(*v as u32),
@@ -180,25 +267,45 @@ impl Serialize for Number {
     }
 }
 
+#[verus_verify]
 impl From<BigInt> for Number {
+    #[verus_spec(result =>
+        ensures
+            result@ == NumberView::Integer(value@),
+    )]
     fn from(value: BigInt) -> Self {
         Number::from_bigint_owned(value)
     }
 }
 
+#[verus_verify]
 impl From<u64> for Number {
+    #[verus_spec(result =>
+        ensures
+            result@ == NumberView::Integer(value as int),
+    )]
     fn from(value: u64) -> Self {
         Number::UInt(value)
     }
 }
 
+#[verus_verify]
 impl From<usize> for Number {
+    #[verus_spec(result =>
+        ensures
+            result@ == NumberView::Integer(value as int),
+    )]
     fn from(value: usize) -> Self {
         Number::UInt(value as u64)
     }
 }
 
+#[verus_verify]
 impl From<u128> for Number {
+    #[verus_spec(result =>
+        ensures
+            result@ == NumberView::Integer(value as int),
+    )]
     fn from(value: u128) -> Self {
         if let Ok(n) = u64::try_from(value) {
             Number::UInt(n)
@@ -208,19 +315,34 @@ impl From<u128> for Number {
     }
 }
 
+#[verus_verify]
 impl From<i64> for Number {
+    #[verus_spec(result =>
+        ensures
+            result@ == NumberView::Integer(value as int),
+    )]
     fn from(value: i64) -> Self {
         Number::Int(value)
     }
 }
 
+#[verus_verify]
 impl From<i128> for Number {
+    #[verus_spec(result =>
+        ensures
+            result@ == NumberView::Integer(value as int),
+    )]
     fn from(value: i128) -> Self {
         Number::from_i128(value)
     }
 }
 
+#[verus_verify]
 impl From<f64> for Number {
+    #[verus_spec(result =>
+        ensures
+            result@ == NumberView::Float(value),
+    )]
     fn from(value: f64) -> Self {
         Number::Float(value)
     }
@@ -288,8 +410,25 @@ impl FromStr for Number {
     }
 }
 
+#[verus_verify]
 impl PartialEq for Number {
+    #[verus_spec(result =>
+        ensures
+            match (self@.to_int(), other@.to_int()) {
+                (Some(n1), Some(n2)) => result == (n1 == n2),
+                _ => exists|f1: f64, f2: f64| #![trigger self@.to_f64_lossy_ensures(f1), other@.to_f64_lossy_ensures(f2)] {
+                    &&& self@.to_f64_lossy_ensures(f1)
+                    &&& other@.to_f64_lossy_ensures(f2)
+                    &&& result == (!f1.is_nan_spec() && !f2.is_nan_spec() && f1.eq_spec(&f2))
+                },
+            },
+    )]
     fn eq(&self, other: &Self) -> bool {
+        proof! {
+            axiom_bigint_obeys_eq_spec();
+            axiom_f64_obeys_eq_spec();
+        }
+
         if let (Some(a), Some(b)) = (self.to_bigint_owned(), other.to_bigint_owned()) {
             return a == b;
         }
@@ -305,8 +444,24 @@ impl PartialEq for Number {
 
 impl Eq for Number {}
 
+#[verus_verify]
 impl Ord for Number {
+    #[verus_spec(result =>
+         ensures
+             match (self@.to_int(), other@.to_int()) {
+                 (Some(n1), Some(n2)) => result == n1.cmp_spec(&n2),
+                 _ => exists|f1: f64, f2: f64| #![trigger self@.to_f64_lossy_ensures(f1), other@.to_f64_lossy_ensures(f2)] {
+                     &&& self@.to_f64_lossy_ensures(f1)
+                     &&& other@.to_f64_lossy_ensures(f2)
+                     &&& result == f1.partial_cmp_spec(&f2).unwrap_or(Ordering::Equal)
+                },
+            },
+    )]
     fn cmp(&self, other: &Self) -> Ordering {
+        proof! {
+            axiom_f64_obeys_partial_cmp_spec();
+            axiom_bigint_obeys_cmp_spec();
+        }
         if let (Some(a), Some(b)) = (self.to_bigint_owned(), other.to_bigint_owned()) {
             return a.cmp(&b);
         }

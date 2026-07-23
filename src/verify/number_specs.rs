@@ -183,7 +183,7 @@ impl PartialEqSpecImpl for Number {
 }
 
 impl Number {
-    spec fn spec_to_f64_lossy(&self) -> f64
+    pub open spec fn spec_to_f64_lossy(&self) -> f64
     {
         match *self {
             Number::UInt(v) => ieee_float_cast::<u64, f64>(v),
@@ -208,13 +208,13 @@ impl OrdSpecImpl for Number {
         true
     }
 
-    closed spec fn cmp_spec(&self, other: &Self) -> Ordering
+    open spec fn cmp_spec(&self, other: &Self) -> Ordering
     {
          match (self@.to_int(), other@.to_int()) {
              (Some(n1), Some(n2)) => n1.cmp_spec(&n2),
              _ => {
                  let f1 = self.spec_to_f64_lossy();
-                 let f2 = self.spec_to_f64_lossy();
+                 let f2 = other.spec_to_f64_lossy();
                  f1.partial_cmp_spec(&f2).unwrap_or(Ordering::Equal)
             },
         }

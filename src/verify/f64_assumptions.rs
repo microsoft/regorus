@@ -101,24 +101,16 @@ pub assume_specification [ f64::is_nan ](f: f64) -> (res: bool)
 
 pub uninterp spec fn spec_f64_neg_infinity() -> f64;
 
-#[inline]
-#[verifier::external_body]
-pub fn f64_neg_infinity() -> (res: f64)
-    ensures
-        res == spec_f64_neg_infinity(),
-{
-    f64::NEG_INFINITY
-}
-
 pub uninterp spec fn spec_f64_infinity() -> f64;
 
-#[inline]
-#[verifier::external_body]
-pub fn f64_infinity() -> (res: f64)
+pub assume_specification[ f64::NEG_INFINITY ] -> (res: f64)
+    ensures
+        res == spec_f64_neg_infinity(),
+;
+
+pub assume_specification[ f64::INFINITY ] -> (res: f64)
     ensures
         res == spec_f64_infinity(),
-{
-    f64::INFINITY
-}
+;
 
 } // end verus!
