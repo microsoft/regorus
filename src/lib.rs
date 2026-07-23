@@ -1,12 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// Unsafe code should not be used.
+// Unsafe code should not be used, except during verification.
 // Hard to reason about correctness, and maintainability.
-#![forbid(unsafe_code)]
+// The `verus` feature is only used during verification, never in production
+// builds, so the forbid remains in force for all shipped code.
+#![cfg_attr(not(feature = "verus"), forbid(unsafe_code))]
 // Ensure that all lint names are valid.
 #![deny(unknown_lints)]
 // Fail-fast lints: correctness, safety, and API surface
+#![cfg_attr(not(verus_keep_ghost), deny(dead_code))] // ban unused items
+#![cfg_attr(not(verus_keep_ghost), deny(missing_debug_implementations))] // require Debug on public types
 #![deny(
     // Panic sources - catch all ways code can panic
     clippy::panic, // forbid explicit panic! macro
@@ -21,7 +25,6 @@
     clippy::panic_in_result_fn, // disallow panic inside functions returning Result
 
     // Rust warnings/upstream
-    dead_code, // ban unused items
     deprecated, // prevent use of deprecated APIs
     deprecated_in_future, // catch items scheduled for deprecation
     exported_private_dependencies, // avoid leaking private deps in public API
@@ -29,7 +32,6 @@
     invalid_doc_attributes, // ensure doc attributes are valid
     keyword_idents, // disallow identifiers that are keywords
     macro_use_extern_crate, // block legacy macro_use extern crate
-    missing_debug_implementations, // require Debug on public types
     // TODO: Address in future pass
     // missing_docs, // require docs on public items
     non_ascii_idents, // disallow non-ASCII identifiers
@@ -125,6 +127,8 @@ mod compiler;
 mod engine;
 mod indexchecker;
 mod interpreter;
+#[cfg(feature = "verus")]
+mod verify;
 
 pub mod languages {
     #[cfg(feature = "azure_policy")]

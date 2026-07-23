@@ -27,7 +27,6 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use serde::ser::Serializer;
 use serde::Serialize;
 
-#[cfg(feature = "verus")]
 use vstd::prelude::*;
 
 use crate::*;
@@ -37,6 +36,8 @@ pub type BigInt = NumBigInt;
 #[cfg_attr(feature = "verus", verus_verify)]
 const F64_SAFE_INTEGER: f64 = 9_007_199_254_740_992.0; // 2^53
 
+#[verus_verify]
+#[verus_verify(external_derive)]
 #[derive(Clone)]
 pub enum Number {
     UInt(u64),
