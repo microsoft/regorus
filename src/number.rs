@@ -791,7 +791,8 @@ impl Number {
         if e >= 0 {
             Ok(ten_pow_positive(e as u32))
         } else {
-            let denom = ten_pow_positive((-e) as u32);
+            // Must cast to i64 before negating in case it's i32::MIN
+            let denom = ten_pow_positive((-(e as i64)) as u32);
             Number::from(1u64).divide(&denom)
         }
     }
