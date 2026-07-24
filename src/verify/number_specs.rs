@@ -204,6 +204,33 @@ impl NumberView {
             },
         }
     }
+
+    pub open spec fn div_ensures(
+        self: Self,
+        rhs: Self,
+        lhs_float: f64,
+        rhs_float: f64,
+        result: Self,
+    ) -> bool
+    {
+        match (self, rhs) {
+            (NumberView::Integer(lhs), NumberView::Integer(divisor)) => {
+                &&& divisor != 0
+                &&& if vstd::arithmetic::div_mod::rust_rem(lhs, divisor) == 0 {
+                    result == NumberView::Integer(
+                        vstd::arithmetic::div_mod::rust_div(lhs, divisor),
+                    )
+                } else {
+                    result == NumberView::Float(lhs_float / rhs_float)
+                }
+            },
+            (NumberView::Float(_), _) | (NumberView::Integer(_), NumberView::Float(_)) => {
+                &&& !rhs.is_zero()
+                &&& result == NumberView::Float(lhs_float / rhs_float)
+            },
+        }
+    }
+
 }
 
 impl FromSpecImpl<BigInt> for Number {
@@ -299,6 +326,7 @@ impl Number {
             },
         }
     }
+
 }
 
 impl OrdSpecImpl for Number {

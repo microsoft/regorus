@@ -23,6 +23,7 @@ verus! {
 
 use core::cmp::Ordering;
 use num_bigint::BigInt;
+use vstd::arithmetic::div_mod::{rust_div, rust_rem};
 use vstd::arithmetic::power2::pow2;
 use vstd::std_specs::cmp::OrdSpec;
 
@@ -500,74 +501,95 @@ pub assume_specification<'a>[ <BigInt as core::ops::Mul<&u8>>::mul ](x: BigInt, 
 
 // Division
 
+pub axiom fn axiom_bigint_obeys_div_rem_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::DivSpec>::obeys_div_spec(),
+        <BigInt as vstd::std_specs::ops::RemSpec>::obeys_rem_spec(),
+        forall|lhs: BigInt, rhs: BigInt| rhs@ != 0 ==> #[trigger]
+            <BigInt as vstd::std_specs::ops::DivSpec>::div_req(lhs, rhs),
+        forall|lhs: BigInt, rhs: BigInt| rhs@ != 0 ==> #[trigger]
+            <BigInt as vstd::std_specs::ops::RemSpec>::rem_req(lhs, rhs),
+        forall|lhs: BigInt, rhs: BigInt| rhs@ != 0 ==> #[trigger]
+            <BigInt as vstd::std_specs::ops::DivSpec>::div_spec(lhs, rhs)@
+                == rust_div(lhs@, rhs@),
+        forall|lhs: BigInt, rhs: BigInt| rhs@ != 0 ==> #[trigger]
+            <BigInt as vstd::std_specs::ops::RemSpec>::rem_spec(lhs, rhs)@
+                == rust_rem(lhs@, rhs@),
+;
+
 pub assume_specification[ <BigInt as core::ops::Div>::div ](x: BigInt, y: BigInt) -> (o: BigInt)
     ensures
-        o@ == x@ / y@,
+        y@ != 0 ==> o@ == rust_div(x@, y@),
 ;
 
 pub assume_specification<'a>[ <BigInt as core::ops::Div<&BigInt>>::div ](x: BigInt, y: &BigInt) -> (o: BigInt)
     ensures
-        o@ == x@ / (*y)@,
+        y@ != 0 ==> o@ == rust_div(x@, (*y)@),
 ;
 
 pub assume_specification<'a, 'b>[ <&BigInt as core::ops::Div<&BigInt>>::div ](x: &'b BigInt, y: &BigInt) -> (o: BigInt)
     ensures
-        o@ == (*x)@ / (*y)@,
+        y@ != 0 ==> o@ == rust_div((*x)@, (*y)@),
+;
+
+pub assume_specification<'a, 'b>[ <&BigInt as core::ops::Rem<&BigInt>>::rem ](x: &'b BigInt, y: &BigInt) -> (o: BigInt)
+    ensures
+        y@ != 0 ==> o@ == rust_rem((*x)@, (*y)@),
 ;
 
 pub assume_specification[ <BigInt as core::ops::Div<u8>>::div ](x: BigInt, y: u8) -> (o: BigInt)
     ensures
-        o@ == x@ / (y as int),
+        y != 0 ==> o@ == rust_div(x@, y as int),
 ;
 
 pub assume_specification[ <BigInt as core::ops::Div<u16>>::div ](x: BigInt, y: u16) -> (o: BigInt)
     ensures
-        o@ == x@ / (y as int),
+        y != 0 ==> o@ == rust_div(x@, y as int),
 ;
 
 pub assume_specification[ <BigInt as core::ops::Div<u32>>::div ](x: BigInt, y: u32) -> (o: BigInt)
     ensures
-        o@ == x@ / (y as int),
+        y != 0 ==> o@ == rust_div(x@, y as int),
 ;
 
 pub assume_specification[ <BigInt as core::ops::Div<u64>>::div ](x: BigInt, y: u64) -> (o: BigInt)
     ensures
-        o@ == x@ / (y as int),
+        y != 0 ==> o@ == rust_div(x@, y as int),
 ;
 
 pub assume_specification[ <BigInt as core::ops::Div<u128>>::div ](x: BigInt, y: u128) -> (o: BigInt)
     ensures
-        o@ == x@ / (y as int),
+        y != 0 ==> o@ == rust_div(x@, y as int),
 ;
 
 pub assume_specification[ <BigInt as core::ops::Div<i8>>::div ](x: BigInt, y: i8) -> (o: BigInt)
     ensures
-        o@ == x@ / (y as int),
+        y != 0 ==> o@ == rust_div(x@, y as int),
 ;
 
 pub assume_specification[ <BigInt as core::ops::Div<i16>>::div ](x: BigInt, y: i16) -> (o: BigInt)
     ensures
-        o@ == x@ / (y as int),
+        y != 0 ==> o@ == rust_div(x@, y as int),
 ;
 
 pub assume_specification[ <BigInt as core::ops::Div<i32>>::div ](x: BigInt, y: i32) -> (o: BigInt)
     ensures
-        o@ == x@ / (y as int),
+        y != 0 ==> o@ == rust_div(x@, y as int),
 ;
 
 pub assume_specification[ <BigInt as core::ops::Div<i64>>::div ](x: BigInt, y: i64) -> (o: BigInt)
     ensures
-        o@ == x@ / (y as int),
+        y != 0 ==> o@ == rust_div(x@, y as int),
 ;
 
 pub assume_specification[ <BigInt as core::ops::Div<i128>>::div ](x: BigInt, y: i128) -> (o: BigInt)
     ensures
-        o@ == x@ / (y as int),
+        y != 0 ==> o@ == rust_div(x@, y as int),
 ;
 
 pub assume_specification<'a>[ <BigInt as core::ops::Div<&u8>>::div ](x: BigInt, y: &u8) -> (o: BigInt)
     ensures
-        o@ == x@ / (*y as int),
+        *y != 0 ==> o@ == rust_div(x@, *y as int),
 ;
 
 } // end verus!

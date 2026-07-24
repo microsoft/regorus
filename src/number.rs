@@ -39,6 +39,8 @@ use crate::verify::bigint_proofs::*;
 #[cfg(verus_keep_ghost)]
 use crate::verify::f64_assumptions::*;
 #[cfg(verus_keep_ghost)]
+use crate::verify::number_proofs::*;
+#[cfg(verus_keep_ghost)]
 use crate::verify::number_specs::*;
 #[cfg(verus_keep_ghost)]
 use vstd::arithmetic::power2::pow2;
@@ -936,29 +938,39 @@ impl Number {
         }
     }
 
+    // Verus does not support the formatting internals used by `anyhow!`.
     #[verus_verify(external_body)]
+    fn division_by_zero_error() -> anyhow::Error {
+        anyhow!("division by zero")
+    }
+
     #[verus_spec(result =>
         ensures
-            match (self@, rhs@, result) {
-                (NumberView::Integer(lhs), NumberView::Integer(divisor), Ok(value)) => {
-                    &&& divisor != 0
-                    &&& if vstd::arithmetic::div_mod::rust_rem(lhs, divisor) == 0 {
-                        value@ == NumberView::Integer(vstd::arithmetic::div_mod::rust_div(lhs, divisor))
-                    } else {
-                        value@ == NumberView::Float(self.spec_to_f64_lossy() / rhs.spec_to_f64_lossy())
-                    }
-                },
-                (NumberView::Float(_), _, Ok(value))
-                | (NumberView::Integer(_), NumberView::Float(_), Ok(value)) => {
-                    &&& !rhs@.is_zero()
-                    &&& value@ == NumberView::Float(self.spec_to_f64_lossy() / rhs.spec_to_f64_lossy())
-                },
-                (_, _, Err(_)) => rhs@.is_zero(),
+            match result {
+                Ok(value) => self@.div_ensures(
+                    rhs@,
+                    self.spec_to_f64_lossy(),
+                    rhs.spec_to_f64_lossy(),
+                    value@,
+                ),
+                Err(_) => rhs@.is_zero(),
             },
     )]
     pub fn divide(self, rhs: &Self) -> Result<Number> {
+        proof! {
+            axiom_f64_ops_deterministic();
+            axiom_bigint_obeys_div_rem_spec();
+            lemma_div_ensures_cases(
+                self@,
+                rhs@,
+                self.spec_to_f64_lossy(),
+                rhs.spec_to_f64_lossy(),
+            );
+            lemma_number_primitive_division_facts(&self, rhs);
+        }
+
         if rhs.is_zero() {
-            bail!("division by zero");
+            return Err(Self::division_by_zero_error());
         }
 
         if matches!(self, Number::Float(_)) || matches!(rhs, Number::Float(_)) {
@@ -980,6 +992,9 @@ impl Number {
                     Ok(Number::from_bigint_owned(quotient))
                 } else if *a % *b == 0 {
                     if let Some(q) = a.checked_div(*b) {
+                        proof! {
+                            lemma_checked_div_matches_rust_i64(*a, *b, q);
+                        }
                         Ok(Number::Int(q))
                     } else {
                         let quotient = BigInt::from(*a) / BigInt::from(*b);
@@ -1718,6 +1733,14 @@ mod tests {
         assert!(matches!(
             Number::ten_pow(-3),
             Ok(Number::Float(value)) if value == 0.001
+        ));
+    }
+
+    #[test]
+    fn divide_handles_minimum_i64_by_negative_one() {
+        assert!(matches!(
+            Number::Int(i64::MIN).divide(&Number::Int(-1)),
+            Ok(Number::UInt(value)) if value == 1u64 << 63
         ));
     }
 }
