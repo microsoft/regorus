@@ -576,7 +576,6 @@ impl Number {
         }
     }
 
-    #[verus_verify]
     #[verus_spec(result =>
         ensures
             match self@ {
@@ -624,7 +623,6 @@ impl Number {
         }
     }
 
-    #[verus_verify]
     #[verus_spec(result =>
         ensures
             match self@ {
@@ -676,7 +674,6 @@ impl Number {
         }
     }
 
-    #[verus_verify]
     #[verus_spec(result =>
         ensures
             match (self@, result) {
@@ -715,7 +712,6 @@ impl Number {
         }
     }
 
-    #[verus_verify]
     #[verus_spec(result =>
         ensures
             match self@ {
@@ -750,7 +746,6 @@ impl Number {
             .ok_or_else(|| anyhow!("Number::to_big failed"))
     }
 
-    #[verus_verify]
     #[verus_spec(result =>
         ensures
             result is Ok,
@@ -761,6 +756,7 @@ impl Number {
         Ok(())
     }
 
+    // Verus does not yet support overloaded op-assignment operators like `+=`.
     #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
@@ -807,7 +803,6 @@ impl Number {
         }
     }
 
-    #[verus_verify]
     #[verus_spec(result =>
         ensures
             result is Ok,
@@ -866,7 +861,6 @@ impl Number {
         }
     }
 
-    #[verus_verify]
     #[verus_spec(result =>
         ensures
             result is Ok,
@@ -1066,7 +1060,6 @@ impl Number {
         Ok(Number::from_bigint_owned(rem))
     }
 
-    #[verus_verify]
     #[verus_spec(result =>
         ensures
             result == self@.is_integer(),
@@ -1079,7 +1072,6 @@ impl Number {
         }
     }
 
-    #[verus_verify]
     #[verus_spec(result =>
         ensures
             match self@ {
@@ -1180,6 +1172,8 @@ impl Number {
         let (a, b) = Self::ensure_integers(self, rhs)?;
         Some(Number::from_bigint_owned(a ^ b))
     }
+
+    // Verus does not yet support overloaded assigment operators like `<<=`.
     #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
@@ -1244,7 +1238,6 @@ impl Number {
         Some(Number::from_bigint_owned(value))
     }
 
-    #[verus_verify]
     #[verus_spec(result =>
         ensures
             match self@ {
@@ -1269,7 +1262,6 @@ impl Number {
         }
     }
 
-    #[verus_verify]
     #[verus_spec(result =>
         ensures
             match self@ {
@@ -1284,7 +1276,6 @@ impl Number {
         }
     }
 
-    #[verus_verify]
     #[verus_spec(result =>
         ensures
             match self@ {
@@ -1299,7 +1290,6 @@ impl Number {
         }
     }
 
-    #[verus_verify]
     #[verus_spec(result =>
         ensures
             match self@ {
@@ -1313,6 +1303,7 @@ impl Number {
             _ => self.clone(),
         }
     }
+
     #[verus_spec(result =>
         ensures
             match result {
@@ -1354,8 +1345,20 @@ impl Number {
         }
     }
 
-    #[verus_verify(external)]
+    #[verus_spec(result =>
+        ensures
+            result is Ok,
+            e >= 0 ==> (result matches Ok(value) && value@ is Integer),
+            e < 0 ==> (result matches Ok(value) && value@ is Float),
+    )]
     pub fn ten_pow(e: i32) -> Result<Number> {
+        proof! {
+            axiom_f64_ops_deterministic();
+            if e < 0 {
+                let exp = (-(e as i64)) as u32;
+                assert(exp > 0);
+            }
+        }
         if e >= 0 {
             Ok(ten_pow_positive(e as u32))
         } else {
@@ -1507,7 +1510,9 @@ fn pow10_bigint(exp: u32) -> BigInt {
 #[verus_verify(external_body)]
 #[verus_spec(result =>
     ensures
-        result@ matches NumberView::Integer(value) && value > 0,
+        result@ matches NumberView::Integer(value)
+            && value > 0
+            && (exp > 0 ==> vstd::arithmetic::div_mod::rust_rem(1, value) == 1),
 )]
 fn ten_pow_positive(exp: u32) -> Number {
     if let Some(value) = 10u64.checked_pow(exp) {
@@ -1691,6 +1696,15 @@ mod tests {
         assert!(matches!(
             Number::two_pow(i32::MIN),
             Ok(Number::Float(value)) if value == 0.0
+        ));
+    }
+
+    #[test]
+    fn ten_pow_uses_unsigned_minimum_exponent_magnitude() {
+        assert_eq!((-(i32::MIN as i64)) as u32, 1u32 << 31);
+        assert!(matches!(
+            Number::ten_pow(-3),
+            Ok(Number::Float(value)) if value == 0.001
         ));
     }
 }
