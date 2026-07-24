@@ -206,13 +206,6 @@ impl NumberView {
     }
 }
 
-pub assume_specification[ Number::two_pow ](e: i32) -> (result: anyhow::Result<Number>)
-    ensures
-        result is Ok,
-        e >= 0 ==> (result matches Ok(value) && value@ is Integer),
-        e < 0 ==> (result matches Ok(value) && value@ is Float),
-;
-
 pub assume_specification[ Number::ten_pow ](e: i32) -> (result: anyhow::Result<Number>)
     ensures
         result is Ok,

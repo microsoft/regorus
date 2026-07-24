@@ -79,11 +79,19 @@ pub axiom fn axiom_bigint_obeys_bitxor_spec()
                 == spec_bigint_bitxor(lhs@, rhs@),
 ;
 
+pub assume_specification[ <BigInt as core::ops::ShrAssign<usize>>::shr_assign ](
+    value: &mut BigInt,
+    shift: usize,
+)
+    ensures
+        (*final(value))@ == (*old(value))@ / (pow2(shift as nat) as int),
+;
+
 pub axiom fn axiom_bigint_not_spec(value: BigInt)
     ensures
-    <BigInt as vstd::std_specs::ops::NotSpec>::obeys_not_spec(),
-    <BigInt as vstd::std_specs::ops::NotSpec>::not_req(value),
-    <BigInt as vstd::std_specs::ops::NotSpec>::not_spec(value)@ == -(value@) - 1,
+        <BigInt as vstd::std_specs::ops::NotSpec>::obeys_not_spec(),
+        <BigInt as vstd::std_specs::ops::NotSpec>::not_req(value),
+        <BigInt as vstd::std_specs::ops::NotSpec>::not_spec(value)@ == -(value@) - 1,
 ;
 
 // Conditions
