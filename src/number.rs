@@ -591,7 +591,11 @@ impl Number {
                 }
             }
             (Number::Int(a), Number::Int(b)) => {
-                if *a % *b == 0 {
+                if *a == i64::MIN && *b == -1 {
+                    // Rust panics on i64::MIN % -1i64, so handle it specially
+                    let quotient = BigInt::from(*a) / BigInt::from(*b);
+                    Ok(Number::from_bigint_owned(quotient))
+                } else if *a % *b == 0 {
                     if let Some(q) = a.checked_div(*b) {
                         Ok(Number::Int(q))
                     } else {
