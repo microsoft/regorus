@@ -35,6 +35,10 @@ honest trusted boundary.
    - Before editing, compare the function with `main` or the relevant base.
    - Keep executable statements unchanged unless the task explicitly requires a
      runtime fix.
+   - Never use conditional compilation to give Verus and ordinary Rust different
+     executable bodies or behavior. If Verus cannot verify the shared body,
+     retain the narrowest `external_body` boundary and document the unsupported
+     construct.
    - Put ghost reasoning in `proof!` blocks. Move proof work to the beginning of
      the function when it depends only on inputs.
    - Afterward, inspect the focused diff against the base and confirm that only

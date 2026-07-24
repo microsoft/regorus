@@ -49,6 +49,11 @@ pub axiom fn axiom_f64_ops_deterministic()
         <f64 as vstd::std_specs::ops::SubSpec>::obeys_sub_spec(),
         <f64 as vstd::std_specs::ops::MulSpec>::obeys_mul_spec(),
         <f64 as vstd::std_specs::ops::DivSpec>::obeys_div_spec(),
+        forall|lhs: f64, rhs: f64| #[trigger]
+            <f64 as vstd::std_specs::ops::MulSpec>::mul_req(lhs, rhs),
+        forall|lhs: f64, rhs: f64| #[trigger]
+            <f64 as vstd::std_specs::ops::MulSpec>::mul_spec(lhs, rhs)
+                == lhs.ieee_mul(rhs),
         forall|n: i8, f: f64| float_cast_spec::<i8, f64>(n, f) ==> f == ieee_float_cast::<i8, f64>(n),
         forall|n: u8, f: f64| float_cast_spec::<u8, f64>(n, f) ==> f == ieee_float_cast::<u8, f64>(n),
         forall|n: i8, f: f64| float_cast_spec::<f64, i8>(f, n) ==> n == ieee_float_cast::<f64, i8>(f),

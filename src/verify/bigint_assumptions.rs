@@ -418,6 +418,16 @@ pub assume_specification<'a>[ <BigInt as core::ops::Sub<&i128>>::sub ](x: BigInt
 
 // Multiplication
 
+pub axiom fn axiom_bigint_obeys_mul_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::MulSpec>::obeys_mul_spec(),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::MulSpec>::mul_req(lhs, rhs),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::MulSpec>::mul_spec(lhs, rhs)@
+                == lhs@ * rhs@,
+;
+
 pub assume_specification[ <BigInt as core::ops::Mul>::mul ](x: BigInt, y: BigInt) -> (o: BigInt)
     ensures
         o@ == x@ * y@,
