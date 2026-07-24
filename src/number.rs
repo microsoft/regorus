@@ -995,3 +995,41 @@ fn scientific_parts_to_bigint(mantissa: &str, exponent: i32) -> Option<BigInt> {
 
     Some(value)
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)] // tests expect() to assert arithmetic results
+
+    use super::*;
+
+    /// Regression test: `i64::MIN / -1` overflows `i64` and panics in Rust's
+    /// native integer division/remainder. `divide` must promote the result
+    /// instead of panicking.
+    #[test]
+    fn i64_min_by_negative_one() {
+        let quotient = Number::Int(i64::MIN)
+            .divide(&Number::Int(-1))
+            .expect("division should succeed");
+
+        // 2^63 does not fit in i64, but does fit in u64.
+        assert_eq!(quotient.as_u64(), Some(9_223_372_036_854_775_808));
+        assert_eq!(quotient.as_i64(), None);
+        assert_eq!(quotient.as_i128(), Some(9_223_372_036_854_775_808));
+        assert_eq!(
+            *quotient.to_big().expect("to_big should succeed"),
+            -BigInt::from(i64::MIN)
+        );
+
+        // The same overflow case reached via the mixed `Int`/`BigInt` path.
+        let big_quotient = Number::Int(i64::MIN)
+            .divide(&Number::BigInt(Rc::new(BigInt::from(-1))))
+            .expect("division should succeed");
+        assert_eq!(big_quotient.as_u64(), Some(9_223_372_036_854_775_808));
+
+        // `i64::MIN % -1` also panics natively; the result must be zero.
+        let remainder = Number::Int(i64::MIN)
+            .modulo(&Number::Int(-1))
+            .expect("modulo should succeed");
+        assert_eq!(remainder.as_i64(), Some(0));
+    }
+}
