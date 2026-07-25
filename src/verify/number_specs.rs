@@ -85,14 +85,6 @@ pub open spec fn normalize_float(value: f64) -> NumberView
 }
 
 impl NumberView {
-    pub open spec fn integer_value(&self) -> Option<int>
-    {
-        match *self {
-            Self::Integer(n) => Some(n),
-            Self::Float(_) => None,
-        }
-    }
-
     pub open spec fn is_zero(&self) -> bool
     {
         match *self {
@@ -130,8 +122,9 @@ impl NumberView {
 
     pub open spec fn add_ensures(self: Self, rhs: Self, result: Self) -> bool
     {
-        match (self.integer_value(), rhs.integer_value()) {
-            (Some(lhs), Some(rhs)) => result matches NumberView::Integer(sum) && sum == lhs + rhs,
+        match (self, rhs) {
+            (NumberView::Integer(lhs), NumberView::Integer(rhs)) =>
+                result matches NumberView::Integer(sum) && sum == lhs + rhs,
             _ => exists|lhs_float: f64, rhs_float: f64| {
                 &&& self.to_f64_lossy_ensures(lhs_float)
                 &&& rhs.to_f64_lossy_ensures(rhs_float)
@@ -147,8 +140,9 @@ impl NumberView {
 
     pub open spec fn sub_ensures(self: Self, rhs: Self, result: Self) -> bool
     {
-        match (self.integer_value(), rhs.integer_value()) {
-            (Some(lhs), Some(rhs)) => result matches NumberView::Integer(diff) && diff == lhs - rhs,
+        match (self, rhs) {
+            (NumberView::Integer(lhs), NumberView::Integer(rhs)) =>
+                result matches NumberView::Integer(diff) && diff == lhs - rhs,
             _ => exists|lhs_float: f64, rhs_float: f64| {
                 &&& self.to_f64_lossy_ensures(lhs_float)
                 &&& rhs.to_f64_lossy_ensures(rhs_float)
@@ -164,8 +158,9 @@ impl NumberView {
 
     pub open spec fn mul_ensures(self: Self, rhs: Self, result: Self) -> bool
     {
-        match (self.integer_value(), rhs.integer_value()) {
-            (Some(lhs), Some(rhs)) => result matches NumberView::Integer(product) && product == lhs * rhs,
+        match (self, rhs) {
+            (NumberView::Integer(lhs), NumberView::Integer(rhs)) =>
+                result matches NumberView::Integer(product) && product == lhs * rhs,
             _ => exists|lhs_float: f64, rhs_float: f64| {
                 &&& self.to_f64_lossy_ensures(lhs_float)
                 &&& rhs.to_f64_lossy_ensures(rhs_float)

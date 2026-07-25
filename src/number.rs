@@ -877,18 +877,15 @@ impl Number {
         proof! {
             axiom_f64_ops_deterministic();
             axiom_bigint_obeys_mul_spec();
-            reveal(NumberView::integer_value);
-            reveal(NumberView::mul_ensures);
-            assert(forall|lhs: int, rhs_value: int|
-                self@.integer_value() == Some(lhs)
-                    && rhs@.integer_value() == Some(rhs_value)
-                ==> self@.mul_ensures(
-                    rhs@,
-                    NumberView::Integer(lhs * rhs_value),
-                ));
             if let (Number::UInt(lhs), Number::UInt(rhs_value)) = (self, rhs) {
                 assert((*lhs as int) * (*rhs_value as int) <= u128::MAX as int)
                     by(nonlinear_arith);
+            }
+            // Some cases are handled by an or-pattern that computes the product
+            // with the operands swapped.
+            if self@ is Integer && rhs@ is Integer {
+                assert(self@->Integer_0 * rhs@->Integer_0 == rhs@->Integer_0
+                    * self@->Integer_0) by(nonlinear_arith);
             }
         }
 
