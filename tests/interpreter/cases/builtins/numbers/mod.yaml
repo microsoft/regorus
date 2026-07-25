@@ -68,6 +68,6 @@ cases:
     modules:
       - |
         package test
-        x = 1e300 % 3
+        x = 100000000000000000e-1 % 2
     query: data.test
     error: modulo on floating-point number
