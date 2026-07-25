@@ -18,7 +18,7 @@ use core::cmp::Ordering;
 use core::fmt::{Debug, Formatter};
 use core::str::FromStr;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use num_bigint::BigInt as NumBigInt;
 #[allow(unused)]
 use num_traits::float::FloatCore;
@@ -938,10 +938,8 @@ impl Number {
         }
     }
 
-    // Verus does not support the formatting internals used by `anyhow!`.
-    #[verus_verify(external_body)]
-    fn division_by_zero_error() -> anyhow::Error {
-        anyhow!("division by zero")
+    fn make_error(message: &str) -> anyhow::Error {
+        anyhow::Error::msg(message.to_string())
     }
 
     #[verus_spec(result =>
@@ -970,7 +968,7 @@ impl Number {
         }
 
         if rhs.is_zero() {
-            return Err(Self::division_by_zero_error());
+            return Err(Self::make_error("division by zero"));
         }
 
         if matches!(self, Number::Float(_)) || matches!(rhs, Number::Float(_)) {
@@ -1061,18 +1059,23 @@ impl Number {
         }
     }
 
-    #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
-            match (self@.to_int(), rhs@.to_int(), result) {
-                (Some(a), Some(b), Ok(value)) => {
-                    b != 0 && value@ == NumberView::Integer(vstd::arithmetic::div_mod::rust_rem(a, b))
-                },
-                (_, _, Ok(_)) => false,
-                (_, _, Err(_)) => rhs@.is_zero() || !self@.is_integer() || !rhs@.is_integer(),
+            match (self@.to_int(), rhs@.to_int()) {
+                (Some(a), Some(b)) =>
+                    if b == 0 {
+                        result is Err
+                    } else {
+                        result matches Ok(value)
+                            && value@ == NumberView::Integer(
+                            vstd::arithmetic::div_mod::rust_rem(a, b),
+                        )
+                    },
+                _ => result is Err,
             },
     )]
     pub fn modulo(self, rhs: &Self) -> Result<Number> {
+<<<<<<< HEAD
         // Conversion fails for a non-integral float, and also for an integral
         // one whose magnitude exceeds 2^53, which cannot be represented exactly.
         let (a, b) = match (self.to_bigint_owned(), rhs.to_bigint_owned()) {
@@ -1084,6 +1087,23 @@ impl Number {
             bail!("modulo by zero");
         }
 
+=======
+        proof! {
+            axiom_bigint_obeys_div_rem_spec();
+        }
+
+        // Conversion fails for a non-integral float, and also for an integral
+        // one whose magnitude exceeds 2^53, which cannot be represented exactly.
+        let (a, b) = match (self.to_bigint_owned(), rhs.to_bigint_owned()) {
+            (Some(a), Some(b)) => (a, b),
+            _ => return Err(Self::make_error("modulo on floating-point number")),
+        };
+
+        if b.is_zero() {
+            return Err(Self::make_error("modulo by zero"));
+        }
+
+>>>>>>> efd56bf (Fix bug in Number::modulo)
         let rem = a % &b;
         Ok(Number::from_bigint_owned(rem))
     }
@@ -1742,5 +1762,30 @@ mod tests {
             Number::Int(i64::MIN).divide(&Number::Int(-1)),
             Ok(Number::UInt(value)) if value == 1u64 << 63
         ));
+    }
+
+    #[test]
+    fn modulo_handles_floats_that_are_really_integers() {
+        // An integral float is a valid operand.
+        assert!(matches!(
+            Number::Float(4.0).modulo(&Number::Int(3)),
+            Ok(Number::UInt(1))
+        ));
+        // `1e300` has no fractional part, but it is too large to convert to an
+        // integer exactly. This must report an error, not panic.
+        assert_eq!(
+            Number::Float(1e300)
+                .modulo(&Number::Int(3))
+                .err()
+                .map(|e| e.to_string()),
+            Some("modulo on floating-point number".to_string())
+        );
+        assert_eq!(
+            Number::Int(3)
+                .modulo(&Number::Float(1e300))
+                .err()
+                .map(|e| e.to_string()),
+            Some("modulo on floating-point number".to_string())
+        );
     }
 }

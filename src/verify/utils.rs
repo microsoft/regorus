@@ -36,6 +36,11 @@ fn my_test_verus_format(fcn: &'static str, x: u32) -> String
 pub struct ExAnyhowError(anyhow::Error);
 
 #[cfg(verus_keep_ghost)]
+pub assume_specification<M: core::fmt::Display + core::fmt::Debug + Send + Sync + 'static>[
+    anyhow::Error::msg::<M>
+](message: M) -> (error: anyhow::Error);
+
+#[cfg(verus_keep_ghost)]
 #[verifier::external_body]
 pub fn verus_bail_helper<T>() -> Result<T>
 {
