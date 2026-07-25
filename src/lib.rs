@@ -6,6 +6,10 @@
 // The `verus` feature is only used during verification, never in production
 // builds, so the forbid remains in force for all shipped code.
 #![cfg_attr(not(feature = "verus"), forbid(unsafe_code))]
+// `anyhow!` with a literal lowers to `Arguments::from_str`, which is unstable.
+// Verus needs to name it to give it a specification. Verification builds use the
+// Verus toolchain, so this gate never applies to shipped code.
+#![cfg_attr(verus_keep_ghost, feature(fmt_arguments_from_str))]
 // Ensure that all lint names are valid.
 #![deny(unknown_lints)]
 // Fail-fast lints: correctness, safety, and API surface

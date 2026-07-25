@@ -938,10 +938,6 @@ impl Number {
         }
     }
 
-    fn make_error(message: &str) -> anyhow::Error {
-        anyhow::Error::msg(message.to_string())
-    }
-
     #[verus_spec(result =>
         ensures
             match result {
@@ -968,7 +964,7 @@ impl Number {
         }
 
         if rhs.is_zero() {
-            return Err(Self::make_error("division by zero"));
+            return Err(anyhow!("division by zero"));
         }
 
         if matches!(self, Number::Float(_)) || matches!(rhs, Number::Float(_)) {
@@ -1096,11 +1092,11 @@ impl Number {
         // one whose magnitude exceeds 2^53, which cannot be represented exactly.
         let (a, b) = match (self.to_bigint_owned(), rhs.to_bigint_owned()) {
             (Some(a), Some(b)) => (a, b),
-            _ => return Err(Self::make_error("modulo on floating-point number")),
+            _ => return Err(anyhow!("modulo on floating-point number")),
         };
 
         if b.is_zero() {
-            return Err(Self::make_error("modulo by zero"));
+            return Err(anyhow!("modulo by zero"));
         }
 
 >>>>>>> efd56bf (Fix bug in Number::modulo)
