@@ -1,4 +1,3 @@
-use anyhow::{bail, Result};
 use std::format;
 use std::string::String;
 
@@ -62,32 +61,5 @@ pub assume_specification<'a>[
 pub assume_specification[
     anyhow::__private::must_use
 ](error: anyhow::Error) -> (result: anyhow::Error);
-
-#[cfg(verus_keep_ghost)]
-#[verifier::external_body]
-pub fn verus_bail_helper<T>() -> Result<T>
-{
-    bail!("who cares")
-}
-
-macro_rules! verus_bail {
-    ( $( $tt0:tt )* ) => {
-        {
-            #[cfg(not(verus_keep_ghost))]
-            { bail!($($tt0)*) }
-            #[cfg(verus_keep_ghost)]
-            { return verus_bail_helper(); }
-        }
-    }
-}
-
-#[allow(dead_code)]
-fn my_test_verus_bail(fcn: &'static str, x: u32) -> Result<()>
-{
-    if x > 0 {
-        verus_bail!("Invalid parameters `{}` and `{}`", fcn, x)
-    }
-    Ok(())
-}
 
 } // end verus!

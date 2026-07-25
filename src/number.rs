@@ -18,7 +18,7 @@ use core::cmp::Ordering;
 use core::fmt::{Debug, Formatter};
 use core::str::FromStr;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use num_bigint::BigInt as NumBigInt;
 #[allow(unused)]
 use num_traits::float::FloatCore;
@@ -962,7 +962,7 @@ impl Number {
         }
 
         if rhs.is_zero() {
-            return Err(anyhow!("division by zero"));
+            bail!("division by zero");
         }
 
         if matches!(self, Number::Float(_)) || matches!(rhs, Number::Float(_)) {
@@ -1090,11 +1090,11 @@ impl Number {
         // one whose magnitude exceeds 2^53, which cannot be represented exactly.
         let (a, b) = match (self.to_bigint_owned(), rhs.to_bigint_owned()) {
             (Some(a), Some(b)) => (a, b),
-            _ => return Err(anyhow!("modulo on floating-point number")),
+            _ => bail!("modulo on floating-point number"),
         };
 
         if b.is_zero() {
-            return Err(anyhow!("modulo by zero"));
+            bail!("modulo by zero");
         }
 
 >>>>>>> efd56bf (Fix bug in Number::modulo)
