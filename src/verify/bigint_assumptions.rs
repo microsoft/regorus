@@ -15,10 +15,8 @@
     clippy::pattern_type_mismatch
 )]
 
-#[cfg(feature = "verus")]
 use vstd::prelude::*;
 
-#[cfg(feature = "verus")]
 verus! {
 
 use core::cmp::Ordering;
@@ -592,14 +590,8 @@ pub assume_specification<'a>[ <BigInt as core::ops::Div<&u8>>::div ](x: BigInt, 
         *y != 0 ==> o@ == rust_div(x@, *y as int),
 ;
 
-} // end verus!
-
 // Verus's encoding of ToPrimitive relies on an unstable feature
 // `sized_hierarchy`, so we can only talk about it when verifying.
-// So, we wrap it all in `#[cfg(verus_keep_ghost)]`.
-
-#[cfg(verus_keep_ghost)]
-verus! {
 
 // ToPrimitive
 
@@ -818,4 +810,4 @@ pub assume_specification[ <num_bigint::BigInt as num_traits::ToPrimitive>::to_u1
 pub assume_specification[ <num_bigint::BigInt as num_traits::ToPrimitive>::to_f32 ](x: &BigInt) -> (res: Option<f32>);
 pub assume_specification[ <num_bigint::BigInt as num_traits::ToPrimitive>::to_f64 ](x: &BigInt) -> (res: Option<f64>);
 
-} // end verus! hidden by cfg(verus_keep_ghost)
+} // end verus!

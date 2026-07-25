@@ -14,10 +14,8 @@
     clippy::pattern_type_mismatch
 )]
 
-#[cfg(feature = "verus")]
 use vstd::prelude::*;
 
-#[cfg(feature = "verus")]
 verus! {
 
 use core::cmp::Ordering;

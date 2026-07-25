@@ -14,10 +14,8 @@
     clippy::pattern_type_mismatch
 )]
 
-#[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
-#[cfg(verus_keep_ghost)]
 verus! {
 
 use vstd::float::*;
@@ -81,7 +79,8 @@ pub axiom fn axiom_f64_ops_deterministic()
         forall|n: u128, f: f64| float_cast_spec::<f64, u128>(f, n) ==> n == ieee_float_cast::<f64, u128>(f),
 ;
 
-// The executable test below validates these casts and justifies this axiom.
+// The executable test in `f64_tests.rs` validates these casts and justifies
+// this axiom.
 pub axiom fn axiom_f64_safe_integer_casts()
     ensures
         ieee_float_cast::<f64, u64>(9_007_199_254_740_992.0f64) == 9_007_199_254_740_992u64,
@@ -162,14 +161,3 @@ pub assume_specification[ f64::INFINITY ] -> (res: f64)
 ;
 
 } // end verus!
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn f64_safe_integer_casts_match_runtime() {
-        let safe_integer = 9_007_199_254_740_992.0f64;
-
-        assert_eq!(safe_integer as u64, 9_007_199_254_740_992u64);
-        assert_eq!(safe_integer as i128, 9_007_199_254_740_992i128);
-    }
-}
