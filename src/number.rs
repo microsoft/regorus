@@ -728,8 +728,6 @@ impl Number {
         self.to_bigint_rc()
     }
 
-    // Verus does not support the formatting internals used by `anyhow!`.
-    #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
             match self@ {
