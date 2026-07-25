@@ -93,14 +93,6 @@ impl NumberView {
         }
     }
 
-    pub open spec fn is_integer(&self) -> bool
-    {
-        match *self {
-            Self::Integer(_) => true,
-            Self::Float(f) => f.is_finite_spec() && spec_f64_fract(f).eq_spec(&0.0f64),
-        }
-    }
-
     pub open spec fn is_zero(&self) -> bool
     {
         match *self {

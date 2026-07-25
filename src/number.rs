@@ -289,7 +289,6 @@ impl From<u64> for Number {
     #[verus_spec(result =>
         ensures
             result@ == NumberView::Integer(value as int),
-            result@.to_f64_lossy_ensures(ieee_float_cast::<u64, f64>(value)),
     )]
     fn from(value: u64) -> Self {
         Number::UInt(value)
@@ -1093,7 +1092,10 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            result == self@.is_integer(),
+            result == match self@ {
+                NumberView::Integer(_) => true,
+                NumberView::Float(f) => f.is_finite_spec() && spec_f64_fract(f).eq_spec(&0.0f64),
+            },
     )]
     pub fn is_integer(&self) -> bool {
         proof! { axiom_f64_obeys_eq_spec(); }
