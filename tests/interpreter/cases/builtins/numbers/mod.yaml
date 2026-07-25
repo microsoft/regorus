@@ -62,3 +62,12 @@ cases:
         x = 1 % 1.1
     query: data.test
     error: modulo on floating-point number
+
+  - note: integral float too large to convert
+    data: {}
+    modules:
+      - |
+        package test
+        x = (1e300 / 3) % 2
+    query: data.test
+    error: modulo on floating-point number
