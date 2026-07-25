@@ -7,6 +7,8 @@ pub(crate) mod f64_assumptions;
 #[cfg(test)]
 mod f64_tests;
 #[cfg(verus_keep_ghost)]
+pub(crate) mod num_assumptions;
+#[cfg(verus_keep_ghost)]
 pub(crate) mod number_proofs;
 #[cfg(verus_keep_ghost)]
 pub mod number_specs;

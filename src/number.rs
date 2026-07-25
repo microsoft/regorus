@@ -1129,6 +1129,7 @@ impl Number {
             Number::Float(f) => f.is_sign_positive(),
         }
     }
+
     #[verus_spec(result =>
         ensures
             match (a@.to_int(), b@.to_int(), result) {
@@ -1389,9 +1390,22 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            result is Ok,
-            e >= 0 ==> (result matches Ok(value) && value@ is Integer),
-            e < 0 ==> (result matches Ok(value) && value@ is Float),
+            match result {
+                Ok(value) => if e >= 0 {
+                    value@ == NumberView::Integer(vstd::arithmetic::power::pow(10, e as nat))
+                } else {
+                    exists|denominator: Number| {
+                        &&& #[trigger] denominator@ == NumberView::Integer(
+                            vstd::arithmetic::power::pow(10, (-(e as int)) as nat)
+                        )
+                        &&& value@ == NumberView::Float(
+                            ieee_float_cast::<u64, f64>(1u64)
+                                / denominator.spec_to_f64_lossy()
+                        )
+                    }
+                },
+                Err(_) => false,
+            },
     )]
     pub fn ten_pow(e: i32) -> Result<Number> {
         proof! {
@@ -1399,6 +1413,16 @@ impl Number {
             if e < 0 {
                 let exp = (-(e as i64)) as u32;
                 assert(exp > 0);
+                vstd::arithmetic::power::lemma_pow0(10);
+                vstd::arithmetic::power::lemma_pow_strictly_increases(10, 0, exp as nat);
+                assert(1 < vstd::arithmetic::power::pow(10, exp as nat));
+                vstd::arithmetic::div_mod::lemma_small_mod(
+                    1,
+                    vstd::arithmetic::power::pow(10, exp as nat) as nat,
+                );
+            } else {
+                assert((e as u32) as nat == e as nat);
+                vstd::arithmetic::power::lemma_pow_positive(10, (e as u32) as nat);
             }
         }
         if e >= 0 {
@@ -1410,33 +1434,21 @@ impl Number {
         }
     }
 
-    #[verus_verify(external_body)]
-    #[verus_spec(result =>
-        ensures
-            (result@.len() == 0) == self@.to_int() is None,
-    )]
     pub fn format_bin(&self) -> String {
         self.ensure_integer()
             .map(|v| v.to_str_radix(2))
             .unwrap_or_default()
     }
 
-    #[verus_verify(external_body)]
-    #[verus_spec(result =>
-        ensures
-            (result@.len() == 0) == self@.to_int() is None,
-    )]
     pub fn format_octal(&self) -> String {
         self.ensure_integer()
             .map(|v| v.to_str_radix(8))
             .unwrap_or_default()
     }
 
+    // Verus doesn't support format!
     #[verus_verify(external_body)]
-    #[verus_spec(result =>
-        ensures
-            result@.len() > 0,
-    )]
+    #[verus_spec(ensures true)]
     pub fn format_scientific(&self) -> String {
         match self {
             Number::Float(f) => format!("{:e}", f),
@@ -1447,11 +1459,6 @@ impl Number {
         }
     }
 
-    #[verus_verify(external_body)]
-    #[verus_spec(result =>
-        ensures
-            result@.len() > 0,
-    )]
     pub fn format_decimal(&self) -> String {
         match self {
             Number::UInt(v) => v.to_string(),
@@ -1467,11 +1474,9 @@ impl Number {
         }
     }
 
+    // Verus doesn't support format!
     #[verus_verify(external_body)]
-    #[verus_spec(result =>
-        ensures
-            result@.len() > 0,
-    )]
+    #[verus_spec(ensures true)]
     pub fn format_decimal_with_width(&self, d: u32) -> String {
         match self {
             Number::Float(f) => {
@@ -1483,22 +1488,12 @@ impl Number {
         }
     }
 
-    #[verus_verify(external_body)]
-    #[verus_spec(result =>
-        ensures
-            (result@.len() == 0) == self@.to_int() is None,
-    )]
     pub fn format_hex(&self) -> String {
         self.ensure_integer()
             .map(|v| v.to_str_radix(16))
             .unwrap_or_default()
     }
 
-    #[verus_verify(external_body)]
-    #[verus_spec(result =>
-        ensures
-            (result@.len() == 0) == self@.to_int() is None,
-    )]
     pub fn format_big_hex(&self) -> String {
         self.ensure_integer()
             .map(|v| v.to_str_radix(16).to_ascii_uppercase())
@@ -1522,10 +1517,11 @@ fn two_pow_positive(exp: u32) -> Number {
     }
 }
 
+// Verus does not yet support overloaded op-assignment operators such as `*=`.
 #[verus_verify(external_body)]
 #[verus_spec(result =>
     ensures
-        result@ > 0,
+        result@ == vstd::arithmetic::power::pow(10, exp as nat),
 )]
 fn pow10_bigint(exp: u32) -> BigInt {
     if exp == 0 {
@@ -1549,12 +1545,9 @@ fn pow10_bigint(exp: u32) -> BigInt {
     result
 }
 
-#[verus_verify(external_body)]
 #[verus_spec(result =>
     ensures
-        result@ matches NumberView::Integer(value)
-            && value > 0
-            && (exp > 0 ==> vstd::arithmetic::div_mod::rust_rem(1, value) == 1),
+        result@ == NumberView::Integer(vstd::arithmetic::power::pow(10, exp as nat)),
 )]
 fn ten_pow_positive(exp: u32) -> Number {
     if let Some(value) = 10u64.checked_pow(exp) {
@@ -1564,11 +1557,8 @@ fn ten_pow_positive(exp: u32) -> Number {
     }
 }
 
+// Verus does not support format!
 #[verus_verify(external_body)]
-#[verus_spec(result =>
-    ensures
-        result@.len() > 0,
-)]
 fn bigint_to_scientific(value: &BigInt) -> String {
     let s = value.to_string();
     let (sign, digits) = if let Some(rest) = s.strip_prefix('-') {

@@ -55,4 +55,8 @@ pub assume_specification[
     anyhow::__private::must_use
 ](error: anyhow::Error) -> (result: anyhow::Error);
 
+// vstd doesn't specify `to_ascii_uppercase`, and callers don't rely on its
+// result, so this promises nothing.
+pub assume_specification[ <str>::to_ascii_uppercase ](s: &str) -> (res: String);
+
 } // end verus!

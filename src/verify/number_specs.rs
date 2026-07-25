@@ -31,22 +31,6 @@ pub assume_specification[ <Number as Clone>::clone ](n: &Number) -> (res: Number
         res == n,
 ;
 
-pub assume_specification[ i128::abs ](value: i128) -> (res: i128)
-    requires
-        value != i128::MIN,
-    ensures
-        res as int == if value < 0 { -(value as int) } else { value as int },
-;
-
-pub assume_specification[ i64::checked_abs ](value: i64) -> (res: Option<i64>)
-    ensures
-        if value == i64::MIN {
-            res is None
-        } else {
-            res matches Some(abs) && abs as int == if value < 0 { -(value as int) } else { value as int }
-        },
-;
-
 pub enum NumberView {
     Integer(int),
     Float(f64),

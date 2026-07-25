@@ -122,6 +122,13 @@ pub assume_specification[ <BigInt as num_traits::Signed>::abs ](x: &BigInt) -> (
         res@ == if x@ < 0 { -x@ } else { x@ },
 ;
 
+// Formatting
+
+// Nothing is promised about the rendered digits; callers only need this to be
+// callable from verified code.
+pub assume_specification[ BigInt::to_str_radix ](x: &BigInt, radix: u32) -> (res:
+    alloc::string::String);
+
 // PartialEq
 
 pub axiom fn axiom_bigint_obeys_eq_spec()
