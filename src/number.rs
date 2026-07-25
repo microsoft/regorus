@@ -191,7 +191,6 @@ impl Number {
     #[verus_spec(result =>
         ensures
             self@.to_f64_lossy_ensures(result),
-            result == self.spec_to_f64_lossy(),
     )]
     fn to_f64_lossy(&self) -> f64 {
         proof! { axiom_f64_ops_deterministic(); }
@@ -290,7 +289,7 @@ impl From<u64> for Number {
     #[verus_spec(result =>
         ensures
             result@ == NumberView::Integer(value as int),
-            result.spec_to_f64_lossy() == ieee_float_cast::<u64, f64>(value),
+            result@.to_f64_lossy_ensures(ieee_float_cast::<u64, f64>(value)),
     )]
     fn from(value: u64) -> Self {
         Number::UInt(value)
@@ -939,12 +938,7 @@ impl Number {
     #[verus_spec(result =>
         ensures
             match result {
-                Ok(value) => self@.div_ensures(
-                    rhs@,
-                    self.spec_to_f64_lossy(),
-                    rhs.spec_to_f64_lossy(),
-                    value@,
-                ),
+                Ok(value) => self@.div_ensures(rhs@, value@),
                 Err(_) => rhs@.is_zero(),
             },
     )]
@@ -952,12 +946,7 @@ impl Number {
         proof! {
             axiom_f64_ops_deterministic();
             axiom_bigint_obeys_div_rem_spec();
-            lemma_div_ensures_cases(
-                self@,
-                rhs@,
-                self.spec_to_f64_lossy(),
-                rhs.spec_to_f64_lossy(),
-            );
+            lemma_div_ensures_cases(self@, rhs@);
             lemma_number_primitive_division_facts(&self, rhs);
         }
 
@@ -1353,13 +1342,10 @@ impl Number {
                 Ok(value) => if e >= 0 {
                     value@ == NumberView::Integer(pow2(e as nat) as int)
                 } else {
-                    exists|denominator: Number| {
-                        &&& #[trigger] denominator@ == NumberView::Integer(pow2((-(e as int)) as nat) as int)
-                        &&& value@ == NumberView::Float(
-                            ieee_float_cast::<u64, f64>(1u64)
-                                / denominator.spec_to_f64_lossy()
-                        )
-                    }
+                    NumberView::Integer(1).div_ensures(
+                        NumberView::Integer(pow2((-(e as int)) as nat) as int),
+                        value@,
+                    )
                 },
                 Err(_) => false,
             },
@@ -1394,15 +1380,12 @@ impl Number {
                 Ok(value) => if e >= 0 {
                     value@ == NumberView::Integer(vstd::arithmetic::power::pow(10, e as nat))
                 } else {
-                    exists|denominator: Number| {
-                        &&& #[trigger] denominator@ == NumberView::Integer(
+                    NumberView::Integer(1).div_ensures(
+                        NumberView::Integer(
                             vstd::arithmetic::power::pow(10, (-(e as int)) as nat)
-                        )
-                        &&& value@ == NumberView::Float(
-                            ieee_float_cast::<u64, f64>(1u64)
-                                / denominator.spec_to_f64_lossy()
-                        )
-                    }
+                        ),
+                        value@,
+                    )
                 },
                 Err(_) => false,
             },

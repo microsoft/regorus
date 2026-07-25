@@ -187,13 +187,7 @@ impl NumberView {
         }
     }
 
-    pub open spec fn div_ensures(
-        self: Self,
-        rhs: Self,
-        lhs_float: f64,
-        rhs_float: f64,
-        result: Self,
-    ) -> bool
+    pub open spec fn div_ensures(self: Self, rhs: Self, result: Self) -> bool
     {
         match (self, rhs) {
             (NumberView::Integer(lhs), NumberView::Integer(divisor)) => {
@@ -203,12 +197,20 @@ impl NumberView {
                         vstd::arithmetic::div_mod::rust_div(lhs, divisor),
                     )
                 } else {
-                    result == NumberView::Float(lhs_float / rhs_float)
+                    exists|lhs_float: f64, rhs_float: f64| {
+                        &&& self.to_f64_lossy_ensures(lhs_float)
+                        &&& rhs.to_f64_lossy_ensures(rhs_float)
+                        &&& result == NumberView::Float(lhs_float / rhs_float)
+                    }
                 }
             },
             (NumberView::Float(_), _) | (NumberView::Integer(_), NumberView::Float(_)) => {
                 &&& !rhs.is_zero()
-                &&& result == NumberView::Float(lhs_float / rhs_float)
+                &&& exists|lhs_float: f64, rhs_float: f64| {
+                    &&& self.to_f64_lossy_ensures(lhs_float)
+                    &&& rhs.to_f64_lossy_ensures(rhs_float)
+                    &&& result == NumberView::Float(lhs_float / rhs_float)
+                }
             },
         }
     }
@@ -290,44 +292,15 @@ impl PartialEqSpecImpl for Number {
     }
 }
 
-impl Number {
-    pub open spec fn spec_to_f64_lossy(&self) -> f64
-    {
-        match *self {
-            Number::UInt(v) => ieee_float_cast::<u64, f64>(v),
-            Number::Int(v) => ieee_float_cast::<i64, f64>(v),
-            Number::Float(v) => v,
-            Number::BigInt(v) => {
-                if let Some(f) = <BigInt as ToPrimitiveSpec>::spec_to_f64(&v) {
-                    f
-                } else if v@ < 0 {
-                    spec_f64_neg_infinity()
-                } else {
-                    spec_f64_infinity()
-                }
-            },
-        }
-    }
-
-}
-
 impl OrdSpecImpl for Number {
+    // `Number::cmp` is specified directly in terms of `NumberView`, so there's
+    // no need for a `cmp_spec` that would expose the internal representation.
     open spec fn obeys_cmp_spec() -> bool
     {
-        true
+        false
     }
 
-    open spec fn cmp_spec(&self, other: &Self) -> Ordering
-    {
-         match (self@.to_int(), other@.to_int()) {
-             (Some(n1), Some(n2)) => n1.cmp_spec(&n2),
-             _ => {
-                 let f1 = self.spec_to_f64_lossy();
-                 let f2 = other.spec_to_f64_lossy();
-                 f1.partial_cmp_spec(&f2).unwrap_or(Ordering::Equal)
-            },
-        }
-    }
+    uninterp spec fn cmp_spec(&self, other: &Self) -> Ordering;
 }
 
 } // end verus!

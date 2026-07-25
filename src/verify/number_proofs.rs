@@ -21,12 +21,7 @@ use vstd::arithmetic::mul::{
 };
 use vstd::std_specs::ops::*;
 
-pub proof fn lemma_div_ensures_cases(
-    lhs: NumberView,
-    rhs: NumberView,
-    lhs_float: f64,
-    rhs_float: f64,
-)
+pub proof fn lemma_div_ensures_cases(lhs: NumberView, rhs: NumberView)
     ensures
         forall|integer_lhs: int, divisor: int|
             lhs == NumberView::Integer(integer_lhs)
@@ -35,28 +30,18 @@ pub proof fn lemma_div_ensures_cases(
                 && rust_rem(integer_lhs, divisor) == 0
             ==> #[trigger] lhs.div_ensures(
                 rhs,
-                lhs_float,
-                rhs_float,
                 NumberView::Integer(rust_div(integer_lhs, divisor)),
             ),
-        forall|integer_lhs: int, divisor: int|
-            lhs == NumberView::Integer(integer_lhs)
-                && rhs == NumberView::Integer(divisor)
-                && divisor != 0
-                && rust_rem(integer_lhs, divisor) != 0
-            ==> #[trigger] lhs.div_ensures(
-                rhs,
-                lhs_float,
-                rhs_float,
-                NumberView::Float(lhs_float / rhs_float),
-            ),
-        (lhs is Float || rhs is Float) && !rhs.is_zero()
-            ==> lhs.div_ensures(
-                rhs,
-                lhs_float,
-                rhs_float,
-                NumberView::Float(lhs_float / rhs_float),
-            ),
+        forall|lhs_float: f64, rhs_float: f64|
+            lhs is Integer && rhs is Integer && rhs->Integer_0 != 0 && rust_rem(
+                lhs->Integer_0,
+                rhs->Integer_0,
+            ) != 0 && lhs.to_f64_lossy_ensures(lhs_float) && rhs.to_f64_lossy_ensures(rhs_float)
+            ==> #[trigger] lhs.div_ensures(rhs, NumberView::Float(lhs_float / rhs_float)),
+        forall|lhs_float: f64, rhs_float: f64|
+            (lhs is Float || rhs is Float) && !rhs.is_zero() && lhs.to_f64_lossy_ensures(lhs_float)
+                && rhs.to_f64_lossy_ensures(rhs_float)
+            ==> #[trigger] lhs.div_ensures(rhs, NumberView::Float(lhs_float / rhs_float)),
 {
     reveal(NumberView::is_zero);
     reveal(NumberView::div_ensures);
