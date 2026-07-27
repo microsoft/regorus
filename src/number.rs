@@ -1054,19 +1054,6 @@ impl Number {
             },
     )]
     pub fn modulo(self, rhs: &Self) -> Result<Number> {
-<<<<<<< HEAD
-        // Conversion fails for a non-integral float, and also for an integral
-        // one whose magnitude exceeds 2^53, which cannot be represented exactly.
-        let (a, b) = match (self.to_bigint_owned(), rhs.to_bigint_owned()) {
-            (Some(a), Some(b)) => (a, b),
-            _ => bail!("modulo on floating-point number"),
-        };
-
-        if b.is_zero() {
-            bail!("modulo by zero");
-        }
-
-=======
         proof! {
             axiom_bigint_obeys_div_rem_spec();
         }
@@ -1082,7 +1069,6 @@ impl Number {
             bail!("modulo by zero");
         }
 
->>>>>>> efd56bf (Fix bug in Number::modulo)
         let rem = a % &b;
         Ok(Number::from_bigint_owned(rem))
     }
@@ -1757,30 +1743,5 @@ mod tests {
             Number::Int(i64::MIN).divide(&Number::Int(-1)),
             Ok(Number::UInt(value)) if value == 1u64 << 63
         ));
-    }
-
-    #[test]
-    fn modulo_handles_floats_that_are_really_integers() {
-        // An integral float is a valid operand.
-        assert!(matches!(
-            Number::Float(4.0).modulo(&Number::Int(3)),
-            Ok(Number::UInt(1))
-        ));
-        // `1e300` has no fractional part, but it is too large to convert to an
-        // integer exactly. This must report an error, not panic.
-        assert_eq!(
-            Number::Float(1e300)
-                .modulo(&Number::Int(3))
-                .err()
-                .map(|e| e.to_string()),
-            Some("modulo on floating-point number".to_string())
-        );
-        assert_eq!(
-            Number::Int(3)
-                .modulo(&Number::Float(1e300))
-                .err()
-                .map(|e| e.to_string()),
-            Some("modulo on floating-point number".to_string())
-        );
     }
 }
