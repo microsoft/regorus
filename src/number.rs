@@ -144,10 +144,6 @@ impl Number {
         }
     }
 
-    fn ints_to_bigint(a: &Number, b: &Number) -> (BigInt, BigInt) {
-        (a.to_bigint_owned().unwrap(), b.to_bigint_owned().unwrap())
-    }
-
     fn normalize_float(value: f64) -> Number {
         if let Some(i) = Self::float_to_small_bigint(value) {
             return Self::from_bigint_owned(i);
@@ -664,15 +660,17 @@ impl Number {
     }
 
     pub fn modulo(self, rhs: &Self) -> Result<Number> {
-        if rhs.is_zero() {
+        // Conversion fails for a non-integral float, and also for an integral
+        // one whose magnitude exceeds 2^53, which cannot be represented exactly.
+        let (a, b) = match (self.to_bigint_owned(), rhs.to_bigint_owned()) {
+            (Some(a), Some(b)) => (a, b),
+            _ => bail!("modulo on floating-point number"),
+        };
+
+        if b.is_zero() {
             bail!("modulo by zero");
         }
 
-        if !self.is_integer() || !rhs.is_integer() {
-            bail!("modulo on floating-point number");
-        }
-
-        let (a, b) = Number::ints_to_bigint(&self, rhs);
         let rem = a % &b;
         Ok(Number::from_bigint_owned(rem))
     }
@@ -1001,6 +999,7 @@ mod tests {
     #![allow(clippy::expect_used)] // tests expect() to assert arithmetic results
 
     use super::*;
+    use alloc::string::ToString;
 
     /// Regression test: `i64::MIN / -1` overflows `i64` and panics in Rust's
     /// native integer division/remainder. `divide` must promote the result
@@ -1031,5 +1030,30 @@ mod tests {
             .modulo(&Number::Int(-1))
             .expect("modulo should succeed");
         assert_eq!(remainder.as_i64(), Some(0));
+    }
+
+    #[test]
+    fn modulo_handles_floats_that_are_really_integers() {
+        // An integral float is a valid operand.
+        assert!(matches!(
+            Number::Float(4.0).modulo(&Number::Int(3)),
+            Ok(Number::UInt(1))
+        ));
+        // `1e300` has no fractional part, but it is too large to convert to an
+        // integer exactly. This must report an error, not panic.
+        assert_eq!(
+            Number::Float(1e300)
+                .modulo(&Number::Int(3))
+                .err()
+                .map(|e| e.to_string()),
+            Some("modulo on floating-point number".to_string())
+        );
+        assert_eq!(
+            Number::Int(3)
+                .modulo(&Number::Float(1e300))
+                .err()
+                .map(|e| e.to_string()),
+            Some("modulo on floating-point number".to_string())
+        );
     }
 }
