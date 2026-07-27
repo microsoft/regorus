@@ -753,20 +753,21 @@ impl Number {
         Ok(())
     }
 
-    // Verus does not yet support overloaded op-assignment operators like `+=`.
-    #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
             result matches Ok(value) && self@.add_ensures(rhs@, value@),
     )]
     pub fn add(&self, rhs: &Self) -> Result<Number> {
-        if matches!(self, Number::Float(_)) || matches!(rhs, Number::Float(_)) {
-            return Ok(Number::normalize_float(
-                self.to_f64_lossy() + rhs.to_f64_lossy(),
-            ));
+        proof! {
+            axiom_f64_ops_deterministic();
+            axiom_bigint_obeys_add_spec();
+            axiom_bigint_add_assign_req();
         }
 
         match (self, rhs) {
+            (Number::Float(_), _) | (_, Number::Float(_)) => Ok(Number::normalize_float(
+                self.to_f64_lossy() + rhs.to_f64_lossy(),
+            )),
             (Number::UInt(a), Number::UInt(b)) => {
                 if let Some(sum) = a.checked_add(*b) {
                     Ok(Number::UInt(sum))
@@ -796,7 +797,6 @@ impl Number {
                 sum += other.to_bigint_owned().unwrap();
                 Ok(Number::from_bigint_owned(sum))
             }
-            _ => unreachable!(),
         }
     }
 
@@ -810,20 +810,21 @@ impl Number {
         Ok(())
     }
 
-    // Verus does not yet support overloaded op-assignment operators like `-=`.
-    #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
             result matches Ok(value) && self@.sub_ensures(rhs@, value@),
     )]
     pub fn sub(&self, rhs: &Self) -> Result<Number> {
-        if matches!(self, Number::Float(_)) || matches!(rhs, Number::Float(_)) {
-            return Ok(Number::normalize_float(
-                self.to_f64_lossy() - rhs.to_f64_lossy(),
-            ));
+        proof! {
+            axiom_f64_ops_deterministic();
+            axiom_bigint_obeys_sub_spec();
+            axiom_bigint_sub_assign_req();
         }
 
         match (self, rhs) {
+            (Number::Float(_), _) | (_, Number::Float(_)) => Ok(Number::normalize_float(
+                self.to_f64_lossy() - rhs.to_f64_lossy(),
+            )),
             (Number::UInt(a), Number::UInt(b)) => {
                 if a >= b {
                     Ok(Number::UInt(a - b))
@@ -855,7 +856,6 @@ impl Number {
                 diff -= (**b).clone();
                 Ok(Number::from_bigint_owned(diff))
             }
-            _ => unreachable!(),
         }
     }
 
@@ -1204,8 +1204,6 @@ impl Number {
         Some(Number::from_bigint_owned(a ^ b))
     }
 
-    // Verus does not yet support overloaded assigment operators like `<<=`.
-    #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
             match (self@.to_int(), rhs@, result) {
@@ -1221,14 +1219,13 @@ impl Number {
             },
     )]
     pub fn lsh(&self, rhs: &Self) -> Option<Number> {
+        proof! { axiom_bigint_shl_assign_req(); }
         let shift = rhs.as_u32()? as usize;
         let mut value = self.ensure_integer()?;
         value <<= shift;
         Some(Number::from_bigint_owned(value))
     }
 
-    // Verus does not yet support overloaded op-assignment operators such as `>>=`.
-    #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
             match (self@.to_int(), rhs@, result) {
@@ -1244,14 +1241,13 @@ impl Number {
             },
     )]
     pub fn rsh(&self, rhs: &Self) -> Option<Number> {
+        proof! { axiom_bigint_shr_assign_req(); }
         let shift = rhs.as_u32()? as usize;
         let mut value = self.ensure_integer()?;
         value >>= shift;
         Some(Number::from_bigint_owned(value))
     }
 
-    // Verus panics while translating overloaded `!` on an external `BigInt`.
-    #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
             match (self@.to_int(), result) {
@@ -1265,6 +1261,7 @@ impl Number {
     )]
     pub fn neg(&self) -> Option<Number> {
         let mut value = self.ensure_integer()?;
+        proof! { axiom_bigint_not_spec(value); }
         value = !value;
         Some(Number::from_bigint_owned(value))
     }
@@ -1483,29 +1480,35 @@ impl Number {
     }
 }
 
-// Verus does not yet support overloaded op-assignment operators such as `<<=`.
-#[verus_verify(external_body)]
 #[verus_spec(result =>
     ensures
         result@ == NumberView::Integer(pow2(exp as nat) as int),
 )]
 fn two_pow_positive(exp: u32) -> Number {
     if exp < 64 {
+        proof! {
+            vstd::arithmetic::power2::lemma2_to64();
+            vstd::arithmetic::power2::lemma_pow2_strictly_increases(exp as nat, 64);
+            vstd::bits::lemma_u64_shl_is_mul(1u64, exp as u64);
+        }
         Number::UInt(1u64 << exp)
     } else {
         let mut value = BigInt::one();
+        proof! { axiom_bigint_shl_assign_req(); }
         value <<= exp as usize;
         Number::from_bigint_owned(value)
     }
 }
 
-// Verus does not yet support overloaded op-assignment operators such as `*=`.
-#[verus_verify(external_body)]
 #[verus_spec(result =>
     ensures
         result@ == vstd::arithmetic::power::pow(10, exp as nat),
 )]
 fn pow10_bigint(exp: u32) -> BigInt {
+    proof! {
+        vstd::arithmetic::power::lemma_pow0(10);
+    }
+
     if exp == 0 {
         return BigInt::one();
     }
@@ -1514,7 +1517,31 @@ fn pow10_bigint(exp: u32) -> BigInt {
     let mut base = BigInt::from(10u8);
     let mut e = exp;
 
+    #[cfg_attr(verus_keep_ghost, verus_spec(
+        invariant
+            result@ * vstd::arithmetic::power::pow(base@, e as nat)
+                == vstd::arithmetic::power::pow(10, exp as nat),
+        decreases e,
+    ))]
     while e > 0 {
+        proof! {
+            axiom_bigint_obeys_mul_spec();
+            axiom_bigint_mul_assign_ref_req();
+            assert(e & 1 == e % 2) by (bit_vector);
+            assert(e >> 1 == e / 2) by (bit_vector);
+            // `pow(base, 2) == base * base`, so squaring `base` halves `e`.
+            vstd::arithmetic::power::lemma_pow0(base@);
+            vstd::arithmetic::power::lemma_pow1(base@);
+            vstd::arithmetic::power::lemma_pow_adds(base@, 1, 1);
+            vstd::arithmetic::power::lemma_pow_multiplies(base@, 2, (e / 2) as nat);
+            // Peeling one factor off when `e` is odd.
+            vstd::arithmetic::power::lemma_pow_adds(base@, 1, (e - e % 2) as nat);
+            vstd::arithmetic::mul::lemma_mul_is_associative(
+                result@,
+                base@,
+                vstd::arithmetic::power::pow(base@, (e - e % 2) as nat),
+            );
+        }
         if e & 1 == 1 {
             result *= &base;
         }
@@ -1523,6 +1550,8 @@ fn pow10_bigint(exp: u32) -> BigInt {
         }
         e >>= 1;
     }
+
+    proof! { vstd::arithmetic::power::lemma_pow0(base@); }
 
     result
 }

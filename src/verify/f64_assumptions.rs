@@ -48,6 +48,16 @@ pub axiom fn axiom_f64_ops_deterministic()
         <f64 as vstd::std_specs::ops::MulSpec>::obeys_mul_spec(),
         <f64 as vstd::std_specs::ops::DivSpec>::obeys_div_spec(),
         forall|lhs: f64, rhs: f64| #[trigger]
+            <f64 as vstd::std_specs::ops::AddSpec>::add_req(lhs, rhs),
+        forall|lhs: f64, rhs: f64| #[trigger]
+            <f64 as vstd::std_specs::ops::AddSpec>::add_spec(lhs, rhs)
+                == lhs.ieee_add(rhs),
+        forall|lhs: f64, rhs: f64| #[trigger]
+            <f64 as vstd::std_specs::ops::SubSpec>::sub_req(lhs, rhs),
+        forall|lhs: f64, rhs: f64| #[trigger]
+            <f64 as vstd::std_specs::ops::SubSpec>::sub_spec(lhs, rhs)
+                == lhs.ieee_sub(rhs),
+        forall|lhs: f64, rhs: f64| #[trigger]
             <f64 as vstd::std_specs::ops::MulSpec>::mul_req(lhs, rhs),
         forall|lhs: f64, rhs: f64| #[trigger]
             <f64 as vstd::std_specs::ops::MulSpec>::mul_spec(lhs, rhs)

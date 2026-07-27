@@ -10,6 +10,11 @@
 // Verus needs to name it to give it a specification. Verification builds use the
 // Verus toolchain, so this gate never applies to shipped code.
 #![cfg_attr(verus_keep_ghost, feature(fmt_arguments_from_str))]
+// Loop invariants are attached with `#[verus_spec(invariant ...)]` on the loop
+// statement itself. Applying a proc-macro attribute in statement position is
+// still unstable, so verification builds opt in. Shipped builds strip the
+// attribute via `cfg_attr` and therefore never need this feature.
+#![cfg_attr(verus_keep_ghost, feature(proc_macro_hygiene))]
 // Ensure that all lint names are valid.
 #![deny(unknown_lints)]
 // Fail-fast lints: correctness, safety, and API surface

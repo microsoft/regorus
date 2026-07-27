@@ -86,6 +86,47 @@ pub assume_specification[ <BigInt as core::ops::ShrAssign<usize>>::shr_assign ](
         (*final(value))@ == (*old(value))@ / (pow2(shift as nat) as int),
 ;
 
+pub assume_specification[ <BigInt as core::ops::ShlAssign<usize>>::shl_assign ](
+    value: &mut BigInt,
+    shift: usize,
+)
+    ensures
+        (*final(value))@ == (*old(value))@ * (pow2(shift as nat) as int),
+;
+
+// vstd's op-assignment traits carry an uninterpreted precondition that each
+// implementation is free to choose. `num_bigint` imposes no preconditions on
+// its op-assignment operators, so they always hold.
+pub axiom fn axiom_bigint_shr_assign_req()
+    ensures
+        forall|value: BigInt, shift: usize| #[trigger]
+            <BigInt as vstd::std_specs::ops::ShrAssignSpec<usize>>::shr_assign_req(&value, shift),
+;
+
+pub axiom fn axiom_bigint_shl_assign_req()
+    ensures
+        forall|value: BigInt, shift: usize| #[trigger]
+            <BigInt as vstd::std_specs::ops::ShlAssignSpec<usize>>::shl_assign_req(&value, shift),
+;
+
+pub axiom fn axiom_bigint_add_assign_req()
+    ensures
+        forall|value: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::AddAssignSpec<BigInt>>::add_assign_req(&value, rhs),
+;
+
+pub axiom fn axiom_bigint_sub_assign_req()
+    ensures
+        forall|value: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::SubAssignSpec<BigInt>>::sub_assign_req(&value, rhs),
+;
+
+pub axiom fn axiom_bigint_mul_assign_ref_req()
+    ensures
+        forall|value: BigInt, rhs: &BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::MulAssignSpec<&BigInt>>::mul_assign_req(&value, rhs),
+;
+
 pub axiom fn axiom_bigint_not_spec(value: BigInt)
     ensures
         <BigInt as vstd::std_specs::ops::NotSpec>::obeys_not_spec(),
@@ -181,6 +222,18 @@ pub assume_specification[ <BigInt as core::convert::From<u128>>::from ](u: u128)
         res@ == u,
 ;
 
+pub assume_specification[ <BigInt as core::convert::From<u8>>::from ](u: u8) -> (res: BigInt)
+    ensures
+        res@ == u,
+;
+
+// One
+
+pub assume_specification[ <BigInt as num_traits::One>::one ]() -> (res: BigInt)
+    ensures
+        res@ == 1,
+;
+
 // Negation
 
 pub assume_specification[ <BigInt as core::ops::Neg>::neg ](x: BigInt) -> (y: BigInt)
@@ -190,9 +243,27 @@ pub assume_specification[ <BigInt as core::ops::Neg>::neg ](x: BigInt) -> (y: Bi
 
 // Addition
 
+pub axiom fn axiom_bigint_obeys_add_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::AddSpec>::obeys_add_spec(),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::AddSpec>::add_req(lhs, rhs),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::AddSpec>::add_spec(lhs, rhs)@
+                == lhs@ + rhs@,
+;
+
 pub assume_specification[ <BigInt as core::ops::Add>::add ](x: BigInt, y: BigInt) -> (o: BigInt)
     ensures
         o@ == x@ + y@,
+;
+
+pub assume_specification[ <BigInt as core::ops::AddAssign>::add_assign ](
+    value: &mut BigInt,
+    rhs: BigInt,
+)
+    ensures
+        (*final(value))@ == (*old(value))@ + rhs@,
 ;
 
 pub assume_specification<'a>[ <BigInt as core::ops::Add<&BigInt>>::add ](x: BigInt, y: &BigInt) -> (o: BigInt)
@@ -307,9 +378,27 @@ pub assume_specification<'a>[ <BigInt as core::ops::Add<&i128>>::add ](x: BigInt
 
 // Subtraction
 
+pub axiom fn axiom_bigint_obeys_sub_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::SubSpec>::obeys_sub_spec(),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::SubSpec>::sub_req(lhs, rhs),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::SubSpec>::sub_spec(lhs, rhs)@
+                == lhs@ - rhs@,
+;
+
 pub assume_specification[ <BigInt as core::ops::Sub>::sub ](x: BigInt, y: BigInt) -> (o: BigInt)
     ensures
         o@ == x@ - y@,
+;
+
+pub assume_specification[ <BigInt as core::ops::SubAssign>::sub_assign ](
+    value: &mut BigInt,
+    rhs: BigInt,
+)
+    ensures
+        (*final(value))@ == (*old(value))@ - rhs@,
 ;
 
 pub assume_specification<'a>[ <BigInt as core::ops::Sub<&BigInt>>::sub ](x: BigInt, y: &BigInt) -> (o: BigInt)
@@ -437,6 +526,14 @@ pub axiom fn axiom_bigint_obeys_mul_spec()
 pub assume_specification[ <BigInt as core::ops::Mul>::mul ](x: BigInt, y: BigInt) -> (o: BigInt)
     ensures
         o@ == x@ * y@,
+;
+
+pub assume_specification<'a>[ <BigInt as core::ops::MulAssign<&'a BigInt>>::mul_assign ](
+    value: &mut BigInt,
+    rhs: &BigInt,
+)
+    ensures
+        (*final(value))@ == (*old(value))@ * rhs@,
 ;
 
 pub assume_specification<'a>[ <BigInt as core::ops::Mul<&BigInt>>::mul ](x: BigInt, y: &BigInt) -> (o: BigInt)
