@@ -1030,6 +1030,7 @@ mod tests {
             .modulo(&Number::Int(-1))
             .expect("modulo should succeed");
         assert_eq!(remainder.as_i64(), Some(0));
+    }
 
     #[test]
     fn modulo_handles_floats_that_are_really_integers() {
