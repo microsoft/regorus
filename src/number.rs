@@ -145,7 +145,7 @@ impl Number {
             axiom_f64_obeys_partial_cmp_spec();
             axiom_f64_ops_deterministic();
             axiom_f64_comparisons_match_ieee();
-        }
+        };
 
         if !value.is_finite() || value.fract() != 0.0 {
             return None;
