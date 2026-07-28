@@ -5,29 +5,6 @@ use vstd::prelude::*;
 
 verus! {
 
-#[verifier::external_body]
-pub fn verus_format_helper() -> String
-{
-    format!("who cares")
-}
-
-macro_rules! verus_format {
-    ( $( $tt0:tt )* ) => {
-        {
-            #[cfg(not(verus_keep_ghost))]
-            { format!($($tt0)*) }
-            #[cfg(verus_keep_ghost)]
-            { verus_format_helper() }
-        }
-    }
-}
-
-#[allow(dead_code)]
-fn my_test_verus_format(fcn: &'static str, x: u32) -> String
-{
-    verus_format!("The parameters are `{fcn}` and `{x}`")
-}
-
 #[verifier::external_type_specification]
 #[verifier::external_body]
 pub struct ExAnyhowError(anyhow::Error);
