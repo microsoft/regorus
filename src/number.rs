@@ -175,9 +175,9 @@ impl Number {
             match self@ {
                 NumberView::Integer(n) => result matches Some(bi) && bi@ == n,
                 NumberView::Float(f) =>
-                    match result {
-                        Some(bi) => float_to_small_int(f) == Some(bi@),
-                        None => float_to_small_int(f) is None,
+                    match float_to_small_int(f) {
+                        Some(i) => result matches Some(bi) && bi@ == i,
+                        None => result is None,
                     },
             },
     )]
@@ -497,13 +497,14 @@ impl Number {
                     }
                 },
                 NumberView::Float(f) => {
-                    let convertible = f.is_finite_spec()
-                        && f.ieee_ge(0.0f64)
-                        && spec_f64_fract(f).eq_spec(&0.0f64)
-                        && ieee_float_cast::<u128, f64>(ieee_float_cast::<f64, u128>(f)).eq_spec(&f);
-                    match result {
-                        Some(value) => convertible && value == ieee_float_cast::<f64, u128>(f),
-                        None => !convertible,
+                    if f.is_finite_spec()
+                       && f.ieee_ge(0.0f64)
+                       && spec_f64_fract(f).eq_spec(&0.0f64)
+                       && ieee_float_cast::<u128, f64>(ieee_float_cast::<f64, u128>(f)).eq_spec(&f) {
+                        result matches Some(value) && value == ieee_float_cast::<f64, u128>(f)
+                    }
+                    else {
+                        result is None
                     }
                 },
             },
@@ -543,12 +544,13 @@ impl Number {
                     }
                 },
                 NumberView::Float(f) => {
-                    let convertible = f.is_finite_spec()
-                        && spec_f64_fract(f).eq_spec(&0.0f64)
-                        && ieee_float_cast::<i128, f64>(ieee_float_cast::<f64, i128>(f)).eq_spec(&f);
-                    match result {
-                        Some(value) => convertible && value == ieee_float_cast::<f64, i128>(f),
-                        None => !convertible,
+                    if f.is_finite_spec()
+                       && spec_f64_fract(f).eq_spec(&0.0f64)
+                       && ieee_float_cast::<i128, f64>(ieee_float_cast::<f64, i128>(f)).eq_spec(&f) {
+                        result matches Some(value) && value == ieee_float_cast::<f64, i128>(f)
+                    }
+                    else {
+                        result is None
                     }
                 },
             },
@@ -585,14 +587,15 @@ impl Number {
                     }
                 },
                 NumberView::Float(f) => {
-                    let convertible = f.is_finite_spec()
-                        && f.ieee_ge(0.0f64)
-                        && spec_f64_fract(f).eq_spec(&0.0f64)
-                        && f.ieee_le(ieee_float_cast::<u64, f64>(u64::MAX))
-                        && ieee_float_cast::<u64, f64>(ieee_float_cast::<f64, u64>(f)).eq_spec(&f);
-                    match result {
-                        Some(value) => convertible && value == ieee_float_cast::<f64, u64>(f),
-                        None => !convertible,
+                    if f.is_finite_spec()
+                       && f.ieee_ge(0.0f64)
+                       && spec_f64_fract(f).eq_spec(&0.0f64)
+                       && f.ieee_le(ieee_float_cast::<u64, f64>(u64::MAX))
+                       && ieee_float_cast::<u64, f64>(ieee_float_cast::<f64, u64>(f)).eq_spec(&f) {
+                        result matches Some(value) && value == ieee_float_cast::<f64, u64>(f)
+                    }
+                    else {
+                        result is None
                     }
                 },
             },
@@ -632,14 +635,15 @@ impl Number {
                     }
                 },
                 NumberView::Float(f) => {
-                    let convertible = f.is_finite_spec()
-                        && spec_f64_fract(f).eq_spec(&0.0f64)
-                        && f.ieee_ge(ieee_float_cast::<i64, f64>(i64::MIN))
-                        && f.ieee_le(ieee_float_cast::<i64, f64>(i64::MAX))
-                        && ieee_float_cast::<i64, f64>(ieee_float_cast::<f64, i64>(f)).eq_spec(&f);
-                    match result {
-                        Some(value) => convertible && value == ieee_float_cast::<f64, i64>(f),
-                        None => !convertible,
+                    if f.is_finite_spec()
+                       && spec_f64_fract(f).eq_spec(&0.0f64)
+                       && f.ieee_ge(ieee_float_cast::<i64, f64>(i64::MIN))
+                       && f.ieee_le(ieee_float_cast::<i64, f64>(i64::MAX))
+                       && ieee_float_cast::<i64, f64>(ieee_float_cast::<f64, i64>(f)).eq_spec(&f) {
+                        result matches Some(value) && value == ieee_float_cast::<f64, i64>(f)
+                    }
+                    else {
+                        result is None
                     }
                 },
             },
@@ -715,9 +719,9 @@ impl Number {
             match self@ {
                 NumberView::Integer(n) => result matches Some(bi) && bi@ == n,
                 NumberView::Float(f) => {
-                    match result {
-                        Some(bi) => float_to_small_int(f) == Some(bi@),
-                        None => float_to_small_int(f) is None,
+                    match float_to_small_int(f) {
+                        Some(i) => result matches Some(bi) && bi@ == i,
+                        None => result is None,
                     }
                 },
             },
@@ -731,9 +735,9 @@ impl Number {
             match self@ {
                 NumberView::Integer(n) => result matches Ok(bi) && bi@ == n,
                 NumberView::Float(f) => {
-                    match result {
-                        Ok(bi) => float_to_small_int(f) == Some(bi@),
-                        Err(_) => float_to_small_int(f) is None,
+                    match float_to_small_int(f) {
+                        Some(i) => result matches Ok(bi) && bi@ == i,
+                        None => result is Err,
                     }
                 },
             },
@@ -1106,14 +1110,11 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            match (a@.to_int(), b@.to_int(), result) {
-                (Some(lhs), Some(rhs), Some((lhs_big, rhs_big))) => {
-                    lhs_big@ == lhs && rhs_big@ == rhs
-                },
-                (Some(_), Some(_), None) => false,
-                (_, _, Some(_)) => false,
-                (_, _, None) => true,
-            },
+            match (a@.to_int(), b@.to_int()) {
+                (Some(lhs), Some(rhs)) =>
+                    result matches Some((a, b)) && a@ == lhs && b@ == rhs,
+                _ => result is None,
+            }
     )]
     #[allow(clippy::if_then_some_else_none)]
     fn ensure_integers(a: &Number, b: &Number) -> Option<(BigInt, BigInt)> {
@@ -1141,13 +1142,11 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            match (self@.to_int(), rhs@.to_int(), result) {
-                (Some(lhs), Some(rhs), Some(value)) => {
-                    value@ == NumberView::Integer(spec_bigint_bitand(lhs, rhs))
-                },
-                (Some(_), Some(_), None) => false,
-                (_, _, Some(_)) => false,
-                (_, _, None) => true,
+            match (self@.to_int(), rhs@.to_int()) {
+                (Some(a), Some(b)) =>
+                    result matches Some(value) &&
+                    value@ == NumberView::Integer(spec_bigint_bitand(a, b)),
+                _ => result is None,
             },
     )]
     pub fn and(&self, rhs: &Self) -> Option<Number> {
@@ -1158,13 +1157,11 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            match (self@.to_int(), rhs@.to_int(), result) {
-                (Some(lhs), Some(rhs), Some(value)) => {
-                    value@ == NumberView::Integer(spec_bigint_bitor(lhs, rhs))
-                },
-                (Some(_), Some(_), None) => false,
-                (_, _, Some(_)) => false,
-                (_, _, None) => true,
+            match (self@.to_int(), rhs@.to_int()) {
+                (Some(a), Some(b)) =>
+                    result matches Some(value)
+                    && value@ == NumberView::Integer(spec_bigint_bitor(a, b)),
+                _ => result is None,
             },
     )]
     pub fn or(&self, rhs: &Self) -> Option<Number> {
@@ -1175,13 +1172,11 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            match (self@.to_int(), rhs@.to_int(), result) {
-                (Some(lhs), Some(rhs), Some(value)) => {
-                    value@ == NumberView::Integer(spec_bigint_bitxor(lhs, rhs))
-                },
-                (Some(_), Some(_), None) => false,
-                (_, _, Some(_)) => false,
-                (_, _, None) => true,
+            match (self@.to_int(), rhs@.to_int()) {
+                (Some(a), Some(b)) =>
+                    result matches Some(value)
+                    && value@ == NumberView::Integer(spec_bigint_bitxor(a, b)),
+                _ => result is None,
             },
     )]
     pub fn xor(&self, rhs: &Self) -> Option<Number> {
@@ -1192,16 +1187,17 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            match (self@.to_int(), rhs@, result) {
-                (Some(value), NumberView::Integer(shift), Some(result)) => {
-                    &&& 0 <= shift <= u32::MAX
-                    &&& result@ == NumberView::Integer(value * pow2(shift as nat) as int)
+            match (self@.to_int(), rhs@) {
+                (Some(value), NumberView::Integer(shift)) => {
+                    if 0 <= shift <= u32::MAX {
+                        result matches Some(r)
+                         && r@ == NumberView::Integer(value * pow2(shift as nat) as int)
+                    }
+                    else {
+                        result is None
+                    }
                 },
-                (Some(_), NumberView::Integer(shift), None) => {
-                    !(0 <= shift <= u32::MAX)
-                },
-                (_, _, Some(_)) => false,
-                (_, _, None) => true,
+                _ => result is None,
             },
     )]
     pub fn lsh(&self, rhs: &Self) -> Option<Number> {
@@ -1214,16 +1210,17 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            match (self@.to_int(), rhs@, result) {
-                (Some(value), NumberView::Integer(shift), Some(result)) => {
-                    &&& 0 <= shift <= u32::MAX
-                    &&& result@ == NumberView::Integer(value / (pow2(shift as nat) as int))
+            match (self@.to_int(), rhs@) {
+                (Some(value), NumberView::Integer(shift)) => {
+                    if 0 <= shift <= u32::MAX {
+                        result matches Some(r)
+                         && r@ == NumberView::Integer(value / pow2(shift as nat) as int)
+                    }
+                    else {
+                        result is None
+                    }
                 },
-                (Some(_), NumberView::Integer(shift), None) => {
-                    !(0 <= shift <= u32::MAX)
-                },
-                (_, _, Some(_)) => false,
-                (_, _, None) => true,
+                _ => result is None,
             },
     )]
     pub fn rsh(&self, rhs: &Self) -> Option<Number> {
@@ -1236,13 +1233,12 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            match (self@.to_int(), result) {
-                (Some(value), Some(result)) => {
-                    result@ == NumberView::Integer(-value - 1)
+            match self@.to_int() {
+                Some(value) => {
+                    result matches Some(r)
+                    && r@ == NumberView::Integer(-value - 1)
                 },
-                (Some(_), None) => false,
-                (None, Some(_)) => false,
-                (None, None) => true,
+                None => result is None,
             },
     )]
     pub fn neg(&self) -> Option<Number> {
@@ -1320,16 +1316,13 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            match result {
-                Ok(value) => if e >= 0 {
-                    value@ == NumberView::Integer(pow2(e as nat) as int)
-                } else {
-                    NumberView::Integer(1).div_ensures(
-                        NumberView::Integer(pow2((-(e as int)) as nat) as int),
-                        value@,
-                    )
-                },
-                Err(_) => false,
+            result matches Ok(value) && if e >= 0 {
+                value@ == NumberView::Integer(pow2(e as nat) as int)
+            } else {
+                NumberView::Integer(1).div_ensures(
+                    NumberView::Integer(pow2((-(e as int)) as nat) as int),
+                    value@,
+                )
             },
     )]
     pub fn two_pow(e: i32) -> Result<Number> {
@@ -1358,18 +1351,15 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            match result {
-                Ok(value) => if e >= 0 {
-                    value@ == NumberView::Integer(vstd::arithmetic::power::pow(10, e as nat))
-                } else {
-                    NumberView::Integer(1).div_ensures(
-                        NumberView::Integer(
-                            vstd::arithmetic::power::pow(10, (-(e as int)) as nat)
-                        ),
-                        value@,
-                    )
-                },
-                Err(_) => false,
+            result matches Ok(value) && if e >= 0 {
+                value@ == NumberView::Integer(vstd::arithmetic::power::pow(10, e as nat))
+            } else {
+                NumberView::Integer(1).div_ensures(
+                    NumberView::Integer(
+                        vstd::arithmetic::power::pow(10, (-(e as int)) as nat)
+                    ),
+                    value@,
+                )
             },
     )]
     pub fn ten_pow(e: i32) -> Result<Number> {
@@ -1554,8 +1544,6 @@ fn ten_pow_positive(exp: u32) -> Number {
     }
 }
 
-// Verus does not support format!
-#[verus_verify(external_body)]
 fn bigint_to_scientific(value: &BigInt) -> String {
     let s = value.to_string();
     let (sign, digits) = if let Some(rest) = s.strip_prefix('-') {
@@ -1572,18 +1560,12 @@ fn bigint_to_scientific(value: &BigInt) -> String {
     format!("{}{}.{}e{}", sign, &digits[0..1], &digits[1..], exponent)
 }
 
-#[verus_verify(external_body)]
 fn parse_scientific_bigint(input: &str) -> Option<BigInt> {
     let (mantissa, exponent_part) = split_scientific_parts(input)?;
     let exponent = exponent_part.parse::<i32>().ok()?;
     scientific_parts_to_bigint(mantissa, exponent)
 }
 
-#[verus_verify(external_body)]
-#[verus_spec(result =>
-    ensures
-        result matches Some((_, exponent)) ==> exponent@.len() > 0,
-)]
 fn split_scientific_parts(input: &str) -> Option<(&str, &str)> {
     let idx = input.find(['e', 'E'])?;
     let mantissa = &input[..idx];
@@ -1595,7 +1577,6 @@ fn split_scientific_parts(input: &str) -> Option<(&str, &str)> {
     }
 }
 
-#[verus_verify(external_body)]
 fn scientific_parts_to_bigint(mantissa: &str, exponent: i32) -> Option<BigInt> {
     let (sign, unsigned) = if let Some(rest) = mantissa.strip_prefix('-') {
         (-1, rest)
