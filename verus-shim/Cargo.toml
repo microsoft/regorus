@@ -6,7 +6,7 @@ name = "regorus-verus-shim"
 description = "No-op stand-ins for Verus's verus_verify/verus_spec/proof macros, used when the `verus` feature is disabled so annotated source still compiles as ordinary Rust."
 version = "0.0.0"
 edition = "2021"
-license = "MIT AND Apache-2.0 AND BSD-3-Clause"
+license = "MIT"
 repository = "https://github.com/microsoft/regorus"
 publish = false
 
