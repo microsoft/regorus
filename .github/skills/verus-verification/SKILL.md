@@ -55,10 +55,18 @@ honest trusted boundary.
 5. **Reuse existing semantic models.**
    - Search `src/verify/` before adding an uninterpreted spec function.
    - Prefer established models such as `pow2`, `NumberView`,
-     `spec_to_f64_lossy`, and BigInt view/spec traits.
+     `to_f64_lossy_ensures`, and BigInt view/spec traits.
    - If the same mathematical value can have representation-dependent runtime
      behavior, quantify over the concrete modeled value rather than pretending
      the view alone determines the result.
+   - When a view deliberately merges concrete variants, use a relational
+     postcondition for representation-sensitive operations. For example,
+     `NumberView::Integer` merges `Int`, `UInt`, and `BigInt`, whose lossy float
+     conversions and boundary behavior need not be a function of the view alone.
+   - Propagate that relation through callers with existential result witnesses.
+     Do not recover hidden representation by existentially inventing a concrete
+     `Number` whose view matches; that leaks internals and may choose a witness
+     unrelated to the executable receiver.
 
 6. **Minimize and explain trust.**
    - Use `external_body` only at the smallest unsupported boundary.
@@ -99,6 +107,16 @@ The contract should answer:
 
 For arithmetic returning `Result`, avoid vague contracts such as only
 `result is Ok` when the exact value is knowable.
+
+Write contracts around semantic inputs first, then state the result with
+`result matches ...`, `result is None`, or `result is Err`. This is usually
+clearer than matching every input/result tuple and separately excluding each
+impossible result variant.
+
+If an abstract view erases representation but the API result depends on it,
+allow the honest overlap in the postcondition and explain the boundary. For
+example, at `+/-2^53`, primitive and BigInt-backed `Number` values with the same
+view can legitimately differ between `Some` and `None` in an exact-float API.
 
 For BigInt operators, provide exact operator models and prove the caller against
 them. For division producing a float, model the exact lossy conversions used by
@@ -166,6 +184,13 @@ large. Prove extreme paths, but do not execute resource-heavy regression tests
 unless the cost is acceptable and intentional. Test the conversion and a smaller
 representative behavior instead.
 
+For signed division and remainder, model Rust semantics with `rust_div` and
+`rust_rem`; mathematical `/` and `%` do not capture truncation toward zero for
+all negative inputs. Bridge primitive operator specs such as `RemSpec` to those
+models with focused lemmas. Handle `MIN / -1` before either `/` or `%`, because
+both machine operations overflow, and prove the exact quotient fits before
+connecting a mathematical result to `checked_div` or a narrowing cast.
+
 ### 6. Use Verification Attributes Deliberately
 
 - `#[verus_verify]` on an `impl` applies to all methods in that impl.
@@ -179,6 +204,19 @@ representative behavior instead.
 
 Before diagnosing missing internal markers or macro bugs, inspect braces and
 attributes. Confirm the method is actually inside the annotated impl.
+
+### 7. Preserve Production Macros
+
+Do not replace `bail!`, `anyhow!`, or formatting in the executable body merely
+to make translation easier. Inspect the macro expansion and specify the
+smallest unsupported pieces. For `anyhow!`, this may mean narrow specifications
+for `Arguments::from_str`, `format_err`, and `must_use`; if verified callers
+only rely on taking the error branch, those assumptions need not promise
+anything about the error value.
+
+After a Verus upgrade, retry the original macro and previously externalized
+bodies. Translation support changes, so stale shims and `external_body`
+annotations should not become permanent trusted surface by inertia.
 
 ## Diagnosing Verus Failures
 
