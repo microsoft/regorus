@@ -28,7 +28,7 @@ use vstd::std_specs::convert::*;
 
 pub assume_specification[ <Number as Clone>::clone ](n: &Number) -> (res: Number)
     ensures
-        res == n,
+        res@ == n@,
 ;
 
 pub enum NumberView {
@@ -40,7 +40,7 @@ impl View for Number
 {
     type V = NumberView;
 
-    open spec fn view(&self) -> NumberView
+    open(crate) spec fn view(&self) -> NumberView
     {
         match self {
             Number::UInt(n) => NumberView::Integer(n as int),
@@ -59,15 +59,17 @@ pub open spec fn float_to_small_int(value: f64) -> Option<int>
         None
     }
     else if value >= 0.0 {
-        if ieee_float_cast::<u64, f64>(ieee_float_cast::<f64, u64>(value)).eq_spec(&value) {
-            Some(ieee_float_cast::<f64, u64>(value) as int)
+        let value_as_u64 = ieee_float_cast::<f64, u64>(value);
+        if ieee_float_cast::<u64, f64>(value_as_u64).eq_spec(&value) {
+            Some(value_as_u64 as int)
         }
         else {
             None
         }
     }
     else {
-        if ieee_float_cast::<i64, f64>(ieee_float_cast::<f64, i64>(value)).eq_spec(&value) {
+        let value_as_i64 = ieee_float_cast::<f64, i64>(value);
+        if ieee_float_cast::<i64, f64>(value_as_i64).eq_spec(&value) {
             Some(ieee_float_cast::<f64, i64>(value) as int)
         }
         else {
@@ -125,14 +127,12 @@ impl NumberView {
         match (self, rhs) {
             (NumberView::Integer(lhs), NumberView::Integer(rhs)) =>
                 result matches NumberView::Integer(sum) && sum == lhs + rhs,
-            _ => exists|lhs_float: f64, rhs_float: f64| {
-                &&& self.to_f64_lossy_ensures(lhs_float)
-                &&& rhs.to_f64_lossy_ensures(rhs_float)
-                &&& match result {
-                    NumberView::Integer(sum) => float_to_small_int(lhs_float + rhs_float) == Some(sum),
-                    NumberView::Float(sum) => {
-                        float_to_small_int(lhs_float + rhs_float) is None && sum == lhs_float + rhs_float
-                    },
+            _ => exists|a: f64, b: f64| {
+                &&& self.to_f64_lossy_ensures(a)
+                &&& rhs.to_f64_lossy_ensures(b)
+                &&& match float_to_small_int(a + b) {
+                    Some(sum) => result == NumberView::Integer(sum),
+                    None => result == NumberView::Float(a + b),
                 }
             },
         }
@@ -143,14 +143,12 @@ impl NumberView {
         match (self, rhs) {
             (NumberView::Integer(lhs), NumberView::Integer(rhs)) =>
                 result matches NumberView::Integer(diff) && diff == lhs - rhs,
-            _ => exists|lhs_float: f64, rhs_float: f64| {
-                &&& self.to_f64_lossy_ensures(lhs_float)
-                &&& rhs.to_f64_lossy_ensures(rhs_float)
-                &&& match result {
-                    NumberView::Integer(diff) => float_to_small_int(lhs_float - rhs_float) == Some(diff),
-                    NumberView::Float(diff) => {
-                        float_to_small_int(lhs_float - rhs_float) is None && diff == lhs_float - rhs_float
-                    },
+            _ => exists|a: f64, b: f64| {
+                &&& self.to_f64_lossy_ensures(a)
+                &&& rhs.to_f64_lossy_ensures(b)
+                &&& match float_to_small_int(a - b) {
+                    Some(diff) => result == NumberView::Integer(diff),
+                    None => result == NumberView::Float(a - b)
                 }
             },
         }
@@ -161,14 +159,12 @@ impl NumberView {
         match (self, rhs) {
             (NumberView::Integer(lhs), NumberView::Integer(rhs)) =>
                 result matches NumberView::Integer(product) && product == lhs * rhs,
-            _ => exists|lhs_float: f64, rhs_float: f64| {
-                &&& self.to_f64_lossy_ensures(lhs_float)
-                &&& rhs.to_f64_lossy_ensures(rhs_float)
-                &&& match result {
-                    NumberView::Integer(product) => float_to_small_int(lhs_float * rhs_float) == Some(product),
-                    NumberView::Float(product) => {
-                        float_to_small_int(lhs_float * rhs_float) is None && product == lhs_float * rhs_float
-                    },
+            _ => exists|a: f64, b: f64| {
+                &&& self.to_f64_lossy_ensures(a)
+                &&& rhs.to_f64_lossy_ensures(b)
+                &&& match float_to_small_int(a * b) {
+                    Some(product) => result == NumberView::Integer(product),
+                    None => result == NumberView::Float(a * b)
                 }
             },
         }
@@ -184,19 +180,19 @@ impl NumberView {
                         vstd::arithmetic::div_mod::rust_div(lhs, divisor),
                     )
                 } else {
-                    exists|lhs_float: f64, rhs_float: f64| {
-                        &&& self.to_f64_lossy_ensures(lhs_float)
-                        &&& rhs.to_f64_lossy_ensures(rhs_float)
-                        &&& result == NumberView::Float(lhs_float / rhs_float)
+                    exists|a: f64, b: f64| {
+                        &&& self.to_f64_lossy_ensures(a)
+                        &&& rhs.to_f64_lossy_ensures(b)
+                        &&& result == NumberView::Float(a / b)
                     }
                 }
             },
-            (NumberView::Float(_), _) | (NumberView::Integer(_), NumberView::Float(_)) => {
+            _ => {
                 &&& !rhs.is_zero()
-                &&& exists|lhs_float: f64, rhs_float: f64| {
-                    &&& self.to_f64_lossy_ensures(lhs_float)
-                    &&& rhs.to_f64_lossy_ensures(rhs_float)
-                    &&& result == NumberView::Float(lhs_float / rhs_float)
+                &&& exists|a: f64, b: f64| {
+                    &&& self.to_f64_lossy_ensures(a)
+                    &&& rhs.to_f64_lossy_ensures(b)
+                    &&& result == NumberView::Float(a / b)
                 }
             },
         }
