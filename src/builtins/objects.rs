@@ -492,47 +492,315 @@ fn json_match_schema(
     ))
 }
 
+// `json.patch` implements RFC6902 JSON Patch, extended (matching OPA's own
+// behavior) to operate on Rego `object`/`array`/`set` values directly rather
+// than on plain JSON. A generic serde-based JSON-Patch crate cannot express
+// this: sets have no JSON equivalent (a set member is addressed *by value*,
+// not by key/index), so patching has to know about `Value::Set` explicitly.
+// The traversal/mutation rules below mirror OPA's `internal/edittree`
+// (https://github.com/open-policy-agent/opa/blob/v1.2.0/internal/edittree/edittree.go):
+// object -> key lookup, array -> index (numbers, numeric strings, or "-" for
+// append), set -> membership lookup by value equality.
+
 #[cfg(feature = "jsonpatch")]
-fn json_patch(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
-    let name = "json.patch";
-    ensure_args_count(span, name, params, args, 2)?;
-
-    let object_str = args[0].to_json_str()?;
-    let mut object: serde_json::Value = serde_json::from_str(&object_str)
-        .map_err(|err| span.error(&format!("Failed to parse object as JSON: {err}")))?;
-
-    ensure_array(name, &params[1], args[1].clone())?;
-
-    let patches_str = args[1].to_json_str()?;
-    let patches_json: serde_json::Value = serde_json::from_str(&patches_str)
-        .map_err(|err| span.error(&format!("Failed to parse patches as JSON: {err}")))?;
-
-    let patch: json_patch::Patch = serde_json::from_value(patches_json).map_err(|err| {
-        if strict {
-            params[1]
-                .span()
-                .error(&format!("Invalid patch format: {err}"))
-        } else {
-            span.error(&format!("Invalid patch format: {err}"))
+fn json_patch_parse_path(path: &Value) -> core::result::Result<Vec<Value>, String> {
+    match path {
+        // Per OPA: leading '/' is optional and stripped before splitting, so
+        // "/a/b" and "a/b" are equivalent. RFC6901 '~1'/'~0' escapes are
+        // unescaped in that order (must unescape ~1 before ~0).
+        Value::String(s) => {
+            if s.is_empty() {
+                return Ok(Vec::new());
+            }
+            Ok(s.trim_start_matches('/')
+                .split('/')
+                .map(|part| Value::from(part.replace("~1", "/").replace("~0", "~")))
+                .collect())
         }
-    })?;
+        // Array-form paths carry raw, unescaped segments (can be any Value,
+        // not just strings) -- used to address non-string set members.
+        Value::Array(items) => Ok(items.iter().cloned().collect()),
+        _ => Err("path must be a string or an array of path segments".into()),
+    }
+}
 
-    match json_patch::patch(&mut object, &patch) {
-        Ok(_) => {
-            let result_str = serde_json::to_string(&object)
-                .map_err(|err| span.error(&format!("Failed to serialize patched object: {err}")))?;
-            Value::from_json_str(&result_str).map_err(|err| {
-                span.error(&format!(
-                    "Failed to convert patched object back to Value: {err}"
-                ))
-            })
+/// Resolves a path segment to an array index. `append_ok` allows the index to
+/// equal `len` (i.e. one-past-the-end, including `"-"`) -- only valid for the
+/// final segment of an `add`/`insert`; every other use requires `idx < len`.
+#[cfg(feature = "jsonpatch")]
+fn json_patch_to_index(
+    len: usize,
+    seg: &Value,
+    append_ok: bool,
+) -> core::result::Result<usize, String> {
+    let raw: i64 = match seg {
+        Value::Number(n) => n
+            .as_i64()
+            .ok_or_else(|| "invalid number type for indexing".to_string())?,
+        Value::String(s) if s.as_ref() == "-" => {
+            if !append_ok {
+                return Err("'-' index is not valid here".into());
+            }
+            i64::try_from(len).map_err(|_| "array too large to index".to_string())?
         }
-        Err(err) => {
-            if strict {
-                bail!(span.error(&format!("Failed to apply patch: {err}")));
+        Value::String(s) => {
+            if s.as_ref() != "0" && s.starts_with('0') {
+                return Err("leading zeros are not allowed in JSON paths".into());
+            }
+            s.parse::<i64>()
+                .map_err(|_| "invalid string for indexing".to_string())?
+        }
+        _ => return Err("invalid type for indexing".into()),
+    };
+    let idx = usize::try_from(raw).map_err(|_| format!("negative index: {raw}"))?;
+    let in_bounds = if append_ok { idx <= len } else { idx < len };
+    if !in_bounds {
+        return Err(format!("index {idx} out of bounds for length {len}"));
+    }
+    Ok(idx)
+}
+
+/// Read-only path traversal (used for `from`/`test`).
+#[cfg(feature = "jsonpatch")]
+fn json_patch_get<'v>(
+    target: &'v Value,
+    path: &[Value],
+) -> core::result::Result<&'v Value, String> {
+    let Some((head, rest)) = path.split_first() else {
+        return Ok(target);
+    };
+    match target {
+        Value::Object(obj) => obj
+            .get(head)
+            .ok_or_else(|| format!("path {head} does not exist in object"))
+            .and_then(|child| json_patch_get(child, rest)),
+        Value::Array(arr) => {
+            let idx = json_patch_to_index(arr.len(), head, false)?;
+            json_patch_get(&arr[idx], rest)
+        }
+        Value::Set(set) => set
+            .get(head)
+            .ok_or_else(|| format!("path {head} does not exist in set"))
+            .and_then(|member| json_patch_get(member, rest)),
+        _ => Err(format!("expected composite type, found value: {target}")),
+    }
+}
+
+/// Functional insert: rebuilds the path from `target` down with `value`
+/// placed at `path` (last segment inserted/overwritten; intermediate
+/// segments must already exist).
+#[cfg(feature = "jsonpatch")]
+fn json_patch_insert(
+    target: &Value,
+    path: &[Value],
+    value: Value,
+) -> core::result::Result<Value, String> {
+    let Some((head, rest)) = path.split_first() else {
+        return Ok(value);
+    };
+    match target {
+        Value::Object(obj) => {
+            let mut new_obj = (**obj).clone();
+            if rest.is_empty() {
+                new_obj.insert(head.clone(), value);
             } else {
-                Ok(Value::Undefined)
+                let child = obj
+                    .get(head)
+                    .ok_or_else(|| format!("path {head} does not exist in object"))?;
+                let new_child = json_patch_insert(child, rest, value)?;
+                new_obj.insert(head.clone(), new_child);
+            }
+            Ok(new_obj.into_value())
+        }
+        Value::Array(arr) => {
+            if rest.is_empty() {
+                let idx = json_patch_to_index(arr.len(), head, true)?;
+                let mut new_arr = (**arr).clone();
+                new_arr.insert(idx, value);
+                Ok(Value::from(new_arr))
+            } else {
+                let idx = json_patch_to_index(arr.len(), head, false)?;
+                let new_child = json_patch_insert(&arr[idx], rest, value)?;
+                let mut new_arr = (**arr).clone();
+                new_arr[idx] = new_child;
+                Ok(Value::from(new_arr))
             }
         }
+        Value::Set(set) => {
+            if rest.is_empty() {
+                // Sets have no keys: the last path segment must equal the
+                // value being inserted (this is how OPA addresses set
+                // membership for `add`).
+                if head != &value {
+                    return Err(format!(
+                        "set key {head} does not equal value to be inserted {value}"
+                    ));
+                }
+                let mut new_set = (**set).clone();
+                new_set.insert(value);
+                Ok(Value::from(new_set))
+            } else {
+                let member = set
+                    .get(head)
+                    .ok_or_else(|| format!("path {head} does not exist in set"))?;
+                let new_member = json_patch_insert(member, rest, value)?;
+                let mut new_set = (**set).clone();
+                new_set.remove(head);
+                new_set.insert(new_member);
+                Ok(Value::from(new_set))
+            }
+        }
+        _ => Err(format!("expected composite type, found value: {target}")),
+    }
+}
+
+/// Functional remove: rebuilds the path from `target` down with the node at
+/// `path` removed. Returns the rebuilt value and the value that was removed.
+#[cfg(feature = "jsonpatch")]
+fn json_patch_remove(
+    target: &Value,
+    path: &[Value],
+) -> core::result::Result<(Value, Value), String> {
+    let Some((head, rest)) = path.split_first() else {
+        // Removing the root document itself is valid (OPA's EditTree just
+        // marks the node deleted). The placeholder new-document value is
+        // only ever observed by a following `add`/`insert` at the same
+        // (empty) path, which overwrites it outright -- see `replace`.
+        return Ok((Value::Null, target.clone()));
+    };
+    match target {
+        Value::Object(obj) => {
+            if rest.is_empty() {
+                let mut new_obj = (**obj).clone();
+                let removed = new_obj
+                    .remove(head)
+                    .ok_or_else(|| format!("path {head} does not exist in object"))?;
+                Ok((new_obj.into_value(), removed))
+            } else {
+                let child = obj
+                    .get(head)
+                    .ok_or_else(|| format!("path {head} does not exist in object"))?;
+                let (new_child, removed) = json_patch_remove(child, rest)?;
+                let mut new_obj = (**obj).clone();
+                new_obj.insert(head.clone(), new_child);
+                Ok((new_obj.into_value(), removed))
+            }
+        }
+        Value::Array(arr) => {
+            let idx = json_patch_to_index(arr.len(), head, false)?;
+            if rest.is_empty() {
+                let mut new_arr = (**arr).clone();
+                let removed = new_arr.remove(idx);
+                Ok((Value::from(new_arr), removed))
+            } else {
+                let (new_child, removed) = json_patch_remove(&arr[idx], rest)?;
+                let mut new_arr = (**arr).clone();
+                new_arr[idx] = new_child;
+                Ok((Value::from(new_arr), removed))
+            }
+        }
+        Value::Set(set) => {
+            let member = set
+                .get(head)
+                .ok_or_else(|| format!("path {head} does not exist in set"))?
+                .clone();
+            if rest.is_empty() {
+                let mut new_set = (**set).clone();
+                new_set.remove(head);
+                Ok((Value::from(new_set), member))
+            } else {
+                let (new_member, removed) = json_patch_remove(&member, rest)?;
+                let mut new_set = (**set).clone();
+                new_set.remove(head);
+                new_set.insert(new_member);
+                Ok((Value::from(new_set), removed))
+            }
+        }
+        _ => Err(format!("expected composite type, found value: {target}")),
+    }
+}
+
+#[cfg(feature = "jsonpatch")]
+fn json_patch_apply(target: &Value, ops: &[Value]) -> core::result::Result<Value, String> {
+    let mut current = target.clone();
+    for op_value in ops {
+        let obj = match op_value {
+            Value::Object(o) => o,
+            _ => return Err(
+                "must be an array of JSON-Patch objects, but at least one element is not an object"
+                    .into(),
+            ),
+        };
+
+        let get_field = |name: &str| -> core::result::Result<&Value, String> {
+            obj.get(&Value::from(name))
+                .ok_or_else(|| format!("missing '{name}' attribute"))
+        };
+
+        let op = match get_field("op")? {
+            Value::String(s) => s.as_ref(),
+            _ => return Err("attribute 'op' must be a string".into()),
+        };
+
+        match op {
+            "add" => {
+                let path = json_patch_parse_path(get_field("path")?)?;
+                let value = get_field("value")?.clone();
+                current = json_patch_insert(&current, &path, value)?;
+            }
+            "remove" => {
+                let path = json_patch_parse_path(get_field("path")?)?;
+                let (new_current, _) = json_patch_remove(&current, &path)?;
+                current = new_current;
+            }
+            "replace" => {
+                let path = json_patch_parse_path(get_field("path")?)?;
+                let value = get_field("value")?.clone();
+                let (new_current, _) = json_patch_remove(&current, &path)?;
+                current = json_patch_insert(&new_current, &path, value)?;
+            }
+            "move" => {
+                let from = json_patch_parse_path(get_field("from")?)?;
+                let path = json_patch_parse_path(get_field("path")?)?;
+                let (new_current, chunk) = json_patch_remove(&current, &from)?;
+                current = json_patch_insert(&new_current, &path, chunk)?;
+            }
+            "copy" => {
+                let from = json_patch_parse_path(get_field("from")?)?;
+                let path = json_patch_parse_path(get_field("path")?)?;
+                let chunk = json_patch_get(&current, &from)?.clone();
+                current = json_patch_insert(&current, &path, chunk)?;
+            }
+            "test" => {
+                let path = json_patch_parse_path(get_field("path")?)?;
+                let value = get_field("value")?;
+                let chunk = json_patch_get(&current, &path)?;
+                if chunk != value {
+                    return Err(format!(
+                        "value from patch != expected value.\n\nExpected: {value}\n\nFound: {chunk}"
+                    ));
+                }
+            }
+            other => return Err(format!("unrecognized op '{other}'")),
+        }
+    }
+    Ok(current)
+}
+
+// Note: matching OPA's own `builtinJSONPatch`, any failure while applying the
+// patch (bad path, missing attribute, failed `test`, ...) yields Undefined
+// rather than a hard error -- this builtin never errors on a malformed patch,
+// regardless of the `strict-builtin-errors` setting.
+#[cfg(feature = "jsonpatch")]
+fn json_patch(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+    let name = "json.patch";
+    ensure_args_count(span, name, params, args, 2)?;
+    ensure_array(name, &params[1], args[1].clone())?;
+
+    let ops = args[1].as_array()?;
+
+    match json_patch_apply(&args[0], ops) {
+        Ok(patched) => Ok(patched),
+        Err(_) => Ok(Value::Undefined),
     }
 }

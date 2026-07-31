@@ -147,6 +147,7 @@ v1/intersection
 v1/jsonbuiltins
 v1/jsonfilter
 v1/jsonfilteridempotent
+v1/jsonpatch
 v1/jsonremove
 v1/jsonremoveidempotent
 v1/jsonschema
