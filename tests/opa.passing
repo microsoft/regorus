@@ -40,6 +40,7 @@ v0/intersection
 v0/jsonbuiltins
 v0/jsonfilter
 v0/jsonfilteridempotent
+v0/jsonpatch
 v0/jsonremove
 v0/jsonremoveidempotent
 v0/jsonschema
