@@ -1710,8 +1710,7 @@ mod tests {
     }
 
     #[test]
-    fn ten_pow_uses_unsigned_minimum_exponent_magnitude() {
-        assert_eq!((-(i32::MIN as i64)) as u32, 1u32 << 31);
+    fn ten_pow_computes_negative_exponent() {
         assert!(matches!(
             Number::ten_pow(-3),
             Ok(Number::Float(value)) if value == 0.001
