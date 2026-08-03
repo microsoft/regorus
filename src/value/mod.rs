@@ -11,6 +11,7 @@
     clippy::as_conversions
 )] // value helpers index paths directly for performance
 
+mod array;
 mod object;
 mod set;
 
@@ -18,6 +19,7 @@ mod set;
 mod tests;
 
 #[allow(unused_imports)] // surface for downstream PRs
+pub use array::{Array, ArrayCursor, ArrayIntoIter, ArrayIter, ArrayIterMut};
 pub use object::{IntoIter, Iter, IterMut, Object};
 #[allow(unused_imports)] // surface for downstream PRs
 pub use set::Set;
