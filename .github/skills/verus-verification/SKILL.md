@@ -220,6 +220,16 @@ annotations should not become permanent trusted surface by inertia.
 
 ## Diagnosing Verus Failures
 
+### Trigger Failure
+
+Before repairing or replacing a rejected trigger, check whether the quantifier
+is semantically necessary. If its bound variables merely name fields of fixed
+arguments through equalities such as `lhs == NumberView::Integer(integer_lhs)`,
+match on those arguments and state the branch-specific condition directly. This
+preserves the contract while removing the quantifier, its trigger, and needless
+solver instantiation. Use a natural or artificial trigger only when the contract
+genuinely ranges over multiple values that are not determined by fixed inputs.
+
 ### Translation or Compiler Failure
 
 1. Reduce to the exact operator, type, attribute, and impl context.

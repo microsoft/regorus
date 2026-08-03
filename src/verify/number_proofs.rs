@@ -23,15 +23,16 @@ use vstd::std_specs::ops::*;
 
 pub proof fn lemma_div_ensures_cases(lhs: NumberView, rhs: NumberView)
     ensures
-        forall|integer_lhs: int, divisor: int|
-            lhs == NumberView::Integer(integer_lhs)
-                && rhs == NumberView::Integer(divisor)
-                && divisor != 0
-                && rust_rem(integer_lhs, divisor) == 0
-            ==> #[trigger] lhs.div_ensures(
-                rhs,
-                NumberView::Integer(rust_div(integer_lhs, divisor)),
-            ),
+        match (lhs, rhs) {
+            (NumberView::Integer(integer_lhs), NumberView::Integer(divisor)) => {
+                divisor != 0 && rust_rem(integer_lhs, divisor) == 0
+                ==> lhs.div_ensures(
+                    rhs,
+                    NumberView::Integer(rust_div(integer_lhs, divisor)),
+                )
+            },
+            _ => true,
+        },
         forall|lhs_float: f64, rhs_float: f64|
             lhs is Integer && rhs is Integer && rhs->Integer_0 != 0 && rust_rem(
                 lhs->Integer_0,
