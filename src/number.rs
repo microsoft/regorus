@@ -455,7 +455,12 @@ impl Ord for Number {
     #[verus_spec(result =>
          ensures
              match (self@.to_int(), other@.to_int()) {
-                 (Some(n1), Some(n2)) => result == n1.cmp_spec(&n2),
+                 (Some(n1), Some(n2)) =>
+                     match result {
+                         Ordering::Less => n1 < n2,
+                         Ordering::Greater => n1 > n2,
+                         Ordering::Equal => n1 == n2,
+                     },
                  _ => exists|f1: f64, f2: f64| #![trigger self@.to_f64_lossy_ensures(f1), other@.to_f64_lossy_ensures(f2)] {
                      &&& self@.to_f64_lossy_ensures(f1)
                      &&& other@.to_f64_lossy_ensures(f2)

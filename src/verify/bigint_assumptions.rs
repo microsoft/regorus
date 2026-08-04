@@ -192,12 +192,20 @@ pub assume_specification[ <BigInt as core::cmp::PartialEq>::eq ](x: &BigInt, y: 
 pub axiom fn axiom_bigint_obeys_cmp_spec()
     ensures
         <BigInt as vstd::std_specs::cmp::OrdSpec>::obeys_cmp_spec(),
-        forall|b1: &BigInt, b2: &BigInt| b1.cmp_spec(b2) == b1@.cmp_spec(&b2@),
+        forall|b1: &BigInt, b2: &BigInt| match #[trigger] b1.cmp_spec(b2) {
+            Ordering::Less => b1@ < b2@,
+            Ordering::Greater => b1@ > b2@,
+            Ordering::Equal => b1@ == b2@,
+        },
 ;
 
 pub assume_specification[ <BigInt as core::cmp::Ord>::cmp ](x: &BigInt, y: &BigInt) -> (res: Ordering)
     ensures
-        res == x@.cmp_spec(&y@),
+        match res {
+            Ordering::Less => x@ < y@,
+            Ordering::Greater => x@ > y@,
+            Ordering::Equal => x@ == y@,
+        },
 ;
 
 // From
