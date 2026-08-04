@@ -40,7 +40,7 @@ pub(in crate::languages::rego::compiler) fn try_eval_const(expr: &Expr) -> Optio
             .iter()
             .map(|i| try_eval_const(i.as_ref()))
             .collect::<Option<BTreeSet<_>>>()
-            .map(|s| Value::Set(Rc::new(s))),
+            .map(Value::from_set),
         Expr::Object { fields, .. } => fields
             .iter()
             .map(|(_, k, v)| Some((try_eval_const(k.as_ref())?, try_eval_const(v.as_ref())?)))
@@ -92,7 +92,7 @@ impl<'a> Compiler<'a> {
             items.iter().map(|i| try_eval_const(i.as_ref())).collect();
         if let Some(values) = all_const {
             let dest = self.alloc_register();
-            let literal_idx = self.add_literal(Value::Set(Rc::new(values)));
+            let literal_idx = self.add_literal(Value::from_set(values));
             self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
             return Ok(dest);
         }
