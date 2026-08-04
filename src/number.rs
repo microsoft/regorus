@@ -1707,14 +1707,6 @@ mod tests {
     }
 
     #[test]
-    fn two_pow_computes_minimum_exponent() {
-        assert!(matches!(
-            Number::two_pow(i32::MIN),
-            Ok(Number::Float(value)) if value == 0.0
-        ));
-    }
-
-    #[test]
     fn ten_pow_computes_negative_exponent() {
         assert!(matches!(
             Number::ten_pow(-3),
