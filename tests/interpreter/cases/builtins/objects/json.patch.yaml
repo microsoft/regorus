@@ -210,3 +210,39 @@ cases:
         bool: true
         num: 3.14
         str: "hello"
+
+  - note: set add addresses the member by value with an array-form path
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"a", "b", "c"}
+        patches = [{"op": "add", "path": ["d"], "value": "d"}]
+        result = json.patch(obj, patches)
+    query: data.test.result == {"a", "b", "c", "d"}
+    want_result: true
+
+  - note: set remove addresses the member by value with an array-form path
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"a", "b", "c"}
+        patches = [{"op": "remove", "path": ["b"]}]
+        result = json.patch(obj, patches)
+    query: data.test.result == {"a", "c"}
+    want_result: true
+
+  - note: set move removes and reinserts a member by value with array-form paths
+    data: {}
+    modules:
+      - |
+        package test
+
+        obj = {"a", "b", "c"}
+        patches = [{"op": "move", "from": ["a"], "path": ["a"]}]
+        result = json.patch(obj, patches)
+    query: data.test.result == {"a", "b", "c"}
+    want_result: true

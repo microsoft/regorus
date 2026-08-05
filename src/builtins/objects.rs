@@ -721,68 +721,79 @@ fn json_patch_remove(
 }
 
 #[cfg(feature = "jsonpatch")]
-fn json_patch_apply(target: &Value, ops: &[Value]) -> core::result::Result<Value, String> {
+fn json_patch_apply(target: &Value, ops: &[Value]) -> Result<Value> {
     let mut current = target.clone();
     for op_value in ops {
         let obj = match op_value {
             Value::Object(o) => o,
-            _ => return Err(
+            _ => bail!(
                 "must be an array of JSON-Patch objects, but at least one element is not an object"
-                    .into(),
             ),
         };
 
-        let get_field = |name: &str| -> core::result::Result<&Value, String> {
+        let get_field = |name: &str| -> Result<&Value> {
             obj.get(&Value::from(name))
-                .ok_or_else(|| format!("missing '{name}' attribute"))
+                .ok_or_else(|| anyhow::anyhow!("missing '{name}' attribute"))
         };
 
         let op = match get_field("op")? {
             Value::String(s) => s.as_ref(),
-            _ => return Err("attribute 'op' must be a string".into()),
+            _ => bail!("attribute 'op' must be a string"),
         };
 
         match op {
             "add" => {
-                let path = json_patch_parse_path(get_field("path")?)?;
+                let path = json_patch_parse_path(get_field("path")?).map_err(anyhow::Error::msg)?;
                 let value = get_field("value")?.clone();
-                current = json_patch_insert(&current, &path, value)?;
+                current = json_patch_insert(&current, &path, value).map_err(anyhow::Error::msg)?;
             }
             "remove" => {
-                let path = json_patch_parse_path(get_field("path")?)?;
-                let (new_current, _) = json_patch_remove(&current, &path)?;
+                let path = json_patch_parse_path(get_field("path")?).map_err(anyhow::Error::msg)?;
+                let (new_current, _) =
+                    json_patch_remove(&current, &path).map_err(anyhow::Error::msg)?;
                 current = new_current;
             }
             "replace" => {
-                let path = json_patch_parse_path(get_field("path")?)?;
+                let path = json_patch_parse_path(get_field("path")?).map_err(anyhow::Error::msg)?;
                 let value = get_field("value")?.clone();
-                let (new_current, _) = json_patch_remove(&current, &path)?;
-                current = json_patch_insert(&new_current, &path, value)?;
+                let (new_current, _) =
+                    json_patch_remove(&current, &path).map_err(anyhow::Error::msg)?;
+                current =
+                    json_patch_insert(&new_current, &path, value).map_err(anyhow::Error::msg)?;
             }
             "move" => {
-                let from = json_patch_parse_path(get_field("from")?)?;
-                let path = json_patch_parse_path(get_field("path")?)?;
-                let (new_current, chunk) = json_patch_remove(&current, &from)?;
-                current = json_patch_insert(&new_current, &path, chunk)?;
+                let from = json_patch_parse_path(get_field("from")?).map_err(anyhow::Error::msg)?;
+                let path = json_patch_parse_path(get_field("path")?).map_err(anyhow::Error::msg)?;
+                let (new_current, chunk) =
+                    json_patch_remove(&current, &from).map_err(anyhow::Error::msg)?;
+                current =
+                    json_patch_insert(&new_current, &path, chunk).map_err(anyhow::Error::msg)?;
             }
             "copy" => {
-                let from = json_patch_parse_path(get_field("from")?)?;
-                let path = json_patch_parse_path(get_field("path")?)?;
-                let chunk = json_patch_get(&current, &from)?.clone();
-                current = json_patch_insert(&current, &path, chunk)?;
+                let from = json_patch_parse_path(get_field("from")?).map_err(anyhow::Error::msg)?;
+                let path = json_patch_parse_path(get_field("path")?).map_err(anyhow::Error::msg)?;
+                let chunk = json_patch_get(&current, &from)
+                    .map_err(anyhow::Error::msg)?
+                    .clone();
+                current = json_patch_insert(&current, &path, chunk).map_err(anyhow::Error::msg)?;
             }
             "test" => {
-                let path = json_patch_parse_path(get_field("path")?)?;
+                let path = json_patch_parse_path(get_field("path")?).map_err(anyhow::Error::msg)?;
                 let value = get_field("value")?;
-                let chunk = json_patch_get(&current, &path)?;
+                let chunk = json_patch_get(&current, &path).map_err(anyhow::Error::msg)?;
                 if chunk != value {
-                    return Err(format!(
+                    bail!(
                         "value from patch != expected value.\n\nExpected: {value}\n\nFound: {chunk}"
-                    ));
+                    );
                 }
             }
-            other => return Err(format!("unrecognized op '{other}'")),
+            other => bail!("unrecognized op '{other}'"),
         }
+
+        // Each operation may rebuild and grow a user-controlled value. Check
+        // while applying the patch so allocation limits cannot be deferred
+        // until the whole patch list has been processed.
+        enforce_limit()?;
     }
     Ok(current)
 }
@@ -799,8 +810,18 @@ fn json_patch(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) 
 
     let ops = args[1].as_array()?;
 
-    match json_patch_apply(&args[0], ops) {
+    let patched = json_patch_apply(&args[0], ops);
+    match patched {
         Ok(patched) => Ok(patched),
+        // Resource-limit errors must propagate rather than look like an
+        // invalid patch, so callers cannot bypass configured limits.
+        Err(err)
+            if err
+                .downcast_ref::<crate::utils::limits::LimitError>()
+                .is_some() =>
+        {
+            Err(err)
+        }
         Err(_) => Ok(Value::Undefined),
     }
 }

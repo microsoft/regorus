@@ -3434,12 +3434,9 @@ impl Interpreter {
                         .contexts
                         .pop()
                         .ok_or_else(|| anyhow!("internal error: rule's context already popped"))?;
-                    // Old-style stacked bodies (no `else`) carry the rule
-                    // head's assign as their own `.assign` (see
-                    // `Parser::parse_query_blocks`) precisely so this reuses
-                    // the same output expression here; a bare `else`/
-                    // `else if` genuinely has no `.assign` and must default
-                    // to the boolean-true output below, not the head's.
+                    // Each body provides its own assignment. A bare `else`/
+                    // `else if` has no `.assign` and therefore defaults to
+                    // the boolean-true output below.
                     let output_expr = body.assign.as_ref().map(|e| e.value.clone());
                     let mut next_ctx = Context {
                         output_expr,
