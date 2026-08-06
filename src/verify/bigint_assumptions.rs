@@ -54,9 +54,7 @@ pub open spec fn spec_bigint_bitand(lhs: int, rhs: int) -> int
         -lsb
     }
     else {
-        let lhs_shifted: int = if lhs >= 0 { lhs / 2 } else { -((-(lhs + 1)) / 2) - 1 };
-        let rhs_shifted: int = if rhs >= 0 { rhs / 2 } else { -((-(rhs + 1)) / 2) - 1 };
-        spec_bigint_bitand(lhs_shifted, rhs_shifted) * 2 + lsb
+        spec_bigint_bitand(lhs / 2, rhs / 2) * 2 + lsb
     }
 }
 
@@ -81,28 +79,9 @@ proof fn lemma_test_spec_bigint_bitand_for_i16(lhs: i16, rhs: i16)
         ;
     }
     else {
-        let lhs_shifted: i16 =
-            if lhs >= 0 {
-                (lhs / 2) as i16
-            }
-            else {
-                -(((((-((lhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16
-            };
-        let rhs_shifted: i16 =
-            if rhs >= 0 {
-                (rhs / 2) as i16
-            }
-            else {
-                -(((((-((rhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16
-            };
-
-        lemma_test_spec_bigint_bitand_for_i16(lhs_shifted, rhs_shifted);
-        assert((lhs_shifted & rhs_shifted) * 2 + lsb == lhs & rhs) by (bit_vector)
+        lemma_test_spec_bigint_bitand_for_i16((lhs / 2) as i16, (rhs / 2) as i16);
+        assert(((lhs / 2) as i16 & (rhs / 2) as i16) * 2 + lsb == lhs & rhs) by (bit_vector)
             requires
-                lhs >= 0 ==> lhs_shifted == (lhs / 2) as i16,
-                lhs < 0 ==> lhs_shifted == -(((((-((lhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16,
-                rhs >= 0 ==> rhs_shifted == (rhs / 2) as i16,
-                rhs < 0 ==> rhs_shifted == -(((((-((rhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16,
                 lsb == if (lhs % 2 == 1) && (rhs % 2 == 1) { 1i16 } else { 0i16 },
         ;
     }
@@ -158,9 +137,7 @@ pub open spec fn spec_bigint_bitor(lhs: int, rhs: int) -> int
         -lsb
     }
     else {
-        let lhs_shifted: int = if lhs >= 0 { lhs / 2 } else { -((-(lhs + 1)) / 2) - 1 };
-        let rhs_shifted: int = if rhs >= 0 { rhs / 2 } else { -((-(rhs + 1)) / 2) - 1 };
-        spec_bigint_bitor(lhs_shifted, rhs_shifted) * 2 + lsb
+        spec_bigint_bitor(lhs / 2, rhs / 2) * 2 + lsb
     }
 }
 
@@ -185,28 +162,9 @@ proof fn lemma_test_spec_bigint_bitor_for_i16(lhs: i16, rhs: i16)
         ;
     }
     else {
-        let lhs_shifted: i16 =
-            if lhs >= 0 {
-                (lhs / 2) as i16
-            }
-            else {
-                -(((((-((lhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16
-            };
-        let rhs_shifted: i16 =
-            if rhs >= 0 {
-                (rhs / 2) as i16
-            }
-            else {
-                -(((((-((rhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16
-            };
-
-        lemma_test_spec_bigint_bitor_for_i16(lhs_shifted, rhs_shifted);
-        assert((lhs_shifted | rhs_shifted) * 2 + lsb == lhs | rhs) by (bit_vector)
+        lemma_test_spec_bigint_bitor_for_i16((lhs / 2) as i16, (rhs / 2) as i16);
+        assert(((lhs / 2) as i16 | (rhs / 2) as i16) * 2 + lsb == lhs | rhs) by (bit_vector)
             requires
-                lhs >= 0 ==> lhs_shifted == (lhs / 2) as i16,
-                lhs < 0 ==> lhs_shifted == -(((((-((lhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16,
-                rhs >= 0 ==> rhs_shifted == (rhs / 2) as i16,
-                rhs < 0 ==> rhs_shifted == -(((((-((rhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16,
                 lsb == if (lhs % 2 == 1) || (rhs % 2 == 1) { 1i16 } else { 0i16 },
         ;
     }
@@ -262,9 +220,7 @@ pub open spec fn spec_bigint_bitxor(lhs: int, rhs: int) -> int
         -lsb
     }
     else {
-        let lhs_shifted: int = if lhs >= 0 { lhs / 2 } else { -((-(lhs + 1)) / 2) - 1 };
-        let rhs_shifted: int = if rhs >= 0 { rhs / 2 } else { -((-(rhs + 1)) / 2) - 1 };
-        spec_bigint_bitxor(lhs_shifted, rhs_shifted) * 2 + lsb
+        spec_bigint_bitxor(lhs / 2, rhs / 2) * 2 + lsb
     }
 }
 
@@ -289,28 +245,9 @@ proof fn lemma_test_spec_bigint_bitxor_for_i16(lhs: i16, rhs: i16)
         ;
     }
     else {
-        let lhs_shifted: i16 =
-            if lhs >= 0 {
-                (lhs / 2) as i16
-            }
-            else {
-                -(((((-((lhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16
-            };
-        let rhs_shifted: i16 =
-            if rhs >= 0 {
-                (rhs / 2) as i16
-            }
-            else {
-                -(((((-((rhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16
-            };
-
-        lemma_test_spec_bigint_bitxor_for_i16(lhs_shifted, rhs_shifted);
-        assert((lhs_shifted ^ rhs_shifted) * 2 + lsb == lhs ^ rhs) by (bit_vector)
+        lemma_test_spec_bigint_bitxor_for_i16((lhs / 2) as i16, (rhs / 2) as i16);
+        assert(((lhs / 2) as i16 ^ (rhs / 2) as i16) * 2 + lsb == lhs ^ rhs) by (bit_vector)
             requires
-                lhs >= 0 ==> lhs_shifted == (lhs / 2) as i16,
-                lhs < 0 ==> lhs_shifted == -(((((-((lhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16,
-                rhs >= 0 ==> rhs_shifted == (rhs / 2) as i16,
-                rhs < 0 ==> rhs_shifted == -(((((-((rhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16,
                 lsb == if (lhs % 2 == 1) != (rhs % 2 == 1) { 1i16 } else { 0i16 },
         ;
     }
