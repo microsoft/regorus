@@ -46,41 +46,94 @@ impl BigIntAdditionalSpecFns for BigInt {
 
 pub open spec fn spec_bigint_bitand(lhs: int, rhs: int) -> int
     decreases
-        if lhs >= 0 { lhs } else { -lhs - 1 },
-        if rhs >= 0 { rhs } else { -rhs - 1 }
+        if lhs >= 0 { lhs } else { -(lhs + 1) },
+        if rhs >= 0 { rhs } else { -(rhs + 1) }
 {
     let lsb: int = if (lhs % 2 == 1) && (rhs % 2 == 1) { 1int } else { 0int };
     if (lhs == 0 || lhs == -1) && (rhs == 0 || rhs == -1) {
         -lsb
     }
     else {
-        let lhs_shifted: int = if lhs >= 0 { lhs / 2 } else { -((-lhs - 1) / 2) - 1 };
-        let rhs_shifted: int = if rhs >= 0 { rhs / 2 } else { -((-rhs - 1) / 2) - 1 };
+        let lhs_shifted: int = if lhs >= 0 { lhs / 2 } else { -((-(lhs + 1)) / 2) - 1 };
+        let rhs_shifted: int = if rhs >= 0 { rhs / 2 } else { -((-(rhs + 1)) / 2) - 1 };
         spec_bigint_bitand(lhs_shifted, rhs_shifted) * 2 + lsb
     }
 }
 
-proof fn lemma_test_spec_bigint_bitand()
+// To help demonstrate that the spec for `spec_bigint_bitand` is
+// valid, prove that it's equivalent to `&` for arbitrary `i16`
+// values. (Using 16 bits is enough for high confidence, and doesn't
+// tax the bit-vector solver.)
+proof fn lemma_test_spec_bigint_bitand_for_i16(lhs: i16, rhs: i16)
+    ensures
+        spec_bigint_bitand(lhs as int, rhs as int) == (lhs & rhs) as int,
+    decreases
+        if lhs >= 0 { lhs as int } else { -(lhs + 1) },
+        if rhs >= 0 { rhs as int } else { -(rhs + 1) }
 {
-    // Testing examples from https://docs.rs/num-bigint/latest/src/num_bigint/bigint/bits.rs.html
+    let lsb: i16 = if (lhs % 2 == 1) && (rhs % 2 == 1) { 1i16 } else { 0i16 };
+    if (lhs == 0 || lhs == -1) && (rhs == 0 || rhs == -1) {
+        assert(-lsb == lhs & rhs) by (bit_vector)
+            requires
+                lhs == 0 || lhs == -1,
+                rhs == 0 || rhs == -1,
+                lsb == if (lhs % 2 == 1) && (rhs % 2 == 1) { 1i16 } else { 0i16 },
+        ;
+    }
+    else {
+        let lhs_shifted: i16 =
+            if lhs >= 0 {
+                (lhs / 2) as i16
+            }
+            else {
+                -(((((-((lhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16
+            };
+        let rhs_shifted: i16 =
+            if rhs >= 0 {
+                (rhs / 2) as i16
+            }
+            else {
+                -(((((-((rhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16
+            };
 
-    // Documentation for bitand_pos_neg
+        lemma_test_spec_bigint_bitand_for_i16(lhs_shifted, rhs_shifted);
+        assert((lhs_shifted & rhs_shifted) * 2 + lsb == lhs & rhs) by (bit_vector)
+            requires
+                lhs >= 0 ==> lhs_shifted == (lhs / 2) as i16,
+                lhs < 0 ==> lhs_shifted == -(((((-((lhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16,
+                rhs >= 0 ==> rhs_shifted == (rhs / 2) as i16,
+                rhs < 0 ==> rhs_shifted == -(((((-((rhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16,
+                lsb == if (lhs % 2 == 1) && (rhs % 2 == 1) { 1i16 } else { 0i16 },
+        ;
+    }
+}
+
+// To help demonstrate that the spec for `spec_bigint_bitand`
+// corresponds to what's implemented by the BigInt library, prove that
+// its results match examples given in comments at:
+// https://docs.rs/num-bigint/latest/src/num_bigint/bigint/bits.rs.html
+proof fn lemma_test_spec_bigint_bitand_with_examples()
+    ensures
+        // From documentation for bitand_pos_neg:
+        spec_bigint_bitand(1, -0xff) == 1,
+        spec_bigint_bitand(0xff, -1) == 0xff,
+        // From documentation for bitand_neg_pos:
+        spec_bigint_bitand(-1, 0xff) == 0xff,
+        spec_bigint_bitand(-0xff, 1) == 1,
+        // From documentation for bitand_neg_neg:
+        spec_bigint_bitand(-1, -0xff) == -0xff,
+        spec_bigint_bitand(-0xff, -1) == -0xff,
+        spec_bigint_bitand(-0xff, -0xfe) == -0x100,
+{
     assert(spec_bigint_bitand(1, -0xff) == 1) by (compute);
     assert(spec_bigint_bitand(0xff, -1) == 0xff) by (compute);
 
-    // Documentation for bitand_neg_pos
     assert(spec_bigint_bitand(-1, 0xff) == 0xff) by (compute);
     assert(spec_bigint_bitand(-0xff, 1) == 1) by (compute);
 
-    // Documentation for bitand_neg_neg
     assert(spec_bigint_bitand(-1, -0xff) == -0xff) by (compute);
     assert(spec_bigint_bitand(-0xff, -1) == -0xff) by (compute);
     assert(spec_bigint_bitand(-0xff, -0xfe) == -0x100) by (compute);
-
-    // Extra examples
-    assert(spec_bigint_bitand(-27, -9) == -27) by (compute);
-    assert(spec_bigint_bitand(27, 9) == 9) by (compute);
-    assert(spec_bigint_bitand(5, 3) == 1) by (compute);
 }
 
 pub axiom fn axiom_bigint_obeys_bitand_spec()
@@ -97,41 +150,94 @@ pub axiom fn axiom_bigint_obeys_bitand_spec()
 
 pub open spec fn spec_bigint_bitor(lhs: int, rhs: int) -> int
     decreases
-        if lhs >= 0 { lhs } else { -lhs - 1 },
-        if rhs >= 0 { rhs } else { -rhs - 1 }
+        if lhs >= 0 { lhs } else { -(lhs + 1) },
+        if rhs >= 0 { rhs } else { -(rhs + 1) }
 {
     let lsb: int = if (lhs % 2 == 1) || (rhs % 2 == 1) { 1int } else { 0int };
     if (lhs == 0 || lhs == -1) && (rhs == 0 || rhs == -1) {
         -lsb
     }
     else {
-        let lhs_shifted: int = if lhs >= 0 { lhs / 2 } else { -((-lhs - 1) / 2) - 1 };
-        let rhs_shifted: int = if rhs >= 0 { rhs / 2 } else { -((-rhs - 1) / 2) - 1 };
+        let lhs_shifted: int = if lhs >= 0 { lhs / 2 } else { -((-(lhs + 1)) / 2) - 1 };
+        let rhs_shifted: int = if rhs >= 0 { rhs / 2 } else { -((-(rhs + 1)) / 2) - 1 };
         spec_bigint_bitor(lhs_shifted, rhs_shifted) * 2 + lsb
     }
 }
 
-proof fn lemma_test_spec_bigint_bitor()
+// To help demonstrate that the spec for `spec_bigint_bitor` is
+// valid, prove that it's equivalent to `|` for arbitrary `i16`
+// values. (Using 16 bits is enough for high confidence, and doesn't
+// tax the bit-vector solver.)
+proof fn lemma_test_spec_bigint_bitor_for_i16(lhs: i16, rhs: i16)
+    ensures
+        spec_bigint_bitor(lhs as int, rhs as int) == (lhs | rhs) as int,
+    decreases
+        if lhs >= 0 { lhs as int } else { -(lhs + 1) },
+        if rhs >= 0 { rhs as int } else { -(rhs + 1) }
 {
-    // Testing examples from https://docs.rs/num-bigint/latest/src/num_bigint/bigint/bits.rs.html
+    let lsb: i16 = if (lhs % 2 == 1) || (rhs % 2 == 1) { 1i16 } else { 0i16 };
+    if (lhs == 0 || lhs == -1) && (rhs == 0 || rhs == -1) {
+        assert(-lsb == lhs | rhs) by (bit_vector)
+            requires
+                lhs == 0 || lhs == -1,
+                rhs == 0 || rhs == -1,
+                lsb == if (lhs % 2 == 1) || (rhs % 2 == 1) { 1i16 } else { 0i16 },
+        ;
+    }
+    else {
+        let lhs_shifted: i16 =
+            if lhs >= 0 {
+                (lhs / 2) as i16
+            }
+            else {
+                -(((((-((lhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16
+            };
+        let rhs_shifted: i16 =
+            if rhs >= 0 {
+                (rhs / 2) as i16
+            }
+            else {
+                -(((((-((rhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16
+            };
 
-    // Documentation for bitor_pos_neg
+        lemma_test_spec_bigint_bitor_for_i16(lhs_shifted, rhs_shifted);
+        assert((lhs_shifted | rhs_shifted) * 2 + lsb == lhs | rhs) by (bit_vector)
+            requires
+                lhs >= 0 ==> lhs_shifted == (lhs / 2) as i16,
+                lhs < 0 ==> lhs_shifted == -(((((-((lhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16,
+                rhs >= 0 ==> rhs_shifted == (rhs / 2) as i16,
+                rhs < 0 ==> rhs_shifted == -(((((-((rhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16,
+                lsb == if (lhs % 2 == 1) || (rhs % 2 == 1) { 1i16 } else { 0i16 },
+        ;
+    }
+}
+
+// To help demonstrate that the spec for `spec_bigint_bitor`
+// corresponds to what's implemented by the BigInt library, prove that
+// its results match examples given in comments at:
+// https://docs.rs/num-bigint/latest/src/num_bigint/bigint/bits.rs.html
+proof fn lemma_test_spec_bigint_bitor_with_examples()
+    ensures
+        // From documentation for bitor_pos_neg:
+        spec_bigint_bitor(1, -0xff) == -0xff,
+        spec_bigint_bitor(0xff, -1) == -1,
+
+        // From documentation for bitor_neg_pos:
+        spec_bigint_bitor(-1, 0xff) == -1,
+        spec_bigint_bitor(-0xff, 1) == -0xff,
+
+        // From documentation for bitor_neg_neg:
+        spec_bigint_bitor(-1, -0xff) == -1,
+        spec_bigint_bitor(-0xff, -1) == -1,
+{
     assert(spec_bigint_bitor(1, -0xff) == -0xff) by (compute);
     assert(spec_bigint_bitor(0xff, -1) == -1) by (compute);
 
-    // Documentation for bitor_neg_pos
     assert(spec_bigint_bitor(-1, 0xff) == -1) by (compute);
     assert(spec_bigint_bitor(-0xff, 1) == -0xff) by (compute);
 
-    // Documentation for bitor_neg_neg
     assert(spec_bigint_bitor(-1, -0xff) == -1) by (compute);
     assert(spec_bigint_bitor(-0xff, -1) == -1) by (compute);
-
-    // Extra examples
-    assert(spec_bigint_bitor(-0xff, -0xfe) == -0xfd) by (compute);
-    assert(spec_bigint_bitor(-27, -9) == -9) by (compute);
-    assert(spec_bigint_bitor(27, 9) == 27) by (compute);
-    assert(spec_bigint_bitor(5, 3) == 7) by (compute);
 }
 
 pub axiom fn axiom_bigint_obeys_bitor_spec()
@@ -148,41 +254,94 @@ pub axiom fn axiom_bigint_obeys_bitor_spec()
 
 pub open spec fn spec_bigint_bitxor(lhs: int, rhs: int) -> int
     decreases
-        if lhs >= 0 { lhs } else { -lhs - 1 },
-        if rhs >= 0 { rhs } else { -rhs - 1 }
+        if lhs >= 0 { lhs } else { -(lhs + 1) },
+        if rhs >= 0 { rhs } else { -(rhs + 1) }
 {
     let lsb: int = if (lhs % 2 == 1) != (rhs % 2 == 1) { 1int } else { 0int };
     if (lhs == 0 || lhs == -1) && (rhs == 0 || rhs == -1) {
         -lsb
     }
     else {
-        let lhs_shifted: int = if lhs >= 0 { lhs / 2 } else { -((-lhs - 1) / 2) - 1 };
-        let rhs_shifted: int = if rhs >= 0 { rhs / 2 } else { -((-rhs - 1) / 2) - 1 };
+        let lhs_shifted: int = if lhs >= 0 { lhs / 2 } else { -((-(lhs + 1)) / 2) - 1 };
+        let rhs_shifted: int = if rhs >= 0 { rhs / 2 } else { -((-(rhs + 1)) / 2) - 1 };
         spec_bigint_bitxor(lhs_shifted, rhs_shifted) * 2 + lsb
     }
 }
 
-proof fn lemma_test_spec_bigint_bitxor()
+// To help demonstrate that the spec for `spec_bigint_bitxor` is
+// valid, prove that it's equivalent to `^` for arbitrary `i16`
+// values. (Using 16 bits is enough for high confidence, and doesn't
+// tax the bit-vector solver.)
+proof fn lemma_test_spec_bigint_bitxor_for_i16(lhs: i16, rhs: i16)
+    ensures
+        spec_bigint_bitxor(lhs as int, rhs as int) == (lhs ^ rhs) as int,
+    decreases
+        if lhs >= 0 { lhs as int } else { -(lhs + 1) },
+        if rhs >= 0 { rhs as int } else { -(rhs + 1) }
 {
-    // Testing examples from https://docs.rs/num-bigint/latest/src/num_bigint/bigint/bits.rs.html
+    let lsb: i16 = if (lhs % 2 == 1) != (rhs % 2 == 1) { 1i16 } else { 0i16 };
+    if (lhs == 0 || lhs == -1) && (rhs == 0 || rhs == -1) {
+        assert(-lsb == lhs ^ rhs) by (bit_vector)
+            requires
+                lhs == 0 || lhs == -1,
+                rhs == 0 || rhs == -1,
+                lsb == if (lhs % 2 == 1) != (rhs % 2 == 1) { 1i16 } else { 0i16 },
+        ;
+    }
+    else {
+        let lhs_shifted: i16 =
+            if lhs >= 0 {
+                (lhs / 2) as i16
+            }
+            else {
+                -(((((-((lhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16
+            };
+        let rhs_shifted: i16 =
+            if rhs >= 0 {
+                (rhs / 2) as i16
+            }
+            else {
+                -(((((-((rhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16
+            };
 
-    // Documentation for bitxor_pos_neg
+        lemma_test_spec_bigint_bitxor_for_i16(lhs_shifted, rhs_shifted);
+        assert((lhs_shifted ^ rhs_shifted) * 2 + lsb == lhs ^ rhs) by (bit_vector)
+            requires
+                lhs >= 0 ==> lhs_shifted == (lhs / 2) as i16,
+                lhs < 0 ==> lhs_shifted == -(((((-((lhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16,
+                rhs >= 0 ==> rhs_shifted == (rhs / 2) as i16,
+                rhs < 0 ==> rhs_shifted == -(((((-((rhs + 1) as i16) as i16) / 2) as i16) + 1) as i16) as i16,
+                lsb == if (lhs % 2 == 1) != (rhs % 2 == 1) { 1i16 } else { 0i16 },
+        ;
+    }
+}
+
+// To help demonstrate that the spec for `spec_bigint_bitxor`
+// corresponds to what's implemented by the BigInt library, prove that
+// its results match examples given in comments at:
+// https://docs.rs/num-bigint/latest/src/num_bigint/bigint/bits.rs.html
+proof fn lemma_test_spec_bigint_bitxor_with_examples()
+    ensures
+        // From documentation for bitxor_pos_neg:
+        spec_bigint_bitxor(1, -0xff) == -0x100,
+        spec_bigint_bitxor(0xff, -1) == -0x100,
+
+        // From documentation for bitxor_neg_pos:
+        spec_bigint_bitxor(-1, 0xff) == -0x100,
+        spec_bigint_bitxor(-0xff, 1) == -0x100,
+
+        // From documentation for bitxor_neg_neg:
+        spec_bigint_bitxor(-1, -0xff) == 0xfe,
+        spec_bigint_bitxor(-0xff, -1) == 0xfe,
+{
     assert(spec_bigint_bitxor(1, -0xff) == -0x100) by (compute);
     assert(spec_bigint_bitxor(0xff, -1) == -0x100) by (compute);
 
-    // Documentation for bitxor_neg_pos
     assert(spec_bigint_bitxor(-1, 0xff) == -0x100) by (compute);
     assert(spec_bigint_bitxor(-0xff, 1) == -0x100) by (compute);
 
-    // Documentation for bitxor_neg_neg
     assert(spec_bigint_bitxor(-1, -0xff) == 0xfe) by (compute);
     assert(spec_bigint_bitxor(-0xff, -1) == 0xfe) by (compute);
-
-    // Extra examples
-    assert(spec_bigint_bitxor(-0xff, -0xfe) == 3) by (compute);
-    assert(spec_bigint_bitxor(-27, -9) == 18) by (compute);
-    assert(spec_bigint_bitxor(27, 9) == 18) by (compute);
-    assert(spec_bigint_bitxor(5, 3) == 6) by (compute);
 }
 
 pub axiom fn axiom_bigint_obeys_bitxor_spec()
