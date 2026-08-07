@@ -40,6 +40,7 @@ http = []
 glob = ["dep:globset"]
 graph = []
 jsonschema = ["dep:jsonschema"]
+jsonpatch = []
 mimalloc = ["dep:mimalloc"]
 net = ["dep:ipnet"]
 no_std = ["lazy_static/spin_no_std"]
@@ -63,6 +64,7 @@ full-opa = [
     "hex",
     "http",
     "jsonschema",
+    "jsonpatch",
     "net",
     "opa-runtime",
     "regex",
@@ -86,6 +88,7 @@ opa-no-std = [
   "coverage",
   "graph",
   "hex",
+  "jsonpatch",
   "no_std",
   "opa-runtime",
   "regex",

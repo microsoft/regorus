@@ -32,6 +32,8 @@ mod http;
 #[cfg(feature = "net")]
 mod net;
 
+#[cfg(feature = "jsonpatch")]
+mod json_patch;
 pub mod numbers;
 mod objects;
 #[cfg(feature = "opa-runtime")]

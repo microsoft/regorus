@@ -351,7 +351,6 @@ The following test suites don't pass fully due to missing builtins:
 - `globsmatch`
 - `graphql`
 - `invalidkeyerror`
-- `jsonpatch`
 - `jwtbuiltins`
 - `jwtdecodeverify`
 - `jwtencodesign`

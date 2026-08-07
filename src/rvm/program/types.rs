@@ -97,6 +97,10 @@ pub struct RuleInfo {
     /// Optional destructuring block entry point per definition
     /// Index: definition_index → Some(entry_point) | None
     pub destructuring_blocks: Vec<Option<u32>>,
+    /// Per-definition markers for bodies introduced by `else`. Partial rules
+    /// accumulate independent bodies but must short-circuit else branches.
+    #[serde(default)]
+    pub else_bodies: Vec<Vec<bool>>,
     /// If true, all definitions are statically known to produce the same result
     /// value, so the VM can stop after the first successful definition without
     /// checking consistency with remaining definitions.
@@ -113,6 +117,10 @@ impl RuleInfo {
         num_registers: u8,
     ) -> Self {
         let num_definitions = definitions.len();
+        let else_bodies = definitions
+            .iter()
+            .map(|b| alloc::vec![false; b.len()])
+            .collect();
         Self {
             name,
             rule_type,
@@ -122,6 +130,7 @@ impl RuleInfo {
             result_reg,
             num_registers,
             destructuring_blocks: alloc::vec![None; num_definitions],
+            else_bodies,
             early_exit_on_first_success: false,
         }
     }
@@ -137,6 +146,10 @@ impl RuleInfo {
     ) -> Self {
         let num_params = u32::try_from(param_names.len()).unwrap_or(u32::MAX);
         let num_definitions = definitions.len();
+        let else_bodies = definitions
+            .iter()
+            .map(|b| alloc::vec![false; b.len()])
+            .collect();
         Self {
             name,
             rule_type,
@@ -149,6 +162,7 @@ impl RuleInfo {
             result_reg,
             num_registers,
             destructuring_blocks: alloc::vec![None; num_definitions],
+            else_bodies,
             early_exit_on_first_success: false,
         }
     }
