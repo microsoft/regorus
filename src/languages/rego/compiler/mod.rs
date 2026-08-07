@@ -123,6 +123,8 @@ pub struct Compiler<'a> {
     rule_definitions: Vec<Vec<Vec<u32>>>,
     rule_definition_function_params: Vec<Vec<Option<Vec<String>>>>,
     rule_definition_destructuring_patterns: Vec<Vec<Option<u32>>>,
+    /// Per-rule, per-definition marker for bodies introduced by `else`.
+    rule_definition_else_bodies: Vec<Vec<Vec<bool>>>,
     /// Per-rule, per-definition: the static value produced by this definition,
     /// or `None` if the value is dynamic or differs across else-branches.
     /// Used to compute `RuleInfo::early_exit_on_first_success`.
@@ -164,6 +166,7 @@ impl<'a> Compiler<'a> {
             rule_definitions: Vec::new(),
             rule_definition_function_params: Vec::new(),
             rule_definition_destructuring_patterns: Vec::new(),
+            rule_definition_else_bodies: Vec::new(),
             rule_definition_static_values: Vec::new(),
             rule_types: Vec::new(),
             rule_function_param_count: Vec::new(),

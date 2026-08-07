@@ -99,6 +99,17 @@ impl<'a> Compiler<'a> {
             };
 
             rule_info.destructuring_blocks = destructuring_blocks;
+            rule_info.else_bodies = self
+                .rule_definition_else_bodies
+                .get(rule_index as usize)
+                .cloned()
+                .unwrap_or_else(|| {
+                    rule_info
+                        .definitions
+                        .iter()
+                        .map(|b| vec![false; b.len()])
+                        .collect()
+                });
 
             // Compute early_exit_on_first_success: if every definition has
             // the same static value, the VM can stop after the first success.

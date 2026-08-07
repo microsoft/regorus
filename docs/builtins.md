@@ -69,6 +69,7 @@ In future, each builtin will be associated with a feature (many builtins could b
   |----------------------------------------------------------------------------------------------------------------------|--------------|
   | [json.filter](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-object-jsonfilter)               | _            |
   | [json.match_schema](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-object-jsonmatch_schema)   | `jsonschema` |
+  | [json.patch](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-object-jsonpatch)                 | `jsonpatch`  |
   | [json.remove](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-object-jsonremove)               | _            |
   | [json.verify_schema](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-object-jsonverify_schema) | `jsonschema` |
   | [object.filter](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-object-objectfilter)           | _            |

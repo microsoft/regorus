@@ -72,6 +72,13 @@ package limit
 large_array := json.unmarshal(data.limit.large_json)
 "#;
 
+#[cfg(feature = "jsonpatch")]
+const JSON_PATCH_MODULE: &str = r#"
+package limit
+
+patched := json.patch(input, [{"op": "add", "path": "/-", "value": 0}])
+"#;
+
 fn assert_memory_limit_error(err: &Error) {
     match err.downcast_ref::<LimitError>() {
         Some(LimitError::MemoryLimitExceeded { .. }) => {}
@@ -155,6 +162,25 @@ fn interpreter_memory_limit_during_large_allocation() {
     let err = engine
         .eval_rule("data.limit.large_array".to_string())
         .expect_err("expected interpreter memory limit error while parsing");
+    assert_memory_limit_error(&err);
+}
+
+#[cfg(feature = "jsonpatch")]
+#[test]
+fn json_patch_propagates_memory_limit_errors() {
+    let mut guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(JSON_PATCH_MODULE);
+    let input = Value::from((0..50_000).map(Value::from).collect::<Vec<_>>());
+    engine.set_input(input);
+
+    // Entry checks require no meaningful allocation. This budget lets
+    // evaluation enter the builtin, then forces the edit-tree construction
+    // to trip the allocator limit. The builtin must propagate LimitError,
+    // never translate it to Undefined as it does malformed patches.
+    guard.set_with_additional_budget(64 * 1024);
+    let err = engine
+        .eval_rule("data.limit.patched".to_string())
+        .expect_err("expected json.patch edit-tree allocation to hit the memory limit");
     assert_memory_limit_error(&err);
 }
 

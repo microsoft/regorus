@@ -433,14 +433,6 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                     case.note
                 );
                 skip_rvm_validation = true;
-            } else if case.note == "jsonpatch/json_patch_tests" {
-                // Interpreter now correctly runs every body of a multi-body
-                // partial-object rule (`passed_cases[k] = t { .. } { .. }`),
-                // matching OPA. RVM's partial-object-rule codegen doesn't
-                // yet handle multiple bodies contributing distinct keys --
-                // tracked separately in
-                // https://github.com/microsoft/regorus/issues/665.
-                skip_rvm_validation = true;
             } else if case.note == "reachable_paths/cycle_1022_3" {
                 // The OPA behavior is not well-defined.
                 // See: https://github.com/open-policy-agent/opa/issues/5871

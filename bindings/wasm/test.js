@@ -92,6 +92,24 @@ console.log(report);
 report = engine.getCoverageReportPretty();
 console.log(report);
 
+// json.patch is available through the WASM default feature set.
+{
+const patchEngine = new regorus.Engine();
+patchEngine.addPolicy('json-patch.rego', `
+package wasm_patch
+import rego.v1
+
+result := json.patch(
+  {"a": [1, 2]},
+  [{"op": "replace", "path": "/a/1", "value": 9}],
+)
+`);
+const patched = JSON.parse(patchEngine.evalRule('data.wasm_patch.result'));
+if (JSON.stringify(patched) !== JSON.stringify({a: [1, 9]})) {
+  throw new Error(`Unexpected json.patch WASM result: ${JSON.stringify(patched)}`);
+}
+}
+
 // RVM regular example
 {
 const policy = `

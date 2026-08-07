@@ -246,3 +246,176 @@ cases:
         result = json.patch(obj, patches)
     query: data.test.result == {"a", "b", "c"}
     want_result: true
+
+  - note: array-form path rejects an integral float index
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := json.patch(["a", "b"], [{"op": "remove", "path": [1.0]}])
+    query: data.test.result
+    no_result: true
+
+  - note: removing the root produces undefined rather than null
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := json.patch({"a": 1}, [{"op": "remove", "path": ""}])
+    query: data.test.result
+    no_result: true
+
+  - note: root add after root remove restores the document
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := json.patch({"a": 1}, [{"op": "remove", "path": ""}, {"op": "add", "path": "", "value": {"b": 2}}])
+    query: data.test.result
+    want_result:
+      b: 2
+
+  - note: replace nested value inside a set member
+    data: {}
+    modules:
+      - |
+        package test
+
+        target := {{"a": [1, 2]}}
+        member := {"a": [1, 2]}
+        result := json.patch(target, [{"op": "replace", "path": [member, "a", 1], "value": 9}])
+    query: 'data.test.result == {{"a": [1, 9]}}'
+    want_result: true
+
+  - note: copy nested value inside a set member
+    data: {}
+    modules:
+      - |
+        package test
+
+        target := {{"a": [1]}}
+        member := {"a": [1]}
+        result := json.patch(target, [{"op": "copy", "from": [member, "a", 0], "path": [member, "a", "-"]}])
+    query: 'data.test.result == {{"a": [1, 1]}}'
+    want_result: true
+
+  - note: test nested value inside a set member
+    data: {}
+    modules:
+      - |
+        package test
+
+        member := {"a": [1, 2]}
+        result := json.patch({member}, [{"op": "test", "path": [member, "a", 1], "value": 2}])
+    query: 'data.test.result == {{"a": [1, 2]}}'
+    want_result: true
+
+  - note: reject negative array index
+    data: {}
+    modules:
+      - |
+        package test
+        result := json.patch([1, 2], [{"op": "remove", "path": [-1]}])
+    query: data.test.result
+    no_result: true
+
+  - note: reject overflowing array index
+    data: {}
+    modules:
+      - |
+        package test
+        result := json.patch([1, 2], [{"op": "remove", "path": [999999999999999999999999999999999999]}])
+    query: data.test.result
+    no_result: true
+
+  - note: reject leading zero array index
+    data: {}
+    modules:
+      - |
+        package test
+        result := json.patch([1, 2], [{"op": "remove", "path": "/01"}])
+    query: data.test.result
+    no_result: true
+
+  - note: reject dash index for remove
+    data: {}
+    modules:
+      - |
+        package test
+        result := json.patch([1, 2], [{"op": "remove", "path": "/-"}])
+    query: data.test.result
+    no_result: true
+
+  - note: reject missing operation attribute
+    data: {}
+    modules:
+      - |
+        package test
+        result := json.patch({}, [{"path": "/a", "value": 1}])
+    query: data.test.result
+    no_result: true
+
+  - note: reject missing path attribute
+    data: {}
+    modules:
+      - |
+        package test
+        result := json.patch({}, [{"op": "add", "value": 1}])
+    query: data.test.result
+    no_result: true
+
+  - note: reject missing value attribute
+    data: {}
+    modules:
+      - |
+        package test
+        result := json.patch({}, [{"op": "add", "path": "/a"}])
+    query: data.test.result
+    no_result: true
+
+  - note: reject missing from attribute
+    data: {}
+    modules:
+      - |
+        package test
+        result := json.patch({}, [{"op": "move", "path": "/a"}])
+    query: data.test.result
+    no_result: true
+
+  - note: reject malformed operation and path types
+    data: {}
+    modules:
+      - |
+        package test
+        result := json.patch({}, [{"op": 1, "path": {}, "value": 1}])
+    query: data.test.result
+    no_result: true
+
+  - note: reject moving a node into its own child
+    data: {}
+    modules:
+      - |
+        package test
+        result := json.patch({"a": {"b": 1}}, [{"op": "move", "from": "/a", "path": "/a/c"}])
+    query: data.test.result
+    no_result: true
+
+  - note: failed patch does not mutate its input value
+    data: {}
+    modules:
+      - |
+        package test
+
+        original := {"a": [1, 2, 3]}
+        failed := json.patch(original, [
+          {"op": "remove", "path": "/a/0"},
+          {"op": "remove", "path": "/missing"}
+        ])
+        original_unchanged {
+          original == {"a": [1, 2, 3]}
+        }
+    query: data.test.original_unchanged
+    want_result: true

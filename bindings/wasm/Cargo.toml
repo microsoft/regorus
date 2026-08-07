@@ -25,6 +25,7 @@ default = [
 	"regorus/hex",
 	"regorus/http",
 	"regorus/jsonschema",
+	"regorus/jsonpatch",
 	"regorus/net",
 	"regorus/opa-runtime",
 	"regorus/regex",

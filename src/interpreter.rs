@@ -3412,13 +3412,9 @@ impl Interpreter {
     ) -> Result<Value> {
         self.check_execution_time()?;
         let n_scopes = self.scopes.len();
-        // Partial (object/set) rules: each body can contribute a *different*
-        // subset of keys/members (e.g. an `else`-chained or old-style
-        // multi-body rule where one body handles some keys and another body
-        // handles the rest). Every body must be tried and their
-        // contributions accumulated -- unlike complete rules/functions,
-        // where the first body to produce a value wins (`else` semantics)
-        // and later bodies must never run.
+        // Independent bodies of a partial (object/set) rule each contribute
+        // keys/members. Bodies introduced by `else`, however, are mutually
+        // exclusive even for partial rules and must short-circuit.
         let is_partial = ctx.is_set || ctx.key_expr.is_some();
         let result = if bodies.is_empty() {
             self.contexts.push(ctx.clone());
@@ -3434,10 +3430,18 @@ impl Interpreter {
                         .contexts
                         .pop()
                         .ok_or_else(|| anyhow!("internal error: rule's context already popped"))?;
-                    // Each body provides its own assignment. A bare `else`/
-                    // `else if` has no `.assign` and therefore defaults to
-                    // the boolean-true output below.
-                    let output_expr = body.assign.as_ref().map(|e| e.value.clone());
+                    // An assignment on an else body overrides the rule-head
+                    // value. Without one, OPA retains the head assignment.
+                    let output_expr = body.assign.as_ref().map(|e| e.value.clone()).or_else(|| {
+                        // Complete-rule `else if { ... }` has an implicit
+                        // boolean result. Partial rules retain their head
+                        // value so every independent body contributes it.
+                        if is_partial {
+                            ctx.output_expr.clone()
+                        } else {
+                            None
+                        }
+                    });
                     let mut next_ctx = Context {
                         output_expr,
                         //                        value: Value::new_array(),
@@ -3457,7 +3461,11 @@ impl Interpreter {
                 match &result {
                     Ok(true) => {
                         any_success = true;
-                        if !is_partial {
+                        let next_is_else = idx
+                            .checked_add(1)
+                            .and_then(|next_idx| bodies.get(next_idx))
+                            .is_some_and(|next| next.is_else);
+                        if !is_partial || next_is_else {
                             break;
                         }
                     }

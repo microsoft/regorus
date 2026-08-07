@@ -218,6 +218,65 @@ cases:
       BAZ: true
       FOO: true
 
+  - note: partial_object_legacy_body_retains_rule_head_value
+    rego_v0: true
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        values[k] = "expected" {
+          k := "unused"
+          false
+        } {
+          k := "x"
+        }
+    query: data.test.values
+    want_result:
+      x: expected
+
+  - note: partial_object_else_short_circuits_after_success
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        p[k] := 1 if {
+          k := "x"
+          true
+        } else := 2 if {
+          k := "x"
+          true
+        }
+    query: data.test.p
+    want_result:
+      x: 1
+
+  - note: partial_object_parity_does_not_reverse_negated_decision
+    rego_v0: true
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        default allow := false
+
+        parts[k] = true {
+          k := "a"
+        } {
+          k := "b"
+        }
+
+        allow {
+          parts.a
+          not parts.b
+        }
+    query: data.test.allow
+    want_result: false
+
   - note: partial_set_contains_collects_all_bindings
     data: {}
     input:
