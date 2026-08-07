@@ -222,6 +222,7 @@ impl EditNode {
         Ok(removed)
     }
 
+    #[cfg(test)]
     fn replace(&mut self, path: &[Value], value: EditNode) -> Result<()> {
         enforce_limit()?;
         let Some((head, rest)) = path.split_first() else {
@@ -326,6 +327,7 @@ impl EditTree {
         }
     }
 
+    #[cfg(test)]
     fn replace_value(&mut self, path: &[Value], value: &Value) -> Result<()> {
         let node = EditNode::from_value(value)?;
         if path.is_empty() {
@@ -375,7 +377,12 @@ pub(super) fn apply(target: &Value, operations: &[Value]) -> Result<Value> {
             }
             "replace" => {
                 let path = parse_path(field("path")?)?;
-                tree.replace_value(&path, field("value")?)?;
+                // OPA composes replace from delete + insert. This distinction
+                // is observable for sets, whose keys must equal their values:
+                // replacing member "a" at path ["a"] with "b" must fail
+                // rather than silently changing the set's membership key.
+                tree.remove(&path)?;
+                tree.insert_value(&path, field("value")?)?;
             }
             "move" => {
                 let from = parse_path(field("from")?)?;

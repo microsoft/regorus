@@ -247,6 +247,16 @@ cases:
     query: data.test.result == {"a", "b", "c"}
     want_result: true
 
+  - note: replacing a set member with a different value is undefined
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := json.patch({"a", "b"}, [{"op": "replace", "path": ["a"], "value": "c"}])
+    query: data.test.result
+    no_result: true
+
   - note: array-form path rejects an integral float index
     data: {}
     modules:
@@ -278,7 +288,7 @@ cases:
     want_result:
       b: 2
 
-  - note: replace nested value inside a set member
+  - note: replacing a nested value inside a set member is undefined
     data: {}
     modules:
       - |
@@ -287,8 +297,8 @@ cases:
         target := {{"a": [1, 2]}}
         member := {"a": [1, 2]}
         result := json.patch(target, [{"op": "replace", "path": [member, "a", 1], "value": 9}])
-    query: 'data.test.result == {{"a": [1, 9]}}'
-    want_result: true
+    query: data.test.result
+    no_result: true
 
   - note: copy nested value inside a set member
     data: {}
