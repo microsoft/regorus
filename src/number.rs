@@ -770,7 +770,7 @@ impl Number {
         proof! {
             axiom_f64_ops_deterministic();
             axiom_bigint_obeys_add_spec();
-            axiom_bigint_add_assign_req();
+            axiom_bigint_obeys_add_assign_spec();
         }
 
         match (self, rhs) {
@@ -827,7 +827,7 @@ impl Number {
         proof! {
             axiom_f64_ops_deterministic();
             axiom_bigint_obeys_sub_spec();
-            axiom_bigint_sub_assign_req();
+            axiom_bigint_obeys_sub_assign_spec();
         }
 
         match (self, rhs) {
@@ -1206,7 +1206,7 @@ impl Number {
             },
     )]
     pub fn lsh(&self, rhs: &Self) -> Option<Number> {
-        proof! { axiom_bigint_shl_assign_req(); }
+        proof! { axiom_bigint_obeys_shl_assign_spec(); }
         let shift = rhs.as_u32()? as usize;
         let mut value = self.ensure_integer()?;
         value <<= shift;
@@ -1229,7 +1229,7 @@ impl Number {
             },
     )]
     pub fn rsh(&self, rhs: &Self) -> Option<Number> {
-        proof! { axiom_bigint_shr_assign_req(); }
+        proof! { axiom_bigint_obeys_shr_assign_spec(); }
         let shift = rhs.as_u32()? as usize;
         let mut value = self.ensure_integer()?;
         value >>= shift;
@@ -1475,7 +1475,7 @@ fn two_pow_positive(exp: u32) -> Number {
         Number::UInt(1u64 << exp)
     } else {
         let mut value = BigInt::one();
-        proof! { axiom_bigint_shl_assign_req(); }
+        proof! { axiom_bigint_obeys_shl_assign_spec(); }
         value <<= exp as usize;
         Number::from_bigint_owned(value)
     }
@@ -1507,7 +1507,7 @@ fn pow10_bigint(exp: u32) -> BigInt {
     while e > 0 {
         proof! {
             axiom_bigint_obeys_mul_spec();
-            axiom_bigint_mul_assign_ref_req();
+            axiom_bigint_obeys_mul_assign_ref_spec();
             assert(e & 1 == e % 2) by (bit_vector);
             assert(e >> 1 == e / 2) by (bit_vector);
             // `pow(base, 2) == base * base`, so squaring `base` halves `e`.

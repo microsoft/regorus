@@ -29,10 +29,7 @@ use vstd::std_specs::cmp::OrdSpec;
 #[verifier::external_body]
 pub struct ExNumBigInt(num_bigint::BigInt);
 
-pub assume_specification[ <BigInt as Clone>::clone ](n: &BigInt) -> (res: BigInt)
-    ensures
-        res == n,
-;
+/// A `BigInt` is abstracted as an `int`.
 
 pub trait BigIntAdditionalSpecFns {
     spec fn view(&self) -> int;
@@ -42,8 +39,125 @@ impl BigIntAdditionalSpecFns for BigInt {
     uninterp spec fn view(&self) -> int;
 }
 
-// BitAnd
+/// Semantics for BigInt::Clone
 
+pub assume_specification[ <BigInt as Clone>::clone ](n: &BigInt) -> (res: BigInt)
+    ensures
+        res == n,
+;
+
+/// Addition
+
+// This axiom says that, for any pair of `BigInt`s `a` and `b`,
+// `(a + b)@ == a@ + b@.
+pub axiom fn axiom_bigint_obeys_add_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::AddSpec>::obeys_add_spec(),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::AddSpec>::add_req(lhs, rhs),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::AddSpec>::add_spec(lhs, rhs)@
+                == lhs@ + rhs@,
+;
+
+// This axiom says that, for any pair of `BigInt`s `a` and `b`,
+// `a += b` causes the resulting `a@` to be the old value of `a@` plus `b@`.
+pub axiom fn axiom_bigint_obeys_add_assign_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::AddAssignSpec<BigInt>>::obeys_add_assign_spec(),
+        forall|value: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::AddAssignSpec<BigInt>>::add_assign_req(&value, rhs),
+        forall|value: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::AddAssignSpec<BigInt>>::add_assign_spec(&value, rhs)@ ==
+            value@ + rhs@,
+;
+
+/// Subtraction
+
+// This axiom says that, for any pair of `BigInt`s `a` and `b`,
+// `(a - b)@ == a@ - b@.
+pub axiom fn axiom_bigint_obeys_sub_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::SubSpec>::obeys_sub_spec(),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::SubSpec>::sub_req(lhs, rhs),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::SubSpec>::sub_spec(lhs, rhs)@
+                == lhs@ - rhs@,
+;
+
+// This axiom says that, for any pair of `BigInt`s `a` and `b`,
+// `a -= b` causes the resulting `a@` to be the old value of `a@` minus `b@`.
+pub axiom fn axiom_bigint_obeys_sub_assign_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::SubAssignSpec<BigInt>>::obeys_sub_assign_spec(),
+        forall|value: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::SubAssignSpec<BigInt>>::sub_assign_req(&value, rhs),
+        forall|value: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::SubAssignSpec<BigInt>>::sub_assign_spec(&value, rhs)@ ==
+            value@ - rhs@,
+;
+
+/// Multiplication
+
+// This axiom says that, for any pair of `BigInt`s `a` and `b`,
+// `(a * b)@ == a@ * b@.
+pub axiom fn axiom_bigint_obeys_mul_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::MulSpec>::obeys_mul_spec(),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::MulSpec>::mul_req(lhs, rhs),
+        forall|lhs: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::MulSpec>::mul_spec(lhs, rhs)@
+                == lhs@ * rhs@,
+;
+
+// This axiom says that, for any pair of `BigInt`s `a` and `b`,
+// `a *= b` causes the resulting `a@` to be the old value of `a@` times `b@`.
+pub axiom fn axiom_bigint_obeys_mul_assign_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::MulAssignSpec<BigInt>>::obeys_mul_assign_spec(),
+        forall|value: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::MulAssignSpec<BigInt>>::mul_assign_req(&value, rhs),
+        forall|value: BigInt, rhs: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::MulAssignSpec<BigInt>>::mul_assign_spec(&value, rhs)@ ==
+            value@ * rhs@,
+;
+
+pub axiom fn axiom_bigint_obeys_mul_assign_ref_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::MulAssignSpec<&BigInt>>::obeys_mul_assign_spec(),
+        forall|value: BigInt, rhs: &BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::MulAssignSpec<&BigInt>>::mul_assign_req(&value, rhs),
+        forall|value: BigInt, rhs: &BigInt| #[trigger]
+            <BigInt as vstd::std_specs::ops::MulAssignSpec<&BigInt>>::mul_assign_spec(&value, rhs)@ ==
+            value@ * (*rhs)@,
+;
+
+/// Division
+
+// This axiom says that, for any pair of `BigInt`s `a` and `b`,
+// `(a / b)@ == rust_div(a@, b@), and `(a % b)@ == rust_rem(a@, b@)`.
+pub axiom fn axiom_bigint_obeys_div_rem_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::DivSpec>::obeys_div_spec(),
+        <BigInt as vstd::std_specs::ops::RemSpec>::obeys_rem_spec(),
+        forall|lhs: BigInt, rhs: BigInt| rhs@ != 0 ==> #[trigger]
+            <BigInt as vstd::std_specs::ops::DivSpec>::div_req(lhs, rhs),
+        forall|lhs: BigInt, rhs: BigInt| rhs@ != 0 ==> #[trigger]
+            <BigInt as vstd::std_specs::ops::RemSpec>::rem_req(lhs, rhs),
+        forall|lhs: BigInt, rhs: BigInt| rhs@ != 0 ==> #[trigger]
+            <BigInt as vstd::std_specs::ops::DivSpec>::div_spec(lhs, rhs)@
+                == rust_div(lhs@, rhs@),
+        forall|lhs: BigInt, rhs: BigInt| rhs@ != 0 ==> #[trigger]
+            <BigInt as vstd::std_specs::ops::RemSpec>::rem_spec(lhs, rhs)@
+                == rust_rem(lhs@, rhs@),
+;
+
+/// Bitwise AND
+
+// This function describes the result of performing a bitwise AND
+// operation on two unbounded-precision integers.
 pub open spec fn spec_bigint_bitand(lhs: int, rhs: int) -> int
     decreases
         if lhs >= 0 { lhs } else { -(lhs + 1) },
@@ -115,6 +229,10 @@ proof fn lemma_test_spec_bigint_bitand_with_examples()
     assert(spec_bigint_bitand(-0xff, -0xfe) == -0x100) by (compute);
 }
 
+// This axiom says that, for any pair of `BigInt`s `a` and `b`,
+// (a & b)@ == spec_bigint_bitand(a@, b@). It's justified by the
+// lemmas above named `lemma_test_spec_bigint_bitand_for_i16`
+// and `lemma_test_spec_bigint_bitand_with_examples`.
 pub axiom fn axiom_bigint_obeys_bitand_spec()
     ensures
         <BigInt as vstd::std_specs::ops::BitAndSpec>::obeys_bitand_spec(),
@@ -125,8 +243,10 @@ pub axiom fn axiom_bigint_obeys_bitand_spec()
                 == spec_bigint_bitand(lhs@, rhs@),
 ;
 
-// BitOr
+/// Bitwise OR
 
+// This function describes the result of performing a bitwise OR
+// operation on two unbounded-precision integers.
 pub open spec fn spec_bigint_bitor(lhs: int, rhs: int) -> int
     decreases
         if lhs >= 0 { lhs } else { -(lhs + 1) },
@@ -198,6 +318,10 @@ proof fn lemma_test_spec_bigint_bitor_with_examples()
     assert(spec_bigint_bitor(-0xff, -1) == -1) by (compute);
 }
 
+// This axiom says that, for any pair of `BigInt`s `a` and `b`,
+// (a | b)@ == spec_bigint_bitor(a@, b@). It's justified by the
+// lemmas above named `lemma_test_spec_bigint_bitor_for_i16`
+// and `lemma_test_spec_bigint_bitor_with_examples`.
 pub axiom fn axiom_bigint_obeys_bitor_spec()
     ensures
         <BigInt as vstd::std_specs::ops::BitOrSpec>::obeys_bitor_spec(),
@@ -208,8 +332,10 @@ pub axiom fn axiom_bigint_obeys_bitor_spec()
                 == spec_bigint_bitor(lhs@, rhs@),
 ;
 
-// BitXor
+/// Bitwise XOR
 
+// This function describes the result of performing a bitwise XOR
+// operation on two unbounded-precision integers.
 pub open spec fn spec_bigint_bitxor(lhs: int, rhs: int) -> int
     decreases
         if lhs >= 0 { lhs } else { -(lhs + 1) },
@@ -281,6 +407,10 @@ proof fn lemma_test_spec_bigint_bitxor_with_examples()
     assert(spec_bigint_bitxor(-0xff, -1) == 0xfe) by (compute);
 }
 
+// This axiom says that, for any pair of `BigInt`s `a` and `b`,
+// (a | b)@ == spec_bigint_bitxor(a@, b@). It's justified by the
+// lemmas above named `lemma_test_spec_bigint_bitxor_for_i16`
+// and `lemma_test_spec_bigint_bitxor_with_examples`.
 pub axiom fn axiom_bigint_obeys_bitxor_spec()
     ensures
         <BigInt as vstd::std_specs::ops::BitXorSpec>::obeys_bitxor_spec(),
@@ -291,57 +421,10 @@ pub axiom fn axiom_bigint_obeys_bitxor_spec()
                 == spec_bigint_bitxor(lhs@, rhs@),
 ;
 
-// Shift
+/// Bitwise NOT
 
-pub assume_specification[ <BigInt as core::ops::ShrAssign<usize>>::shr_assign ](
-    value: &mut BigInt,
-    shift: usize,
-)
-    ensures
-        (*final(value))@ == (*old(value))@ / (pow2(shift as nat) as int),
-;
-
-pub assume_specification[ <BigInt as core::ops::ShlAssign<usize>>::shl_assign ](
-    value: &mut BigInt,
-    shift: usize,
-)
-    ensures
-        (*final(value))@ == (*old(value))@ * (pow2(shift as nat) as int),
-;
-
-// vstd's op-assignment traits carry an uninterpreted precondition that each
-// implementation is free to choose. `num_bigint` imposes no preconditions on
-// its op-assignment operators, so they always hold.
-pub axiom fn axiom_bigint_shr_assign_req()
-    ensures
-        forall|value: BigInt, shift: usize| #[trigger]
-            <BigInt as vstd::std_specs::ops::ShrAssignSpec<usize>>::shr_assign_req(&value, shift),
-;
-
-pub axiom fn axiom_bigint_shl_assign_req()
-    ensures
-        forall|value: BigInt, shift: usize| #[trigger]
-            <BigInt as vstd::std_specs::ops::ShlAssignSpec<usize>>::shl_assign_req(&value, shift),
-;
-
-pub axiom fn axiom_bigint_add_assign_req()
-    ensures
-        forall|value: BigInt, rhs: BigInt| #[trigger]
-            <BigInt as vstd::std_specs::ops::AddAssignSpec<BigInt>>::add_assign_req(&value, rhs),
-;
-
-pub axiom fn axiom_bigint_sub_assign_req()
-    ensures
-        forall|value: BigInt, rhs: BigInt| #[trigger]
-            <BigInt as vstd::std_specs::ops::SubAssignSpec<BigInt>>::sub_assign_req(&value, rhs),
-;
-
-pub axiom fn axiom_bigint_mul_assign_ref_req()
-    ensures
-        forall|value: BigInt, rhs: &BigInt| #[trigger]
-            <BigInt as vstd::std_specs::ops::MulAssignSpec<&BigInt>>::mul_assign_req(&value, rhs),
-;
-
+// This axiom says that, for `BigInt` `a`, `(~a)@ == -a@ - 1`.
+// This corresponds to twos-complement bitwise negation.
 pub axiom fn axiom_bigint_not_spec(value: BigInt)
     ensures
         <BigInt as vstd::std_specs::ops::NotSpec>::obeys_not_spec(),
@@ -349,8 +432,60 @@ pub axiom fn axiom_bigint_not_spec(value: BigInt)
         <BigInt as vstd::std_specs::ops::NotSpec>::not_spec(value)@ == -(value@) - 1,
 ;
 
-// Conditions
+/// Bitwise shifting
 
+// This axiom says that BigInt supports the expected semantics for
+// core::ops::ShrAssign, i.e., `>>=`. That is, for any BigInt 'a' and
+// any shift amount `u: usize`, `a >>= u` causes the resulting `a@` to
+// be the old `a@` shifted right by `u` bits.
+pub axiom fn axiom_bigint_obeys_shr_assign_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::ShrAssignSpec<usize>>::obeys_shr_assign_spec(),
+        forall|value: BigInt, shift: usize| #[trigger]
+            <BigInt as vstd::std_specs::ops::ShrAssignSpec<usize>>::shr_assign_req(&value, shift),
+        forall|value: BigInt, shift: usize| #[trigger]
+            <BigInt as vstd::std_specs::ops::ShrAssignSpec<usize>>::shr_assign_spec(&value, shift)@ ==
+            value@ / pow2(shift as nat) as int,
+;
+
+// This axiom says that BigInt supports the expected semantics for
+// core::ops::ShlAssign, i.e., `<<=`. That is, for any BigInt 'a' and
+// any shift amount `u: usize`, `a <<= u` causes the resulting `a@` to
+// be the old `a@` shifted left by `u` bits.
+pub axiom fn axiom_bigint_obeys_shl_assign_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::ShlAssignSpec<usize>>::obeys_shl_assign_spec(),
+        forall|value: BigInt, shift: usize| #[trigger]
+            <BigInt as vstd::std_specs::ops::ShlAssignSpec<usize>>::shl_assign_req(&value, shift),
+        forall|value: BigInt, shift: usize| #[trigger]
+            <BigInt as vstd::std_specs::ops::ShlAssignSpec<usize>>::shl_assign_spec(&value, shift)@ ==
+            value@ * pow2(shift as nat) as int,
+;
+
+/// Unary operations
+
+// We assume that `x.is_zero()` gives the same result as `x@ == 0`.
+pub assume_specification[ <BigInt as num_traits::Zero>::is_zero ](x: &BigInt) -> (res: bool)
+    ensures
+        res == (x@ == 0),
+;
+
+// We assume that `x.is_negative()` gives the same result as `x@ < 0`.
+pub assume_specification[ <BigInt as num_traits::Signed>::is_negative ](x: &BigInt) -> (res: bool)
+    ensures
+        res == (x@ < 0),
+;
+
+// We assume that `x.abs()` produces a `BigInt` `y` such that `y@ == abs(x@)`.
+pub assume_specification[ <BigInt as num_traits::Signed>::abs ](x: &BigInt) -> (res: BigInt)
+    ensures
+        res@ == if x@ < 0 { -x@ } else { x@ },
+;
+
+// This is the specification for what `BigInt::bits` produces.
+// According to the documentation
+// (https://docs.rs/num-bigint/latest/num_bigint/struct.BigInt.html#method.bits),
+// it's the fewest bits necessary to express its value, not including the sign.
 pub open spec fn bigint_bits_ensures(value: int, bits: nat) -> bool
 {
     &&& -(pow2(bits) as int) < value < pow2(bits)
@@ -363,47 +498,38 @@ pub assume_specification[ BigInt::bits ](x: &BigInt) -> (res: u64)
         bigint_bits_ensures(x@, res as nat),
 ;
 
-pub assume_specification[ <BigInt as num_traits::Zero>::is_zero ](x: &BigInt) -> (res: bool)
+/// Negation
+
+// This axiom says that, for `BigInt` `a`, `(-a)@ == -a@`.
+pub axiom fn axiom_bigint_neg_spec(value: BigInt)
     ensures
-        res == (x@ == 0),
+        <BigInt as vstd::std_specs::ops::NegSpec>::obeys_neg_spec(),
+        <BigInt as vstd::std_specs::ops::NegSpec>::neg_req(value),
+        <BigInt as vstd::std_specs::ops::NegSpec>::neg_spec(value)@ == -value@,
 ;
 
-pub assume_specification[ <BigInt as num_traits::Signed>::is_negative ](x: &BigInt) -> (res: bool)
-    ensures
-        res == (x@ < 0),
-;
-
-pub assume_specification[ <BigInt as num_traits::Signed>::abs ](x: &BigInt) -> (res: BigInt)
-    ensures
-        res@ == if x@ < 0 { -x@ } else { x@ },
-;
-
-// Formatting
+/// Formatting
 
 // Nothing is promised about the rendered digits; callers only need this to be
 // callable from verified code.
 pub assume_specification[ BigInt::to_str_radix ](x: &BigInt, radix: u32) -> (res:
     alloc::string::String);
 
-// PartialEq
+/// Equality
 
+// This axiom says that if we execute `a == b` for two `BigInt`s `a` and `b`,
+// the result is equal to `a@ == b@`.
 pub axiom fn axiom_bigint_obeys_eq_spec()
     ensures
         <BigInt as vstd::std_specs::cmp::PartialEqSpec>::obeys_eq_spec(),
+        forall|a: BigInt, b: BigInt| #[trigger]
+            <BigInt as vstd::std_specs::cmp::PartialEqSpec>::eq_spec(&a, &b) == (a@ == b@),
 ;
 
-pub axiom fn axiom_bigint_obeys_partial_cmp_spec()
-    ensures
-        <BigInt as vstd::std_specs::cmp::PartialOrdSpec>::obeys_partial_cmp_spec(),
-;
+/// Comparison
 
-pub assume_specification[ <BigInt as core::cmp::PartialEq>::eq ](x: &BigInt, y: &BigInt) -> (res: bool)
-    ensures
-        res == (x@ == y@),
-;
-
-// Ord
-
+// This axiom says that comparison operators on `BigInt`s return what would
+// result from comparing their views.
 pub axiom fn axiom_bigint_obeys_cmp_spec()
     ensures
         <BigInt as vstd::std_specs::cmp::OrdSpec>::obeys_cmp_spec(),
@@ -414,16 +540,7 @@ pub axiom fn axiom_bigint_obeys_cmp_spec()
         },
 ;
 
-pub assume_specification[ <BigInt as core::cmp::Ord>::cmp ](x: &BigInt, y: &BigInt) -> (res: Ordering)
-    ensures
-        match res {
-            Ordering::Less => x@ < y@,
-            Ordering::Greater => x@ > y@,
-            Ordering::Equal => x@ == y@,
-        },
-;
-
-// From
+/// From<T>
 
 pub assume_specification[ <BigInt as core::convert::From<i64>>::from ](i: i64) -> (res: BigInt)
     ensures
@@ -450,471 +567,11 @@ pub assume_specification[ <BigInt as core::convert::From<u8>>::from ](u: u8) -> 
         res@ == u,
 ;
 
-// One
+/// BigInt::one
 
 pub assume_specification[ <BigInt as num_traits::One>::one ]() -> (res: BigInt)
     ensures
         res@ == 1,
-;
-
-// Negation
-
-pub assume_specification[ <BigInt as core::ops::Neg>::neg ](x: BigInt) -> (y: BigInt)
-    ensures
-        y@ == -x@,
-;
-
-// Addition
-
-pub axiom fn axiom_bigint_obeys_add_spec()
-    ensures
-        <BigInt as vstd::std_specs::ops::AddSpec>::obeys_add_spec(),
-        forall|lhs: BigInt, rhs: BigInt| #[trigger]
-            <BigInt as vstd::std_specs::ops::AddSpec>::add_req(lhs, rhs),
-        forall|lhs: BigInt, rhs: BigInt| #[trigger]
-            <BigInt as vstd::std_specs::ops::AddSpec>::add_spec(lhs, rhs)@
-                == lhs@ + rhs@,
-;
-
-pub assume_specification[ <BigInt as core::ops::Add>::add ](x: BigInt, y: BigInt) -> (o: BigInt)
-    ensures
-        o@ == x@ + y@,
-;
-
-pub assume_specification[ <BigInt as core::ops::AddAssign>::add_assign ](
-    value: &mut BigInt,
-    rhs: BigInt,
-)
-    ensures
-        (*final(value))@ == (*old(value))@ + rhs@,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Add<&BigInt>>::add ](x: BigInt, y: &BigInt) -> (o: BigInt)
-    ensures
-        o@ == x@ + (*y)@,
-;
-
-pub assume_specification<'a, 'b>[ <&BigInt as core::ops::Add<&BigInt>>::add ](x: &'b BigInt, y: &BigInt) -> (o: BigInt)
-    ensures
-        o@ == (*x)@ + (*y)@,
-;
-
-pub assume_specification[ <BigInt as core::ops::Add<u8>>::add ](x: BigInt, y: u8) -> (o: BigInt)
-    ensures
-        o@ == x@ + y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Add<u16>>::add ](x: BigInt, y: u16) -> (o: BigInt)
-    ensures
-        o@ == x@ + y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Add<u32>>::add ](x: BigInt, y: u32) -> (o: BigInt)
-    ensures
-        o@ == x@ + y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Add<u64>>::add ](x: BigInt, y: u64) -> (o: BigInt)
-    ensures
-        o@ == x@ + y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Add<u128>>::add ](x: BigInt, y: u128) -> (o: BigInt)
-    ensures
-        o@ == x@ + y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Add<i8>>::add ](x: BigInt, y: i8) -> (o: BigInt)
-    ensures
-        o@ == x@ + y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Add<i16>>::add ](x: BigInt, y: i16) -> (o: BigInt)
-    ensures
-        o@ == x@ + y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Add<i32>>::add ](x: BigInt, y: i32) -> (o: BigInt)
-    ensures
-        o@ == x@ + y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Add<i64>>::add ](x: BigInt, y: i64) -> (o: BigInt)
-    ensures
-        o@ == x@ + y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Add<i128>>::add ](x: BigInt, y: i128) -> (o: BigInt)
-    ensures
-        o@ == x@ + y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Add<&u8>>::add ](x: BigInt, y: &u8) -> (o: BigInt)
-    ensures
-        o@ == x@ + *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Add<&u16>>::add ](x: BigInt, y: &u16) -> (o: BigInt)
-    ensures
-        o@ == x@ + *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Add<&u32>>::add ](x: BigInt, y: &u32) -> (o: BigInt)
-    ensures
-        o@ == x@ + *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Add<&u64>>::add ](x: BigInt, y: &u64) -> (o: BigInt)
-    ensures
-        o@ == x@ + *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Add<&u128>>::add ](x: BigInt, y: &u128) -> (o: BigInt)
-    ensures
-        o@ == x@ + *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Add<&i8>>::add ](x: BigInt, y: &i8) -> (o: BigInt)
-    ensures
-        o@ == x@ + *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Add<&i16>>::add ](x: BigInt, y: &i16) -> (o: BigInt)
-    ensures
-        o@ == x@ + *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Add<&i32>>::add ](x: BigInt, y: &i32) -> (o: BigInt)
-    ensures
-        o@ == x@ + *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Add<&i64>>::add ](x: BigInt, y: &i64) -> (o: BigInt)
-    ensures
-        o@ == x@ + *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Add<&i128>>::add ](x: BigInt, y: &i128) -> (o: BigInt)
-    ensures
-        o@ == x@ + *y,
-;
-
-// Subtraction
-
-pub axiom fn axiom_bigint_obeys_sub_spec()
-    ensures
-        <BigInt as vstd::std_specs::ops::SubSpec>::obeys_sub_spec(),
-        forall|lhs: BigInt, rhs: BigInt| #[trigger]
-            <BigInt as vstd::std_specs::ops::SubSpec>::sub_req(lhs, rhs),
-        forall|lhs: BigInt, rhs: BigInt| #[trigger]
-            <BigInt as vstd::std_specs::ops::SubSpec>::sub_spec(lhs, rhs)@
-                == lhs@ - rhs@,
-;
-
-pub assume_specification[ <BigInt as core::ops::Sub>::sub ](x: BigInt, y: BigInt) -> (o: BigInt)
-    ensures
-        o@ == x@ - y@,
-;
-
-pub assume_specification[ <BigInt as core::ops::SubAssign>::sub_assign ](
-    value: &mut BigInt,
-    rhs: BigInt,
-)
-    ensures
-        (*final(value))@ == (*old(value))@ - rhs@,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Sub<&BigInt>>::sub ](x: BigInt, y: &BigInt) -> (o: BigInt)
-    ensures
-        o@ == x@ - (*y)@,
-;
-
-pub assume_specification<'a, 'b>[ <&BigInt as core::ops::Sub<&BigInt>>::sub ](x: &'b BigInt, y: &BigInt) -> (o: BigInt)
-    ensures
-        o@ == (*x)@ - (*y)@,
-;
-
-pub assume_specification[ <BigInt as core::ops::Sub<u8>>::sub ](x: BigInt, y: u8) -> (o: BigInt)
-    ensures
-        o@ == x@ - y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Sub<u16>>::sub ](x: BigInt, y: u16) -> (o: BigInt)
-    ensures
-        o@ == x@ - y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Sub<u32>>::sub ](x: BigInt, y: u32) -> (o: BigInt)
-    ensures
-        o@ == x@ - y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Sub<u64>>::sub ](x: BigInt, y: u64) -> (o: BigInt)
-    ensures
-        o@ == x@ - y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Sub<u128>>::sub ](x: BigInt, y: u128) -> (o: BigInt)
-    ensures
-        o@ == x@ - y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Sub<i8>>::sub ](x: BigInt, y: i8) -> (o: BigInt)
-    ensures
-        o@ == x@ - y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Sub<i16>>::sub ](x: BigInt, y: i16) -> (o: BigInt)
-    ensures
-        o@ == x@ - y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Sub<i32>>::sub ](x: BigInt, y: i32) -> (o: BigInt)
-    ensures
-        o@ == x@ - y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Sub<i64>>::sub ](x: BigInt, y: i64) -> (o: BigInt)
-    ensures
-        o@ == x@ - y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Sub<i128>>::sub ](x: BigInt, y: i128) -> (o: BigInt)
-    ensures
-        o@ == x@ - y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Sub<&u8>>::sub ](x: BigInt, y: &u8) -> (o: BigInt)
-    ensures
-        o@ == x@ - *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Sub<&u16>>::sub ](x: BigInt, y: &u16) -> (o: BigInt)
-    ensures
-        o@ == x@ - *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Sub<&u32>>::sub ](x: BigInt, y: &u32) -> (o: BigInt)
-    ensures
-        o@ == x@ - *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Sub<&u64>>::sub ](x: BigInt, y: &u64) -> (o: BigInt)
-    ensures
-        o@ == x@ - *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Sub<&u128>>::sub ](x: BigInt, y: &u128) -> (o: BigInt)
-    ensures
-        o@ == x@ - *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Sub<&i8>>::sub ](x: BigInt, y: &i8) -> (o: BigInt)
-    ensures
-        o@ == x@ - *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Sub<&i16>>::sub ](x: BigInt, y: &i16) -> (o: BigInt)
-    ensures
-        o@ == x@ - *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Sub<&i32>>::sub ](x: BigInt, y: &i32) -> (o: BigInt)
-    ensures
-        o@ == x@ - *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Sub<&i64>>::sub ](x: BigInt, y: &i64) -> (o: BigInt)
-    ensures
-        o@ == x@ - *y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Sub<&i128>>::sub ](x: BigInt, y: &i128) -> (o: BigInt)
-    ensures
-        o@ == x@ - *y,
-;
-
-// Multiplication
-
-pub axiom fn axiom_bigint_obeys_mul_spec()
-    ensures
-        <BigInt as vstd::std_specs::ops::MulSpec>::obeys_mul_spec(),
-        forall|lhs: BigInt, rhs: BigInt| #[trigger]
-            <BigInt as vstd::std_specs::ops::MulSpec>::mul_req(lhs, rhs),
-        forall|lhs: BigInt, rhs: BigInt| #[trigger]
-            <BigInt as vstd::std_specs::ops::MulSpec>::mul_spec(lhs, rhs)@
-                == lhs@ * rhs@,
-;
-
-pub assume_specification[ <BigInt as core::ops::Mul>::mul ](x: BigInt, y: BigInt) -> (o: BigInt)
-    ensures
-        o@ == x@ * y@,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::MulAssign<&'a BigInt>>::mul_assign ](
-    value: &mut BigInt,
-    rhs: &BigInt,
-)
-    ensures
-        (*final(value))@ == (*old(value))@ * rhs@,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Mul<&BigInt>>::mul ](x: BigInt, y: &BigInt) -> (o: BigInt)
-    ensures
-        o@ == x@ * (*y)@,
-;
-
-pub assume_specification<'a, 'b>[ <&BigInt as core::ops::Mul<&BigInt>>::mul ](x: &'b BigInt, y: &BigInt) -> (o: BigInt)
-    ensures
-        o@ == (*x)@ * (*y)@,
-;
-
-pub assume_specification[ <BigInt as core::ops::Mul<u8>>::mul ](x: BigInt, y: u8) -> (o: BigInt)
-    ensures
-        o@ == x@ * y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Mul<u16>>::mul ](x: BigInt, y: u16) -> (o: BigInt)
-    ensures
-        o@ == x@ * y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Mul<u32>>::mul ](x: BigInt, y: u32) -> (o: BigInt)
-    ensures
-        o@ == x@ * y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Mul<u64>>::mul ](x: BigInt, y: u64) -> (o: BigInt)
-    ensures
-        o@ == x@ * y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Mul<u128>>::mul ](x: BigInt, y: u128) -> (o: BigInt)
-    ensures
-        o@ == x@ * y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Mul<i8>>::mul ](x: BigInt, y: i8) -> (o: BigInt)
-    ensures
-        o@ == x@ * y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Mul<i16>>::mul ](x: BigInt, y: i16) -> (o: BigInt)
-    ensures
-        o@ == x@ * y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Mul<i32>>::mul ](x: BigInt, y: i32) -> (o: BigInt)
-    ensures
-        o@ == x@ * y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Mul<i64>>::mul ](x: BigInt, y: i64) -> (o: BigInt)
-    ensures
-        o@ == x@ * y,
-;
-
-pub assume_specification[ <BigInt as core::ops::Mul<i128>>::mul ](x: BigInt, y: i128) -> (o: BigInt)
-    ensures
-        o@ == x@ * y,
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Mul<&u8>>::mul ](x: BigInt, y: &u8) -> (o: BigInt)
-    ensures
-        o@ == x@ * *y,
-;
-
-// Division
-
-pub axiom fn axiom_bigint_obeys_div_rem_spec()
-    ensures
-        <BigInt as vstd::std_specs::ops::DivSpec>::obeys_div_spec(),
-        <BigInt as vstd::std_specs::ops::RemSpec>::obeys_rem_spec(),
-        forall|lhs: BigInt, rhs: BigInt| rhs@ != 0 ==> #[trigger]
-            <BigInt as vstd::std_specs::ops::DivSpec>::div_req(lhs, rhs),
-        forall|lhs: BigInt, rhs: BigInt| rhs@ != 0 ==> #[trigger]
-            <BigInt as vstd::std_specs::ops::RemSpec>::rem_req(lhs, rhs),
-        forall|lhs: BigInt, rhs: BigInt| rhs@ != 0 ==> #[trigger]
-            <BigInt as vstd::std_specs::ops::DivSpec>::div_spec(lhs, rhs)@
-                == rust_div(lhs@, rhs@),
-        forall|lhs: BigInt, rhs: BigInt| rhs@ != 0 ==> #[trigger]
-            <BigInt as vstd::std_specs::ops::RemSpec>::rem_spec(lhs, rhs)@
-                == rust_rem(lhs@, rhs@),
-;
-
-pub assume_specification[ <BigInt as core::ops::Div>::div ](x: BigInt, y: BigInt) -> (o: BigInt)
-    ensures
-        y@ != 0 ==> o@ == rust_div(x@, y@),
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Div<&BigInt>>::div ](x: BigInt, y: &BigInt) -> (o: BigInt)
-    ensures
-        y@ != 0 ==> o@ == rust_div(x@, (*y)@),
-;
-
-pub assume_specification<'a, 'b>[ <&BigInt as core::ops::Div<&BigInt>>::div ](x: &'b BigInt, y: &BigInt) -> (o: BigInt)
-    ensures
-        y@ != 0 ==> o@ == rust_div((*x)@, (*y)@),
-;
-
-pub assume_specification<'a, 'b>[ <&BigInt as core::ops::Rem<&BigInt>>::rem ](x: &'b BigInt, y: &BigInt) -> (o: BigInt)
-    ensures
-        y@ != 0 ==> o@ == rust_rem((*x)@, (*y)@),
-;
-
-pub assume_specification[ <BigInt as core::ops::Div<u8>>::div ](x: BigInt, y: u8) -> (o: BigInt)
-    ensures
-        y != 0 ==> o@ == rust_div(x@, y as int),
-;
-
-pub assume_specification[ <BigInt as core::ops::Div<u16>>::div ](x: BigInt, y: u16) -> (o: BigInt)
-    ensures
-        y != 0 ==> o@ == rust_div(x@, y as int),
-;
-
-pub assume_specification[ <BigInt as core::ops::Div<u32>>::div ](x: BigInt, y: u32) -> (o: BigInt)
-    ensures
-        y != 0 ==> o@ == rust_div(x@, y as int),
-;
-
-pub assume_specification[ <BigInt as core::ops::Div<u64>>::div ](x: BigInt, y: u64) -> (o: BigInt)
-    ensures
-        y != 0 ==> o@ == rust_div(x@, y as int),
-;
-
-pub assume_specification[ <BigInt as core::ops::Div<u128>>::div ](x: BigInt, y: u128) -> (o: BigInt)
-    ensures
-        y != 0 ==> o@ == rust_div(x@, y as int),
-;
-
-pub assume_specification[ <BigInt as core::ops::Div<i8>>::div ](x: BigInt, y: i8) -> (o: BigInt)
-    ensures
-        y != 0 ==> o@ == rust_div(x@, y as int),
-;
-
-pub assume_specification[ <BigInt as core::ops::Div<i16>>::div ](x: BigInt, y: i16) -> (o: BigInt)
-    ensures
-        y != 0 ==> o@ == rust_div(x@, y as int),
-;
-
-pub assume_specification[ <BigInt as core::ops::Div<i32>>::div ](x: BigInt, y: i32) -> (o: BigInt)
-    ensures
-        y != 0 ==> o@ == rust_div(x@, y as int),
-;
-
-pub assume_specification[ <BigInt as core::ops::Div<i64>>::div ](x: BigInt, y: i64) -> (o: BigInt)
-    ensures
-        y != 0 ==> o@ == rust_div(x@, y as int),
-;
-
-pub assume_specification[ <BigInt as core::ops::Div<i128>>::div ](x: BigInt, y: i128) -> (o: BigInt)
-    ensures
-        y != 0 ==> o@ == rust_div(x@, y as int),
-;
-
-pub assume_specification<'a>[ <BigInt as core::ops::Div<&u8>>::div ](x: BigInt, y: &u8) -> (o: BigInt)
-    ensures
-        *y != 0 ==> o@ == rust_div(x@, *y as int),
 ;
 
 // Verus's encoding of ToPrimitive relies on an unstable feature
