@@ -855,23 +855,46 @@ pub extern "C" fn regorus_rvm_get_host_await_argument(vm: *mut RegorusRvm) -> Re
     })
 }
 
+/// Convert a HostAwait identifier `Value` into the raw string handed back over
+/// the C ABI.
+///
+/// Unlike the argument accessor, the identifier crosses as a raw (non-JSON) C
+/// string, so an embedded NUL has no faithful representation: `to_c_str` would
+/// silently substitute a placeholder while still reporting `RegorusStatus::Ok`,
+/// handing the caller a wrong identifier it cannot route or resume. Reject it
+/// instead.
+fn host_await_identifier_string(identifier: Option<&Value>) -> Result<Option<String>> {
+    match identifier {
+        Some(Value::String(s)) => {
+            if s.contains('\0') {
+                return Err(anyhow!(
+                    "host-await identifier contains an embedded NUL and cannot be \
+                     represented as a C string"
+                ));
+            }
+            Ok(Some(s.as_ref().to_string()))
+        }
+        Some(_) => Err(anyhow!("host-await identifier must be a string")),
+        None => Ok(None),
+    }
+}
+
 /// Get the HostAwait identifier as a raw UTF-8 string.
 ///
 /// The returned string is the identifier itself (not JSON-quoted), so it can be
 /// passed directly as an identifier to `regorus_rvm_set_host_await_responses`.
 /// Returns the identifier value if the VM is suspended due to a HostAwait instruction,
 /// or None if the VM is not in a HostAwait-suspended state.
+///
+/// Identifiers containing an embedded NUL are rejected with an error, because
+/// they cannot be round-tripped through the C string ABI.
 #[no_mangle]
 pub extern "C" fn regorus_rvm_get_host_await_identifier(vm: *mut RegorusRvm) -> RegorusResult {
     with_unwind_guard(|| {
         let output = || -> Result<Option<String>> {
             let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let guard = vm.try_read()?;
-            match guard.get_host_await_identifier() {
-                Some(Value::String(s)) => Ok(Some(s.as_ref().to_string())),
-                Some(_) => Err(anyhow!("host-await identifier must be a string")),
-                None => Ok(None),
-            }
+            host_await_identifier_string(guard.get_host_await_identifier())
         }();
 
         match output {
@@ -1018,5 +1041,42 @@ mod tests {
     fn convert_builtins_zero_len_ignores_size() {
         let result = convert_c_host_await_builtins(core::ptr::null(), 0, 0).unwrap();
         assert!(result.is_empty());
+    }
+
+    // A plain identifier round-trips as a raw (non-JSON) string, so it can be fed
+    // straight back into `regorus_rvm_set_host_await_responses`.
+    #[test]
+    fn host_await_identifier_returns_raw_string() {
+        let id = host_await_identifier_string(Some(&Value::String("translate".into()))).unwrap();
+        assert_eq!(id, Some("translate".to_string()));
+    }
+
+    // Not being suspended on a HostAwait is a clean "no identifier", not an error.
+    #[test]
+    fn host_await_identifier_none_when_not_suspended() {
+        assert_eq!(host_await_identifier_string(None).unwrap(), None);
+    }
+
+    // Without this check the caller gets a placeholder string under an Ok status.
+    #[test]
+    fn host_await_identifier_rejects_embedded_nul() {
+        let err = host_await_identifier_string(Some(&Value::String("a\0b".into()))).unwrap_err();
+
+        assert!(
+            err.to_string().contains("embedded NUL"),
+            "expected an embedded-NUL error, got: {err}"
+        );
+    }
+
+    // Non-string identifiers are outside the string-only identifier ABI and must
+    // error rather than be coerced.
+    #[test]
+    fn host_await_identifier_rejects_non_string() {
+        let err = host_await_identifier_string(Some(&Value::from(1u64))).unwrap_err();
+
+        assert!(
+            err.to_string().contains("must be a string"),
+            "expected a non-string identifier error, got: {err}"
+        );
     }
 }
