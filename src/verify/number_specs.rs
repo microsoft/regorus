@@ -112,7 +112,7 @@ impl NumberView {
                 ||| i64::MIN <= v <= i64::MAX && f == ieee_float_cast::<i64, f64>(v as i64)
                 ||| exists|bi: BigInt| {
                     &&& bi@ == v
-                    &&& match #[trigger] super::bigint_assumptions::ToPrimitiveSpec::spec_to_f64(&bi) {
+                    &&& match #[trigger] super::bigint_assumptions::spec_bigint_to_f64(&bi) {
                         Some(x) => f == x,
                         None => f == if v < 0 { spec_f64_neg_infinity() } else { spec_f64_infinity() }
                     }

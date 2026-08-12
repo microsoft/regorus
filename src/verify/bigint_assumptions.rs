@@ -41,6 +41,7 @@ impl BigIntAdditionalSpecFns for BigInt {
 
 /// Semantics for BigInt::Clone
 
+// We assume that `a.clone()` has the same view as `BigInt` `a`.
 pub assume_specification[ <BigInt as Clone>::clone ](n: &BigInt) -> (res: BigInt)
     ensures
         res == n,
@@ -542,26 +543,36 @@ pub axiom fn axiom_bigint_obeys_cmp_spec()
 
 /// From<T>
 
+// We assume that `BigInt::from(i)` where `i` has type `i64` produces a `BigInt`
+// whose view equals `i`.
 pub assume_specification[ <BigInt as core::convert::From<i64>>::from ](i: i64) -> (res: BigInt)
     ensures
         res@ == i,
 ;
 
+// We assume that `BigInt::from(i)` where `i` has type `i128` produces a `BigInt`
+// whose view equals `i`.
 pub assume_specification[ <BigInt as core::convert::From<i128>>::from ](i: i128) -> (res: BigInt)
     ensures
         res@ == i,
 ;
 
+// We assume that `BigInt::from(u)` where `u` has type `u64` produces a `BigInt`
+// whose view equals `u`.
 pub assume_specification[ <BigInt as core::convert::From<u64>>::from ](u: u64) -> (res: BigInt)
     ensures
         res@ == u,
 ;
 
+// We assume that `BigInt::from(u)` where `u` has type `u128` produces a `BigInt`
+// whose view equals `u`.
 pub assume_specification[ <BigInt as core::convert::From<u128>>::from ](u: u128) -> (res: BigInt)
     ensures
         res@ == u,
 ;
 
+// We assume that `BigInt::from(u)` where `u` has type `u8` produces a `BigInt`
+// whose view equals `u`.
 pub assume_specification[ <BigInt as core::convert::From<u8>>::from ](u: u8) -> (res: BigInt)
     ensures
         res@ == u,
@@ -569,16 +580,17 @@ pub assume_specification[ <BigInt as core::convert::From<u8>>::from ](u: u8) -> 
 
 /// BigInt::one
 
+// We assume that `BigInt::one` produces a value whose view is 1.
 pub assume_specification[ <BigInt as num_traits::One>::one ]() -> (res: BigInt)
     ensures
         res@ == 1,
 ;
 
-// Verus's encoding of ToPrimitive relies on an unstable feature
-// `sized_hierarchy`, so we can only talk about it when verifying.
-
 // ToPrimitive
 
+// Verus does not support `assume_specification` for provided trait methods, so
+// `to_u32` needs a minimal external trait specification. BigInt's overridden
+// conversion methods are specified directly below.
 #[verifier::external_trait_specification]
 #[verifier::external_trait_extension(ToPrimitiveSpec via ToPrimitiveSpecImpl)]
 pub trait ExToPrimitive {
@@ -587,121 +599,6 @@ pub trait ExToPrimitive {
     spec fn obeys_to_primitive_spec() -> bool;
 
     spec fn spec_to_int(&self) -> Option<int>;
-
-    fn to_isize(&self) -> (res: Option<isize>)
-        ensures
-            Self::obeys_to_primitive_spec() ==>
-                match (self.spec_to_int(), res) {
-                    (None, None) => true,
-                    (None, Some(_)) => false,
-                    (Some(n1), Some(n2)) => n1 == n2,
-                    (Some(n), None) => !(isize::MIN <= n <= isize::MAX),
-                },
-        default_ensures
-            true,
-    ;
-
-    fn to_i8(&self) -> (res: Option<i8>)
-        ensures
-            Self::obeys_to_primitive_spec() ==>
-                match (self.spec_to_int(), res) {
-                    (None, None) => true,
-                    (None, Some(_)) => false,
-                    (Some(n1), Some(n2)) => n1 == n2,
-                    (Some(n), None) => !(i8::MIN <= n <= i8::MAX),
-                },
-        default_ensures
-            true,
-    ;
-
-    fn to_i16(&self) -> (res: Option<i16>)
-        ensures
-            Self::obeys_to_primitive_spec() ==>
-                match (self.spec_to_int(), res) {
-                    (None, None) => true,
-                    (None, Some(_)) => false,
-                    (Some(n1), Some(n2)) => n1 == n2,
-                    (Some(n), None) => !(i16::MIN <= n <= i16::MAX),
-                },
-        default_ensures
-            true,
-    ;
-
-    fn to_i32(&self) -> (res: Option<i32>)
-        ensures
-            Self::obeys_to_primitive_spec() ==>
-                match (self.spec_to_int(), res) {
-                    (None, None) => true,
-                    (None, Some(_)) => false,
-                    (Some(n1), Some(n2)) => n1 == n2,
-                    (Some(n), None) => !(i32::MIN <= n <= i32::MAX),
-                },
-        default_ensures
-            true,
-    ;
-
-    fn to_i64(&self) -> (res: Option<i64>)
-        ensures
-            Self::obeys_to_primitive_spec() ==>
-                match (self.spec_to_int(), res) {
-                    (None, None) => true,
-                    (None, Some(_)) => false,
-                    (Some(n1), Some(n2)) => n1 == n2,
-                    (Some(n), None) => !(i64::MIN <= n <= i64::MAX),
-                },
-    ;
-
-    fn to_i128(&self) -> (res: Option<i128>)
-        ensures
-            Self::obeys_to_primitive_spec() ==>
-                match (self.spec_to_int(), res) {
-                    (None, None) => true,
-                    (None, Some(_)) => false,
-                    (Some(n1), Some(n2)) => n1 == n2,
-                    (Some(n), None) => !(i128::MIN <= n <= i128::MAX),
-                },
-        default_ensures
-            true,
-    ;
-
-    fn to_usize(&self) -> (res: Option<usize>)
-        ensures
-            Self::obeys_to_primitive_spec() ==>
-                match (self.spec_to_int(), res) {
-                    (None, None) => true,
-                    (None, Some(_)) => false,
-                    (Some(n1), Some(n2)) => n1 == n2,
-                    (Some(n), None) => !(usize::MIN <= n <= usize::MAX),
-                },
-        default_ensures
-            true,
-    ;
-
-    fn to_u8(&self) -> (res: Option<u8>)
-        ensures
-            Self::obeys_to_primitive_spec() ==>
-                match (self.spec_to_int(), res) {
-                    (None, None) => true,
-                    (None, Some(_)) => false,
-                    (Some(n1), Some(n2)) => n1 == n2,
-                    (Some(n), None) => !(u8::MIN <= n <= u8::MAX),
-                },
-        default_ensures
-            true,
-    ;
-
-    fn to_u16(&self) -> (res: Option<u16>)
-        ensures
-            Self::obeys_to_primitive_spec() ==>
-                match (self.spec_to_int(), res) {
-                    (None, None) => true,
-                    (None, Some(_)) => false,
-                    (Some(n1), Some(n2)) => n1 == n2,
-                    (Some(n), None) => !(u16::MIN <= n <= u16::MAX),
-                },
-        default_ensures
-            true,
-    ;
 
     fn to_u32(&self) -> (res: Option<u32>)
         ensures
@@ -715,52 +612,9 @@ pub trait ExToPrimitive {
         default_ensures
             true,
     ;
-
-    fn to_u64(&self) -> (res: Option<u64>)
-        ensures
-            Self::obeys_to_primitive_spec() ==>
-                match (self.spec_to_int(), res) {
-                    (None, None) => true,
-                    (None, Some(_)) => false,
-                    (Some(n1), Some(n2)) => n1 == n2,
-                    (Some(n), None) => !(u64::MIN <= n <= u64::MAX),
-                },
-    ;
-
-    fn to_u128(&self) -> (res: Option<u128>)
-        ensures
-            Self::obeys_to_primitive_spec() ==>
-                match (self.spec_to_int(), res) {
-                    (None, None) => true,
-                    (None, Some(_)) => false,
-                    (Some(n1), Some(n2)) => n1 == n2,
-                    (Some(n), None) => !(u128::MIN <= n <= u128::MAX),
-                },
-        default_ensures
-            true,
-    ;
-
-    spec fn spec_to_f32(&self) -> Option<f32>;
-
-    fn to_f32(&self) -> (res: Option<f32>)
-        ensures
-            Self::obeys_to_primitive_spec() ==> res == self.spec_to_f32(),
-        default_ensures
-            true,
-    ;
-
-    spec fn spec_to_f64(&self) -> Option<f64>;
-
-    fn to_f64(&self) -> (res: Option<f64>)
-        ensures
-            Self::obeys_to_primitive_spec() ==> res == self.spec_to_f64(),
-        default_ensures
-            true,
-    ;
 }
 
-impl ToPrimitiveSpecImpl for num_bigint::BigInt
-{
+impl ToPrimitiveSpecImpl for BigInt {
     open spec fn obeys_to_primitive_spec() -> bool
     {
         true
@@ -770,28 +624,57 @@ impl ToPrimitiveSpecImpl for num_bigint::BigInt
     {
         Some(self@)
     }
-
-    uninterp spec fn spec_to_f32(&self) -> Option<f32>;
-
-    uninterp spec fn spec_to_f64(&self) -> Option<f64>;
 }
 
-pub axiom fn axiom_safe_bigints_to_f64()
+// We assume that `b.to_i64()` where `b` is of type `BigInt` produces `Some(i)`
+// if its view `i` is in the range of an `i64` and `None` otherwise.
+pub assume_specification[ <BigInt as num_traits::ToPrimitive>::to_i64 ](x: &BigInt) -> (res: Option<i64>)
     ensures
-        forall|x: &BigInt| {
-            -9_007_199_254_740_992 < x@ < 9_007_199_254_740_992 ==>
-                <BigInt as ToPrimitiveSpec>::spec_to_f64(x) is Some
+        match res {
+            Some(value) => x@ == value,
+            None => !(i64::MIN <= x@ <= i64::MAX),
         },
 ;
 
-// These are the methods of ToPrimitive that BigInt implements because there is no default in ToPrimitive
-pub assume_specification[ <num_bigint::BigInt as num_traits::ToPrimitive>::to_i64 ](x: &BigInt) -> (res: Option<i64>);
-pub assume_specification[ <num_bigint::BigInt as num_traits::ToPrimitive>::to_u64 ](x: &BigInt) -> (res: Option<u64>);
+// We assume that `b.to_i128()` where `b` is of type `BigInt` produces `Some(i)`
+// if its view `i` is in the range of an `i128` and `None` otherwise.
+pub assume_specification[ <BigInt as num_traits::ToPrimitive>::to_i128 ](x: &BigInt) -> (res: Option<i128>)
+    ensures
+        match res {
+            Some(value) => x@ == value,
+            None => !(i128::MIN <= x@ <= i128::MAX),
+        },
+;
 
-// These are the methods of ToPrimitive that BigInt overrides the defaults for because they'd otherwise be wrong
-pub assume_specification[ <num_bigint::BigInt as num_traits::ToPrimitive>::to_i128 ](x: &BigInt) -> (res: Option<i128>);
-pub assume_specification[ <num_bigint::BigInt as num_traits::ToPrimitive>::to_u128 ](x: &BigInt) -> (res: Option<u128>);
-pub assume_specification[ <num_bigint::BigInt as num_traits::ToPrimitive>::to_f32 ](x: &BigInt) -> (res: Option<f32>);
-pub assume_specification[ <num_bigint::BigInt as num_traits::ToPrimitive>::to_f64 ](x: &BigInt) -> (res: Option<f64>);
+// We assume that `b.to_u64()` where `b` is of type `BigInt` produces `Some(u)`
+// if its view `u` is in the range of a `u64` and `None` otherwise.
+pub assume_specification[ <BigInt as num_traits::ToPrimitive>::to_u64 ](x: &BigInt) -> (res: Option<u64>)
+    ensures
+        match res {
+            Some(value) => x@ == value,
+            None => !(u64::MIN <= x@ <= u64::MAX),
+        },
+;
+
+// We assume that `b.to_u128()` where `b` is of type `BigInt` produces `Some(u)`
+// if its view `u` is in the range of a `u128` and `None` otherwise.
+pub assume_specification[ <BigInt as num_traits::ToPrimitive>::to_u128 ](x: &BigInt) -> (res: Option<u128>)
+    ensures
+        match res {
+            Some(value) => x@ == value,
+            None => !(u128::MIN <= x@ <= u128::MAX),
+        },
+;
+
+pub uninterp spec fn spec_bigint_to_f64(x: &BigInt) -> Option<f64>;
+
+// We define the value returned by `b.to_f64()` as `spec_bigint_to_f64(&b)`.
+// We assume that this is `Some` if `b` is in the range -2^53 to 2^53 inclusive.
+// (It may be `Some` elsewhere; we don't assume either way.)
+pub assume_specification[ <BigInt as num_traits::ToPrimitive>::to_f64 ](x: &BigInt) -> (res: Option<f64>)
+    ensures
+        res == spec_bigint_to_f64(x),
+        -9_007_199_254_740_992 <= x@ <= 9_007_199_254_740_992 ==> res is Some,
+;
 
 } // end verus!

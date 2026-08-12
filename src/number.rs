@@ -701,7 +701,6 @@ impl Number {
         proof! {
             axiom_f64_ops_deterministic();
             axiom_f64_safe_integer_casts();
-            axiom_safe_bigints_to_f64();
             lemma_bigint_bits_le_53();
         }
         match self {
