@@ -144,9 +144,26 @@ impl RegoVM {
                             }
                         }
 
-                        // Once a body in this definition succeeds, remaining bodies
-                        // are treated as else-branches and must not be evaluated.
-                        break;
+                        // Independent bodies of partial rules accumulate their
+                        // contributions. `else` bodies (and all complete/function
+                        // rules) preserve first-success semantics.
+                        let next_is_else = rule_info
+                            .else_bodies
+                            .get(def_idx)
+                            .and_then(|bodies| {
+                                body_entry_point_idx
+                                    .checked_add(1)
+                                    .and_then(|next_idx| bodies.get(next_idx))
+                            })
+                            .copied()
+                            .unwrap_or(false);
+                        if !matches!(
+                            rule_info.rule_type,
+                            RuleType::PartialSet | RuleType::PartialObject
+                        ) || next_is_else
+                        {
+                            break;
+                        }
                     }
                     Err(e) if Self::is_fatal_vm_error(&e) => {
                         self.restore_rule_state(

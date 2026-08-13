@@ -120,6 +120,7 @@ impl RegoVM {
             // Per-instruction sanity check: every iteration of the dispatch
             // loop must re-enter with the VM in a Running/Ready state and the
             // working data structures coherent.
+            #[cfg(debug_assertions)]
             self.assert_vm_invariants();
             self.memory_check()?;
             if self.executed_instructions >= self.max_instructions {
@@ -195,6 +196,7 @@ impl RegoVM {
     fn execute_suspendable_entry(&mut self, entry_point_pc: usize) -> Result<Value> {
         // Precondition: callers (execute_entry_point_by_{index,name}) reset the
         // VM before invoking this method, so the VM must be in a clean state.
+        #[cfg(debug_assertions)]
         self.debug_assert_state_is_clean();
         self.execution_state = ExecutionState::Running;
         self.reset_execution_timer_state();
@@ -302,6 +304,7 @@ impl RegoVM {
         while !self.execution_stack.is_empty() {
             // Per-instruction sanity check: see `assert_vm_invariants` for the
             // exact contract. Compiled out in release.
+            #[cfg(debug_assertions)]
             self.assert_vm_invariants();
             self.memory_check()?;
             self.frame_pc_overridden = false;

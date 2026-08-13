@@ -386,6 +386,10 @@ impl<'a> Compiler<'a> {
                 self.rule_definition_destructuring_patterns.push(Vec::new());
             }
 
+            while self.rule_definition_else_bodies.len() <= rule_index as usize {
+                self.rule_definition_else_bodies.push(Vec::new());
+            }
+
             while self.rule_definition_static_values.len() <= rule_index as usize {
                 self.rule_definition_static_values.push(Vec::new());
             }
@@ -528,6 +532,7 @@ impl<'a> Compiler<'a> {
                     };
                     self.push_context(context);
                     let mut body_entry_points = Vec::new();
+                    let mut body_is_else = Vec::new();
 
                     if bodies.is_empty() {
                         let value_expr_opt = self.context_stack.last().unwrap().value_expr.clone();
@@ -558,6 +563,7 @@ impl<'a> Compiler<'a> {
 
                             let body_entry_point = self.program.instructions.len() as u32;
                             body_entry_points.push(body_entry_point);
+                            body_is_else.push(body.is_else);
 
                             ::core::convert::identity(body_idx);
 
@@ -567,7 +573,13 @@ impl<'a> Compiler<'a> {
                                 .and_then(|ctx| ctx.value_expr.clone());
                             let mut body_value_expr =
                                 body.assign.as_ref().map(|assign| assign.value.clone());
-                            if body_value_expr.is_none() && body_idx == 0 {
+                            if body_value_expr.is_none()
+                                && (body_idx == 0
+                                    || matches!(
+                                        rule_type,
+                                        RuleType::PartialSet | RuleType::PartialObject
+                                    ))
+                            {
                                 body_value_expr = previous_value_expr.clone();
                             }
 
@@ -627,7 +639,13 @@ impl<'a> Compiler<'a> {
                         for (bi, b) in bodies.iter().enumerate() {
                             let mut bve: Option<ExprRef> =
                                 b.assign.as_ref().map(|a| a.value.clone());
-                            if bve.is_none() && bi == 0 {
+                            if bve.is_none()
+                                && (bi == 0
+                                    || matches!(
+                                        rule_type,
+                                        RuleType::PartialSet | RuleType::PartialObject
+                                    ))
+                            {
                                 bve = head_value.clone();
                             }
                             match Self::static_value_of_expr(&bve) {
@@ -655,6 +673,7 @@ impl<'a> Compiler<'a> {
                     self.rule_definition_static_values[rule_index as usize].push(def_static_value);
 
                     self.rule_definitions[rule_index as usize].push(body_entry_points);
+                    self.rule_definition_else_bodies[rule_index as usize].push(body_is_else);
 
                     if self.register_counter > num_registers_used {
                         num_registers_used = self.register_counter;

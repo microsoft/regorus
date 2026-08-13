@@ -32,6 +32,11 @@ pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn
         m.insert("json.match_schema", (json_match_schema, 2));
         m.insert("json.verify_schema", (json_verify_schema, 1));
     }
+
+    #[cfg(feature = "jsonpatch")]
+    {
+        m.insert("json.patch", (json_patch, 2));
+    }
 }
 
 fn json_filter_impl(v: &Value, filter: &Value) -> Result<Value> {
@@ -469,7 +474,6 @@ fn json_match_schema(
     let name = "json.match_schema";
     ensure_args_count(span, name, params, args, 2)?;
 
-    // The following is expected to succeed.
     let document: serde_json::Value = serde_json::from_str(&args[0].to_json_str()?)
         .map_err(|err| span.error(&format!("Failed to parse JSON: {err}")))?;
 
@@ -486,4 +490,32 @@ fn json_match_schema(
         }
         .to_vec(),
     ))
+}
+
+// Note: matching OPA's own `builtinJSONPatch`, any failure while applying the
+// patch (bad path, missing attribute, failed `test`, ...) yields Undefined
+// rather than a hard error -- this builtin never errors on a malformed patch,
+// regardless of the `strict-builtin-errors` setting.
+#[cfg(feature = "jsonpatch")]
+fn json_patch(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+    let name = "json.patch";
+    ensure_args_count(span, name, params, args, 2)?;
+    ensure_array(name, &params[1], args[1].clone())?;
+
+    let ops = args[1].as_array()?;
+
+    let patched = super::json_patch::apply(&args[0], ops);
+    match patched {
+        Ok(patched) => Ok(patched),
+        // Resource-limit errors must propagate rather than look like an
+        // invalid patch, so callers cannot bypass configured limits.
+        Err(err)
+            if err
+                .downcast_ref::<crate::utils::limits::LimitError>()
+                .is_some() =>
+        {
+            Err(err)
+        }
+        Err(_) => Ok(Value::Undefined),
+    }
 }

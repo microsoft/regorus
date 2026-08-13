@@ -429,6 +429,10 @@ mod tests {
                 result_reg,
                 num_registers: 50, // Increased to accommodate test cases with higher register indices
                 destructuring_blocks,
+                else_bodies: definitions
+                    .iter()
+                    .map(|b| alloc::vec![false; b.len()])
+                    .collect(),
                 early_exit_on_first_success: false,
             };
 

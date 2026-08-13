@@ -390,6 +390,9 @@ pub struct RuleAssign {
 pub struct RuleBody {
     pub span: Span,
     pub assign: Option<RuleAssign>,
+    /// True when this body was introduced by an `else` clause. Unlike
+    /// independent legacy query blocks, else bodies are mutually exclusive.
+    pub is_else: bool,
     pub query: Ref<Query>,
 }
 

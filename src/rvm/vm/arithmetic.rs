@@ -30,9 +30,7 @@ impl RegoVM {
         match (a, b) {
             (&Value::Number(ref x), &Value::Number(ref y)) => Ok(Value::from(x.sub(y)?)),
             (&Value::Set(ref left), &Value::Set(ref right)) => {
-                let diff: alloc::collections::BTreeSet<Value> =
-                    left.difference(right).cloned().collect();
-                Ok(Value::from(diff))
+                Ok(Value::from(left.difference(right)))
             }
             _ => Err(VmError::InvalidSubtraction {
                 left: a.clone(),

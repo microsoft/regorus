@@ -747,6 +747,11 @@ fn yaml_test(file: &str) -> Result<()> {
         return Ok(());
     }
 
+    #[cfg(not(feature = "jsonpatch"))]
+    if file.contains("json.patch.yaml") {
+        return Ok(());
+    }
+
     // Targets are supported only with azure_policy feature.
     #[cfg(not(feature = "azure_policy"))]
     if file.contains("target") {

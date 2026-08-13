@@ -82,8 +82,10 @@ impl Set {
     /// deterministic order is required, or [`Set::cursor`] when iteration
     /// must yield and resume.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = &Value> + '_ {
-        self.inner.iter()
+    pub fn iter(&self) -> Iter<'_> {
+        Iter {
+            inner: self.inner.iter(),
+        }
     }
 
     /// Iteration in sorted order (by `Value::Ord`). Non-resumable.
@@ -158,7 +160,7 @@ impl Set {
     /// Wrap into a `Value::Set`.
     #[inline]
     pub fn into_value(self) -> Value {
-        Value::Set(crate::Rc::new(self.inner))
+        Value::Set(crate::Rc::new(self))
     }
 
     /// Create a resumable cursor over elements in implementation-defined

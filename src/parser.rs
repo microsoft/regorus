@@ -1725,6 +1725,7 @@ impl<'source> Parser<'source> {
                 bodies.push(RuleBody {
                     span,
                     assign,
+                    is_else: false,
                     query,
                 });
                 // Guard rule body accumulation against allocator limits.
@@ -1745,6 +1746,7 @@ impl<'source> Parser<'source> {
                 bodies.push(RuleBody {
                     span,
                     assign,
+                    is_else: false,
                     query,
                 });
                 // Guard rule body accumulation against allocator limits.
@@ -1772,6 +1774,7 @@ impl<'source> Parser<'source> {
             bodies.push(RuleBody {
                 span,
                 assign: None,
+                is_else: false,
                 query,
             });
             // Guard rule body accumulation against allocator limits.
@@ -1806,6 +1809,7 @@ impl<'source> Parser<'source> {
                     bodies.push(RuleBody {
                         span,
                         assign,
+                        is_else: true,
                         query,
                     });
                     // Guard rule body accumulation against allocator limits.
@@ -1821,6 +1825,7 @@ impl<'source> Parser<'source> {
                     bodies.push(RuleBody {
                         span,
                         assign,
+                        is_else: true,
                         query,
                     });
                     // Guard rule body accumulation against allocator limits.
@@ -1848,6 +1853,7 @@ impl<'source> Parser<'source> {
                     bodies.push(RuleBody {
                         span,
                         assign,
+                        is_else: true,
                         query,
                     });
                     // Guard rule body accumulation against allocator limits.

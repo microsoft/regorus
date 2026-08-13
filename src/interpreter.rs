@@ -3412,30 +3412,72 @@ impl Interpreter {
     ) -> Result<Value> {
         self.check_execution_time()?;
         let n_scopes = self.scopes.len();
+        // Independent bodies of a partial (object/set) rule each contribute
+        // keys/members. Bodies introduced by `else`, however, are mutually
+        // exclusive even for partial rules and must short-circuit.
+        let is_partial = ctx.is_set || ctx.key_expr.is_some();
         let result = if bodies.is_empty() {
             self.contexts.push(ctx.clone());
             self.eval_output_expr()
         } else {
             let mut result = Ok(true);
+            let mut any_success = false;
             for (idx, body) in bodies.iter().enumerate() {
                 if idx == 0 {
                     self.contexts.push(ctx.clone());
                 } else {
-                    self.contexts.pop();
-                    let output_expr = body.assign.as_ref().map(|e| e.value.clone());
-                    self.contexts.push(Context {
+                    let popped = self
+                        .contexts
+                        .pop()
+                        .ok_or_else(|| anyhow!("internal error: rule's context already popped"))?;
+                    // An assignment on an else body overrides the rule-head
+                    // value. Without one, OPA retains the head assignment.
+                    let output_expr = body.assign.as_ref().map(|e| e.value.clone()).or_else(|| {
+                        // Complete-rule `else if { ... }` has an implicit
+                        // boolean result. Partial rules retain their head
+                        // value so every independent body contributes it.
+                        if is_partial {
+                            ctx.output_expr.clone()
+                        } else {
+                            None
+                        }
+                    });
+                    let mut next_ctx = Context {
                         output_expr,
                         //                        value: Value::new_array(),
                         //                        ..Context::default()
                         ..ctx.clone()
-                    });
+                    };
+                    if is_partial {
+                        // Carry the accumulator forward so this body adds to
+                        // (rather than replaces) what earlier bodies
+                        // produced.
+                        next_ctx.rule_value = popped.rule_value;
+                        next_ctx.value = popped.value;
+                    }
+                    self.contexts.push(next_ctx);
                 }
                 result = self.eval_query(&body.query);
-                if matches!(&result, Ok(true) | Err(_)) {
-                    break;
+                match &result {
+                    Ok(true) => {
+                        any_success = true;
+                        let next_is_else = idx
+                            .checked_add(1)
+                            .and_then(|next_idx| bodies.get(next_idx))
+                            .is_some_and(|next| next.is_else);
+                        if !is_partial || next_is_else {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                    Ok(false) => {}
                 }
             }
-            result
+            if is_partial {
+                result.map(|_| any_success)
+            } else {
+                result
+            }
         };
 
         let popped_ctx = match self.contexts.pop() {

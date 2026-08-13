@@ -71,12 +71,12 @@ fn constant_set_is_hoisted() {
     "#,
     );
     assert_no_collection_create(&program);
-    let expected_set = Value::Set(Rc::new(
+    let expected_set = Value::from(
         [1, 2, 3]
             .into_iter()
             .map(Value::from)
             .collect::<BTreeSet<_>>(),
-    ));
+    );
     assert_literal_exists(&program, &expected_set);
 }
 
