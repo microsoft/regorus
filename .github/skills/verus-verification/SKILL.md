@@ -264,7 +264,7 @@ First trace a concrete input through the runtime behavior.
 After the first substantive edit, immediately run the narrowest check:
 
 ```bash
-cargo verus verify --features verus \
+cargo verus verify \
   --fwd-verus-args-to roots -- --verify-module number
 ```
 

@@ -1014,7 +1014,6 @@ dependencies = [
  "rand",
  "regex",
  "regorus-mimalloc",
- "regorus-verus-shim",
  "semver",
  "serde",
  "serde_json",
@@ -1049,10 +1048,6 @@ version = "2.2.6"
 dependencies = [
  "cc",
 ]
-
-[[package]]
-name = "regorus-verus-shim"
-version = "0.0.0"
 
 [[package]]
 name = "rustc_version"

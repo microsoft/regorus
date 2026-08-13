@@ -1,11 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// Unsafe code should not be used, except during verification.
-// Hard to reason about correctness, and maintainability.
-// The `verus` feature is only used during verification, never in production
-// builds, so the forbid remains in force for all shipped code.
-#![cfg_attr(not(feature = "verus"), forbid(unsafe_code))]
+// Unsafe code should not be used since it's hard to reason about
+// its correctness and maintainability.
+// However, `verus_keep_ghost` is only set during verification,
+// never in production builds, so it's OK to allow unsafe code
+// during verification. The `forbid` remains in force for all
+// shipped code.
+#![cfg_attr(not(verus_keep_ghost), forbid(unsafe_code))]
 // `anyhow!` with a literal lowers to `Arguments::from_str`, which is unstable.
 // Verus needs to name it to give it a specification. Verification builds use the
 // Verus toolchain, so this gate never applies to shipped code.

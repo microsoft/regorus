@@ -27,9 +27,6 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use serde::ser::Serializer;
 use serde::Serialize;
 
-#[cfg(not(feature = "verus"))]
-use regorus_verus_shim::{proof, verus_spec, verus_verify};
-#[cfg(feature = "verus")]
 use vstd::prelude::*;
 
 #[cfg(verus_keep_ghost)]

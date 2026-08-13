@@ -1012,7 +1012,6 @@ dependencies = [
  "postcard",
  "rand",
  "regex",
- "regorus-verus-shim",
  "semver",
  "serde",
  "serde_json",
@@ -1023,10 +1022,6 @@ dependencies = [
  "uuid",
  "vstd",
 ]
-
-[[package]]
-name = "regorus-verus-shim"
-version = "0.0.0"
 
 [[package]]
 name = "regorusjs"
