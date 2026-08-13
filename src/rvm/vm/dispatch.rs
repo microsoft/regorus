@@ -711,7 +711,7 @@ impl RegoVM {
                             set.insert(self.get_register(reg)?.clone());
                         }
 
-                        let set_value = Value::Set(crate::Rc::new(set));
+                        let set_value = Value::from(set);
                         self.set_register(params.dest, set_value)?;
                     }
                     Ok(InstructionOutcome::Continue)

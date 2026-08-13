@@ -17,7 +17,7 @@ use crate::languages::azure_policy::ast::{
     Condition, EffectKind, FieldKind, JsonValue, Lhs, OperatorKind, PolicyDefinition, PolicyRule,
     ValueOrExpr,
 };
-use crate::{Rc, Value};
+use crate::Value;
 
 use super::core::Compiler;
 
@@ -237,7 +237,7 @@ impl Compiler {
                 .iter()
                 .map(|p| Value::String(p.name.as_str().into()))
                 .collect();
-            annot.insert("parameter_names".to_string(), Value::Set(Rc::new(set)));
+            annot.insert("parameter_names".to_string(), Value::from_set(set));
         }
 
         // Extra fields: policyType → policy_type, id → policy_id, name → policy_name.
@@ -279,6 +279,6 @@ fn insert_string_set_annotation(
             .iter()
             .map(|s| Value::String(s.as_str().into()))
             .collect();
-        annot.insert(key.to_string(), Value::Set(Rc::new(set)));
+        annot.insert(key.to_string(), Value::from_set(set));
     }
 }

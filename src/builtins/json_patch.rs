@@ -87,7 +87,7 @@ impl EditNode {
                     set.insert(value.render()?);
                     enforce_limit()?;
                 }
-                Value::Set(crate::Rc::new(set))
+                Value::from_set(set)
             }
         })
     }

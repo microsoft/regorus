@@ -11,8 +11,8 @@ use serde::ser::{SerializeSeq as _, SerializeTuple as _};
 use serde::{Deserialize, Serialize};
 
 use crate::number::Number;
-use crate::value::Object;
 use crate::value::Value;
+use crate::value::{Object, Set};
 
 const VARIANT_NULL: u32 = 0;
 const VARIANT_BOOL: u32 = 1;
@@ -118,7 +118,7 @@ impl<'a> Serialize for BinaryValueSlice<'a> {
     }
 }
 
-struct BinarySetRef<'a>(&'a BTreeSet<Value>);
+struct BinarySetRef<'a>(&'a Set);
 
 impl<'a> Serialize for BinarySetRef<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -126,7 +126,7 @@ impl<'a> Serialize for BinarySetRef<'a> {
         S: serde::Serializer,
     {
         let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
-        for value in self.0.iter() {
+        for value in self.0.iter_sorted() {
             seq.serialize_element(&BinaryValueRef(value))?;
         }
         seq.end()

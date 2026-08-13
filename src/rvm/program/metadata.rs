@@ -173,7 +173,7 @@ impl MetadataValue {
                             .collect(),
                     )
                 } else {
-                    MetadataValue::List(set.iter().map(MetadataValue::from_value).collect())
+                    MetadataValue::List(set.iter_sorted().map(MetadataValue::from_value).collect())
                 }
             }
             Value::Object(ref obj) => {
@@ -202,7 +202,7 @@ impl MetadataValue {
                 for s in set {
                     bset.insert(Value::String(s.as_str().into()));
                 }
-                Value::Set(Rc::new(bset))
+                Value::from_set(bset)
             }
             MetadataValue::Bool(b) => Value::Bool(b),
             MetadataValue::Integer(n) => Value::from(n),
@@ -301,7 +301,7 @@ mod tests {
         let mut set = BTreeSet::new();
         set.insert(Value::String("a".into()));
         set.insert(Value::String("b".into()));
-        let v = Value::Set(Rc::new(set));
+        let v = Value::from_set(set);
         assert_round_trip(&v, &v);
     }
 
@@ -328,11 +328,14 @@ mod tests {
         let mut set = BTreeSet::new();
         set.insert(Value::String("a".into()));
         set.insert(Value::from(1_i64));
-        let v = Value::Set(Rc::new(set));
+        let v = Value::from_set(set);
         let mv = MetadataValue::from_value(&v);
-        assert!(
-            matches!(mv, MetadataValue::List(_)),
-            "mixed-type set should produce List, got {mv:?}"
+        assert_eq!(
+            mv,
+            MetadataValue::List(alloc::vec![
+                MetadataValue::Integer(1),
+                MetadataValue::String("a".into()),
+            ])
         );
     }
 
