@@ -90,7 +90,7 @@ fn fn_items(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) 
         entry.insert(Value::from("value"), v.clone());
         result.push(Value::Object(Rc::new(entry)));
     }
-    Ok(Value::Array(Rc::new(result)))
+    Ok(Value::from_array(result))
 }
 
 // ── indexFromEnd ──────────────────────────────────────────────────────

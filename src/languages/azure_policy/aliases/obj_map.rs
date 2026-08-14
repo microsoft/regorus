@@ -93,7 +93,7 @@ pub fn make_value(map: ObjMap) -> Value {
 
 /// Convert a `Vec<Value>` into a `Value::Array`.
 pub fn make_array(items: Vec<Value>) -> Value {
-    Value::Array(Rc::new(items))
+    Value::from_array(items)
 }
 
 /// Extract a `&str` from a `Value::String`.

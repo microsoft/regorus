@@ -2,10 +2,8 @@
 // Licensed under the MIT License.
 
 use crate::rvm::instructions::{ComprehensionMode, LoopMode};
-use crate::value::Value;
-use crate::value::{Object, ObjectCursor, Set, SetCursor};
+use crate::value::{Array, Object, ObjectCursor, Set, SetCursor};
 use crate::Rc;
-use alloc::vec::Vec;
 
 /// Loop execution context for managing iteration state
 #[derive(Debug, Clone)]
@@ -36,7 +34,7 @@ pub struct LoopContext {
 #[derive(Debug, Clone)]
 pub enum IterationState {
     Array {
-        items: Rc<Vec<Value>>,
+        items: Rc<Array>,
         index: usize,
     },
     Object {
@@ -134,7 +132,8 @@ pub(super) struct ComprehensionContext {
 )]
 mod tests {
     use super::*;
-    use crate::value::Object;
+    use crate::value::{Object, Value};
+    use alloc::vec::Vec;
 
     /// IterationState::Object holds an `Rc<Object>` plus an opaque cursor.
     /// Mutating an aliased Rc via `Rc::make_mut` allocates a new collection

@@ -583,7 +583,7 @@ impl RegoVM {
                 }
             }
             ArrayNew { dest } => {
-                let empty_array = Value::Array(crate::Rc::new(Vec::new()));
+                let empty_array = Value::new_array();
                 self.set_register(dest, empty_array)?;
                 Ok(InstructionOutcome::Continue)
             }
@@ -656,7 +656,7 @@ impl RegoVM {
                             .map(|&reg| self.get_register(reg).cloned())
                             .collect::<Result<Vec<_>>>()?;
 
-                        let array_value = Value::Array(crate::Rc::new(elements));
+                        let array_value = Value::from_array(elements);
                         self.set_register(params.dest, array_value)?;
                     }
                     Ok(InstructionOutcome::Continue)
