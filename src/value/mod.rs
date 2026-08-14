@@ -73,7 +73,7 @@ pub enum Value {
     String(Rc<str>),
 
     /// JSON array.
-    Array(Rc<Vec<Value>>),
+    Array(Rc<Array>),
 
     /// A set of values.
     /// No JSON equivalent.
@@ -765,7 +765,7 @@ impl From<Vec<Value>> for Value {
     /// # Ok(())
     /// # }
     fn from(a: Vec<Value>) -> Self {
-        Value::Array(Rc::new(a))
+        Value::Array(Rc::new(Array::from(a)))
     }
 }
 
@@ -1215,7 +1215,7 @@ impl Value {
         }
     }
 
-    /// Cast value to [`& Vec<Value>`] if [`Value::Array`].
+    /// Cast value to [`&Array`] if [`Value::Array`].
     /// ```
     /// # use regorus::*;
     /// # fn main() -> anyhow::Result<()> {
@@ -1223,14 +1223,14 @@ impl Value {
     /// assert_eq!(v.as_array()?[0], Value::from("Hello"));
     /// # Ok(())
     /// # }
-    pub fn as_array(&self) -> Result<&Vec<Value>> {
+    pub fn as_array(&self) -> Result<&Array> {
         match self {
             Value::Array(a) => Ok(a),
             _ => Err(anyhow!("not an array")),
         }
     }
 
-    /// Cast value to [`&mut Vec<Value>`] if [`Value::Array`].
+    /// Cast value to [`&mut Array`] if [`Value::Array`].
     /// ```
     /// # use regorus::*;
     /// # fn main() -> anyhow::Result<()> {
@@ -1238,7 +1238,7 @@ impl Value {
     /// v.as_array_mut()?.push(Value::from("World"));
     /// # Ok(())
     /// # }
-    pub fn as_array_mut(&mut self) -> Result<&mut Vec<Value>> {
+    pub fn as_array_mut(&mut self) -> Result<&mut Array> {
         match self {
             Value::Array(a) => Ok(Rc::make_mut(a)),
             _ => Err(anyhow!("not an array")),
@@ -1622,7 +1622,7 @@ impl ops::Index<&Value> for Value {
                 _ => &Value::Undefined,
             },
             (Value::Array(a), Value::Number(n)) => match n.as_u64() {
-                Some(index) if (index as usize) < a.len() => &a[index as usize],
+                Some(index) => a.get(index as usize).unwrap_or(&Value::Undefined),
                 _ => &Value::Undefined,
             },
             _ => &Value::Undefined,

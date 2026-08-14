@@ -35,7 +35,7 @@ pub(in crate::languages::rego::compiler) fn try_eval_const(expr: &Expr) -> Optio
             .iter()
             .map(|i| try_eval_const(i.as_ref()))
             .collect::<Option<Vec<_>>>()
-            .map(|v| Value::Array(Rc::new(v))),
+            .map(Value::from_array),
         Expr::Set { items, .. } => items
             .iter()
             .map(|i| try_eval_const(i.as_ref()))
@@ -59,7 +59,7 @@ impl<'a> Compiler<'a> {
         let all_const: Option<Vec<_>> = items.iter().map(|i| try_eval_const(i.as_ref())).collect();
         if let Some(values) = all_const {
             let dest = self.alloc_register();
-            let literal_idx = self.add_literal(Value::Array(Rc::new(values)));
+            let literal_idx = self.add_literal(Value::from_array(values));
             self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
             return Ok(dest);
         }

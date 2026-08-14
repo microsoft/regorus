@@ -79,7 +79,7 @@ impl EditNode {
                     array.push(value.render()?);
                     enforce_limit()?;
                 }
-                Value::Array(crate::Rc::new(array))
+                Value::Array(crate::Rc::new(crate::value::Array::from(array)))
             }
             Self::Set(members) => {
                 let mut set = BTreeSet::new();

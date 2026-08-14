@@ -9,6 +9,7 @@ mod serde;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::fmt;
+use core::ops;
 
 use crate::value::Value;
 
@@ -31,12 +32,12 @@ impl Array {
     }
 
     #[inline]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.inner.len()
     }
 
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
 
@@ -66,13 +67,8 @@ impl Array {
     }
 
     #[inline]
-    pub fn as_slice(&self) -> &[Value] {
+    pub const fn as_slice(&self) -> &[Value] {
         self.inner.as_slice()
-    }
-
-    #[inline]
-    pub fn as_mut_slice(&mut self) -> &mut [Value] {
-        self.inner.as_mut_slice()
     }
 
     /// Iteration in element order. Non-resumable.
@@ -103,6 +99,12 @@ impl Array {
     #[inline]
     pub fn extend<I: IntoIterator<Item = Value>>(&mut self, iter: I) {
         self.inner.extend(iter);
+    }
+
+    /// Append all elements of `other` (by clone) to the end of `self`.
+    #[inline]
+    pub fn extend_from_slice(&mut self, other: &[Value]) {
+        self.inner.extend_from_slice(other);
     }
 
     #[inline]
@@ -136,6 +138,12 @@ impl Array {
     #[inline]
     pub fn into_vec(self) -> Vec<Value> {
         self.inner
+    }
+
+    /// Wrap into a `Value::Array`.
+    #[inline]
+    pub fn into_value(self) -> Value {
+        Value::Array(crate::Rc::new(self))
     }
 
     /// Create a resumable cursor over elements in order. O(1).
@@ -195,5 +203,24 @@ impl From<Vec<Value>> for Array {
     #[inline]
     fn from(values: Vec<Value>) -> Self {
         Self { inner: values }
+    }
+}
+
+impl ops::Index<usize> for Array {
+    type Output = Value;
+
+    /// Indexes the array. Returns `&Value::Undefined` for out-of-range
+    /// indices rather than panicking, matching `Value`'s indexing semantics.
+    /// Use [`Array::get`] to distinguish "missing" from "present-and-Undefined".
+    #[inline]
+    fn index(&self, index: usize) -> &Self::Output {
+        self.inner.get(index).unwrap_or(&Value::Undefined)
+    }
+}
+
+impl From<Array> for Value {
+    #[inline]
+    fn from(a: Array) -> Self {
+        a.into_value()
     }
 }
