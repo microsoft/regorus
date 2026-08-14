@@ -37,7 +37,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: ./.github/actions/toolchains/rust
       - name: Cache cargo
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ${{ runner.os }}-regorus
 
@@ -52,7 +52,7 @@ jobs:
 
       - name: Upload analysis results to GitHub
         if: ${{ hashFiles('rust-clippy-results.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@d1ba80a13dd99fba24a470575428917156a28b43 # v3.29.11
+        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v3.29.11
         with:
           sarif_file: rust-clippy-results.sarif
           wait-for-processing: true
