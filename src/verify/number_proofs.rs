@@ -5,8 +5,11 @@ use vstd::prelude::*;
 
 verus! {
 
-use super::number_specs::NumberView;
+use core::cmp::Ordering;
 use crate::number::Number;
+use num_bigint::BigInt;
+use super::bigint_assumptions::*;
+use super::number_specs::NumberView;
 use vstd::arithmetic::div_mod::{
     lemma_div_of0,
     lemma_fundamental_div_mod,
@@ -19,7 +22,136 @@ use vstd::arithmetic::mul::{
     lemma_mul_strictly_increases,
     lemma_mul_unary_negation,
 };
+use vstd::float::*;
+use vstd::std_specs::cmp::*;
+use vstd::std_specs::convert::*;
 use vstd::std_specs::ops::*;
+
+/// Spec trait implementations
+
+// For various `T`, we implement `From<T>` for `Number`. This means
+// that Verus demands a proof that it implements `FromSpecImpl<T>`.
+// The easiest (and most obviously correct) way to do this is to just
+// define `obeys_from_spec()` as always returning `false`. We also
+// need to define a `from_spec`, but it's meaningless since
+// `obeys_from_spec()` always returns false. So we may as well leave
+// it uninterpreted.
+
+impl FromSpecImpl<BigInt> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: BigInt) -> Number;
+}
+
+impl FromSpecImpl<u64> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: u64) -> Number;
+}
+
+impl FromSpecImpl<usize> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: usize) -> Number;
+}
+
+impl FromSpecImpl<u128> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: u128) -> Number;
+}
+
+impl FromSpecImpl<i64> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: i64) -> Number;
+}
+
+impl FromSpecImpl<i128> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: i128) -> Number;
+}
+
+impl FromSpecImpl<f64> for Number {
+    open spec fn obeys_from_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn from_spec(v: f64) -> Number;
+}
+
+// We implement `PartialEq` for `Number`. This means that Verus
+// demands a proof that it implements `PartialEqSpecImpl`. The
+// simplest, and most obviously correct, way to do this is to just say
+// that `obeys_eq_spec()` always returns `false`. This makes all the
+// postconditions trivial. We also need to define an `eq_spec`, but
+// it's meaningless since `obeys_from_spec()` always returns false. So
+// we may as well leave it uninterpreted.
+
+impl PartialEqSpecImpl for Number {
+    open spec fn obeys_eq_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn eq_spec(&self, other: &Self) -> bool;
+}
+
+// We implement `Ord` for `Number`. This means that Verus demands a
+// proof that it implements `OrdSpecImpl`. The simplest, and most
+// obviously correct, way to do this is to just say that
+// `obeys_eq_spec()` always returns `false`. This makes all the
+// postconditions trivial. We also need to define a `cmp_spec`, but
+// it's meaningless since `obeys_from_spec()` always returns false. So
+// we may as well leave it uninterpreted.
+
+impl OrdSpecImpl for Number {
+    open spec fn obeys_cmp_spec() -> bool
+    {
+        false
+    }
+
+    uninterp spec fn cmp_spec(&self, other: &Self) -> Ordering;
+}
+
+/// View implementation (internal to crate)
+
+impl View for Number
+{
+    type V = NumberView;
+
+    open(crate) spec fn view(&self) -> NumberView
+    {
+        match self {
+            Number::UInt(n) => NumberView::Integer(n as int),
+            Number::Int(n) => NumberView::Integer(n as int),
+            Number::Float(f) => NumberView::Float(*f),
+            Number::BigInt(b) => NumberView::Integer(b@),
+        }
+    }
+}
+
+/// Helpful lemmas
 
 pub proof fn lemma_div_ensures_cases(lhs: NumberView, rhs: NumberView)
     ensures

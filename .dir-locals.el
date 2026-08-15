@@ -9,4 +9,4 @@
 ;;
 ;; Everything before `--' is passed to cargo-verus; everything after `--' is
 ;; forwarded to the Verus binary. The `--' is required by verus-mode.el.
-((verus-mode . ((verus-cargo-verus-arguments . ("--features" "verus" "--")))))
+;((verus-mode . ((verus-cargo-verus-arguments . ("--features" "verus" "--")))))

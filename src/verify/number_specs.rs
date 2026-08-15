@@ -18,13 +18,11 @@ use vstd::prelude::*;
 
 verus! {
 
-use core::cmp::Ordering;
 use crate::number::*;
 use super::bigint_assumptions::*;
 use super::f64_assumptions::*;
 use vstd::float::*;
-use vstd::std_specs::cmp::*;
-use vstd::std_specs::convert::*;
+use vstd::std_specs::cmp::PartialEqSpec;
 
 pub assume_specification[ <Number as Clone>::clone ](n: &Number) -> (res: Number)
     ensures
@@ -34,21 +32,6 @@ pub assume_specification[ <Number as Clone>::clone ](n: &Number) -> (res: Number
 pub enum NumberView {
     Integer(int),
     Float(f64),
-}
-
-impl View for Number
-{
-    type V = NumberView;
-
-    open(crate) spec fn view(&self) -> NumberView
-    {
-        match self {
-            Number::UInt(n) => NumberView::Integer(n as int),
-            Number::Int(n) => NumberView::Integer(n as int),
-            Number::Float(f) => NumberView::Float(*f),
-            Number::BigInt(b) => NumberView::Integer(b@),
-        }
-    }
 }
 
 pub open spec fn float_to_small_int(value: f64) -> Option<int>
@@ -198,92 +181,6 @@ impl NumberView {
         }
     }
 
-}
-
-impl FromSpecImpl<BigInt> for Number {
-    open spec fn obeys_from_spec() -> bool
-    {
-        false
-    }
-
-    uninterp spec fn from_spec(v: BigInt) -> Number;
-}
-
-impl FromSpecImpl<u64> for Number {
-    open spec fn obeys_from_spec() -> bool
-    {
-        false
-    }
-
-    uninterp spec fn from_spec(v: u64) -> Number;
-}
-
-impl FromSpecImpl<usize> for Number {
-    open spec fn obeys_from_spec() -> bool
-    {
-        false
-    }
-
-    uninterp spec fn from_spec(v: usize) -> Number;
-}
-
-impl FromSpecImpl<u128> for Number {
-    open spec fn obeys_from_spec() -> bool
-    {
-        false
-    }
-
-    uninterp spec fn from_spec(v: u128) -> Number;
-}
-
-impl FromSpecImpl<i64> for Number {
-    open spec fn obeys_from_spec() -> bool
-    {
-        false
-    }
-
-    uninterp spec fn from_spec(v: i64) -> Number;
-}
-
-impl FromSpecImpl<i128> for Number {
-    open spec fn obeys_from_spec() -> bool
-    {
-        false
-    }
-
-    uninterp spec fn from_spec(v: i128) -> Number;
-}
-
-impl FromSpecImpl<f64> for Number {
-    open spec fn obeys_from_spec() -> bool
-    {
-        false
-    }
-
-    uninterp spec fn from_spec(v: f64) -> Number;
-}
-
-impl PartialEqSpecImpl for Number {
-    open spec fn obeys_eq_spec() -> bool
-    {
-        false
-    }
-
-    open spec fn eq_spec(&self, other: &Self) -> bool
-    {
-        *self == *other
-    }
-}
-
-impl OrdSpecImpl for Number {
-    // `Number::cmp` is specified directly in terms of `NumberView`, so there's
-    // no need for a `cmp_spec` that would expose the internal representation.
-    open spec fn obeys_cmp_spec() -> bool
-    {
-        false
-    }
-
-    uninterp spec fn cmp_spec(&self, other: &Self) -> Ordering;
 }
 
 } // end verus!
