@@ -30,7 +30,7 @@ jobs:
           # Common library usage pattern (issue #595): consumer enables
           # std + arc + rvm and relies on indexmap/std propagation.
           - name: library (std + arc + rvm)
-            features: std,arc,rvm
+            features: std,arc,rvm,test-utils
 
           # New default after removing mimalloc from full-opa.
           # Ensures all builtins compile without the allocator.
@@ -45,12 +45,12 @@ jobs:
           # Selective builtins without full-opa: validates that popular
           # features can be cherry-picked independently.
           - name: cherry-picked builtins
-            features: std,arc,rvm,regex,time,semver,cache
+            features: std,arc,rvm,regex,time,semver,cache,test-utils
 
           # Observability features only: coverage + cache without the
           # heavier builtins (regex, time, etc.).
           - name: observability
-            features: std,arc,rvm,coverage,cache
+            features: std,arc,rvm,coverage,cache,test-utils
 
           # Azure Policy adds jsonschema + dashmap; test it compiles
           # and runs on top of full-opa.
