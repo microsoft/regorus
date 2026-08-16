@@ -265,8 +265,15 @@ impl<'de> Visitor<'de> for BinaryValueVisitor {
                 let mut map = Object::new();
                 for (key, value) in entries {
                     map.insert(key.into_value(), value.into_value());
+                    crate::utils::limits::check_memory_limit_if_needed()
+                        .map_err(|err| de::Error::custom(format!("{err}")))?;
                 }
-                Ok(BinaryValue(Value::Object(crate::Rc::new(map))))
+                let object = map.into_value();
+                // Mirror the JSON object path: re-check after `into_value` compacts
+                // storage so binary program loading honors allocator memory limits.
+                crate::utils::limits::check_memory_limit_if_needed()
+                    .map_err(|err| de::Error::custom(format!("{err}")))?;
+                Ok(BinaryValue(object))
             }
             (BinaryVariant::Undefined, variant) => {
                 variant.unit_variant()?;

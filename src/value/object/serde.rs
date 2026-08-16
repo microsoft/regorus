@@ -48,6 +48,11 @@ impl<'de> Visitor<'de> for ObjectVisitor {
             crate::utils::limits::check_memory_limit_if_needed()
                 .map_err(|err| A::Error::custom(err.to_string()))?;
         }
+        let obj = obj.freeze();
+        // `freeze` allocates compact boxed-slice storage after the final insert; keep this
+        // fallible deserialization path honest under allocator memory limits.
+        crate::utils::limits::check_memory_limit_if_needed()
+            .map_err(|err| A::Error::custom(err.to_string()))?;
         Ok(obj)
     }
 }

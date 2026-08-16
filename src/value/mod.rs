@@ -245,7 +245,11 @@ impl<'de> Visitor<'de> for ValueVisitor {
                 // Enforce allocator limit while expanding a deserialized object.
                 enforce_limit_for::<V::Error>()?;
             }
-            Ok(Value::from(map))
+            let value = Value::from(map);
+            // The freeze into compact object storage allocates after the final map insert.
+            // Re-check fallible deserialization paths so allocator-limit builds observe it.
+            enforce_limit_for::<V::Error>()?;
+            Ok(value)
         } else {
             Ok(Value::new_object())
         }
@@ -808,7 +812,7 @@ impl From<BTreeMap<Value, Value>> for Value {
     /// # Ok(())
     /// # }
     fn from(s: BTreeMap<Value, Value>) -> Self {
-        Value::Object(Rc::new(Object::from(s)))
+        Object::from(s).into_value()
     }
 }
 

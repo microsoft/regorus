@@ -399,7 +399,8 @@ fn object_union(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool
     let _ = ensure_object(name, &params[0], args[0].clone())?;
     let _ = ensure_object(name, &params[1], args[1].clone())?;
 
-    union(&args[0], &args[1])
+    let result = union(&args[0], &args[1])?;
+    Ok(result)
 }
 
 fn object_union_n(
