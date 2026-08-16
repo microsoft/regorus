@@ -9,7 +9,7 @@ use super::evaluator::RbacBuiltinError;
 pub(super) fn list_contains(left: &Value, right: &Value) -> Result<bool, RbacBuiltinError> {
     match *left {
         // Lists and sets share containment semantics.
-        Value::Array(ref list) => Ok(list_contains_values(list, right)),
+        Value::Array(ref list) => Ok(list_contains_values(list.as_slice(), right)),
         Value::Set(ref set) => Ok(set_contains_values(set, right)),
         _ => Ok(false),
     }

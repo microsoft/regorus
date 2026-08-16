@@ -976,10 +976,7 @@ fn test_deserialize_array_items_with_fields() {
             assert_eq!(description.as_deref(), Some("outer array"));
             assert_eq!(min_items, &Some(1));
             assert_eq!(max_items, &Some(2));
-            assert_eq!(
-                default,
-                &Some(Value::Array(Rc::new(vec![Value::from("bar")])))
-            );
+            assert_eq!(default, &Some(Value::from_array(vec![Value::from("bar")])));
             match items.as_type() {
                 Type::String {
                     description,

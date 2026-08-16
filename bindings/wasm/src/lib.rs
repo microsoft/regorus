@@ -523,7 +523,8 @@ mod tests {
         assert_eq!(
             r["files"][0]["covered"]
                 .as_array()
-                .map_err(crate::error_to_jsvalue)?,
+                .map_err(crate::error_to_jsvalue)?
+                .as_slice(),
             &vec![regorus::Value::from(3)]
         );
 

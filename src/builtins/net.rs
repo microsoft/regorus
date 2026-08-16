@@ -153,7 +153,7 @@ fn _cidr_expand(cidr: Arc<str>) -> Result<Value> {
         enforce_limit()?;
     }
 
-    Ok(Value::Array(Arc::from(hosts)))
+    Ok(Value::from_array(hosts))
 }
 
 #[cfg(test)]
