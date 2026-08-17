@@ -1040,3 +1040,81 @@ fn object_remove_absent_on_frozen_stays_frozen() {
     assert_eq!(obj.storage_variant_for_memory_diagnostics(), "BTree");
     assert_eq!(obj.get(&val(1)), None);
 }
+
+#[cfg(feature = "std")]
+mod interning_tests {
+    use crate::Value;
+    use alloc::vec::Vec;
+
+    // Parse a homogeneous array of objects sharing keys and return the parsed value.
+    fn parse(json: &str) -> Value {
+        Value::from_json_str(json).expect("valid json")
+    }
+
+    #[test]
+    fn interning_preserves_values_round_trip() {
+        let json = r#"[{"ruleId":"A","level":"error"},{"ruleId":"B","level":"warning"}]"#;
+        let value = parse(json);
+        let arr = value.as_array().expect("array");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0].as_object().expect("object").len(), 2);
+        assert_eq!(arr[0]["ruleId"], Value::from("A"));
+        assert_eq!(arr[1]["level"], Value::from("warning"));
+    }
+
+    #[test]
+    fn parse_error_cleans_up_intern_session() {
+        // Truncated input that is valid up to and including an interned key
+        // (`"k"`) before hitting EOF, so at least one key is interned before the
+        // parse fails. The guard must still tear the table down on the error
+        // path, leaving no session installed for the next parse.
+        Value::from_json_str(r#"{"k":1,"#).expect_err("truncated json must error");
+        assert!(
+            !crate::value::interning::is_installed(),
+            "intern table must be torn down after a failed parse"
+        );
+        let value = parse(r#"{"k":"v"}"#);
+        assert_eq!(value["k"], Value::from("v"));
+    }
+
+    #[test]
+    fn nested_guards_reuse_and_teardown_once() {
+        use crate::value::interning::{is_installed, InternGuard};
+        assert!(!is_installed(), "no session before install");
+        let outer = InternGuard::install();
+        assert!(is_installed(), "outer installs the table");
+        {
+            let inner = InternGuard::install();
+            assert!(is_installed(), "inner reuses the existing table");
+            drop(inner);
+            // The inner guard did not install the table, so dropping it must not
+            // tear the table down out from under the outer guard.
+            assert!(is_installed(), "inner drop preserves the outer table");
+        }
+        drop(outer);
+        assert!(!is_installed(), "only the installing guard tears down");
+    }
+
+    // Repeated keys across sibling objects share a single Rc<str> allocation.
+    #[test]
+    fn repeated_keys_share_allocation() {
+        let json = r#"[{"ruleId":"A"},{"ruleId":"B"},{"ruleId":"C"}]"#;
+        let value = parse(json);
+        let arr = value.as_array().expect("array");
+
+        let mut ptrs = Vec::new();
+        for elem in arr.iter() {
+            let obj = elem.as_object().expect("object");
+            for (k, _) in obj.iter() {
+                if let Value::String(rc) = k {
+                    ptrs.push(crate::Rc::as_ptr(rc));
+                }
+            }
+        }
+        assert_eq!(ptrs.len(), 3);
+        assert!(
+            ptrs.windows(2).all(|w| core::ptr::addr_eq(w[0], w[1])),
+            "repeated object keys should share one interned allocation"
+        );
+    }
+}
