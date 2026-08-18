@@ -685,6 +685,15 @@ fn main() -> Result<()> {
         Some(p) => p,
         None => {
             let branch_dir = format!("target/opa/branch/{OPA_BRANCH}");
+            if std::path::Path::exists(Path::new(&branch_dir))
+                && !std::path::Path::exists(Path::new(format!("{branch_dir}/.git").as_str()))
+            {
+                // A stale/partial checkout (e.g. left behind by a cancelled
+                // run or restored from a build cache) can exist without a
+                // `.git` directory. `git clone` refuses to clone into a
+                // non-empty directory, so remove any stale contents first.
+                std::fs::remove_dir_all(&branch_dir)?;
+            }
             std::fs::create_dir_all(&branch_dir)?;
             if !std::path::Path::exists(Path::new(format!("{branch_dir}/.git").as_str())) {
                 let output = match Command::new("git")

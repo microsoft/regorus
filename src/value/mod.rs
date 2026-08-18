@@ -15,6 +15,9 @@ mod array;
 mod object;
 mod set;
 
+#[cfg(feature = "std")]
+mod interning;
+
 #[cfg(test)]
 mod tests;
 
@@ -237,19 +240,40 @@ impl<'de> Visitor<'de> for ValueVisitor {
                 }
             }
             let mut map = BTreeMap::new();
-            map.insert(key, value);
+            map.insert(intern_object_key(key), value);
             // Enforce allocator limit while expanding a deserialized object.
             enforce_limit_for::<V::Error>()?;
             while let Some((key, value)) = visitor.next_entry()? {
-                map.insert(key, value);
+                map.insert(intern_object_key(key), value);
                 // Enforce allocator limit while expanding a deserialized object.
                 enforce_limit_for::<V::Error>()?;
             }
-            Ok(Value::from(map))
+            let value = Value::from(map);
+            // The freeze into compact object storage allocates after the final map insert.
+            // Re-check fallible deserialization paths so allocator-limit builds observe it.
+            enforce_limit_for::<V::Error>()?;
+            Ok(value)
         } else {
             Ok(Value::new_object())
         }
     }
+}
+
+/// Key-only interning hook for the JSON deserialization hot path (see
+/// [`crate::value::interning`]). No-op when no interning session is installed
+/// or when built without the `std` feature.
+#[cfg(feature = "std")]
+fn intern_object_key(key: Value) -> Value {
+    match key {
+        Value::String(rc) => Value::String(interning::intern_key(rc)),
+        other => other,
+    }
+}
+
+/// No-op key hook for builds without the `std` feature (no interning table).
+#[cfg(not(feature = "std"))]
+const fn intern_object_key(key: Value) -> Value {
+    key
 }
 
 #[doc(hidden)]
@@ -358,6 +382,10 @@ impl Value {
     /// # }
     /// ```
     pub fn from_json_str(json: &str) -> Result<Value> {
+        // Intern object keys for the duration of the parse: a homogeneous array
+        // of N objects sharing K keys allocates K key strings instead of N * K.
+        #[cfg(feature = "std")]
+        let _guard = interning::InternGuard::install();
         match serde_json::from_str::<Value>(json) {
             Ok(value) => Ok(value),
             Err(err) => {
@@ -808,7 +836,7 @@ impl From<BTreeMap<Value, Value>> for Value {
     /// # Ok(())
     /// # }
     fn from(s: BTreeMap<Value, Value>) -> Self {
-        Value::Object(Rc::new(Object::from(s)))
+        Object::from(s).into_value()
     }
 }
 

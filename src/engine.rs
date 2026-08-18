@@ -398,6 +398,13 @@ impl Engine {
     /// # }
     /// ```
     pub fn set_input(&mut self, input: Value) {
+        // Store the document as-is -- this is a pure setter. Inputs produced by
+        // `set_input_json`/`from_json_str` already carry compact frozen storage; a
+        // programmatically-built `Value` is kept in whatever representation the caller
+        // supplied. Not freezing here avoids a full recursive traversal and the
+        // unnecessary materialization (BTree -> boxed slice) of a value we were
+        // just handed, and keeps the API free of any infallible allocation under
+        // `allocator-memory-limits`.
         self.interpreter.set_input(input);
     }
 
@@ -484,13 +491,15 @@ impl Engine {
             // allocating, so validate then deep-merge in place (zero-copy fast path).
             self.interpreter.get_init_data().check_mergeable(&data)?;
             self.prepared = false;
-            self.interpreter.get_init_data_mut().deep_merge(data)
+            self.interpreter.get_init_data_mut().deep_merge(data)?;
+            Ok(())
         }
         #[cfg(feature = "allocator-memory-limits")]
         {
             // A limit failure can strike mid-merge and can't be predicted, so merge into a
-            // candidate and commit only on success. `Value` is copy-on-write, so only touched
-            // subtrees are cloned.
+            // candidate and commit only on success; `deep_merge` limit-checks each insertion,
+            // so the committed document is already bounded. `Value` is copy-on-write, so only
+            // touched subtrees are cloned.
             let mut candidate = self.interpreter.get_init_data().clone();
             candidate.deep_merge(data)?;
             *self.interpreter.get_init_data_mut() = candidate;

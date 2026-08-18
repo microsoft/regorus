@@ -43,11 +43,25 @@ impl<'de> Visitor<'de> for ObjectVisitor {
 
     fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
         let mut obj = Object::new();
-        while let Some((k, v)) = access.next_entry::<Value, Value>()? {
+        while let Some(k) = access.next_key::<Value>()? {
+            let v = access.next_value::<Value>()?;
+            // Key-only interning: dedup key `Rc<str>` allocations across objects
+            // parsed within the same interning session. String *values* are left
+            // untouched.
+            #[cfg(feature = "std")]
+            let k = match k {
+                Value::String(rc) => Value::String(crate::value::interning::intern_key(rc)),
+                other => other,
+            };
             obj.insert(k, v);
             crate::utils::limits::check_memory_limit_if_needed()
                 .map_err(|err| A::Error::custom(err.to_string()))?;
         }
+        let obj = obj.freeze();
+        // `freeze` allocates compact boxed-slice storage after the final insert; keep this
+        // fallible deserialization path honest under allocator memory limits.
+        crate::utils::limits::check_memory_limit_if_needed()
+            .map_err(|err| A::Error::custom(err.to_string()))?;
         Ok(obj)
     }
 }

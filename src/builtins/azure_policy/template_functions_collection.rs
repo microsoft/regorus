@@ -10,7 +10,6 @@ use crate::builtins;
 use crate::lexer::Span;
 use crate::value::Object;
 use crate::value::Value;
-use crate::Rc;
 
 use alloc::vec::Vec;
 use anyhow::Result;
@@ -79,7 +78,9 @@ fn fn_intersection(
                 };
                 result.retain(|k, v| other.get(k).is_some_and(|ov| *ov == *v));
             }
-            Ok(Value::Object(Rc::new(result)))
+            let value = result.into_value();
+            crate::utils::limits::enforce_memory_limit().map_err(anyhow::Error::new)?;
+            Ok(value)
         }
         _ => Ok(Value::Undefined),
     }
@@ -123,14 +124,19 @@ fn fn_union(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) 
                     #[allow(clippy::needless_borrowed_reference)]
                     let merged = match (result.get(k), v) {
                         (Some(&Value::Object(ref prev)), &Value::Object(ref next)) => {
-                            merge_objects(prev, next)
+                            merge_objects(prev, next)?
                         }
                         _ => v.clone(),
                     };
                     result.insert(k.clone(), merged);
+                    // Throttled check bounds peak allocation across nested merges.
+                    crate::utils::limits::check_memory_limit_if_needed()
+                        .map_err(anyhow::Error::new)?;
                 }
             }
-            Ok(Value::Object(Rc::new(result)))
+            let value = result.into_value();
+            crate::utils::limits::enforce_memory_limit().map_err(anyhow::Error::new)?;
+            Ok(value)
         }
         _ => Ok(Value::Undefined),
     }
@@ -274,27 +280,35 @@ fn fn_create_object(
         #[allow(clippy::pattern_type_mismatch)]
         if let [key, value] = pair {
             map.insert(key.clone(), value.clone());
+            // Throttled check bounds peak allocation while building the object.
+            crate::utils::limits::check_memory_limit_if_needed().map_err(anyhow::Error::new)?;
         }
     }
 
-    Ok(Value::Object(Rc::new(map)))
+    let value = map.into_value();
+    crate::utils::limits::enforce_memory_limit().map_err(anyhow::Error::new)?;
+    Ok(value)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
 /// Recursively merge two objects.  Nested objects are merged; everything
 /// else (including arrays) uses the value from `incoming`.
-fn merge_objects(base: &Object, overlay: &Object) -> Value {
+fn merge_objects(base: &Object, overlay: &Object) -> Result<Value> {
     let mut result = base.clone();
     for (k, v) in overlay.iter() {
         #[allow(clippy::needless_borrowed_reference)]
         let merged = match (result.get(k), v) {
-            (Some(&Value::Object(ref prev)), &Value::Object(ref next)) => merge_objects(prev, next),
+            (Some(&Value::Object(ref prev)), &Value::Object(ref next)) => {
+                merge_objects(prev, next)?
+            }
             _ => v.clone(),
         };
         result.insert(k.clone(), merged);
+        // Throttled check bounds peak allocation across recursive merges.
+        crate::utils::limits::check_memory_limit_if_needed().map_err(anyhow::Error::new)?;
     }
-    Value::Object(Rc::new(result))
+    Ok(result.into_value())
 }
 
 fn extract_usize(v: &Value) -> Option<usize> {

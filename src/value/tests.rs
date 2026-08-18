@@ -866,3 +866,255 @@ fn check_mergeable_rejects_excessive_depth() {
         "expected a depth-limit error, got: {err}"
     );
 }
+
+const CONST_OBJECT_NEW: Object = Object::new();
+
+#[test]
+fn object_new_is_const_context() {
+    assert!(CONST_OBJECT_NEW.is_empty());
+}
+
+#[test]
+fn object_mutable_inserts_use_btree_storage() {
+    let mut obj = Object::new();
+    obj.insert(val(1), val(10));
+    obj.insert(val(2), val(20));
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "BTree");
+    obj.insert(val(3), val(30));
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "BTree");
+}
+
+#[test]
+fn object_btree_freeze_mutate_insert_and_refreeze_roundtrip() {
+    let mut obj: Object = make_pairs(3).into_iter().collect();
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "BTree");
+    obj = obj.freeze();
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "Frozen");
+    obj.insert(val(99), val(100));
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "BTree");
+    assert_eq!(obj.get(&val(99)), Some(&val(100)));
+    obj = obj.freeze();
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "Frozen");
+    assert_eq!(obj.get(&val(99)), Some(&val(100)));
+}
+
+#[test]
+fn object_empty_freeze_get_iter_and_cursor() {
+    let obj = Object::new().freeze();
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "Frozen");
+    assert!(obj.get(&val(0)).is_none());
+    assert_eq!(obj.iter().count(), 0);
+    let mut cursor = obj.cursor();
+    assert!(obj.next(&mut cursor).is_none());
+}
+
+#[test]
+fn object_from_large_btreemap_into_value_is_frozen() {
+    let map: BTreeMap<Value, Value> = make_pairs(3).into_iter().collect();
+    let value = Object::from(map).into_value();
+    let object = value.as_object().expect("object");
+    assert_eq!(object.storage_variant_for_memory_diagnostics(), "Frozen");
+}
+
+#[test]
+fn object_cross_variant_partial_eq_ignores_storage() {
+    let empty_frozen = Object::from_iter(core::iter::empty()).freeze();
+    assert_eq!(Object::new(), empty_frozen);
+
+    let mutable: Object = make_pairs(2).into_iter().collect();
+    assert_eq!(mutable.storage_variant_for_memory_diagnostics(), "BTree");
+    let frozen = mutable.clone().freeze();
+
+    let mut btree: Object = make_pairs(3).into_iter().collect();
+    btree.remove(&val(2));
+    assert_eq!(btree.storage_variant_for_memory_diagnostics(), "BTree");
+
+    assert_eq!(mutable, frozen);
+    assert_eq!(mutable, btree);
+}
+
+#[test]
+fn object_cursor_frozen_one_entry_yields_once() {
+    let obj = Object::from_iter([(val(1), val(2))]).freeze();
+    let mut cursor = obj.cursor();
+    assert_eq!(obj.next(&mut cursor), Some((&val(1), &val(2))));
+    assert!(obj.next(&mut cursor).is_none());
+}
+
+#[test]
+fn object_cursor_resumes_after_frozen_storage_thaws() {
+    let mut obj = Object::from_iter(make_pairs(4)).freeze();
+    let mut cursor = obj.cursor();
+
+    assert_eq!(obj.next(&mut cursor), Some((&val(0), &val(0))));
+    obj.insert(val(5), val(10));
+
+    // Cursors resume after the last yielded key. Structural mutation may change the storage
+    // representation, but continuing from the key yields the remaining greater keys.
+    let remainder: Vec<(Value, Value)> = core::iter::from_fn(|| {
+        obj.next(&mut cursor)
+            .map(|(key, value)| (key.clone(), value.clone()))
+    })
+    .collect();
+    assert_eq!(
+        remainder,
+        Vec::from([
+            (val(1), val(2)),
+            (val(2), val(4)),
+            (val(3), val(6)),
+            (val(5), val(10)),
+        ])
+    );
+}
+
+#[test]
+fn object_iter_mut_on_frozen_persists_changes() {
+    let mut obj = Object::from_iter([(val(1), val(2))]).freeze();
+    for (_, value) in obj.iter_mut() {
+        *value = val(3);
+    }
+    assert_eq!(obj.get(&val(1)), Some(&val(3)));
+}
+
+#[test]
+fn object_hybrid_insert_existing_on_frozen_stays_frozen() {
+    let mut obj = Object::from_iter([(val(1), val(2))]).freeze();
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "Frozen");
+    assert_eq!(obj.insert(val(1), val(9)), Some(val(2)));
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "Frozen");
+    assert_eq!(obj.get(&val(1)), Some(&val(9)));
+}
+
+#[test]
+fn object_get_or_insert_existing_on_frozen_stays_frozen() {
+    let mut obj = Object::from_iter(make_pairs(3)).freeze();
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "Frozen");
+
+    // Existing key: the default must not run and storage must stay compact.
+    let slot = obj.get_or_insert_with(val(1), || panic!("default must not be called"));
+    assert_eq!(*slot, val(2));
+    *slot = val(42);
+
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "Frozen");
+    assert_eq!(obj.get(&val(1)), Some(&val(42)));
+}
+
+#[test]
+fn object_get_or_insert_absent_on_frozen_thaws_and_inserts() {
+    let mut obj = Object::from_iter(make_pairs(3)).freeze();
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "Frozen");
+
+    let slot = obj.get_or_insert_with(val(99), || val(100));
+    assert_eq!(*slot, val(100));
+
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "BTree");
+    assert_eq!(obj.get(&val(99)), Some(&val(100)));
+    // Pre-existing keys survive the thaw unchanged.
+    assert_eq!(obj.get(&val(1)), Some(&val(2)));
+}
+
+#[test]
+fn object_get_or_insert_on_empty_frozen_inserts() {
+    let mut obj = Object::new().freeze();
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "Frozen");
+
+    let slot = obj.get_or_insert_with(val(1), || val(7));
+    assert_eq!(*slot, val(7));
+
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "BTree");
+    assert_eq!(obj.get(&val(1)), Some(&val(7)));
+}
+
+#[test]
+fn object_remove_absent_on_frozen_stays_frozen() {
+    let mut obj = Object::from_iter(make_pairs(3)).freeze();
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "Frozen");
+
+    // Removing a key that is not present must not disturb the compact storage.
+    assert_eq!(obj.remove(&val(99)), None);
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "Frozen");
+    assert_eq!(obj.len(), 3);
+
+    // Removing a present key thaws to the mutable representation.
+    assert_eq!(obj.remove(&val(1)), Some(val(2)));
+    assert_eq!(obj.storage_variant_for_memory_diagnostics(), "BTree");
+    assert_eq!(obj.get(&val(1)), None);
+}
+
+#[cfg(feature = "std")]
+mod interning_tests {
+    use crate::Value;
+    use alloc::vec::Vec;
+
+    // Parse a homogeneous array of objects sharing keys and return the parsed value.
+    fn parse(json: &str) -> Value {
+        Value::from_json_str(json).expect("valid json")
+    }
+
+    #[test]
+    fn interning_preserves_values_round_trip() {
+        let json = r#"[{"ruleId":"A","level":"error"},{"ruleId":"B","level":"warning"}]"#;
+        let value = parse(json);
+        let arr = value.as_array().expect("array");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0].as_object().expect("object").len(), 2);
+        assert_eq!(arr[0]["ruleId"], Value::from("A"));
+        assert_eq!(arr[1]["level"], Value::from("warning"));
+    }
+
+    #[test]
+    fn parse_error_cleans_up_intern_session() {
+        // Truncated input that is valid up to and including an interned key
+        // (`"k"`) before hitting EOF, so at least one key is interned before the
+        // parse fails. The guard must still tear the table down on the error
+        // path, leaving no session installed for the next parse.
+        Value::from_json_str(r#"{"k":1,"#).expect_err("truncated json must error");
+        assert!(
+            !crate::value::interning::is_installed(),
+            "intern table must be torn down after a failed parse"
+        );
+        let value = parse(r#"{"k":"v"}"#);
+        assert_eq!(value["k"], Value::from("v"));
+    }
+
+    #[test]
+    fn nested_guards_reuse_and_teardown_once() {
+        use crate::value::interning::{is_installed, InternGuard};
+        assert!(!is_installed(), "no session before install");
+        let outer = InternGuard::install();
+        assert!(is_installed(), "outer installs the table");
+        {
+            let inner = InternGuard::install();
+            assert!(is_installed(), "inner reuses the existing table");
+            drop(inner);
+            // The inner guard did not install the table, so dropping it must not
+            // tear the table down out from under the outer guard.
+            assert!(is_installed(), "inner drop preserves the outer table");
+        }
+        drop(outer);
+        assert!(!is_installed(), "only the installing guard tears down");
+    }
+
+    // Repeated keys across sibling objects share a single Rc<str> allocation.
+    #[test]
+    fn repeated_keys_share_allocation() {
+        let json = r#"[{"ruleId":"A"},{"ruleId":"B"},{"ruleId":"C"}]"#;
+        let value = parse(json);
+        let arr = value.as_array().expect("array");
+
+        let mut ptrs = Vec::new();
+        for elem in arr.iter() {
+            let obj = elem.as_object().expect("object");
+            for (k, _) in obj.iter() {
+                if let Value::String(rc) = k {
+                    ptrs.push(crate::Rc::as_ptr(rc));
+                }
+            }
+        }
+        assert_eq!(ptrs.len(), 3);
+        assert!(
+            ptrs.windows(2).all(|w| core::ptr::addr_eq(w[0], w[1])),
+            "repeated object keys should share one interned allocation"
+        );
+    }
+}
