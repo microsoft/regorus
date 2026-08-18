@@ -170,7 +170,7 @@ fn run_aci_tests(dir: &Path, filter: Option<&str>) -> Result<()> {
 
         let yaml = std::fs::read(&path)?;
         let yaml = String::from_utf8_lossy(&yaml);
-        let test: YamlTest = serde_yaml::from_str(&yaml)?;
+        let test: YamlTest = yaml_serde::from_str(&yaml)?;
 
         for case in &test.cases {
             // Apply filter if specified
@@ -194,8 +194,8 @@ fn run_aci_tests(dir: &Path, filter: Option<&str>) -> Result<()> {
                 println!(
                     "INTERPRETER DIFF {}",
                     prettydiff::diff_chars(
-                        &serde_yaml::to_string(&case.want_result)?,
-                        &serde_yaml::to_string(&interpreter_results)?
+                        &yaml_serde::to_string(&case.want_result)?,
+                        &yaml_serde::to_string(&interpreter_results)?
                     )
                 );
                 nfailures += 1;
@@ -215,14 +215,14 @@ fn run_aci_tests(dir: &Path, filter: Option<&str>) -> Result<()> {
 
             if interpreter_results != rvm_results {
                 println!("INTERPRETER RESULT:");
-                println!("{}", serde_yaml::to_string(&interpreter_results)?);
+                println!("{}", yaml_serde::to_string(&interpreter_results)?);
                 println!("RVM RESULT:");
-                println!("{}", serde_yaml::to_string(&rvm_results)?);
+                println!("{}", yaml_serde::to_string(&rvm_results)?);
                 println!(
                     "INTERPRETER vs RVM DIFF {}",
                     prettydiff::diff_chars(
-                        &serde_yaml::to_string(&interpreter_results)?,
-                        &serde_yaml::to_string(&rvm_results)?
+                        &yaml_serde::to_string(&interpreter_results)?,
+                        &yaml_serde::to_string(&rvm_results)?
                     )
                 );
                 nfailures += 1;
@@ -273,7 +273,7 @@ fn run_aci_tests_coverage(dir: &Path) -> Result<()> {
 
         let yaml = std::fs::read(&path)?;
         let yaml = String::from_utf8_lossy(&yaml);
-        let test: YamlTest = serde_yaml::from_str(&yaml)?;
+        let test: YamlTest = yaml_serde::from_str(&yaml)?;
 
         for case in &test.cases {
             for (idx, rego) in case.modules.iter().enumerate() {

@@ -288,7 +288,7 @@ fn load_aci_cases(dir: &Path) -> Vec<AciTestCase> {
         }
         let yaml = std::fs::read(path).expect("failed to read yaml");
         let yaml = String::from_utf8_lossy(&yaml);
-        let test: AciYamlTest = serde_yaml::from_str(&yaml).expect("failed to deserialize yaml");
+        let test: AciYamlTest = yaml_serde::from_str(&yaml).expect("failed to deserialize yaml");
         cases.extend(test.cases);
     }
     cases

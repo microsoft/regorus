@@ -54,7 +54,7 @@ std = ["rand/std", "rand/std_rng", "serde_json/std", "indexmap?/std", "msvc_spec
 time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
-yaml = ["serde_yaml"]
+yaml = ["yaml_serde"]
 full-opa = [
     "base64",
     "base64url",
@@ -129,7 +129,7 @@ chrono-tz = { version = "0.10.1", optional = true }
 ipnet = { version = "2.12.0", optional = true, default-features = false }
 icu_casemap = { version = "2.1", optional = true, default-features = false, features = ["compiled_data"] }
 
-serde_yaml = {version = "0.9.16", default-features = false, optional = true }
+yaml_serde = { version = "0.10", default-features = false, optional = true }
 # Specify thread_rng for in order to use random_range
 rand = { version = "0.10.0", default-features = false, features = ["thread_rng"], optional = true }
 
@@ -153,7 +153,7 @@ anyhow = "1.0.102"
 cfg-if = "1.0.0"
 clap = { version = "4.5.53", features = ["derive"] }
 prettydiff = { version = "0.9.0", default-features = false }
-serde_yaml = "0.9.16"
+yaml_serde = "0.10"
 test-generator = "0.3.1"
 walkdir = "2.3.2"
 criterion = { version = "0.8" }

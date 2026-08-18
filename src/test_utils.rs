@@ -93,8 +93,8 @@ pub fn process_value(v: &Value) -> Result<Value> {
 /// Diff-friendly equality helper used by multiple YAML suites.
 pub fn match_values(computed: &Value, expected: &Value) -> Result<()> {
     if computed != expected {
-        let expected_yaml = serde_yaml::to_string(expected)?;
-        let computed_yaml = serde_yaml::to_string(computed)?;
+        let expected_yaml = yaml_serde::to_string(expected)?;
+        let computed_yaml = yaml_serde::to_string(computed)?;
         bail!("expected:\n{}computed:\n{}", expected_yaml, computed_yaml);
     }
     Ok(())

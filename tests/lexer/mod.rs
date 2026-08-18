@@ -74,7 +74,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     println!("\nrunning {file}");
 
     let yaml = std::fs::read_to_string(file)?;
-    let test: Test = serde_yaml::from_str(&yaml)?;
+    let test: Test = yaml_serde::from_str(&yaml)?;
 
     for case in &test.cases {
         let source = Source::from_contents("case.rego".to_string(), case.rego.clone())?;

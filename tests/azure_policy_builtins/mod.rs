@@ -32,9 +32,9 @@ struct TestCase {
     /// Short human-readable label.
     note: String,
     /// Positional arguments fed to the builtin.
-    args: Vec<serde_yaml::Value>,
+    args: Vec<yaml_serde::Value>,
     /// Expected return value (`null` for JSON null).
-    want: Option<serde_yaml::Value>,
+    want: Option<yaml_serde::Value>,
     /// If true, the builtin is expected to return null.
     /// (Needed because `want: null` in YAML deserializes as Option::None.)
     #[serde(default)]
@@ -51,12 +51,12 @@ struct TestCase {
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-/// Convert a serde_yaml::Value to a regorus Value.
-fn yaml_to_value(v: &serde_yaml::Value) -> Value {
+/// Convert a yaml_serde::Value to a regorus Value.
+fn yaml_to_value(v: &yaml_serde::Value) -> Value {
     match v {
-        serde_yaml::Value::Null => Value::Null,
-        serde_yaml::Value::Bool(b) => Value::Bool(*b),
-        serde_yaml::Value::Number(n) => {
+        yaml_serde::Value::Null => Value::Null,
+        yaml_serde::Value::Bool(b) => Value::Bool(*b),
+        yaml_serde::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Value::from(i)
             } else if let Some(f) = n.as_f64() {
@@ -65,12 +65,12 @@ fn yaml_to_value(v: &serde_yaml::Value) -> Value {
                 panic!("unsupported YAML numeric representation: {n:?}")
             }
         }
-        serde_yaml::Value::String(s) => Value::String(s.as_str().into()),
-        serde_yaml::Value::Sequence(items) => {
+        yaml_serde::Value::String(s) => Value::String(s.as_str().into()),
+        yaml_serde::Value::Sequence(items) => {
             let vals: Vec<Value> = items.iter().map(yaml_to_value).collect();
             Value::from(vals)
         }
-        serde_yaml::Value::Mapping(map) => {
+        yaml_serde::Value::Mapping(map) => {
             let mut obj = Value::new_object();
             {
                 let m = obj.as_object_mut().unwrap();
@@ -80,7 +80,7 @@ fn yaml_to_value(v: &serde_yaml::Value) -> Value {
             }
             obj
         }
-        serde_yaml::Value::Tagged(t) => yaml_to_value(&t.value),
+        yaml_serde::Value::Tagged(t) => yaml_to_value(&t.value),
     }
 }
 
@@ -101,7 +101,7 @@ fn dummy_span() -> Span {
 
 fn run_yaml_test(path: &str) -> Result<()> {
     let content = std::fs::read_to_string(path)?;
-    let test_file: YamlTestFile = serde_yaml::from_str(&content)?;
+    let test_file: YamlTestFile = yaml_serde::from_str(&content)?;
 
     let filter = std::env::var("TEST_CASE_FILTER").ok();
 

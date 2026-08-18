@@ -11,7 +11,7 @@ mod condition_tests {
     use alloc::vec;
     use alloc::vec::Vec;
     use serde_json;
-    use serde_yaml;
+    use yaml_serde;
 
     #[derive(Debug, serde::Deserialize)]
     struct TestCase {
@@ -27,7 +27,7 @@ mod condition_tests {
 
     fn load_test_cases() -> TestCases {
         let yaml_content = include_str!("test_cases.yaml");
-        serde_yaml::from_str(yaml_content).expect("Failed to parse test cases YAML")
+        yaml_serde::from_str(yaml_content).expect("Failed to parse test cases YAML")
     }
 
     #[test]
@@ -160,9 +160,9 @@ mod rbac_builtin_tests {
     use alloc::string::{String, ToString as _};
     use alloc::vec::Vec;
     use serde_json;
-    use serde_yaml;
     use std::fs;
     use std::path::PathBuf;
+    use yaml_serde;
 
     use crate::languages::azure_rbac::ast::{
         EnvironmentContext, EvaluationContext, Principal, PrincipalType, RequestContext, Resource,
@@ -334,7 +334,7 @@ mod rbac_builtin_tests {
         for path in entries {
             let yaml = fs::read_to_string(&path).expect("Failed to read test case YAML");
             let suite: EvalTestCases =
-                serde_yaml::from_str(&yaml).expect("Failed to parse evaluation cases YAML");
+                yaml_serde::from_str(&yaml).expect("Failed to parse evaluation cases YAML");
             cases.extend(suite.test_cases);
         }
         cases

@@ -378,7 +378,7 @@ fn compile_and_run_rvm_with_all_entry_points(
 
 fn yaml_test_impl(file: &str) -> Result<()> {
     let yaml_str = fs::read_to_string(file)?;
-    let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
+    let test: YamlTest = yaml_serde::from_str(&yaml_str)?;
 
     println!("running {file}");
     if let Ok(filter) = std::env::var("TEST_CASE_FILTER") {

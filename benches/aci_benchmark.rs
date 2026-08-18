@@ -37,7 +37,7 @@ fn aci_policy_eval(c: &mut Criterion) {
 
         let yaml = std::fs::read(path).expect("failed to read yaml test");
         let yaml = String::from_utf8_lossy(&yaml);
-        let test: YamlTest = serde_yaml::from_str(&yaml).expect("failed to deserialize yaml test");
+        let test: YamlTest = yaml_serde::from_str(&yaml).expect("failed to deserialize yaml test");
 
         for case in &test.cases {
             let rule = case.query.replace("=x", "");

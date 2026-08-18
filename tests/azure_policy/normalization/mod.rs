@@ -160,7 +160,7 @@ fn pretty_regorus(v: &Value) -> String {
 
 fn run_yaml_test(file: &str) -> Result<()> {
     let yaml_str = std::fs::read_to_string(file)?;
-    let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
+    let test: YamlTest = yaml_serde::from_str(&yaml_str)?;
     let file_registry = load_registry(file, &test)?;
 
     for case in &test.cases {
