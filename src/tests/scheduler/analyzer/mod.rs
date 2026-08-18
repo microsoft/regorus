@@ -115,7 +115,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     std::println!("\nrunning {file}");
 
     let yaml_str = std::fs::read_to_string(file)?;
-    let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
+    let test: YamlTest = yaml_serde::from_str(&yaml_str)?;
 
     for case in &test.cases {
         std::print!("\ncase {} ", case.note);

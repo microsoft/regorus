@@ -73,7 +73,7 @@ fn extract_if_json(source_json: &str) -> Option<String> {
 /// Run all test cases from a YAML file.
 fn yaml_test_impl(file: &str) -> Result<()> {
     let yaml_str = fs::read_to_string(file)?;
-    let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
+    let test: YamlTest = yaml_serde::from_str(&yaml_str)?;
 
     println!("running {file}");
     if let Ok(filter) = std::env::var("TEST_CASE_FILTER") {

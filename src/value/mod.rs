@@ -471,7 +471,7 @@ impl Value {
     #[cfg(feature = "yaml")]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     pub fn from_yaml_str(yaml: &str) -> Result<Value> {
-        let value = serde_yaml::from_str(yaml)
+        let value = yaml_serde::from_str(yaml)
             .map_err(|err| anyhow::anyhow!("Failed to parse YAML: {}", err))?;
         Ok(value)
     }
@@ -681,8 +681,8 @@ impl From<serde_json::Value> for Value {
 
 #[cfg(feature = "yaml")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yaml")))]
-impl From<serde_yaml::Value> for Value {
-    /// Create a [`Value`] from [`serde_yaml::Value`].
+impl From<yaml_serde::Value> for Value {
+    /// Create a [`Value`] from [`yaml_serde::Value`].
     ///
     /// Returns [`Value::Undefined`] in case of error.
     /// ```
@@ -692,15 +692,15 @@ impl From<serde_yaml::Value> for Value {
     ///   x: 10
     ///   y: 20
     /// ";
-    /// let yaml_v : serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+    /// let yaml_v : yaml_serde::Value = yaml_serde::from_str(&yaml).unwrap();
     /// let v = Value::from(yaml_v);
     ///
     /// assert_eq!(v["x"].as_u64()?, 10);
     /// assert_eq!(v["y"].as_u64()?, 20);
     /// # Ok(())
     /// # }
-    fn from(v: serde_yaml::Value) -> Self {
-        match serde_yaml::from_value(v) {
+    fn from(v: yaml_serde::Value) -> Self {
+        match yaml_serde::from_value(v) {
             Ok(v) => v,
             _ => Value::Undefined,
         }

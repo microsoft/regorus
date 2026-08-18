@@ -909,7 +909,7 @@ mod tests {
     fn run_vm_test_suite(file: &str) -> Result<()> {
         std::println!("Running VM test suite: {}", file);
         let yaml_content = fs::read_to_string(file)?;
-        let test_suite: VmTestSuite = serde_yaml::from_str(&yaml_content)?;
+        let test_suite: VmTestSuite = yaml_serde::from_str(&yaml_content)?;
 
         for test_case in test_suite.cases {
             std::println!("Running VM test case: {}", test_case.note);

@@ -168,7 +168,7 @@ fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Value> {
             // Get test to pass for now.
             query_results = qr_full;
         } else {
-            println!("{}", serde_yaml::to_string(case)?);
+            println!("{}", yaml_serde::to_string(case)?);
         }
     }
 
@@ -347,8 +347,8 @@ fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value)
     };
 
     if &rvm_binding != actual {
-        let interpreter_yaml = serde_yaml::to_string(actual)?;
-        let rvm_yaml = serde_yaml::to_string(&rvm_binding)?;
+        let interpreter_yaml = yaml_serde::to_string(actual)?;
+        let rvm_yaml = yaml_serde::to_string(&rvm_binding)?;
         bail!(
             "RVM mismatch for query '{}':\nINTERPRETER:\n{}\nRVM:\n{}",
             case.query,
@@ -420,7 +420,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         let entry = status.entry(path_dir_str).or_insert((0, 0, 0));
 
         let yaml_str = std::fs::read_to_string(&path_str)?;
-        let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
+        let test: YamlTest = yaml_serde::from_str(&yaml_str)?;
 
         for mut case in test.cases {
             let is_json_schema_test = case.note.starts_with("json_verify_schema")
@@ -509,7 +509,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                         maybe_verify_rvm_case(&case, is_rego_v0_test, &actual)
                     {
                         println!("\n{} failed.", case.note);
-                        println!("{}", serde_yaml::to_string(&case)?);
+                        println!("{}", yaml_serde::to_string(&case)?);
                         println!("{rvm_err}");
                         entry.1 += 1;
                         n += 1;
@@ -526,7 +526,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                         maybe_verify_rvm_case(&case, is_rego_v0_test, &actual)
                     {
                         println!("\n{} failed.", case.note);
-                        println!("{}", serde_yaml::to_string(&case)?);
+                        println!("{}", yaml_serde::to_string(&case)?);
                         println!("{rvm_err}");
                         entry.1 += 1;
                         n += 1;
@@ -558,10 +558,10 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                 }
                 (r, _) => {
                     println!("\n{} failed.", case.note);
-                    println!("{}", serde_yaml::to_string(&case)?);
+                    println!("{}", yaml_serde::to_string(&case)?);
                     match &r {
                         Ok(actual) => {
-                            println!("GOT\n{}", serde_yaml::to_string(&actual)?);
+                            println!("GOT\n{}", yaml_serde::to_string(&actual)?);
                         }
                         Err(e) => println!("ERROR: {e}"),
                     }

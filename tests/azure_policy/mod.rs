@@ -47,11 +47,11 @@ struct TestCase {
 
     /// Resource properties supplied as the evaluation input document.
     #[serde(default)]
-    pub resource: Option<serde_yaml::Value>,
+    pub resource: Option<yaml_serde::Value>,
 
     /// Policy parameters supplied to the policy evaluation.
     #[serde(default)]
-    pub parameters: Option<serde_yaml::Value>,
+    pub parameters: Option<yaml_serde::Value>,
 
     /// Expected effect produced by policy evaluation when the rule matches.
     #[serde(default)]
@@ -60,7 +60,7 @@ struct TestCase {
     /// Expected details object in the structured effect result.
     /// When set, the test verifies `result.details == want_details`.
     #[serde(default)]
-    pub want_details: Option<serde_yaml::Value>,
+    pub want_details: Option<yaml_serde::Value>,
 
     /// If true, the compilation is expected to fail (e.g. modifiable check).
     #[serde(default)]
@@ -93,13 +93,13 @@ struct TestCase {
     /// `api_version` is present, `api_version` is used as a fallback
     /// for `context.requestContext.apiVersion` (backward compatibility).
     #[serde(default)]
-    pub request_context: Option<serde_yaml::Value>,
+    pub request_context: Option<yaml_serde::Value>,
 
     /// Optional custom context object. Overrides the default test context
     /// (resourceGroup, subscription). Useful for testing `resourceGroup()`,
     /// `subscription()`, and other context-dependent expressions.
     #[serde(default)]
-    pub context: Option<serde_yaml::Value>,
+    pub context: Option<yaml_serde::Value>,
 
     /// Host-await response entries for cross-resource effects
     /// (`auditIfNotExists` / `deployIfNotExists`).
@@ -138,7 +138,7 @@ struct HostAwaitEntry {
     /// Descriptive key identifying the request (not used at runtime;
     /// serves as documentation in YAML tests).
     #[serde(default)]
-    pub key: Option<serde_yaml::Value>,
+    pub key: Option<yaml_serde::Value>,
 
     /// The fully-qualified ARM resource type of the related resource
     /// (e.g., `"Microsoft.Insights/diagnosticSettings"`).  When an alias
@@ -149,7 +149,7 @@ struct HostAwaitEntry {
     pub resource_type: Option<String>,
 
     /// The value the VM receives as the host-await response.
-    pub response: serde_yaml::Value,
+    pub response: yaml_serde::Value,
 }
 
 /// Top-level YAML test file structure.
@@ -190,7 +190,7 @@ fn should_run_test_case(case_note: &str) -> bool {
 /// Run all test cases from a YAML file.
 fn yaml_test_impl(file: &str) -> Result<()> {
     let yaml_str = fs::read_to_string(file)?;
-    let test: YamlTest = serde_yaml::from_str(&yaml_str)?;
+    let test: YamlTest = yaml_serde::from_str(&yaml_str)?;
 
     // Load alias registry if an aliases file is specified.
     let alias_registry: Option<Rc<AliasRegistry>> = if let Some(ref aliases_file) = test.aliases {
@@ -558,7 +558,7 @@ fn make_context(case: &TestCase) -> Result<Value> {
     Ok(ctx)
 }
 
-fn yaml_to_regorus_value(value: Option<&serde_yaml::Value>) -> Result<Option<Value>> {
+fn yaml_to_regorus_value(value: Option<&yaml_serde::Value>) -> Result<Option<Value>> {
     let Some(value) = value else {
         return Ok(None);
     };
