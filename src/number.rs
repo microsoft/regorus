@@ -912,7 +912,7 @@ fn bigint_to_scientific(value: &BigInt) -> String {
         return format!("{}{}e0", sign, digits);
     }
 
-    let exponent = digits.len() as i32 - 1;
+    let exponent = digits.len() - 1;
     format!("{}{}.{}e{}", sign, &digits[0..1], &digits[1..], exponent)
 }
 
