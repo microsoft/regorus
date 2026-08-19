@@ -93,6 +93,12 @@ namespace Regorus.Internal
         internal static extern RegorusEngine* regorus_engine_clone(RegorusEngine* engine);
 
         /// <summary>
+        /// Prepare a RegorusEngine for evaluation without executing a query.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_prepare", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_prepare(RegorusEngine* engine);
+
+        /// <summary>
         /// Compile an RVM program from the engine state with entry points.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_engine_compile_program_with_entrypoints", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]

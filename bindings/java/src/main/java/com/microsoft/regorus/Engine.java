@@ -21,6 +21,7 @@ public class Engine implements AutoCloseable, Cloneable {
     // if you update the native API.
     private static native long nativeNewEngine();
     private static native long nativeClone(long enginePtr);
+    private static native void nativePrepare(long enginePtr);
     private static native void nativeSetRegoV0(long enginePtr, boolean enable);
     private static native String nativeAddPolicy(long enginePtr, String path, String rego);
     private static native String nativeAddPolicyFromFile(long enginePtr, String path);
@@ -45,7 +46,7 @@ public class Engine implements AutoCloseable, Cloneable {
 
     // Pointer to Engine allocated on Rust's heap, all native methods works on
     // engine expects this pointer. It is free'd in `close` method.
-    private final long enginePtr;
+    private long enginePtr;
 
     /**
      * Creates a new Regorus Engine.
@@ -63,7 +64,15 @@ public class Engine implements AutoCloseable, Cloneable {
      * Efficiently clones an Engine.
      */
     public Engine clone() {
-	return new Engine(nativeClone(enginePtr));
+	return new Engine(nativeClone(requireOpen()));
+    }
+
+    /**
+     * Prepares internal evaluation structures without executing a query.
+     * Optional: if skipped, first evaluation performs the same setup.
+     */
+    public void prepare() {
+        nativePrepare(requireOpen());
     }
     
      /**
@@ -73,7 +82,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * 
      */
     public void setRegoV0(boolean enable) {
-        nativeSetRegoV0(enginePtr, enable);
+        nativeSetRegoV0(requireOpen(), enable);
     }
 
     /**
@@ -85,7 +94,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * @return Rego package defined in the policy.
      */
     public String addPolicy(String filename, String rego) {
-        return nativeAddPolicy(enginePtr, filename, rego);
+        return nativeAddPolicy(requireOpen(), filename, rego);
     }
 
     /**
@@ -96,7 +105,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * @return Rego package defined in the policy.
      */
     public String addPolicyFromFile(String path) {
-        return nativeAddPolicyFromFile(enginePtr, path);
+        return nativeAddPolicyFromFile(requireOpen(), path);
     }
 
     /**
@@ -105,7 +114,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * @return List of Rego packages as a JSON array of strings.
      */
     public String getPackages() {
-        return nativeGetPackages(enginePtr);
+        return nativeGetPackages(requireOpen());
     }
     
     /**
@@ -114,14 +123,14 @@ public class Engine implements AutoCloseable, Cloneable {
      * @return List of Rego policies as a JSON array of sources.
      */
     public String getPolicies() {
-        return nativeGetPolicies(enginePtr);
+        return nativeGetPolicies(requireOpen());
     }
     
     /**
      * Clears the data  document.
      */
     public void clearData() {
-        nativeClearData(enginePtr);
+        nativeClearData(requireOpen());
     }
 
     /**
@@ -143,7 +152,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * @param data Inline data document.
      */
     public void addDataJson(String data) throws RuntimeException {
-        nativeAddDataJson(enginePtr, data);
+        nativeAddDataJson(requireOpen(), data);
     }
 
     /**
@@ -160,7 +169,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * @param path Path to JSON data document.
      */
     public void addDataJsonFromFile(String path) throws RuntimeException {
-        nativeAddDataJsonFromFile(enginePtr, path);
+        nativeAddDataJsonFromFile(requireOpen(), path);
     }
 
     /**
@@ -169,7 +178,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * @param input inline JSON input.
      */
     public void setInputJson(String input) {
-        nativeSetInputJson(enginePtr, input);
+        nativeSetInputJson(requireOpen(), input);
     }
 
     /**
@@ -178,7 +187,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * @param path Path to JSON input.
      */
     public void setInputJsonFromFile(String path) {
-        nativeSetInputJsonFromFile(enginePtr, path);
+        nativeSetInputJsonFromFile(requireOpen(), path);
     }
 
     /**
@@ -189,7 +198,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * @return Query results as a JSON string.
      */
     public String evalQuery(String query) {
-        return nativeEvalQuery(enginePtr, query);
+        return nativeEvalQuery(requireOpen(), query);
     }
     
     /**
@@ -200,7 +209,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * @return Value of the rule as a JSON string.
      */
     public String evalRule(String rule) {
-        return nativeEvalRule(enginePtr, rule);
+        return nativeEvalRule(requireOpen(), rule);
     }
     
     /**
@@ -210,7 +219,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * 
      */
     public void setEnableCoverage(boolean enable) {
-        nativeSetEnableCoverage(enginePtr, enable);
+        nativeSetEnableCoverage(requireOpen(), enable);
     }
     
     /**
@@ -218,7 +227,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * 
      */
     public void clearCoverageData() {
-        nativeClearCoverageData(enginePtr);
+        nativeClearCoverageData(requireOpen());
     }
     
     /**
@@ -228,7 +237,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * 
      */
     public String getCoverageReport() {
-        return nativeGetCoverageReport(enginePtr);
+        return nativeGetCoverageReport(requireOpen());
     }
     
     /**
@@ -238,7 +247,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * 
      */
     public String getCoverageReportPretty() {
-        return nativeGetCoverageReportPretty(enginePtr);
+        return nativeGetCoverageReportPretty(requireOpen());
     }
     
     /**
@@ -248,7 +257,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * 
      */
     public void setGatherPrints(boolean b) {
-        nativeSetGatherPrints(enginePtr, b);
+        nativeSetGatherPrints(requireOpen(), b);
     }
     
     /**
@@ -258,7 +267,7 @@ public class Engine implements AutoCloseable, Cloneable {
      * 
      */
     public String takePrints() {
-        return nativeTakePrints(enginePtr);
+        return nativeTakePrints(requireOpen());
     }
 
     /**
@@ -267,24 +276,34 @@ public class Engine implements AutoCloseable, Cloneable {
      * @param config Policy length configuration.
      */
     public void setPolicyLengthConfig(PolicyLengthConfig config) {
-        nativeSetPolicyLengthConfig(enginePtr, config.maxCol, config.maxFileBytes, config.maxLines);
+        nativeSetPolicyLengthConfig(requireOpen(), config.maxCol, config.maxFileBytes, config.maxLines);
     }
 
     /**
      * Clear the policy length configuration, reverting to defaults.
      */
     public void clearPolicyLengthConfig() {
-        nativeClearPolicyLengthConfig(enginePtr);
+        nativeClearPolicyLengthConfig(requireOpen());
     }
 
     long getPtr() {
+        return requireOpen();
+    }
+
+    private long requireOpen() {
+        if (enginePtr == 0) {
+            throw new IllegalStateException("Engine is closed");
+        }
         return enginePtr;
     }
 
     
     @Override
     public void close() {
-        nativeDestroyEngine(enginePtr);
+        if (enginePtr != 0) {
+            nativeDestroyEngine(enginePtr);
+            enginePtr = 0;
+        }
     }
 
     // Loading native library from JAR is adapted from:

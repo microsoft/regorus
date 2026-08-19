@@ -80,6 +80,10 @@ namespace regorus {
 	    return std::unique_ptr<Engine>(new Engine(regorus_engine_clone(engine)));
 	}
 
+	Result prepare() {
+	    return Result(regorus_engine_prepare(engine));
+	}
+
 	Result set_rego_v0(bool enable) {
 		return Result(regorus_engine_set_rego_v0(engine, enable));
 	}

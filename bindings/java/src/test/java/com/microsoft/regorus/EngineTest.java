@@ -22,8 +22,19 @@ public class EngineTest extends TestCase
                 "package test\nmessage = concat(\", \", [input.message, data.message])"
             );
             engine.addDataJson("{\"message\":\"World!\"}");
+            engine.prepare();
             engine.setInputJson("{\"message\":\"Hello\"}");
             resJson = engine.evalQuery("data.test.message");
+
+            try (Engine template = engine.clone()) {
+                template.setInputJson("{\"message\":\"Hi\"}");
+                String templateResJson = template.evalQuery("data.test.message");
+                Map templateRes = new Gson().fromJson(templateResJson, Map.class);
+                ArrayList templateResults = (ArrayList) templateRes.get("result");
+                ArrayList templateExpressions = (ArrayList) ((Map) templateResults.get(0)).get("expressions");
+                Map templateExpression = (Map) templateExpressions.get(0);
+                Assert.assertEquals("Hi, World!", templateExpression.get("value"));
+            }
         }
 
         Gson gson = new Gson();
@@ -32,5 +43,29 @@ public class EngineTest extends TestCase
         ArrayList expressions = (ArrayList) ((Map) results.get(0)).get("expressions");
         Map expression = (Map) expressions.get(0);
         Assert.assertEquals("Hello, World!", expression.get("value"));
+    }
+
+    public void test_closed_engine_operations_throw()
+    {
+        Engine engine = new Engine();
+        engine.close();
+
+        try {
+            engine.prepare();
+            fail("prepare should fail on closed engine");
+        } catch (IllegalStateException expected) {
+        }
+
+        try {
+            engine.clone();
+            fail("clone should fail on closed engine");
+        } catch (IllegalStateException expected) {
+        }
+
+        try {
+            engine.evalQuery("data");
+            fail("evalQuery should fail on closed engine");
+        } catch (IllegalStateException expected) {
+        }
     }
 }
