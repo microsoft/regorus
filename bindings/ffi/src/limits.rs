@@ -4,6 +4,8 @@
 use crate::common::{to_regorus_result, RegorusResult, RegorusStatus};
 use alloc::format;
 use anyhow::{anyhow, Result};
+#[cfg(feature = "allocator-memory-limits")]
+use core::num::NonZeroU64;
 use core::num::{NonZeroU32, NonZeroUsize};
 use core::time::Duration;
 use regorus::utils::limits::{self, ExecutionTimerConfig};
@@ -145,6 +147,23 @@ pub struct RegorusExecutionTimerConfig {
     pub check_interval: u32,
 }
 
+/// FFI representation of [`regorus::MemoryBudgetConfig`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct RegorusMemoryBudgetConfig {
+    /// Maximum additional live bytes allowed during one execution.
+    pub limit_bytes: u64,
+}
+
+#[cfg(feature = "allocator-memory-limits")]
+impl RegorusMemoryBudgetConfig {
+    pub fn to_memory_budget_config(self) -> Result<regorus::MemoryBudgetConfig> {
+        let limit = NonZeroU64::new(self.limit_bytes)
+            .ok_or_else(|| anyhow!("memory_budget.limit_bytes must be non-zero"))?;
+        Ok(regorus::MemoryBudgetConfig { limit })
+    }
+}
+
 impl RegorusExecutionTimerConfig {
     pub fn to_execution_timer_config(self) -> Result<ExecutionTimerConfig> {
         let check_interval = NonZeroU32::new(self.check_interval)
@@ -235,6 +254,8 @@ pub extern "C" fn regorus_clear_cache() -> RegorusResult {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "allocator-memory-limits")]
+    use super::RegorusMemoryBudgetConfig;
     use super::{
         optional_u64_to_result, regorus_get_global_memory_limit, regorus_set_global_memory_limit,
     };
@@ -254,6 +275,13 @@ mod tests {
         assert!(!result.bool_value);
         assert!(matches!(result.data_type, RegorusDataType::None));
         assert_eq!(result.int_value, 0);
+    }
+
+    #[cfg(feature = "allocator-memory-limits")]
+    #[test]
+    fn memory_budget_must_be_non_zero() {
+        let config = RegorusMemoryBudgetConfig { limit_bytes: 0 };
+        assert!(config.to_memory_budget_config().is_err());
     }
 
     #[test]

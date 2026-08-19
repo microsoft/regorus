@@ -105,6 +105,29 @@ var result = vm.Execute();
 Console.WriteLine($"allow: {result}");
 ```
 
+### Per-execution memory budget
+
+RVM run-to-completion evaluation can use an optional additional live-memory budget. Each call to `Execute` or `ExecuteEntryPoint` starts with a fresh budget. Program compilation and data/input loading are not charged.
+
+```csharp
+using var vm = new Rvm();
+vm.LoadProgram(program);
+vm.SetDataJson(Data);
+vm.SetInputJson(Input);
+vm.SetMemoryBudgetConfig(new MemoryBudgetConfig(16 * 1024 * 1024));
+
+try
+{
+    var result = vm.Execute();
+}
+catch (RegorusMemoryBudgetExceededException ex)
+{
+    Console.WriteLine(ex.Message);
+}
+```
+
+The budget is cooperative and may overshoot between VM checks. It is not supported in suspendable execution mode. `ClearMemoryBudgetConfig` restores the previous unlimited per-execution behavior. The process-wide limit exposed by `MemoryLimits` remains a separate safeguard.
+
 ## Azure RBAC Condition Evaluation
 
 Evaluate Azure RBAC condition expressions directly with a JSON evaluation context:

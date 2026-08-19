@@ -24,6 +24,7 @@ impl RegoVM {
             err,
             VmError::TimeLimitExceeded { .. }
                 | VmError::MemoryLimitExceeded { .. }
+                | VmError::MemoryBudgetExceeded { .. }
                 | VmError::RegexSizeLimitExceeded { .. }
                 | VmError::InstructionLimitExceeded { .. }
         )

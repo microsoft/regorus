@@ -43,6 +43,9 @@ pub enum RegorusStatus {
 
     /// The engine remains poisoned because a previous panic was detected.
     Poisoned,
+
+    /// An RVM execution exceeded its configured memory budget.
+    MemoryBudgetExceeded,
 }
 
 /// Type of data contained in RegorusResult

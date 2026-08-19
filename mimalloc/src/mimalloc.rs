@@ -9,9 +9,9 @@ use mimalloc_sys::{
 
 #[cfg(feature = "allocator-memory-limits")]
 pub use crate::limits::{
-    allocation_stats_snapshot, current_thread_allocation_stats, flush_thread_counters,
-    global_allocation_stats_snapshot, record_alloc, record_free, set_thread_flush_threshold,
-    GlobalAllocationStats, ThreadAllocationStats,
+    allocation_stats_snapshot, current_thread_allocation_stats, current_thread_live_bytes,
+    flush_thread_counters, global_allocation_stats_snapshot, record_alloc, record_free,
+    set_thread_flush_threshold, GlobalAllocationStats, ThreadAllocationStats,
 };
 pub struct Mimalloc;
 

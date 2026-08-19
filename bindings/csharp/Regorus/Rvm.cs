@@ -145,6 +145,38 @@ namespace Regorus
         }
 
         /// <summary>
+        /// Configure a fresh memory budget for every run-to-completion execution.
+        /// </summary>
+        /// <param name="config">Memory-budget configuration.</param>
+        public void SetMemoryBudgetConfig(MemoryBudgetConfig config)
+        {
+            var nativeConfig = config.ToNative();
+            UseHandle(vmPtr =>
+            {
+                CheckAndDropResult(API.regorus_rvm_set_memory_budget_config(
+                    (RegorusRvm*)vmPtr,
+                    has_config: true,
+                    nativeConfig));
+                return 0;
+            });
+        }
+
+        /// <summary>
+        /// Clear the per-execution memory budget.
+        /// </summary>
+        public void ClearMemoryBudgetConfig()
+        {
+            UseHandle(vmPtr =>
+            {
+                CheckAndDropResult(API.regorus_rvm_set_memory_budget_config(
+                    (RegorusRvm*)vmPtr,
+                    has_config: false,
+                    default));
+                return 0;
+            });
+        }
+
+        /// <summary>
         /// Execute the program and return the JSON result.
         /// </summary>
         public string? Execute()

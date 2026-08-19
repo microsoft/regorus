@@ -14,12 +14,14 @@ mod time;
 #[allow(unused_imports)]
 pub use error::LimitError;
 
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+pub(crate) use memory::current_thread_live_bytes;
 #[allow(unused_imports)]
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 pub use memory::{
     check_global_memory_limit, enforce_memory_limit, flush_thread_memory_counters,
     global_memory_limit, set_global_memory_limit, set_thread_flush_threshold_override,
-    thread_memory_flush_threshold,
+    thread_memory_flush_threshold, MemoryBudgetConfig,
 };
 
 #[allow(unused_imports)]

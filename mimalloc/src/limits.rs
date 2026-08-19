@@ -211,6 +211,11 @@ pub fn current_thread_allocation_stats() -> ThreadAllocationStats {
     allocation_stats_snapshot().1
 }
 
+/// Return the current thread's live-byte count without publishing counters globally.
+pub fn current_thread_live_bytes() -> i64 {
+    THREAD_COUNTERS.with(|counters| counters.allocated.get())
+}
+
 /// Return the unflushed allocation delta for the current thread.
 pub fn thread_allocation_pending_delta() -> i64 {
     THREAD_COUNTERS.with(|counters| counters.pending_delta())
@@ -264,4 +269,24 @@ pub fn set_thread_flush_threshold(bytes: Option<u64>) {
 pub fn thread_flush_threshold() -> Option<u64> {
     let value = THREAD_FLUSH_THRESHOLD.load(Ordering::Relaxed);
     (value > 0).then_some(value as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{current_thread_live_bytes, record_alloc, record_free};
+
+    #[test]
+    fn current_thread_live_bytes_tracks_usage_without_a_snapshot() {
+        const SIZE: usize = 4096;
+        let before = current_thread_live_bytes();
+
+        record_alloc(SIZE);
+        assert_eq!(
+            current_thread_live_bytes(),
+            before.saturating_add(SIZE as i64)
+        );
+
+        record_free(SIZE);
+        assert_eq!(current_thread_live_bytes(), before);
+    }
 }
