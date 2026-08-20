@@ -18,6 +18,7 @@ namespace Regorus.Internal
                 RegorusStatus.Panic => new InvalidOperationException($"Regorus engine panicked: {details}"),
                 RegorusStatus.Poisoned => new InvalidOperationException($"Regorus engine is poisoned: {details}"),
                 RegorusStatus.MemoryBudgetExceeded => new RegorusMemoryBudgetExceededException(details),
+                RegorusStatus.MemoryBudgetUnsupportedInSuspendableExecution => new RegorusMemoryBudgetUnsupportedException(details),
                 _ => new InvalidOperationException(details),
             };
         }

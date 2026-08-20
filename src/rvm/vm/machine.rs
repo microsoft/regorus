@@ -27,9 +27,6 @@ use super::execution_model::{
     BreakpointSet, ExecutionMode, ExecutionStack, ExecutionState, SuspendReason,
 };
 
-#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-const MEMORY_BUDGET_CHECK_STRIDE: u32 = 16;
-
 /// The Rego Virtual Machine
 #[derive(Debug)]
 pub struct RegoVM {
@@ -144,9 +141,9 @@ pub struct RegoVM {
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) memory_budget_baseline: i64,
 
-    /// Number of dispatch checks since the last memory-budget sample
+    /// Whether the current baseline belongs to an active run-to-completion execution
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    pub(super) memory_budget_ticks: u32,
+    pub(super) memory_budget_active: bool,
 
     /// Cached dummy span for builtin calls (avoids Source::from_contents per call)
     pub(super) dummy_span: Option<crate::lexer::Span>,
@@ -219,7 +216,7 @@ impl RegoVM {
             #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
             memory_budget_baseline: 0,
             #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-            memory_budget_ticks: 0,
+            memory_budget_active: false,
             dummy_span: None,
             dummy_exprs: Vec::new(),
             cached_builtin_args: Vec::new(),
@@ -427,13 +424,16 @@ impl RegoVM {
 
     /// Configure a fresh memory budget for every run-to-completion execution.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    pub fn set_memory_budget_config(&mut self, config: Option<MemoryBudgetConfig>) {
+    #[cfg_attr(docsrs, doc(cfg(feature = "allocator-memory-limits")))]
+    pub const fn set_memory_budget_config(&mut self, config: Option<MemoryBudgetConfig>) {
         self.memory_budget_config = config;
-        self.reset_memory_budget_state();
+        self.memory_budget_baseline = 0;
+        self.memory_budget_active = false;
     }
 
     /// Return the configured per-execution memory budget.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "allocator-memory-limits")))]
     pub const fn memory_budget_config(&self) -> Option<MemoryBudgetConfig> {
         self.memory_budget_config
     }
@@ -445,7 +445,7 @@ impl RegoVM {
         } else {
             0
         };
-        self.memory_budget_ticks = 0;
+        self.memory_budget_active = self.memory_budget_config.is_some();
     }
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
@@ -459,38 +459,46 @@ impl RegoVM {
         Ok(())
     }
 
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    pub(super) const fn ensure_memory_budget_resume_supported(&self) -> Result<()> {
+        if self.memory_budget_config.is_some() {
+            return Err(VmError::MemoryBudgetUnsupportedInSuspendableExecution { pc: self.pc });
+        }
+
+        Ok(())
+    }
+
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     #[allow(clippy::unused_self)]
     pub(super) const fn ensure_memory_budget_execution_mode(&self) -> Result<()> {
         Ok(())
     }
 
-    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    fn check_memory_budget_if_needed(&mut self) -> Result<()> {
-        if self.memory_budget_config.is_none() {
-            self.memory_budget_ticks = 0;
-            return Ok(());
-        }
-
-        let next = self.memory_budget_ticks.saturating_add(1);
-        if next < MEMORY_BUDGET_CHECK_STRIDE {
-            self.memory_budget_ticks = next;
-            return Ok(());
-        }
-
-        self.memory_budget_ticks = 0;
-        self.check_memory_budget_now()
+    #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
+    #[allow(clippy::unused_self)]
+    pub(super) const fn ensure_memory_budget_resume_supported(&self) -> Result<()> {
+        Ok(())
     }
 
+    /// Check the configured budget against the latest run-to-completion execution baseline.
+    ///
+    /// Bindings can call this on the execution thread after result serialization so their
+    /// marshaling allocations are included before returning success.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    pub(super) fn check_memory_budget_now(&self) -> Result<()> {
-        let Some(config) = self.memory_budget_config else {
+    #[cfg_attr(docsrs, doc(cfg(feature = "allocator-memory-limits")))]
+    pub fn check_memory_budget(&mut self) -> Result<()> {
+        let Some(config) = self
+            .memory_budget_config
+            .filter(|_| self.memory_budget_active)
+        else {
             return Ok(());
         };
 
         let current = limits::current_thread_live_bytes();
-        let usage =
-            u64::try_from(current.saturating_sub(self.memory_budget_baseline)).unwrap_or_default();
+        self.memory_budget_baseline = self.memory_budget_baseline.min(current);
+        let usage = current
+            .saturating_sub(self.memory_budget_baseline)
+            .unsigned_abs();
         let budget = config.limit.get();
         if usage > budget {
             return Err(VmError::MemoryBudgetExceeded {
@@ -504,9 +512,9 @@ impl RegoVM {
     }
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    pub(super) fn apply_memory_budget_precedence(&self, err: VmError) -> VmError {
+    pub(super) fn apply_memory_budget_precedence(&mut self, err: VmError) -> VmError {
         if matches!(err, VmError::MemoryLimitExceeded { .. }) {
-            self.check_memory_budget_now().err().unwrap_or(err)
+            self.check_memory_budget().err().unwrap_or(err)
         } else {
             err
         }
@@ -514,13 +522,13 @@ impl RegoVM {
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     #[allow(clippy::unused_self)]
-    pub(super) const fn check_memory_budget_now(&self) -> Result<()> {
+    pub(super) const fn check_memory_budget(&mut self) -> Result<()> {
         Ok(())
     }
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     #[allow(clippy::unused_self)]
-    pub(super) fn apply_memory_budget_precedence(&self, err: VmError) -> VmError {
+    pub(super) fn apply_memory_budget_precedence(&mut self, err: VmError) -> VmError {
         err
     }
 
@@ -663,7 +671,7 @@ impl RegoVM {
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn memory_check(&mut self) -> Result<()> {
-        self.check_memory_budget_if_needed()?;
+        self.check_memory_budget()?;
         limits::check_memory_limit_if_needed()
             .map_err(|err| match err {
                 LimitError::MemoryLimitExceeded { usage, limit } => VmError::MemoryLimitExceeded {
@@ -723,5 +731,70 @@ impl RegoVM {
                 }));
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "allocator-memory-limits", not(miri)))]
+mod memory_budget_tests {
+    use super::RegoVM;
+    use super::VmError;
+    use crate::MemoryBudgetConfig;
+    use alloc::vec;
+    use core::num::NonZeroU64;
+
+    #[test]
+    fn foreign_free_observed_before_allocation_does_not_grant_budget_credit() -> anyhow::Result<()>
+    {
+        const FOREIGN_ALLOCATION_BYTES: usize = 512 * 1024;
+        const LOCAL_ALLOCATION_BYTES: usize = 256 * 1024;
+        const BUDGET_BYTES: u64 = 128 * 1024;
+
+        let foreign_allocation =
+            std::thread::spawn(|| vec![0_u8; FOREIGN_ALLOCATION_BYTES].into_boxed_slice())
+                .join()
+                .map_err(|_| anyhow::anyhow!("allocation thread panicked"))?;
+
+        let mut vm = RegoVM::new();
+        vm.set_memory_budget_config(Some(MemoryBudgetConfig {
+            limit: NonZeroU64::new(BUDGET_BYTES).unwrap_or(NonZeroU64::MIN),
+        }));
+        vm.reset_memory_budget_state();
+
+        drop(foreign_allocation);
+        vm.check_memory_budget()?;
+
+        let local_allocation = vec![0_u8; LOCAL_ALLOCATION_BYTES];
+        core::hint::black_box(&local_allocation);
+
+        match vm.check_memory_budget() {
+            Err(VmError::MemoryBudgetExceeded { .. }) => Ok(()),
+            Err(err) => Err(anyhow::anyhow!("unexpected memory budget error: {err}")),
+            Ok(()) => Err(anyhow::anyhow!("expected memory budget exhaustion")),
+        }
+    }
+
+    #[test]
+    fn memory_budget_error_takes_precedence_over_global_limit_error() {
+        const ALLOCATION_BYTES: usize = 256 * 1024;
+        const ALLOCATION_BYTES_U64: u64 = 256 * 1024;
+        const BUDGET_BYTES: u64 = 128 * 1024;
+
+        let mut vm = RegoVM::new();
+        vm.set_memory_budget_config(Some(MemoryBudgetConfig {
+            limit: NonZeroU64::new(BUDGET_BYTES).unwrap_or(NonZeroU64::MIN),
+        }));
+        vm.reset_memory_budget_state();
+
+        let allocation = vec![0_u8; ALLOCATION_BYTES];
+        core::hint::black_box(&allocation);
+
+        assert!(matches!(
+            vm.apply_memory_budget_precedence(VmError::MemoryLimitExceeded {
+                usage: ALLOCATION_BYTES_U64,
+                limit: BUDGET_BYTES,
+                pc: 0,
+            }),
+            VmError::MemoryBudgetExceeded { .. }
+        ));
     }
 }

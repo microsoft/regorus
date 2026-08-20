@@ -18,6 +18,7 @@ pub use error::LimitError;
 pub(crate) use memory::current_thread_live_bytes;
 #[allow(unused_imports)]
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+#[cfg_attr(docsrs, doc(cfg(feature = "allocator-memory-limits")))]
 pub use memory::{
     check_global_memory_limit, enforce_memory_limit, flush_thread_memory_counters,
     global_memory_limit, set_global_memory_limit, set_thread_flush_threshold_override,

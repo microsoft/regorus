@@ -34,7 +34,7 @@ namespace Regorus
         {
             if (LimitBytes == 0)
             {
-                throw new InvalidOperationException("Memory budget must be non-zero.");
+                throw new ArgumentOutOfRangeException(nameof(LimitBytes), "Memory budget must be non-zero.");
             }
 
             return new Regorus.Internal.RegorusMemoryBudgetConfig

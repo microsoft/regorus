@@ -11,6 +11,8 @@ namespace Regorus.Tests;
 [TestClass]
 public sealed class RvmMemoryBudgetTests
 {
+    private const ulong TightMemoryBudgetBytes = 64 * 1024;
+
     private const string Policy = """
 package limits.memory
 import rego.v1
@@ -24,6 +26,9 @@ large_array := json.unmarshal(data.large_json)
     public void Memory_budget_must_be_non_zero()
     {
         Assert.ThrowsException<ArgumentOutOfRangeException>(() => new MemoryBudgetConfig(0));
+
+        using var vm = new Rvm();
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() => vm.SetMemoryBudgetConfig(default));
     }
 
     [TestMethod]
@@ -31,9 +36,9 @@ large_array := json.unmarshal(data.large_json)
     {
         using var program = CreateProgram();
         using var vm = CreateRvm(program);
-        vm.SetMemoryBudgetConfig(new MemoryBudgetConfig(1));
+        vm.SetMemoryBudgetConfig(new MemoryBudgetConfig(TightMemoryBudgetBytes));
 
-        Assert.ThrowsException<RegorusMemoryBudgetExceededException>(() => vm.Execute());
+        Assert.ThrowsException<RegorusMemoryBudgetExceededException>(() => vm.ExecuteEntryPoint(EntryPoint));
     }
 
     [TestMethod]
@@ -41,12 +46,12 @@ large_array := json.unmarshal(data.large_json)
     {
         using var program = CreateProgram();
         using var vm = CreateRvm(program);
-        vm.SetMemoryBudgetConfig(new MemoryBudgetConfig(1));
-        Assert.ThrowsException<RegorusMemoryBudgetExceededException>(() => vm.Execute());
+        vm.SetMemoryBudgetConfig(new MemoryBudgetConfig(TightMemoryBudgetBytes));
+        Assert.ThrowsException<RegorusMemoryBudgetExceededException>(() => vm.ExecuteEntryPoint(EntryPoint));
 
         vm.ClearMemoryBudgetConfig();
 
-        var result = vm.Execute();
+        var result = vm.ExecuteEntryPoint(EntryPoint);
         Assert.IsFalse(string.IsNullOrWhiteSpace(result));
     }
 
@@ -57,8 +62,7 @@ large_array := json.unmarshal(data.large_json)
         vm.SetExecutionMode(ExecutionMode.Suspendable);
         vm.SetMemoryBudgetConfig(new MemoryBudgetConfig(1024));
 
-        var exception = Assert.ThrowsException<InvalidOperationException>(() => vm.Execute());
-        StringAssert.Contains(exception.Message, "not supported for suspendable execution");
+        Assert.ThrowsException<RegorusMemoryBudgetUnsupportedException>(() => vm.Execute());
     }
 
     private static Program CreateProgram()

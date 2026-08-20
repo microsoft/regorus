@@ -46,6 +46,9 @@ pub enum RegorusStatus {
 
     /// An RVM execution exceeded its configured memory budget.
     MemoryBudgetExceeded,
+
+    /// An RVM memory budget was used with suspendable execution.
+    MemoryBudgetUnsupportedInSuspendableExecution,
 }
 
 /// Type of data contained in RegorusResult

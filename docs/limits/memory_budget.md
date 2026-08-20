@@ -19,13 +19,17 @@ No configured budget preserves existing RVM behavior. A zero-byte budget is not 
 
 ## Included work
 
-The budget starts when RVM execution begins. Allocations retained by rule evaluation and its result count against the budget.
+The budget starts when RVM execution begins. Fresh execution-state initialization, rule evaluation, and allocations retained by the result count against the budget.
 
 Program compilation, program loading, data loading, input loading, and context loading happen before the execution baseline and are not charged.
 
+The C FFI and C# bindings also check the budget after result JSON serialization and native string marshaling, before returning success.
+
 ## Enforcement
 
-Regorus checks the budget cooperatively during VM dispatch and once before returning a successful result. Enforcement can overshoot between checks. A short-lived allocation created and freed inside one instruction may not be observed.
+Regorus checks the budget at every VM memory checkpoint and once before returning a successful result. This is cooperative enforcement, not an allocation-time hard cap: a single instruction or builtin can overshoot the budget by an unbounded amount before the next checkpoint. A short-lived allocation created and freed entirely inside one instruction may not be observed.
+
+Accounting uses the execution thread's live-byte counter rather than allocation ownership. When a sample falls below the baseline, Regorus lowers the baseline so an already-observed foreign free does not grant credit to later work. A foreign free can still offset evaluation allocations when both occur between samples because the allocator does not retain execution ownership for each allocation. The control therefore bounds observed additional live bytes on the execution thread, not memory attributed to an execution across threads.
 
 Exhaustion returns `VmError::MemoryBudgetExceeded`, including:
 
@@ -37,7 +41,7 @@ The C FFI reports `RegorusStatus::MemoryBudgetExceeded`. The C# binding throws `
 
 ## Execution modes
 
-The first implementation supports run-to-completion execution only. Configuring a budget and executing in suspendable mode returns `VmError::MemoryBudgetUnsupportedInSuspendableExecution`.
+The first implementation supports run-to-completion execution only. Configuring a budget and starting or resuming suspendable execution returns `VmError::MemoryBudgetUnsupportedInSuspendableExecution`. The FFI reports `RegorusStatus::MemoryBudgetUnsupportedInSuspendableExecution`, and C# throws `RegorusMemoryBudgetUnsupportedException`.
 
 Suspendable execution may resume on another thread. A thread-local baseline cannot safely span that migration without evaluation-owned allocation attribution.
 

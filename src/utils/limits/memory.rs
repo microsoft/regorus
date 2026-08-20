@@ -17,6 +17,7 @@ const MEMORY_CHECK_DELTA_BYTES: u64 = 32 * 1024;
 
 /// Configuration for a fresh RVM memory budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(docsrs, doc(cfg(feature = "allocator-memory-limits")))]
 pub struct MemoryBudgetConfig {
     /// Maximum additional live bytes allowed during one execution.
     pub limit: NonZeroU64,

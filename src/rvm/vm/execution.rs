@@ -61,7 +61,7 @@ impl RegoVM {
                 let result = self
                     .jump_to(entry_point_pc_u32)
                     .map_err(|err| self.apply_memory_budget_precedence(err))?;
-                self.check_memory_budget_now()?;
+                self.check_memory_budget()?;
                 Ok(result)
             }
             ExecutionMode::Suspendable => {
@@ -110,7 +110,7 @@ impl RegoVM {
                 let result = self
                     .jump_to(entry_point_pc_u32)
                     .map_err(|err| self.apply_memory_budget_precedence(err))?;
-                self.check_memory_budget_now()?;
+                self.check_memory_budget()?;
                 Ok(result)
             }
             ExecutionMode::Suspendable => {
@@ -181,7 +181,7 @@ impl RegoVM {
             .jump_to(0_u32)
             .map_err(|err| self.apply_memory_budget_precedence(err))
             .and_then(|value| {
-                self.check_memory_budget_now()?;
+                self.check_memory_budget()?;
                 Ok(value)
             });
         match result {
@@ -228,6 +228,8 @@ impl RegoVM {
     }
 
     pub fn resume(&mut self, resume_value: Option<Value>) -> Result<Value> {
+        self.ensure_memory_budget_resume_supported()?;
+
         // Precondition is enforced below by returning `VmError::InvalidResumeState`
         // for any non-`Suspended` state. A `debug_assert!` here would diverge
         // debug vs release behavior and, when invoked via FFI, would trip the

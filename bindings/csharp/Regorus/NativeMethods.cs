@@ -251,6 +251,8 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_memory_budget_config", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_rvm_set_memory_budget_config(RegorusRvm* vm, [MarshalAs(UnmanagedType.I1)] bool has_config, RegorusMemoryBudgetConfig config);
+
+        /// <summary>
         /// Add a policy.
         /// The policy is parsed into AST.
         /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.add_policy
@@ -838,6 +840,10 @@ namespace Regorus.Internal
         /// An RVM execution exceeded its configured memory budget.
         /// </summary>
         MemoryBudgetExceeded,
+        /// <summary>
+        /// An RVM memory budget was used with suspendable execution.
+        /// </summary>
+        MemoryBudgetUnsupportedInSuspendableExecution,
     }
 
     /// <summary>
