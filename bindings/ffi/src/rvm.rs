@@ -1,12 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+use crate::common::regorus_result_drop;
 use crate::common::{
     from_c_str, to_ref, to_regorus_result, to_shared_ref, RegorusBuffer, RegorusResult,
     RegorusStatus,
 };
-#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-use crate::common::regorus_result_drop;
 use crate::compile::RegorusPolicyModule;
 use crate::compiled_policy::RegorusCompiledPolicy;
 use crate::limits::{RegorusExecutionTimerConfig, RegorusMemoryBudgetConfig};
