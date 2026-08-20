@@ -38,6 +38,8 @@
 
 use std::hint::black_box;
 use std::num::NonZeroU32;
+#[cfg(feature = "allocator-memory-limits")]
+use std::num::NonZeroU64;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -50,6 +52,8 @@ use regorus::languages::rego::compiler::Compiler;
 use regorus::rvm::program::Program;
 use regorus::rvm::vm::{ExecutionMode, RegoVM};
 use regorus::utils::limits::ExecutionTimerConfig;
+#[cfg(feature = "allocator-memory-limits")]
+use regorus::MemoryBudgetConfig;
 use regorus::{Engine, Rc, Value};
 
 // ---------------------------------------------------------------------------
@@ -68,28 +72,39 @@ struct EvalConfig {
     name: &'static str,
     mode: ExecutionMode,
     limits: bool,
+    memory_budget: bool,
 }
 
-const EVAL_CONFIGS: [EvalConfig; 4] = [
+const EVAL_CONFIGS: [EvalConfig; 5] = [
     EvalConfig {
         name: "regular_no_limits",
         mode: ExecutionMode::RunToCompletion,
         limits: false,
+        memory_budget: false,
+    },
+    EvalConfig {
+        name: "regular_memory_budget",
+        mode: ExecutionMode::RunToCompletion,
+        limits: false,
+        memory_budget: true,
     },
     EvalConfig {
         name: "regular_with_limits",
         mode: ExecutionMode::RunToCompletion,
         limits: true,
+        memory_budget: true,
     },
     EvalConfig {
         name: "suspendable_no_limits",
         mode: ExecutionMode::Suspendable,
         limits: false,
+        memory_budget: false,
     },
     EvalConfig {
         name: "suspendable_with_limits",
         mode: ExecutionMode::Suspendable,
         limits: true,
+        memory_budget: false,
     },
 ];
 
@@ -358,9 +373,9 @@ fn compile_all_programs() -> Vec<BenchmarkProgram> {
 // Limit helpers
 // ---------------------------------------------------------------------------
 
-/// Apply or remove production-style limits based on a boolean flag.
-fn configure_limits(vm: &mut RegoVM, limits: bool) {
-    if limits {
+/// Apply the limits selected for one benchmark configuration.
+fn configure_limits(vm: &mut RegoVM, config: EvalConfig) {
+    if config.limits {
         #[cfg(feature = "allocator-memory-limits")]
         regorus::set_global_memory_limit(Some(MEMORY_LIMIT_BYTES));
         vm.set_execution_timer_config(Some(ExecutionTimerConfig {
@@ -374,6 +389,11 @@ fn configure_limits(vm: &mut RegoVM, limits: bool) {
         vm.set_execution_timer_config(None);
         vm.set_max_instructions(usize::MAX);
     }
+
+    #[cfg(feature = "allocator-memory-limits")]
+    vm.set_memory_budget_config(config.memory_budget.then(|| MemoryBudgetConfig {
+        limit: NonZeroU64::new(MEMORY_LIMIT_BYTES).expect("non-zero memory budget"),
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +428,7 @@ fn bench_cold(c: &mut Criterion) {
                             vm.set_data(black_box(d.clone())).unwrap();
                         }
                         vm.set_input(black_box(input.clone()));
-                        configure_limits(&mut vm, config.limits);
+                        configure_limits(&mut vm, config);
                         black_box(vm.execute().unwrap())
                     })
                 });
@@ -445,7 +465,7 @@ fn bench_hot(c: &mut Criterion) {
                 if let Some(ref d) = data {
                     vm.set_data(d.clone()).unwrap();
                 }
-                configure_limits(&mut vm, config.limits);
+                configure_limits(&mut vm, config);
 
                 // Warm up: fill register window pools, caches, etc.
                 vm.set_input(inputs[0].clone());

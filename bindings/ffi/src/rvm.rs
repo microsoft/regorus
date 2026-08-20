@@ -1,13 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+use crate::common::regorus_result_drop;
 use crate::common::{
     from_c_str, to_ref, to_regorus_result, to_shared_ref, RegorusBuffer, RegorusResult,
     RegorusStatus,
 };
 use crate::compile::RegorusPolicyModule;
 use crate::compiled_policy::RegorusCompiledPolicy;
-use crate::limits::RegorusExecutionTimerConfig;
+use crate::limits::{RegorusExecutionTimerConfig, RegorusMemoryBudgetConfig};
 use crate::lock::{new_handle, try_read, try_write, Handle, ReadGuard, WriteGuard};
 use crate::panic_guard::with_unwind_guard;
 use alloc::boxed::Box;
@@ -23,7 +25,7 @@ use regorus::rvm::program::{
     generate_assembly_listing, generate_tabular_assembly_listing, AssemblyListingConfig,
     DeserializationResult, Program,
 };
-use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM};
+use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, VmError};
 use regorus::PolicyModule;
 use regorus::Value;
 
@@ -53,6 +55,50 @@ impl RegorusRvm {
 
     fn try_read(&self) -> Result<ReadGuard<'_, RegoVM>> {
         try_read(&self.vm).ok_or_else(Self::contention_error)
+    }
+}
+
+fn to_rvm_string_result(output: Result<String>) -> RegorusResult {
+    match output {
+        Ok(json) => RegorusResult::ok_string(json),
+        Err(err) => to_rvm_error_result(err),
+    }
+}
+
+fn to_rvm_error_result(err: anyhow::Error) -> RegorusResult {
+    let status = match err.downcast_ref::<VmError>() {
+        Some(VmError::MemoryBudgetExceeded { .. }) => RegorusStatus::MemoryBudgetExceeded,
+        Some(VmError::MemoryBudgetUnsupportedInSuspendableExecution { .. }) => {
+            RegorusStatus::MemoryBudgetUnsupportedInSuspendableExecution
+        }
+        _ => RegorusStatus::Error,
+    };
+    RegorusResult::err_with_message(status, err.to_string())
+}
+
+fn execute_to_rvm_result<F>(vm: *mut RegorusRvm, execute: F) -> RegorusResult
+where
+    F: FnOnce(&mut RegoVM) -> core::result::Result<Value, VmError>,
+{
+    let output = || -> Result<RegorusResult> {
+        let vm = to_shared_ref(vm as *const RegorusRvm)?;
+        let mut guard = vm.try_write()?;
+        let value = execute(&mut guard)?;
+        let json = value.to_json_str()?;
+        let result = RegorusResult::ok_string(json);
+
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        if let Err(err) = guard.check_memory_budget() {
+            regorus_result_drop(result);
+            return Err(err.into());
+        }
+
+        Ok(result)
+    }();
+
+    match output {
+        Ok(result) => result,
+        Err(err) => to_rvm_error_result(err),
     }
 }
 
@@ -478,22 +524,57 @@ pub extern "C" fn regorus_rvm_set_execution_timer_config(
     })
 }
 
+/// Configure the per-VM memory budget for run-to-completion execution.
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+#[no_mangle]
+pub extern "C" fn regorus_rvm_set_memory_budget_config(
+    vm: *mut RegorusRvm,
+    has_config: bool,
+    config: RegorusMemoryBudgetConfig,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        let config = if has_config {
+            match config.to_memory_budget_config() {
+                Ok(config) => Some(config),
+                Err(err) => {
+                    return RegorusResult::err_with_message(
+                        RegorusStatus::InvalidArgument,
+                        err.to_string(),
+                    )
+                }
+            }
+        } else {
+            None
+        };
+
+        to_regorus_result(|| -> Result<()> {
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
+            let mut guard = vm.try_write()?;
+            guard.set_memory_budget_config(config);
+            Ok(())
+        }())
+    })
+}
+
+/// Report that memory budgets are unavailable without allocator tracking.
+#[cfg(any(not(feature = "allocator-memory-limits"), miri))]
+#[no_mangle]
+pub extern "C" fn regorus_rvm_set_memory_budget_config(
+    _vm: *mut RegorusRvm,
+    _has_config: bool,
+    _config: RegorusMemoryBudgetConfig,
+) -> RegorusResult {
+    RegorusResult::err_with_message(
+        RegorusStatus::InvalidArgument,
+        "regorus_rvm_set_memory_budget_config unavailable: allocator memory tracking is disabled"
+            .into(),
+    )
+}
+
 /// Execute the program's main entry point.
 #[no_mangle]
 pub extern "C" fn regorus_rvm_execute(vm: *mut RegorusRvm) -> RegorusResult {
-    with_unwind_guard(|| {
-        let output = || -> Result<String> {
-            let vm = to_shared_ref(vm as *const RegorusRvm)?;
-            let mut guard = vm.try_write()?;
-            let result = guard.execute()?;
-            result.to_json_str()
-        }();
-
-        match output {
-            Ok(json) => RegorusResult::ok_string(json),
-            Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
-        }
-    })
+    with_unwind_guard(|| execute_to_rvm_result(vm, RegoVM::execute))
 }
 
 /// Execute a named entry point.
@@ -503,18 +584,11 @@ pub extern "C" fn regorus_rvm_execute_entry_point_by_name(
     entry_point: *const c_char,
 ) -> RegorusResult {
     with_unwind_guard(|| {
-        let output = || -> Result<String> {
-            let vm = to_shared_ref(vm as *const RegorusRvm)?;
-            let mut guard = vm.try_write()?;
-            let name = from_c_str(entry_point)?;
-            let result = guard.execute_entry_point_by_name(&name)?;
-            result.to_json_str()
-        }();
-
-        match output {
-            Ok(json) => RegorusResult::ok_string(json),
-            Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
-        }
+        let name = match from_c_str(entry_point) {
+            Ok(name) => name,
+            Err(err) => return to_rvm_error_result(err),
+        };
+        execute_to_rvm_result(vm, |guard| guard.execute_entry_point_by_name(&name))
     })
 }
 
@@ -525,17 +599,7 @@ pub extern "C" fn regorus_rvm_execute_entry_point_by_index(
     index: usize,
 ) -> RegorusResult {
     with_unwind_guard(|| {
-        let output = || -> Result<String> {
-            let vm = to_shared_ref(vm as *const RegorusRvm)?;
-            let mut guard = vm.try_write()?;
-            let result = guard.execute_entry_point_by_index(index)?;
-            result.to_json_str()
-        }();
-
-        match output {
-            Ok(json) => RegorusResult::ok_string(json),
-            Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
-        }
+        execute_to_rvm_result(vm, |guard| guard.execute_entry_point_by_index(index))
     })
 }
 
@@ -559,10 +623,7 @@ pub extern "C" fn regorus_rvm_resume(
             result.to_json_str()
         }();
 
-        match output {
-            Ok(json) => RegorusResult::ok_string(json),
-            Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
-        }
+        to_rvm_string_result(output)
     })
 }
 
@@ -582,6 +643,211 @@ pub extern "C" fn regorus_rvm_get_execution_state(vm: *mut RegorusRvm) -> Regoru
             Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
         }
     })
+}
+
+#[cfg(all(test, feature = "allocator-memory-limits", not(miri)))]
+mod tests {
+    use super::{
+        regorus_rvm_drop, regorus_rvm_execute, regorus_rvm_execute_entry_point_by_index,
+        regorus_rvm_execute_entry_point_by_name, regorus_rvm_new, regorus_rvm_resume,
+        regorus_rvm_set_memory_budget_config, RegorusRvm,
+    };
+    use crate::common::{regorus_result_drop, RegorusStatus};
+    use crate::limits::RegorusMemoryBudgetConfig;
+    use alloc::boxed::Box;
+    use alloc::ffi::CString;
+    use alloc::string::ToString;
+    use alloc::sync::Arc;
+    use alloc::vec;
+    use core::ptr;
+    use regorus::languages::rego::compiler::Compiler;
+    use regorus::rvm::instructions::Instruction;
+    use regorus::rvm::program::Program;
+    use regorus::rvm::vm::{ExecutionMode, RegoVM};
+    use regorus::{Engine, MemoryBudgetConfig, Rc, Value};
+
+    const POLICY: &str = r#"
+package limits.memory
+import rego.v1
+
+copy := [value | some value in input]
+"#;
+
+    const TIGHT_MEMORY_BUDGET_BYTES: u64 = 64 * 1024;
+
+    fn memory_budget(limit: u64) -> MemoryBudgetConfig {
+        MemoryBudgetConfig {
+            limit: core::num::NonZeroU64::new(limit).expect("non-zero budget"),
+        }
+    }
+
+    fn host_await_program() -> Arc<Program> {
+        let mut program = Program::new();
+        program.dispatch_window_size = 3;
+        program.max_rule_window_size = 3;
+        program.entry_points.insert("main".to_string(), 0);
+        program.literals = vec![Value::from("id"), Value::from(1)];
+        program.instructions = vec![
+            Instruction::Load {
+                dest: 0,
+                literal_idx: 0,
+            },
+            Instruction::Load {
+                dest: 1,
+                literal_idx: 1,
+            },
+            Instruction::HostAwait {
+                dest: 2,
+                arg: 1,
+                id: 0,
+            },
+            Instruction::Return { value: 2 },
+        ];
+        program.instruction_spans = vec![None; program.instructions.len()];
+        Arc::new(program)
+    }
+
+    fn preloaded_result_program() -> Arc<Program> {
+        let mut program = Program::new();
+        program.dispatch_window_size = 1;
+        program.max_rule_window_size = 1;
+        program.entry_points.insert("main".to_string(), 0);
+        program.literals = vec![Value::from("x".repeat(2 * 1024 * 1024))];
+        program.instructions = vec![
+            Instruction::Load {
+                dest: 0,
+                literal_idx: 0,
+            },
+            Instruction::Return { value: 0 },
+        ];
+        program.instruction_spans = vec![None; program.instructions.len()];
+        Arc::new(program)
+    }
+
+    #[test]
+    fn ffi_memory_budget_setter_validates_and_clears_configuration() {
+        let vm = regorus_rvm_new();
+
+        let result = regorus_rvm_set_memory_budget_config(
+            vm,
+            true,
+            RegorusMemoryBudgetConfig { limit_bytes: 0 },
+        );
+        assert!(matches!(result.status, RegorusStatus::InvalidArgument));
+        regorus_result_drop(result);
+
+        let result = regorus_rvm_set_memory_budget_config(
+            vm,
+            true,
+            RegorusMemoryBudgetConfig { limit_bytes: 1024 },
+        );
+        assert!(matches!(result.status, RegorusStatus::Ok));
+        regorus_result_drop(result);
+
+        let result = regorus_rvm_set_memory_budget_config(
+            vm,
+            false,
+            RegorusMemoryBudgetConfig { limit_bytes: 0 },
+        );
+        assert!(matches!(result.status, RegorusStatus::Ok));
+        regorus_result_drop(result);
+
+        regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn ffi_execution_reports_memory_budget_status() {
+        let entrypoint = Rc::from("data.limits.memory.copy");
+        let mut engine = Engine::new();
+        engine
+            .add_policy("memory_budget.rego".into(), POLICY.into())
+            .expect("add policy");
+        let compiled = engine
+            .compile_with_entrypoint(&entrypoint)
+            .expect("compile policy");
+        let program = Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()])
+            .expect("compile VM program");
+
+        let mut vm = RegoVM::new();
+        vm.load_program(program);
+        vm.set_input(
+            Value::from_json_str(&format!(
+                "[{}]",
+                (0..50_000)
+                    .map(|value| value.to_string())
+                    .collect::<alloc::vec::Vec<_>>()
+                    .join(",")
+            ))
+            .expect("parse input"),
+        );
+        vm.set_memory_budget_config(Some(memory_budget(TIGHT_MEMORY_BUDGET_BYTES)));
+
+        let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
+        let result = regorus_rvm_execute_entry_point_by_index(vm, 0);
+        assert!(matches!(result.status, RegorusStatus::MemoryBudgetExceeded));
+        assert!(result.output.is_null());
+        regorus_result_drop(result);
+        regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn ffi_result_serialization_is_included_in_memory_budget() {
+        let mut vm = RegoVM::new();
+        vm.load_program(preloaded_result_program());
+        vm.set_memory_budget_config(Some(memory_budget(512 * 1024)));
+        assert!(vm.execute().is_ok(), "core execution should fit the budget");
+
+        let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
+        let entrypoint = CString::new("main").expect("entry point CString");
+        let results = [
+            regorus_rvm_execute(vm),
+            regorus_rvm_execute_entry_point_by_name(vm, entrypoint.as_ptr()),
+            regorus_rvm_execute_entry_point_by_index(vm, 0),
+        ];
+
+        for result in results {
+            assert!(matches!(result.status, RegorusStatus::MemoryBudgetExceeded));
+            assert!(result.output.is_null());
+            regorus_result_drop(result);
+        }
+        regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn ffi_resume_reports_unsupported_memory_budget_status() {
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.load_program(host_await_program());
+        vm.execute().expect("suspend execution");
+
+        let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
+        let set_result = regorus_rvm_set_memory_budget_config(
+            vm,
+            true,
+            RegorusMemoryBudgetConfig {
+                limit_bytes: 1024 * 1024,
+            },
+        );
+        assert!(matches!(set_result.status, RegorusStatus::Ok));
+        regorus_result_drop(set_result);
+
+        let result = regorus_rvm_resume(vm, ptr::null(), false);
+        assert!(matches!(
+            result.status,
+            RegorusStatus::MemoryBudgetUnsupportedInSuspendableExecution
+        ));
+        regorus_result_drop(result);
+        regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn memory_budget_status_values_are_appended() {
+        assert_eq!(RegorusStatus::MemoryBudgetExceeded as u32, 10);
+        assert_eq!(
+            RegorusStatus::MemoryBudgetUnsupportedInSuspendableExecution as u32,
+            11
+        );
+    }
 }
 
 fn convert_c_entry_points(

@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(rvm)* add opt-in per-execution memory budgets for run-to-completion evaluation, including typed Rust and binding errors ([#792](https://github.com/microsoft/regorus/pull/792))
+
 ## [0.11.0](https://github.com/microsoft/regorus/compare/regorus-v0.10.1...regorus-v0.11.0) - 2026-07-21
 
 ### Added
@@ -634,4 +638,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LICENSE committed
 - CODE_OF_CONDUCT.md committed
 - Initial commit
-

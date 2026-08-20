@@ -81,6 +81,27 @@ The Regorus C# bindings provide a modern, thread-safe API for compiling and eval
 - **Thread Safety**: All operations are thread-safe without external synchronization
 - **Registry Management**: Centralized management of targets and schemas
 - **Policy Introspection**: Rich metadata about compiled policies
+- **RVM Memory Budgets**: Optional per-execution live-memory limits for run-to-completion evaluation
+
+## RVM Memory Budgets
+
+`Rvm.SetMemoryBudgetConfig` configures a fresh non-zero budget for each `Execute` or `ExecuteEntryPoint` call. `Rvm.ClearMemoryBudgetConfig` restores unlimited execution. Compilation and data, input, and context loading are excluded; execution setup, evaluation, and result serialization are included.
+
+```csharp
+using var vm = new Rvm();
+vm.SetMemoryBudgetConfig(new MemoryBudgetConfig(16UL * 1024 * 1024));
+
+try
+{
+    var result = vm.Execute();
+}
+catch (RegorusMemoryBudgetExceededException)
+{
+    // The execution exceeded its configured budget.
+}
+```
+
+Memory budgets require a native library built with allocator memory tracking and are supported only for run-to-completion execution. `RegorusMemoryBudgetUnsupportedException` is thrown if a configured budget is used to start or resume suspendable execution. Enforcement is cooperative, so one instruction can overshoot before the next checkpoint.
 
 ## Core Classes
 

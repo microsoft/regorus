@@ -7,8 +7,8 @@ pub mod mimalloc;
 #[cfg(feature = "allocator-memory-limits")]
 #[cfg(not(any(target_family = "wasm", miri)))]
 pub use mimalloc::{
-    allocation_stats_snapshot, current_thread_allocation_stats, global_allocation_stats_snapshot,
-    GlobalAllocationStats, ThreadAllocationStats,
+    allocation_stats_snapshot, current_thread_allocation_stats, current_thread_live_bytes,
+    global_allocation_stats_snapshot, GlobalAllocationStats, ThreadAllocationStats,
 };
 
 #[cfg(feature = "allocator-memory-limits")]

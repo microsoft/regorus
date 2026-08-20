@@ -245,6 +245,14 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_execution_timer_config", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_rvm_set_execution_timer_config(RegorusRvm* vm, [MarshalAs(UnmanagedType.I1)] bool has_config, RegorusExecutionTimerConfig config);
+
+        /// <summary>
+        /// Set memory budget configuration.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_memory_budget_config", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_rvm_set_memory_budget_config(RegorusRvm* vm, [MarshalAs(UnmanagedType.I1)] bool has_config, RegorusMemoryBudgetConfig config);
+
+        /// <summary>
         /// Add a policy.
         /// The policy is parsed into AST.
         /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.add_policy
@@ -828,6 +836,14 @@ namespace Regorus.Internal
         /// The engine remains poisoned because a previous panic was detected.
         /// </summary>
         Poisoned,
+        /// <summary>
+        /// An RVM execution exceeded its configured memory budget.
+        /// </summary>
+        MemoryBudgetExceeded,
+        /// <summary>
+        /// An RVM memory budget was used with suspendable execution.
+        /// </summary>
+        MemoryBudgetUnsupportedInSuspendableExecution,
     }
 
     /// <summary>
@@ -881,6 +897,15 @@ namespace Regorus.Internal
     {
         public ulong limit_ns;
         public uint check_interval;
+    }
+
+    /// <summary>
+    /// FFI representation of the RVM memory budget configuration.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct RegorusMemoryBudgetConfig
+    {
+        public ulong limit_bytes;
     }
 
     /// <summary>

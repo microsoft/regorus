@@ -3,6 +3,7 @@
 
 use super::error::LimitError;
 use core::cell::Cell;
+use core::num::NonZeroU64;
 use core::sync::atomic::{AtomicU64, Ordering};
 use std::thread_local;
 
@@ -13,6 +14,14 @@ const MEMORY_CHECK_STRIDE: u32 = 16;
 // Pending per-thread allocator delta (bytes) that triggers a memory check. Chosen at 32 KiB to
 // catch short bursts before they exceed typical entry budgets while still amortizing the atomic.
 const MEMORY_CHECK_DELTA_BYTES: u64 = 32 * 1024;
+
+/// Configuration for a fresh RVM memory budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(docsrs, doc(cfg(feature = "allocator-memory-limits")))]
+pub struct MemoryBudgetConfig {
+    /// Maximum additional live bytes allowed during one execution.
+    pub limit: NonZeroU64,
+}
 
 thread_local! {
     // Per-thread stride counter used to amortize global memory checks.
@@ -210,4 +219,8 @@ pub(super) fn check_memory_limit_if_needed() -> Result<(), LimitError> {
 pub fn global_memory_limit() -> Option<u64> {
     let limit = GLOBAL_MEMORY_LIMIT.load(Ordering::Relaxed);
     (limit != u64::MAX).then_some(limit)
+}
+
+pub fn current_thread_live_bytes() -> i64 {
+    mimalloc::current_thread_live_bytes()
 }

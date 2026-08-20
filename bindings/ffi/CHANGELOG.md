@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add `regorus_rvm_set_memory_budget_config`, `RegorusMemoryBudgetConfig`, and appended statuses for memory-budget exhaustion and unsupported suspendable execution.
+
 ## [0.1.0](https://github.com/microsoft/regorus/releases/tag/regorus-ffi-v0.1.0) - 2024-02-08
 
 ### Other

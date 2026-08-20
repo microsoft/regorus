@@ -172,10 +172,11 @@ pub use policy_info::PolicyInfo;
 pub use utils::limits::LimitError;
 pub use utils::limits::PolicyLengthConfig;
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+#[cfg_attr(docsrs, doc(cfg(feature = "allocator-memory-limits")))]
 pub use utils::limits::{
     check_global_memory_limit, enforce_memory_limit, flush_thread_memory_counters,
     global_memory_limit, set_global_memory_limit, set_thread_flush_threshold_override,
-    thread_memory_flush_threshold,
+    thread_memory_flush_threshold, MemoryBudgetConfig,
 };
 pub use value::Value;
 

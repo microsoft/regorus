@@ -4,11 +4,13 @@
 use crate::common::{to_regorus_result, RegorusResult, RegorusStatus};
 use alloc::format;
 use anyhow::{anyhow, Result};
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+use core::num::NonZeroU64;
 use core::num::{NonZeroU32, NonZeroUsize};
 use core::time::Duration;
 use regorus::utils::limits::{self, ExecutionTimerConfig};
 
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 fn some_or_none(flag: bool, value: u64) -> Option<u64> {
     if flag {
         Some(value)
@@ -17,7 +19,7 @@ fn some_or_none(flag: bool, value: u64) -> Option<u64> {
     }
 }
 
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 fn optional_u64_to_result(value: Option<u64>) -> RegorusResult {
     match value {
         Some(bytes) => {
@@ -43,32 +45,32 @@ fn optional_u64_to_result(value: Option<u64>) -> RegorusResult {
     }
 }
 
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 #[no_mangle]
 pub extern "C" fn regorus_set_global_memory_limit(limit: u64, has_limit: bool) -> RegorusResult {
     ::regorus::set_global_memory_limit(some_or_none(has_limit, limit));
     RegorusResult::ok_void()
 }
 
-#[cfg(not(feature = "allocator-memory-limits"))]
+#[cfg(any(not(feature = "allocator-memory-limits"), miri))]
 #[no_mangle]
 pub extern "C" fn regorus_set_global_memory_limit(_limit: u64, _has_limit: bool) -> RegorusResult {
     feature_disabled("regorus_set_global_memory_limit")
 }
 
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 #[no_mangle]
 pub extern "C" fn regorus_get_global_memory_limit() -> RegorusResult {
     optional_u64_to_result(::regorus::global_memory_limit())
 }
 
-#[cfg(not(feature = "allocator-memory-limits"))]
+#[cfg(any(not(feature = "allocator-memory-limits"), miri))]
 #[no_mangle]
 pub extern "C" fn regorus_get_global_memory_limit() -> RegorusResult {
     feature_disabled("regorus_get_global_memory_limit")
 }
 
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 #[no_mangle]
 pub extern "C" fn regorus_check_global_memory_limit() -> RegorusResult {
     match ::regorus::check_global_memory_limit() {
@@ -77,26 +79,26 @@ pub extern "C" fn regorus_check_global_memory_limit() -> RegorusResult {
     }
 }
 
-#[cfg(not(feature = "allocator-memory-limits"))]
+#[cfg(any(not(feature = "allocator-memory-limits"), miri))]
 #[no_mangle]
 pub extern "C" fn regorus_check_global_memory_limit() -> RegorusResult {
     feature_disabled("regorus_check_global_memory_limit")
 }
 
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 #[no_mangle]
 pub extern "C" fn regorus_flush_thread_memory_counters() -> RegorusResult {
     ::regorus::flush_thread_memory_counters();
     RegorusResult::ok_void()
 }
 
-#[cfg(not(feature = "allocator-memory-limits"))]
+#[cfg(any(not(feature = "allocator-memory-limits"), miri))]
 #[no_mangle]
 pub extern "C" fn regorus_flush_thread_memory_counters() -> RegorusResult {
     feature_disabled("regorus_flush_thread_memory_counters")
 }
 
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 #[no_mangle]
 pub extern "C" fn regorus_set_thread_flush_threshold_override(
     bytes: u64,
@@ -106,7 +108,7 @@ pub extern "C" fn regorus_set_thread_flush_threshold_override(
     RegorusResult::ok_void()
 }
 
-#[cfg(not(feature = "allocator-memory-limits"))]
+#[cfg(any(not(feature = "allocator-memory-limits"), miri))]
 #[no_mangle]
 pub extern "C" fn regorus_set_thread_flush_threshold_override(
     _bytes: u64,
@@ -115,23 +117,23 @@ pub extern "C" fn regorus_set_thread_flush_threshold_override(
     feature_disabled("regorus_set_thread_flush_threshold_override")
 }
 
-#[cfg(feature = "allocator-memory-limits")]
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 #[no_mangle]
 pub extern "C" fn regorus_get_thread_memory_flush_threshold() -> RegorusResult {
     optional_u64_to_result(::regorus::thread_memory_flush_threshold())
 }
 
-#[cfg(not(feature = "allocator-memory-limits"))]
+#[cfg(any(not(feature = "allocator-memory-limits"), miri))]
 #[no_mangle]
 pub extern "C" fn regorus_get_thread_memory_flush_threshold() -> RegorusResult {
     feature_disabled("regorus_get_thread_memory_flush_threshold")
 }
 
-#[cfg(not(feature = "allocator-memory-limits"))]
+#[cfg(any(not(feature = "allocator-memory-limits"), miri))]
 fn feature_disabled(function: &str) -> RegorusResult {
     RegorusResult::err_with_message(
         RegorusStatus::InvalidArgument,
-        format!("{function} unavailable: regorus built without allocator-memory-limits feature"),
+        format!("{function} unavailable: allocator memory tracking is disabled"),
     )
 }
 
@@ -143,6 +145,23 @@ pub struct RegorusExecutionTimerConfig {
     pub limit_ns: u64,
     /// Number of work units between timer checks (must be non-zero).
     pub check_interval: u32,
+}
+
+/// FFI representation of [`regorus::MemoryBudgetConfig`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct RegorusMemoryBudgetConfig {
+    /// Maximum additional live bytes allowed during one execution.
+    pub limit_bytes: u64,
+}
+
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+impl RegorusMemoryBudgetConfig {
+    pub fn to_memory_budget_config(self) -> Result<regorus::MemoryBudgetConfig> {
+        let limit = NonZeroU64::new(self.limit_bytes)
+            .ok_or_else(|| anyhow!("memory_budget.limit_bytes must be non-zero"))?;
+        Ok(regorus::MemoryBudgetConfig { limit })
+    }
 }
 
 impl RegorusExecutionTimerConfig {
@@ -233,8 +252,10 @@ pub extern "C" fn regorus_clear_cache() -> RegorusResult {
     RegorusResult::ok_void()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
+    #[cfg(feature = "allocator-memory-limits")]
+    use super::RegorusMemoryBudgetConfig;
     use super::{
         optional_u64_to_result, regorus_get_global_memory_limit, regorus_set_global_memory_limit,
     };
@@ -254,6 +275,13 @@ mod tests {
         assert!(!result.bool_value);
         assert!(matches!(result.data_type, RegorusDataType::None));
         assert_eq!(result.int_value, 0);
+    }
+
+    #[cfg(feature = "allocator-memory-limits")]
+    #[test]
+    fn memory_budget_must_be_non_zero() {
+        let config = RegorusMemoryBudgetConfig { limit_bytes: 0 };
+        assert!(config.to_memory_budget_config().is_err());
     }
 
     #[test]

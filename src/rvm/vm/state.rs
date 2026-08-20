@@ -11,29 +11,44 @@ use super::machine::RegoVM;
 impl RegoVM {
     /// Reset all execution state and return objects to pools for reuse
     pub(super) fn reset_execution_state(&mut self) {
+        self.release_previous_execution_state();
+        self.initialize_execution_state();
+    }
+
+    /// Release values retained by the previous execution before capturing a new memory baseline.
+    pub(super) fn reset_run_to_completion_state(&mut self) {
+        self.release_previous_execution_state();
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        self.reset_memory_budget_state();
+        self.initialize_execution_state();
+    }
+
+    fn release_previous_execution_state(&mut self) {
+        self.evaluated = Value::Undefined;
+        self.execution_state = ExecutionState::Ready;
+        self.execution_stack.clear();
+        self.return_to_pools();
+        self.rule_cache.clear();
+        self.registers.clear();
+        self.builtins_cache.clear();
+        self.cached_builtin_args.clear();
+    }
+
+    fn initialize_execution_state(&mut self) {
         // Reset basic execution state
         self.executed_instructions = 0;
         self.pc = 0;
         self.evaluated = Value::new_object();
         self.cache_hits = 0;
 
-        // Reset suspendable execution state
-        self.execution_stack.clear();
         self.execution_state = ExecutionState::Ready;
-
-        // Return objects to pools and clear stacks
-        self.return_to_pools();
 
         // Reset rule cache
         self.rule_cache = alloc::vec![(false, Value::Undefined); self.program.rule_infos.len()];
 
         // Reset registers to clean state
-        self.registers.clear();
         self.registers
             .resize(self.base_register_count, Value::Undefined);
-
-        // Builtin cache entries only live for a single execution
-        self.builtins_cache.clear();
 
         // Postcondition: every stack/cache that `reset_execution_state` touches
         // must be in its documented "clean" shape. This catches accidental
