@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Collections.Generic;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Regorus.Tests;
@@ -116,4 +117,338 @@ allow if {
         var resumed = vm.Resume("{\"tier\":\"gold\"}");
         Assert.AreEqual("true", resumed, "expected allow=true after resume");
     }
+
+    private const string GetAccountPolicy = """
+package demo
+import rego.v1
+
+default allow := false
+
+allow if {
+  account := get_account({"id": input.account_id})
+  account.status == "active"
+}
+""";
+
+    [TestMethod]
+    public void RegisteredHostAwait_Suspendable_SuspendAndResume()
+    {
+        var modules = new[] { new PolicyModule("account.rego", GetAccountPolicy) };
+        var entryPoints = new[] { "data.demo.allow" };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("get_account") };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"account_id\": \"acct-42\"}");
+
+        // Execute — should suspend on get_account()
+        vm.Execute();
+
+        // Verify we're suspended due to HostAwait with identifier "get_account".
+        var identifier = vm.GetHostAwaitIdentifier();
+        Assert.AreEqual("get_account", identifier, "expected identifier to be get_account");
+
+        var argument = vm.GetHostAwaitArgument();
+        Assert.IsNotNull(argument, "expected non-null argument");
+        StringAssert.Contains(argument!, "acct-42", "expected account_id in argument");
+
+        // Resume with an account response
+        var result = vm.Resume("{\"status\": \"active\", \"name\": \"Alice\"}");
+        Assert.AreEqual("true", result, "expected allow=true after resume");
+    }
+
+    private const string TranslatePolicy = """
+package demo
+import rego.v1
+
+default greeting := "unknown"
+
+greeting := msg if {
+  msg := translate(input.lang)
+}
+""";
+
+    [TestMethod]
+    public void RegisteredHostAwait_RunToCompletion_WithPreloadedResponses()
+    {
+        var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
+        var entryPoints = new[] { "data.demo.greeting" };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate") };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.RunToCompletion);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"lang\": \"es\"}");
+
+        // Pre-load a response for translate
+        vm.SetHostAwaitResponses(new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["translate"] = new[] { "\"hola\"" },
+        });
+
+        // Execute — translate returns "hola"
+        var result = vm.Execute();
+        Assert.AreEqual("\"hola\"", result, "expected greeting=hola");
+    }
+
+    [TestMethod]
+    public void RegisteredHostAwait_CompileRejectsEmptyOrWhitespaceName()
+    {
+        var modules = new[] { new PolicyModule("noop.rego", "package demo\nallow := true\n") };
+        var entryPoints = new[] { "data.demo.allow" };
+
+        foreach (var badName in new[] { "", "   ", "\t" })
+        {
+            var builtins = new[] { new HostAwaitBuiltin(badName) };
+            Assert.ThrowsException<InvalidOperationException>(
+                () => Program.CompileFromModules("{}", modules, entryPoints, builtins),
+                $"expected compilation to reject empty/whitespace name '{badName}'");
+        }
+    }
+
+    [TestMethod]
+    public void RegisteredHostAwait_CompileRejectsDuplicateRegistration()
+    {
+        var modules = new[] { new PolicyModule("noop.rego", "package demo\nallow := true\n") };
+        var entryPoints = new[] { "data.demo.allow" };
+        var builtins = new[]
+        {
+            new HostAwaitBuiltin("translate"),
+            new HostAwaitBuiltin("translate"),
+        };
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => Program.CompileFromModules("{}", modules, entryPoints, builtins),
+            "expected compilation to reject duplicate registration");
+    }
+
+    [TestMethod]
+    public void RegisteredHostAwait_CompileRejectsReservedName()
+    {
+        var modules = new[] { new PolicyModule("noop.rego", "package demo\nallow := true\n") };
+        var entryPoints = new[] { "data.demo.allow" };
+        var builtins = new[] { new HostAwaitBuiltin("__builtin_host_await") };
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => Program.CompileFromModules("{}", modules, entryPoints, builtins),
+            "expected compilation to reject reserved __builtin_host_await identifier");
+    }
+
+    public static IEnumerable<object[]> EmbeddedNulIdentifierScenarios()
+    {
+        // Identifiers (registration name + response key) are raw C strings with
+        // no downstream parser to catch truncation, so an embedded NUL would
+        // silently mis-route. Both write-points reject it.
+        yield return new object[]
+        {
+            "builtin name",
+            (Action)(() => _ = new HostAwaitBuiltin("bad\0name")),
+        };
+        yield return new object[]
+        {
+            "response identifier",
+            (Action)(() =>
+            {
+                using var vm = new Rvm();
+                vm.SetHostAwaitResponses(new Dictionary<string, IReadOnlyList<string>>
+                {
+                    ["bad\0id"] = new[] { "\"v\"" },
+                });
+            }),
+        };
+    }
+
+    // A raw NUL in an identifier is rejected loudly at the public surface,
+    // before Rust's CStr can silently truncate it.
+    [DataTestMethod]
+    [DynamicData(nameof(EmbeddedNulIdentifierScenarios), DynamicDataSourceType.Method)]
+    public void RegisteredHostAwait_RejectsEmbeddedNulInIdentifier(string description, Action action)
+    {
+        Assert.ThrowsException<ArgumentException>(
+            action,
+            $"expected embedded NUL in {description} to be rejected before crossing the FFI boundary");
+    }
+
+    // A JSON-escaped null (\u0000) is six ASCII chars, not a raw NUL, so it
+    // round-trips faithfully. Response values are not NUL-validated (client
+    // responsibility, consistent with other JSON inputs).
+    [TestMethod]
+    public void RegisteredHostAwait_ResponseValueWithEscapedNul_RoundTrips()
+    {
+        var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
+        var entryPoints = new[] { "data.demo.greeting" };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate") };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.RunToCompletion);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"lang\": \"es\"}");
+
+        vm.SetHostAwaitResponses(new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["translate"] = new[] { "\"a\\u0000b\"" },
+        });
+
+        var result = vm.Execute();
+
+        Assert.AreEqual("\"a\\u0000b\"", result);
+    }
+
+    // Same escaped-null round-trip on the resume path (customer-controlled JSON,
+    // not NUL-validated).
+    [TestMethod]
+    public void RegisteredHostAwait_ResumeValueWithEscapedNul_RoundTrips()
+    {
+        var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
+        var entryPoints = new[] { "data.demo.greeting" };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate") };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"lang\": \"es\"}");
+
+        vm.Execute();
+        Assert.AreEqual("translate", vm.GetHostAwaitIdentifier());
+
+        var result = vm.Resume("\"a\\u0000b\"");
+
+        Assert.AreEqual("\"a\\u0000b\"", result);
+    }
+
+    // Failing scenario: a raw NUL in the resume value is not validated, but
+    // Rust's CStr truncates at it and the truncated text ("a) is invalid JSON,
+    // so it surfaces as a loud parse error. (A raw NUL that truncates to *valid*
+    // JSON — e.g. "123\0456" -> 123 — is silently accepted, the accepted
+    // binding-wide value contract shared with AddDataJson/SetInputJson.)
+    [TestMethod]
+    public void RegisteredHostAwait_ResumeValueWithRawNul_ThrowsFromParse()
+    {
+        var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
+        var entryPoints = new[] { "data.demo.greeting" };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate") };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"lang\": \"es\"}");
+
+        vm.Execute();
+        Assert.AreEqual("translate", vm.GetHostAwaitIdentifier());
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => vm.Resume("\"a\0b\""),
+            "expected a raw NUL that truncates to invalid JSON to surface as a parse error");
+    }
+
+    [TestMethod]
+    public void RegisteredHostAwait_GetAccessorsReturnNullWhenVmIsNotSuspended()
+    {
+        var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
+        var entryPoints = new[] { "data.demo.greeting" };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate") };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.RunToCompletion);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"lang\": \"es\"}");
+        vm.SetHostAwaitResponses(new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["translate"] = new[] { "\"hola\"" },
+        });
+        vm.Execute();
+
+        // After run-to-completion completes successfully, the VM is no longer suspended.
+        Assert.IsNull(vm.GetHostAwaitArgument(), "expected null argument when VM is not suspended");
+        Assert.IsNull(vm.GetHostAwaitIdentifier(), "expected null identifier when VM is not suspended");
+    }
+
+    private const string TranslateNoDefaultPolicy = """
+package demo
+import rego.v1
+
+# No default — if translate() can't produce a value, the entry point
+# evaluation propagates the error to the caller.
+result := translate(input.lang)
+""";
+
+    [TestMethod]
+    public void RegisteredHostAwait_RunToCompletion_FailsWhenResponseQueueExhausted()
+    {
+        var modules = new[] { new PolicyModule("translate.rego", TranslateNoDefaultPolicy) };
+        var entryPoints = new[] { "data.demo.result" };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate") };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.RunToCompletion);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"lang\": \"es\"}");
+
+        // No responses pre-loaded — translate has nothing to return.
+        // Document the actual behavior: in run-to-completion mode the
+        // missing-response error fails the rule body silently rather than
+        // surfacing as an exception, so Execute() returns the literal
+        // string `"<undefined>"` for an entry point that produced no value.
+        // Asserting the exact return value locks this contract so any
+        // future change (e.g. propagating an exception) shows up as a
+        // test failure that has to be explicitly re-acknowledged.
+        var actual = vm.Execute();
+        Assert.AreEqual(
+            "\"<undefined>\"",
+            actual,
+            "expected `\"<undefined>\"` when the response queue is exhausted");
+    }
+
+    private const string MultiAwaitPolicy = """
+package demo
+import rego.v1
+
+default greeting := "unknown"
+
+greeting := combined if {
+  hello := translate(input.lang)
+  user := lookup_user({"id": input.user_id})
+  combined := sprintf("%s %s", [hello, user.name])
+}
+""";
+
+    [TestMethod]
+    public void RegisteredHostAwait_RunToCompletion_MultipleIdentifiersInSingleCall()
+    {
+        var modules = new[] { new PolicyModule("multi.rego", MultiAwaitPolicy) };
+        var entryPoints = new[] { "data.demo.greeting" };
+        var hostAwaitBuiltins = new[]
+        {
+            new HostAwaitBuiltin("translate"),
+            new HostAwaitBuiltin("lookup_user"),
+        };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.RunToCompletion);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"lang\": \"es\", \"user_id\": \"u1\"}");
+
+        // Pre-load responses for BOTH identifiers in a single call.
+        // The new IReadOnlyDictionary API atomically replaces ALL prior
+        // responses, so this single call must carry every identifier the
+        // policy may invoke during this run.
+        vm.SetHostAwaitResponses(new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["translate"] = new[] { "\"hola\"" },
+            ["lookup_user"] = new[] { "{\"name\": \"Alice\"}" },
+        });
+
+        var result = vm.Execute();
+        Assert.AreEqual("\"hola Alice\"", result, "expected combined greeting from both responses");
+    }
+
 }
