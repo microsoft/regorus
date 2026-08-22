@@ -7,8 +7,8 @@ mod types;
 
 pub use params::{
     ArrayCreateParams, BuiltinCallParams, ChainedIndexParams, ComprehensionBeginParams,
-    FunctionCallParams, InstructionData, LoopStartParams, ObjectCreateParams, SetCreateParams,
-    VirtualDataDocumentLookupParams,
+    FunctionCallParams, InstructionData, LoopStartParams, ObjectCreateParams, ObjectDeepSetParams,
+    SetCreateParams, VirtualDataDocumentLookupParams,
 };
 pub use types::{
     ComprehensionMode, GuardMode, LiteralOrRegister, LogicalBlockMode, LoopMode, PolicyOp,
@@ -179,6 +179,13 @@ pub enum Instruction {
         obj: u8,
         key: u8,
         value: u8,
+    },
+
+    /// Deep set into nested object with optional multi-value (set) leaf.
+    /// Handles patterns like `foo[a][b] := c` and `foo[a][b] contains v`.
+    ObjectDeepSet {
+        /// Index into program's instruction_data.object_deep_set_params table
+        params_index: u16,
     },
 
     /// Create object with optimized field setting - uses parameter table
