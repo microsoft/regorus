@@ -37,6 +37,11 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [x % y](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-numbers-rem)                            | _       |
   | [round](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-numbers-round)                          | _       |
 
+  `numbers.range_step` accepts integer endpoints and a positive integer step,
+  includes the start, and stops before crossing the end. Descending ranges
+  automatically subtract the step. Invalid steps are errors in strict mode
+  and Undefined otherwise. Stepping uses exact integers and incremental
+  allocation, with existing memory-limit checks during accumulation.
 
 - [Aggregates](https://www.openpolicyagent.org/docs/latest/policy-reference/#aggregates)
   | Builtin                                                                                             | Feature |
