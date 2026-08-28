@@ -1431,6 +1431,170 @@ fn run_rego_compiler_yaml(file: &str) {
 }
 
 #[test]
+fn units_exponent_limits_are_fatal_in_both_execution_paths() -> Result<()> {
+    let entrypoints = [
+        "data.test.allow",
+        "data.test.allow_function",
+        "data.test.values",
+    ];
+    for (builtin, quantities) in [
+        (
+            "units.parse",
+            [
+                "1e4097",
+                "1e4094K",
+                "1e4097Ki",
+                "1e4_097",
+                "1e4_094K",
+                "1e4_097Ki",
+            ],
+        ),
+        (
+            "units.parse_bytes",
+            [
+                "1e4097",
+                "1e4094KB",
+                "1e4097Ki",
+                "1e4_097",
+                "1e4_094KB",
+                "1e4_097Ki",
+            ],
+        ),
+    ] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "units.rego".into(),
+                format!(
+                    "package test
+                    quantity(value) := {builtin}(value)
+                    quantity(_) := 0 if {{ input.fallback }}
+                    deny if {{ {builtin}(input.cpu) > 64 }}
+                    allow if {{ not deny }}
+                    deny_function if {{ quantity(input.cpu) > 64 }}
+                    allow_function if {{ not deny_function }}
+                    default values := []
+                    values := [value | value := {builtin}(input.cpu)]"
+                ),
+            )?;
+            let policy = engine.compile_with_entrypoint(&Rc::from(entrypoints[0]))?;
+            let program = Compiler::compile_from_policy(&policy, &entrypoints)?;
+            for quantity in quantities {
+                let mut input = Value::new_object();
+                input
+                    .as_object_mut()?
+                    .insert(Value::from("cpu"), Value::from(quantity));
+                input
+                    .as_object_mut()?
+                    .insert(Value::from("fallback"), Value::Bool(true));
+                engine.set_input(input.clone());
+                for (index, entrypoint) in entrypoints.iter().enumerate() {
+                    let error = engine
+                        .eval_rule((*entrypoint).into())
+                        .expect_err("unit exponent cap must abort interpreter evaluation");
+                    assert!(
+                        matches!(
+                            error.downcast_ref::<regorus::LimitError>(),
+                            Some(regorus::LimitError::UnitExponentLimitExceeded { limit: 4096 })
+                        ),
+                        "{builtin}, {quantity}, {entrypoint}, strict={strict}: {error}"
+                    );
+                    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                        let mut vm = RegoVM::new();
+                        vm.load_program(program.clone());
+                        vm.set_execution_mode(mode);
+                        vm.set_strict_builtin_errors(strict);
+                        vm.set_input(input.clone());
+                        let result = vm.execute_entry_point_by_index(index);
+                        assert!(
+                            matches!(result, Err(VmError::UnitExponentLimitExceeded { limit: 4096, .. })),
+                            "{builtin}, {quantity}, {entrypoint}, strict={strict}, {mode:?}: {result:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn units_exponent_parse_errors_preserve_strictness() -> Result<()> {
+    let entrypoint = "data.test.result";
+    for builtin in ["units.parse", "units.parse_bytes"] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "units.rego".into(),
+                format!("package test\nresult := {builtin}(input.cpu)"),
+            )?;
+            let policy = engine.compile_with_entrypoint(&Rc::from(entrypoint))?;
+            let program = Compiler::compile_from_policy(&policy, &[entrypoint])?;
+            for number in [
+                "node12345",
+                "x1e5000",
+                "x1e5",
+                "e4097",
+                "-e4097",
+                "--1e4097",
+                "+-1e4097",
+                "1..2e4097",
+                "1+2e4097",
+                "1/2e4097",
+                "x1e9223372036854775808",
+                "\u{03bb}1e4097",
+                "1e++6",
+                "1e4_097XYZ",
+            ] {
+                for suffix in ["", "K", "Ki"] {
+                    let quantity = format!("{number}{suffix}");
+                    let ordinary_error = strict && !number.ends_with("XYZ");
+                    let mut input = Value::new_object();
+                    input
+                        .as_object_mut()?
+                        .insert(Value::from("cpu"), Value::from(quantity.clone()));
+                    engine.set_input(input.clone());
+                    let result = engine.eval_rule(entrypoint.into());
+                    if ordinary_error {
+                        let error = result.expect_err("malformed mantissa must be a parse error");
+                        assert!(
+                            error.downcast_ref::<regorus::LimitError>().is_none(),
+                            "{error}"
+                        );
+                        assert!(
+                            error.to_string().contains("could not parse number"),
+                            "{error}"
+                        );
+                    } else {
+                        assert_eq!(
+                            result?,
+                            Value::Undefined,
+                            "{builtin}, {quantity}, strict={strict}"
+                        );
+                    }
+                    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                        let mut vm = RegoVM::new();
+                        vm.load_program(program.clone());
+                        vm.set_execution_mode(mode);
+                        vm.set_strict_builtin_errors(strict);
+                        vm.set_input(input.clone());
+                        // RVM rules currently absorb ordinary errors even in strict mode.
+                        assert_eq!(
+                            vm.execute()?,
+                            Value::Undefined,
+                            "{builtin}, {quantity}, strict={strict}, {mode:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn registered_host_await_vm_reuses_after_instruction_limit() -> Result<()> {
     const ENTRYPOINT: &str = "data.demo.result";
     let mut engine = Engine::new();

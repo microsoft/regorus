@@ -940,6 +940,9 @@ impl RegoVM {
                 LimitError::RegexSizeLimitExceeded { limit } => {
                     VmError::RegexSizeLimitExceeded { limit, pc: self.pc }
                 }
+                LimitError::UnitExponentLimitExceeded { limit } => {
+                    VmError::UnitExponentLimitExceeded { limit, pc: self.pc }
+                }
             })
     }
 

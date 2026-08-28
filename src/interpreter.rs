@@ -1471,6 +1471,9 @@ impl Interpreter {
                                 self.with_functions
                                     .insert(target, FunctionModifier::Value(v));
                             }
+                            Err(error) if error.downcast_ref::<crate::LimitError>().is_some() => {
+                                return Err(error);
+                            }
                             _ => {
                                 // Function replaced by another function.
                                 // Lookup by with current module path prefixed.
@@ -2888,6 +2891,7 @@ impl Interpreter {
             }
             match r {
                 Ok(v) => return Ok(v),
+                Err(e) if e.downcast_ref::<crate::LimitError>().is_some() => return Err(e),
                 Err(e) => bail!(span.error(&format!("{e}"))),
             }
         }
@@ -2985,8 +2989,14 @@ impl Interpreter {
                     // resolve paths through the wrong module's imports when
                     // the error is swallowed below in non-strict mode.
                     self.set_current_module(prev_module)?;
-                    errors.push(e);
                     self.scopes = scopes;
+                    if e.downcast_ref::<crate::LimitError>().is_some() {
+                        if let Some(with_functions) = with_functions_saved {
+                            self.with_functions = with_functions;
+                        }
+                        return Err(e);
+                    }
+                    errors.push(e);
                     continue;
                 }
             };
@@ -3027,9 +3037,12 @@ impl Interpreter {
         }
 
         if self.compiled_policy.strict_builtin_errors && !errors.is_empty() {
+            if let Some(with_functions) = with_functions_saved {
+                self.with_functions = with_functions;
+            }
             return Err(errors
-                .first()
-                .map(|e| anyhow!(e.to_string()))
+                .into_iter()
+                .next()
                 .unwrap_or_else(|| anyhow!("internal error: missing error entry")));
         }
 
@@ -3061,6 +3074,13 @@ impl Interpreter {
                         if let Rule::Default { value, .. } = rule.as_ref() {
                             match self.eval_expr(value) {
                                 Ok(v) => results.push(v),
+                                Err(e) if e.downcast_ref::<crate::LimitError>().is_some() => {
+                                    self.scopes = scopes;
+                                    if let Some(with_functions) = with_functions_saved {
+                                        self.with_functions = with_functions;
+                                    }
+                                    return Err(e);
+                                }
                                 Err(e) => errors.push(e),
                             }
                         }
@@ -3079,8 +3099,8 @@ impl Interpreter {
                 return Ok(Value::Undefined);
             } else {
                 return Err(errors
-                    .first()
-                    .map(|e| anyhow!(e.to_string()))
+                    .into_iter()
+                    .next()
                     .unwrap_or_else(|| anyhow!("internal error: missing error entry")));
             }
         }

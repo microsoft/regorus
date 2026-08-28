@@ -5,6 +5,192 @@ use anyhow::{bail, Result};
 use regorus::*;
 
 #[test]
+fn units_exponent_limits_survive_with_replacement_expressions() -> Result<()> {
+    for builtin in ["units.parse", "units.parse_bytes"] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "with-units.rego".into(),
+                format!(
+                    "package test
+                    original(_) := []
+                    f(v) := r if {{
+                        r := original(v) with original as [x | x := {builtin}(input.cpu)]
+                    }}
+                    f(_) := [] if {{ input.fallback }}
+                    deny if {{ count(f(0)) > 0 }}
+                    allow if {{ not deny }}"
+                ),
+            )?;
+            engine.set_input(Value::from_json_str(r#"{"cpu":"1e4097","fallback":true}"#)?);
+            let error = engine
+                .eval_rule("data.test.allow".into())
+                .expect_err("with replacements must preserve fatal resource errors");
+            assert!(
+                matches!(
+                    error.downcast_ref::<LimitError>(),
+                    Some(LimitError::UnitExponentLimitExceeded { limit: 4096 })
+                ),
+                "{builtin}, strict={strict}: {error}"
+            );
+            engine.set_input(Value::from_json_str(r#"{"cpu":"1","fallback":false}"#)?);
+            assert_eq!(
+                engine.eval_rule("data.test.allow".into())?,
+                Value::Undefined
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn units_exponent_limits_survive_extension_wrappers() -> Result<()> {
+    for builtin in ["units.parse", "units.parse_bytes"] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_extension(
+                "delegated_units".into(),
+                1,
+                Box::new(move |args| {
+                    let input = args
+                        .first()
+                        .ok_or_else(|| anyhow::anyhow!("missing delegated quantity"))?
+                        .clone();
+                    let mut delegated = Engine::new();
+                    delegated.add_policy(
+                        "delegated.rego".into(),
+                        format!("package delegated\nresult := {builtin}(input)"),
+                    )?;
+                    delegated.set_input(input);
+                    delegated.eval_rule("data.delegated.result".into())
+                }),
+            )?;
+            engine.add_policy(
+                "wrapper.rego".into(),
+                "package test
+                f(v) := delegated_units(v)
+                f(_) := 0 if { input.fallback }
+                direct := delegated_units(input.cpu)
+                deny if { f(input.cpu) > 64 }
+                allow if { not deny }"
+                    .into(),
+            )?;
+            engine.set_input(Value::from_json_str(r#"{"cpu":"1e4097","fallback":true}"#)?);
+            for entrypoint in ["direct", "allow"] {
+                let error = engine
+                    .eval_rule(format!("data.test.{entrypoint}"))
+                    .expect_err("extensions must preserve delegated fatal resource errors");
+                assert!(
+                    matches!(
+                        error.downcast_ref::<LimitError>(),
+                        Some(LimitError::UnitExponentLimitExceeded { limit: 4096 })
+                    ),
+                    "{builtin}, {entrypoint}, strict={strict}: {error}"
+                );
+            }
+            engine.set_input(Value::from_json_str(r#"{"cpu":"1","fallback":false}"#)?);
+            assert_eq!(engine.eval_rule("data.test.direct".into())?, Value::from(1));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn units_exponent_limits_survive_nested_default_functions() -> Result<()> {
+    for (builtin, quantities) in [
+        ("units.parse", ["1e4097", "1e4094K", "1e4097Ki"]),
+        ("units.parse_bytes", ["1e4_097", "1e4_094KB", "1e4_097Ki"]),
+    ] {
+        for strict in [false, true] {
+            for (default_value, fallback) in [
+                (format!("[x | x := {builtin}(input.cpu)]"), "[]"),
+                (format!("{{x | x := {builtin}(input.cpu)}}"), "set()"),
+                (
+                    format!("{{\"quantity\": x | x := {builtin}(input.cpu)}}"),
+                    "{}",
+                ),
+            ] {
+                for definitions in [
+                    format!("f(v) := q(v)\nf(_) := {fallback} if {{ input.fallback }}"),
+                    format!("f(_) := {fallback} if {{ input.fallback }}\nf(v) := q(v)"),
+                ] {
+                    let mut engine = Engine::new();
+                    engine.set_strict_builtin_errors(strict);
+                    engine.add_policy(
+                        "default-units.rego".into(),
+                        format!(
+                            "package test
+                            default q(_) := {default_value}
+                            {definitions}
+                            default nested(_) := [v | v := q(0)]
+                            direct := q(0)
+                            result := f(0)
+                            nested_result := nested(0)
+                            deny if {{ count(f(0)) > 0 }}
+                            allow if {{ not deny }}
+                            original(_) := []
+                            original_result := original(0)
+                            replacement(_) := {fallback} if {{ false }}
+                            default replacement(_) := {default_value}
+                            overridden := v if {{ v := original(0) with original as replacement }}"
+                        ),
+                    )?;
+                    for quantity in quantities {
+                        engine.set_input(Value::from_json_str(&format!(
+                            r#"{{"cpu":"{quantity}","fallback":true}}"#
+                        ))?);
+                        for entrypoint in
+                            ["direct", "result", "nested_result", "allow", "overridden"]
+                        {
+                            let error = engine
+                                .eval_rule(format!("data.test.{entrypoint}"))
+                                .expect_err(&format!(
+                                    "default functions must preserve fatal unit limits: \
+                                     {builtin}, {quantity}, {entrypoint}, strict={strict}"
+                                ));
+                            assert!(
+                                matches!(
+                                    error.downcast_ref::<LimitError>(),
+                                    Some(LimitError::UnitExponentLimitExceeded { limit: 4096 })
+                                ),
+                                "{builtin}, {quantity}, {entrypoint}, strict={strict}, \
+                                 default={default_value}, definitions={definitions}: {error}"
+                            );
+                        }
+                    }
+                    engine.set_input(Value::from_json_str(r#"{"cpu":"1","fallback":false}"#)?);
+                    assert_eq!(
+                        engine.eval_rule("data.test.allow".into())?,
+                        Value::Undefined
+                    );
+                    assert_eq!(
+                        engine.eval_rule("data.test.original_result".into())?,
+                        Value::new_array()
+                    );
+                    engine.set_input(Value::from_json_str(
+                        r#"{"cpu":"x1e5000","fallback":true}"#,
+                    )?);
+                    if strict {
+                        let error = engine
+                            .eval_rule("data.test.allow".into())
+                            .expect_err("strict malformed inputs must remain ordinary errors");
+                        assert!(error.downcast_ref::<LimitError>().is_none(), "{error}");
+                    } else {
+                        assert_eq!(
+                            engine.eval_rule("data.test.allow".into())?,
+                            Value::Bool(true)
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn package_components_distinguish_literal_dots_from_nested_namespaces() -> Result<()> {
     let mut engine = Engine::new();
     let literal = engine.add_policy(

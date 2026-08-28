@@ -6,7 +6,7 @@
 use core::fmt;
 use core::time::Duration;
 
-/// Errors reported when execution time or memory ceilings are enforced.
+/// Errors reported when execution or builtin resource ceilings are enforced.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LimitError {
     /// Reported when the execution timer observes elapsed time beyond the configured limit.
@@ -28,6 +28,11 @@ pub enum LimitError {
         /// Configured compiled-NFA size ceiling in bytes.
         limit: usize,
     },
+    /// Reported when a unit quantity would exceed the positive exponent ceiling.
+    UnitExponentLimitExceeded {
+        /// Maximum positive decimal exponent after decimal suffix adjustment.
+        limit: i64,
+    },
 }
 
 impl fmt::Debug for LimitError {
@@ -45,6 +50,10 @@ impl fmt::Debug for LimitError {
                 .finish(),
             Self::RegexSizeLimitExceeded { limit } => f
                 .debug_struct("RegexSizeLimitExceeded")
+                .field("limit", limit)
+                .finish(),
+            Self::UnitExponentLimitExceeded { limit } => f
+                .debug_struct("UnitExponentLimitExceeded")
                 .field("limit", limit)
                 .finish(),
         }
@@ -72,6 +81,9 @@ impl fmt::Display for LimitError {
             }
             Self::RegexSizeLimitExceeded { limit } => {
                 write!(f, "compiled regex exceeded size limit ({} bytes)", limit)
+            }
+            Self::UnitExponentLimitExceeded { limit } => {
+                write!(f, "unit exponent too large (maximum {limit})")
             }
         }
     }
