@@ -6,6 +6,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/microsoft/regorus/compare/regorus-v0.11.0...regorus-v0.12.0) - 2026-09-01
+
+### Added
+
+- *(value)* Frozen object storage (boxed-slice) for compact parsed objects ([#787](https://github.com/microsoft/regorus/pull/787))
+- json.patch builtin with Rego set support + partial-rule multi-body fix (picks up #442) ([#776](https://github.com/microsoft/regorus/pull/776))
+- Support Verus verification ([#759](https://github.com/microsoft/regorus/pull/759))
+
+### Fixed
+
+- Prevent panic by `Number::modulo` ([#773](https://github.com/microsoft/regorus/pull/773))
+- Handle i64::MIN / -1 special case
+- *(interpreter,rvm)* resolve function calls through import aliases ([#769](https://github.com/microsoft/regorus/pull/769))
+
+### Other
+
+- Add per-execution memory budgets to RVM ([#792](https://github.com/microsoft/regorus/pull/792))
+- Verify `Number` with Verus ([#774](https://github.com/microsoft/regorus/pull/774))
+- *(deps)* bump the github-actions group with 3 updates ([#793](https://github.com/microsoft/regorus/pull/793))
+- Fix potential underflow in bigint_to_scientific ([#791](https://github.com/microsoft/regorus/pull/791))
+- *(deps)* migrate from serde_yaml to yaml_serde ([#790](https://github.com/microsoft/regorus/pull/790))
+- *(value)* migrate Array storage abstraction ([#785](https://github.com/microsoft/regorus/pull/785))
+- *(deps)* bump the github-actions group across 1 directory with 4 updates ([#783](https://github.com/microsoft/regorus/pull/783))
+- Pin GitHub Actions to full-length commit SHAs ([#777](https://github.com/microsoft/regorus/pull/777))
+- *(value)* migrate Value::Set to Set storage abstraction ([#778](https://github.com/microsoft/regorus/pull/778))
+- *(deps)* bump the rust-dependencies group across 5 directories with 10 updates ([#784](https://github.com/microsoft/regorus/pull/784))
+- *(deps)* bump the github-actions group with 4 updates ([#779](https://github.com/microsoft/regorus/pull/779))
+- *(deps)* bump the github-actions group across 1 directory with 11 updates ([#763](https://github.com/microsoft/regorus/pull/763))
+- *(deps)* bump the rust-dependencies group across 6 directories with 6 updates ([#768](https://github.com/microsoft/regorus/pull/768))
+- Handle `i32::MIN` in `Number::two_pow` and `Number::ten_pow` ([#771](https://github.com/microsoft/regorus/pull/771))
+
 ### Added
 
 - *(rvm)* add opt-in per-execution memory budgets for run-to-completion evaluation, including typed Rust and binding errors ([#792](https://github.com/microsoft/regorus/pull/792))
