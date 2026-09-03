@@ -42,8 +42,8 @@ jobs:
 
       - name: Setup Rust toolchain
         run: |
-          rustup toolchain install 1.92.0 --profile minimal
-          rustup override set 1.92.0
+          rustup toolchain install 1.93.1 --profile minimal
+          rustup override set 1.93.1
           cargo --version
           rustc --version
 
