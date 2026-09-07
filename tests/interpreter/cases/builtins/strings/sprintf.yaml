@@ -145,22 +145,64 @@ cases:
       unicode_width: "   \"🙂\""
       unicode_precision: "\"🙂\""
 
-  - note: "%q on a number still errors"
+  - note: "%q full string format specification"
     data: {}
     modules:
       - |
         package test
 
-        error_case := sprintf("%q", [42])
+        ascii_only := sprintf("%+q", ["é🙂"])
+        raw := sprintf("%#q", ["a\tb"])
+        raw_fallback := sprintf("%#q", ["a\nb"])
+        left_aligned := sprintf("%-8q", ["é"])
+        width_and_precision := sprintf("%8.1q", ["éx"])
+        ascii_width_and_precision := sprintf("%+14.1q", ["éx"])
+        raw_width_and_precision := sprintf("%#8.2q", ["abx"])
+        dynamic := sprintf("%*.*q", [8, 1, "éx"])
+        indexed := sprintf("%[3]*.[2]*[1]q", ["éx", 1, 8])
     query: data.test
-    error: "number specified for format verb q."
+    want_result:
+      ascii_only: "\"\\u00e9\\U0001f642\""
+      raw: "`a\tb`"
+      raw_fallback: "\"a\\nb\""
+      left_aligned: "\"é\"     "
+      width_and_precision: "     \"é\""
+      ascii_width_and_precision: "      \"\\u00e9\""
+      raw_width_and_precision: "    `ab`"
+      dynamic: "     \"é\""
+      indexed: "     \"é\""
 
-  - note: "%q on a non-string, non-number value still errors (only Value::String is supported)"
+  - note: "%q follows OPA value conversion semantics"
     data: {}
     modules:
       - |
         package test
 
-        error_case := sprintf("%q", [true])
+        rune := sprintf("%q", [97])
+        control_rune := sprintf("%q", [0])
+        quote_rune := sprintf("%q", [39])
+        invalid_rune := sprintf("%q", [-1])
+        ascii_rune := sprintf("%+q", [233])
+        padded_rune := sprintf("%8q", [97])
+        fractional := sprintf("%q", [65.5])
+        big_integer := sprintf("%q", [9223372036854775808])
+        boolean := sprintf("%q", [true])
+        null_value := sprintf("%q", [null])
+        array := sprintf("%q", [[1, "x"]])
+        set := sprintf("%q", [{true, 1, "x"}])
+        object := sprintf("%q", [{"b": 2, "a": 1}])
     query: data.test
-    error: "Go-syntax format verbs %#v. %q, %p and %T are not supported."
+    want_result:
+      rune: "'a'"
+      control_rune: "'\\x00'"
+      quote_rune: "'\\''"
+      invalid_rune: "'�'"
+      ascii_rune: "'\\u00e9'"
+      padded_rune: "     'a'"
+      fractional: "%!q(float64=65.5)"
+      big_integer: "%!q(big.Int=9223372036854775808)"
+      boolean: "\"true\""
+      null_value: "\"null\""
+      array: "\"[1, \\\"x\\\"]\""
+      set: "\"{true, 1, \\\"x\\\"}\""
+      object: "\"{\\\"a\\\": 1, \\\"b\\\": 2}\""
