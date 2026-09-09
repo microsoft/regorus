@@ -440,6 +440,7 @@ public sealed class Rvm : IDisposable
 
     // Configure execution
     public void SetExecutionMode(ExecutionMode mode);
+    public void SetMaxInstructions(ulong maxInstructions);
 
     // Run
     public string? Execute();
@@ -460,6 +461,15 @@ public sealed class Rvm : IDisposable
     public void Dispose();
 }
 ```
+
+`SetMaxInstructions` configures the maximum number of dispatched RVM bytecode
+instructions for the VM. The default is 25,000 and zero permits no
+dispatches. A fresh execution and `LoadProgram` reset the consumed count while
+preserving the configured maximum; `Resume` is cumulative with the preceding
+execution. Updating the maximum while suspended replaces the limit without
+resetting consumption. Instruction-limit failures use the existing generic
+`InvalidOperationException` projection. The setter is write-only in the C#
+binding; consumed instruction counts are not exposed.
 
 ### HostAwaitBuiltin
 

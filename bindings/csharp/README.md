@@ -105,6 +105,23 @@ var result = vm.Execute();
 Console.WriteLine($"allow: {result}");
 ```
 
+### RVM instruction budget
+
+Use `SetMaxInstructions` to configure the maximum number of dispatched RVM
+bytecode instructions for a VM:
+
+```csharp
+vm.SetMaxInstructions(25_000);
+```
+
+The default is 25,000 and zero permits no dispatches. A fresh execution or
+`LoadProgram` resets the consumed count, while `Resume` preserves it across
+suspendable execution. Changing the maximum while suspended replaces the limit
+without resetting consumption. Exhaustion is reported as the existing generic
+`InvalidOperationException`; the C# setter does not expose a consumed-count
+getter. Values that cannot fit the native pointer width are rejected instead
+of being truncated.
+
 ### Per-execution memory budget
 
 RVM run-to-completion evaluation can use an optional additional live-memory budget. Each ordinary `Execute` or `ExecuteEntryPoint` call starts with a fresh budget for execution; program compilation, program loading, and prior `SetDataJson`, `SetInputJson`, and `SetContextJson` calls occur before and outside that budget.

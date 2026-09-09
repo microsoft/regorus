@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Regorus.Tests;
@@ -58,6 +59,16 @@ allow if {
 }
 """;
 
+    private const string CumulativeHostAwaitPolicy = """
+package demo
+import rego.v1
+
+result := __builtin_host_await(
+  __builtin_host_await(input.value, "first"),
+  "second"
+)
+""";
+
     [TestMethod]
     public void Program_compile_and_execute_succeeds()
     {
@@ -79,6 +90,90 @@ allow if {
 
         var result = vm.Execute();
         Assert.AreEqual("true", result, "expected allow=true");
+    }
+
+    [TestMethod]
+    public void SetMaxInstructions_zero_stops_execution_and_is_per_vm()
+    {
+        var modules = new[] { new PolicyModule("demo.rego", Policy) };
+        var entryPoints = new[] { "data.demo.allow" };
+        using var program = Program.CompileFromModules(Data, modules, entryPoints);
+
+        using var limitedVm = new Rvm();
+        limitedVm.SetMaxInstructions(0);
+        limitedVm.LoadProgram(program);
+        limitedVm.SetDataJson(Data);
+        limitedVm.SetInputJson(Input);
+        Assert.ThrowsException<InvalidOperationException>(
+            () => limitedVm.Execute(),
+            "zero must prohibit every instruction dispatch");
+
+        using var independentVm = new Rvm();
+        independentVm.LoadProgram(program);
+        independentVm.SetDataJson(Data);
+        independentVm.SetInputJson(Input);
+        Assert.AreEqual("true", independentVm.Execute(), "VM limits must not be shared");
+    }
+
+    [TestMethod]
+    public void SetMaxInstructions_replacement_applies_to_a_fresh_execution()
+    {
+        var modules = new[] { new PolicyModule("demo.rego", Policy) };
+        var entryPoints = new[] { "data.demo.allow" };
+        using var program = Program.CompileFromModules(Data, modules, entryPoints);
+        using var vm = new Rvm();
+
+        vm.SetMaxInstructions(0);
+        vm.LoadProgram(program);
+        vm.SetDataJson(Data);
+        vm.SetInputJson(Input);
+        Assert.ThrowsException<InvalidOperationException>(() => vm.Execute());
+
+        vm.SetMaxInstructions(1000);
+        Assert.AreEqual("true", vm.Execute(), "a fresh execution should start with zero consumed instructions");
+    }
+
+    [TestMethod]
+    public void Execute_after_success_starts_a_fresh_execution()
+    {
+        var modules = new[] { new PolicyModule("demo.rego", Policy) };
+        var entryPoints = new[] { "data.demo.allow" };
+        using var program = Program.CompileFromModules(Data, modules, entryPoints);
+        using var vm = new Rvm();
+        vm.SetMaxInstructions(1000);
+        vm.LoadProgram(program);
+        vm.SetDataJson(Data);
+        vm.SetInputJson(Input);
+
+        Assert.AreEqual("true", vm.Execute());
+        vm.SetInputJson(Input.Replace("\"alice\"", "\"bob\"", StringComparison.Ordinal));
+        Assert.AreEqual("false", vm.Execute(), "a successful execution must not consume the next fresh execution");
+    }
+
+    [TestMethod]
+    public void SetMaxInstructions_preserves_native_width_and_rejects_32_bit_overflow()
+    {
+        using var vm = new Rvm();
+
+        if (IntPtr.Size == 4)
+        {
+            Assert.ThrowsException<ArgumentOutOfRangeException>(
+                () => vm.SetMaxInstructions((ulong)uint.MaxValue + 1),
+                "values wider than native usize must not be truncated");
+        }
+        else
+        {
+            vm.SetMaxInstructions(ulong.MaxValue);
+        }
+    }
+
+    [TestMethod]
+    public void SetMaxInstructions_rejects_a_disposed_vm()
+    {
+        var vm = new Rvm();
+        vm.Dispose();
+
+        Assert.ThrowsException<ObjectDisposedException>(() => vm.SetMaxInstructions(1));
     }
 
     [TestMethod]
@@ -116,6 +211,227 @@ allow if {
 
         var resumed = vm.Resume("{\"tier\":\"gold\"}");
         Assert.AreEqual("true", resumed, "expected allow=true after resume");
+    }
+
+    [TestMethod]
+    public void SetMaxInstructions_host_await_resume_preserves_consumed_count()
+    {
+        var modules = new[] { new PolicyModule("host_await.rego", HostAwaitPolicy) };
+        var entryPoints = new[] { "data.demo.allow" };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.SetMaxInstructions(1000);
+        vm.LoadProgram(program);
+        vm.SetInputJson(HostAwaitInput);
+
+        vm.Execute();
+        StringAssert.Contains(vm.GetExecutionState()!, "HostAwait");
+
+        vm.SetMaxInstructions(0);
+        Assert.ThrowsException<InvalidOperationException>(
+            () => vm.Resume("{\"tier\":\"gold\"}"),
+            "lowering a suspended VM below its consumed count must reject the next dispatch");
+        Assert.IsTrue(
+            vm.GetExecutionState()!.Contains("Error", StringComparison.Ordinal),
+            "instruction exhaustion must leave the VM in Error state");
+        Assert.ThrowsException<InvalidOperationException>(
+            () => vm.Resume("{\"tier\":\"gold\"}"),
+            "Resume must be rejected after the VM enters Error state");
+
+        vm.SetMaxInstructions(1000);
+        vm.SetInputJson("""
+{
+  "account": {
+    "id": "acct-2",
+    "active": true
+  }
+}
+""");
+        vm.Execute();
+        StringAssert.Contains(vm.GetHostAwaitArgument()!, "acct-2");
+        Assert.AreEqual("true", vm.Resume("{\"tier\":\"gold\"}"));
+    }
+
+    [TestMethod]
+    public void SetMaxInstructions_supports_multiple_host_await_resumes()
+    {
+        var modules = new[] { new PolicyModule("multi.rego", MultiAwaitPolicy) };
+        var entryPoints = new[] { "data.demo.greeting" };
+        var hostAwaitBuiltins = new[]
+        {
+            new HostAwaitBuiltin("translate"),
+            new HostAwaitBuiltin("lookup_user"),
+        };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.SetMaxInstructions(1000);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"lang\":\"es\",\"user_id\":\"u1\"}");
+
+        vm.Execute();
+        StringAssert.Contains(vm.GetExecutionState()!, "HostAwait");
+
+        vm.Resume("\"hola\"");
+        StringAssert.Contains(vm.GetExecutionState()!, "HostAwait");
+
+        var result = vm.Resume("{\"name\":\"Alice\"}");
+        Assert.AreEqual("\"hola Alice\"", result);
+    }
+
+    [TestMethod]
+    public void SetMaxInstructions_counts_sequential_cross_thread_resume_cumulatively()
+    {
+        var modules = new[] { new PolicyModule("cumulative.rego", CumulativeHostAwaitPolicy) };
+        var entryPoints = new[] { "data.demo.result" };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints);
+        var listing = GetListing(program);
+        AssertCumulativeHostAwaitListing(listing);
+
+        // The generated path is:
+        // E: PC 0, 2, 3, 4, 5, 6 -> first HostAwait (6 dispatches).
+        // R1: PC 7, 8 -> second HostAwait (2 dispatches).
+        // R2: PC 9, 10, 1 -> completion (3 dispatches).
+        const ulong executeToFirstSuspension = 6;
+        const ulong firstResumeToSecondSuspension = 2;
+        const ulong secondResumeToCompletion = 3;
+        const ulong positiveLimit = 8;
+
+        Assert.AreEqual(
+            positiveLimit,
+            executeToFirstSuspension + firstResumeToSecondSuspension);
+        Assert.IsTrue(
+            positiveLimit < executeToFirstSuspension
+                + firstResumeToSecondSuspension
+                + secondResumeToCompletion);
+        Assert.IsTrue(
+            firstResumeToSecondSuspension + secondResumeToCompletion <= positiveLimit);
+
+        Console.WriteLine(
+            $"RVM budget path: entry_points=[data.demo.result], listing_instructions=11, "
+            + $"E={executeToFirstSuspension}, R1={firstResumeToSecondSuspension}, "
+            + $"R2={secondResumeToCompletion}, N={positiveLimit}; "
+            + "E+R1<=N<E+R1+R2 and R1+R2<=N.");
+
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.SetMaxInstructions(positiveLimit);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"value\":\"initial\"}");
+
+        using var executeFinished = new ManualResetEventSlim();
+        using var resumeFinished = new ManualResetEventSlim();
+        Exception? executeError = null;
+        Exception? firstResumeError = null;
+        Exception? secondResumeError = null;
+        var executeThreadId = -1;
+        var resumeThreadId = -1;
+        var firstResumeState = string.Empty;
+
+        var executeThread = new Thread(() =>
+        {
+            try
+            {
+                vm.Execute();
+                executeThreadId = Thread.CurrentThread.ManagedThreadId;
+            }
+            catch (Exception ex)
+            {
+                executeError = ex;
+            }
+            finally
+            {
+                executeFinished.Set();
+            }
+
+            if (!resumeFinished.Wait(TimeSpan.FromSeconds(30)))
+            {
+                executeError ??= new TimeoutException("Resume thread did not complete.");
+            }
+        });
+
+        var resumeThread = new Thread(() =>
+        {
+            try
+            {
+                if (!executeFinished.Wait(TimeSpan.FromSeconds(30)))
+                {
+                    throw new TimeoutException("Execute thread did not complete.");
+                }
+
+                resumeThreadId = Thread.CurrentThread.ManagedThreadId;
+                vm.Resume("\"first\"");
+            }
+            catch (Exception ex)
+            {
+                firstResumeError = ex;
+            }
+
+            if (firstResumeError is null)
+            {
+                firstResumeState = vm.GetExecutionState()!;
+                try
+                {
+                    vm.Resume("\"second\"");
+                }
+                catch (Exception ex)
+                {
+                    secondResumeError = ex;
+                }
+            }
+
+            resumeFinished.Set();
+        });
+
+        executeThread.Start();
+        resumeThread.Start();
+        executeThread.Join();
+        resumeThread.Join();
+
+        Assert.IsNull(executeError, executeError?.ToString());
+        Assert.IsNull(firstResumeError, firstResumeError?.ToString());
+        Assert.IsNotNull(secondResumeError, "cumulative execution must exhaust the positive limit");
+        Assert.AreNotEqual(executeThreadId, resumeThreadId, "continuation must use distinct threads");
+        StringAssert.Contains(firstResumeState, "HostAwait");
+        StringAssert.Contains(vm.GetExecutionState() ?? string.Empty, "InstructionLimitExceeded");
+    }
+
+    private static string GetListing(Program program)
+    {
+        var listing = program.GenerateListing();
+        Assert.IsNotNull(listing);
+        return listing!;
+    }
+
+    private static void AssertCumulativeHostAwaitListing(string listing)
+    {
+        var expectedInstructions = new[]
+        {
+            "; RVM Assembly - 11 instructions, 3 literals, 0 builtins",
+            "000: CallRule",
+            "001: Return",
+            "002: RuleInit",
+            "003:     LoadInput",
+            "004:     IndexLiteral",
+            "005:     Load",
+            "006:     HostAwait",
+            "007:     Load",
+            "008:     HostAwait",
+            "009:     Move",
+            "010: } return from rule",
+        };
+
+        foreach (var expectedInstruction in expectedInstructions)
+        {
+            StringAssert.Contains(
+                listing,
+                expectedInstruction,
+                $"compiled RVM listing changed; missing '{expectedInstruction}'");
+        }
     }
 
     private const string GetAccountPolicy = """

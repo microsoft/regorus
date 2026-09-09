@@ -25,7 +25,7 @@ fields to responsibilities.
 | `comprehension_stack`                 | Active `ComprehensionContext` objects.                      | `comprehension.rs` |
 | `base_register_count`                 | Root window size derived from program metadata.             | `load_program` |
 | `register_window_pool`                | Recycled register vectors to reduce allocations.            | `state.rs`, `rules.rs` |
-| `max_instructions`, `executed_instructions` | Instruction budget and counter.                           | `execution.rs` |
+| `max_instructions`, `executed_instructions` | Instruction limit and internal per-execution counter.     | `execution.rs` |
 | `evaluated`                           | Cache for virtual document lookups.                         | `virtual_data.rs` |
 | `cache_hits`                          | Counters aiding diagnostics.                                | `virtual_data.rs` |
 | `execution_stack`                     | Explicit frame stack for suspendable mode.                  | `execution_model.rs` |
@@ -46,7 +46,8 @@ fields to responsibilities.
 - `set_data` / `set_input`: inject host documents. `set_data` runs
   `Program::check_rule_data_conflicts` to guard against rule/data collisions.
 - `set_max_instructions`, `set_execution_mode`, `set_step_mode`: configure
-  runtime policy.
+  runtime policy. `set_max_instructions` replaces the limit without resetting
+  the current execution's counter.
 - `set_host_await_responses`: pre-loads responses per identifier, consumed in
   FIFO order when `HostAwait` executes in run-to-completion mode.
 - `set_strict_builtin_errors`: toggles builtin failure semantics between
@@ -233,8 +234,30 @@ assertion messages. When an internal invariant fails, the error message includes
 
 ## 8. Operational guidance
 
+### Instruction budget contract
+
+The default instruction limit is 25,000 dispatched bytecode instructions per
+execution. A limit of zero permits no dispatches. The counter is incremented
+once immediately before each dispatched instruction; the next instruction is
+rejected when the counter has reached the configured limit. Builtin calls and
+`HostAwait` each consume one dispatch, not the work performed inside the host
+or builtin.
+
+`execute` and a valid entry-point execution begin a fresh count, and
+`load_program` also resets the count while preserving the configured maximum.
+`resume` continues the same count. Replacing the maximum while suspended
+preserves consumption: lowering it below the current count rejects the next
+dispatch, while raising it can provide more headroom. Invalid entry-point
+selection can fail before a fresh execution is initialized.
+
+Instruction exhaustion is `VmError::InstructionLimitExceeded` with the limit,
+executed count, and program counter. The C# binding maps it to the existing
+generic `InvalidOperationException`; `executed_instructions` remains an
+internal runtime field and is not a public C# getter.
+
 - **Instruction budgets**: adjust via `set_max_instructions` when running
-  untrusted policies. Inspect `executed_instructions` after completion.
+  untrusted policies. Use the instruction-limit error for the runtime metadata;
+  consumers should not assume a public consumed-count accessor.
 - **Breakpoints & stepping**: populate `breakpoints` with bytecode PCs (see the
   assembly listing) and enable `set_step_mode(true)` to pause after each
   instruction.
@@ -254,5 +277,4 @@ assertion messages. When an internal invariant fails, the error message includes
   combines nested loops, comprehensions, function calls, and host awaits.
 
 ---
-
 

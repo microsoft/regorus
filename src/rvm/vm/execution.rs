@@ -701,20 +701,45 @@ impl RegoVM {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExecutionMode, Instruction, Program, RegoVM, Value};
+    use super::super::errors::VmError;
+    use super::{ExecutionMode, ExecutionState, Instruction, Program, RegoVM, Value};
     use alloc::sync::Arc;
-    use alloc::vec;
+
+    fn two_instruction_program() -> Arc<Program> {
+        let mut program = Program::new();
+        program.add_instruction(Instruction::LoadTrue { dest: 0 }, None);
+        program.add_instruction(Instruction::Return { value: 0 }, None);
+        Arc::new(program)
+    }
+
+    fn two_instruction_program_with_entry_point() -> Arc<Program> {
+        let mut program = Program::new();
+        program.add_instruction(Instruction::LoadTrue { dest: 0 }, None);
+        program.add_instruction(Instruction::Return { value: 0 }, None);
+        program.entry_points.insert("entry".into(), 0);
+        Arc::new(program)
+    }
+
+    fn host_await_program() -> Arc<Program> {
+        let mut program = Program::new();
+        program.add_instruction(Instruction::LoadInput { dest: 0 }, None);
+        program.add_instruction(Instruction::LoadNull { dest: 1 }, None);
+        program.add_instruction(
+            Instruction::HostAwait {
+                dest: 0,
+                arg: 0,
+                id: 1,
+            },
+            None,
+        );
+        program.add_instruction(Instruction::Return { value: 0 }, None);
+        Arc::new(program)
+    }
 
     #[allow(clippy::expect_used)]
     #[test]
     fn execution_loops_check_memory_once_per_dispatched_instruction() {
-        let mut program = Program::new();
-        program.instructions = vec![
-            Instruction::LoadTrue { dest: 0 },
-            Instruction::Return { value: 0 },
-        ];
-        program.instruction_spans = vec![None; program.instructions.len()];
-        let program = Arc::new(program);
+        let program = two_instruction_program();
 
         for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
             let mut vm = RegoVM::new();
@@ -725,5 +750,224 @@ mod tests {
             assert_eq!(vm.executed_instructions, 2);
             assert_eq!(vm.memory_check_count, vm.executed_instructions);
         }
+    }
+
+    #[test]
+    fn instruction_budget_exact_boundaries_are_consistent_across_modes() {
+        let program = two_instruction_program();
+        let default_vm = RegoVM::new();
+        assert_eq!(default_vm.max_instructions, 25_000);
+
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            for (limit, expected_executed, expected_pc) in [(0, 0, 0), (1, 1, 1)] {
+                let mut vm = RegoVM::new();
+                vm.set_execution_mode(mode);
+                vm.set_max_instructions(limit);
+                vm.load_program(program.clone());
+
+                assert_eq!(
+                    vm.execute(),
+                    Err(VmError::InstructionLimitExceeded {
+                        limit,
+                        executed: expected_executed,
+                        pc: expected_pc,
+                    })
+                );
+            }
+
+            for limit in [2, 3] {
+                let mut vm = RegoVM::new();
+                vm.set_execution_mode(mode);
+                vm.set_max_instructions(limit);
+                vm.load_program(program.clone());
+
+                assert_eq!(vm.execute(), Ok(Value::Bool(true)));
+                assert_eq!(vm.executed_instructions, 2);
+            }
+        }
+    }
+
+    #[test]
+    fn instruction_budget_entry_points_reset_consumption_in_both_modes() {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            for by_name in [true, false] {
+                let mut vm = RegoVM::new();
+                vm.set_execution_mode(mode);
+                vm.set_max_instructions(1);
+                vm.load_program(two_instruction_program_with_entry_point());
+
+                let first = if by_name {
+                    vm.execute_entry_point_by_name("entry")
+                } else {
+                    vm.execute_entry_point_by_index(0)
+                };
+                assert_eq!(
+                    first,
+                    Err(VmError::InstructionLimitExceeded {
+                        limit: 1,
+                        executed: 1,
+                        pc: 1,
+                    })
+                );
+
+                vm.set_max_instructions(2);
+                let second = if by_name {
+                    vm.execute_entry_point_by_name("entry")
+                } else {
+                    vm.execute_entry_point_by_index(0)
+                };
+                assert_eq!(second, Ok(Value::Bool(true)));
+                assert_eq!(vm.executed_instructions, 2);
+            }
+        }
+    }
+
+    #[test]
+    fn instruction_budget_counts_a_dispatched_failing_instruction() {
+        let mut program = Program::new();
+        program.add_instruction(Instruction::LoadTrue { dest: 0 }, None);
+        program.add_instruction(Instruction::LoadNull { dest: 1 }, None);
+        program.add_instruction(
+            Instruction::Lt {
+                dest: 2,
+                left: 0,
+                right: 1,
+            },
+            None,
+        );
+
+        let mut vm = RegoVM::new();
+        vm.set_strict_builtin_errors(true);
+        vm.load_program(Arc::new(program));
+
+        let result = vm.execute();
+        assert!(matches!(
+            result,
+            Err(VmError::ArithmeticError { pc: 2, .. })
+        ));
+        assert_eq!(vm.executed_instructions, 3);
+    }
+
+    #[test]
+    fn load_program_resets_consumption_after_a_successful_execution() {
+        let program = two_instruction_program();
+        let mut vm = RegoVM::new();
+        vm.set_max_instructions(2);
+        vm.load_program(program.clone());
+
+        assert_eq!(vm.execute(), Ok(Value::Bool(true)));
+        assert_eq!(vm.executed_instructions, 2);
+
+        vm.load_program(program);
+        assert_eq!(vm.executed_instructions, 0);
+        assert_eq!(vm.max_instructions, 2);
+        assert_eq!(vm.execute(), Ok(Value::Bool(true)));
+        assert_eq!(vm.executed_instructions, 2);
+    }
+
+    #[test]
+    fn successful_execution_can_be_followed_by_a_fresh_execution() {
+        let program = two_instruction_program();
+        let mut vm = RegoVM::new();
+        vm.set_max_instructions(2);
+        vm.load_program(program);
+
+        assert_eq!(vm.execute(), Ok(Value::Bool(true)));
+        assert_eq!(vm.executed_instructions, 2);
+        assert_eq!(vm.execute(), Ok(Value::Bool(true)));
+        assert_eq!(vm.executed_instructions, 2);
+    }
+
+    #[test]
+    fn instruction_budget_rejects_the_next_suspendable_instruction_without_executing_it() {
+        let mut program = Program::new();
+        program.add_instruction(Instruction::LoadTrue { dest: 0 }, None);
+        program.add_instruction(Instruction::LoadFalse { dest: 1 }, None);
+        program.add_instruction(Instruction::Return { value: 0 }, None);
+
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.set_max_instructions(1);
+        vm.load_program(Arc::new(program));
+
+        assert_eq!(
+            vm.execute(),
+            Err(VmError::InstructionLimitExceeded {
+                limit: 1,
+                executed: 1,
+                pc: 1,
+            })
+        );
+        assert_eq!(vm.get_registers().get(1), Some(&Value::Undefined));
+    }
+
+    #[test]
+    fn instruction_budget_replacement_preserves_consumption_while_suspended() {
+        let program = host_await_program();
+
+        let mut lowered = RegoVM::new();
+        lowered.set_execution_mode(ExecutionMode::Suspendable);
+        lowered.set_max_instructions(3);
+        lowered.load_program(program.clone());
+        assert_eq!(lowered.execute(), Ok(Value::Undefined));
+        assert_eq!(lowered.executed_instructions, 3);
+        lowered.set_max_instructions(3);
+        assert_eq!(
+            lowered.resume(Some(Value::Bool(true))),
+            Err(VmError::InstructionLimitExceeded {
+                limit: 3,
+                executed: 3,
+                pc: 3,
+            })
+        );
+        assert!(matches!(
+            lowered.execution_state(),
+            ExecutionState::Error {
+                error: VmError::InstructionLimitExceeded { .. }
+            }
+        ));
+        assert!(matches!(
+            lowered.resume(Some(Value::Bool(true))),
+            Err(VmError::InvalidResumeState { .. })
+        ));
+
+        lowered.set_max_instructions(4);
+        lowered.set_input(Value::String("second".into()));
+        assert_eq!(lowered.execute(), Ok(Value::Undefined));
+        assert_eq!(
+            lowered.get_host_await_argument(),
+            Some(&Value::String("second".into()))
+        );
+        assert_eq!(
+            lowered.resume(Some(Value::Bool(true))),
+            Ok(Value::Bool(true))
+        );
+
+        let mut lowered_below = RegoVM::new();
+        lowered_below.set_execution_mode(ExecutionMode::Suspendable);
+        lowered_below.set_max_instructions(3);
+        lowered_below.load_program(host_await_program());
+        assert_eq!(lowered_below.execute(), Ok(Value::Undefined));
+        lowered_below.set_max_instructions(2);
+        assert_eq!(
+            lowered_below.resume(Some(Value::Bool(true))),
+            Err(VmError::InstructionLimitExceeded {
+                limit: 2,
+                executed: 3,
+                pc: 3,
+            })
+        );
+
+        let mut raised = RegoVM::new();
+        raised.set_execution_mode(ExecutionMode::Suspendable);
+        raised.set_max_instructions(3);
+        raised.load_program(program);
+        assert_eq!(raised.execute(), Ok(Value::Undefined));
+        raised.set_max_instructions(4);
+        assert_eq!(
+            raised.resume(Some(Value::Bool(true))),
+            Ok(Value::Bool(true))
+        );
+        assert_eq!(raised.executed_instructions, 4);
     }
 }

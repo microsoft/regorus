@@ -146,6 +146,36 @@ namespace Regorus
         }
 
         /// <summary>
+        /// Set the maximum number of RVM bytecode instructions dispatched by one execution.
+        /// </summary>
+        /// <remarks>
+        /// The default is 25,000. Zero permits no dispatches. A fresh execution or program load
+        /// resets the consumed count, while Resume preserves it. Updating the maximum while
+        /// suspended replaces the limit without resetting the consumed count.
+        /// </remarks>
+        /// <param name="maxInstructions">The maximum number of dispatched instructions.</param>
+        /// <exception cref="ArgumentOutOfRangeException">
+        /// Thrown when the value cannot be represented by the native pointer width.
+        /// </exception>
+        public void SetMaxInstructions(ulong maxInstructions)
+        {
+            if (IntPtr.Size == 4 && maxInstructions > uint.MaxValue)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(maxInstructions),
+                    "The instruction limit must fit in the native pointer width.");
+            }
+
+            UseHandle(vmPtr =>
+            {
+                CheckAndDropResult(API.regorus_rvm_set_max_instructions(
+                    (RegorusRvm*)vmPtr,
+                    new UIntPtr(maxInstructions)));
+                return 0;
+            });
+        }
+
+        /// <summary>
         /// Configure a fresh memory budget for every run-to-completion execution.
         /// </summary>
         /// <param name="config">Memory-budget configuration.</param>
