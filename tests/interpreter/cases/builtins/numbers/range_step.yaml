@@ -1,0 +1,59 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: ascending
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range_step(1, 5, 1)
+    query: data.test.x
+    want_result: [1, 2, 3, 4, 5]
+
+  - note: step-2
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range_step(0, 10, 2)
+    query: data.test.x
+    want_result: [0, 2, 4, 6, 8, 10]
+
+  - note: descending
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range_step(5, 1, 1)
+    query: data.test.x
+    want_result: [5, 4, 3, 2, 1]
+
+  - note: single-element
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range_step(3, 3, 1)
+    query: data.test.x
+    want_result: [3]
+
+  - note: non-integer-step-undefined
+    strict: false
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range_step(1, 5, 0.5)
+    query: data.test.x
+    no_result: true
+
+  - note: zero-step-undefined
+    strict: false
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range_step(1, 5, 0)
+    query: data.test.x
+    no_result: true
