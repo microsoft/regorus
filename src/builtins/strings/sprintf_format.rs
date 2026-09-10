@@ -89,6 +89,9 @@ pub(super) fn parse(
     if let Some(index) = parse_index(bytes, &mut cursor)? {
         *args_idx = index;
         *reordered = true;
+        if matches!(bytes.get(cursor), Some(b'0'..=b'9' | b'.')) {
+            bail!(format_span.error("invalid sprintf argument index"));
+        }
     }
 
     if bytes.get(cursor) == Some(&b'*') {
@@ -110,12 +113,17 @@ pub(super) fn parse(
         if let Some(index) = parse_index(bytes, &mut cursor)? {
             *args_idx = index;
             *reordered = true;
+            if matches!(bytes.get(cursor), Some(b'0'..=b'9' | b'.')) {
+                bail!(format_span.error("invalid sprintf argument index"));
+            }
         }
         if bytes.get(cursor) == Some(&b'*') {
             cursor += 1;
             let precision = take_integer(args, args_idx, args_span)?;
             if precision >= 0 {
                 spec.precision = Some(checked_dynamic_value(precision as u64, args_span)?);
+            } else {
+                spec.bad_precision = true;
             }
         } else {
             spec.precision = Some(parse_usize(bytes, &mut cursor)?.unwrap_or_default());

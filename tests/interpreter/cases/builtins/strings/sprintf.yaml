@@ -185,6 +185,11 @@ cases:
         ascii_rune := sprintf("%+q", [233])
         padded_rune := sprintf("%8q", [97])
         fractional := sprintf("%q", [65.5])
+        fractional_width := sprintf("%8q", [65.5])
+        fractional_precision := sprintf("%.2q", [65.5])
+        fractional_zero_padded := sprintf("%08q", [65.5])
+        fractional_alternate := sprintf("%#q", [65.5])
+        bad_dynamic_precision := sprintf("%.*q", [-1, "x"])
         big_integer := sprintf("%q", [9223372036854775808])
         boolean := sprintf("%q", [true])
         null_value := sprintf("%q", [null])
@@ -200,6 +205,11 @@ cases:
       ascii_rune: "'\\u00e9'"
       padded_rune: "     'a'"
       fractional: "%!q(float64=65.5)"
+      fractional_width: "%!q(float64=    65.5)"
+      fractional_precision: "%!q(float64=66)"
+      fractional_zero_padded: "%!q(float64=000065.5)"
+      fractional_alternate: "%!q(float64=65.5000)"
+      bad_dynamic_precision: "%!(BADPREC)\"x\""
       big_integer: "%!q(big.Int=9223372036854775808)"
       boolean: "\"true\""
       null_value: "\"null\""

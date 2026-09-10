@@ -242,6 +242,7 @@ struct FormatSpec {
     flags: FormatFlags,
     width: Option<usize>,
     precision: Option<usize>,
+    bad_precision: bool,
 }
 
 impl FormatSpec {
@@ -294,8 +295,10 @@ fn append_go_quoted(out: &mut String, input: &str, spec: FormatSpec) -> Result<(
 
     if raw {
         out.push('`');
-        out.push_str(input);
-        enforce_limit()?;
+        for c in input.chars() {
+            out.push(c);
+            enforce_limit()?;
+        }
         out.push('`');
         enforce_limit()?;
     } else {
@@ -413,19 +416,129 @@ fn append_go_quoted_value(out: &mut String, value: &Value, spec: FormatSpec) -> 
         }
         Value::Number(Number::Float(value)) => {
             out.push_str("%!q(float64=");
-            if spec.flags.plus && value.is_sign_positive() {
-                out.push('+');
-            }
-            out.push_str(&value.to_string());
+            append_go_float_value(out, value, spec)?;
             out.push(')');
             enforce_limit()
         }
         value => {
-            let value = to_string(value, false);
-            enforce_limit()?;
-            append_go_quoted(out, &value, spec)
+            let mut rendered = String::new();
+            append_value_string(&mut rendered, value, false)?;
+            append_go_quoted(out, &rendered, spec)
         }
     }
+}
+
+// Go renders an invalid %q float operand using the supplied flags, width, and
+// precision as a nested %v conversion.
+fn append_go_float_value(out: &mut String, value: &f64, spec: FormatSpec) -> Result<()> {
+    let value = if let Some(precision) = spec.precision {
+        format_go_float_v(*value, precision, spec.flags.alternate)
+    } else {
+        format_go_float_v(*value, 6, spec.flags.alternate)
+    };
+    let padding = spec.width.unwrap_or_default().saturating_sub(value.len());
+    let padding_char = if spec.flags.zero && !spec.flags.minus {
+        '0'
+    } else {
+        ' '
+    };
+    if !spec.flags.minus {
+        append_padding(out, padding, padding_char)?;
+    }
+    out.push_str(&value);
+    enforce_limit()?;
+    if spec.flags.minus {
+        append_padding(out, padding, ' ')?;
+    }
+    Ok(())
+}
+
+// Go's %v precision for floats is the number of significant digits, using the
+// same general-format threshold as %g. The alternate form retains trailing
+// zeroes up to that precision.
+fn format_go_float_v(value: f64, precision: usize, alternate: bool) -> String {
+    if !value.is_finite() || value == 0.0 {
+        return value.to_string();
+    }
+    let precision = precision.max(1);
+    let exponent = value.abs().log10().floor() as i32;
+    let scientific = exponent >= precision as i32 || exponent < -4;
+    let mut rendered = if scientific {
+        let fraction_digits = precision - 1;
+        let rendered = format!("{value:.fraction_digits$e}");
+        let (mantissa, exponent) = rendered
+            .split_once('e')
+            .expect("scientific format has exponent");
+        let mantissa = if alternate {
+            mantissa.to_owned()
+        } else {
+            mantissa
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+                .to_owned()
+        };
+        let exponent = exponent.parse::<i32>().expect("Rust exponent is numeric");
+        format!("{mantissa}e{exponent:+03}")
+    } else {
+        let fraction_digits = (precision as i32 - exponent - 1).max(0) as usize;
+        format!("{value:.fraction_digits$}")
+    };
+    if !alternate && !scientific {
+        rendered = rendered
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_owned();
+    }
+    rendered
+}
+
+fn append_value_string(out: &mut String, value: &Value, unescape: bool) -> Result<()> {
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(value) => out.push_str(&value.to_string()),
+        Value::String(value) if unescape => out.push_str(
+            &serde_json::to_string(value.as_ref()).unwrap_or_else(|_| value.as_ref().to_string()),
+        ),
+        Value::String(value) => out.push_str(value.as_ref()),
+        Value::Number(value) => out.push_str(&value.format_decimal()),
+        Value::Array(values) => {
+            out.push('[');
+            for (index, value) in values.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                append_value_string(out, value, true)?;
+                enforce_limit()?;
+            }
+            out.push(']');
+        }
+        Value::Set(values) => {
+            out.push('{');
+            for (index, value) in values.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                append_value_string(out, value, true)?;
+                enforce_limit()?;
+            }
+            out.push('}');
+        }
+        Value::Object(values) => {
+            out.push('{');
+            for (index, (key, value)) in values.iter_sorted().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                append_value_string(out, key, true)?;
+                out.push_str(": ");
+                append_value_string(out, value, true)?;
+                enforce_limit()?;
+            }
+            out.push('}');
+        }
+        Value::Undefined => out.push_str("#undefined"),
+    }
+    enforce_limit()
 }
 
 fn append_hex_escape(out: &mut String, prefix: char, value: u32, digits: usize) {
@@ -484,12 +597,21 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
             ));
         }
 
+        if verb != 'q' && spec.width.is_some() && spec.precision.is_some() {
+            bail!(format_span
+                .error("sprintf combined width and precision are currently supported only for %q"));
+        }
+
         if args_idx >= args.len() {
             bail!(args_span
                 .error(format!("no argument specified for format verb {args_idx}").as_str()));
         }
         let arg = &args[args_idx];
         args_idx += 1;
+        if spec.bad_precision {
+            s.push_str("%!(BADPREC)");
+            enforce_limit()?;
+        }
         let width = spec.legacy_width();
 
         // Handle Golang flags.
@@ -945,6 +1067,7 @@ mod tests {
                     },
                     width: Some(5),
                     precision: None,
+                    ..FormatSpec::default()
                 }
             ),
             "00\"a\""

@@ -18,3 +18,24 @@ cases:
       quoted: "\"a\\u2028b\""
       width: "  \"é\""
       precision: "\"é\""
+
+  - note: sprintf_q_dynamic_indexed_and_value_conversions
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := {
+          "dynamic": sprintf("%*.*q", [8, 1, "éx"]),
+          "indexed": sprintf("%[3]*.[2]*[1]q", ["éx", 1, 8]),
+          "rune": sprintf("%q", [97]),
+          "array": sprintf("%q", [[1, "x"]]),
+          "float": sprintf("%8q", [65.5]),
+        }
+    query: data.test.result
+    want_result:
+      dynamic: "     \"é\""
+      indexed: "     \"é\""
+      rune: "'a'"
+      array: "\"[1, \\\"x\\\"]\""
+      float: "%!q(float64=    65.5)"
