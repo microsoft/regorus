@@ -542,15 +542,15 @@ fn strings_count(
     ensure_args_count(span, name, params, args, 2)?;
 
     let search = ensure_string(name, &params[0], &args[0])?;
-    let substring = ensure_string(name, &params[0], &args[1])?;
+    let substring = ensure_string(name, &params[1], &args[1])?;
 
-    Ok(Value::from(
-        search
-            .as_bytes()
-            .windows(substring.len())
-            .filter(|&w| w == substring.as_bytes())
-            .count(),
-    ))
+    if substring.is_empty() {
+        // An empty needle matches between every character (and at both ends),
+        // consistent with Go's strings.Count and OPA semantics.
+        return Ok(Value::from(search.chars().count().saturating_add(1)));
+    }
+
+    Ok(Value::from(search.matches(substring.as_ref()).count()))
 }
 
 fn startswith(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
