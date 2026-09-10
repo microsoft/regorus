@@ -463,6 +463,13 @@ impl Engine {
         self.engine.take_prints()
     }
 
+    /// Prepare internal evaluation structures without executing a query.
+    ///
+    /// Optional: if skipped, first evaluation performs the same setup.
+    pub fn prepare(&mut self) -> Result<()> {
+        self.engine.prepare()
+    }
+
     /// Clone a [`Engine`]
     ///
     /// To avoid having to parse same policy again, the engine can be cloned
