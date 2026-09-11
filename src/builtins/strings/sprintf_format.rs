@@ -86,11 +86,16 @@ pub(super) fn parse(
         cursor += 1;
     }
 
+    let args_idx_before_index = *args_idx;
     if let Some(index) = parse_index(bytes, &mut cursor)? {
         *args_idx = index;
         *reordered = true;
         if matches!(bytes.get(cursor), Some(b'0'..=b'9' | b'.')) {
-            bail!(format_span.error("invalid sprintf argument index"));
+            spec.bad_index = true;
+            *args_idx = args_idx_before_index;
+            // A malformed explicit index neither consumes nor reorders an
+            // argument, but it suppresses the legacy extra-argument check.
+            *reordered = true;
         }
     }
 
@@ -113,9 +118,6 @@ pub(super) fn parse(
         if let Some(index) = parse_index(bytes, &mut cursor)? {
             *args_idx = index;
             *reordered = true;
-            if matches!(bytes.get(cursor), Some(b'0'..=b'9' | b'.')) {
-                bail!(format_span.error("invalid sprintf argument index"));
-            }
         }
         if bytes.get(cursor) == Some(&b'*') {
             cursor += 1;

@@ -243,6 +243,7 @@ struct FormatSpec {
     width: Option<usize>,
     precision: Option<usize>,
     bad_precision: bool,
+    bad_index: bool,
 }
 
 impl FormatSpec {
@@ -585,6 +586,14 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
 
         if verb == '%' {
             s.push('%');
+            enforce_limit()?;
+            continue;
+        }
+
+        if spec.bad_index {
+            s.push_str("%!");
+            s.push(verb);
+            s.push_str("(BADINDEX)");
             enforce_limit()?;
             continue;
         }

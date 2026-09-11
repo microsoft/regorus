@@ -190,6 +190,9 @@ cases:
         fractional_zero_padded := sprintf("%08q", [65.5])
         fractional_alternate := sprintf("%#q", [65.5])
         bad_dynamic_precision := sprintf("%.*q", [-1, "x"])
+        bad_index := sprintf("%[1]2q", ["x"])
+        bad_index_precision := sprintf("%[1].2q", ["x"])
+        bad_index_does_not_consume := sprintf("%[2]2q %q", ["x"])
         big_integer := sprintf("%q", [9223372036854775808])
         boolean := sprintf("%q", [true])
         null_value := sprintf("%q", [null])
@@ -210,6 +213,9 @@ cases:
       fractional_zero_padded: "%!q(float64=000065.5)"
       fractional_alternate: "%!q(float64=65.5000)"
       bad_dynamic_precision: "%!(BADPREC)\"x\""
+      bad_index: "%!q(BADINDEX)"
+      bad_index_precision: "%!q(BADINDEX)"
+      bad_index_does_not_consume: "%!q(BADINDEX) \"x\""
       big_integer: "%!q(big.Int=9223372036854775808)"
       boolean: "\"true\""
       null_value: "\"null\""

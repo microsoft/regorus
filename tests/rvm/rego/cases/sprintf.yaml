@@ -31,6 +31,7 @@ cases:
           "rune": sprintf("%q", [97]),
           "array": sprintf("%q", [[1, "x"]]),
           "float": sprintf("%8q", [65.5]),
+          "bad_index": sprintf("%[1]2q", ["x"]),
         }
     query: data.test.result
     want_result:
@@ -39,3 +40,4 @@ cases:
       rune: "'a'"
       array: "\"[1, \\\"x\\\"]\""
       float: "%!q(float64=    65.5)"
+      bad_index: "%!q(BADINDEX)"
