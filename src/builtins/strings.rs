@@ -23,6 +23,11 @@ use anyhow::{bail, Result};
 mod go_is_print;
 mod sprintf_format;
 
+// Keep formatting directives bounded even when allocator memory limits are
+// disabled. This caps both parsed width/precision values and the padding helper
+// that materializes width.
+const MAX_SPRINTF_WIDTH_OR_PRECISION: usize = 1_000_000;
+
 pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("concat", (concat, 2));
     m.insert("contains", (contains, 2));
@@ -345,6 +350,9 @@ fn append_go_quoted_body(
 }
 
 fn append_padding(out: &mut String, count: usize, padding_char: char) -> Result<()> {
+    if count > MAX_SPRINTF_WIDTH_OR_PRECISION {
+        bail!("sprintf padding is outside the supported range");
+    }
     for _ in 0..count {
         out.push(padding_char);
         enforce_limit()?;
@@ -462,7 +470,7 @@ fn format_go_float_v(value: f64, precision: usize, alternate: bool) -> String {
         return value.to_string();
     }
     let precision = precision.max(1);
-    let exponent = value.abs().log10().floor() as i32;
+    let exponent = decimal_exponent(value);
     let scientific = exponent >= precision as i32 || exponent < -4;
     let mut rendered = if scientific {
         let fraction_digits = precision - 1;
@@ -473,10 +481,7 @@ fn format_go_float_v(value: f64, precision: usize, alternate: bool) -> String {
         let mantissa = if alternate {
             mantissa.to_owned()
         } else {
-            mantissa
-                .trim_end_matches('0')
-                .trim_end_matches('.')
-                .to_owned()
+            trim_fraction_zeros(mantissa).to_owned()
         };
         let exponent = exponent.parse::<i32>().expect("Rust exponent is numeric");
         format!("{mantissa}e{exponent:+03}")
@@ -485,12 +490,27 @@ fn format_go_float_v(value: f64, precision: usize, alternate: bool) -> String {
         format!("{value:.fraction_digits$}")
     };
     if !alternate && !scientific {
-        rendered = rendered
-            .trim_end_matches('0')
-            .trim_end_matches('.')
-            .to_owned();
+        rendered = trim_fraction_zeros(&rendered).to_owned();
     }
     rendered
+}
+
+// `f64::log10` requires libm in genuine no_std builds. Rust's core formatter
+// already computes the normalized scientific representation we need, so parse
+// its small decimal exponent instead of introducing a platform math symbol.
+fn decimal_exponent(value: f64) -> i32 {
+    format!("{value:e}")
+        .rsplit_once('e')
+        .and_then(|(_, exponent)| exponent.parse().ok())
+        .unwrap_or_default()
+}
+
+fn trim_fraction_zeros(value: &str) -> &str {
+    if value.contains('.') {
+        value.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        value
+    }
 }
 
 fn append_value_string(out: &mut String, value: &Value, unescape: bool) -> Result<()> {
@@ -1121,5 +1141,30 @@ mod tests {
             ),
             "\"\u{1F642}\""
         );
+    }
+
+    #[test]
+    fn float_diagnostics_use_no_std_general_formatting() {
+        assert_eq!(format_go_float_v(10.0, 6, false), "10");
+        assert_eq!(format_go_float_v(100.0, 6, false), "100");
+        assert_eq!(format_go_float_v(9.99, 2, false), "10");
+        assert_eq!(format_go_float_v(0.0001, 2, false), "0.0001");
+        assert_eq!(format_go_float_v(0.00001, 2, false), "1e-05");
+        assert_eq!(format_go_float_v(1e20, 6, false), "1e+20");
+        assert_eq!(decimal_exponent(f64::MIN_POSITIVE), -308);
+        assert_eq!(decimal_exponent(f64::from_bits(1)), -324);
+    }
+
+    #[test]
+    fn padding_has_a_hard_limit_without_allocator_limits() {
+        let error = append_padding(
+            &mut String::new(),
+            MAX_SPRINTF_WIDTH_OR_PRECISION.saturating_add(1),
+            ' ',
+        )
+        .expect_err("oversized padding must be rejected");
+        assert!(error
+            .to_string()
+            .contains("sprintf padding is outside the supported range"));
     }
 }

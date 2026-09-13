@@ -187,6 +187,8 @@ cases:
         fractional := sprintf("%q", [65.5])
         fractional_width := sprintf("%8q", [65.5])
         fractional_precision := sprintf("%.2q", [65.5])
+        fractional_rounds_to_integer := sprintf("%.2q", [9.99])
+        fractional_scientific_threshold := sprintf("%.2q", [0.00001])
         fractional_zero_padded := sprintf("%08q", [65.5])
         fractional_alternate := sprintf("%#q", [65.5])
         bad_dynamic_precision := sprintf("%.*q", [-1, "x"])
@@ -210,6 +212,8 @@ cases:
       fractional: "%!q(float64=65.5)"
       fractional_width: "%!q(float64=    65.5)"
       fractional_precision: "%!q(float64=66)"
+      fractional_rounds_to_integer: "%!q(float64=10)"
+      fractional_scientific_threshold: "%!q(float64=1e-05)"
       fractional_zero_padded: "%!q(float64=000065.5)"
       fractional_alternate: "%!q(float64=65.5000)"
       bad_dynamic_precision: "%!(BADPREC)\"x\""
@@ -222,3 +226,23 @@ cases:
       array: "\"[1, \\\"x\\\"]\""
       set: "\"{true, 1, \\\"x\\\"}\""
       object: "\"{\\\"a\\\": 1, \\\"b\\\": 2}\""
+
+  - note: "sprintf rejects literal width above the hard limit"
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := sprintf("%1000001q", ["x"])
+    query: data.test.result
+    error: "sprintf width or precision is too large"
+
+  - note: "sprintf rejects dynamic width above the hard limit"
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := sprintf("%*q", [1000001, "x"])
+    query: data.test.result
+    error: "sprintf width or precision is outside the supported range"

@@ -31,6 +31,8 @@ cases:
           "rune": sprintf("%q", [97]),
           "array": sprintf("%q", [[1, "x"]]),
           "float": sprintf("%8q", [65.5]),
+          "float_rounds_to_integer": sprintf("%.2q", [9.99]),
+          "float_scientific_threshold": sprintf("%.2q", [0.00001]),
           "bad_index": sprintf("%[1]2q", ["x"]),
         }
     query: data.test.result
@@ -40,4 +42,6 @@ cases:
       rune: "'a'"
       array: "\"[1, \\\"x\\\"]\""
       float: "%!q(float64=    65.5)"
+      float_rounds_to_integer: "%!q(float64=10)"
+      float_scientific_threshold: "%!q(float64=1e-05)"
       bad_index: "%!q(BADINDEX)"

@@ -7,9 +7,7 @@ use crate::value::{Array, Value};
 use alloc::format;
 use anyhow::{anyhow, bail, Result};
 
-use super::FormatSpec;
-
-const MAX_FORMAT_VALUE: usize = 1_000_000;
+use super::{FormatSpec, MAX_SPRINTF_WIDTH_OR_PRECISION};
 
 fn parse_usize(bytes: &[u8], cursor: &mut usize) -> Result<Option<usize>> {
     let start = *cursor;
@@ -18,7 +16,7 @@ fn parse_usize(bytes: &[u8], cursor: &mut usize) -> Result<Option<usize>> {
         value = value
             .checked_mul(10)
             .and_then(|value| value.checked_add((bytes[*cursor] - b'0') as usize))
-            .filter(|value| *value <= MAX_FORMAT_VALUE)
+            .filter(|value| *value <= MAX_SPRINTF_WIDTH_OR_PRECISION)
             .ok_or_else(|| anyhow!("sprintf width or precision is too large"))?;
         *cursor += 1;
     }
@@ -57,7 +55,7 @@ fn take_integer(args: &Array, args_idx: &mut usize, args_span: &Span) -> Result<
 fn checked_dynamic_value(value: u64, args_span: &Span) -> Result<usize> {
     usize::try_from(value)
         .ok()
-        .filter(|value| *value <= MAX_FORMAT_VALUE)
+        .filter(|value| *value <= MAX_SPRINTF_WIDTH_OR_PRECISION)
         .ok_or_else(|| args_span.error("sprintf width or precision is outside the supported range"))
 }
 
