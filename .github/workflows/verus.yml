@@ -68,7 +68,22 @@ jobs:
         # Verus is built against a specific Rust toolchain and refuses to run
         # against any other version. Read the required toolchain from the
         # release metadata so we track it automatically instead of hardcoding.
-        required_toolchain="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["verus"]["toolchain"].split()[0])' "$version_json")"
+        required_toolchain="$(
+          python3 - "$version_json" <<'PY'
+        import json
+        import sys
+
+        with open(sys.argv[1], encoding="utf-8") as version_file:
+            toolchain = json.load(version_file).get("verus", {}).get("toolchain", "")
+        if not toolchain:
+            raise SystemExit("missing verus.toolchain in version.json")
+
+        # Some Verus release metadata includes rustup's
+        # "(overridden by environment variable RUSTUP_TOOLCHAIN)" suffix.
+        # rustup needs only the installable toolchain token.
+        print(toolchain.split()[0])
+        PY
+        )"
         test -n "$required_toolchain"
         echo "Verus requires Rust toolchain: $required_toolchain"
 
