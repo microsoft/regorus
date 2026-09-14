@@ -11,9 +11,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# This workflow only checks out code, downloads a pinned Verus release asset,
-# and runs verification. It never writes to the repository, so restrict the
-# GITHUB_TOKEN to read-only access to repository contents.
+# This workflow only checks out code, downloads pinned Verus and Z3 release
+# assets, and runs verification. It never writes to the repository, so
+# restrict the GITHUB_TOKEN to read-only access to repository contents.
 permissions:
   contents: read
 
@@ -27,6 +27,16 @@ jobs:
       uses: ./.github/actions/toolchains/rust
       with:
         components: ""
+    - name: Install z3
+      shell: bash
+      run: |
+        set -euxo pipefail
+        z3_url=https://github.com/Z3Prover/z3/releases/download/z3-4.16.0/z3-4.16.0-x64-glibc-2.39.zip
+        z3_sha256=7288c49a5bd6dbafd7b0b0d1f65956b91672da24b08f09242919af159be3418e
+        curl -fsSL "$z3_url" -o z3.zip
+        echo "${z3_sha256}  z3.zip" | sha256sum --check --strict
+        unzip -q z3.zip
+        echo "$PWD/z3-4.16.0-x64-glibc-2.39/bin" >> "$GITHUB_PATH"
     - name: Cache cargo
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
@@ -58,7 +68,7 @@ jobs:
         # Verus is built against a specific Rust toolchain and refuses to run
         # against any other version. Read the required toolchain from the
         # release metadata so we track it automatically instead of hardcoding.
-        required_toolchain="$(sed -n 's/.*"toolchain"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$version_json")"
+        required_toolchain="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["verus"]["toolchain"].split()[0])' "$version_json")"
         test -n "$required_toolchain"
         echo "Verus requires Rust toolchain: $required_toolchain"
 
