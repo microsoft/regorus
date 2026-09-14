@@ -11,9 +11,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# This workflow only checks out code, downloads a pinned Verus release asset,
-# and runs verification. It never writes to the repository, so restrict the
-# GITHUB_TOKEN to read-only access to repository contents.
+# This workflow only checks out code, downloads pinned Verus and Z3 release
+# assets, and runs verification. It never writes to the repository, so
+# restrict the GITHUB_TOKEN to read-only access to repository contents.
 permissions:
   contents: read
 
@@ -27,6 +27,16 @@ jobs:
       uses: ./.github/actions/toolchains/rust
       with:
         components: ""
+    - name: Install z3
+      shell: bash
+      run: |
+        set -euxo pipefail
+        z3_url=https://github.com/Z3Prover/z3/releases/download/z3-4.16.0/z3-4.16.0-x64-glibc-2.39.zip
+        z3_sha256=7288c49a5bd6dbafd7b0b0d1f65956b91672da24b08f09242919af159be3418e
+        curl -fsSL "$z3_url" -o z3.zip
+        echo "${z3_sha256}  z3.zip" | sha256sum --check --strict
+        unzip -q z3.zip
+        echo "$PWD/z3-4.16.0-x64-glibc-2.39/bin" >> "$GITHUB_PATH"
     - name: Cache cargo
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
@@ -35,8 +45,8 @@ jobs:
       shell: bash
       run: |
         set -euxo pipefail
-        asset_url=https://github.com/verus-lang/verus/releases/download/release%2F0.2026.08.23.fbbbbcf/verus-0.2026.08.23.fbbbbcf-x86-linux.zip
-        asset_sha256=b65483714e6bf2ae72bfe7c7199e1c608495a941306b979260e9ed585d5899c9
+        asset_url=https://github.com/verus-lang/verus/releases/download/release%2F0.2026.09.06.8dea4a2/verus-0.2026.09.06.8dea4a2-x86-linux.zip
+        asset_sha256=13d01e134c0620c3b29770874707d16c33b3d227c843a489c8ceb744d43c0a16
         test -n "$asset_url"
         curl -fsSL "$asset_url" -o verus.zip
 
@@ -58,7 +68,22 @@ jobs:
         # Verus is built against a specific Rust toolchain and refuses to run
         # against any other version. Read the required toolchain from the
         # release metadata so we track it automatically instead of hardcoding.
-        required_toolchain="$(sed -n 's/.*"toolchain"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$version_json")"
+        required_toolchain="$(
+          python3 - "$version_json" <<'PY'
+        import json
+        import sys
+
+        with open(sys.argv[1], encoding="utf-8") as version_file:
+            toolchain = json.load(version_file).get("verus", {}).get("toolchain", "")
+        if not toolchain:
+            raise SystemExit("missing verus.toolchain in version.json")
+
+        # Some Verus release metadata includes rustup's
+        # "(overridden by environment variable RUSTUP_TOOLCHAIN)" suffix.
+        # rustup needs only the installable toolchain token.
+        print(toolchain.split()[0])
+        PY
+        )"
         test -n "$required_toolchain"
         echo "Verus requires Rust toolchain: $required_toolchain"
 
