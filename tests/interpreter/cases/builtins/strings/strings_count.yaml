@@ -1,0 +1,59 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: basic match
+    data: {}
+    modules: []
+    query: 'x := strings.count("cheese", "e")'
+    want_result:
+      x: 3
+
+  - note: no match
+    data: {}
+    modules: []
+    query: 'x := strings.count("dummy", "x")'
+    want_result:
+      x: 0
+
+  - note: multiple separate matches
+    data: {}
+    modules: []
+    query: 'x := strings.count("hello hello hello world", "hello")'
+    want_result:
+      x: 3
+
+  - note: empty needle returns char_count+1
+    data: {}
+    modules: []
+    query: 'x := strings.count("abc", "")'
+    want_result:
+      x: 4
+
+  - note: empty needle on empty string
+    data: {}
+    modules: []
+    query: 'x := strings.count("", "")'
+    want_result:
+      x: 1
+
+  - note: empty needle on single char
+    data: {}
+    modules: []
+    query: 'x := strings.count("a", "")'
+    want_result:
+      x: 2
+
+  - note: non-overlapping matches only
+    data: {}
+    modules: []
+    query: 'x := strings.count("aaaa", "aa")'
+    want_result:
+      x: 2
+
+  - note: multibyte utf8 string with empty needle
+    data: {}
+    modules: []
+    query: 'x := strings.count("\u4e16\u754c", "")'
+    want_result:
+      x: 3
