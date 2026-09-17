@@ -138,6 +138,17 @@ impl Engine {
         self.engine.set_rego_v0(enable)
     }
 
+    /// Clone this engine.
+    ///
+    /// Useful for creating per-request engines after loading policy/data once.
+    ///
+    /// Clone is designed to avoid reparsing policy text and reloading immutable
+    /// policy structures. Mutable evaluation state is copied for isolation.
+    #[wasm_bindgen(js_name = "clone")]
+    pub fn cloneEngine(&self) -> Engine {
+        Clone::clone(self)
+    }
+
     /// Add a policy
     ///
     /// The policy is parsed into AST.
@@ -156,6 +167,20 @@ impl Engine {
     pub fn addDataJson(&mut self, data: String) -> Result<(), JsValue> {
         let data = regorus::Value::from_json_str(&data).map_err(error_to_jsvalue)?;
         self.engine.add_data(data).map_err(error_to_jsvalue)
+    }
+
+    /// Prepare the engine for evaluation.
+    ///
+    /// The first evaluation on an unprepared engine performs one-time setup.
+    /// Calling `prepare()` performs that setup eagerly.
+    ///
+    /// This is optional for correctness. If omitted, the first `eval*` call
+    /// implicitly performs preparation.
+    ///
+    /// If policies/data are modified after `prepare()`, preparation is
+    /// invalidated and must be performed again (explicitly or via first eval).
+    pub fn prepare(&mut self) -> Result<(), JsValue> {
+        self.engine.prepare().map_err(error_to_jsvalue)
     }
 
     /// Get the list of packages defined by loaded policies.
@@ -486,6 +511,9 @@ mod tests {
                 .to_string(),
         )?;
         assert_eq!(pkg, "data.test");
+
+        // Prepare before first evaluation.
+        engine.prepare()?;
 
         let results = engine.evalQuery("data".to_string())?;
         let r = regorus::Value::from_json_str(&results).map_err(error_to_jsvalue)?;

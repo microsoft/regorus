@@ -28,6 +28,17 @@ func (e *Engine) Clone() *Engine {
 	return c
 }
 
+func (e *Engine) Prepare() error {
+	result := C.regorus_engine_prepare(e.e)
+	defer C.regorus_result_drop(result)
+
+	if result.status != C.Ok {
+		return fmt.Errorf("%s", C.GoString(result.error_message))
+	}
+
+	return nil
+}
+
 func (e *Engine) SetRegoV0(enable bool) error {
 	result := C.regorus_engine_set_rego_v0(e.e, C.bool(enable))
 	defer C.regorus_result_drop(result)
