@@ -156,6 +156,8 @@ impl<'a> Compiler<'a> {
             context_type: ContextType::Every,
             dest_register: result_reg,
             key_expr: None,
+            extra_key_exprs: Vec::new(),
+            multi_value: false,
             value_expr: None,
             span: span.clone(),
             key_value_loops_hoisted: false,
