@@ -174,12 +174,12 @@ fn percent_encode(s: &str) -> String {
             // always returns Some for radix 16.
             result.push('%');
             result.push(
-                core::char::from_digit(u32::from(b >> 4), 16)
+                char::from_digit(u32::from(b >> 4), 16)
                     .unwrap_or('0')
                     .to_ascii_uppercase(),
             );
             result.push(
-                core::char::from_digit(u32::from(b & 0x0F), 16)
+                char::from_digit(u32::from(b & 0x0F), 16)
                     .unwrap_or('0')
                     .to_ascii_uppercase(),
             );

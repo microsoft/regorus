@@ -598,6 +598,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
             "globmatch.yaml",
             "now_ns.yaml",
             "parse_duration_ns.yaml",
+            "duration_units.yaml",
             "parse_ns.yaml",
             "parse_rfc3339_ns.yaml",
             "weekday.yaml",
