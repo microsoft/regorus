@@ -1,0 +1,92 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+#
+name: lean
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "formal/**"
+      - ".github/workflows/lean.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "formal/**"
+      - ".github/workflows/lean.yml"
+
+env:
+  # elan (the Lean toolchain manager) reads `formal/lean-toolchain` to decide
+  # which pinned Lean release to install; this only sets its install location.
+  ELAN_HOME: ${{ github.workspace }}/.elan
+
+# This workflow only checks out code, installs a pinned Lean/elan toolchain,
+# fetches precompiled Mathlib caches, and builds/checks the `formal/`
+# formalization. It never writes to the repository, so restrict the
+# GITHUB_TOKEN to read-only access to repository contents.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: lean (formal/)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install elan (pinned to formal/lean-toolchain)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          toolchain="$(cat formal/lean-toolchain)"
+          test -n "$toolchain"
+          curl -fsSL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | bash -s -- -y --default-toolchain "$toolchain"
+          echo "$ELAN_HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Lake build artifacts and Mathlib cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            formal/.lake
+          # Keyed on the manifest (exact pinned dependency revisions) and the
+          # toolchain version, so a Mathlib/Batteries bump invalidates the
+          # cache instead of silently reusing stale `.olean` files.
+          key: lean-lake-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain', 'formal/lake-manifest.json') }}
+          restore-keys: |
+            lean-lake-${{ runner.os }}-
+
+      - name: Fetch dependencies and precompiled Mathlib cache
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euxo pipefail
+          lake --version
+          # `lake exe cache get` resolves/fetches the pinned dependencies from
+          # lake-manifest.json (Mathlib, Batteries, ...) and then downloads
+          # their prebuilt `.olean` files instead of compiling them from
+          # source, which would otherwise take a very long time. Failures are
+          # tolerated here (e.g. no cache entry for a brand-new revision);
+          # `lake build` below falls back to compiling anything missing.
+          lake exe cache get || echo "Mathlib cache fetch skipped/unavailable; continuing to lake build."
+
+      - name: Build the Regorus formalization
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euxo pipefail
+          lake build
+
+      - name: Reject unproven placeholders (sorry/admit)
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # `lake build` succeeds even in the presence of `sorry`, which only
+          # produces a warning. Fail CI explicitly so the formalization can
+          # never merge with an unproven theorem hiding behind a warning.
+          if grep -rnE '\bsorry\b|\badmit\b' Regorus Main.lean Regorus.lean; then
+            echo "::error::Found sorry/admit in the Lean formalization; all theorems must be fully proved."
+            exit 1
+          fi
+          echo "No sorry/admit found."
