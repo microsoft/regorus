@@ -87,7 +87,11 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          lake build
+          # `@[default_target]` is only on the `Regorus` library, so a bare
+          # `lake build` never builds/typechecks the `regorusFormal`
+          # executable (whose root is `Main.lean`). Build it explicitly; it
+          # imports `Regorus`, so this still builds/checks the full library.
+          lake build regorusFormal
 
       - name: Reject unproven placeholders (sorry/admit)
         working-directory: formal
