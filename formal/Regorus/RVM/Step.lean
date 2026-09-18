@@ -90,33 +90,43 @@ private def evalEq : Value → Value → Except VMError Value :=
 private def evalNe : Value → Value → Except VMError Value :=
   strictLift₂ fun left right => .ok (.Bool (decide (left ≠ right)))
 
+/-- Ordered comparisons in the modeled strict mode reject operands of
+different value kinds instead of falling back to heterogeneous ordering. -/
+private def requireSameKind
+    (left right : Value) (result : Bool) : Except VMError Value :=
+  if left.kindRank = right.kindRank then
+    .ok (.Bool result)
+  else
+    .error (.TypeMismatch "cannot compare values of different types")
+
 private def evalLt : Value → Value → Except VMError Value :=
   strictLift₂ fun left right =>
-    .ok (.Bool (decide (Value.compareValue left right = .lt)))
+    requireSameKind left right (decide (Value.compareValue left right = .lt))
 
 private def evalLe : Value → Value → Except VMError Value :=
   strictLift₂ fun left right =>
-    .ok (.Bool (decide (Value.compareValue left right ≠ .gt)))
+    requireSameKind left right (decide (Value.compareValue left right ≠ .gt))
 
 private def evalGt : Value → Value → Except VMError Value :=
   strictLift₂ fun left right =>
-    .ok (.Bool (decide (Value.compareValue left right = .gt)))
+    requireSameKind left right (decide (Value.compareValue left right = .gt))
 
 private def evalGe : Value → Value → Except VMError Value :=
   strictLift₂ fun left right =>
-    .ok (.Bool (decide (Value.compareValue left right ≠ .lt)))
+    requireSameKind left right (decide (Value.compareValue left right ≠ .lt))
 
+/-- Strict-mode `And`/`Or` accept Boolean operands only; the Rust VM's
+`to_bool` helper additionally coerces `Null` in non-strict mode only, which
+this phase does not model (see the module docstring). -/
 private def evalAnd : Value → Value → Except VMError Value :=
-  strictLift₂ fun left right =>
-    .ok (Regorus.lift₂
-      (fun x y => .Bool (Regorus.isTruthy x && Regorus.isTruthy y))
-      left right)
+  strictLift₂ fun
+    | .Bool left, .Bool right => .ok (.Bool (left && right))
+    | _, _ => .error (.TypeMismatch "And expects two booleans")
 
 private def evalOr : Value → Value → Except VMError Value :=
-  strictLift₂ fun left right =>
-    .ok (Regorus.lift₂
-      (fun x y => .Bool (Regorus.isTruthy x || Regorus.isTruthy y))
-      left right)
+  strictLift₂ fun
+    | .Bool left, .Bool right => .ok (.Bool (left || right))
+    | _, _ => .error (.TypeMismatch "Or expects two booleans")
 
 private def executeBinary
     (operation : Value → Value → Except VMError Value)

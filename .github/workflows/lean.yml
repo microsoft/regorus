@@ -34,14 +34,26 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install elan (pinned to formal/lean-toolchain)
+      - name: Install elan (pinned release, pinned to formal/lean-toolchain)
         shell: bash
         run: |
           set -euxo pipefail
           toolchain="$(cat formal/lean-toolchain)"
           test -n "$toolchain"
-          curl -fsSL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            | bash -s -- -y --default-toolchain "$toolchain"
+
+          # Download a specific, pinned elan release binary instead of piping
+          # the mutable `elan/master` install script into bash, and verify its
+          # integrity before executing it (mirroring how
+          # .github/workflows/verus.yml pins and hash-checks the Verus release).
+          elan_version=4.2.4
+          asset_url="https://github.com/leanprover/elan/releases/download/v${elan_version}/elan-x86_64-unknown-linux-gnu.tar.gz"
+          asset_sha256=42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
+          curl -fsSL "$asset_url" -o elan.tar.gz
+          echo "${asset_sha256}  elan.tar.gz" | sha256sum --check --strict
+
+          tar -xzf elan.tar.gz
+          chmod +x elan-init
+          ./elan-init -y --default-toolchain "$toolchain"
           echo "$ELAN_HOME/bin" >> "$GITHUB_PATH"
 
       - name: Cache Lake build artifacts and Mathlib cache

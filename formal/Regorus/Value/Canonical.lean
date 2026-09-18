@@ -384,12 +384,31 @@ theorem deduplicateObjectLast_eq_self {xs : List (Value × Value)}
       have h' := List.nodup_cons.mp h
       simp [deduplicateObjectLast, ih h'.2, h'.1]
 
+theorem mem_deduplicateObjectLast {p : Value × Value}
+    {xs : List (Value × Value)} (h : p ∈ deduplicateObjectLast xs) : p ∈ xs := by
+  induction xs with
+  | nil => simp [deduplicateObjectLast] at h
+  | cons x xs ih =>
+      simp only [deduplicateObjectLast] at h
+      split at h
+      · exact List.mem_cons_of_mem _ (ih h)
+      · rcases List.mem_cons.mp h with rfl | h
+        · exact List.mem_cons_self _ _
+        · exact List.mem_cons_of_mem _ (ih h)
+
 /--
 Canonical representation of an object. Duplicate keys use last-write-wins;
 the retained entries are sorted by key, then by value as a vacuous tie-break.
 -/
 def canonicalizeObject (xs : List (Value × Value)) : List (Value × Value) :=
   Multiset.sort entryLE (deduplicateObjectLast xs : Multiset (Value × Value))
+
+/-- Every retained entry of the canonical object came from the original
+input; canonicalization only removes shadowed duplicate-key entries and
+reorders, it never fabricates entries. -/
+theorem mem_canonicalizeObject {p : Value × Value}
+    {xs : List (Value × Value)} (h : p ∈ canonicalizeObject xs) : p ∈ xs :=
+  mem_deduplicateObjectLast (by simpa [canonicalizeObject] using h)
 
 theorem canonicalizeObject_perm {xs ys : List (Value × Value)}
     (hkeys : (xs.map Prod.fst).Nodup) (h : xs.Perm ys) :

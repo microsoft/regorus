@@ -3,6 +3,7 @@ Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 -/
 
+import Regorus.Value.Canonical
 import Regorus.Value.Truth
 
 /-!
@@ -28,15 +29,19 @@ inductive SourceValue where
 namespace SourceValue
 
 mutual
-  /-- Total embedding of the bottom-free source domain into semantic values. -/
+  /-- Total embedding of the bottom-free source domain into semantic values.
+  `Set`/`Object` go through the canonical smart constructors so that source
+  values built with duplicate/unordered elements still respect the `Value`
+  representation invariant (e.g. `Set [Null, Null]` embeds as a one-element
+  set, matching Rust's `BTreeSet`/`BTreeMap`-backed collections). -/
   def embed : SourceValue → Value
     | .Null => .Null
     | .Bool b => .Bool b
     | .Number n => .Number n
     | .String s => .String s
     | .Array xs => .Array (embedList xs)
-    | .Set xs => .Set (embedList xs)
-    | .Object xs => .Object (embedObject xs)
+    | .Set xs => Value.mkSet (embedList xs)
+    | .Object xs => Value.mkObject (embedObject xs)
 
   def embedList : List SourceValue → List Value
     | [] => []
@@ -78,6 +83,45 @@ theorem BottomFree.ne_undefined {v : Value} (h : BottomFree v) :
   subst v
   exact h
 
+theorem ListBottomFree.of_forall_mem {xs : List Value}
+    (h : ∀ x ∈ xs, BottomFree x) : ListBottomFree xs := by
+  induction xs with
+  | nil => trivial
+  | cons x xs ih =>
+      exact ⟨h x (List.mem_cons_self ..),
+        ih fun y hy => h y (List.mem_cons_of_mem _ hy)⟩
+
+theorem ListBottomFree.forall_mem {xs : List Value}
+    (h : ListBottomFree xs) : ∀ x ∈ xs, BottomFree x := by
+  induction xs with
+  | nil => intro x hx; cases hx
+  | cons y xs ih =>
+      intro x hx
+      rcases List.mem_cons.mp hx with rfl | hx
+      · exact h.1
+      · exact ih h.2 x hx
+
+theorem ObjectBottomFree.of_forall_mem {xs : List (Value × Value)}
+    (h : ∀ p ∈ xs, BottomFree p.1 ∧ BottomFree p.2) : ObjectBottomFree xs := by
+  induction xs with
+  | nil => trivial
+  | cons p xs ih =>
+      obtain ⟨k, v⟩ := p
+      exact ⟨(h (k, v) (List.mem_cons_self ..)).1,
+        (h (k, v) (List.mem_cons_self ..)).2,
+        ih fun q hq => h q (List.mem_cons_of_mem _ hq)⟩
+
+theorem ObjectBottomFree.forall_mem {xs : List (Value × Value)}
+    (h : ObjectBottomFree xs) : ∀ p ∈ xs, BottomFree p.1 ∧ BottomFree p.2 := by
+  induction xs with
+  | nil => intro p hp; cases hp
+  | cons q xs ih =>
+      obtain ⟨k, v⟩ := q
+      intro p hp
+      rcases List.mem_cons.mp hp with rfl | hp
+      · exact ⟨h.1, h.2.1⟩
+      · exact ih h.2.2 p hp
+
 end Value
 
 namespace SourceValue
@@ -91,8 +135,14 @@ mutual
     | Number _ => trivial
     | String _ => trivial
     | Array xs => exact embedList_bottomFree xs
-    | Set xs => exact embedList_bottomFree xs
-    | Object xs => exact embedObject_bottomFree xs
+    | Set xs =>
+        show Value.ListBottomFree (Value.canonicalizeSet (embedList xs))
+        exact Value.ListBottomFree.of_forall_mem fun v hv =>
+          (embedList_bottomFree xs).forall_mem v (Value.mem_canonicalizeSet.mp hv)
+    | Object xs =>
+        show Value.ObjectBottomFree (Value.canonicalizeObject (embedObject xs))
+        exact Value.ObjectBottomFree.of_forall_mem fun p hp =>
+          (embedObject_bottomFree xs).forall_mem p (Value.mem_canonicalizeObject hp)
   termination_by sizeOf s
 
   theorem embedList_bottomFree (xs : List SourceValue) :

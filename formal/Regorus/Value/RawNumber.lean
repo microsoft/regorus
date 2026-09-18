@@ -276,8 +276,7 @@ def div (a b : F64Bits) : F64Bits :=
   | .nan, _ | _, .nan => quietNaN
   | .infinity _, .infinity _ => quietNaN
   | .infinity sa, .finite y zy =>
-      if y = 0 then quietNaN
-      else ofFields (xor sa (finiteSign y zy)) maxExponentField 0
+      ofFields (xor sa (finiteSign y zy)) maxExponentField 0
   | .finite x zx, .infinity sb =>
       ofFields (xor (finiteSign x zx) sb) 0 0
   | .finite x zx, .finite y zy =>
