@@ -58,6 +58,40 @@ public class RegorusTests
     }
 
     [TestMethod]
+    public void Add_policy_with_package_rejects_embedded_nul_in_rego_without_adding_policy()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy("existing.rego", "package existing\nallow := true");
+        var packagesBefore = engine.GetPolicyPackageNames();
+
+        Assert.ThrowsException<ArgumentException>(
+            () => engine.AddPolicyWithPackage(
+                "source.rego",
+                "package original\nallow := true\0\nallow := false",
+                "tenant.authz"));
+
+        Assert.AreEqual(packagesBefore, engine.GetPolicyPackageNames());
+        Assert.AreEqual("true", engine.EvalRule("data.existing.allow"));
+    }
+
+    [TestMethod]
+    public void Add_policy_with_package_rejects_embedded_nul_in_path_without_adding_policy()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy("existing.rego", "package existing\nallow := true");
+        var packagesBefore = engine.GetPolicyPackageNames();
+
+        Assert.ThrowsException<ArgumentException>(
+            () => engine.AddPolicyWithPackage(
+                "source.rego\0suffix",
+                "package original\nallow := true",
+                "tenant.authz"));
+
+        Assert.AreEqual(packagesBefore, engine.GetPolicyPackageNames());
+        Assert.AreEqual("true", engine.EvalRule("data.existing.allow"));
+    }
+
+    [TestMethod]
     public void Evaluation_using_file_policies_succeeds()
     {
         using var engine = new Engine();

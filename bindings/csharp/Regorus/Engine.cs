@@ -127,6 +127,8 @@ namespace Regorus
         /// </summary>
         public string? AddPolicyWithPackage(string path, string rego, string effectivePackage)
         {
+            Utf8Marshaller.ThrowIfContainsNul(path, nameof(path));
+            Utf8Marshaller.ThrowIfContainsNul(rego, nameof(rego));
             Utf8Marshaller.ThrowIfContainsNul(effectivePackage, nameof(effectivePackage));
             return Utf8Marshaller.WithUtf8(path, pathPtr =>
                 Utf8Marshaller.WithUtf8(rego, regoPtr =>

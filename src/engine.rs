@@ -17,6 +17,7 @@ use crate::{Extension, QueryResults};
 
 use crate::Rc;
 use anyhow::{anyhow, bail, Result};
+use core::num::{NonZeroU32, NonZeroUsize};
 
 /// The Rego evaluation engine.
 ///
@@ -290,13 +291,30 @@ impl Engine {
             bail!("effective package must be a non-empty bare dotted Rego package path (for example `tenant.authz`)");
         }
 
+        const PACKAGE_PREFIX: &str = "package ";
+        // The configured limits apply to caller input, not this generated prefix.
+        let package_prefix_columns = u32::try_from(PACKAGE_PREFIX.len()).unwrap_or(u32::MAX);
+        let max_file_bytes = NonZeroUsize::new(
+            self.policy_length_config
+                .max_file_bytes
+                .get()
+                .saturating_add(PACKAGE_PREFIX.len()),
+        )
+        .unwrap_or(self.policy_length_config.max_file_bytes);
+        let max_col = NonZeroU32::new(
+            self.policy_length_config
+                .max_col
+                .get()
+                .saturating_add(package_prefix_columns),
+        )
+        .unwrap_or(self.policy_length_config.max_col);
         let source = Source::from_contents_with_limits(
             "<effective package>".to_string(),
-            format!("package {effective_package}"),
-            self.policy_length_config.max_file_bytes,
+            format!("{PACKAGE_PREFIX}{effective_package}"),
+            max_file_bytes,
             self.policy_length_config.max_lines,
         )?;
-        let mut parser = self.make_parser(&source)?;
+        let mut parser = self.make_parser_with_max_col(&source, max_col)?;
         let parsed = parser
             .parse()
             .map_err(|error| anyhow!("invalid effective package `{effective_package}`: {error}"))?;
@@ -1660,8 +1678,16 @@ impl Engine {
     }
 
     fn make_parser<'a>(&self, source: &'a Source) -> Result<Parser<'a>> {
+        self.make_parser_with_max_col(source, self.policy_length_config.max_col)
+    }
+
+    fn make_parser_with_max_col<'a>(
+        &self,
+        source: &'a Source,
+        max_col: NonZeroU32,
+    ) -> Result<Parser<'a>> {
         let mut parser = Parser::new(source)?;
-        parser.set_max_col(self.policy_length_config.max_col);
+        parser.set_max_col(max_col);
         if self.rego_v1 {
             parser.enable_rego_v1()?;
         }

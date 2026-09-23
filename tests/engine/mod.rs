@@ -136,6 +136,42 @@ fn policy_package_override_is_used_for_evaluation() -> Result<()> {
 }
 
 #[test]
+fn policy_package_override_uses_limits_for_policy_source_not_synthetic_package() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.set_policy_length_config(PolicyLengthConfig {
+        max_col: core::num::NonZeroU32::new(24)
+            .ok_or_else(|| anyhow::anyhow!("invalid test limit"))?,
+        max_file_bytes: core::num::NonZeroUsize::new(24)
+            .ok_or_else(|| anyhow::anyhow!("invalid test limit"))?,
+        max_lines: core::num::NonZeroUsize::new(20)
+            .ok_or_else(|| anyhow::anyhow!("invalid test limit"))?,
+    });
+
+    let package = engine.add_policy_with_package(
+        "source.rego".to_string(),
+        "package a\nallow := true".to_string(),
+        "tenant.authorization".to_string(),
+    )?;
+
+    assert_eq!("data.tenant.authorization", package);
+    assert_eq!(
+        Value::from(true),
+        engine.eval_rule("data.tenant.authorization.allow".into())?
+    );
+
+    assert!(engine
+        .add_policy_with_package(
+            "over-limit.rego".to_string(),
+            "package a\nallow := true\n\n".to_string(),
+            "tenant.other".to_string(),
+        )
+        .is_err());
+    assert_eq!(vec!["data.tenant.authorization"], engine.get_packages()?);
+
+    Ok(())
+}
+
+#[test]
 fn legacy_bracketed_package_segments_remain_evaluable() -> Result<()> {
     let mut engine = Engine::new();
     let package = engine.add_policy(
