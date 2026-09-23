@@ -28,6 +28,30 @@ public class RegorusTests
     }
 
     [TestMethod]
+    public void Rule_conflict_preserves_error_status_and_reports_previous_location()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy(
+            @"C:\policy files\first.rego",
+            "package test\np := 1\n");
+        engine.AddPolicy(
+            @"C:\policy files\second.rego",
+            "package test\np := 2\n");
+
+        var ex = Assert.ThrowsException<InvalidOperationException>(
+            () => engine.EvalRule("data.test.p"));
+
+        StringAssert.Contains(
+            ex.Message,
+            @"rule conflicts with rule at C:\policy files\first.rego:2:1");
+        StringAssert.Contains(ex.Message, @"C:\policy files\second.rego:2:1");
+        StringAssert.Contains(ex.Message, "p := 2");
+        Assert.IsFalse(ex.Message.Contains("p := 1", StringComparison.Ordinal));
+        Assert.IsFalse(ex.Message.Contains("defined here", StringComparison.Ordinal));
+        Assert.IsFalse(ex.Message.Contains('"'));
+    }
+
+    [TestMethod]
     public void Evaluation_using_file_policies_succeeds()
     {
         using var engine = new Engine();

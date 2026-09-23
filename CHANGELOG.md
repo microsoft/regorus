@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Rule-conflict diagnostics now retain the current source envelope and identify the previous rule by file, line, and column without nesting a second diagnostic; literal CR/LF characters in the previous file label are escaped. RVM conflict result semantics are unchanged.
+
 ## [0.12.0](https://github.com/microsoft/regorus/compare/regorus-v0.11.0...regorus-v0.12.0) - 2026-09-01
 
 ### Added
