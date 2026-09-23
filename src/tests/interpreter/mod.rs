@@ -30,6 +30,58 @@ use timer_test_support::{
     apply_engine_timer, configure_time_source, reset_time_source, GlobalTimerGuard,
 };
 
+#[test]
+fn rule_conflict_reports_previous_rule_location_without_nested_diagnostic() {
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            r"C:\policy files\first.rego".to_string(),
+            "package test\np := 1\n".to_string(),
+        )
+        .unwrap();
+    engine
+        .add_policy(
+            r"C:\policy files\second.rego".to_string(),
+            "package test\np := 2\n".to_string(),
+        )
+        .unwrap();
+
+    let error = engine.eval_rule("data.test.p".to_string()).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("--> C:\\policy files\\second.rego:2:1"));
+    assert!(message.contains("| p := 2"));
+    assert!(message.contains("error: rule conflicts with rule at C:\\policy files\\first.rego:2:1"));
+    assert_eq!(message.matches("\n--> ").count(), 1);
+    assert_eq!(message.matches("| ^").count(), 1);
+    assert_eq!(message.matches("error: ").count(), 1);
+    assert!(!message.contains("defined here"));
+    assert!(!message.contains("\n--> C:\\policy files\\first.rego:2:1"));
+    assert!(!message.contains("p := 1"));
+    assert!(!message.contains('"'));
+}
+
+#[test]
+fn rule_conflict_reports_current_location_for_same_file_rules() {
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            r"C:\policy files\same.rego".to_string(),
+            "package test\np := 1\np := 2\n".to_string(),
+        )
+        .unwrap();
+
+    let error = engine.eval_rule("data.test.p".to_string()).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("--> C:\\policy files\\same.rego:3:1"));
+    assert!(message.contains("| p := 2"));
+    assert!(message.contains("error: rule conflicts with rule at C:\\policy files\\same.rego:2:1"));
+    assert_eq!(message.matches("\n--> ").count(), 1);
+    assert_eq!(message.matches("| ^").count(), 1);
+    assert_eq!(message.matches("error: ").count(), 1);
+    assert!(!message.contains("p := 1"));
+    assert!(!message.contains('"'));
+}
+
 mod timer_test_support {
     use super::{ExecutionTimerTestConfig, TimeSourceTestConfig};
     #[cfg(any(test, not(feature = "std")))]

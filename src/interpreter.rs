@@ -3888,8 +3888,10 @@ impl Interpreter {
 
         if let Some((_, r)) = conflict {
             bail!(refr.span().error(&format!(
-                "rule conflicts with the following rule:\n{}",
-                r.span().message("", "defined here")
+                "rule conflicts with rule at {}:{}:{}",
+                r.span().source.file(),
+                r.span().line,
+                r.span().col
             )));
         }
         self.rule_values

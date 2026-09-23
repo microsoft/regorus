@@ -81,14 +81,50 @@ mod tests {
 #[cfg(all(test, feature = "std"))]
 mod panic_tests {
     use super::{
-        regorus_engine_drop, regorus_engine_eval_query, regorus_engine_get_policies,
-        regorus_engine_new,
+        regorus_engine_add_policy, regorus_engine_drop, regorus_engine_eval_query,
+        regorus_engine_eval_rule, regorus_engine_get_policies, regorus_engine_new,
     };
     use crate::common::{regorus_result_drop, RegorusStatus};
     use crate::panic_guard::{is_poisoned, reset_poison};
     use alloc::boxed::Box;
     use regorus::Value;
     use std::ffi::{CStr, CString};
+
+    #[test]
+    fn rule_conflict_preserves_error_status_and_message() {
+        let _poison_test_lock = crate::panic_guard::lock_poison_test_state();
+        crate::panic_guard::reset_poison();
+
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let first_path = CString::new(r"C:\policy files\first.rego").unwrap();
+        let first_policy = CString::new("package test\np := 1\n").unwrap();
+        let second_path = CString::new(r"C:\policy files\second.rego").unwrap();
+        let second_policy = CString::new("package test\np := 2\n").unwrap();
+        let query = CString::new("data.test.p").unwrap();
+
+        let first_result =
+            regorus_engine_add_policy(engine, first_path.as_ptr(), first_policy.as_ptr());
+        assert!(matches!(first_result.status, RegorusStatus::Ok));
+        regorus_result_drop(first_result);
+
+        let second_result =
+            regorus_engine_add_policy(engine, second_path.as_ptr(), second_policy.as_ptr());
+        assert!(matches!(second_result.status, RegorusStatus::Ok));
+        regorus_result_drop(second_result);
+
+        let result = regorus_engine_eval_rule(engine, query.as_ptr());
+        assert!(matches!(result.status, RegorusStatus::Error));
+        assert!(!result.error_message.is_null());
+        unsafe {
+            let message = CStr::from_ptr(result.error_message).to_str().unwrap();
+            assert!(message.contains(r"rule conflicts with rule at C:\policy files\first.rego:2:1"));
+            assert!(!message.contains("defined here"));
+            regorus_result_drop(result);
+        }
+        regorus_engine_drop(engine);
+    }
 
     #[test]
     fn catches_extension_panics_and_marks_poison() {
