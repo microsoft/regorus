@@ -3889,7 +3889,11 @@ impl Interpreter {
         if let Some((_, r)) = conflict {
             bail!(refr.span().error(&format!(
                 "rule conflicts with rule at {}:{}:{}",
-                r.span().source.file(),
+                r.span()
+                    .source
+                    .file()
+                    .replace('\n', "\\n")
+                    .replace('\r', "\\r"),
                 r.span().line,
                 r.span().col
             )));

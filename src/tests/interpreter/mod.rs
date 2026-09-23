@@ -82,6 +82,74 @@ fn rule_conflict_reports_current_location_for_same_file_rules() {
     assert!(!message.contains('"'));
 }
 
+#[test]
+fn rule_conflict_reports_escaped_newline_in_previous_rule_file_label() {
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "C:\\policy files\\first\nsplit.rego".to_string(),
+            "package test\np := 1\n".to_string(),
+        )
+        .unwrap();
+    engine
+        .add_policy(
+            r"C:\policy files\second.rego".to_string(),
+            "package test\np := 2\n".to_string(),
+        )
+        .unwrap();
+
+    let error = engine.eval_rule("data.test.p".to_string()).unwrap_err();
+    let message = error.to_string();
+    let conflict_line = message
+        .lines()
+        .find(|line| line.starts_with("error: rule conflicts"))
+        .unwrap();
+    assert_eq!(
+        conflict_line,
+        "error: rule conflicts with rule at C:\\policy files\\first\\nsplit.rego:2:1"
+    );
+    assert!(message.contains("--> C:\\policy files\\second.rego:2:1"));
+    assert!(message.contains("| p := 2"));
+    assert!(!conflict_line.contains('\r'));
+    assert!(!conflict_line.contains('\n'));
+    assert!(!message.contains("defined here"));
+    assert!(!message.contains('"'));
+}
+
+#[test]
+fn rule_conflict_reports_escaped_carriage_return_in_previous_rule_file_label() {
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "C:\\policy files\\first\rsplit.rego".to_string(),
+            "package test\np := 1\n".to_string(),
+        )
+        .unwrap();
+    engine
+        .add_policy(
+            r"C:\policy files\second.rego".to_string(),
+            "package test\np := 2\n".to_string(),
+        )
+        .unwrap();
+
+    let error = engine.eval_rule("data.test.p".to_string()).unwrap_err();
+    let message = error.to_string();
+    let conflict_line = message
+        .lines()
+        .find(|line| line.starts_with("error: rule conflicts"))
+        .unwrap();
+    assert_eq!(
+        conflict_line,
+        "error: rule conflicts with rule at C:\\policy files\\first\\rsplit.rego:2:1"
+    );
+    assert!(message.contains("--> C:\\policy files\\second.rego:2:1"));
+    assert!(message.contains("| p := 2"));
+    assert!(!conflict_line.contains('\r'));
+    assert!(!conflict_line.contains('\n'));
+    assert!(!message.contains("defined here"));
+    assert!(!message.contains('"'));
+}
+
 mod timer_test_support {
     use super::{ExecutionTimerTestConfig, TimeSourceTestConfig};
     #[cfg(any(test, not(feature = "std")))]
