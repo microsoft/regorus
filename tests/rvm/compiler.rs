@@ -51,6 +51,36 @@ fn assert_literal_exists(program: &regorus::rvm::program::Program, expected: &Va
 }
 
 #[test]
+fn package_override_is_used_for_rvm_entrypoint_and_original_source() {
+    let source =
+        "package original\nis_admin(user) := user == \"alice\"\nallow if is_admin(input.user)";
+    let mut engine = Engine::new();
+    assert_eq!(
+        "data.tenant.authz",
+        engine
+            .add_policy_with_package(
+                "source.rego".to_string(),
+                source.to_string(),
+                "tenant.authz".to_string(),
+            )
+            .expect("failed to add package-overridden policy")
+    );
+
+    let compiled = engine
+        .compile_with_entrypoint(&Rc::from("data.tenant.authz.allow"))
+        .expect("failed to compile overridden entrypoint");
+    let program = Compiler::compile_from_policy(&compiled, &["data.tenant.authz.allow"])
+        .expect("failed to compile RVM program");
+
+    assert!(
+        program.get_entry_point("data.tenant.authz.allow").is_some(),
+        "RVM should expose the effective-package entrypoint"
+    );
+    assert_eq!("source.rego", program.sources[0].name);
+    assert_eq!(source, program.sources[0].content);
+}
+
+#[test]
 fn constant_array_is_hoisted() {
     let program = compile_rule(
         r#"

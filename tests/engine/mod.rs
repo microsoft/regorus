@@ -103,6 +103,250 @@ fn extension_with_state() -> Result<()> {
 }
 
 #[test]
+fn policy_package_override_is_used_for_evaluation() -> Result<()> {
+    let mut engine = Engine::new();
+    let package = engine.add_policy_with_package(
+        "source.rego".to_string(),
+        r#"package original.authz
+
+            default allowed = false
+            is_admin(user) := user == "admin"
+            allowed if is_admin(input.user)
+        "#
+        .to_string(),
+        "tenant.authz".to_string(),
+    )?;
+
+    assert_eq!("data.tenant.authz", package);
+    assert_eq!(vec!["data.tenant.authz"], engine.get_packages()?);
+    let source = engine.get_policies()?;
+    assert_eq!("source.rego", source[0].get_path());
+    assert!(source[0]
+        .get_contents()
+        .starts_with("package original.authz"));
+    let sources_json = engine.get_policies_as_json()?;
+    assert!(sources_json.contains("package original.authz"));
+    assert!(!sources_json.contains("tenant.authz"));
+
+    engine.set_input(Value::from_json_str(r#"{"user":"admin"}"#)?);
+    let result = engine.eval_query("data.tenant.authz.allowed".to_string(), false)?;
+    assert_eq!(Value::from(true), result.result[0].expressions[0].value);
+
+    Ok(())
+}
+
+#[test]
+fn legacy_bracketed_package_segments_remain_evaluable() -> Result<()> {
+    let mut engine = Engine::new();
+    let package = engine.add_policy(
+        "bracketed.rego".to_string(),
+        "package team[\"authz\"]\nallow := true".to_string(),
+    )?;
+
+    assert_eq!("data.team.authz", package);
+    assert_eq!(
+        Value::from(true),
+        engine.eval_rule("data.team.authz.allow".into())?
+    );
+    Ok(())
+}
+
+#[test]
+fn invalid_package_overrides_leave_existing_engine_state_unchanged() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "original.rego".to_string(),
+        "package original\ndefined := true".to_string(),
+    )?;
+    assert_eq!(
+        Value::from(true),
+        engine
+            .eval_query("data.original.defined".to_string(), false)?
+            .result[0]
+            .expressions[0]
+            .value
+    );
+
+    for invalid_package in [
+        "",
+        "data.tenant.authz",
+        "tenant .authz",
+        "tenant.authz # comment",
+        "tenant.authz\nallow := true",
+        "package tenant.authz",
+        "tenant..authz",
+        "tenant\0authz",
+    ] {
+        assert!(
+            engine
+                .add_policy_with_package(
+                    "invalid.rego".to_string(),
+                    "package invalid\nvalue := 1".to_string(),
+                    invalid_package.to_string(),
+                )
+                .is_err(),
+            "accepted malformed package {invalid_package:?}"
+        );
+    }
+
+    assert!(engine
+        .add_policy_with_package(
+            "broken.rego".to_string(),
+            "package broken\nvalue := {".to_string(),
+            "tenant.authz".to_string(),
+        )
+        .is_err());
+
+    assert_eq!(vec!["data.original"], engine.get_packages()?);
+    assert_eq!(1, engine.get_policies()?.len());
+    assert_eq!(
+        Value::from(true),
+        engine
+            .eval_query("data.original.defined".to_string(), false)?
+            .result[0]
+            .expressions[0]
+            .value
+    );
+    Ok(())
+}
+
+#[test]
+fn adding_overridden_policy_after_evaluation_updates_only_that_engine() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "first.rego".to_string(),
+        "package first\nvalue := 1".to_string(),
+    )?;
+    assert_eq!(
+        Value::from(1),
+        engine
+            .eval_query("data.first.value".to_string(), false)?
+            .result[0]
+            .expressions[0]
+            .value
+    );
+    let mut clone = engine.clone();
+
+    engine.add_policy_with_package(
+        "source.rego".to_string(),
+        "package original\nanswer := 2".to_string(),
+        "tenant.authz".to_string(),
+    )?;
+
+    assert_eq!(
+        Value::from(2),
+        engine
+            .eval_query("data.tenant.authz.answer".to_string(), false)?
+            .result[0]
+            .expressions[0]
+            .value
+    );
+    assert_eq!(
+        vec!["data.first", "data.tenant.authz"],
+        engine.get_packages()?
+    );
+    assert_eq!(vec!["data.first"], clone.get_packages()?);
+    assert!(clone
+        .eval_query("data.tenant.authz.answer".to_string(), false)?
+        .result
+        .is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn modules_with_the_same_effective_package_merge_distinct_rules() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy_with_package(
+        "first.rego".to_string(),
+        "package first\none := 1".to_string(),
+        "tenant.authz".to_string(),
+    )?;
+    engine.add_policy_with_package(
+        "second.rego".to_string(),
+        "package second\ntwo := 2".to_string(),
+        "tenant.authz".to_string(),
+    )?;
+
+    assert_eq!(
+        Value::from(1),
+        engine.eval_rule("data.tenant.authz.one".into())?
+    );
+    assert_eq!(
+        Value::from(2),
+        engine.eval_rule("data.tenant.authz.two".into())?
+    );
+    Ok(())
+}
+
+#[test]
+fn colliding_rules_in_overridden_packages_keep_existing_conflict_behavior() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy_with_package(
+        "first.rego".to_string(),
+        "package first\nvalue := 1".to_string(),
+        "tenant.authz".to_string(),
+    )?;
+    engine.add_policy_with_package(
+        "second.rego".to_string(),
+        "package second\nvalue := 2".to_string(),
+        "tenant.authz".to_string(),
+    )?;
+
+    let error = engine
+        .eval_rule("data.tenant.authz.value".into())
+        .expect_err("different complete-rule values must conflict");
+    assert!(error
+        .to_string()
+        .contains("rule conflicts with the following rule"));
+    Ok(())
+}
+
+#[test]
+fn absolute_references_and_imports_are_not_rewritten() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_data(Value::from_json_str(r#"{"original":{"base":100}}"#)?)?;
+    engine.add_policy_with_package(
+        "moved.rego".to_string(),
+        "package original\nbase := 1\nabsolute := data.original.base".to_string(),
+        "tenant.authz".to_string(),
+    )?;
+    engine.add_policy_with_package(
+        "helpers.rego".to_string(),
+        "package original.helpers\nvalue := 7".to_string(),
+        "tenant.authz.helpers".to_string(),
+    )?;
+    engine.add_policy(
+        "consumer.rego".to_string(),
+        "package consumer\nimport data.original.helpers\nresult := helpers.value".to_string(),
+    )?;
+
+    assert_eq!(
+        Value::from(100),
+        engine.eval_rule("data.tenant.authz.absolute".into())?
+    );
+    assert_eq!(
+        Value::Undefined,
+        engine.eval_rule("data.consumer.result".into())?
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "ast")]
+fn ast_json_omits_unset_effective_package_for_legacy_output() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy("legacy.rego".to_string(), "package legacy".to_string())?;
+
+    let ast = engine.get_ast_as_json()?;
+    assert!(
+        !ast.contains("\"effective_package\""),
+        "legacy AST output should omit unset override metadata"
+    );
+    Ok(())
+}
+
+#[test]
 #[cfg(feature = "azure_policy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
 fn get_policy_package_names() -> Result<()> {
@@ -136,6 +380,24 @@ fn get_policy_package_names() -> Result<()> {
 
     assert_eq!("test.nested.name", package_names[1].package_name);
     assert_eq!("testPolicy2", package_names[1].source_file);
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "azure_policy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
+fn get_policy_package_names_uses_effective_package() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy_with_package(
+        "source.rego".to_string(),
+        "package original\nallow := true".to_string(),
+        "tenant.authz".to_string(),
+    )?;
+
+    let package_names = engine.get_policy_package_names()?;
+    assert_eq!(1, package_names.len());
+    assert_eq!("tenant.authz", package_names[0].package_name);
+    assert_eq!("source.rego", package_names[0].source_file);
     Ok(())
 }
 

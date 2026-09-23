@@ -19,7 +19,10 @@ use crate::utils::limits::{monotonic_now, ExecutionTimer, ExecutionTimerConfig};
 #[cfg(feature = "std")]
 use crate::utils::*;
 #[cfg(not(feature = "std"))]
-use crate::utils::{get_extra_arg, get_path_string, get_root_var, FunctionTable};
+use crate::utils::{
+    get_extra_arg, get_module_package_components, get_module_package_path, get_path_string,
+    get_root_var, FunctionTable,
+};
 use crate::value::*;
 use crate::*;
 use crate::{Expression, Extension, Location, QueryResult, QueryResults};
@@ -3010,7 +3013,7 @@ impl Interpreter {
                 // Prevent cyclic evaluation.
                 continue;
             }
-            let module_path_str = get_path_string(&module.package.refr, Some("data"))?;
+            let module_path_str = get_module_package_path(&module, Some("data"))?;
             let has_dot_after_prefix = module_path_str
                 .get(path.len()..)
                 .is_some_and(|suffix| suffix.starts_with('.'));
@@ -3019,9 +3022,7 @@ impl Interpreter {
                 && (module_path_str.len() == path.len() || has_dot_after_prefix)
             {
                 // Ensure that the module is created.
-                let module_path_components = Parser::get_path_ref_components(&module.package.refr)?;
-                let module_path_components: Vec<&str> =
-                    module_path_components.iter().map(|s| s.text()).collect();
+                let module_path_components = get_module_package_components(&module)?;
                 let vref = Self::make_or_get_value_mut(&mut self.data, &module_path_components)?;
                 if *vref == Value::Undefined {
                     *vref = Value::new_object();
@@ -3167,8 +3168,8 @@ impl Interpreter {
             Ok(Self::get_value_chained(self.data.clone(), fields))
         } else if !self.compiled_policy.modules.is_empty() {
             let module = self.current_module()?;
-            let parsed_path = Parser::get_path_ref_components(&module.package.refr)?;
-            let mut module_var_path: Vec<&str> = parsed_path.iter().map(|s| s.text()).collect();
+            let parsed_path = get_module_package_components(&module)?;
+            let mut module_var_path = parsed_path;
             module_var_path.push(name.text());
 
             if self.is_processed(&module_var_path)? {
@@ -3632,8 +3633,7 @@ impl Interpreter {
     ) -> Result<Option<Ref<Module>>> {
         let previous_module = self.module.clone();
         if let Some(new_module) = &module {
-            self.current_module_path =
-                Self::get_path_string(&new_module.package.refr, Some("data"))?;
+            self.current_module_path = get_module_package_path(new_module, Some("data"))?;
             self.current_module_index = self.find_module_index(new_module);
         }
         self.module = module;
@@ -3753,7 +3753,7 @@ impl Interpreter {
             let scopes = core::mem::take(&mut self.scopes);
 
             let module = self.current_module()?;
-            let mut path = Parser::get_path_ref_components(&module.package.refr)?;
+            let mut path = get_module_package_components(module.as_ref())?;
 
             let (refr, index) = match refr.as_ref() {
                 Expr::RefBrack { refr, index, .. } => (refr, Some(index.clone())),
@@ -3764,8 +3764,9 @@ impl Interpreter {
                     .error(&format!("invalid token {refr:?} with the default keyword"))),
             };
 
-            Parser::get_path_ref_components_into(refr, &mut path)?;
-            let paths: Vec<&str> = path.iter().map(|s| s.text()).collect();
+            let rule_path = Parser::get_path_ref_components(refr)?;
+            path.extend(rule_path.iter().map(|component| component.text()));
+            let paths = path;
 
             Self::check_default_value(value)?;
             let value = self.eval_expr(value)?;
@@ -3913,7 +3914,10 @@ impl Interpreter {
                         let is_object = ctx.key_expr.is_some() && !is_set;
 
                         let value = self.eval_rule_bodies(ctx, span, rule_body)?;
-                        let package_components = self.eval_rule_ref(&module.package.refr)?;
+                        let package_components = get_module_package_components(module)?
+                            .into_iter()
+                            .map(Value::from)
+                            .collect::<Vec<_>>();
 
                         if value != Value::Undefined {
                             for (path, value_in_map) in value.as_object()? {
@@ -3953,11 +3957,11 @@ impl Interpreter {
                     RuleHead::Func {
                         refr, args, assign, ..
                     } => {
-                        let mut path =
-                            Parser::get_path_ref_components(&self.current_module()?.package.refr)?;
-
-                        Parser::get_path_ref_components_into(refr, &mut path)?;
-                        let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+                        let current_module = self.current_module()?;
+                        let package_path = get_module_package_components(current_module.as_ref())?;
+                        let mut path = package_path;
+                        let rule_path = Parser::get_path_ref_components(refr)?;
+                        path.extend(rule_path.iter().map(|component| component.text()));
 
                         // Ensure that for functions with a nesting level (e.g: a.foo),
                         // `a` is created as an empty object.
@@ -4202,7 +4206,10 @@ impl Interpreter {
 
     pub fn create_rule_prefixes(&mut self) -> Result<()> {
         for module in self.compiled_policy.modules.clone().iter() {
-            let module_path = Self::get_rule_path_components(&module.package.refr)?;
+            let module_path: Vec<Rc<str>> = get_module_package_components(module)?
+                .into_iter()
+                .map(Rc::from)
+                .collect();
 
             for rule in &module.policy {
                 let rule_refr = Self::get_rule_refr(rule);
@@ -4323,7 +4330,7 @@ impl Interpreter {
 
     pub fn process_imports(&mut self) -> Result<()> {
         for module in self.compiled_policy.modules.clone().iter() {
-            let module_path = get_path_string(&module.package.refr, Some("data"))?;
+            let module_path = get_module_package_path(module, Some("data"))?;
             for import in &module.imports {
                 let target = match &import.r#as {
                     Some(s) => s.text(),

@@ -28,6 +28,36 @@ public class RegorusTests
     }
 
     [TestMethod]
+    public void Add_policy_with_package_evaluates_under_effective_package()
+    {
+        using var engine = new Engine();
+        var package = engine.AddPolicyWithPackage(
+            "source.rego",
+            "package original\nallow := input.user == \"alice\"",
+            "tenant.authz");
+        engine.SetInputJson("{\"user\":\"alice\"}");
+
+        Assert.AreEqual("data.tenant.authz", package);
+        Assert.AreEqual("true", engine.EvalRule("data.tenant.authz.allow"));
+    }
+
+    [TestMethod]
+    public void Add_policy_with_package_rejects_embedded_nul_without_adding_policy()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy("existing.rego", "package existing\nallow := true");
+        var packagesBefore = engine.GetPolicyPackageNames();
+
+        Assert.ThrowsException<ArgumentException>(
+            () => engine.AddPolicyWithPackage(
+                "source.rego",
+                "package original\nallow := true",
+                "tenant.authz\0evil"));
+
+        Assert.AreEqual(packagesBefore, engine.GetPolicyPackageNames());
+    }
+
+    [TestMethod]
     public void Evaluation_using_file_policies_succeeds()
     {
         using var engine = new Engine();

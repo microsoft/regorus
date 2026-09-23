@@ -462,6 +462,10 @@ pub struct Import {
 #[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct Module {
     pub package: Package,
+    /// Effective package path used for evaluation, when overridden by the caller.
+    /// The original package AST is retained so source spans and policy text stay intact.
+    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Option::is_none"))]
+    pub effective_package: Option<String>,
     pub imports: Vec<Import>,
     #[cfg_attr(feature = "ast", serde(rename(serialize = "rules")))]
     pub policy: Vec<Ref<Rule>>,

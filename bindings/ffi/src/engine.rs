@@ -58,6 +58,146 @@ impl Clone for RegorusEngine {
     }
 }
 
+#[cfg(all(test, feature = "std"))]
+mod package_override_tests {
+    #[cfg(feature = "azure_policy")]
+    use super::regorus_engine_get_policy_package_names;
+    use super::{
+        regorus_engine_add_policy, regorus_engine_add_policy_with_package, regorus_engine_drop,
+        regorus_engine_get_packages, regorus_engine_get_policies, regorus_engine_new,
+    };
+    use crate::common::{regorus_result_drop, RegorusDataType, RegorusStatus};
+    use core::ffi::c_char;
+    use core::ptr;
+    use std::ffi::{CStr, CString};
+
+    fn result_text(result: &crate::common::RegorusResult) -> String {
+        assert!(matches!(&result.status, RegorusStatus::Ok));
+        assert!(matches!(&result.data_type, RegorusDataType::String));
+        assert!(!result.output.is_null());
+        unsafe {
+            CStr::from_ptr(result.output)
+                .to_str()
+                .expect("FFI output should be UTF-8")
+                .to_owned()
+        }
+    }
+
+    fn assert_rejected(result: crate::common::RegorusResult) {
+        assert!(matches!(&result.status, RegorusStatus::Error));
+        assert!(!result.error_message.is_null());
+        unsafe {
+            assert!(!CStr::from_ptr(result.error_message)
+                .to_str()
+                .expect("FFI error should be UTF-8")
+                .is_empty());
+        }
+        regorus_result_drop(result);
+    }
+
+    #[test]
+    fn package_override_ffi_reports_effective_package_and_preserves_source() {
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let legacy_path = CString::new("legacy.rego").unwrap();
+        let legacy_policy = CString::new("package legacy\nvalue := 1").unwrap();
+        let legacy_result =
+            regorus_engine_add_policy(engine, legacy_path.as_ptr(), legacy_policy.as_ptr());
+        assert_eq!(
+            "data.legacy",
+            result_text(&legacy_result),
+            "the existing two-argument symbol keeps declared-package behavior"
+        );
+        regorus_result_drop(legacy_result);
+
+        let path = CString::new("source.rego").unwrap();
+        let rego = CString::new("package original.authz\nallowed := true").unwrap();
+        let package = CString::new("tenant.authz").unwrap();
+        let added = regorus_engine_add_policy_with_package(
+            engine,
+            path.as_ptr(),
+            rego.as_ptr(),
+            package.as_ptr(),
+        );
+        assert_eq!("data.tenant.authz", result_text(&added));
+        regorus_result_drop(added);
+
+        let packages = regorus_engine_get_packages(engine);
+        let package_json: serde_json::Value =
+            serde_json::from_str(&result_text(&packages)).expect("valid package JSON");
+        assert_eq!(
+            serde_json::json!(["data.legacy", "data.tenant.authz"]),
+            package_json
+        );
+        regorus_result_drop(packages);
+
+        let policies = regorus_engine_get_policies(engine);
+        let policy_json: serde_json::Value =
+            serde_json::from_str(&result_text(&policies)).expect("valid policy JSON");
+        assert_eq!("source.rego", policy_json[1]["path"]);
+        assert_eq!(
+            "package original.authz\nallowed := true",
+            policy_json[1]["contents"]
+        );
+        regorus_result_drop(policies);
+
+        #[cfg(feature = "azure_policy")]
+        {
+            let names = regorus_engine_get_policy_package_names(engine);
+            let name_json: serde_json::Value =
+                serde_json::from_str(&result_text(&names)).expect("valid package-name JSON");
+            assert_eq!("tenant.authz", name_json[1]["package_name"]);
+            regorus_result_drop(names);
+        }
+
+        regorus_engine_drop(engine);
+    }
+
+    #[test]
+    fn package_override_ffi_rejects_null_and_malformed_without_adding_modules() {
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let existing_path = CString::new("existing.rego").unwrap();
+        let existing_policy = CString::new("package existing\nvalue := true").unwrap();
+        let existing =
+            regorus_engine_add_policy(engine, existing_path.as_ptr(), existing_policy.as_ptr());
+        assert_eq!("data.existing", result_text(&existing));
+        regorus_result_drop(existing);
+
+        let path = CString::new("invalid.rego").unwrap();
+        let rego = CString::new("package invalid\nvalue := 1").unwrap();
+        assert_rejected(regorus_engine_add_policy_with_package(
+            engine,
+            path.as_ptr(),
+            rego.as_ptr(),
+            ptr::null::<c_char>(),
+        ));
+
+        let malformed_package = CString::new("tenant .authz").unwrap();
+        assert_rejected(regorus_engine_add_policy_with_package(
+            engine,
+            path.as_ptr(),
+            rego.as_ptr(),
+            malformed_package.as_ptr(),
+        ));
+
+        let packages = regorus_engine_get_packages(engine);
+        let package_json: serde_json::Value =
+            serde_json::from_str(&result_text(&packages)).expect("valid package JSON");
+        assert_eq!(serde_json::json!(["data.existing"]), package_json);
+        regorus_result_drop(packages);
+
+        let policies = regorus_engine_get_policies(engine);
+        let policy_json: serde_json::Value =
+            serde_json::from_str(&result_text(&policies)).expect("valid policy JSON");
+        assert_eq!(1, policy_json.as_array().expect("array").len());
+        regorus_result_drop(policies);
+        regorus_engine_drop(engine);
+    }
+}
+
 #[cfg(all(test, feature = "contention_checks", feature = "std"))]
 mod tests {
     use super::RegorusEngine;
@@ -228,6 +368,30 @@ pub extern "C" fn regorus_engine_add_policy(
             let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             guard.add_policy(from_c_str(path)?, from_c_str(rego)?)
+        }())
+    })
+}
+
+/// Add a policy with an effective package path override.
+///
+/// `package` is a bare dotted Rego package path (for example `tenant.authz`),
+/// without the `data.` prefix or `package` keyword.
+#[no_mangle]
+pub extern "C" fn regorus_engine_add_policy_with_package(
+    engine: *mut RegorusEngine,
+    path: *const c_char,
+    rego: *const c_char,
+    package: *const c_char,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        to_regorus_string_result(|| -> Result<String> {
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
+            let mut guard = engine.try_write()?;
+            guard.add_policy_with_package(
+                from_c_str(path)?,
+                from_c_str(rego)?,
+                from_c_str(package)?,
+            )
         }())
     })
 }

@@ -12,6 +12,7 @@ pub mod limits;
 
 use crate::ast::*;
 use crate::builtins::*;
+use crate::interpreter::Interpreter;
 use crate::lexer::*;
 use crate::*;
 
@@ -45,6 +46,48 @@ pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
     };
     comps.reverse();
     Ok(comps.join("."))
+}
+
+pub fn get_module_package_path(module: &Module, document: Option<&str>) -> Result<String> {
+    if let Some(package) = &module.effective_package {
+        return Ok(document.map_or_else(
+            || package.clone(),
+            |document| format!("{document}.{package}"),
+        ));
+    }
+    Interpreter::get_path_string(&module.package.refr, document)
+}
+
+pub fn get_module_package_components(module: &Module) -> Result<Vec<&str>> {
+    if let Some(package) = &module.effective_package {
+        return Ok(package.split('.').collect());
+    }
+
+    let mut components = vec![];
+    let mut expr = module.package.refr.as_ref();
+    loop {
+        match expr {
+            Expr::RefDot { refr, field, .. } => {
+                components.push(field.0.text());
+                expr = refr.as_ref();
+            }
+            Expr::RefBrack { refr, index, .. } => {
+                if let Expr::String { span, .. } = index.as_ref() {
+                    components.push(span.text());
+                } else {
+                    bail!("internal error: not a package path {expr:?}");
+                }
+                expr = refr.as_ref();
+            }
+            Expr::Var { span, .. } => {
+                components.push(span.text());
+                break;
+            }
+            _ => bail!("internal error: not a package path {expr:?}"),
+        }
+    }
+    components.reverse();
+    Ok(components)
 }
 
 pub type FunctionTable = BTreeMap<String, (Vec<Ref<Rule>>, u8, Ref<Module>)>;
@@ -87,7 +130,7 @@ pub fn gather_functions(modules: &[Ref<Module>]) -> Result<FunctionTable> {
     let mut table = FunctionTable::new();
 
     for module in modules {
-        let module_path = get_path_string(&module.package.refr, Some("data"))?;
+        let module_path = get_module_package_path(module, Some("data"))?;
         for rule in &module.policy {
             if let Rule::Spec {
                 span,

@@ -120,6 +120,26 @@ namespace Regorus
                     )));
         }
 
+        /// <summary>
+        /// Adds a policy using a bare dotted effective package path, such as
+        /// <c>tenant.authz</c>. The original policy text is preserved. Absolute
+        /// <c>data.*</c> references are not rewritten.
+        /// </summary>
+        public string? AddPolicyWithPackage(string path, string rego, string effectivePackage)
+        {
+            Utf8Marshaller.ThrowIfContainsNul(effectivePackage, nameof(effectivePackage));
+            return Utf8Marshaller.WithUtf8(path, pathPtr =>
+                Utf8Marshaller.WithUtf8(rego, regoPtr =>
+                    Utf8Marshaller.WithUtf8(effectivePackage, packagePtr =>
+                        UseHandle(enginePtr =>
+                            CheckAndDropResult(Regorus.Internal.API.regorus_engine_add_policy_with_package(
+                                (Regorus.Internal.RegorusEngine*)enginePtr,
+                                (byte*)pathPtr,
+                                (byte*)regoPtr,
+                                (byte*)packagePtr))
+                        ))));
+        }
+
         public void SetRegoV0(bool enable)
         {
             UseHandle(enginePtr =>

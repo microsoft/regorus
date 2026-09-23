@@ -240,6 +240,34 @@ impl Engine {
     /// ```
     ///
     pub fn add_policy(&mut self, path: String, rego: String) -> Result<String> {
+        self.add_policy_internal(path, rego, None)
+    }
+
+    /// Add a policy while overriding its effective package path.
+    ///
+    /// `effective_package` must be a bare dotted Rego package path, such as
+    /// `tenant.authz` (without the `data.` prefix or `package` keyword).
+    /// The original policy text is retained. References written as absolute
+    /// `data.*` paths are not rewritten and must be updated by the caller when
+    /// needed.
+    ///
+    /// Returns the effective package name including the `data.` prefix.
+    pub fn add_policy_with_package(
+        &mut self,
+        path: String,
+        rego: String,
+        effective_package: String,
+    ) -> Result<String> {
+        self.validate_effective_package(&effective_package)?;
+        self.add_policy_internal(path, rego, Some(effective_package))
+    }
+
+    fn add_policy_internal(
+        &mut self,
+        path: String,
+        rego: String,
+        effective_package: Option<String>,
+    ) -> Result<String> {
         let source = Source::from_contents_with_limits(
             path,
             rego,
@@ -247,12 +275,41 @@ impl Engine {
             self.policy_length_config.max_lines,
         )?;
         let mut parser = self.make_parser(&source)?;
-        let module = Ref::new(parser.parse()?);
+        let mut parsed_module = parser.parse()?;
+        parsed_module.effective_package = effective_package;
+        let module = Ref::new(parsed_module);
         limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
         Rc::make_mut(&mut self.modules).push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
-        Interpreter::get_path_string(&module.package.refr, Some("data"))
+        crate::utils::get_module_package_path(&module, Some("data"))
+    }
+
+    fn validate_effective_package(&self, effective_package: &str) -> Result<()> {
+        if effective_package.is_empty() || effective_package.starts_with("data.") {
+            bail!("effective package must be a non-empty bare dotted Rego package path (for example `tenant.authz`)");
+        }
+
+        let source = Source::from_contents_with_limits(
+            "<effective package>".to_string(),
+            format!("package {effective_package}"),
+            self.policy_length_config.max_file_bytes,
+            self.policy_length_config.max_lines,
+        )?;
+        let mut parser = self.make_parser(&source)?;
+        let parsed = parser
+            .parse()
+            .map_err(|error| anyhow!("invalid effective package `{effective_package}`: {error}"))?;
+        let components = Parser::get_path_ref_components(&parsed.package.refr)?;
+        let parsed_package = components
+            .iter()
+            .map(|component| component.text())
+            .collect::<Vec<_>>()
+            .join(".");
+        if parsed_package != effective_package || !parsed.policy.is_empty() {
+            bail!("effective package must be a bare dotted Rego package path without whitespace, comments, or policy statements");
+        }
+        Ok(())
     }
 
     /// Add a policy from a given file.
@@ -290,7 +347,7 @@ impl Engine {
         Rc::make_mut(&mut self.modules).push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
-        Interpreter::get_path_string(&module.package.refr, Some("data"))
+        crate::utils::get_module_package_path(&module, Some("data"))
     }
 
     /// Get the list of packages defined by loaded policies.
@@ -314,7 +371,7 @@ impl Engine {
     pub fn get_packages(&self) -> Result<Vec<String>> {
         self.modules
             .iter()
-            .map(|m| Interpreter::get_path_string(&m.package.refr, Some("data")))
+            .map(|m| crate::utils::get_module_package_path(m, Some("data")))
             .collect()
     }
 
@@ -1203,8 +1260,7 @@ impl Engine {
 
         // Ensure that empty modules are created.
         for m in self.modules.iter().filter(|m| m.policy.is_empty()) {
-            let path = Parser::get_path_ref_components(&m.package.refr)?;
-            let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+            let path = crate::utils::get_module_package_components(m)?;
             let vref =
                 Interpreter::make_or_get_value_mut(self.interpreter.get_data_mut(), &path[..])?;
             if *vref == Value::Undefined {
@@ -1229,8 +1285,7 @@ impl Engine {
 
         // Ensure that all modules are created.
         for m in self.modules.iter() {
-            let path = Parser::get_path_ref_components(&m.package.refr)?;
-            let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+            let path = crate::utils::get_module_package_components(m)?;
             let vref =
                 Interpreter::make_or_get_value_mut(self.interpreter.get_data_mut(), &path[..])?;
             if *vref == Value::Undefined {
@@ -1490,7 +1545,7 @@ impl Engine {
     pub fn get_policy_package_names(&self) -> Result<Vec<PolicyPackageNameDefinition>> {
         let mut package_names = vec![];
         for m in self.modules.iter() {
-            let package_name = Interpreter::get_path_string(&m.package.refr, None)?;
+            let package_name = crate::utils::get_module_package_path(m, None)?;
             package_names.push(PolicyPackageNameDefinition {
                 source_file: m.package.span.source.file().to_string(),
                 package_name,
