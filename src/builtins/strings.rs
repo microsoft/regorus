@@ -39,6 +39,7 @@ pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn
     m.insert("strings.count", (strings_count, 2));
     m.insert("strings.replace_n", (replace_n, 2));
     m.insert("strings.reverse", (reverse, 1));
+    m.insert("strings.split_n", (split_n, 3));
     m.insert("substring", (substring, 3));
     m.insert("trim", (trim, 2));
     m.insert("trim_left", (trim_left, 2));
@@ -151,7 +152,7 @@ fn replace(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
 }
 
 fn split(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
-    let name = "replace";
+    let name = "split";
     ensure_args_count(span, name, params, args, 2)?;
     let s = ensure_string(name, &params[0], &args[0])?;
     let delimiter = ensure_string(name, &params[1], &args[1])?;
@@ -180,6 +181,83 @@ fn split(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
     };
 
     Ok(Value::from(parts))
+}
+
+fn split_n(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
+    let name = "strings.split_n";
+    ensure_args_count(span, name, params, args, 3)?;
+    let s = ensure_string(name, &params[0], &args[0])?;
+    let delimiter = ensure_string(name, &params[1], &args[1])?;
+    let n = ensure_numeric(name, &params[2], &args[2])?;
+
+    if !n.is_integer() {
+        if strict {
+            bail!(params[2]
+                .span()
+                .error("strings.split_n expects an integer third argument"));
+        }
+        return Ok(Value::Undefined);
+    }
+
+    let Some(n) = n.as_i64() else {
+        if n.is_positive() {
+            // n overflows i64 — treat as no limit (full split); pass only the first 2 args
+            return split(span, &params[..2], &args[..2], strict);
+        }
+        return Ok(Value::from_array(Vec::new()));
+    };
+
+    if n == 0 {
+        return Ok(Value::from_array(Vec::new()));
+    }
+
+    // For positive n: split into at most n pieces (last piece holds remainder).
+    // For negative n: return the last |n| pieces from a full split.
+    let result: Vec<Value> = if n > 0 {
+        let limit = usize::try_from(n).unwrap_or(usize::MAX);
+        if delimiter.is_empty() {
+            // Empty delimiter: yield individual chars; last piece holds any remainder.
+            let chars: Vec<char> = s.chars().collect();
+            if limit >= chars.len() {
+                chars
+                    .iter()
+                    .map(|c| {
+                        enforce_limit()?;
+                        Ok(Value::from(c.to_string()))
+                    })
+                    .collect::<Result<Vec<Value>>>()?
+            } else {
+                let mut parts: Vec<Value> = chars[..limit.saturating_sub(1)]
+                    .iter()
+                    .map(|c| {
+                        enforce_limit()?;
+                        Ok(Value::from(c.to_string()))
+                    })
+                    .collect::<Result<Vec<Value>>>()?;
+                let rest: String = chars[limit.saturating_sub(1)..].iter().collect();
+                enforce_limit()?;
+                parts.push(Value::from(rest));
+                parts
+            }
+        } else {
+            s.splitn(limit, delimiter.as_ref())
+                .map(|p| {
+                    enforce_limit()?;
+                    Ok(Value::String(p.into()))
+                })
+                .collect::<Result<Vec<Value>>>()?
+        }
+    } else {
+        let parts = match split(span, &params[..2], &args[..2], strict)? {
+            Value::Array(parts) => parts.as_ref().clone(),
+            _ => return Ok(Value::Undefined),
+        };
+        let count = usize::try_from(n.unsigned_abs()).unwrap_or(usize::MAX);
+        let start = parts.len().saturating_sub(count);
+        parts.into_iter().skip(start).collect()
+    };
+
+    Ok(Value::from_array(result))
 }
 
 fn to_string(v: &Value, unescape: bool) -> String {
