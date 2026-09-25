@@ -578,3 +578,14 @@ var result = policy.EvalWithInput(inputJson);
 ```
 
 The compiled approach provides better performance for repeated evaluations and clearer resource management.
+
+## Effective Package Override
+
+For engine-based loading, `Engine.AddPolicyWithPackage(path, rego, effectivePackage)`
+loads the original policy text under a bare dotted package path such as
+`tenant.authz` (not `data.tenant.authz`). This changes the policy's effective
+package for evaluation and compilation without changing its source. Absolute
+`data.*` references and imports are left unchanged; callers must update those
+references themselves if they should point to the overridden package.
+For RVM compilation, use `Program.CompileFromEngine(engine, new[] { "data.tenant.authz.allow" })`;
+`Program.CompileFromModules` has no package-override option.

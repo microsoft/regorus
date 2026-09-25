@@ -16,7 +16,7 @@ use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
 use crate::rvm::program::{Program, RuleType};
 use crate::rvm::Instruction;
-use crate::utils::get_path_string;
+use crate::utils::get_module_package_path;
 use crate::Map;
 use crate::{CompiledPolicy, Value};
 use alloc::collections::BTreeSet;
@@ -202,19 +202,18 @@ impl<'a> Compiler<'a> {
                 for (module_index, module) in self.policy.get_modules().iter().enumerate() {
                     for policy_rule in &module.policy {
                         if core::ptr::eq(policy_rule.as_ref(), rule) {
-                            let package_path =
-                                match get_path_string(&module.package.refr, Some("data")) {
-                                    Ok(path) => path,
-                                    Err(e) => {
-                                        return Err(CompilerError::General {
-                                            message: format!(
-                                                "Failed to get package path for module: {}",
-                                                e
-                                            ),
-                                        }
-                                        .into());
+                            let package_path = match get_module_package_path(module, Some("data")) {
+                                Ok(path) => path,
+                                Err(e) => {
+                                    return Err(CompilerError::General {
+                                        message: format!(
+                                            "Failed to get package path for module: {}",
+                                            e
+                                        ),
                                     }
-                                };
+                                    .into());
+                                }
+                            };
                             return Ok((package_path, module_index as u32));
                         }
                     }

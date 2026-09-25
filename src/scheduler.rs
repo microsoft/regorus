@@ -320,7 +320,7 @@ impl Analyzer {
 
     fn add_rules_and_aliases(&mut self, modules: &[Ref<Module>]) -> Result<()> {
         for m in modules {
-            let path = get_path_string(&m.package.refr, Some("data"))?;
+            let path = get_module_package_path(m, Some("data"))?;
             let scope: &mut Scope = self.packages.entry(path).or_default();
             for r in &m.policy {
                 let var = match r.as_ref() {
@@ -348,7 +348,7 @@ impl Analyzer {
     }
 
     fn analyze_module(&mut self, m: &Module) -> Result<()> {
-        let path = get_path_string(&m.package.refr, Some("data"))?;
+        let path = get_module_package_path(m, Some("data"))?;
         let scope = match self.packages.get(&path) {
             Some(s) => s,
             _ => bail!("internal error: package scope missing"),
@@ -1143,7 +1143,7 @@ pub fn compute_module_globals(
 
     // First pass: collect all rule names by package
     for m in modules {
-        let path = get_path_string(&m.package.refr, Some("data"))?;
+        let path = get_module_package_path(m, Some("data"))?;
         let package_globals: &mut crate::Rc<BTreeSet<String>> = packages.entry(path).or_default();
 
         for r in &m.policy {
@@ -1163,7 +1163,7 @@ pub fn compute_module_globals(
 
     // Second pass: for each module, combine package globals with module-specific imports
     for (module_idx, m) in modules.iter().enumerate() {
-        let path = get_path_string(&m.package.refr, Some("data"))?;
+        let path = get_module_package_path(m, Some("data"))?;
         let mut module_globals = packages.get(&path).cloned().unwrap_or_default();
 
         // Add import aliases specific to this module

@@ -285,6 +285,12 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_engine_add_policy(RegorusEngine* engine, byte* path, byte* rego);
 
         /// <summary>
+        /// Add a policy with an effective package path override.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_add_policy_with_package", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_add_policy_with_package(RegorusEngine* engine, byte* path, byte* rego, byte* package);
+
+        /// <summary>
         /// Add a policy from file.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_engine_add_policy_from_file", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]

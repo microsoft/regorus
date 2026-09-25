@@ -193,6 +193,23 @@ result := __builtin_host_await(
     }
 
     [TestMethod]
+    public void Program_compile_from_engine_uses_effective_package_override()
+    {
+        using var engine = new Engine();
+        engine.AddPolicyWithPackage(
+            "source.rego",
+            "package original\nis_admin(user) := user == \"alice\"\nallow if is_admin(input.user)",
+            "tenant.authz");
+
+        var program = Program.CompileFromEngine(engine, new[] { "data.tenant.authz.allow" });
+        using var vm = new Rvm();
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"user\":\"alice\"}");
+
+        Assert.AreEqual("true", vm.Execute(), "expected the overridden package entrypoint to evaluate");
+    }
+
+    [TestMethod]
     public void Program_host_await_suspend_and_resume_succeeds()
     {
         var modules = new[] { new PolicyModule("host_await.rego", HostAwaitPolicy) };

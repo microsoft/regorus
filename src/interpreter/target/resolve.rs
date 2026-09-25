@@ -32,7 +32,7 @@ pub fn resolve_target(interpreter: &mut Interpreter) -> Result<(), TargetCompile
     for module in interpreter.compiled_policy.modules.iter() {
         if let Some(ref module_target) = module.target {
             // Get the package path for this module
-            let module_package = Interpreter::get_path_string(&module.package.refr, None)
+            let module_package = get_module_package_path(module, None)
                 .map_err(|_| TargetCompileError::TargetNotFound(module_target.clone().into()))?;
 
             match &target_name {

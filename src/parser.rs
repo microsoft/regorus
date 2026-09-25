@@ -2153,6 +2153,7 @@ impl<'source> Parser<'source> {
 
         let m = Module {
             package,
+            effective_package: None,
             imports,
             target,
             policy,
