@@ -334,7 +334,7 @@ fn colliding_rules_in_overridden_packages_keep_existing_conflict_behavior() -> R
         .expect_err("different complete-rule values must conflict");
     assert!(error
         .to_string()
-        .contains("rule conflicts with the following rule"));
+        .contains("rule conflicts with rule at first.rego:2:1"));
     Ok(())
 }
 
