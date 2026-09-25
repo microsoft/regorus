@@ -469,8 +469,8 @@ impl Analyzer {
 
     fn gather_local_vars(
         &mut self,
-        key: Option<Ref<Expr>>,
-        value: Option<Ref<Expr>>,
+        key: Option<&Ref<Expr>>,
+        value: Option<&Ref<Expr>>,
         query: &Query,
         scope: &mut Scope,
     ) -> Result<()> {
@@ -522,10 +522,10 @@ impl Analyzer {
             }
         }
 
-        if let Some(key) = &key {
+        if let Some(key) = key {
             gather_vars(key, false, &self.scopes, scope)?;
         }
-        if let Some(value) = &value {
+        if let Some(value) = value {
             gather_vars(value, false, &self.scopes, scope)?;
         }
 
@@ -896,7 +896,7 @@ impl Analyzer {
         mut scope: Scope,
     ) -> Result<()> {
         let empty_str = query.span.source_str().clone_empty();
-        self.gather_local_vars(key.clone(), value.clone(), query, &mut scope)?;
+        self.gather_local_vars(key.as_ref(), value.as_ref(), query, &mut scope)?;
 
         let mut infos = vec![];
         let mut first_use = BTreeMap::new();
