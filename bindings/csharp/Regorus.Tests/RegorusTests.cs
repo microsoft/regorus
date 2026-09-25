@@ -265,6 +265,30 @@ public class RegorusTests
     }
 
     [TestMethod]
+    public void HasPolicyParams_checks_the_exact_module_rule_heads()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy("with_params.rego", "package customer\nparams if { false }");
+        engine.AddPolicy(
+            "without_params.rego",
+            "package customer\nimport data.shared as params\nuse := params.value\nconfig := {\"params\": true}");
+
+        Assert.IsTrue(engine.HasPolicyParams("with_params.rego"));
+        Assert.IsFalse(engine.HasPolicyParams("without_params.rego"));
+        Assert.ThrowsException<InvalidOperationException>(() => engine.HasPolicyParams("missing.rego"));
+    }
+
+    [TestMethod]
+    public void HasPolicyParams_rejects_ambiguous_source_paths()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy("duplicate.rego", "package customer\nparams := false");
+        engine.AddPolicy("duplicate.rego", "package customer\nx := true");
+
+        Assert.ThrowsException<InvalidOperationException>(() => engine.HasPolicyParams("duplicate.rego"));
+    }
+
+    [TestMethod]
     public void Global_memory_limit_can_be_set_and_cleared()
     {
         lock (LimitLock)

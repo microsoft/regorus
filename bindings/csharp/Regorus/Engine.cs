@@ -120,6 +120,23 @@ namespace Regorus
                     )));
         }
 
+        /// <summary>
+        /// Check whether the policy module identified by its exact source path declares any rule rooted at <c>params</c>.
+        /// </summary>
+        /// <param name="sourcePath">The path passed when the policy was added.</param>
+        /// <returns>True if the module declares a rule rooted at <c>params</c>.</returns>
+        /// <exception cref="InvalidOperationException">
+        /// No unique loaded module matches the source path or a rule head cannot be classified.
+        /// </exception>
+        public bool HasPolicyParams(string sourcePath)
+        {
+            return Utf8Marshaller.WithUtf8(sourcePath, pathPtr =>
+                UseHandle(enginePtr =>
+                    ResultHelpers.GetBoolResult(Regorus.Internal.API.regorus_engine_has_policy_params(
+                        (Regorus.Internal.RegorusEngine*)enginePtr,
+                        (byte*)pathPtr))));
+        }
+
         public void SetRegoV0(bool enable)
         {
             UseHandle(enginePtr =>

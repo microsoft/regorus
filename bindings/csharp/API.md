@@ -167,6 +167,28 @@ public static class Compiler
 }
 ```
 
+### Engine
+
+The stateful `Engine` API can inspect a loaded module for rules rooted at
+`params` without evaluating the policy. `HasPolicyParams` matches
+`sourcePath` exactly against the path passed to `AddPolicy` or
+`AddPolicyFromFile`; it returns `true` when that module declares a matching
+rule head, and `false` when it does not, regardless of whether evaluation
+would produce a value. Other modules in the same package are not included.
+
+```csharp
+using var engine = new Engine();
+engine.AddPolicy(
+    "customer.rego",
+    "package customer\nparams.timeout := input.timeout");
+
+bool hasParams = engine.HasPolicyParams("customer.rego");
+```
+
+The source path must identify exactly one loaded module. The method throws
+`InvalidOperationException` when no module or multiple modules match, or when
+a rule head cannot be classified.
+
 ### PolicyModule
 
 Represents a single policy module to be compiled. Each PolicyModule corresponds to a Rego file (.rego), and each Rego file defines a Rego package using the `package` declaration at the top of the file.
@@ -542,7 +564,7 @@ catch (Exception ex)
 
 Some functionality requires specific Rust feature flags:
 
-- **azure_policy**: Required for target-aware compilation and policy parameters
+- **azure_policy**: Required for target-aware compilation and the `GetPolicyParameters` metadata API
 - Without this feature, target-related methods will not be available
 
 ## Version Compatibility
