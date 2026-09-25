@@ -111,13 +111,36 @@ namespace Regorus
             });
         }
 
+        /// <exception cref="ArgumentException">The path contains an embedded NUL.</exception>
         public string? AddPolicy(string path, string rego)
         {
+            Utf8Marshaller.ThrowIfContainsNul(path, nameof(path));
+
             return Utf8Marshaller.WithUtf8(path, pathPtr =>
                 Utf8Marshaller.WithUtf8(rego, regoPtr =>
                     UseHandle(enginePtr =>
                         CheckAndDropResult(Regorus.Internal.API.regorus_engine_add_policy((Regorus.Internal.RegorusEngine*)enginePtr, (byte*)pathPtr, (byte*)regoPtr))
                     )));
+        }
+
+        /// <summary>
+        /// Check whether the policy module identified by its exact source path declares any rule rooted at <c>params</c>.
+        /// </summary>
+        /// <param name="sourcePath">The path passed when the policy was added.</param>
+        /// <returns>True if the module declares a rule rooted at <c>params</c>.</returns>
+        /// <exception cref="ArgumentException">The source path contains an embedded NUL.</exception>
+        /// <exception cref="InvalidOperationException">
+        /// No unique loaded module matches the source path or a rule head cannot be classified.
+        /// </exception>
+        public bool HasPolicyParams(string sourcePath)
+        {
+            Utf8Marshaller.ThrowIfContainsNul(sourcePath, nameof(sourcePath));
+
+            return Utf8Marshaller.WithUtf8(sourcePath, pathPtr =>
+                UseHandle(enginePtr =>
+                    ResultHelpers.GetBoolResult(Regorus.Internal.API.regorus_engine_has_policy_params(
+                        (Regorus.Internal.RegorusEngine*)enginePtr,
+                        (byte*)pathPtr))));
         }
 
         public void SetRegoV0(bool enable)
@@ -128,8 +151,11 @@ namespace Regorus
             });
         }
 
+        /// <exception cref="ArgumentException">The path contains an embedded NUL.</exception>
         public string? AddPolicyFromFile(string path)
         {
+            Utf8Marshaller.ThrowIfContainsNul(path, nameof(path));
+
             return Utf8Marshaller.WithUtf8(path, pathPtr =>
             {
                 return UseHandle(enginePtr =>

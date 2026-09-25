@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System;
+using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -25,6 +26,26 @@ public class RegorusTests
         var result = engine.EvalRule("data.test.message");
 
         Assert.AreEqual("\"Hello\"", result);
+    }
+
+    [TestMethod]
+    public void AddPolicy_rejects_embedded_nul_in_path()
+    {
+        using var engine = new Engine();
+
+        Assert.ThrowsException<ArgumentException>(
+            () => engine.AddPolicy("a.rego\0suffix", "package test\nx := true"));
+    }
+
+    [TestMethod]
+    public void AddPolicyFromFile_rejects_embedded_nul_in_path()
+    {
+        using var engine = new Engine();
+        engine.SetRegoV0(true);
+
+        Assert.ThrowsException<ArgumentException>(
+            () => engine.AddPolicyFromFile(
+                Path.Combine(AppContext.BaseDirectory, "tests", "aci", "framework.rego") + "\0suffix"));
     }
 
     [TestMethod]
@@ -262,6 +283,40 @@ public class RegorusTests
 
         Assert.AreEqual("a", parameterName);
         Assert.AreEqual("b", modifierName);
+    }
+
+    [TestMethod]
+    public void HasPolicyParams_checks_the_exact_module_rule_heads()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy("with_params.rego", "package customer\nparams if { false }");
+        engine.AddPolicy(
+            "without_params.rego",
+            "package customer\nimport data.shared as params\nuse := params.value\nconfig := {\"params\": true}");
+
+        Assert.IsTrue(engine.HasPolicyParams("with_params.rego"));
+        Assert.IsFalse(engine.HasPolicyParams("without_params.rego"));
+        Assert.ThrowsException<InvalidOperationException>(() => engine.HasPolicyParams("missing.rego"));
+    }
+
+    [TestMethod]
+    public void HasPolicyParams_rejects_embedded_nul_in_source_path()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy("a.rego", "package customer\nparams := true");
+
+        Assert.ThrowsException<ArgumentException>(
+            () => engine.HasPolicyParams("a.rego\0missing.rego"));
+    }
+
+    [TestMethod]
+    public void HasPolicyParams_rejects_ambiguous_source_paths()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy("duplicate.rego", "package customer\nparams := false");
+        engine.AddPolicy("duplicate.rego", "package customer\nx := true");
+
+        Assert.ThrowsException<InvalidOperationException>(() => engine.HasPolicyParams("duplicate.rego"));
     }
 
     [TestMethod]

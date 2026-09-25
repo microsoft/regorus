@@ -199,6 +199,63 @@ mod panic_tests {
     }
 }
 
+#[cfg(all(test, feature = "std"))]
+mod policy_params_tests {
+    use super::{
+        regorus_engine_add_policy, regorus_engine_drop, regorus_engine_has_policy_params,
+        regorus_engine_new,
+    };
+    use crate::common::{regorus_result_drop, RegorusDataType, RegorusStatus};
+    use std::ffi::CString;
+
+    #[test]
+    fn reports_module_params_and_errors_for_missing_or_duplicate_paths() {
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let path = CString::new("policy.rego").expect("valid path");
+        let policy = CString::new("package customer\nparams if { false }").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, path.as_ptr(), policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let found = regorus_engine_has_policy_params(engine, path.as_ptr());
+        assert!(matches!(found.status, RegorusStatus::Ok));
+        assert!(matches!(found.data_type, RegorusDataType::Boolean));
+        assert!(found.bool_value);
+        regorus_result_drop(found);
+
+        let absent_path = CString::new("absent.rego").expect("valid path");
+        let absent_policy =
+            CString::new("package customer\nuse := params.value").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, absent_path.as_ptr(), absent_policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let absent = regorus_engine_has_policy_params(engine, absent_path.as_ptr());
+        assert!(matches!(absent.status, RegorusStatus::Ok));
+        assert!(matches!(absent.data_type, RegorusDataType::Boolean));
+        assert!(!absent.bool_value);
+        regorus_result_drop(absent);
+
+        let missing_path = CString::new("missing.rego").expect("valid path");
+        let missing = regorus_engine_has_policy_params(engine, missing_path.as_ptr());
+        assert!(!matches!(missing.status, RegorusStatus::Ok));
+        regorus_result_drop(missing);
+
+        let duplicate_policy = CString::new("package customer\nx := true").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, path.as_ptr(), duplicate_policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let ambiguous = regorus_engine_has_policy_params(engine, path.as_ptr());
+        assert!(!matches!(ambiguous.status, RegorusStatus::Ok));
+        regorus_result_drop(ambiguous);
+
+        regorus_engine_drop(engine);
+    }
+}
+
 #[no_mangle]
 #[cfg(feature = "std")]
 pub extern "C" fn regorus_engine_test_trigger_panic() -> RegorusResult {
@@ -265,6 +322,25 @@ pub extern "C" fn regorus_engine_add_policy(
             let mut guard = engine.try_write()?;
             guard.add_policy(from_c_str(path)?, from_c_str(rego)?)
         }())
+    })
+}
+
+/// Check whether the loaded policy module identified by `path` declares a rule rooted at `params`.
+#[no_mangle]
+pub extern "C" fn regorus_engine_has_policy_params(
+    engine: *mut RegorusEngine,
+    path: *const c_char,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        let output = || -> Result<bool> {
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
+            let guard = engine.try_read()?;
+            guard.has_policy_params(&from_c_str(path)?)
+        }();
+        match output {
+            Ok(value) => RegorusResult::ok_bool(value),
+            Err(e) => to_regorus_result(Err(e)),
+        }
     })
 }
 

@@ -167,6 +167,37 @@ public static class Compiler
 }
 ```
 
+### Engine
+
+`AddPolicy(path, rego)` and `AddPolicyFromFile(path)` reject an embedded NUL
+in `path` with `ArgumentException` instead of allowing the native call to
+silently truncate it.
+
+The stateful `Engine` API can inspect a loaded module for rules rooted at
+`params` without evaluating the policy. `HasPolicyParams` matches
+`sourcePath` against the module's stored source label. For `AddPolicy`, this
+is the supplied path. For `AddPolicyFromFile`, it is the path converted to a
+string lossily by the native implementation; the lookup does not compare the
+original path bytes. Non-UTF-8 filenames can therefore produce the same
+source label and an ambiguous-source error. The method returns `true` when the
+matched module declares a rule rooted at `params`, and `false` when it does
+not, regardless of whether evaluation would produce a value. Other modules in
+the same package are not included.
+
+```csharp
+using var engine = new Engine();
+engine.AddPolicy(
+    "customer.rego",
+    "package customer\nparams.timeout := input.timeout");
+
+bool hasParams = engine.HasPolicyParams("customer.rego");
+```
+
+The source path must identify exactly one loaded module. The method throws
+`InvalidOperationException` when no module or multiple modules match, or when
+a rule head cannot be classified. An embedded NUL in `sourcePath` is rejected
+with `ArgumentException` rather than being silently truncated.
+
 ### PolicyModule
 
 Represents a single policy module to be compiled. Each PolicyModule corresponds to a Rego file (.rego), and each Rego file defines a Rego package using the `package` declaration at the top of the file.
@@ -542,7 +573,7 @@ catch (Exception ex)
 
 Some functionality requires specific Rust feature flags:
 
-- **azure_policy**: Required for target-aware compilation and policy parameters
+- **azure_policy**: Required for target-aware compilation and the `GetPolicyParameters` metadata API
 - Without this feature, target-related methods will not be available
 
 ## Version Compatibility

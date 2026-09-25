@@ -255,6 +255,45 @@ impl Engine {
         Interpreter::get_path_string(&module.package.refr, Some("data"))
     }
 
+    /// Check whether a loaded policy module declares any rule rooted at `params`.
+    ///
+    /// `source_path` must exactly identify one module added with
+    /// [`Engine::add_policy`] or `add_policy_from_file`. This checks authored
+    /// rule heads without evaluating the policy.
+    ///
+    /// Returns an error if no module or multiple modules have the source path,
+    /// or if a rule head cannot be classified as a reference.
+    pub fn has_policy_params(&self, source_path: &str) -> Result<bool> {
+        let mut modules = self
+            .modules
+            .iter()
+            .filter(|module| module.package.span.source.get_path() == source_path);
+        let module = modules
+            .next()
+            .ok_or_else(|| anyhow!("no policy module found for source path '{source_path}'"))?;
+        if modules.next().is_some() {
+            bail!("multiple policy modules found for source path '{source_path}'");
+        }
+
+        let mut found = false;
+        for rule in &module.policy {
+            let head = match *rule.as_ref() {
+                Rule::Spec { ref head, .. } => match *head {
+                    RuleHead::Compr { ref refr, .. }
+                    | RuleHead::Set { ref refr, .. }
+                    | RuleHead::Func { ref refr, .. } => refr,
+                },
+                Rule::Default { ref refr, .. } => refr,
+            };
+            let components = Parser::get_path_ref_components(head)?;
+            found |= components
+                .first()
+                .is_some_and(|component| component.text() == "params");
+        }
+
+        Ok(found)
+    }
+
     /// Add a policy from a given file.
     ///
     /// The policy file will be parsed and converted to AST representation.
