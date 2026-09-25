@@ -23,3 +23,276 @@ cases:
         z := [x | x := 1; x == 2]
     query: data.test.z
     want_result: []
+
+  - note: inline_comprehension_module_scope_array_empty
+    input:
+      violations: []
+    modules:
+      - |
+        package test
+        violations := input.violations
+        deny := {"result": true, "reasons": [v | some v in violations]} if { count(violations) > 0 }
+    query: data.test.deny
+    want_result: "#undefined"
+
+  - note: inline_comprehension_module_scope_array_nonempty
+    input:
+      violations: ["one", "two"]
+    modules:
+      - |
+        package test
+        violations := input.violations
+        deny := {"result": true, "reasons": [v | some v in violations]} if { count(violations) > 0 }
+    query: data.test.deny
+    want_result:
+      result: true
+      reasons: ["one", "two"]
+
+  - note: inline_comprehension_module_scope_set_empty
+    modules:
+      - |
+        package test
+        violations := set()
+        deny := {"result": true, "reasons": [v | some v in violations]} if { count(violations) > 0 }
+    query: data.test.deny
+    want_result: "#undefined"
+
+  - note: inline_comprehension_module_scope_set_nonempty
+    modules:
+      - |
+        package test
+        violations := {"one", "two"}
+        deny := {"result": true, "reasons": [v | some v in violations]} if { count(violations) > 0 }
+    query: data.test.deny
+    want_result:
+      result: true
+      reasons: ["one", "two"]
+
+  - note: inline_comprehension_module_scope_missing
+    modules:
+      - |
+        package test
+        violations := input.violations
+        deny := {"result": true, "reasons": [v | some v in violations]} if { count(violations) > 0 }
+    query: data.test.deny
+    want_result: "#undefined"
+
+  - note: inline_comprehension_separate_module_array_nonempty
+    input:
+      violations: ["one", "two"]
+    modules:
+      - |
+        package test
+        violations := input.violations
+      - |
+        package test
+        reasons := [v | some v in violations]
+        deny := {"result": true, "reasons": reasons} if {count(violations)>0}
+    query: data.test.deny
+    want_result:
+      result: true
+      reasons: ["one", "two"]
+
+  - note: extracted_comprehension_module_scope_array_empty
+    input:
+      violations: []
+    modules:
+      - |
+        package test
+        violations := input.violations
+        reasons := [v | some v in violations]
+        deny := {"result": true, "reasons": reasons} if { count(violations) > 0 }
+    query: data.test.deny
+    want_result: "#undefined"
+
+  - note: extracted_comprehension_module_scope_set_nonempty
+    modules:
+      - |
+        package test
+        violations := {"one", "two"}
+        reasons := [v | some v in violations]
+        deny := {"result": true, "reasons": reasons} if { count(violations) > 0 }
+    query: data.test.deny
+    want_result:
+      result: true
+      reasons: ["one", "two"]
+
+  - note: extracted_comprehension_module_scope_set_empty
+    modules:
+      - |
+        package test
+        violations := set()
+        reasons := [v | some v in violations]
+        deny := {"result": true, "reasons": reasons} if { count(violations) > 0 }
+    query: data.test.deny
+    want_result: "#undefined"
+
+  - note: extracted_comprehension_module_scope_missing
+    modules:
+      - |
+        package test
+        violations := input.violations
+        reasons := [v | some v in violations]
+        deny := {"result": true, "reasons": reasons} if { count(violations) > 0 }
+    query: data.test.deny
+    want_result: "#undefined"
+
+  - note: inline_comprehension_function_result
+    input:
+      violations: ["one", "two"]
+    modules:
+      - |
+        package test
+        violations := input.violations
+        deny(flag) := {"result": flag, "reasons": [v | some v in violations]} if { count(violations) > 0 }
+        main := deny(true)
+    query: data.test.main
+    want_result:
+      result: true
+      reasons: ["one", "two"]
+
+  - note: inline_comprehension_function_argument_result
+    modules:
+      - |
+        package test
+        deny(values) := [v | some v in values] if { count(values) > 0 }
+        main := deny(["one", "two"])
+    query: data.test.main
+    want_result: ["one", "two"]
+
+  - note: inline_array_comprehension_contains_nested_term_comprehension
+    input:
+      violations: ["one", "two"]
+    modules:
+      - |
+        package test
+        result := [[v | some v in xs] | some xs in [[1], [2]]]
+    query: data.test.result
+    want_result:
+      - [1]
+      - [2]
+
+  - note: inline_object_comprehension_nested_key_and_value_comprehensions
+    modules:
+      - |
+        package test
+        result := {
+          [k | some k in ["one", "two"]][0]: {
+            [v | some v in ["a", "b"]][0]: [upper(v) | some v in ["a", "b"]]
+            | some marker in [true]
+          }
+        }
+    query: data.test.result
+    want_result:
+      one:
+        a: ["A", "B"]
+
+  - note: inline_object_comprehension_key_value_output
+    input:
+      violations: ["one", "two"]
+    modules:
+      - |
+        package test
+        violations := input.violations
+        deny := {v: upper(v) | some v in violations} if { count(violations) > 0 }
+    query: data.test.deny
+    want_result:
+      one: "ONE"
+      two: "TWO"
+
+  - note: inline_comprehension_else_output
+    input:
+      violations: []
+    modules:
+      - |
+        package test
+        violations := input.violations
+        deny := {"reasons": [v | some v in violations]} if { count(violations) > 0 }
+        else := {"reasons": [v | some v in violations]} if { count(violations) == 0 }
+    query: data.test.deny
+    want_result:
+      reasons: []
+
+  - note: inline_comprehension_local_scope_array_nonempty
+    input:
+      violations: ["one", "two"]
+    modules:
+      - |
+        package test
+        deny := {"result": true, "reasons": [v | some v in violations]} if {
+          violations := input.violations
+          count(violations) > 0
+        }
+    query: data.test.deny
+    want_result:
+      result: true
+      reasons: ["one", "two"]
+
+  - note: inline_comprehension_else_skips_unsafe_head_output
+    modules:
+      - |
+        package test
+        deny := [v | some v in xs] if {
+          xs := [1]
+          false
+        } else := [] if {
+          true
+        }
+    query: data.test.deny
+    want_result: []
+
+  - note: partial_object_independent_body_inherits_head_comprehension_output
+    rego_v0: true
+    modules:
+      - |
+        package test
+        import future.keywords.in
+        result[k] = [v | some v in values] {
+          k := "first"
+          values := [1]
+        }
+        {
+          k := "second"
+          values := [2]
+        }
+    query: data.test.result
+    want_result:
+      first: [1]
+      second: [2]
+
+  - note: inline_comprehension_embedded_in_object_key_and_value
+    input:
+      values: ["one", "two"]
+    modules:
+      - |
+        package test
+        result := {
+          [v | some v in input.values][0]: [upper(v) | some v in input.values]
+        }
+    query: data.test.result
+    want_result:
+      one: ["ONE", "TWO"]
+
+  - note: bodyless_partial_set_key_with_comprehension
+    modules:
+      - |
+        package test
+        values := [1, 2]
+        result contains [v | some v in values]
+    query: data.test.result
+    want_result:
+      set!:
+        - [1, 2]
+
+  - note: inline_set_comprehension_output
+    input:
+      values: [false, "x", false]
+    modules:
+      - |
+        package test
+        result := {v | some v in input.values}
+    query: data.test.result
+    want_result:
+      set!:
+        - false
+        - "x"

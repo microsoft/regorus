@@ -371,11 +371,27 @@ impl Analyzer {
                 // Args are maintained in a separate scope so that they aren't used for
                 // scheduling.
                 self.scopes.push(scope);
-                for b in bodies {
-                    self.analyze_query(key.clone(), value.clone(), &b.query, Scope::default())?;
+                let is_partial = match head {
+                    RuleHead::Set { .. } => true,
+                    RuleHead::Compr { refr, .. } => {
+                        matches!(refr.as_ref(), Expr::RefBrack { .. })
+                    }
+                    RuleHead::Func { .. } => false,
+                };
+                for (idx, b) in bodies.iter().enumerate() {
+                    let use_head_output = idx == 0 || (is_partial && b.assign.is_none());
+                    let (body_key, body_value) = if use_head_output {
+                        (key.clone(), value.clone())
+                    } else {
+                        (None, b.assign.as_ref().map(|assign| assign.value.clone()))
+                    };
+                    self.analyze_query(body_key, body_value, &b.query, Scope::default())?;
                 }
 
                 if bodies.is_empty() {
+                    if let Some(key) = key {
+                        self.analyze_value_expr(&key)?;
+                    }
                     if let Some(value) = value {
                         self.analyze_value_expr(&value)?;
                     }
@@ -414,6 +430,17 @@ impl Analyzer {
             }
         }
         Ok(())
+    }
+
+    fn analyze_output_expr(&mut self, expr: &Ref<Expr>, scope: &Scope) -> Result<()> {
+        let mut output_scope = scope.clone();
+        output_scope
+            .unscoped
+            .extend(output_scope.locals.keys().cloned());
+        self.scopes.push(output_scope);
+        let result = self.analyze_value_expr(expr);
+        self.scopes.pop();
+        result
     }
 
     fn analyze_rule_head(
@@ -869,7 +896,7 @@ impl Analyzer {
         mut scope: Scope,
     ) -> Result<()> {
         let empty_str = query.span.source_str().clone_empty();
-        self.gather_local_vars(key, value, query, &mut scope)?;
+        self.gather_local_vars(key.clone(), value.clone(), query, &mut scope)?;
 
         let mut infos = vec![];
         let mut first_use = BTreeMap::new();
@@ -1118,6 +1145,14 @@ impl Analyzer {
         self.schedule_table
             .set_checked(self.current_module_index, query.qidx, query_schedule)
             .map_err(|err| anyhow!("schedule_table out of bounds: {err}"))?;
+
+        // Output expressions are evaluated after the query body.
+        if let Some(key) = &key {
+            self.analyze_output_expr(key, &scope)?;
+        }
+        if let Some(value) = &value {
+            self.analyze_output_expr(value, &scope)?;
+        }
 
         // Propagate input usage to parent scopes
         if scope.uses_input && !self.scopes.is_empty() {
