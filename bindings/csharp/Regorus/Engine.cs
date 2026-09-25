@@ -117,8 +117,11 @@ namespace Regorus
         /// not a canonical rule path; use bracket notation for string
         /// components when evaluating a rule.
         /// </summary>
+        /// <exception cref="ArgumentException">The path contains an embedded NUL.</exception>
         public string? AddPolicy(string path, string rego)
         {
+            Utf8Marshaller.ThrowIfContainsNul(path, nameof(path));
+
             return Utf8Marshaller.WithUtf8(path, pathPtr =>
                 Utf8Marshaller.WithUtf8(rego, regoPtr =>
                     UseHandle(enginePtr =>
@@ -131,11 +134,14 @@ namespace Regorus
         /// </summary>
         /// <param name="sourcePath">The path passed when the policy was added.</param>
         /// <returns>True if the module declares a rule rooted at <c>params</c>.</returns>
+        /// <exception cref="ArgumentException">The source path contains an embedded NUL.</exception>
         /// <exception cref="InvalidOperationException">
         /// No unique loaded module matches the source path or a rule head cannot be classified.
         /// </exception>
         public bool HasPolicyParams(string sourcePath)
         {
+            Utf8Marshaller.ThrowIfContainsNul(sourcePath, nameof(sourcePath));
+
             return Utf8Marshaller.WithUtf8(sourcePath, pathPtr =>
                 UseHandle(enginePtr =>
                     ResultHelpers.GetBoolResult(Regorus.Internal.API.regorus_engine_has_policy_params(
@@ -156,8 +162,11 @@ namespace Regorus
         /// metadata, not a canonical rule path. Quoted string contents omit
         /// their delimiter quotes.
         /// </summary>
+        /// <exception cref="ArgumentException">The path contains an embedded NUL.</exception>
         public string? AddPolicyFromFile(string path)
         {
+            Utf8Marshaller.ThrowIfContainsNul(path, nameof(path));
+
             return Utf8Marshaller.WithUtf8(path, pathPtr =>
             {
                 return UseHandle(enginePtr =>
