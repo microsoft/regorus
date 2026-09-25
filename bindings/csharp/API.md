@@ -169,12 +169,20 @@ public static class Compiler
 
 ### Engine
 
+`AddPolicy(path, rego)` and `AddPolicyFromFile(path)` reject an embedded NUL
+in `path` with `ArgumentException` instead of allowing the native call to
+silently truncate it.
+
 The stateful `Engine` API can inspect a loaded module for rules rooted at
 `params` without evaluating the policy. `HasPolicyParams` matches
-`sourcePath` exactly against the path passed to `AddPolicy` or
-`AddPolicyFromFile`; it returns `true` when that module declares a matching
-rule head, and `false` when it does not, regardless of whether evaluation
-would produce a value. Other modules in the same package are not included.
+`sourcePath` against the module's stored source label. For `AddPolicy`, this
+is the supplied path. For `AddPolicyFromFile`, it is the path converted to a
+string lossily by the native implementation; the lookup does not compare the
+original path bytes. Non-UTF-8 filenames can therefore produce the same
+source label and an ambiguous-source error. The method returns `true` when the
+matched module declares a rule rooted at `params`, and `false` when it does
+not, regardless of whether evaluation would produce a value. Other modules in
+the same package are not included.
 
 ```csharp
 using var engine = new Engine();
@@ -187,7 +195,8 @@ bool hasParams = engine.HasPolicyParams("customer.rego");
 
 The source path must identify exactly one loaded module. The method throws
 `InvalidOperationException` when no module or multiple modules match, or when
-a rule head cannot be classified.
+a rule head cannot be classified. An embedded NUL in `sourcePath` is rejected
+with `ArgumentException` rather than being silently truncated.
 
 ### PolicyModule
 

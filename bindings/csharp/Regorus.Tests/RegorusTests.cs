@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System;
+using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -25,6 +26,26 @@ public class RegorusTests
         var result = engine.EvalRule("data.test.message");
 
         Assert.AreEqual("\"Hello\"", result);
+    }
+
+    [TestMethod]
+    public void AddPolicy_rejects_embedded_nul_in_path()
+    {
+        using var engine = new Engine();
+
+        Assert.ThrowsException<ArgumentException>(
+            () => engine.AddPolicy("a.rego\0suffix", "package test\nx := true"));
+    }
+
+    [TestMethod]
+    public void AddPolicyFromFile_rejects_embedded_nul_in_path()
+    {
+        using var engine = new Engine();
+        engine.SetRegoV0(true);
+
+        Assert.ThrowsException<ArgumentException>(
+            () => engine.AddPolicyFromFile(
+                Path.Combine(AppContext.BaseDirectory, "tests", "aci", "framework.rego") + "\0suffix"));
     }
 
     [TestMethod]
@@ -276,6 +297,16 @@ public class RegorusTests
         Assert.IsTrue(engine.HasPolicyParams("with_params.rego"));
         Assert.IsFalse(engine.HasPolicyParams("without_params.rego"));
         Assert.ThrowsException<InvalidOperationException>(() => engine.HasPolicyParams("missing.rego"));
+    }
+
+    [TestMethod]
+    public void HasPolicyParams_rejects_embedded_nul_in_source_path()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy("a.rego", "package customer\nparams := true");
+
+        Assert.ThrowsException<ArgumentException>(
+            () => engine.HasPolicyParams("a.rego\0missing.rego"));
     }
 
     [TestMethod]
