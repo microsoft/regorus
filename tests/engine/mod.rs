@@ -143,6 +143,52 @@ fn fresh_engine_evaluates_inline_comprehension_outputs_without_entrypoint_compil
 }
 
 #[test]
+fn eval_rule_schedules_unification_nested_output_capture() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"
+            package test
+            result := a if {
+                a := [[v | some v in vals] | true]
+                vals = [1, 2]
+            }
+        "#
+        .to_string(),
+    )?;
+
+    assert_eq!(
+        engine.eval_rule("data.test.result".to_string())?,
+        Value::from_json_str("[[1,2]]")?
+    );
+    Ok(())
+}
+
+#[test]
+fn eval_rule_rejects_forward_assignment_nested_output_capture() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"
+            package test
+            result := a if {
+                a := [[v | some v in vals] | true]
+                vals := [1, 2]
+            }
+        "#
+        .to_string(),
+    )?;
+
+    let error = engine
+        .eval_rule("data.test.result".to_string())
+        .expect_err("forward assignment should remain unsafe");
+    assert!(error
+        .to_string()
+        .contains("use of undefined variable `vals`"));
+    Ok(())
+}
+
+#[test]
 #[cfg(feature = "azure_policy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
 fn get_policy_package_names() -> Result<()> {

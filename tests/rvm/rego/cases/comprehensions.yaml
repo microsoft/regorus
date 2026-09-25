@@ -296,3 +296,15 @@ cases:
       set!:
         - false
         - "x"
+
+  - note: output_comprehension_captures_unification_body_local
+    modules:
+      - |
+        package test
+        result := a if {
+          a := [[v | some v in vals] | true]
+          vals = [1, 2]
+        }
+    query: data.test.result
+    want_result:
+      - [1, 2]

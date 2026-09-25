@@ -389,22 +389,23 @@ impl Analyzer {
                 }
 
                 if bodies.is_empty() {
+                    let mut scope = Scope::default();
                     if let Some(key) = key {
-                        self.analyze_value_expr(&key)?;
+                        self.analyze_value_expr(&key, &mut scope)?;
                     }
                     if let Some(value) = value {
-                        self.analyze_value_expr(&value)?;
+                        self.analyze_value_expr(&value, &mut scope)?;
                     }
                 }
 
                 self.scopes.pop();
                 Ok(())
             }
-            Rule::Default { value, .. } => self.analyze_value_expr(value),
+            Rule::Default { value, .. } => self.analyze_value_expr(value, &mut Scope::default()),
         }
     }
 
-    fn analyze_value_expr(&mut self, expr: &Ref<Expr>) -> Result<()> {
+    fn analyze_value_expr(&mut self, expr: &Ref<Expr>, scope: &mut Scope) -> Result<()> {
         let mut comprs = vec![];
         traverse(expr, &mut |e| match e.as_ref() {
             ArrayCompr { .. } | SetCompr { .. } | ObjectCompr { .. } => {
@@ -414,32 +415,57 @@ impl Analyzer {
             _ => Ok(true),
         })?;
         for compr in comprs {
-            match compr.as_ref() {
+            let qidx = match compr.as_ref() {
                 Expr::ArrayCompr { query, term, .. } | Expr::SetCompr { query, term, .. } => {
                     self.analyze_query(None, Some(term.clone()), query, Scope::default())?;
+                    query.qidx
                 }
                 Expr::ObjectCompr {
                     query, key, value, ..
-                } => self.analyze_query(
-                    Some(key.clone()),
-                    Some(value.clone()),
-                    query,
-                    Scope::default(),
-                )?,
-                _ => (),
+                } => {
+                    self.analyze_query(
+                        Some(key.clone()),
+                        Some(value.clone()),
+                        query,
+                        Scope::default(),
+                    )?;
+                    query.qidx
+                }
+                _ => continue,
+            };
+
+            if let Some(compr_scope) = self
+                .schedule_table
+                .get_checked(self.current_module_index, qidx)
+                .map_err(|err| anyhow!("schedule_table out of bounds: {err}"))?
+                .map(|qs| &qs.scope)
+            {
+                Self::propagate_nested_scope(compr_scope, scope);
             }
         }
         Ok(())
     }
 
-    fn analyze_output_expr(&mut self, expr: &Ref<Expr>, scope: &Scope) -> Result<()> {
+    fn propagate_nested_scope(compr_scope: &Scope, scope: &mut Scope) {
+        if compr_scope.uses_input {
+            scope.uses_input = true;
+        }
+        for iv in &compr_scope.inputs {
+            if !scope.locals.contains_key(iv) && !scope.unscoped.contains(iv) {
+                scope.inputs.insert(iv.clone());
+            }
+        }
+    }
+
+    fn analyze_output_expr(&mut self, expr: &Ref<Expr>, scope: &mut Scope) -> Result<()> {
         let mut output_scope = scope.clone();
         output_scope
             .unscoped
             .extend(output_scope.locals.keys().cloned());
-        self.scopes.push(output_scope);
-        let result = self.analyze_value_expr(expr);
+        self.scopes.push(output_scope.clone());
+        let result = self.analyze_value_expr(expr, &mut output_scope);
         self.scopes.pop();
+        Self::propagate_nested_scope(&output_scope, scope);
         result
     }
 
@@ -1138,6 +1164,14 @@ impl Analyzer {
             _ => Vec::new(),
         };
 
+        // Output expressions are evaluated after the query body.
+        if let Some(key) = &key {
+            self.analyze_output_expr(key, &mut scope)?;
+        }
+        if let Some(value) = &value {
+            self.analyze_output_expr(value, &mut scope)?;
+        }
+
         let query_schedule = QuerySchedule {
             scope: scope.clone(),
             order,
@@ -1145,14 +1179,6 @@ impl Analyzer {
         self.schedule_table
             .set_checked(self.current_module_index, query.qidx, query_schedule)
             .map_err(|err| anyhow!("schedule_table out of bounds: {err}"))?;
-
-        // Output expressions are evaluated after the query body.
-        if let Some(key) = &key {
-            self.analyze_output_expr(key, &scope)?;
-        }
-        if let Some(value) = &value {
-            self.analyze_output_expr(value, &scope)?;
-        }
 
         // Propagate input usage to parent scopes
         if scope.uses_input && !self.scopes.is_empty() {
