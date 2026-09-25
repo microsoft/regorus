@@ -4,6 +4,7 @@
 
 use regorus::languages::rego::compiler::Compiler;
 use regorus::rvm::instructions::GuardMode;
+use regorus::rvm::vm::{RegoVM, VmError};
 use regorus::rvm::Instruction;
 use regorus::{Engine, Rc, Value};
 use std::collections::BTreeSet;
@@ -78,6 +79,101 @@ fn package_override_is_used_for_rvm_entrypoint_and_original_source() {
     );
     assert_eq!("source.rego", program.sources[0].name);
     assert_eq!(source, program.sources[0].content);
+}
+
+#[test]
+fn rule_data_conflict_preserves_error_identity_and_pc() {
+    let program = compile_rule(
+        r#"
+        package test
+        p := 1
+    "#,
+    );
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+
+    let error = vm
+        .set_data(Value::from_json_str(r#"{"test":{"p":2}}"#).unwrap())
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        VmError::RuleDataConflict { ref message, pc: 0 }
+            if message.contains("rule defines path 'test.p'")
+    ));
+}
+
+fn run_rvm_policy(module: &str, input: &str) -> anyhow::Result<Value> {
+    let program = compile_rule(module);
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    vm.set_input(Value::from_json_str(input)?);
+    Ok(vm.execute_entry_point_by_name("data.test.p")?)
+}
+
+fn run_interpreter_policy(module: &str, input: &str) -> anyhow::Result<Value> {
+    let mut engine = Engine::new();
+    engine.add_policy("test.rego".to_string(), module.to_string())?;
+    engine.set_input(Value::from_json_str(input)?);
+    engine.eval_rule("data.test.p".to_string())
+}
+
+#[test]
+fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
+    let module = r#"
+        package test
+        p := input.left if input.enabled
+        p := input.right if input.enabled
+    "#;
+
+    let conflict_input = r#"{"enabled":true,"left":1,"right":2}"#;
+    assert_eq!(
+        run_rvm_policy(module, conflict_input).unwrap(),
+        Value::Undefined
+    );
+    let interpreter_error = run_interpreter_policy(module, conflict_input)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        interpreter_error.contains("rule conflicts"),
+        "unexpected interpreter error: {interpreter_error}"
+    );
+
+    let equal_input = r#"{"enabled":true,"left":1,"right":1}"#;
+    assert_eq!(run_rvm_policy(module, equal_input).unwrap(), Value::from(1));
+    assert_eq!(
+        run_interpreter_policy(module, equal_input).unwrap(),
+        Value::from(1)
+    );
+}
+
+#[test]
+fn function_rule_conflict_is_undefined_in_rvm_and_interpreter() {
+    let module = r#"
+        package test
+        f(x) := input.left if input.enabled
+        f(x) := input.right if input.enabled
+        p := f(1)
+    "#;
+
+    let conflict_input = r#"{"enabled":true,"left":1,"right":2}"#;
+    assert_eq!(
+        run_rvm_policy(module, conflict_input).unwrap(),
+        Value::Undefined
+    );
+    let interpreter_error = run_interpreter_policy(module, conflict_input)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        interpreter_error.contains("functions must not produce multiple outputs"),
+        "unexpected interpreter error: {interpreter_error}"
+    );
+
+    let equal_input = r#"{"enabled":true,"left":1,"right":1}"#;
+    assert_eq!(run_rvm_policy(module, equal_input).unwrap(), Value::from(1));
+    assert_eq!(
+        run_interpreter_policy(module, equal_input).unwrap(),
+        Value::from(1)
+    );
 }
 
 #[test]
