@@ -115,6 +115,13 @@ impl Engine {
         Ok(())
     }
 
+    fn prepare(&self) -> Result<(), Error> {
+        self.engine
+            .borrow_mut()
+            .prepare()
+            .map_err(|e| Error::new(runtime_error(), format!("Failed to prepare engine: {e}")))
+    }
+
     fn get_packages(&self) -> Result<Vec<String>, Error> {
         self.engine
             .borrow()
@@ -373,6 +380,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         method!(Engine::add_data_from_json_file, 1),
     )?;
     engine_class.define_method("clear_data", method!(Engine::clear_data, 0))?;
+    engine_class.define_method("prepare", method!(Engine::prepare, 0))?;
 
     // input operations
     engine_class.define_method("set_input", method!(Engine::set_input, 1))?;

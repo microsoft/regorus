@@ -68,6 +68,18 @@ namespace Regorus
             });
         }
 
+        /// <summary>
+        /// Prepare internal evaluation structures without executing a query.
+        /// This is optional: if skipped, the first evaluation pays this setup cost.
+        /// </summary>
+        public void Prepare()
+        {
+            UseHandle(enginePtr =>
+            {
+                CheckAndDropResult(Regorus.Internal.API.regorus_engine_prepare((Regorus.Internal.RegorusEngine*)enginePtr));
+            });
+        }
+
         public void SetStrictBuiltinErrors(bool strict)
         {
             UseHandle(enginePtr =>

@@ -150,6 +150,7 @@ class TestRegorus < Minitest::Test
   end
 
   def test_engine_cloning
+    @engine.prepare
     cloned_engine = @engine.clone
 
     assert_instance_of ::Regorus::Engine, cloned_engine

@@ -103,6 +103,135 @@ fn extension_with_state() -> Result<()> {
 }
 
 #[test]
+fn prepare_then_clone_without_initial_eval() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"package test
+           import rego.v1
+
+           default allow := false
+
+           allow if {
+             input.user in data.allowed_users
+           }
+        "#
+        .to_string(),
+    )?;
+    engine.add_data(Value::from_json_str(
+        r#"{"allowed_users":["alice","bob"]}"#,
+    )?)?;
+
+    // Prepare once and clone without running an initial evaluation.
+    engine.prepare()?;
+
+    let mut alice_engine = engine.clone();
+    alice_engine.set_input_json(r#"{"user":"alice"}"#)?;
+    assert_eq!(
+        alice_engine.eval_rule("data.test.allow".to_string())?,
+        Value::from(true)
+    );
+
+    let mut mallory_engine = engine.clone();
+    mallory_engine.set_input_json(r#"{"user":"mallory"}"#)?;
+    assert_eq!(
+        mallory_engine.eval_rule("data.test.allow".to_string())?,
+        Value::from(false)
+    );
+
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "azure_policy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
+fn prepare_then_compile_for_target() -> Result<()> {
+    if !registry::targets::contains("target.tests.sample_test_target") {
+        let target = Target::from_json_str(include_str!(
+            "../interpreter/cases/target/definitions/sample_target.json"
+        ))?;
+        registry::targets::register(Rc::new(target))?;
+    }
+
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"package test
+           import rego.v1
+           __target__ := "target.tests.sample_test_target"
+
+           default allow := false
+
+           allow if {
+               input.type == "test_resource"
+           }
+        "#
+        .to_string(),
+    )?;
+
+    engine.prepare()?;
+    let compiled = engine.compile_for_target()?;
+    let info = compiled.get_policy_info()?;
+    assert_eq!(
+        info.target_name.as_deref(),
+        Some("target.tests.sample_test_target")
+    );
+
+    let result = compiled.eval_with_input(Value::from_json_str(
+        r#"{"name":"resource-1","type":"test_resource"}"#,
+    )?)?;
+    assert_eq!(result, Value::from(true));
+
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "azure_policy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
+fn prepare_then_compile_for_target_error_recovery() -> Result<()> {
+    let target_name = "target.tests.prepare_recovery_test_target";
+
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        format!(
+            r#"package test
+           import rego.v1
+           __target__ := "{target_name}"
+
+           default allow := false
+
+           allow if {{
+               input.type == "test_resource"
+           }}
+        "#
+        ),
+    )?;
+
+    engine.prepare()?;
+    assert!(engine.compile_for_target().is_err());
+
+    if !registry::targets::contains(target_name) {
+        let target_json =
+            include_str!("../interpreter/cases/target/definitions/sample_target.json")
+                .replace("target.tests.sample_test_target", target_name);
+        let target = Target::from_json_str(&target_json)?;
+        registry::targets::register(Rc::new(target))?;
+    }
+
+    let compiled = engine.compile_for_target()?;
+    let info = compiled.get_policy_info()?;
+    assert_eq!(info.target_name.as_deref(), Some(target_name));
+
+    let result = compiled.eval_with_input(Value::from_json_str(
+        r#"{"name":"resource-1","type":"test_resource"}"#,
+    )?)?;
+    assert_eq!(result, Value::from(true));
+
+    Ok(())
+}
+
+#[test]
 #[cfg(feature = "azure_policy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
 fn get_policy_package_names() -> Result<()> {
