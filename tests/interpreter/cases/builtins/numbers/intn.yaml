@@ -16,12 +16,16 @@ cases:
 
         results = [
           x == z[0],
-          x != y,
-          x != a,
+          x >= 0,
+          x < 50000,
+          y >= 0,
+          y < 50000,
+          a >= 0,
+          a < 25000,
           rand.intn("b", 0)
         ]
     query: data.test.results
-    want_result: [true, true, true, 0]
+    want_result: [true, true, true, true, true, true, true, 0]
 
   - note: undefined
     data: {}
