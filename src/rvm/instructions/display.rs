@@ -201,6 +201,9 @@ impl core::fmt::Display for Instruction {
             Instruction::ObjectSet { obj, key, value } => {
                 format!("OBJECT_SET R({}) R({}) R({})", obj, key, value)
             }
+            Instruction::ObjectDeepSet { params_index } => {
+                format!("OBJECT_DEEP_SET P({})", params_index)
+            }
             Instruction::ObjectCreate { params_index } => {
                 format!("OBJECT_CREATE P({})", params_index)
             }

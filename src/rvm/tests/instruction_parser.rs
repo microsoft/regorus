@@ -53,6 +53,7 @@ pub fn parse_instruction(text: &str) -> Result<Instruction> {
             "RuleReturn" => parse_rule_return(params_text),
             "DestructuringSuccess" => parse_destructuring_success(params_text),
             "ObjectSet" => parse_object_set(params_text),
+            "ObjectDeepSet" => parse_object_deep_set(params_text),
             "ObjectCreate" => parse_object_create(params_text),
             "Index" => parse_index(params_text),
             "IndexLiteral" => parse_index_literal(params_text),
@@ -398,6 +399,12 @@ fn parse_object_set(params_text: &str) -> Result<Instruction> {
         key: key.try_into().unwrap(),
         value: value.try_into().unwrap(),
     })
+}
+
+fn parse_object_deep_set(params_text: &str) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let params_index = get_param_u16(&params, "params_index")?;
+    Ok(Instruction::ObjectDeepSet { params_index })
 }
 
 fn parse_object_create(params_text: &str) -> Result<Instruction> {
