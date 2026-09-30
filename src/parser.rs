@@ -59,7 +59,14 @@ const DEFAULT_MAX_EXPR_DEPTH: usize = 32;
 
 impl<'source> Parser<'source> {
     pub fn new(source: &'source Source) -> Result<Self> {
+        Self::new_with_max_col(source, None)
+    }
+
+    fn new_with_max_col(source: &'source Source, max_col: Option<NonZeroU32>) -> Result<Self> {
         let mut lexer = Lexer::new(source);
+        if let Some(max_col) = max_col {
+            lexer.set_max_col(max_col);
+        }
         let tok = lexer.next_token()?;
         Ok(Self {
             source: source.clone(),
@@ -234,6 +241,48 @@ impl<'source> Parser<'source> {
         let mut comps = vec![];
         Self::get_path_ref_components_into(refr, &mut comps)?;
         Ok(comps)
+    }
+
+    pub(crate) fn get_static_string_path_components(refr: &Expr) -> Result<Vec<String>> {
+        fn collect(refr: &Expr, components: &mut Vec<String>) -> Result<()> {
+            match refr {
+                Expr::Var { span, .. } => components.push(span.text().to_string()),
+                Expr::RefDot { refr, field, .. } => {
+                    collect(refr, components)?;
+                    components.push(field.0.text().to_string());
+                }
+                Expr::RefBrack { refr, index, .. } => {
+                    collect(refr, components)?;
+                    if let Expr::String { value, .. } = index.as_ref() {
+                        components.push(value.as_string()?.as_ref().to_string());
+                    } else {
+                        bail!(refr.span().error("not a static string path"));
+                    }
+                }
+                _ => bail!(refr.span().error("not a static string path")),
+            }
+            Ok(())
+        }
+
+        let mut components = Vec::new();
+        collect(refr, &mut components)?;
+        Ok(components)
+    }
+
+    pub(crate) fn parse_static_path_components(path: &str) -> Result<Vec<String>> {
+        let max_col = path
+            .len()
+            .checked_add(1)
+            .and_then(|max_col| u32::try_from(max_col).ok())
+            .and_then(NonZeroU32::new)
+            .ok_or_else(|| anyhow!("path exceeds maximum supported length"))?;
+        let source = Source::from_contents("entrypoint.rego".to_string(), path.to_string())?;
+        let mut parser = Parser::<'_>::new_with_max_col(&source, Some(max_col))?;
+        let expression = parser.parse_path_ref()?;
+        if parser.tok.0 != TokenKind::Eof {
+            bail!(parser.tok.1.error("expecting EOF"));
+        }
+        Self::get_static_string_path_components(&expression)
     }
 
     fn handle_import_future_keywords(&mut self, comps: &[Span]) -> Result<bool> {
@@ -1473,14 +1522,7 @@ impl<'source> Parser<'source> {
                 "[" => {
                     self.next_token()?;
                     let index = match &self.tok.0 {
-                        TokenKind::String => {
-                            let (span, value) = Self::span_and_value(self.tok.1.clone());
-                            Expr::String {
-                                span,
-                                value,
-                                eidx: self.next_eidx(),
-                            }
-                        }
+                        TokenKind::String => self.parse_scalar_or_var()?,
                         _ => {
                             return Err(self.source.error(
                                 self.tok.1.line,
@@ -1489,7 +1531,6 @@ impl<'source> Parser<'source> {
                             ));
                         }
                     };
-                    self.next_token()?;
                     self.expect("]", "while parsing bracketed reference")?;
                     span.end = self.end;
                     refr = Expr::RefBrack {

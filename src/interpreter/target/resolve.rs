@@ -6,6 +6,7 @@ use super::super::error::TargetCompileError;
 #[cfg(feature = "azure_policy")]
 use super::super::TargetInfo;
 use super::super::*;
+use crate::parser::Parser;
 
 fn format_effect_names(names: &[String]) -> String {
     match names.len() {
@@ -22,6 +23,23 @@ fn format_effect_names(names: &[String]) -> String {
     }
 }
 
+fn target_effect_path(
+    package: &str,
+    effect_name: &str,
+    target_name: &str,
+) -> Result<(Vec<String>, String), TargetCompileError> {
+    let mut components = vec!["data".to_string()];
+    components.extend(
+        Parser::parse_static_path_components(package)
+            .map_err(|_| TargetCompileError::TargetNotFound(target_name.into()))?,
+    );
+    components.push(effect_name.to_string());
+    let refs: Vec<&str> = components.iter().map(String::as_str).collect();
+    let path = crate::utils::format_string_path(&refs)
+        .map_err(|_| TargetCompileError::TargetNotFound(target_name.into()))?;
+    Ok((components, path))
+}
+
 pub fn resolve_target(interpreter: &mut Interpreter) -> Result<(), TargetCompileError> {
     use crate::registry::targets;
 
@@ -32,7 +50,7 @@ pub fn resolve_target(interpreter: &mut Interpreter) -> Result<(), TargetCompile
     for module in interpreter.compiled_policy.modules.iter() {
         if let Some(ref module_target) = module.target {
             // Get the package path for this module
-            let module_package = Interpreter::get_path_string(&module.package.refr, None)
+            let module_package = crate::utils::get_path_string(&module.package.refr, None)
                 .map_err(|_| TargetCompileError::TargetNotFound(module_target.clone().into()))?;
 
             match &target_name {
@@ -125,11 +143,20 @@ pub fn resolve_effect(interpreter: &mut Interpreter) -> Result<(), TargetCompile
         // For each effect defined in the target, check if rules exist
         for effect_name in target.effects.keys() {
             // Rule keys are stored with "data." prefix in CompiledPolicy
-            let expected_path = format!("data.{}.{}", package, effect_name);
+            let (expected_components, expected_path) =
+                target_effect_path(package, effect_name, &target.name)?;
 
             // Disallow sub-paths for effects in rules.
             for rule_path in interpreter.compiled_policy.rules.keys() {
-                if rule_path.starts_with(&expected_path) && rule_path.len() > expected_path.len() {
+                let is_sub_path = interpreter
+                    .compiled_policy
+                    .rule_path_components
+                    .get(rule_path)
+                    .is_some_and(|components| {
+                        components.len() > expected_components.len()
+                            && components.starts_with(&expected_components)
+                    });
+                if is_sub_path {
                     // Sub-paths are not allowed for effects - they must be exact matches only
                     // This prevents effect rules from being defined at deeper nested paths
                     let all_effect_names: Vec<String> =
@@ -145,7 +172,15 @@ pub fn resolve_effect(interpreter: &mut Interpreter) -> Result<(), TargetCompile
 
             // Disallow sub-paths for effects in default_rules.
             for rule_path in interpreter.compiled_policy.default_rules.keys() {
-                if rule_path.starts_with(&expected_path) && rule_path.len() > expected_path.len() {
+                let is_sub_path = interpreter
+                    .compiled_policy
+                    .rule_path_components
+                    .get(rule_path)
+                    .is_some_and(|components| {
+                        components.len() > expected_components.len()
+                            && components.starts_with(&expected_components)
+                    });
+                if is_sub_path {
                     // Sub-paths are not allowed for effects - they must be exact matches only
                     let all_effect_names: Vec<String> =
                         target.effects.keys().map(|k| k.to_string()).collect();
@@ -218,7 +253,7 @@ pub fn resolve_effect(interpreter: &mut Interpreter) -> Result<(), TargetCompile
                 };
 
                 // Update the target info with the correct effect schema, name, and path
-                let expected_path = format!("data.{}.{}", package, effect_name);
+                let (_, expected_path) = target_effect_path(package, effect_name, &target.name)?;
                 if let Some(ref mut target_info_mut) = interpreter.compiled_policy_mut().target_info
                 {
                     target_info_mut.effect_schema = effect_schema;

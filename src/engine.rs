@@ -8,9 +8,9 @@ use crate::interpreter::*;
 use crate::lexer::*;
 use crate::parser::*;
 use crate::scheduler::*;
-use crate::utils::gather_functions;
 use crate::utils::limits::PolicyLengthConfig;
 use crate::utils::limits::{self, fallback_execution_timer_config, ExecutionTimerConfig};
+use crate::utils::{gather_functions, get_path_string};
 use crate::value::*;
 use crate::*;
 use crate::{Extension, QueryResults};
@@ -217,7 +217,9 @@ impl Engine {
     ///
     /// The policy file will be parsed and converted to AST representation.
     /// Multiple policy files may be added to the engine.
-    /// Returns the Rego package name declared in the policy.
+    /// Returns the Rego package name declared in the policy, formatted as a
+    /// canonical Rego path. String components that are not identifiers use
+    /// bracket notation, for example `data.graph["1.0.0"]`.
     ///
     /// * `path`: A filename to be associated with the policy.
     /// * `rego`: The rego policy code.
@@ -252,14 +254,16 @@ impl Engine {
         Rc::make_mut(&mut self.modules).push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
-        Interpreter::get_path_string(&module.package.refr, Some("data"))
+        get_path_string(&module.package.refr, Some("data"))
     }
 
     /// Add a policy from a given file.
     ///
     /// The policy file will be parsed and converted to AST representation.
     /// Multiple policy files may be added to the engine.
-    /// Returns the Rego package name declared in the policy.
+    /// Returns the Rego package name declared in the policy, formatted as a
+    /// canonical Rego path (using bracket notation for non-identifier string
+    /// components).
     ///
     /// * `path`: Path to the policy file (.rego).
     ///
@@ -290,10 +294,15 @@ impl Engine {
         Rc::make_mut(&mut self.modules).push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
-        Interpreter::get_path_string(&module.package.refr, Some("data"))
+        get_path_string(&module.package.refr, Some("data"))
     }
 
     /// Get the list of packages defined by loaded policies.
+    ///
+    /// Each package is returned as a canonical Rego path. String components
+    /// that are not identifiers use JSON-escaped bracket notation, so a
+    /// literal component such as `"1.0.0"` is not confused with three nested
+    /// identifier components.
     ///
     /// ```
     /// # use regorus::*;
@@ -314,7 +323,7 @@ impl Engine {
     pub fn get_packages(&self) -> Result<Vec<String>> {
         self.modules
             .iter()
-            .map(|m| Interpreter::get_path_string(&m.package.refr, Some("data")))
+            .map(|m| get_path_string(&m.package.refr, Some("data")))
             .collect()
     }
 
@@ -796,7 +805,12 @@ impl Engine {
     /// The `rule` parameter should follow the Rego rule path format:
     /// - `"data.package.rule"` - For rules in a specific package
     /// - `"data.package.subpackage.rule"` - For nested packages
+    /// - `"data.graph.defUniqueName[\"1.0.0\"].deny"` - For a rule under a
+    ///   package with a literal string component
     /// - `"allow"` - For rules in the default package (though this is not recommended)
+    ///
+    /// Bracketed string components are matched by their literal value; an
+    /// identifier in brackets is equivalent to dot notation.
     ///
     /// # Notes
     ///
@@ -850,6 +864,9 @@ impl Engine {
     /// // Evaluating a non-existent rule is an error.
     /// let r = engine.eval_rule("data.exaample.x".to_string());
     /// assert!(r.is_err());
+    ///
+    /// // Literal string components use bracket notation.
+    /// // engine.eval_rule("data.graph[\"1.0.0\"].deny".to_string())?;
     ///
     /// // Path must be valid rule paths.
     /// assert!( engine.eval_rule("data".to_string()).is_err());
@@ -1203,8 +1220,8 @@ impl Engine {
 
         // Ensure that empty modules are created.
         for m in self.modules.iter().filter(|m| m.policy.is_empty()) {
-            let path = Parser::get_path_ref_components(&m.package.refr)?;
-            let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+            let path = Parser::get_static_string_path_components(&m.package.refr)?;
+            let path: Vec<&str> = path.iter().map(String::as_str).collect();
             let vref =
                 Interpreter::make_or_get_value_mut(self.interpreter.get_data_mut(), &path[..])?;
             if *vref == Value::Undefined {
@@ -1229,8 +1246,8 @@ impl Engine {
 
         // Ensure that all modules are created.
         for m in self.modules.iter() {
-            let path = Parser::get_path_ref_components(&m.package.refr)?;
-            let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+            let path = Parser::get_static_string_path_components(&m.package.refr)?;
+            let path: Vec<&str> = path.iter().map(String::as_str).collect();
             let vref =
                 Interpreter::make_or_get_value_mut(self.interpreter.get_data_mut(), &path[..])?;
             if *vref == Value::Undefined {
@@ -1490,7 +1507,7 @@ impl Engine {
     pub fn get_policy_package_names(&self) -> Result<Vec<PolicyPackageNameDefinition>> {
         let mut package_names = vec![];
         for m in self.modules.iter() {
-            let package_name = Interpreter::get_path_string(&m.package.refr, None)?;
+            let package_name = get_path_string(&m.package.refr, None)?;
             package_names.push(PolicyPackageNameDefinition {
                 source_file: m.package.span.source.file().to_string(),
                 package_name,

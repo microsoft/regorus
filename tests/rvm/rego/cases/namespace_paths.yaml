@@ -1,0 +1,207 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: dotted package entrypoint returns the conditional true value
+    modules:
+      - |
+        package graph.defUniqueName["1.0.0"]
+        default deny := false
+        deny := true if { input.blocked == true }
+    query: data.graph.defUniqueName["1.0.0"].deny
+    input:
+      blocked: true
+    want_result: true
+
+  - note: dotted package entrypoint preserves its false default
+    modules:
+      - |
+        package graph.defUniqueName["1.0.0"]
+        default deny := false
+        deny := true if { input.blocked == true }
+    query: data.graph.defUniqueName["1.0.0"].deny
+    input:
+      blocked: false
+    want_result: false
+
+  - note: default-only dotted package rule returns false
+    modules:
+      - |
+        package graph.defUniqueName["1.0.0"]
+        default deny := false
+    query: data.graph.defUniqueName["1.0.0"].deny
+    input: {}
+    want_result: false
+
+  - note: conditional dotted package rule without a default stays undefined
+    modules:
+      - |
+        package graph.defUniqueName["1.0.0"]
+        deny := true if { input.blocked == true }
+    query: data.graph.defUniqueName["1.0.0"].deny
+    input:
+      blocked: false
+    want_result: "#undefined"
+
+  - note: literal-dot and nested packages keep imported defaults and functions separate
+    modules:
+      - |
+        package graph["a.b"]
+        import rego.v1
+
+        default value := "literal default"
+        suffix() := "literal function"
+      - |
+        package graph.a.b
+        import rego.v1
+
+        default value := "nested default"
+        suffix() := "nested function"
+      - |
+        package consumer
+        import rego.v1
+        import data.graph["a.b"] as dotted
+        import data.graph.a.b as nested
+
+        result := {
+          "dotted": dotted.value,
+          "nested": nested.value,
+          "dotted_function": dotted.suffix(),
+          "nested_function": nested.suffix()
+        }
+    query: data.consumer.result
+    input: {}
+    want_result:
+      dotted: literal default
+      nested: nested default
+      dotted_function: literal function
+      nested_function: nested function
+
+  - note: absent literal-dot namespace does not route to nested package rule
+    modules:
+      - |
+        package graph.a.b
+        value := "nested"
+      - |
+        package consumer
+        import rego.v1
+        result := data.graph["a.b"].value
+    query: data.consumer.result
+    input: {}
+    want_result: "#undefined"
+
+  - note: input-selected literal-dot version reaches the matching rule
+    modules:
+      - |
+        package graph["1.0.0"]
+        deny := true if { input.blocked == true }
+      - |
+        package consumer
+        import rego.v1
+        result := data.graph[input.version].deny
+    query: data.consumer.result
+    input:
+      version: "1.0.0"
+      blocked: true
+    want_result: true
+
+  - note: dotted package entrypoint also works in suspendable mode
+    modules:
+      - |
+        package graph.defUniqueName["1.0.0"]
+        default deny := false
+        deny := true if { input.blocked == true }
+    query: data.graph.defUniqueName["1.0.0"].deny
+    input:
+      blocked: true
+    execution_mode: suspendable
+    want_result: true
+
+  - note: numeric selector finds the canonical numeric string package
+    modules:
+      - |
+        package graph["1"]
+        value := 7
+        result := data.graph[1].value
+    query: data.graph["1"].result
+    want_result: 7
+
+  - note: numeric data key remains preferred over a numeric string namespace
+    data:
+      graph:
+        1: numeric data
+    modules:
+      - |
+        package graph["1"]
+        value := 7
+      - |
+        package consumer
+        result := data.graph[1]
+    query: data.consumer.result
+    want_result: numeric data
+
+  - note: numeric namespace subobject preserves base fields in both selectors
+    data:
+      graph:
+        "1":
+          extra: 9
+    modules:
+      - |
+        package graph["1"]
+        value := 7
+      - |
+        package consumer
+        result := {
+          "numeric": data.graph[input.numeric],
+          "string": data.graph[input.string]
+        }
+    query: data.consumer.result
+    input:
+      numeric: 1
+      string: "1"
+    want_result:
+      numeric:
+        extra: 9
+        value: 7
+      string:
+        extra: 9
+        value: 7
+
+  - note: actual numeric data object takes precedence over a string namespace
+    data:
+      graph:
+        1:
+          extra: numeric data
+        "1":
+          extra: string data
+    modules:
+      - |
+        package graph["1"]
+        value := 7
+      - |
+        package consumer
+        result := data.graph[1]
+    query: data.consumer.result
+    want_result:
+      extra: numeric data
+
+  - note: escaped package zero argument function projection uses decoded keys
+    modules:
+      - |
+        package graph["a\".b"]
+        value() := 7
+      - |
+        package consumer
+        result := data.graph["a\".b"].value
+    query: data.consumer.result
+    want_result: 7
+
+  - note: bracketed identifier entrypoint retains its caller-visible name
+    modules:
+      - |
+        package graph.version
+        value := 7
+    query: data.graph["version"].value
+    entry_points:
+      - data.graph["version"].value
+    want_result: 7

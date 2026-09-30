@@ -52,6 +52,26 @@ public class RegorusTests
     }
 
     [TestMethod]
+    public void Dotted_package_metadata_and_rule_paths_remain_canonical()
+    {
+        using var engine = new Engine();
+        var package = engine.AddPolicy(
+            "namespace.rego",
+            """
+            package graph.defUniqueName["1.0.0"]
+
+            default deny := false
+            deny := true if { input.blocked == true }
+            """);
+
+        Assert.AreEqual("data.graph.defUniqueName[\"1.0.0\"]", package);
+        engine.SetInputJson("""{"blocked":false}""");
+        Assert.AreEqual(
+            "false",
+            engine.EvalRule("data.graph.defUniqueName[\"1.0.0\"].deny"));
+    }
+
+    [TestMethod]
     public void Evaluation_using_file_policies_succeeds()
     {
         using var engine = new Engine();

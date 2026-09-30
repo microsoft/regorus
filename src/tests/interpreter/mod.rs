@@ -15,6 +15,8 @@
 use std::env;
 
 use crate::test_utils::{check_output, ValueOrVec};
+#[cfg(feature = "azure_policy")]
+use crate::utils::limits::PolicyLengthConfig;
 use crate::utils::limits::{
     acquire_limits_test_lock, fallback_execution_timer_config, ExecutionTimerConfig,
 };
@@ -436,6 +438,41 @@ mod load_target_definitions {
             assert_eq!(target.name.as_ref(), "target.tests.azure_compute");
             assert_eq!(target.version.as_ref(), "1.0.0");
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn compile_for_target_accepts_a_long_first_package_component() -> Result<()> {
+        load()?;
+        assert!(crate::registry::targets::contains(
+            "target.tests.azure_policy"
+        ));
+
+        let package_component = "g".repeat(1300);
+        let mut engine = Engine::new();
+        engine.set_policy_length_config(PolicyLengthConfig {
+            max_col: NonZeroU32::new(2048).expect("non-zero column limit"),
+            ..PolicyLengthConfig::default()
+        });
+        engine.add_policy(
+            "long-target.rego".to_string(),
+            format!(
+                r#"package {package_component}
+import rego.v1
+__target__ := "target.tests.azure_policy"
+default allow := false
+allow if {{
+    input.type == "Microsoft.Storage/storageAccounts"
+}}"#
+            ),
+        )?;
+
+        let compiled = engine.compile_for_target()?;
+        let input = Value::from_json_str(
+            r#"{"type":"Microsoft.Storage/storageAccounts","name":"long-target","location":"East US"}"#,
+        )?;
+        assert_eq!(compiled.eval_with_input(input)?, Value::Bool(true));
 
         Ok(())
     }
