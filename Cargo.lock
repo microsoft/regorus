@@ -848,9 +848,9 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
-version = "0.58.3"
+version = "0.58.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "905edfa6eee835291d6efe33f733f7fcb40c2a24be93b78b74df95e56aef8611"
+checksum = "5761b0ca0a31464030d7c2a98087fde3124ebb5e09b5a112cdb815f03b8ee150"
 dependencies = [
  "ahash",
  "bytecount",
@@ -876,18 +876,18 @@ dependencies = [
 
 [[package]]
 name = "jsonschema-regex"
-version = "0.58.3"
+version = "0.58.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "023cf6b6c38655c1e9cedf72b9c534fd361bd35d20ac06e074f2c93b7dd0836c"
+checksum = "f1ffba4378a3d6ee7f1ab65a8ed95c711ccfe4a3870932bdce89d8260abed38a"
 dependencies = [
  "regex-syntax",
 ]
 
 [[package]]
 name = "jsonschema-value"
-version = "0.58.3"
+version = "0.58.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43519639b8e32075ef90a9b6b19136e516a3236b7943c3fe6b1622dafdced8ea"
+checksum = "386121f898b560ff6aaa7974952720e9d9276a201eca31296387c2ed8707855e"
 dependencies = [
  "ahash",
  "bytecount",
@@ -970,9 +970,9 @@ dependencies = [
 
 [[package]]
 name = "msvc_spectre_libs_build"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "feb7dc354576190586db234c41e482a81a16796f0cdf41203fe7b04e767ae9c5"
+checksum = "a07e5704d9a91580f47259f03d641b1b1608a1dc9814ad1055867f181ff24cab"
 dependencies = [
  "cc",
  "ohno",
@@ -1078,9 +1078,9 @@ dependencies = [
 
 [[package]]
 name = "ohno"
-version = "0.5.0"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6f03365c20a62c82c5da4cd93abf43cec7115c7d9f84a55ea827e2b56d704a5"
+checksum = "67922df3646e8f0953af30e66647be24f02518cf1f4f160d021bc738182e333e"
 dependencies = [
  "ohno_macros",
  "typeid",
@@ -1088,18 +1088,18 @@ dependencies = [
 
 [[package]]
 name = "ohno_macros"
-version = "0.5.0"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a4ce72614cf218523160501f1c275d718c80083697d62d54186e41512429ba9"
+checksum = "12528c18ca9d578146dfdf1407ffcd9daebfefda1949dd1c016b8832f83e2245"
 dependencies = [
  "ohno_macros_impl",
 ]
 
 [[package]]
 name = "ohno_macros_impl"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a2711e52bb0de91b2d6a3c60636bac1827fb109003e235ed827dc9021287d0d"
+checksum = "d2daefea908c4baf7a805b32f8bedd0955c54d8167e73a7584bf6793a3bd8afa"
 dependencies = [
  "proc-macro2 1.0.107",
  "quote 1.0.47",
@@ -1375,9 +1375,9 @@ dependencies = [
 
 [[package]]
 name = "referencing"
-version = "0.58.3"
+version = "0.58.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ead446bbb5527785ff232eb96625ac03daa627945470374c553db8f13090e30f"
+checksum = "5cfa1c91745dbca76a406b926918d7c63e15a4525ebab939fec3e015a1fb82b1"
 dependencies = [
  "ahash",
  "fluent-uri",
