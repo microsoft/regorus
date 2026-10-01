@@ -167,6 +167,62 @@ public static class Compiler
 }
 ```
 
+### Engine
+
+`AddPolicy(path, rego)` and `AddPolicyFromFile(path)` reject an embedded NUL
+in `path` with `ArgumentException` instead of allowing the native call to
+silently truncate it.
+
+The stateful `Engine` API can inspect one loaded module for rule declarations
+without evaluating the policy. Call
+`HasDeclaredRuleRootedAt(sourcePath, rootName)` with either a bare root such as
+`"metadata"` or a dotted rule path such as `"metadata.parameters"`. A selector
+matches that exact path and its component-wise descendants: `"metadata"`
+matches `metadata.parameters`, `metadata.parameters.child`, and
+`metadata.other`, while `"metadata.parameters"` matches `metadata.parameters`
+and `metadata.parameters.child`, but not
+`metadata.other` or `metadata.parametersExtra`.
+
+The method scans authored rule heads in only the selected module, including
+defaults, functions, sets, and rules whose bodies would be false or undefined.
+Imports, references, comments, strings, and object keys are not declarations;
+rules in other modules in the same package are not included.
+
+```csharp
+using var engine = new Engine();
+engine.AddPolicy(
+    "customer.rego",
+    "package customer\nparams.timeout := input.timeout");
+
+bool hasParams = engine.HasDeclaredRuleRootedAt("customer.rego", "params");
+```
+
+`sourcePath` must identify exactly one loaded module. For `AddPolicy`, the
+stored source label is the supplied path. For `AddPolicyFromFile`, the path is
+converted to a string lossily by the native implementation; the lookup does
+not compare the original path bytes. Non-UTF-8 filenames can therefore
+produce the same source label and an ambiguous-source error. Source selection
+occurs before validating `rootName`, so missing or ambiguous paths remain
+`InvalidOperationException` even when the selector is invalid.
+
+`rootName` must be a nonempty path accepted by the module's load-time Rego mode
+and future-keyword imports. It is parsed as a native rule reference: only a
+root identifier followed by zero or more dot-qualified fields is accepted;
+whitespace, comments, bracket selectors, calls, and trailing syntax are not.
+Path components compare exactly, not by string prefix. Invalid selectors
+throw `ArgumentException` with `ParamName` set to `rootName`. A missing or
+ambiguous source, or a rule head that cannot be classified, throws
+`InvalidOperationException`. Null strings throw `ArgumentNullException`;
+embedded NULs in either string throw `ArgumentException` before native
+marshalling.
+
+The native call validates the engine and acquires its read lock before source
+transport, then validates the root string. A null or invalid-UTF-8 root is an
+invalid argument; source-path transport errors retain the normal operation
+error status. After valid string transport, exact source selection precedes
+selector grammar validation, so a missing or ambiguous source remains an
+`InvalidOperationException` even when `rootName` is invalid.
+
 ### PolicyModule
 
 Represents a single policy module to be compiled. Each PolicyModule corresponds to a Rego file (.rego), and each Rego file defines a Rego package using the `package` declaration at the top of the file.
@@ -542,7 +598,7 @@ catch (Exception ex)
 
 Some functionality requires specific Rust feature flags:
 
-- **azure_policy**: Required for target-aware compilation and policy parameters
+- **azure_policy**: Required for target-aware compilation and the `GetPolicyParameters` metadata API
 - Without this feature, target-related methods will not be available
 
 ## Version Compatibility

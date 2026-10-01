@@ -111,13 +111,52 @@ namespace Regorus
             });
         }
 
+        /// <exception cref="ArgumentException">The path contains an embedded NUL.</exception>
         public string? AddPolicy(string path, string rego)
         {
+            Utf8Marshaller.ThrowIfContainsNul(path, nameof(path));
+
             return Utf8Marshaller.WithUtf8(path, pathPtr =>
                 Utf8Marshaller.WithUtf8(rego, regoPtr =>
                     UseHandle(enginePtr =>
                         CheckAndDropResult(Regorus.Internal.API.regorus_engine_add_policy((Regorus.Internal.RegorusEngine*)enginePtr, (byte*)pathPtr, (byte*)regoPtr))
                     )));
+        }
+
+        /// <summary>
+        /// Check whether the policy module identified by its exact source path declares a rule at the selected rule path or a descendant, without evaluating the policy.
+        /// </summary>
+        /// <param name="sourcePath">The exact source label associated with the loaded policy module.</param>
+        /// <param name="rootName">A native-grammar rule path, either a root identifier such as <c>metadata</c> or a dotted path such as <c>metadata.parameters</c>.</param>
+        /// <returns>True if the module declares a rule at the selected path or any component-wise descendant.</returns>
+        /// <exception cref="ArgumentException">Either string contains an embedded NUL, or the rule path is invalid.</exception>
+        /// <exception cref="ArgumentNullException">The source path or root name is null.</exception>
+        /// <exception cref="InvalidOperationException">
+        /// No unique loaded module matches the source path or a rule head cannot be classified.
+        /// </exception>
+        public bool HasDeclaredRuleRootedAt(string sourcePath, string rootName)
+        {
+            if (sourcePath is null)
+            {
+                throw new ArgumentNullException(nameof(sourcePath));
+            }
+            if (rootName is null)
+            {
+                throw new ArgumentNullException(nameof(rootName));
+            }
+
+            Utf8Marshaller.ThrowIfContainsNul(sourcePath, nameof(sourcePath));
+            Utf8Marshaller.ThrowIfContainsNul(rootName, nameof(rootName));
+
+            return Utf8Marshaller.WithUtf8(sourcePath, pathPtr =>
+                Utf8Marshaller.WithUtf8(rootName, rootNamePtr =>
+                    UseHandle(enginePtr =>
+                        ResultHelpers.GetBoolResult(
+                            Regorus.Internal.API.regorus_engine_has_declared_rule_rooted_at(
+                                (Regorus.Internal.RegorusEngine*)enginePtr,
+                                (byte*)pathPtr,
+                                (byte*)rootNamePtr),
+                            nameof(rootName)))));
         }
 
         public void SetRegoV0(bool enable)
@@ -128,8 +167,11 @@ namespace Regorus
             });
         }
 
+        /// <exception cref="ArgumentException">The path contains an embedded NUL.</exception>
         public string? AddPolicyFromFile(string path)
         {
+            Utf8Marshaller.ThrowIfContainsNul(path, nameof(path));
+
             return Utf8Marshaller.WithUtf8(path, pathPtr =>
             {
                 return UseHandle(enginePtr =>
