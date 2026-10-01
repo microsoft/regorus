@@ -14,6 +14,7 @@ use crate::compiler::hoist::{HoistedLoop, LoopType};
 use crate::lexer::*;
 use crate::lookup::Lookup;
 use crate::parser::Parser;
+use crate::parser::ParserContext;
 use crate::scheduler::*;
 use crate::utils::limits::{monotonic_now, ExecutionTimer, ExecutionTimerConfig};
 #[cfg(feature = "std")]
@@ -328,8 +329,14 @@ impl Interpreter {
         self.compiled_policy_mut().functions = functions;
     }
 
-    pub fn set_modules(&mut self, modules: Rc<Vec<Ref<Module>>>) {
-        self.compiled_policy_mut().modules = modules;
+    pub(crate) fn set_modules(
+        &mut self,
+        modules: Rc<Vec<Ref<Module>>>,
+        parser_contexts: Rc<Vec<ParserContext>>,
+    ) {
+        let compiled_policy = self.compiled_policy_mut();
+        compiled_policy.modules = modules;
+        compiled_policy.parser_contexts = parser_contexts;
     }
 
     pub fn set_loop_hoisting_table(&mut self, table: crate::compiler::hoist::HoistedLoopsLookup) {
