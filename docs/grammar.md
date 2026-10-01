@@ -155,6 +155,11 @@ referenced by:
 path-ref ::= IDENT ( NO_WS ( '.' NO_WS IDENT | '[' STRING ']' ) )*
 ```
 
+String components in brackets retain their literal identity, including dots.
+For example, `graph["a.b"]` is distinct from `graph.a.b`. When a package path
+is returned by the Engine API or used as a rule entry point, non-identifier
+string components use JSON-escaped bracket notation.
+
 referenced by:
 
 * call-expr

@@ -863,3 +863,110 @@ pub extern "C" fn regorus_engine_compile_program_with_entrypoints(
         }
     })
 }
+
+#[cfg(all(test, feature = "std"))]
+mod namespace_tests {
+    use super::{
+        regorus_engine_add_policy, regorus_engine_compile_program_with_entrypoints,
+        regorus_engine_drop, regorus_engine_eval_rule, regorus_engine_new,
+    };
+    use crate::common::{regorus_result_drop, RegorusStatus};
+    use core::ffi::CStr;
+    use std::ffi::CString;
+
+    #[test]
+    fn canonical_dotted_namespace_paths_cross_the_ffi_boundary() {
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let file = CString::new("namespace.rego").expect("valid file path");
+        let policy = CString::new(
+            "package graph.defUniqueName[\"1.0.0\"]\n\
+             default deny := false\n\
+             deny := true if { input.blocked == true }\n",
+        )
+        .expect("valid policy");
+        let added = regorus_engine_add_policy(engine, file.as_ptr(), policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        unsafe {
+            let package = CStr::from_ptr(added.output)
+                .to_str()
+                .expect("UTF-8 package");
+            assert_eq!(package, "data.graph.defUniqueName[\"1.0.0\"]");
+        }
+        regorus_result_drop(added);
+
+        let rule =
+            CString::new("data.graph.defUniqueName[\"1.0.0\"].deny").expect("valid rule path");
+        let result = regorus_engine_eval_rule(engine, rule.as_ptr());
+        assert!(matches!(result.status, RegorusStatus::Ok));
+        unsafe {
+            let value = CStr::from_ptr(result.output).to_str().expect("UTF-8 value");
+            assert_eq!(value, "false");
+        }
+        regorus_result_drop(result);
+        regorus_engine_drop(engine);
+    }
+
+    #[cfg(feature = "rvm")]
+    #[test]
+    fn bracketed_identifier_entrypoint_compiles_and_executes_through_engine_ffi() {
+        use crate::rvm::{
+            regorus_program_drop, regorus_rvm_drop, regorus_rvm_execute_entry_point_by_index,
+            regorus_rvm_execute_entry_point_by_name, regorus_rvm_load_program, regorus_rvm_new,
+            RegorusProgram,
+        };
+
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let file = CString::new("namespace.rego").expect("valid file path");
+        let policy = CString::new("package graph.version\nvalue := 7").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, file.as_ptr(), policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let entrypoint = CString::new("data.graph[\"version\"].value").expect("valid entry point");
+        let entrypoints = [entrypoint.as_ptr()];
+        let compiled =
+            regorus_engine_compile_program_with_entrypoints(engine, entrypoints.as_ptr(), 1);
+        assert!(
+            matches!(compiled.status, RegorusStatus::Ok),
+            "RVM compilation failed with {:?}",
+            compiled.status
+        );
+        let program = compiled.pointer_value as *mut RegorusProgram;
+        assert!(!program.is_null());
+        regorus_result_drop(compiled);
+
+        let vm = regorus_rvm_new();
+        assert!(!vm.is_null());
+        let loaded = regorus_rvm_load_program(vm, program);
+        assert!(matches!(loaded.status, RegorusStatus::Ok));
+        regorus_result_drop(loaded);
+
+        let named = regorus_rvm_execute_entry_point_by_name(vm, entrypoint.as_ptr());
+        assert!(matches!(named.status, RegorusStatus::Ok));
+        assert_eq!(
+            unsafe { CStr::from_ptr(named.output) }
+                .to_str()
+                .expect("UTF-8 result"),
+            "7"
+        );
+        regorus_result_drop(named);
+
+        let indexed = regorus_rvm_execute_entry_point_by_index(vm, 0);
+        assert!(matches!(indexed.status, RegorusStatus::Ok));
+        assert_eq!(
+            unsafe { CStr::from_ptr(indexed.output) }
+                .to_str()
+                .expect("UTF-8 result"),
+            "7"
+        );
+        regorus_result_drop(indexed);
+
+        regorus_rvm_drop(vm);
+        regorus_program_drop(program);
+        regorus_engine_drop(engine);
+    }
+}

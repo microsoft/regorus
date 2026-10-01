@@ -4,7 +4,9 @@
 
 use anyhow::Result;
 use regorus::languages::rego::compiler::Compiler;
-use regorus::rvm::program::{generate_tabular_assembly_listing, AssemblyListingConfig, Program};
+use regorus::rvm::program::{
+    generate_tabular_assembly_listing, AssemblyListingConfig, DeserializationResult, Program,
+};
 use regorus::rvm::tests::test_utils::test_round_trip_serialization;
 use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, SuspendReason};
 use regorus::test_utils::{check_output, process_value, value_or_vec_to_vec, ValueOrVec};
@@ -12,6 +14,7 @@ use regorus::{CompiledPolicy, Engine, Rc, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
+use std::sync::Arc;
 use test_generator::test_resources;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -826,6 +829,249 @@ fn yaml_test_impl(file: &str) -> Result<()> {
         "📊 Test Summary for {}: {} executed, {} skipped",
         file, executed_count, skipped_count
     );
+
+    Ok(())
+}
+
+#[test]
+fn namespace_entrypoint_roundtrips_and_reuses_vm_state() -> Result<()> {
+    let entrypoint = "data.graph.defUniqueName[\"1.0.0\"].deny";
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "namespace.rego".to_string(),
+        r#"
+        package graph.defUniqueName["1.0.0"]
+
+        default deny := false
+        deny := true if { input.blocked == true }
+        "#
+        .to_string(),
+    )?;
+    let entrypoint_ref: Rc<str> = entrypoint.into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint_ref)?;
+    let program = Compiler::compile_from_policy(&compiled, &[entrypoint])?;
+
+    let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+    let json_program = Program::deserialize_json(&json).map_err(anyhow::Error::msg)?;
+    let binary = program.serialize_binary().map_err(anyhow::Error::msg)?;
+    let binary_program = match Program::deserialize_binary(&binary).map_err(anyhow::Error::msg)? {
+        DeserializationResult::Complete(program) => program,
+        DeserializationResult::Partial(_) => {
+            anyhow::bail!("binary namespace program unexpectedly needs recompilation")
+        }
+    };
+
+    for (program, mode) in [
+        (json_program, ExecutionMode::RunToCompletion),
+        (binary_program, ExecutionMode::Suspendable),
+    ] {
+        let mut vm = RegoVM::new();
+        vm.load_program(Arc::new(program));
+        vm.set_data(Value::new_object())?;
+        vm.set_execution_mode(mode);
+
+        vm.set_input(Value::from_json_str(r#"{"blocked":true}"#)?);
+        assert_eq!(
+            vm.execute_entry_point_by_name(entrypoint)?,
+            Value::Bool(true)
+        );
+
+        vm.set_input(Value::from_json_str(r#"{"blocked":false}"#)?);
+        assert_eq!(vm.execute_entry_point_by_index(0)?, Value::Bool(false));
+
+        vm.set_input(Value::Undefined);
+        assert_eq!(
+            vm.execute_entry_point_by_name(entrypoint)?,
+            Value::Bool(false)
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn numeric_namespace_selectors_keep_string_identity_on_reused_vm() -> Result<()> {
+    let entrypoint = "data.consumer.result";
+    let mut engine = Engine::new();
+    engine.add_data(Value::from_json_str(
+        r#"{"graph":{"1":{"extra":9},"1.0":{"extra":90}}}"#,
+    )?)?;
+    engine.add_policy(
+        "namespace.rego".to_string(),
+        r#"
+        package graph["1"]
+        value := 7
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "decimal_namespace.rego".to_string(),
+        r#"
+        package graph["1.0"]
+        value := 70
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "consumer.rego".to_string(),
+        r#"
+        package consumer
+        result := data.graph[input.selector]
+        "#
+        .to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&entrypoint.into())?;
+    let program = Compiler::compile_from_policy(&compiled, &[entrypoint])?;
+    let data = engine.get_data();
+    let cases = [
+        (r#"{"selector":"1"}"#, r#"{"extra":9,"value":7}"#),
+        (r#"{"selector":1}"#, r#"{"extra":9,"value":7}"#),
+        (r#"{"selector":1.0}"#, r#"{"extra":9,"value":7}"#),
+        (r#"{"selector":"1.0"}"#, r#"{"extra":90,"value":70}"#),
+        (r#"{"selector":1.0}"#, r#"{"extra":9,"value":7}"#),
+        (r#"{"selector":"1"}"#, r#"{"extra":9,"value":7}"#),
+        (r#"{"selector":"1.0"}"#, r#"{"extra":90,"value":70}"#),
+    ];
+
+    for (input_json, expected_json) in cases {
+        let input = Value::from_json_str(input_json)?;
+        let expected = Value::from_json_str(expected_json)?;
+        engine.set_input(input);
+        assert_eq!(
+            engine.eval_rule(entrypoint.to_string())?,
+            expected,
+            "interpreter result for input {input_json}"
+        );
+    }
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_data(data.clone())?;
+        vm.set_execution_mode(mode);
+
+        for (input_json, expected_json) in cases {
+            vm.set_input(Value::from_json_str(input_json)?);
+            assert_eq!(
+                vm.execute_entry_point_by_name(entrypoint)?,
+                Value::from_json_str(expected_json)?,
+                "{mode:?} result for input {input_json}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn numeric_object_selectors_do_not_use_data_namespace_fallback() -> Result<()> {
+    let entrypoint = "data.consumer.result";
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "consumer.rego".to_string(),
+        r#"
+        package consumer
+        result := input.object[input.selector]
+        "#
+        .to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&entrypoint.into())?;
+    let program = Compiler::compile_from_policy(&compiled, &[entrypoint])?;
+    let data = engine.get_data();
+    let cases = [
+        (
+            r#"{"object":{"1":"integer string","1.0":"decimal string"},"selector":"1"}"#,
+            Value::String("integer string".into()),
+        ),
+        (
+            r#"{"object":{"1":"integer string","1.0":"decimal string"},"selector":1}"#,
+            Value::Undefined,
+        ),
+        (
+            r#"{"object":{"1":"integer string","1.0":"decimal string"},"selector":1.0}"#,
+            Value::Undefined,
+        ),
+        (
+            r#"{"object":{"1":"integer string","1.0":"decimal string"},"selector":"1.0"}"#,
+            Value::String("decimal string".into()),
+        ),
+        (
+            r#"{"object":{"1":"integer string","1.0":"decimal string"},"selector":1.0}"#,
+            Value::Undefined,
+        ),
+        (
+            r#"{"object":{"1":"integer string","1.0":"decimal string"},"selector":"1"}"#,
+            Value::String("integer string".into()),
+        ),
+        (
+            r#"{"object":{"1":"integer string","1.0":"decimal string"},"selector":"1.0"}"#,
+            Value::String("decimal string".into()),
+        ),
+    ];
+
+    for (input_json, expected) in &cases {
+        engine.set_input(Value::from_json_str(input_json)?);
+        let actual = engine.eval_rule(entrypoint.to_string())?;
+        assert_eq!(
+            &actual, expected,
+            "interpreter result for input {input_json}"
+        );
+    }
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_data(data.clone())?;
+        vm.set_execution_mode(mode);
+
+        for (input_json, expected) in &cases {
+            vm.set_input(Value::from_json_str(input_json)?);
+            let actual = vm.execute_entry_point_by_name(entrypoint)?;
+            assert_eq!(&actual, expected, "{mode:?} result for input {input_json}");
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn bracketed_identifier_entrypoint_roundtrips_and_executes_by_name_and_index() -> Result<()> {
+    let requested_entrypoint = "data.graph[\"version\"].value";
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "namespace.rego".to_string(),
+        "package graph.version\nvalue := 7".to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&"data.graph.version.value".into())?;
+    for invalid_entrypoint in [
+        "data.graph[1].value",
+        "data.graph.version.value trailing",
+        "data.graph.missing.value",
+    ] {
+        assert!(Compiler::compile_from_policy(&compiled, &[invalid_entrypoint]).is_err());
+    }
+    let program = Compiler::compile_from_policy(&compiled, &[requested_entrypoint])?;
+
+    let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+    let json_program = Program::deserialize_json(&json).map_err(anyhow::Error::msg)?;
+    let binary = program.serialize_binary().map_err(anyhow::Error::msg)?;
+    let binary_program = match Program::deserialize_binary(&binary).map_err(anyhow::Error::msg)? {
+        DeserializationResult::Complete(program) => program,
+        DeserializationResult::Partial(_) => {
+            anyhow::bail!("binary identifier program unexpectedly needs recompilation")
+        }
+    };
+
+    for program in [json_program, binary_program] {
+        let mut vm = RegoVM::new();
+        vm.load_program(Arc::new(program));
+        vm.set_data(Value::new_object())?;
+        assert_eq!(
+            vm.execute_entry_point_by_name(requested_entrypoint)?,
+            Value::from(7)
+        );
+        assert_eq!(vm.execute_entry_point_by_index(0)?, Value::from(7));
+    }
 
     Ok(())
 }

@@ -16,7 +16,7 @@ use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
 use crate::rvm::instructions::{BuiltinCallParams, FunctionCallParams};
 use crate::rvm::Instruction;
-use crate::utils::get_path_string;
+use crate::utils::{append_path_component, get_path_string, split_canonical_path_root};
 use crate::value::Value;
 use alloc::{
     format,
@@ -233,20 +233,17 @@ impl<'a> Compiler<'a> {
     /// aliases unconditionally and rejects calls to a missing target at
     /// compile time.
     fn resolve_fcn_path_through_imports(&self, path: &str) -> Option<String> {
-        if self.policy.inner.imports.is_empty() || path.starts_with("data.") {
+        if self.policy.inner.imports.is_empty() {
             return None;
         }
-        let (alias, rest) = match path.split_once('.') {
-            Some((alias, rest)) => (alias, Some(rest)),
-            None => (path, None),
-        };
-        let import_key = format!("{}.{}", self.current_package, alias);
+        let (alias, suffix) = split_canonical_path_root(path)?;
+        if alias == "data" {
+            return None;
+        }
+        let import_key = append_path_component(&self.current_package, alias).ok()?;
         let import_expr = self.policy.inner.imports.get(&import_key)?;
-        let target = get_path_string(import_expr, None).ok()?;
-        let candidate = match rest {
-            Some(rest) => format!("{target}.{rest}"),
-            None => target,
-        };
+        let mut candidate = get_path_string(import_expr.as_ref(), None).ok()?;
+        candidate.push_str(suffix);
         self.policy
             .inner
             .functions
