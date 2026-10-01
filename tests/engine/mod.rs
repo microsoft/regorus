@@ -103,6 +103,92 @@ fn extension_with_state() -> Result<()> {
 }
 
 #[test]
+fn fresh_engine_evaluates_inline_comprehension_outputs_without_entrypoint_compile() -> Result<()> {
+    let policy = r#"
+        package test
+        deny := {"result": true, "reasons": [v | some v in input.values]} if {
+            count(input.values) > 0
+        }
+    "#;
+    let expected = Value::from_json_str(r#"{"result":true,"reasons":[false,"x",false]}"#)?;
+
+    let mut nonempty = Engine::new();
+    nonempty.set_input(Value::from_json_str(r#"{"values":[false,"x",false]}"#)?);
+    nonempty.add_policy("test.rego".to_string(), policy.to_string())?;
+    assert_eq!(nonempty.eval_rule("data.test.deny".to_string())?, expected);
+    let query = nonempty.eval_query("data.test.deny".to_string(), false)?;
+    assert_eq!(query.result.len(), 1);
+    assert_eq!(query.result[0].expressions[0].value, expected);
+
+    let mut empty = Engine::new();
+    empty.set_input(Value::from_json_str(r#"{"values":[]}"#)?);
+    empty.add_policy("test.rego".to_string(), policy.to_string())?;
+    assert_eq!(
+        empty.eval_rule("data.test.deny".to_string())?,
+        Value::Undefined
+    );
+    let query = empty.eval_query("data.test.deny".to_string(), false)?;
+    assert!(query.result.is_empty());
+
+    let mut missing = Engine::new();
+    missing.add_policy("test.rego".to_string(), policy.to_string())?;
+    assert_eq!(
+        missing.eval_rule("data.test.deny".to_string())?,
+        Value::Undefined
+    );
+    let query = missing.eval_query("data.test.deny".to_string(), false)?;
+    assert!(query.result.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn eval_rule_schedules_unification_nested_output_capture() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"
+            package test
+            result := a if {
+                a := [[v | some v in vals] | true]
+                vals = [1, 2]
+            }
+        "#
+        .to_string(),
+    )?;
+
+    assert_eq!(
+        engine.eval_rule("data.test.result".to_string())?,
+        Value::from_json_str("[[1,2]]")?
+    );
+    Ok(())
+}
+
+#[test]
+fn eval_rule_rejects_forward_assignment_nested_output_capture() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"
+            package test
+            result := a if {
+                a := [[v | some v in vals] | true]
+                vals := [1, 2]
+            }
+        "#
+        .to_string(),
+    )?;
+
+    let error = engine
+        .eval_rule("data.test.result".to_string())
+        .expect_err("forward assignment should remain unsafe");
+    assert!(error
+        .to_string()
+        .contains("use of undefined variable `vals`"));
+    Ok(())
+}
+
+#[test]
 #[cfg(feature = "azure_policy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
 fn get_policy_package_names() -> Result<()> {
