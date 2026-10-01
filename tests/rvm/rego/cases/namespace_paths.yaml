@@ -126,6 +126,39 @@ cases:
     query: data.graph["1"].result
     want_result: 7
 
+  - note: numeric literal selectors canonicalize while quoted versions stay distinct
+    data:
+      graph:
+        "1":
+          base: integer
+        "1.0":
+          base: decimal
+    modules:
+      - |
+        package graph["1"]
+        value := "integer namespace"
+      - |
+        package graph["1.0"]
+        value := "decimal namespace"
+      - |
+        package consumer
+        result := [
+          data.graph["1"],
+          data.graph["1.0"],
+          data.graph[1],
+          data.graph[1.0]
+        ]
+    query: data.consumer.result
+    want_result:
+      - base: integer
+        value: integer namespace
+      - base: decimal
+        value: decimal namespace
+      - base: integer
+        value: integer namespace
+      - base: integer
+        value: integer namespace
+
   - note: numeric data key remains preferred over a numeric string namespace
     data:
       graph:
@@ -136,9 +169,11 @@ cases:
         value := 7
       - |
         package consumer
-        result := data.graph[1]
+        result := [data.graph[1], data.graph[1.0]]
     query: data.consumer.result
-    want_result: numeric data
+    want_result:
+      - numeric data
+      - numeric data
 
   - note: numeric namespace subobject preserves base fields in both selectors
     data:
