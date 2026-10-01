@@ -3892,8 +3892,9 @@ impl Interpreter {
                 r.span()
                     .source
                     .file()
-                    .replace('\n', "\\n")
-                    .replace('\r', "\\r"),
+                    .replace('%', "%25")
+                    .replace('\n', "%0A")
+                    .replace('\r', "%0D"),
                 r.span().line,
                 r.span().col
             )));
