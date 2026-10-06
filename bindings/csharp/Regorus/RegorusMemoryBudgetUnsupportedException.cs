@@ -6,7 +6,7 @@ using System;
 namespace Regorus
 {
     /// <summary>
-    /// The exception thrown when an RVM memory budget is used with suspendable execution.
+    /// Compatibility exception for the reserved native status 11.
     /// </summary>
     public sealed class RegorusMemoryBudgetUnsupportedException : InvalidOperationException
     {

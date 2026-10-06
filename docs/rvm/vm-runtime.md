@@ -34,6 +34,8 @@ fields to responsibilities.
 | `step_mode`                           | Enables single-step suspension after each instruction.      | `execution.rs` |
 | `host_await_responses`                | Pre-scripted responses keyed by identifier (run-to-completion). | `dispatch.rs` |
 | `execution_mode`                      | `RunToCompletion` or `Suspendable`.                         | `execution.rs` |
+| `next_execution_mode`                 | Mode selected for the next initial execution.                | `machine.rs` |
+| memory-budget account                 | Per-execution requested-byte owner retained across suspendable segments. | `machine.rs`, allocator shim |
 | `frame_pc_overridden`                 | Tracks manual PC updates inside frames.                     | `execution.rs`, `loops.rs`, `comprehension.rs` |
 | `strict_builtin_errors`               | Configures builtin failure handling (error vs `undefined`).  | `machine.rs`, `arithmetic.rs`, `dispatch.rs` |
 
@@ -102,6 +104,17 @@ fields to responsibilities.
   `resume(resume_value)` to continue.
 - Completion: when `execution_stack` becomes empty the VM sets
   `ExecutionState::Completed { result }`.
+- With `allocator-memory-limits`, one requested-byte account is snapshotted for
+  the initial execution and retained across suspensions. The account is selected
+  only while a synchronous segment runs; allocation headers preserve ownership
+  for frees on other threads. Updating the configured budget or execution mode
+  affects only the next initial execution. Native FFI resume parsing and
+  immediate result serialization remain within the active budget.
+- An independent unbudgeted VM entry, resume, or native conversion nested inside
+  a budgeted callback temporarily masks the caller's account and restores it on
+  return or unwind. This does not alter run-to-completion thread-baseline
+  accounting. Initial suspendable failures publish `ExecutionState::Error`;
+  unbudgeted failures retain the legacy register contents.
 
 `execution_model.rs` defines the frame types and state machine:
 
@@ -277,4 +290,3 @@ internal runtime field and is not a public C# getter.
   combines nested loops, comprehensions, function calls, and host awaits.
 
 ---
-

@@ -5,11 +5,15 @@ use crate::rvm::program::Program;
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 use crate::utils::limits;
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+use crate::utils::limits::MemoryBudgetAccount;
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 use crate::utils::limits::MemoryBudgetConfig;
 use crate::utils::limits::{
     fallback_execution_timer_config, monotonic_now, ExecutionTimer, ExecutionTimerConfig,
     LimitError,
 };
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+use crate::value::ResumeJsonError;
 use crate::value::Value;
 use crate::CompiledPolicy;
 use alloc::collections::{btree_map::Entry, BTreeMap, VecDeque};
@@ -34,6 +38,7 @@ pub(super) enum MemoryBudgetLifecycle {
     Inactive,
     ImplicitExecution,
     FfiResultSerialization,
+    SuspendableExecution,
 }
 
 /// The Rego Virtual Machine
@@ -95,6 +100,12 @@ pub struct RegoVM {
     #[cfg(test)]
     pub(super) memory_check_count: usize,
 
+    #[cfg(all(test, feature = "allocator-memory-limits", not(miri)))]
+    last_memory_budget_usage_for_test: Option<u64>,
+
+    #[cfg(all(test, feature = "allocator-memory-limits", not(miri)))]
+    ffi_output_start_usage_for_test: Option<u64>,
+
     /// Cache for evaluated paths in virtual data document lookup
     /// Structure: evaluated[path_component1][path_component2]...[Undefined] = result_value
     pub(super) evaluated: Value,
@@ -119,6 +130,9 @@ pub struct RegoVM {
 
     /// Current execution mode (run-to-completion vs suspendable)
     pub(super) execution_mode: ExecutionMode,
+
+    /// Execution mode selected for the next initial execution.
+    pub(super) next_execution_mode: ExecutionMode,
 
     /// Tracks whether the current top-of-stack frame PC was explicitly set by an instruction
     pub(super) frame_pc_overridden: bool,
@@ -145,9 +159,17 @@ pub struct RegoVM {
     /// Elapsed wall-clock time recorded when the VM entered a suspended state
     pub(super) execution_timer_elapsed_at_suspend: Option<Duration>,
 
-    /// Optional additional live-memory budget for each run-to-completion execution
+    /// Optional budget selected for the next initial execution.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) memory_budget_config: Option<MemoryBudgetConfig>,
+
+    /// Budget snapshotted for the currently active execution.
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    pub(super) active_memory_budget_config: Option<MemoryBudgetConfig>,
+
+    /// Requested-byte account retained across suspendable execution segments.
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    pub(super) suspendable_memory_budget_account: Option<MemoryBudgetAccount>,
 
     /// Current-thread live-byte baseline captured at execution start
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
@@ -156,6 +178,10 @@ pub struct RegoVM {
     /// Owner of the current memory-budget baseline.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) memory_budget_lifecycle: MemoryBudgetLifecycle,
+
+    /// Keeps an FFI segment active through immediate native result serialization.
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    pub(super) ffi_memory_budget_scope_active: bool,
 
     /// Cached dummy span for builtin calls (avoids Source::from_contents per call)
     pub(super) dummy_span: Option<crate::lexer::Span>,
@@ -230,6 +256,10 @@ impl RegoVM {
             executed_instructions: 0,
             #[cfg(test)]
             memory_check_count: 0,
+            #[cfg(all(test, feature = "allocator-memory-limits", not(miri)))]
+            last_memory_budget_usage_for_test: None,
+            #[cfg(all(test, feature = "allocator-memory-limits", not(miri)))]
+            ffi_output_start_usage_for_test: None,
             evaluated: Value::new_object(), // Initialize evaluation cache
             cache_hits: 0,                  // Initialize cache hit counter
             execution_stack: ExecutionStack::new(),
@@ -238,6 +268,7 @@ impl RegoVM {
             step_mode: false,
             host_await_responses: BTreeMap::new(),
             execution_mode: ExecutionMode::RunToCompletion,
+            next_execution_mode: ExecutionMode::RunToCompletion,
             frame_pc_overridden: false,
             strict_builtin_errors: false,
             builtins_cache: BTreeMap::new(),
@@ -247,9 +278,15 @@ impl RegoVM {
             #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
             memory_budget_config: None,
             #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+            active_memory_budget_config: None,
+            #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+            suspendable_memory_budget_account: None,
+            #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
             memory_budget_baseline: 0,
             #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
             memory_budget_lifecycle: MemoryBudgetLifecycle::Inactive,
+            #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+            ffi_memory_budget_scope_active: false,
             dummy_span: None,
             dummy_exprs: Vec::new(),
             cached_builtin_args: Vec::new(),
@@ -267,6 +304,15 @@ impl RegoVM {
 
     /// Load a complete program for execution
     pub fn load_program(&mut self, program: Arc<Program>) {
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        if matches!(
+            self.memory_budget_lifecycle,
+            MemoryBudgetLifecycle::SuspendableExecution
+        ) {
+            self.release_previous_execution_state();
+            self.finish_active_memory_budget_execution();
+        }
+
         self.program = program.clone();
 
         // Use the dispatch window size from the program for initial register allocation
@@ -368,7 +414,7 @@ impl RegoVM {
 
     /// Set the execution mode for the VM
     pub const fn set_execution_mode(&mut self, mode: ExecutionMode) {
-        self.execution_mode = mode;
+        self.next_execution_mode = mode;
     }
 
     /// Configure whether builtin operations should raise errors strictly
@@ -438,9 +484,9 @@ impl RegoVM {
         Ok(response)
     }
 
-    /// Get the current execution mode
+    /// Get the execution mode selected for the next initial execution.
     pub const fn get_execution_mode(&self) -> ExecutionMode {
-        self.execution_mode
+        self.next_execution_mode
     }
 
     /// Configure the execution timer to use the supplied configuration, or fall back to the global
@@ -455,13 +501,25 @@ impl RegoVM {
         self.execution_timer_config
     }
 
-    /// Configure a fresh memory budget for every run-to-completion execution.
+    /// Configure a fresh memory budget for the next initial execution.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     #[cfg_attr(docsrs, doc(cfg(feature = "allocator-memory-limits")))]
     pub const fn set_memory_budget_config(&mut self, config: Option<MemoryBudgetConfig>) {
         self.memory_budget_config = config;
+    }
+
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    pub(super) fn begin_suspendable_memory_budget_execution(&mut self) {
+        self.active_memory_budget_config = self.memory_budget_config;
         self.memory_budget_baseline = 0;
-        self.memory_budget_lifecycle = MemoryBudgetLifecycle::Inactive;
+        self.suspendable_memory_budget_account = self
+            .active_memory_budget_config
+            .map(|_| MemoryBudgetAccount::new());
+        self.memory_budget_lifecycle = if self.suspendable_memory_budget_account.is_some() {
+            MemoryBudgetLifecycle::SuspendableExecution
+        } else {
+            MemoryBudgetLifecycle::Inactive
+        };
     }
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
@@ -473,12 +531,16 @@ impl RegoVM {
             return;
         }
 
-        self.memory_budget_baseline = if self.memory_budget_config.is_some() {
+        self.suspendable_memory_budget_account = None;
+        self.active_memory_budget_config = self.memory_budget_config;
+        self.memory_budget_baseline = if self.active_memory_budget_config.is_some() {
             limits::current_thread_live_bytes()
         } else {
             0
         };
-        self.memory_budget_lifecycle = if self.memory_budget_config.is_some() {
+        self.memory_budget_lifecycle = if self.ffi_memory_budget_scope_active {
+            MemoryBudgetLifecycle::FfiResultSerialization
+        } else if self.active_memory_budget_config.is_some() {
             MemoryBudgetLifecycle::ImplicitExecution
         } else {
             MemoryBudgetLifecycle::Inactive
@@ -492,6 +554,7 @@ impl RegoVM {
             MemoryBudgetLifecycle::ImplicitExecution
         ) {
             self.memory_budget_baseline = 0;
+            self.active_memory_budget_config = None;
             self.memory_budget_lifecycle = MemoryBudgetLifecycle::Inactive;
         }
     }
@@ -502,7 +565,18 @@ impl RegoVM {
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     fn begin_ffi_result_serialization_memory_budget(&mut self) {
-        self.memory_budget_baseline = if self.memory_budget_config.is_some() {
+        self.ffi_memory_budget_scope_active = true;
+        if matches!(
+            self.memory_budget_lifecycle,
+            MemoryBudgetLifecycle::SuspendableExecution
+        ) || matches!(self.next_execution_mode, ExecutionMode::Suspendable)
+        {
+            return;
+        }
+
+        self.active_memory_budget_config = self.memory_budget_config;
+        self.suspendable_memory_budget_account = None;
+        self.memory_budget_baseline = if self.active_memory_budget_config.is_some() {
             limits::current_thread_live_bytes()
         } else {
             0
@@ -511,19 +585,27 @@ impl RegoVM {
     }
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    const fn finish_ffi_result_serialization_memory_budget(&mut self) {
+    fn finish_ffi_result_serialization_memory_budget(&mut self) {
+        self.ffi_memory_budget_scope_active = false;
         if matches!(
             self.memory_budget_lifecycle,
             MemoryBudgetLifecycle::FfiResultSerialization
         ) {
-            self.memory_budget_baseline = 0;
-            self.memory_budget_lifecycle = MemoryBudgetLifecycle::Inactive;
+            self.finish_active_memory_budget_execution();
+        } else if matches!(
+            self.memory_budget_lifecycle,
+            MemoryBudgetLifecycle::SuspendableExecution
+        ) && !matches!(self.execution_state, ExecutionState::Suspended { .. })
+        {
+            self.finish_active_memory_budget_execution();
         }
     }
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    pub(super) const fn finish_active_memory_budget_execution(&mut self) {
+    pub(super) fn finish_active_memory_budget_execution(&mut self) {
         self.memory_budget_baseline = 0;
+        self.active_memory_budget_config = None;
+        self.suspendable_memory_budget_account = None;
         self.memory_budget_lifecycle = MemoryBudgetLifecycle::Inactive;
     }
 
@@ -555,6 +637,112 @@ impl RegoVM {
         self.execute_to_c_string_for_ffi_with(|vm| vm.execute_entry_point_by_index(index))
     }
 
+    /// Parse a native resume value, resume the VM, and serialize the result under one budget.
+    #[doc(hidden)]
+    pub fn resume_to_c_string_for_ffi<F>(&mut self, parse_resume_json: F) -> Result<CString>
+    where
+        F: FnOnce() -> Result<Option<String>>,
+    {
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        {
+            self.begin_ffi_result_serialization_memory_budget();
+            let mut budget = FfiResultSerializationBudget { vm: self };
+            let account = budget.vm().suspendable_memory_budget_account.clone();
+
+            let process = || {
+                let resume_json = match parse_resume_json() {
+                    Ok(value) => value,
+                    Err(error) => {
+                        if let Err(budget_error) = budget.vm().check_memory_budget() {
+                            return Err(budget.vm().fail_suspendable_execution(budget_error));
+                        }
+                        let error = budget.vm().apply_memory_budget_precedence(error);
+                        if matches!(
+                            error,
+                            VmError::MemoryBudgetExceeded { .. }
+                                | VmError::MemoryLimitExceeded { .. }
+                        ) {
+                            return Err(budget.vm().fail_suspendable_execution(error));
+                        }
+                        return Err(error);
+                    }
+                };
+                let resume_value = match resume_json {
+                    Some(json) => match Value::from_json_str_for_resume(&json) {
+                        Ok(value) => Some(value),
+                        Err(ResumeJsonError::Malformed(error)) => {
+                            return Err(VmError::from(error));
+                        }
+                        Err(ResumeJsonError::Other(error)) => {
+                            let error = VmError::from(error);
+                            if let Err(budget_error) = budget.vm().check_memory_budget() {
+                                return Err(budget.vm().fail_suspendable_execution(budget_error));
+                            }
+                            let error = budget.vm().apply_memory_budget_precedence(error);
+                            if matches!(
+                                error,
+                                VmError::MemoryBudgetExceeded { .. }
+                                    | VmError::MemoryLimitExceeded { .. }
+                            ) {
+                                return Err(budget.vm().fail_suspendable_execution(error));
+                            }
+                            return Err(error);
+                        }
+                    },
+                    None => None,
+                };
+
+                let value = budget.vm().resume(resume_value)?;
+                let output = (|| {
+                    #[cfg(test)]
+                    {
+                        budget.vm().ffi_output_start_usage_for_test = budget
+                            .vm()
+                            .suspendable_memory_budget_account
+                            .as_ref()
+                            .map(|account| account.live_bytes());
+                    }
+                    let json = value.to_json_str().map_err(VmError::from)?;
+                    let output = CString::new(json).map_err(|_| VmError::Internal {
+                        message: String::from("RVM JSON result contained an interior NUL byte"),
+                        pc: budget.vm().pc,
+                    })?;
+                    budget.vm().check_memory_budget()?;
+                    Ok(output)
+                })();
+
+                match output {
+                    Ok(output) => Ok(output),
+                    Err(error) => {
+                        let error = budget.vm().apply_memory_budget_precedence(error);
+                        Err(budget.vm().fail_suspendable_execution(error))
+                    }
+                }
+            };
+
+            if let Some(account) = account.as_ref() {
+                account.with_scope(process)
+            } else {
+                crate::utils::limits::without_memory_budget_scope(process)
+            }
+        }
+
+        #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
+        {
+            crate::utils::limits::without_memory_budget_scope(|| {
+                let resume_value = parse_resume_json()?
+                    .map(|json| Value::from_json_str(&json).map_err(VmError::from))
+                    .transpose()?;
+                let value = self.resume(resume_value)?;
+                let json = value.to_json_str().map_err(VmError::from)?;
+                CString::new(json).map_err(|_| VmError::Internal {
+                    message: String::from("RVM JSON result contained an interior NUL byte"),
+                    pc: self.pc,
+                })
+            })
+        }
+    }
+
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     fn execute_to_c_string_for_ffi_with<F>(&mut self, execute: F) -> Result<CString>
     where
@@ -564,13 +752,26 @@ impl RegoVM {
         let mut budget = FfiResultSerializationBudget { vm: self };
         let output = (|| {
             let value = execute(budget.vm())?;
-            let json = value.to_json_str().map_err(VmError::from)?;
-            let output = CString::new(json).map_err(|_| VmError::Internal {
-                message: String::from("RVM JSON result contained an interior NUL byte"),
-                pc: budget.vm().pc,
-            })?;
-            budget.vm().check_memory_budget()?;
-            Ok(output)
+            let account = budget.vm().suspendable_memory_budget_account.clone();
+            let serialize = || {
+                #[cfg(test)]
+                {
+                    budget.vm().ffi_output_start_usage_for_test =
+                        account.as_ref().map(|account| account.live_bytes());
+                }
+                let json = value.to_json_str().map_err(VmError::from)?;
+                let output = CString::new(json).map_err(|_| VmError::Internal {
+                    message: String::from("RVM JSON result contained an interior NUL byte"),
+                    pc: budget.vm().pc,
+                })?;
+                budget.vm().check_memory_budget()?;
+                Ok(output)
+            };
+            if let Some(account) = account.as_ref() {
+                account.with_scope(serialize)
+            } else {
+                crate::utils::limits::without_memory_budget_scope(serialize)
+            }
         })();
 
         match output {
@@ -601,21 +802,11 @@ impl RegoVM {
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) const fn ensure_memory_budget_execution_mode(&self) -> Result<()> {
-        if self.memory_budget_config.is_some()
-            && matches!(self.execution_mode, ExecutionMode::Suspendable)
-        {
-            return Err(VmError::MemoryBudgetUnsupportedInSuspendableExecution { pc: self.pc });
-        }
-
         Ok(())
     }
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) const fn ensure_memory_budget_resume_supported(&self) -> Result<()> {
-        if self.memory_budget_config.is_some() {
-            return Err(VmError::MemoryBudgetUnsupportedInSuspendableExecution { pc: self.pc });
-        }
-
         Ok(())
     }
 
@@ -634,20 +825,33 @@ impl RegoVM {
     /// Check the configured budget against the active execution baseline.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn check_memory_budget(&mut self) -> Result<()> {
-        let Some(config) = self.memory_budget_config.filter(|_| {
-            !matches!(
-                self.memory_budget_lifecycle,
-                MemoryBudgetLifecycle::Inactive
-            )
-        }) else {
+        let Some(config) = self.active_memory_budget_config else {
             return Ok(());
         };
 
-        let current = limits::current_thread_live_bytes();
-        self.memory_budget_baseline = self.memory_budget_baseline.min(current);
-        let usage = current
-            .saturating_sub(self.memory_budget_baseline)
-            .unsigned_abs();
+        let usage = match self.memory_budget_lifecycle {
+            MemoryBudgetLifecycle::Inactive => return Ok(()),
+            MemoryBudgetLifecycle::SuspendableExecution => self
+                .suspendable_memory_budget_account
+                .as_ref()
+                .ok_or_else(|| VmError::Internal {
+                    message: String::from("active suspendable memory budget has no account"),
+                    pc: self.pc,
+                })?
+                .live_bytes(),
+            MemoryBudgetLifecycle::ImplicitExecution
+            | MemoryBudgetLifecycle::FfiResultSerialization => {
+                let current = limits::current_thread_live_bytes();
+                self.memory_budget_baseline = self.memory_budget_baseline.min(current);
+                current
+                    .saturating_sub(self.memory_budget_baseline)
+                    .unsigned_abs()
+            }
+        };
+        #[cfg(test)]
+        {
+            self.last_memory_budget_usage_for_test = Some(usage);
+        }
         let budget = config.limit.get();
         if usage > budget {
             return Err(VmError::MemoryBudgetExceeded {
@@ -919,9 +1123,268 @@ impl RegoVM {
 mod memory_budget_tests {
     use super::RegoVM;
     use super::VmError;
+    use crate::languages::rego::compiler::Compiler;
+    use crate::rvm::vm::ExecutionMode;
     use crate::MemoryBudgetConfig;
+    use crate::{Engine, Rc, Value};
+    use alloc::ffi::CString;
+    use alloc::string::String;
+    use alloc::sync::Arc;
     use alloc::vec;
     use core::num::NonZeroU64;
+
+    const NATIVE_RESUME_OUTPUT_BYTES: usize = 128 * 1024;
+    const NATIVE_OUTPUT_TEST_CAP_BYTES: u64 = 1024 * 1024;
+    const NATIVE_RESUME_OUTPUT_POLICY: &str = r#"
+package limit
+import rego.v1
+
+result := sprintf("%s%s", [
+    __builtin_host_await(input.value, "first"),
+    data.limit.large_text
+])
+"#;
+
+    fn native_resume_output_vm(
+        program: &Arc<crate::rvm::program::Program>,
+        data: &Value,
+        budget: u64,
+    ) -> RegoVM {
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.load_program(program.clone());
+        vm.set_data(data.clone()).expect("set fixture data");
+        vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+        vm.set_memory_budget_config(Some(MemoryBudgetConfig {
+            limit: NonZeroU64::new(budget).unwrap_or(NonZeroU64::MIN),
+        }));
+        vm
+    }
+
+    fn compile_native_resume_output_fixture() -> (Arc<crate::rvm::program::Program>, Value) {
+        let data_json = alloc::format!(
+            r#"{{"limit":{{"large_text":"{}"}}}}"#,
+            "x".repeat(NATIVE_RESUME_OUTPUT_BYTES)
+        );
+        let data = Value::from_json_str(&data_json).expect("valid fixture data");
+
+        let mut engine = Engine::new();
+        engine
+            .add_policy(
+                "memory_budget.rego".into(),
+                NATIVE_RESUME_OUTPUT_POLICY.into(),
+            )
+            .expect("add fixture policy");
+        let entry_point = Rc::from("data.limit.result");
+        let compiled = engine
+            .compile_with_entrypoint(&entry_point)
+            .expect("compile fixture policy");
+        let program = Compiler::compile_from_policy(&compiled, &[entry_point.as_ref()])
+            .expect("compile fixture VM program");
+
+        (program, data)
+    }
+
+    fn resume_to_large_native_output(
+        mut vm: RegoVM,
+    ) -> (RegoVM, core::result::Result<CString, VmError>) {
+        let initial = vm
+            .execute_entry_point_by_name_to_c_string_for_ffi("data.limit.result")
+            .expect("initial HostAwait output");
+        assert_eq!(initial.as_bytes_with_nul(), b"\"<undefined>\"\0");
+        assert!(matches!(
+            vm.execution_state,
+            super::super::execution_model::ExecutionState::Suspended { .. }
+        ));
+
+        let response = String::from("\"ok\"");
+        let output = vm.resume_to_c_string_for_ffi(move || Ok(Some(response)));
+        (vm, output)
+    }
+
+    #[allow(clippy::expect_used)]
+    #[test]
+    fn native_resume_output_allows_exact_budget_and_rejects_one_byte_over() {
+        let (program, data) = compile_native_resume_output_fixture();
+        let vm = native_resume_output_vm(&program, &data, NATIVE_OUTPUT_TEST_CAP_BYTES);
+        let (vm, output) = resume_to_large_native_output(vm);
+        let output = output.expect("budgeted native resume output succeeds");
+        assert_eq!(
+            output.as_bytes().len(),
+            NATIVE_RESUME_OUTPUT_BYTES.saturating_add(4)
+        );
+        let expected_output = output.as_bytes().to_vec();
+        let sampled_usage = vm
+            .last_memory_budget_usage_for_test
+            .expect("final native output check should record its live usage");
+        assert!(sampled_usage >= NATIVE_RESUME_OUTPUT_BYTES as u64);
+        assert!(sampled_usage <= NATIVE_OUTPUT_TEST_CAP_BYTES);
+        std::println!(
+            "native_resume_final_output_check_usage={sampled_usage}; output_json_bytes={}",
+            output.as_bytes().len()
+        );
+
+        let exact_vm = native_resume_output_vm(&program, &data, sampled_usage);
+        let (exact_vm, exact_output) = resume_to_large_native_output(exact_vm);
+        let exact_output = exact_output.expect("usage equal to budget succeeds");
+        assert_eq!(exact_output.as_bytes(), expected_output);
+        assert_eq!(
+            exact_vm.last_memory_budget_usage_for_test,
+            Some(sampled_usage)
+        );
+
+        let one_byte_over_budget = sampled_usage
+            .checked_sub(1)
+            .expect("fixture usage must exceed zero");
+        assert_eq!(sampled_usage, one_byte_over_budget.saturating_add(1));
+        let over_budget_vm = native_resume_output_vm(&program, &data, one_byte_over_budget);
+        let (mut over_budget_vm, over_budget_output) =
+            resume_to_large_native_output(over_budget_vm);
+        assert!(matches!(
+            over_budget_output,
+            Err(VmError::MemoryBudgetExceeded { usage, budget, .. })
+                if usage == sampled_usage && budget == one_byte_over_budget
+        ));
+        assert!(matches!(
+            &over_budget_vm.execution_state,
+            super::super::execution_model::ExecutionState::Error {
+                error: VmError::MemoryBudgetExceeded { usage, budget, .. }
+            } if *usage == sampled_usage && *budget == one_byte_over_budget
+        ));
+        assert!(over_budget_vm.execution_stack.is_empty());
+        assert!(over_budget_vm.host_await_responses.is_empty());
+        assert!(over_budget_vm.suspendable_memory_budget_account.is_none());
+        assert!(matches!(
+            over_budget_vm.memory_budget_lifecycle,
+            super::MemoryBudgetLifecycle::Inactive
+        ));
+        assert!(!matches!(
+            &over_budget_vm.execution_state,
+            super::super::execution_model::ExecutionState::Completed { .. }
+        ));
+
+        let further_resume =
+            over_budget_vm.resume_to_c_string_for_ffi(|| Ok(Some(String::from("\"retry\""))));
+        assert!(further_resume.is_err());
+        assert!(matches!(
+            &over_budget_vm.execution_state,
+            super::super::execution_model::ExecutionState::Error { .. }
+        ));
+
+        let plus_one_vm = native_resume_output_vm(&program, &data, sampled_usage.saturating_add(1));
+        let (_, plus_one_output) = resume_to_large_native_output(plus_one_vm);
+        assert_eq!(
+            plus_one_output
+                .expect("budget one byte above usage succeeds")
+                .as_bytes(),
+            expected_output
+        );
+    }
+
+    #[allow(clippy::expect_used)]
+    #[test]
+    fn large_native_resume_output_fails_at_the_final_check_and_allows_reuse() {
+        let (program, data) = compile_native_resume_output_fixture();
+        let calibration_vm = native_resume_output_vm(&program, &data, NATIVE_OUTPUT_TEST_CAP_BYTES);
+        let (calibration_vm, calibration_output) = resume_to_large_native_output(calibration_vm);
+        calibration_output.expect("calibration output succeeds under large cap");
+        let output_start_usage = calibration_vm
+            .ffi_output_start_usage_for_test
+            .expect("resume records live usage before native output construction");
+        let final_usage = calibration_vm
+            .last_memory_budget_usage_for_test
+            .expect("calibration records final native output check usage");
+        assert!(output_start_usage < final_usage);
+
+        let mut vm = native_resume_output_vm(&program, &data, output_start_usage);
+        let initial = vm
+            .execute_entry_point_by_name_to_c_string_for_ffi("data.limit.result")
+            .expect("initial HostAwait output");
+        assert_eq!(initial.as_bytes_with_nul(), b"\"<undefined>\"\0");
+        assert!(matches!(
+            vm.execution_state,
+            super::super::execution_model::ExecutionState::Suspended { .. }
+        ));
+        let before_resume_usage = vm
+            .suspendable_memory_budget_account
+            .as_ref()
+            .expect("suspended execution has an account")
+            .live_bytes();
+        assert!(before_resume_usage < output_start_usage);
+
+        let response = String::from("\"ok\"");
+        let error = vm
+            .resume_to_c_string_for_ffi(move || Ok(Some(response)))
+            .expect_err("native JSON and C-string production exceeds the cap");
+        let observed_output_start = vm
+            .ffi_output_start_usage_for_test
+            .expect("native output stage was reached");
+        let sampled_usage = vm
+            .last_memory_budget_usage_for_test
+            .expect("final output check should record live usage");
+        assert_eq!(observed_output_start, output_start_usage);
+        assert!(sampled_usage > output_start_usage);
+        assert!(matches!(
+            error,
+            VmError::MemoryBudgetExceeded { usage, budget, .. }
+                if usage == sampled_usage && budget == output_start_usage
+        ));
+        assert!(matches!(
+            &vm.execution_state,
+            super::super::execution_model::ExecutionState::Error {
+                error: VmError::MemoryBudgetExceeded { usage, budget, .. }
+            } if *usage == sampled_usage && *budget == output_start_usage
+        ));
+        assert!(vm.execution_stack.is_empty());
+        assert!(vm.host_await_responses.is_empty());
+        assert!(vm.suspendable_memory_budget_account.is_none());
+        assert!(matches!(
+            vm.memory_budget_lifecycle,
+            super::MemoryBudgetLifecycle::Inactive
+        ));
+        let further_resume = vm.resume_to_c_string_for_ffi(|| Ok(Some(String::from("\"retry\""))));
+        assert!(further_resume.is_err());
+        assert!(matches!(
+            &vm.execution_state,
+            super::super::execution_model::ExecutionState::Error { .. }
+        ));
+
+        vm.set_memory_budget_config(Some(MemoryBudgetConfig {
+            limit: NonZeroU64::new(NATIVE_OUTPUT_TEST_CAP_BYTES).unwrap_or(NonZeroU64::MIN),
+        }));
+        let (_, reused_output) = resume_to_large_native_output(vm);
+        assert_eq!(
+            reused_output
+                .expect("independent execution completes under its own budget")
+                .as_bytes()
+                .len(),
+            NATIVE_RESUME_OUTPUT_BYTES.saturating_add(4)
+        );
+    }
+
+    #[allow(clippy::expect_used)]
+    #[test]
+    fn one_byte_native_resume_budget_fails_and_terminalizes() {
+        let (program, data) = compile_native_resume_output_fixture();
+        let mut vm = native_resume_output_vm(&program, &data, 1);
+        let error = vm
+            .execute_entry_point_by_name_to_c_string_for_ffi("data.limit.result")
+            .expect_err("one-byte budget must not reach a valid HostAwait continuation");
+        assert!(matches!(error, VmError::MemoryBudgetExceeded { .. }));
+        assert!(matches!(
+            &vm.execution_state,
+            super::super::execution_model::ExecutionState::Error {
+                error: VmError::MemoryBudgetExceeded { .. }
+            }
+        ));
+        assert!(vm.execution_stack.is_empty());
+        assert!(vm.host_await_responses.is_empty());
+        assert!(vm.suspendable_memory_budget_account.is_none());
+        assert!(matches!(
+            vm.memory_budget_lifecycle,
+            super::MemoryBudgetLifecycle::Inactive
+        ));
+    }
 
     #[test]
     fn foreign_free_observed_before_allocation_does_not_grant_budget_credit() -> anyhow::Result<()>

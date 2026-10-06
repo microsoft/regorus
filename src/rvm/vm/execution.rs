@@ -16,127 +16,124 @@ use super::machine::RegoVM;
 
 impl RegoVM {
     pub fn execute(&mut self) -> Result<Value> {
-        self.ensure_memory_budget_execution_mode()?;
-        match self.execution_mode {
-            ExecutionMode::RunToCompletion => self.execute_run_to_completion(),
-            ExecutionMode::Suspendable => self.execute_suspendable(),
-        }
+        crate::utils::limits::without_memory_budget_scope(|| {
+            self.ensure_memory_budget_execution_mode()?;
+            self.execution_mode = self.next_execution_mode;
+            match self.execution_mode {
+                ExecutionMode::RunToCompletion => self.execute_run_to_completion(),
+                ExecutionMode::Suspendable => self.execute_suspendable(),
+            }
+        })
     }
 
     pub fn execute_entry_point_by_index(&mut self, index: usize) -> Result<Value> {
-        self.ensure_memory_budget_execution_mode()?;
-        let (entry_point_name, entry_point_pc) = {
-            let (name, &pc) = self.program.entry_points.get_index(index).ok_or(
-                VmError::InvalidEntryPointIndex {
-                    index,
-                    max_index: self.program.entry_points.len().saturating_sub(1),
-                    pc: self.pc,
-                },
-            )?;
-            (name.clone(), pc)
-        };
+        crate::utils::limits::without_memory_budget_scope(|| {
+            self.ensure_memory_budget_execution_mode()?;
+            let (entry_point_name, entry_point_pc) = {
+                let (name, &pc) = self.program.entry_points.get_index(index).ok_or(
+                    VmError::InvalidEntryPointIndex {
+                        index,
+                        max_index: self.program.entry_points.len().saturating_sub(1),
+                        pc: self.pc,
+                    },
+                )?;
+                (name.clone(), pc)
+            };
 
-        if entry_point_pc >= self.program.instructions.len() {
-            return Err(VmError::EntryPointPcOutOfBounds {
-                pc: entry_point_pc,
-                instruction_count: self.program.instructions.len(),
-                entry_point: entry_point_name,
-            });
-        }
+            if entry_point_pc >= self.program.instructions.len() {
+                return Err(VmError::EntryPointPcOutOfBounds {
+                    pc: entry_point_pc,
+                    instruction_count: self.program.instructions.len(),
+                    entry_point: entry_point_name,
+                });
+            }
 
-        match self.execution_mode {
-            ExecutionMode::RunToCompletion => {
-                let result = (|| {
-                    self.reset_run_to_completion_state()?;
-                    self.reset_execution_timer_state();
-                    self.validate_vm_state()?;
-                    let entry_point_pc_u32 = u32::try_from(entry_point_pc).map_err(|_| {
-                        VmError::EntryPointPcOutOfBounds {
-                            pc: entry_point_pc,
-                            instruction_count: self.program.instructions.len(),
-                            entry_point: entry_point_name.clone(),
+            self.execution_mode = self.next_execution_mode;
+            match self.execution_mode {
+                ExecutionMode::RunToCompletion => {
+                    let result = (|| {
+                        self.reset_run_to_completion_state()?;
+                        self.reset_execution_timer_state();
+                        self.validate_vm_state()?;
+                        let entry_point_pc_u32 = u32::try_from(entry_point_pc).map_err(|_| {
+                            VmError::EntryPointPcOutOfBounds {
+                                pc: entry_point_pc,
+                                instruction_count: self.program.instructions.len(),
+                                entry_point: entry_point_name.clone(),
+                            }
+                        })?;
+
+                        let result = self
+                            .jump_to(entry_point_pc_u32)
+                            .map_err(|err| self.apply_memory_budget_precedence(err))?;
+                        self.check_memory_budget()?;
+                        Ok(result)
+                    })();
+                    match result {
+                        Ok(value) => {
+                            self.finish_implicit_memory_budget_execution();
+                            Ok(value)
                         }
-                    })?;
-
-                    let result = self
-                        .jump_to(entry_point_pc_u32)
-                        .map_err(|err| self.apply_memory_budget_precedence(err))?;
-                    self.check_memory_budget()?;
-                    Ok(result)
-                })();
-                match result {
-                    Ok(value) => {
-                        self.finish_implicit_memory_budget_execution();
-                        Ok(value)
+                        Err(err) => Err(self.fail_run_to_completion(err)),
                     }
-                    Err(err) => Err(self.fail_run_to_completion(err)),
                 }
+                ExecutionMode::Suspendable => self.execute_suspendable_entry(entry_point_pc),
             }
-            ExecutionMode::Suspendable => {
-                self.reset_execution_state();
-                self.reset_execution_timer_state();
-
-                self.validate_vm_state()?;
-                self.execute_suspendable_entry(entry_point_pc)
-            }
-        }
+        })
     }
 
     pub fn execute_entry_point_by_name(&mut self, name: &str) -> Result<Value> {
-        self.ensure_memory_budget_execution_mode()?;
-        let entry_point_pc =
-            self.program
-                .get_entry_point(name)
-                .ok_or_else(|| VmError::EntryPointNotFound {
-                    name: String::from(name),
-                    available: self.program.entry_points.keys().cloned().collect(),
-                    pc: self.pc,
-                })?;
-
-        if entry_point_pc >= self.program.instructions.len() {
-            return Err(VmError::EntryPointPcOutOfBounds {
-                pc: entry_point_pc,
-                instruction_count: self.program.instructions.len(),
-                entry_point: String::from(name),
-            });
-        }
-
-        match self.execution_mode {
-            ExecutionMode::RunToCompletion => {
-                let result = (|| {
-                    self.reset_run_to_completion_state()?;
-                    self.reset_execution_timer_state();
-                    self.validate_vm_state()?;
-                    let entry_point_pc_u32 = u32::try_from(entry_point_pc).map_err(|_| {
-                        VmError::EntryPointPcOutOfBounds {
-                            pc: entry_point_pc,
-                            instruction_count: self.program.instructions.len(),
-                            entry_point: String::from(name),
-                        }
+        crate::utils::limits::without_memory_budget_scope(|| {
+            self.ensure_memory_budget_execution_mode()?;
+            let entry_point_pc =
+                self.program
+                    .get_entry_point(name)
+                    .ok_or_else(|| VmError::EntryPointNotFound {
+                        name: String::from(name),
+                        available: self.program.entry_points.keys().cloned().collect(),
+                        pc: self.pc,
                     })?;
 
-                    let result = self
-                        .jump_to(entry_point_pc_u32)
-                        .map_err(|err| self.apply_memory_budget_precedence(err))?;
-                    self.check_memory_budget()?;
-                    Ok(result)
-                })();
-                match result {
-                    Ok(value) => {
-                        self.finish_implicit_memory_budget_execution();
-                        Ok(value)
-                    }
-                    Err(err) => Err(self.fail_run_to_completion(err)),
-                }
+            if entry_point_pc >= self.program.instructions.len() {
+                return Err(VmError::EntryPointPcOutOfBounds {
+                    pc: entry_point_pc,
+                    instruction_count: self.program.instructions.len(),
+                    entry_point: String::from(name),
+                });
             }
-            ExecutionMode::Suspendable => {
-                self.reset_execution_state();
-                self.reset_execution_timer_state();
 
-                self.validate_vm_state()?;
-                self.execute_suspendable_entry(entry_point_pc)
+            self.execution_mode = self.next_execution_mode;
+            match self.execution_mode {
+                ExecutionMode::RunToCompletion => {
+                    let result = (|| {
+                        self.reset_run_to_completion_state()?;
+                        self.reset_execution_timer_state();
+                        self.validate_vm_state()?;
+                        let entry_point_pc_u32 = u32::try_from(entry_point_pc).map_err(|_| {
+                            VmError::EntryPointPcOutOfBounds {
+                                pc: entry_point_pc,
+                                instruction_count: self.program.instructions.len(),
+                                entry_point: String::from(name),
+                            }
+                        })?;
+
+                        let result = self
+                            .jump_to(entry_point_pc_u32)
+                            .map_err(|err| self.apply_memory_budget_precedence(err))?;
+                        self.check_memory_budget()?;
+                        Ok(result)
+                    })();
+                    match result {
+                        Ok(value) => {
+                            self.finish_implicit_memory_budget_execution();
+                            Ok(value)
+                        }
+                        Err(err) => Err(self.fail_run_to_completion(err)),
+                    }
+                }
+                ExecutionMode::Suspendable => self.execute_suspendable_entry(entry_point_pc),
             }
-        }
+        })
     }
 
     pub(super) fn jump_to(&mut self, target: u32) -> Result<Value> {
@@ -214,37 +211,119 @@ impl RegoVM {
     }
 
     fn execute_suspendable(&mut self) -> Result<Value> {
-        self.reset_execution_state();
-        self.reset_execution_timer_state();
-        self.execution_state = ExecutionState::Running;
-        match self.run_stackless_from(0) {
-            Ok(result) => Ok(result),
-            Err(err) => {
-                self.execution_state = ExecutionState::Error { error: err.clone() };
-                Err(err)
-            }
-        }
+        self.execute_new_suspendable_execution(0, false)
     }
 
     fn execute_suspendable_entry(&mut self, entry_point_pc: usize) -> Result<Value> {
-        // Precondition: callers (execute_entry_point_by_{index,name}) reset the
-        // VM before invoking this method, so the VM must be in a clean state.
-        #[cfg(debug_assertions)]
-        self.debug_assert_state_is_clean();
-        self.execution_state = ExecutionState::Running;
-        self.reset_execution_timer_state();
-        match self.run_stackless_from(entry_point_pc) {
-            Ok(result) => Ok(result),
-            Err(err) => {
-                self.execution_state = ExecutionState::Error { error: err.clone() };
-                Err(err)
+        self.execute_new_suspendable_execution(entry_point_pc, true)
+    }
+
+    fn execute_new_suspendable_execution(
+        &mut self,
+        start_pc: usize,
+        validate_vm_state: bool,
+    ) -> Result<Value> {
+        self.release_previous_execution_state();
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        self.begin_suspendable_memory_budget_execution();
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        let budget_account = self.suspendable_memory_budget_account.clone();
+        let mut run = || {
+            self.initialize_execution_state();
+            #[cfg(debug_assertions)]
+            self.debug_assert_state_is_clean();
+            self.execution_state = ExecutionState::Running;
+            self.reset_execution_timer_state();
+
+            self.pc = start_pc;
+            let result = (|| {
+                if validate_vm_state {
+                    self.validate_vm_state()?;
+                }
+                self.check_memory_budget()
+            })()
+            .and_then(|()| self.run_stackless_from(start_pc))
+            .and_then(|value| {
+                self.check_memory_budget()?;
+                Ok(value)
+            });
+            match result {
+                Ok(value) => {
+                    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+                    if !self.ffi_memory_budget_scope_active
+                        && !matches!(self.execution_state, ExecutionState::Suspended { .. })
+                    {
+                        self.finish_active_memory_budget_execution();
+                    }
+                    Ok(value)
+                }
+                Err(err) => {
+                    let err = self.apply_memory_budget_precedence(err);
+                    Err(self.fail_initial_suspendable_execution(err))
+                }
             }
+        };
+
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        if let Some(account) = budget_account.as_ref() {
+            account.with_scope(run)
+        } else {
+            run()
         }
+        #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
+        run()
     }
 
     pub fn resume(&mut self, resume_value: Option<Value>) -> Result<Value> {
         self.ensure_memory_budget_resume_supported()?;
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        let budget_account = self.suspendable_memory_budget_account.clone();
 
+        let resume = || {
+            let result = self
+                .resume_suspendable_segment(resume_value)
+                .and_then(|value| {
+                    self.check_memory_budget()?;
+                    Ok(value)
+                });
+            match result {
+                Ok(value) => {
+                    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+                    if !self.ffi_memory_budget_scope_active
+                        && !matches!(self.execution_state, ExecutionState::Suspended { .. })
+                    {
+                        self.finish_active_memory_budget_execution();
+                    }
+                    Ok(value)
+                }
+                Err(err)
+                    if matches!(
+                        err,
+                        VmError::MissingResumeValue { .. }
+                            | VmError::UnexpectedResumeValue { .. }
+                            | VmError::InvalidResumeState { .. }
+                    ) =>
+                {
+                    Err(err)
+                }
+                Err(err) => {
+                    let err = self.apply_memory_budget_precedence(err);
+                    Err(self.fail_suspendable_execution(err))
+                }
+            }
+        };
+
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        if let Some(account) = budget_account.as_ref() {
+            account.with_scope(resume)
+        } else {
+            crate::utils::limits::without_memory_budget_scope(resume)
+        }
+        #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
+        crate::utils::limits::without_memory_budget_scope(resume)
+    }
+
+    fn resume_suspendable_segment(&mut self, resume_value: Option<Value>) -> Result<Value> {
         // Precondition is enforced below by returning `VmError::InvalidResumeState`
         // for any non-`Suspended` state. A `debug_assert!` here would diverge
         // debug vs release behavior and, when invoked via FFI, would trip the
@@ -286,6 +365,7 @@ impl RegoVM {
                 if let Some(slot) = self.registers.get_mut(dest_index) {
                     *slot = value;
                 }
+                self.check_memory_budget()?;
             }
             other_reason => {
                 if resume_value.is_some() {

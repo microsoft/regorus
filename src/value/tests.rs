@@ -21,6 +21,59 @@ use alloc::vec::Vec;
 use super::{Object, Set};
 use crate::value::Value;
 
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+#[test]
+fn resume_deserialization_limit_error_capture_is_nested_thread_local_and_unwind_safe() {
+    use super::{
+        record_resume_deserialization_limit_error, ResumeDeserializationLimitErrorCapture,
+    };
+    use crate::utils::limits::LimitError;
+
+    let outer_error = LimitError::MemoryLimitExceeded {
+        usage: 256,
+        limit: 128,
+    };
+    let nested_error = LimitError::MemoryLimitExceeded {
+        usage: 512,
+        limit: 256,
+    };
+    let thread_error = LimitError::MemoryLimitExceeded {
+        usage: 1024,
+        limit: 512,
+    };
+    let outer_capture = ResumeDeserializationLimitErrorCapture::new();
+    record_resume_deserialization_limit_error(outer_error);
+
+    {
+        let nested_capture = ResumeDeserializationLimitErrorCapture::new();
+        assert_eq!(nested_capture.take(), None);
+        record_resume_deserialization_limit_error(nested_error);
+        assert_eq!(nested_capture.take(), Some(nested_error));
+    }
+
+    let thread_result = std::thread::spawn(move || {
+        let thread_capture = ResumeDeserializationLimitErrorCapture::new();
+        assert_eq!(thread_capture.take(), None);
+        record_resume_deserialization_limit_error(thread_error);
+        thread_capture.take()
+    })
+    .join()
+    .expect("thread-local capture test thread should complete");
+    assert_eq!(thread_result, Some(thread_error));
+
+    let unwind_result = std::panic::catch_unwind(|| {
+        let _unwinding_capture = ResumeDeserializationLimitErrorCapture::new();
+        record_resume_deserialization_limit_error(nested_error);
+        panic!("exercise RAII restoration during unwind");
+    });
+    assert!(unwind_result.is_err());
+    assert_eq!(outer_capture.take(), Some(outer_error));
+
+    drop(outer_capture);
+    let subsequent_capture = ResumeDeserializationLimitErrorCapture::new();
+    assert_eq!(subsequent_capture.take(), None);
+}
+
 fn val(i: u64) -> Value {
     Value::from(i)
 }

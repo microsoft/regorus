@@ -14,8 +14,6 @@ mod time;
 #[allow(unused_imports)]
 pub use error::LimitError;
 
-#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-pub(crate) use memory::current_thread_live_bytes;
 #[allow(unused_imports)]
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 #[cfg_attr(docsrs, doc(cfg(feature = "allocator-memory-limits")))]
@@ -24,6 +22,8 @@ pub use memory::{
     global_memory_limit, set_global_memory_limit, set_thread_flush_threshold_override,
     thread_memory_flush_threshold, MemoryBudgetConfig,
 };
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+pub(crate) use memory::{current_thread_live_bytes, MemoryBudgetAccount};
 
 #[allow(unused_imports)]
 pub use time::{
@@ -33,6 +33,30 @@ pub use time::{
 
 pub use length::PolicyLengthConfig;
 pub(crate) use length::{DEFAULT_MAX_COL, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_LINES};
+
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+#[inline]
+pub(crate) fn without_memory_budget_scope<R>(operation: impl FnOnce() -> R) -> R {
+    mimalloc::limits::with_unowned_memory_budget_scope(operation)
+}
+
+#[cfg(any(miri, not(feature = "allocator-memory-limits")))]
+#[inline]
+pub(crate) fn without_memory_budget_scope<R>(operation: impl FnOnce() -> R) -> R {
+    operation()
+}
+
+/// Run a binding-side read-only operation without attributing its allocations
+/// to an active VM execution budget.
+///
+/// This doc-hidden bridge is needed by the separately compiled FFI crate,
+/// which cannot call the crate-private selector helper. Process-global
+/// allocation accounting remains enabled.
+#[doc(hidden)]
+#[inline]
+pub fn with_unowned_memory_budget_scope_for_ffi<R>(operation: impl FnOnce() -> R) -> R {
+    without_memory_budget_scope(operation)
+}
 
 #[cfg(test)]
 pub use time::acquire_limits_test_lock;

@@ -7,6 +7,8 @@ use core::num::NonZeroU64;
 use core::sync::atomic::{AtomicU64, Ordering};
 use std::thread_local;
 
+pub(crate) use mimalloc::limits::MemoryBudgetAccount;
+
 static GLOBAL_MEMORY_LIMIT: AtomicU64 = AtomicU64::new(u64::MAX);
 
 // Maximum iteration count before forcing a global memory check.
