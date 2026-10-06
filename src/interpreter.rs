@@ -3192,12 +3192,32 @@ impl Interpreter {
                 }
 
                 let prev_module = self.set_current_module(Some(module.clone()))?;
-                for rule in &module.policy {
-                    if !self.processed.contains(rule) {
-                        self.eval_default_rule(rule)?;
+                let default_result = (|| -> Result<()> {
+                    for rule in &module.policy {
+                        if !self.processed.contains(rule) {
+                            if let Rule::Default { refr, args, .. } = rule.as_ref() {
+                                if args.is_empty() {
+                                    let refr = match refr.as_ref() {
+                                        Expr::RefBrack { refr, .. } => refr,
+                                        _ => refr,
+                                    };
+                                    let mut rule_path =
+                                        vec![PathComponent::String("data".to_string())];
+                                    rule_path
+                                        .extend(get_rule_path_components(&module.package.refr)?);
+                                    rule_path.extend(get_rule_path_components(refr)?);
+                                    self.ensure_rule_evaluated(format_path_components(
+                                        &rule_path,
+                                    )?)?;
+                                }
+                            }
+                            self.eval_default_rule(rule)?;
+                        }
                     }
-                }
+                    Ok(())
+                })();
                 self.set_current_module(prev_module)?;
+                default_result?;
                 self.mark_processed(&module_value_components)?;
             }
         }

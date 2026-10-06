@@ -1019,6 +1019,57 @@ fn dynamic_namespace_package_prefetch_matches_in_both_vm_modes() -> Result<()> {
 }
 
 #[test]
+fn dynamic_namespace_selected_package_defaults_follow_normal_rules_in_both_vm_modes() -> Result<()>
+{
+    let entrypoint = "data.framework.allow";
+
+    for default_first in [true, false] {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "framework.rego".to_string(),
+            r#"
+            package framework
+            default allow := true
+            allow := false if {
+                cfg := data.config[input.namespace]
+                cfg.blocked
+            }
+            "#
+            .to_string(),
+        )?;
+
+        let default_policy = "package config.target\ndefault blocked := false".to_string();
+        let ordinary_policy = "package config.target\nblocked := true".to_string();
+        if default_first {
+            engine.add_policy("default.rego".to_string(), default_policy)?;
+            engine.add_policy("ordinary.rego".to_string(), ordinary_policy)?;
+        } else {
+            engine.add_policy("ordinary.rego".to_string(), ordinary_policy)?;
+            engine.add_policy("default.rego".to_string(), default_policy)?;
+        }
+
+        let compiled = engine.compile_with_entrypoint(&entrypoint.into())?;
+        let program = Compiler::compile_from_policy(&compiled, &[entrypoint])?;
+        let data = engine.get_data();
+
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_data(data.clone())?;
+            vm.set_execution_mode(mode);
+            vm.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+            assert_eq!(
+                vm.execute_entry_point_by_name(entrypoint)?,
+                Value::Bool(false),
+                "{mode:?} result with default_first={default_first}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn dynamic_namespace_lookup_does_not_prefetch_a_trailing_sibling_rule() -> Result<()> {
     let entrypoint = "data.framework.result";
     let mut engine = Engine::new();

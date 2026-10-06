@@ -314,6 +314,181 @@ fn dynamic_data_root_lookup_does_not_evaluate_unrelated_modules() -> Result<()> 
 }
 
 #[test]
+fn dynamic_namespace_defaults_follow_ordinary_rules_across_file_orders() -> Result<()> {
+    for default_first in [true, false] {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "framework.rego".to_string(),
+            r#"
+            package framework
+            default allow := true
+            allow := false if {
+                cfg := data[input.namespace]
+                cfg.blocked
+            }
+            "#
+            .to_string(),
+        )?;
+
+        let default_policy = "package target\ndefault blocked := false".to_string();
+        let ordinary_policy = "package target\nblocked := true".to_string();
+        if default_first {
+            engine.add_policy("default.rego".to_string(), default_policy)?;
+            engine.add_policy("ordinary.rego".to_string(), ordinary_policy)?;
+        } else {
+            engine.add_policy("ordinary.rego".to_string(), ordinary_policy)?;
+            engine.add_policy("default.rego".to_string(), default_policy)?;
+        }
+        engine.add_policy(
+            "unrelated.rego".to_string(),
+            "package unrelated\nfirst := second\nsecond := first".to_string(),
+        )?;
+        engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+        let entrypoint: Rc<str> = "data.framework.allow".into();
+        let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+        let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+        assert_eq!(compiled.eval_with_input(input)?, Value::Bool(false));
+        assert_eq!(
+            engine.eval_rule(entrypoint.to_string())?,
+            Value::Bool(false)
+        );
+        assert_eq!(
+            engine.eval_rule("data.target.blocked".to_string())?,
+            Value::Bool(true),
+            "ordinary target rule must win regardless of file order"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_with_failure_restores_default_module_context() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        f(x) := x
+        result := "primary" if { f(0) with f as data[input.namespace] } else := "fallback" if { true }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "target-default.rego".to_string(),
+        "package target\ndefault blocked := false".to_string(),
+    )?;
+    engine.add_policy(
+        "target-true.rego".to_string(),
+        "package target\nblocked := true".to_string(),
+    )?;
+    engine.add_policy(
+        "target-false.rego".to_string(),
+        "package target\nblocked := false".to_string(),
+    )?;
+
+    let entrypoint: Rc<str> = "data.framework.result".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    assert_eq!(
+        compiled.eval_with_input(input.clone())?,
+        Value::from("fallback")
+    );
+
+    engine.set_input(input);
+    assert_eq!(
+        engine.eval_rule(entrypoint.to_string())?,
+        Value::from("fallback")
+    );
+
+    let followup = engine.eval_query("data.framework.f(7)".to_string(), false)?;
+    assert_eq!(
+        followup.result[0].expressions[0].value,
+        Value::from(7),
+        "a subsequent ordinary function call should remain usable on the same Engine"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_default_applies_when_selected_ordinary_rule_is_undefined() -> Result<()> {
+    for default_first in [true, false] {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "framework.rego".to_string(),
+            r#"
+            package framework
+            default allow := true
+            allow := false if {
+                cfg := data[input.namespace]
+                cfg.blocked
+            }
+            "#
+            .to_string(),
+        )?;
+
+        let default_policy = "package target\ndefault blocked := false".to_string();
+        let ordinary_policy = "package target\nblocked := true if { input.enabled }".to_string();
+        if default_first {
+            engine.add_policy("default.rego".to_string(), default_policy)?;
+            engine.add_policy("ordinary.rego".to_string(), ordinary_policy)?;
+        } else {
+            engine.add_policy("ordinary.rego".to_string(), ordinary_policy)?;
+            engine.add_policy("default.rego".to_string(), default_policy)?;
+        }
+        engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+        let entrypoint: Rc<str> = "data.framework.allow".into();
+        let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+        let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+        assert_eq!(compiled.eval_with_input(input)?, Value::Bool(true));
+        assert_eq!(engine.eval_rule(entrypoint.to_string())?, Value::Bool(true));
+        assert_eq!(
+            engine.eval_rule("data.target.blocked".to_string())?,
+            Value::Bool(false)
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_ordinary_rule_without_default_stays_undefined() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        default allow := true
+        allow := false if {
+            cfg := data[input.namespace]
+            cfg.blocked
+        }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nblocked := true if { input.enabled }".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.allow".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, Value::Bool(true));
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, Value::Bool(true));
+    assert_eq!(
+        engine.eval_rule("data.target.blocked".to_string())?,
+        Value::Undefined
+    );
+
+    Ok(())
+}
+
+#[test]
 fn nested_dynamic_data_lookup_does_not_prefetch_a_dotted_suffix_rule() -> Result<()> {
     let mut engine = Engine::new();
     engine.add_policy(
