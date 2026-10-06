@@ -908,6 +908,110 @@ mod namespace_tests {
         regorus_engine_drop(engine);
     }
 
+    #[test]
+    fn overdeep_policy_path_returns_an_error_and_keeps_the_engine_usable() {
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let stable_file = CString::new("stable.rego").expect("valid file path");
+        let stable_policy = CString::new("package stable\nvalue := true").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, stable_file.as_ptr(), stable_policy.as_ptr());
+        assert!(matches!(&added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let deep_package = ["segment"; 33].join(".");
+        let deep_file = CString::new("deep.rego").expect("valid file path");
+        let deep_policy =
+            CString::new(format!("package {deep_package}\nvalue := true")).expect("valid policy");
+        let rejected = regorus_engine_add_policy(engine, deep_file.as_ptr(), deep_policy.as_ptr());
+        let is_error = matches!(&rejected.status, RegorusStatus::Error);
+        let error_message = if rejected.error_message.is_null() {
+            None
+        } else {
+            Some(
+                unsafe { CStr::from_ptr(rejected.error_message) }
+                    .to_str()
+                    .expect("UTF-8 error message")
+                    .to_owned(),
+            )
+        };
+        regorus_result_drop(rejected);
+        assert!(
+            is_error,
+            "overdeep policy was not rejected: {error_message:?}"
+        );
+
+        let query = CString::new("data.stable.value").expect("valid rule path");
+        let result = regorus_engine_eval_rule(engine, query.as_ptr());
+        let succeeded = matches!(&result.status, RegorusStatus::Ok);
+        let output = if result.output.is_null() {
+            None
+        } else {
+            Some(
+                unsafe { CStr::from_ptr(result.output) }
+                    .to_str()
+                    .expect("UTF-8 result")
+                    .to_owned(),
+            )
+        };
+        regorus_result_drop(result);
+        assert!(
+            succeeded,
+            "engine failed after rejecting the policy: {output:?}"
+        );
+        assert_eq!(output.as_deref(), Some("true"));
+
+        let long_dotted = format!("data{}", ".a".repeat(300_000));
+        let long_bracketed = format!("data{}", r#"["a"]"#.repeat(180_000));
+        for path in [long_dotted, long_bracketed] {
+            assert!(path.len() < 1024 * 1024);
+            let rule = CString::new(path).expect("valid rule path");
+            let rejected = regorus_engine_eval_rule(engine, rule.as_ptr());
+            let is_error = matches!(&rejected.status, RegorusStatus::Error);
+            let error_message = if rejected.error_message.is_null() {
+                None
+            } else {
+                Some(
+                    unsafe { CStr::from_ptr(rejected.error_message) }
+                        .to_str()
+                        .expect("UTF-8 error message")
+                        .to_owned(),
+                )
+            };
+            regorus_result_drop(rejected);
+            assert!(
+                is_error,
+                "huge rule path was not rejected: {error_message:?}"
+            );
+            assert_eq!(
+                error_message.as_deref(),
+                Some("not a valid rule path"),
+                "expected the path validation error, not an engine-poisoned error"
+            );
+
+            let result = regorus_engine_eval_rule(engine, query.as_ptr());
+            let succeeded = matches!(&result.status, RegorusStatus::Ok);
+            let output = if result.output.is_null() {
+                None
+            } else {
+                Some(
+                    unsafe { CStr::from_ptr(result.output) }
+                        .to_str()
+                        .expect("UTF-8 result")
+                        .to_owned(),
+                )
+            };
+            regorus_result_drop(result);
+            assert!(
+                succeeded,
+                "engine failed after rejecting the rule: {output:?}"
+            );
+            assert_eq!(output.as_deref(), Some("true"));
+        }
+
+        regorus_engine_drop(engine);
+    }
+
     #[cfg(feature = "rvm")]
     #[test]
     fn bracketed_identifier_entrypoint_compiles_and_executes_through_engine_ffi() {

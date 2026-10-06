@@ -964,6 +964,154 @@ fn numeric_namespace_selectors_keep_string_identity_on_reused_vm() -> Result<()>
 }
 
 #[test]
+fn dynamic_namespace_package_prefetch_matches_in_both_vm_modes() -> Result<()> {
+    let entrypoint = "data.framework.allow";
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        default allow := true
+        allow := false if {
+            cfg := data.config[input.namespace]
+            cfg.blocked
+        }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package config.target\nblocked := true".to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&entrypoint.into())?;
+    let program = Compiler::compile_from_policy(&compiled, &[entrypoint])?;
+    let data = engine.get_data();
+    let cases = [
+        (
+            Value::from_json_str(r#"{"namespace":"target"}"#)?,
+            Value::Bool(false),
+        ),
+        (Value::new_object(), Value::Bool(true)),
+        (Value::Undefined, Value::Bool(true)),
+        (
+            Value::from_json_str(r#"{"namespace":"target"}"#)?,
+            Value::Bool(false),
+        ),
+    ];
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_data(data.clone())?;
+        vm.set_execution_mode(mode);
+
+        for (input, expected) in &cases {
+            vm.set_input(input.clone());
+            assert_eq!(
+                vm.execute_entry_point_by_name(entrypoint)?,
+                *expected,
+                "{mode:?} result for input {input:?}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookup_does_not_prefetch_a_trailing_sibling_rule() -> Result<()> {
+    let entrypoint = "data.framework.result";
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        "package framework\nresult := data[input.namespace].value".to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nvalue := 7\nunrelated := data.framework.result".to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&entrypoint.into())?;
+    let program = Compiler::compile_from_policy(&compiled, &[entrypoint])?;
+    let data = engine.get_data();
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_data(data.clone())?;
+        vm.set_execution_mode(mode);
+        vm.set_input(input.clone());
+        assert_eq!(
+            vm.execute_entry_point_by_name(entrypoint)?,
+            Value::from(7),
+            "{mode:?} result"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookup_materializes_a_trailing_subpackage_without_parent_siblings(
+) -> Result<()> {
+    let entrypoint = "data.framework.config";
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        "package framework\nconfig := data[input.namespace].nested".to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nunrelated := data.framework.config".to_string(),
+    )?;
+    engine.add_policy(
+        "nested.rego".to_string(),
+        "package target.nested\nvalue := 7".to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&entrypoint.into())?;
+    let program = Compiler::compile_from_policy(&compiled, &[entrypoint])?;
+    let data = engine.get_data();
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    let expected = Value::from_json_str(r#"{"value":7}"#)?;
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_data(data.clone())?;
+        vm.set_execution_mode(mode);
+        vm.set_input(input.clone());
+        assert_eq!(
+            vm.execute_entry_point_by_name(entrypoint)?,
+            expected,
+            "{mode:?} result"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn rvm_compiler_rejects_large_entrypoints_with_many_components() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "base.rego".to_string(),
+        "package base\nvalue := true".to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&"data.base.value".into())?;
+    let paths = [
+        format!("data{}", ".a".repeat(300_000)),
+        format!("data{}", r#"["a"]"#.repeat(180_000)),
+    ];
+
+    for path in &paths {
+        assert!(path.len() < 1024 * 1024);
+        assert!(Compiler::compile_from_policy(&compiled, &[path]).is_err());
+    }
+
+    Ok(())
+}
+
+#[test]
 fn numeric_object_selectors_do_not_use_data_namespace_fallback() -> Result<()> {
     let entrypoint = "data.consumer.result";
     let mut engine = Engine::new();

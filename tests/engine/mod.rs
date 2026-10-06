@@ -304,10 +304,12 @@ fn dynamic_data_root_lookup_does_not_evaluate_unrelated_modules() -> Result<()> 
     )?;
     engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
 
-    assert_eq!(
-        engine.eval_rule("data.framework.result".to_string())?,
-        Value::from(7)
-    );
+    let entrypoint: Rc<str> = "data.framework.result".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, Value::from(7));
+
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, Value::from(7));
     Ok(())
 }
 
@@ -330,6 +332,702 @@ fn nested_dynamic_data_lookup_does_not_prefetch_a_dotted_suffix_rule() -> Result
         engine.eval_rule("data.dynamic.value".to_string())?,
         Value::from(7)
     );
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookup_does_not_prefetch_a_trailing_sibling_rule() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        "package framework\nresult := data[input.namespace].value\nnested := data[input.namespace].nested"
+            .to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nvalue := 7\nunrelated := data.framework.result".to_string(),
+    )?;
+    engine.add_policy(
+        "nested.rego".to_string(),
+        "package target.nested\nvalue := 11".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    assert_eq!(
+        engine.eval_rule("data.framework.result".to_string())?,
+        Value::from(7)
+    );
+    assert_eq!(
+        engine.eval_rule("data.framework.nested".to_string())?,
+        Value::from_json_str(r#"{"value":11}"#)?
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_nested_input_with_preserves_outer_data_override() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        outer := cfg if { cfg := inner with data.target as {"blocked": false} }
+        inner := cfg if { cfg := data[input.namespace] with input as {"namespace": "target"} }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nblocked := true".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.outer".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    let expected = Value::from_json_str(r#"{"blocked":false}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, expected);
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, expected);
+    assert_eq!(
+        engine.eval_rule("data.target.blocked".to_string())?,
+        Value::Bool(true),
+        "the data replacement must not persist after evaluation"
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookup_materializes_a_trailing_subpackage_without_parent_siblings(
+) -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        "package framework\nconfig := data[input.namespace].nested".to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nunrelated := data.framework.config".to_string(),
+    )?;
+    engine.add_policy(
+        "nested.rego".to_string(),
+        "package target.nested\nvalue := 7".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.config".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    let expected = Value::from_json_str(r#"{"value":7}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, expected);
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, expected);
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookup_honors_with_replacement_of_selected_parent_data() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        result := cfg if {
+            cfg := data[input.namespace] with data.target as {"blocked": false}
+        }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nblocked := true".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.result".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    let expected = Value::from_json_str(r#"{"blocked":false}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, expected);
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, expected);
+    assert_eq!(
+        engine.eval_rule("data.target.blocked".to_string())?,
+        Value::Bool(true),
+        "the data replacement must not persist after evaluation"
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookup_honors_with_data_root_replacement_and_restores_original_data(
+) -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        result := cfg if {
+            cfg := data[input.namespace] with data as {"target": {"blocked": false}}
+        }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nblocked := true".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.result".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    let expected = Value::from_json_str(r#"{"blocked":false}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, expected);
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, expected);
+    assert_eq!(
+        engine.eval_rule("data.target.blocked".to_string())?,
+        Value::Bool(true),
+        "the data-root replacement must not persist after evaluation"
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookup_honors_with_data_root_replacement_without_materializing_modules(
+) -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        result := cfg if {
+            cfg := data[input.namespace] with data as {}
+        }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nvalue := 7".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.result".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, Value::Undefined);
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, Value::Undefined);
+    assert_eq!(
+        engine.eval_rule("data.target.value".to_string())?,
+        Value::from(7),
+        "the root replacement must be restored before ordinary evaluation"
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookup_with_empty_parent_replacement_does_not_materialize_empty_child(
+) -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        config := cfg if {
+            cfg := data[input.namespace].nested with data.target as {}
+        }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "nested.rego".to_string(),
+        "package target.nested".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.config".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, Value::Undefined);
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, Value::Undefined);
+
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookup_with_scalar_parent_replacement_does_not_materialize_child() -> Result<()>
+{
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        config := cfg if {
+            cfg := data[input.namespace].nested with data.target as 7
+        }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "nested.rego".to_string(),
+        "package target.nested\nvalue := 7".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.config".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, Value::Undefined);
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, Value::Undefined);
+    assert_eq!(
+        engine.eval_rule("data.target.nested.value".to_string())?,
+        Value::from(7),
+        "the scalar replacement must be restored before ordinary evaluation"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_prefetch_materializes_an_ordinary_empty_child_package() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        config := cfg.nested if {
+            cfg := data[input.namespace]
+        }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nvalue := 7".to_string(),
+    )?;
+    engine.add_policy(
+        "nested.rego".to_string(),
+        "package target.nested".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.config".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    let expected = Value::new_object();
+    assert_eq!(compiled.eval_with_input(input)?, expected);
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, expected);
+
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookup_honors_with_parent_replacement_of_default_rule() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        result := cfg if {
+            cfg := data[input.namespace] with data.target as {"blocked": false}
+        }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\ndefault blocked := true".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.result".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    let expected = Value::from_json_str(r#"{"blocked":false}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, expected);
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, expected);
+    assert_eq!(
+        engine.eval_rule("data.target.blocked".to_string())?,
+        Value::Bool(true),
+        "the default rule must remain unchanged after evaluation"
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookup_honors_with_nested_parent_replacement() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        config := cfg if {
+            cfg := data[input.namespace].nested with data.target as {"nested": {"value": 7}}
+        }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nunrelated := data.framework.config".to_string(),
+    )?;
+    engine.add_policy(
+        "nested.rego".to_string(),
+        "package target.nested\nvalue := 11".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.config".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    let expected = Value::from_json_str(r#"{"value":7}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, expected);
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, expected);
+    assert_eq!(
+        engine.eval_rule("data.target.nested.value".to_string())?,
+        Value::from(11),
+        "the nested package must remain unchanged after evaluation"
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookup_honors_with_exact_leaf_replacement() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        result := blocked if {
+            blocked := data[input.namespace].blocked with data.target.blocked as false
+        }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nblocked := true\nvalue := 7".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.result".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, Value::Bool(false));
+    assert_eq!(
+        engine.eval_rule(entrypoint.to_string())?,
+        Value::Bool(false)
+    );
+    assert_eq!(
+        engine.eval_rule("data.target.blocked".to_string())?,
+        Value::Bool(true)
+    );
+    assert_eq!(
+        engine.eval_rule("data.target.value".to_string())?,
+        Value::from(7)
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_lookup_with_literal_dot_override_preserves_sibling_identity() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        result := config if {
+            config := data.graph[input.namespace] with data.graph["a.b"] as {"value": 7}
+        }
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "literal.rego".to_string(),
+        "package graph[\"a.b\"]\nvalue := 11".to_string(),
+    )?;
+    engine.add_policy(
+        "nested.rego".to_string(),
+        "package graph.a.b\nvalue := 13".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"a.b"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.result".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"a.b"}"#)?;
+    let expected = Value::from_json_str(r#"{"value":7}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, expected);
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, expected);
+    assert_eq!(
+        engine.eval_rule(r#"data.graph["a.b"].value"#.to_string())?,
+        Value::from(11),
+        "the literal-dot override must be restored"
+    );
+    assert_eq!(
+        engine.eval_rule("data.graph.a.b.value".to_string())?,
+        Value::from(13),
+        "the dotted sibling must not be marked as part of the override"
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_prefetch_merges_initial_data_with_virtual_children() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_data(Value::from_json_str(r#"{"target":{"existing":1}}"#)?)?;
+    engine.add_policy(
+        "framework.rego".to_string(),
+        "package framework\nresult := data[input.namespace]".to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nvirtual := 7".to_string(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+
+    let entrypoint: Rc<str> = "data.framework.result".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let input = Value::from_json_str(r#"{"namespace":"target"}"#)?;
+    let expected = Value::from_json_str(r#"{"existing":1,"virtual":7}"#)?;
+    assert_eq!(compiled.eval_with_input(input)?, expected);
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, expected);
+    Ok(())
+}
+
+#[test]
+fn dynamic_namespace_package_prefetch_evaluates_only_the_selected_package() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_extension(
+        "unrelated_failure".to_string(),
+        0,
+        Box::new(|_| Err(anyhow::anyhow!("unrelated module was evaluated"))),
+    )?;
+    engine.add_policy(
+        "framework.rego".to_string(),
+        r#"
+        package framework
+        default allow := true
+        allow := false if {
+            cfg := data[input.namespace]
+            cfg.blocked
+        }
+        config := data[input.namespace]
+        literal_config := data.graph[input.namespace]
+        "#
+        .to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nblocked := true".to_string(),
+    )?;
+    engine.add_policy(
+        "unblocked.rego".to_string(),
+        "package unblocked\nvalue := 7".to_string(),
+    )?;
+    engine.add_policy(
+        "literal.rego".to_string(),
+        "package graph[\"target.v1\"]\nblocked := true".to_string(),
+    )?;
+    engine.add_policy(
+        "unrelated.rego".to_string(),
+        "package unrelated\nfailure := unrelated_failure()".to_string(),
+    )?;
+
+    let entrypoint: Rc<str> = "data.framework.allow".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let cases = [
+        (
+            Value::from_json_str(r#"{"namespace":"target"}"#)?,
+            Value::Bool(false),
+        ),
+        (Value::new_object(), Value::Bool(true)),
+        (Value::Undefined, Value::Bool(true)),
+        (
+            Value::from_json_str(r#"{"namespace":"unblocked"}"#)?,
+            Value::Bool(true),
+        ),
+        (
+            Value::from_json_str(r#"{"namespace":"nonexistent"}"#)?,
+            Value::Bool(true),
+        ),
+        (
+            Value::from_json_str(r#"{"namespace":"target"}"#)?,
+            Value::Bool(false),
+        ),
+    ];
+
+    for (input, expected) in cases {
+        engine.set_input(input.clone());
+        assert_eq!(
+            engine.eval_rule(entrypoint.to_string())?,
+            expected,
+            "interpreter result for input {input:?}"
+        );
+        assert_eq!(
+            compiled.eval_with_input(input)?,
+            expected,
+            "compiled interpreter result"
+        );
+    }
+
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target"}"#)?);
+    assert_eq!(
+        engine.eval_rule("data.framework.config".to_string())?,
+        Value::from_json_str(r#"{"blocked":true}"#)?
+    );
+
+    engine.set_input(Value::from_json_str(r#"{"namespace":"target.v1"}"#)?);
+    assert_eq!(
+        engine.eval_rule("data.framework.literal_config".to_string())?,
+        Value::from_json_str(r#"{"blocked":true}"#)?
+    );
+
+    engine.set_input(Value::from_json_str(r#"{"namespace":"nonexistent"}"#)?);
+    assert_eq!(
+        engine.eval_rule("data.framework.config".to_string())?,
+        Value::Undefined
+    );
+
+    Ok(())
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn failed_with_modifier_application_restores_document_before_engine_reuse() -> Result<()> {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::time::Duration;
+
+    use regorus::utils::limits::ExecutionTimerConfig;
+
+    let replacement_reached = Arc::new(AtomicBool::new(false));
+    let extension_reached = Arc::clone(&replacement_reached);
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nvalue := 42".to_string(),
+    )?;
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"
+        package test
+        result := value if {
+            value := data.target.value with data.target as slow_replacement()
+        }
+        later := value if {
+            value := data.target.value with input.flag as true
+        }
+        "#
+        .to_string(),
+    )?;
+    engine.add_extension(
+        "slow_replacement".to_string(),
+        0,
+        Box::new(move |_| {
+            extension_reached.store(true, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_secs(2));
+            Value::from_json_str(r#"{"value":99}"#)
+        }),
+    )?;
+
+    assert_eq!(
+        engine.eval_rule("data.test.later".to_string())?,
+        Value::from(42),
+        "prepare the engine before starting the timer"
+    );
+
+    engine.set_execution_timer_config(ExecutionTimerConfig {
+        limit: Duration::from_secs(1),
+        check_interval: std::num::NonZeroU32::new(1).unwrap(),
+    });
+    let error = engine
+        .eval_rule("data.test.result".to_string())
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("execution exceeded time limit"),
+        "expected the descendant scan timer to fail, got {error:#}"
+    );
+    assert!(
+        replacement_reached.load(Ordering::SeqCst),
+        "the replacement extension must run before the timer expires"
+    );
+
+    engine.clear_execution_timer_config();
+    let later_result = engine.eval_rule("data.test.later".to_string());
+    assert!(
+        matches!(&later_result, Ok(value) if value == &Value::from(42)),
+        "failed modifier application must preserve original virtual data; got {later_result:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn rule_path_component_limit_preserves_engine_behavior() -> Result<()> {
+    let package_path = (0..30)
+        .map(|index| format!("p{index}"))
+        .collect::<Vec<_>>()
+        .join(".");
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "deep.rego".to_string(),
+        format!("package {package_path}\nvalue := 7"),
+    )?;
+    let remaining_package_path = package_path
+        .split('.')
+        .skip(1)
+        .collect::<Vec<_>>()
+        .join(".");
+    let at_limit = format!("data[\"p0\"].{remaining_package_path}.value");
+    assert_eq!(
+        package_path.split('.').count(),
+        30,
+        "the policy package contributes 30 components"
+    );
+    assert_eq!(
+        engine.eval_rule(at_limit.clone())?,
+        Value::from(7),
+        "a 32-component entrypoint remains valid"
+    );
+    let compiled = engine.compile_with_entrypoint(&at_limit.clone().into())?;
+    assert_eq!(
+        compiled.eval_with_input(Value::Null)?,
+        Value::from(7),
+        "the compiled interpreter accepts a 32-component entrypoint"
+    );
+    assert_eq!(
+        engine
+            .eval_rule(format!("{at_limit}.extra"))
+            .unwrap_err()
+            .to_string(),
+        "not a valid rule path"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn engine_rejects_huge_dotted_and_bracketed_rule_paths() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "stable.rego".to_string(),
+        "package stable\nvalue := true".to_string(),
+    )?;
+    let long_dotted = format!("data{}", ".a".repeat(300_000));
+    let long_bracketed = format!("data{}", r#"["a"]"#.repeat(180_000));
+    for path in [long_dotted, long_bracketed] {
+        assert!(path.len() < 1024 * 1024);
+        assert_eq!(
+            engine.eval_rule(path).unwrap_err().to_string(),
+            "not a valid rule path"
+        );
+        assert_eq!(
+            engine.eval_rule("data.stable.value".to_string())?,
+            Value::Bool(true),
+            "engine remains usable after rejecting a huge rule path"
+        );
+    }
+
     Ok(())
 }
 

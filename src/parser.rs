@@ -285,6 +285,15 @@ impl<'source> Parser<'source> {
         Self::get_static_string_path_components(&expression)
     }
 
+    fn check_path_component_limit(&self, current_count: usize) -> Result<()> {
+        if current_count >= DEFAULT_MAX_EXPR_DEPTH {
+            let message =
+                alloc::format!("path exceeds maximum depth of {DEFAULT_MAX_EXPR_DEPTH} components");
+            bail!("{}", self.tok.1.error(&message));
+        }
+        Ok(())
+    }
+
     fn handle_import_future_keywords(&mut self, comps: &[Span]) -> Result<bool> {
         if comps.len() >= 2 && comps[0].text() == "future" && comps[1].text() == "keywords" {
             match comps.len().saturating_sub(2) {
@@ -1472,6 +1481,7 @@ impl<'source> Parser<'source> {
     fn parse_path_ref(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let var = self.parse_var()?;
+        let mut component_count = 1;
 
         let (span, value) = Self::span_and_value(var);
         let mut refr = Expr::Var {
@@ -1495,6 +1505,8 @@ impl<'source> Parser<'source> {
                     );
                 }
                 "." => {
+                    self.check_path_component_limit(component_count)?;
+                    component_count = component_count.saturating_add(1);
                     // Read identifier. Keywords are allowed as field names in
                     // dot-notation refs (e.g. `import data.my.package`).
                     self.next_token()?;
@@ -1520,6 +1532,8 @@ impl<'source> Parser<'source> {
                     };
                 }
                 "[" => {
+                    self.check_path_component_limit(component_count)?;
+                    component_count = component_count.saturating_add(1);
                     self.next_token()?;
                     let index = match &self.tok.0 {
                         TokenKind::String => self.parse_scalar_or_var()?,

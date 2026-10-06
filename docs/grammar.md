@@ -160,6 +160,12 @@ For example, `graph["a.b"]` is distinct from `graph.a.b`. When a package path
 is returned by the Engine API or used as a rule entry point, non-identifier
 string components use JSON-escaped bracket notation.
 
+Each parsed path reference is limited to 32 components, counting its initial
+identifier as one. Every dotted identifier or bracketed string adds one
+component; dots inside a bracketed string do not. A 33rd component is rejected
+during parsing. `Engine::eval_rule` reports `not a valid rule path` for an
+overlong entry point, while parser and compiler APIs return an error.
+
 referenced by:
 
 * call-expr
