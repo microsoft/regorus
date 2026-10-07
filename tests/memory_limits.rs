@@ -50,6 +50,10 @@ impl LimitGuard {
         set_global_memory_limit(Some(limit));
     }
 
+    fn disable_limit(&mut self) {
+        set_global_memory_limit(None);
+    }
+
     fn set_with_usage_limit<F>(&mut self, calc: F)
     where
         F: FnOnce(u64) -> u64,
@@ -133,6 +137,162 @@ fn new_engine_with_module(module: &str) -> Engine {
         .add_policy("limit.rego".to_string(), module.to_string())
         .expect("add policy");
     engine
+}
+
+const RULE_CLAUSE_COUNT: usize = 64;
+const DEEP_PACKAGE_COMPONENT_COUNT: usize = 32;
+
+fn repeated_clause_policy() -> (String, String) {
+    let package = (0..DEEP_PACKAGE_COMPONENT_COUNT)
+        .map(|index| format!("package_component_{index:02}_long"))
+        .collect::<Vec<_>>()
+        .join(".");
+    let mut module = format!("package {package}\n\n");
+    for value in 0..RULE_CLAUSE_COUNT {
+        module.push_str(&format!("items contains {value} if {{ true }}\n"));
+    }
+
+    (module, format!("data.{package}.items"))
+}
+
+fn assert_repeated_clause_set(value: Value) {
+    match value {
+        Value::Set(values) => assert_eq!(values.len(), RULE_CLAUSE_COUNT),
+        other => panic!("expected set with {RULE_CLAUSE_COUNT} values, got {other:?}"),
+    }
+}
+
+#[test]
+fn interpreter_rule_registration_checks_memory_and_can_retry() {
+    let mut guard = LimitGuard::lock();
+    let (module, entrypoint) = repeated_clause_policy();
+    let mut engine = Engine::new();
+    engine
+        .add_policy("many-clauses.rego".to_string(), module)
+        .expect("add many-clause policy");
+    let entrypoint: regorus::Rc<str> = entrypoint.into();
+
+    for _ in 0..2 {
+        guard.set_with_additional_budget(16 * 1024);
+        let err = match engine.compile_with_entrypoint(&entrypoint) {
+            Ok(_) => panic!("expected rule registration to hit the memory limit"),
+            Err(err) => err,
+        };
+        assert_memory_limit_error(&err);
+    }
+
+    guard.disable_limit();
+    let compiled = engine
+        .compile_with_entrypoint(&entrypoint)
+        .expect("retry compilation with a relaxed memory limit");
+    let registered_rules = compiled
+        .get_rules()
+        .get(entrypoint.as_ref())
+        .expect("deep entrypoint rules are registered after retry");
+    assert_eq!(registered_rules.len(), RULE_CLAUSE_COUNT);
+    assert_repeated_clause_set(
+        compiled
+            .eval_with_input(Value::Undefined)
+            .expect("evaluate compiled policy after retry"),
+    );
+    assert_repeated_clause_set(
+        engine
+            .eval_rule(entrypoint.to_string())
+            .expect("reuse engine after registration retry"),
+    );
+}
+
+#[test]
+fn interpreter_indexed_default_registration_can_retry_after_memory_limit() {
+    let mut guard = LimitGuard::lock();
+    let (mut module, entrypoint) = repeated_clause_policy();
+    let package_end = module.find("\n\n").expect("package declaration") + 2;
+    module.insert_str(package_end, "default indexed[true] = \"bool_true\"\n\n");
+    let default_query = format!(
+        "{}.indexed[true]",
+        entrypoint
+            .strip_suffix(".items")
+            .expect("entrypoint ends with items")
+    );
+    let mut engine = Engine::new();
+    engine
+        .add_policy("many-clauses.rego".to_string(), module)
+        .expect("add many-clause policy with indexed default");
+    let entrypoint: regorus::Rc<str> = entrypoint.into();
+    let retained = engine
+        .compile_with_entrypoint(&entrypoint)
+        .expect("compile policy before constrained re-preparation");
+    engine.clear_data();
+
+    for _ in 0..2 {
+        guard.set_with_additional_budget(16 * 1024);
+        let err = match engine.compile_with_entrypoint(&entrypoint) {
+            Ok(_) => panic!("expected indexed default registration to hit the memory limit"),
+            Err(err) => err,
+        };
+        assert_memory_limit_error(&err);
+    }
+
+    guard.disable_limit();
+    let compiled = engine
+        .compile_with_entrypoint(&entrypoint)
+        .expect("retry indexed default registration with a relaxed memory limit");
+    let registered_rules = compiled
+        .get_rules()
+        .get(entrypoint.as_ref())
+        .expect("deep entrypoint rules are registered after retry");
+    assert_eq!(registered_rules.len(), RULE_CLAUSE_COUNT);
+    assert_repeated_clause_set(
+        retained
+            .eval_with_input(Value::Undefined)
+            .expect("retained compiled policy remains usable after retry"),
+    );
+    assert_repeated_clause_set(
+        compiled
+            .eval_with_input(Value::Undefined)
+            .expect("evaluate compiled policy after retry"),
+    );
+    let default_result = engine
+        .eval_query(default_query, false)
+        .expect("evaluate indexed default after retry");
+    assert_eq!(
+        default_result.result[0].expressions[0].value,
+        Value::from("bool_true")
+    );
+}
+
+#[test]
+fn interpreter_compile_checks_memory_before_publishing_cow_clone() {
+    let mut guard = LimitGuard::lock();
+    let (module, entrypoint) = repeated_clause_policy();
+    let mut engine = Engine::new();
+    engine
+        .add_policy("many-clauses.rego".to_string(), module)
+        .expect("add many-clause policy");
+    let entrypoint: regorus::Rc<str> = entrypoint.into();
+    let first_compiled = engine
+        .compile_with_entrypoint(&entrypoint)
+        .expect("compile first policy");
+
+    let baseline = global_allocation_stats_snapshot().allocated as u64;
+    guard.set_absolute_limit(baseline.saturating_add(16 * 1024));
+    let err = match engine.compile_with_entrypoint(&entrypoint) {
+        Ok(_) => panic!("expected recompilation clone to exceed the memory limit"),
+        Err(err) => err,
+    };
+    assert_memory_limit_error(&err);
+
+    guard.disable_limit();
+    assert_repeated_clause_set(
+        first_compiled
+            .eval_with_input(Value::Undefined)
+            .expect("first compiled policy remains usable"),
+    );
+    assert_repeated_clause_set(
+        engine
+            .eval_rule(entrypoint.to_string())
+            .expect("engine remains usable after failed recompilation"),
+    );
 }
 
 #[cfg(feature = "rvm")]

@@ -58,6 +58,8 @@ const FUTURE_KEYWORDS: [&str; 4] = ["contains", "every", "if", "in"];
 const DEFAULT_MAX_EXPR_DEPTH: usize = 32;
 
 impl<'source> Parser<'source> {
+    pub(crate) const MAX_PATH_COMPONENTS: usize = DEFAULT_MAX_EXPR_DEPTH;
+
     pub fn new(source: &'source Source) -> Result<Self> {
         Self::new_with_max_col(source, None)
     }
@@ -269,7 +271,10 @@ impl<'source> Parser<'source> {
         Ok(components)
     }
 
-    pub(crate) fn parse_static_path_components(path: &str) -> Result<Vec<String>> {
+    pub(crate) fn parse_static_path_components(
+        path: &str,
+        max_components: usize,
+    ) -> Result<Vec<String>> {
         let max_col = path
             .len()
             .checked_add(1)
@@ -278,17 +283,87 @@ impl<'source> Parser<'source> {
             .ok_or_else(|| anyhow!("path exceeds maximum supported length"))?;
         let source = Source::from_contents("entrypoint.rego".to_string(), path.to_string())?;
         let mut parser = Parser::<'_>::new_with_max_col(&source, Some(max_col))?;
-        let expression = parser.parse_path_ref()?;
+        let mut components = Vec::new();
+
+        let root = parser.parse_var()?;
+        Self::push_static_path_component(&mut components, root.text().to_string(), max_components)?;
+
+        loop {
+            match parser.token_text() {
+                "." | "[" if parser.tok.1.start != parser.end => {
+                    bail!(
+                        "{}",
+                        parser.source.error(
+                            parser.tok.1.line,
+                            parser.tok.1.col.saturating_sub(1),
+                            format!("invalid whitespace before {}", parser.token_text()).as_str()
+                        )
+                    );
+                }
+                "." => {
+                    let separator = parser.tok.1.start;
+                    parser.next_token()?;
+                    let field = parser.parse_ref_field()?;
+                    if field.start != separator.saturating_add(1) {
+                        bail!(
+                            "{}",
+                            parser.source.error(
+                                field.line,
+                                field.col.saturating_sub(1),
+                                "invalid whitespace between . and identifier"
+                            )
+                        );
+                    }
+                    Self::push_static_path_component(
+                        &mut components,
+                        field.text().to_string(),
+                        max_components,
+                    )?;
+                }
+                "[" => {
+                    parser.next_token()?;
+                    if parser.tok.0 != TokenKind::String {
+                        bail!(parser.tok.1.error("expected string"));
+                    }
+                    let index = parser.parse_scalar_or_var()?;
+                    parser.expect("]", "while parsing bracketed reference")?;
+                    let Expr::String { value, .. } = index else {
+                        bail!("internal error: static path component is not a string");
+                    };
+                    Self::push_static_path_component(
+                        &mut components,
+                        value.as_string()?.as_ref().to_string(),
+                        max_components,
+                    )?;
+                }
+                _ => break,
+            }
+        }
         if parser.tok.0 != TokenKind::Eof {
             bail!(parser.tok.1.error("expecting EOF"));
         }
-        Self::get_static_string_path_components(&expression)
+        Ok(components)
+    }
+
+    fn push_static_path_component(
+        components: &mut Vec<String>,
+        component: String,
+        max_components: usize,
+    ) -> Result<()> {
+        if components.len() >= max_components {
+            bail!("path exceeds maximum supported component count of {max_components}");
+        }
+        components.push(component);
+        check_memory_limit()?;
+        Ok(())
     }
 
     fn check_path_component_limit(&self, current_count: usize) -> Result<()> {
-        if current_count >= DEFAULT_MAX_EXPR_DEPTH {
-            let message =
-                alloc::format!("path exceeds maximum depth of {DEFAULT_MAX_EXPR_DEPTH} components");
+        if current_count >= Self::MAX_PATH_COMPONENTS {
+            let message = alloc::format!(
+                "path exceeds maximum depth of {} components",
+                Self::MAX_PATH_COMPONENTS
+            );
             bail!("{}", self.tok.1.error(&message));
         }
         Ok(())

@@ -1275,6 +1275,69 @@ fn bracketed_identifier_entrypoint_roundtrips_and_executes_by_name_and_index() -
     Ok(())
 }
 
+#[test]
+fn bracketed_entrypoints_match_dotted_paths_at_supported_depths_and_reuse_vm() -> Result<()> {
+    for (package_component_count, rule_component_count) in [(31, 1), (32, 1), (32, 32)] {
+        let package_components = (0..package_component_count)
+            .map(|index| format!("p{index}"))
+            .collect::<Vec<_>>();
+        let rule_components = (0..rule_component_count)
+            .map(|index| format!("r{index}"))
+            .collect::<Vec<_>>();
+        let package_path = package_components.join(".");
+        let rule_path = rule_components.join(".");
+        let dotted_path = format!("data.{package_path}.{rule_path}");
+        let mut bracketed_path = String::from("data");
+        for component in package_components.iter().chain(&rule_components) {
+            bracketed_path.push_str(&format!("[\"{component}\"]"));
+        }
+
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "deep.rego".to_string(),
+            format!("package {package_path}\n{rule_path} := 7"),
+        )?;
+        let dotted_entrypoint: Rc<str> = dotted_path.into();
+        let compiled = engine.compile_with_entrypoint(&dotted_entrypoint)?;
+        let program = Compiler::compile_from_policy(&compiled, &[bracketed_path.as_str()])?;
+
+        let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+        let json_program = Program::deserialize_json(&json).map_err(anyhow::Error::msg)?;
+        let binary = program.serialize_binary().map_err(anyhow::Error::msg)?;
+        let binary_program =
+            match Program::deserialize_binary(&binary).map_err(anyhow::Error::msg)? {
+                DeserializationResult::Complete(program) => program,
+                DeserializationResult::Partial(_) => {
+                    anyhow::bail!("deep namespace program unexpectedly needs recompilation")
+                }
+            };
+
+        for (program, mode) in [
+            (json_program, ExecutionMode::RunToCompletion),
+            (binary_program, ExecutionMode::Suspendable),
+        ] {
+            let mut vm = RegoVM::new();
+            vm.load_program(Arc::new(program));
+            vm.set_data(Value::new_object())?;
+            vm.set_execution_mode(mode);
+            for _ in 0..2 {
+                assert_eq!(
+                    vm.execute_entry_point_by_name(&bracketed_path)?,
+                    Value::from(7),
+                    "{mode:?} named path with {package_component_count} package and {rule_component_count} rule components"
+                );
+                assert_eq!(
+                    vm.execute_entry_point_by_index(0)?,
+                    Value::from(7),
+                    "{mode:?} indexed path with {package_component_count} package and {rule_component_count} rule components"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[test_resources("tests/rvm/rego/cases/*.yaml")]
 fn run_rego_compiler_yaml(file: &str) {
     yaml_test_impl(file).unwrap();

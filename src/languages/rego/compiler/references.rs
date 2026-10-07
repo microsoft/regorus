@@ -258,10 +258,10 @@ impl<'a> Compiler<'a> {
             let pattern_part = &pattern[i];
             if pattern_part.is_none() {
                 // Wildcard in pattern matches any non-empty rule component exactly
-                if rule_part.is_empty() {
+                if rule_part.value().is_empty() {
                     return false;
                 }
-            } else if pattern_part.as_ref() != Some(rule_part) {
+            } else if pattern_part.as_deref() != Some(rule_part.value()) {
                 return false;
             }
         }

@@ -1293,7 +1293,7 @@ impl Interpreter {
         &mut self,
         paths: &Value,
         path: &mut Vec<String>,
-        overridden_paths: &mut Vec<Vec<String>>,
+        overridden_paths: &mut Vec<Vec<PathComponent>>,
     ) -> Result<Value> {
         let mut inherited_paths = Value::new_object();
         let Value::Object(entries) = paths else {
@@ -1307,8 +1307,8 @@ impl Interpreter {
                 inherited_paths
                     .as_object_mut()?
                     .insert(key.clone(), value.clone());
-                let mut overridden_path = vec!["data".to_string()];
-                overridden_path.extend(path.iter().cloned());
+                let mut overridden_path = vec![PathComponent::String("data".to_string())];
+                overridden_path.extend(path.iter().cloned().map(PathComponent::String));
                 overridden_paths.push(overridden_path);
                 self.memory_check()?;
             } else if let Value::String(component) = key {
@@ -1326,36 +1326,26 @@ impl Interpreter {
         Ok(inherited_paths)
     }
 
-    fn suppress_rules_under_data_override(&mut self, overridden_path: &[String]) -> Result<()> {
-        let compiled_policy = self.compiled_policy.clone();
-        for (rule_path, rules) in &compiled_policy.rules {
-            self.check_execution_time()?;
-            let rule_components = compiled_policy
-                .rule_path_components
-                .get(rule_path)
-                .ok_or_else(|| {
-                    anyhow!("missing components for registered rule path {rule_path}")
-                })?;
-            if rule_components.starts_with(overridden_path) {
-                for rule in rules {
-                    self.processed.insert(rule.clone());
-                    self.memory_check()?;
-                }
-            }
+    fn suppress_rules_under_data_override(
+        &mut self,
+        overridden_path: &[PathComponent],
+    ) -> Result<()> {
+        fn path_starts_with(path: &[PathComponent], prefix: &[PathComponent]) -> bool {
+            path.len() >= prefix.len()
+                && path
+                    .iter()
+                    .zip(prefix)
+                    .all(|(path_component, prefix_component)| {
+                        path_component.matches_path_component(prefix_component)
+                    })
         }
-        for (rule_path, rules) in &compiled_policy.default_rules {
+
+        let compiled_policy = self.compiled_policy.clone();
+        for (rule, rule_components) in &compiled_policy.rule_path_components_by_rule {
             self.check_execution_time()?;
-            let rule_components = compiled_policy
-                .rule_path_components
-                .get(rule_path)
-                .ok_or_else(|| {
-                    anyhow!("missing components for registered default rule path {rule_path}")
-                })?;
-            if rule_components.starts_with(overridden_path) {
-                for (rule, _) in rules {
-                    self.processed.insert(rule.clone());
-                    self.memory_check()?;
-                }
+            if path_starts_with(rule_components, overridden_path) {
+                self.processed.insert(rule.clone());
+                self.memory_check()?;
             }
         }
         Ok(())
@@ -1373,7 +1363,7 @@ impl Interpreter {
 
             let processed_paths =
                 core::mem::replace(&mut self.processed_paths, Value::new_object());
-            let mut inherited_overrides = Vec::new();
+            let mut inherited_overrides: Vec<Vec<PathComponent>> = Vec::new();
             let inherited_paths = match self.copy_explicit_data_with_override_markers(
                 &processed_paths,
                 &mut Vec::new(),
@@ -1504,17 +1494,14 @@ impl Interpreter {
                             *obj = value;
 
                             if first.value() == "data" {
-                                let overridden_path: Vec<String> = path
-                                    .iter()
-                                    .map(|component| component.value().to_string())
-                                    .collect();
+                                let overridden_path = path.clone();
                                 let (_, overridden_subtree) = overridden_path
                                     .split_first()
                                     .ok_or_else(|| anyhow!("empty path in with modifier"))?;
                                 self.mark_data_with_override(
                                     &overridden_subtree
                                         .iter()
-                                        .map(String::as_str)
+                                        .map(PathComponent::value)
                                         .collect::<Vec<_>>(),
                                 )?;
                                 self.suppress_rules_under_data_override(&overridden_path)?;
@@ -3258,7 +3245,7 @@ impl Interpreter {
                 .get(&path)
                 .cloned()
                 .ok_or_else(|| anyhow!("missing components for registered rule path {path}"))?;
-            let comps: Vec<&str> = components.iter().map(String::as_str).collect();
+            let comps: Vec<&str> = components.iter().map(PathComponent::value).collect();
             let (_, tail) = comps
                 .split_first()
                 .ok_or_else(|| anyhow!("internal error: expected rule path components"))?;
@@ -4026,10 +4013,11 @@ impl Interpreter {
                                 registered_components.split_first().ok_or_else(|| {
                                     anyhow!("internal error: expected rule path components")
                                 })?;
-                            if root != "data" {
+                            if root.value() != "data" {
                                 bail!("internal error: rule path must start with data");
                             }
-                            let value_path: Vec<&str> = tail.iter().map(String::as_str).collect();
+                            let value_path: Vec<&str> =
+                                tail.iter().map(PathComponent::value).collect();
                             let value = Self::get_value_chained(self.data.clone(), &value_path);
 
                             if value != Value::Undefined {
@@ -4467,17 +4455,18 @@ impl Interpreter {
     fn record_rule(&mut self, refr: &Ref<Expr>, rule: Ref<Rule>) -> Result<()> {
         let rule_components = get_rule_path_components(refr)?;
         let mut path_components = self.current_module_data_path_components()?;
+        let mut full_path_components = path_components.clone();
+        full_path_components.extend(rule_components.iter().cloned());
+        self.compiled_policy_mut()
+            .rule_path_components_by_rule
+            .insert(rule.clone(), full_path_components);
         for (index, component) in rule_components.iter().enumerate() {
             path_components.push(component.clone());
             let path = format_path_components(&path_components)?;
-            let string_components = path_components
-                .iter()
-                .map(|path_component| path_component.value().to_string())
-                .collect();
             let compiled_policy = self.compiled_policy_mut();
             compiled_policy
                 .rule_path_components
-                .insert(path.clone(), string_components);
+                .insert(path.clone(), path_components.clone());
             if index == rule_components.len().saturating_sub(1) {
                 compiled_policy.rule_paths.insert(path.clone());
             }
@@ -4503,17 +4492,18 @@ impl Interpreter {
     ) -> Result<()> {
         let rule_components = get_rule_path_components(refr)?;
         let mut path_components = self.current_module_data_path_components()?;
+        let mut full_path_components = path_components.clone();
+        full_path_components.extend(rule_components.iter().cloned());
+        self.compiled_policy_mut()
+            .rule_path_components_by_rule
+            .insert(rule.clone(), full_path_components);
         for (idx, component) in rule_components.iter().enumerate() {
             path_components.push(component.clone());
             let path = format_path_components(&path_components)?;
-            let string_components = path_components
-                .iter()
-                .map(|path_component| path_component.value().to_string())
-                .collect();
             let compiled_policy = self.compiled_policy_mut();
             compiled_policy
                 .rule_path_components
-                .insert(path.clone(), string_components);
+                .insert(path.clone(), path_components.clone());
             if idx == rule_components.len().saturating_sub(1) {
                 compiled_policy.rule_paths.insert(path.clone());
             }
@@ -4540,6 +4530,15 @@ impl Interpreter {
         }
 
         Ok(())
+    }
+
+    fn clear_rule_registrations(&mut self) {
+        let compiled_policy = self.compiled_policy_mut();
+        compiled_policy.rules.clear();
+        compiled_policy.default_rules.clear();
+        compiled_policy.rule_paths.clear();
+        compiled_policy.rule_path_components.clear();
+        compiled_policy.rule_path_components_by_rule.clear();
     }
 
     pub fn process_imports(&mut self) -> Result<()> {
@@ -4585,49 +4584,64 @@ impl Interpreter {
     }
 
     pub fn gather_rules(&mut self) -> Result<()> {
-        for module in self.compiled_policy.modules.clone().iter() {
-            let prev_module = self.set_current_module(Some(module.clone()))?;
-            for rule in &module.policy {
-                let refr = Self::get_rule_refr(rule);
+        self.clear_rule_registrations();
+        let result = (|| -> Result<()> {
+            for module in self.compiled_policy.modules.clone().iter() {
+                let prev_module = self.set_current_module(Some(module.clone()))?;
+                let registration_result = (|| -> Result<()> {
+                    for rule in &module.policy {
+                        let refr = Self::get_rule_refr(rule);
 
-                if let Rule::Spec { .. } = rule.as_ref() {
-                    // Adjust refr to ensure simple ref.
-                    // TODO: refactor.
-                    let refr = match refr.as_ref() {
-                        Expr::RefBrack { index, .. }
-                            if matches!(index.as_ref(), Expr::String { .. }) =>
-                        {
-                            refr
+                        if let Rule::Spec { .. } = rule.as_ref() {
+                            // Adjust refr to ensure simple ref.
+                            // TODO: refactor.
+                            let refr = match refr.as_ref() {
+                                Expr::RefBrack { index, .. }
+                                    if matches!(index.as_ref(), Expr::String { .. }) =>
+                                {
+                                    refr
+                                }
+                                Expr::RefBrack { refr, .. } => refr,
+                                _ => refr,
+                            };
+                            self.record_rule(refr, rule.clone())?;
+                            self.memory_check()?;
+                        } else if let Rule::Default { .. } = rule.as_ref() {
+                            let (refr, index) = match refr.as_ref() {
+                                // TODO: Validate the index
+                                Expr::RefBrack { refr, index, .. } => {
+                                    if !matches!(
+                                        index.as_ref(),
+                                        Expr::Bool { .. }
+                                            | Expr::Number { .. }
+                                            | Expr::String { .. }
+                                    ) {
+                                        // OPA's behavior is ignoring the non-scalar index
+                                        bail!(index.span().error("index is not a scalar value"));
+                                    }
+
+                                    let index = self.eval_expr(index)?;
+
+                                    (refr, Some(index.to_string()))
+                                }
+                                _ => (refr, None),
+                            };
+
+                            self.record_default_rule(refr, rule, index)?;
+                            self.memory_check()?;
                         }
-                        Expr::RefBrack { refr, .. } => refr,
-                        _ => refr,
-                    };
-                    self.record_rule(refr, rule.clone())?;
-                } else if let Rule::Default { .. } = rule.as_ref() {
-                    let (refr, index) = match refr.as_ref() {
-                        // TODO: Validate the index
-                        Expr::RefBrack { refr, index, .. } => {
-                            if !matches!(
-                                index.as_ref(),
-                                Expr::Bool { .. } | Expr::Number { .. } | Expr::String { .. }
-                            ) {
-                                // OPA's behavior is ignoring the non-scalar index
-                                bail!(index.span().error("index is not a scalar value"));
-                            }
-
-                            let index = self.eval_expr(index)?;
-
-                            (refr, Some(index.to_string()))
-                        }
-                        _ => (refr, None),
-                    };
-
-                    self.record_default_rule(refr, rule, index)?;
-                }
+                    }
+                    Ok(())
+                })();
+                self.set_current_module(prev_module)?;
+                registration_result?;
             }
-            self.set_current_module(prev_module)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            self.clear_rule_registrations();
         }
-        Ok(())
+        result
     }
 
     pub fn add_extension(
@@ -4791,7 +4805,14 @@ impl Interpreter {
             return Ok(path.to_string());
         }
 
-        let requested_components = Parser::parse_static_path_components(path)
+        let max_components = self
+            .compiled_policy
+            .rule_path_components
+            .values()
+            .map(Vec::len)
+            .max()
+            .unwrap_or_default();
+        let requested_components = Parser::parse_static_path_components(path, max_components)
             .map_err(|_| anyhow!("not a valid rule path"))?;
         let component_refs: Vec<&str> = requested_components.iter().map(String::as_str).collect();
         let canonical_path =
@@ -4816,10 +4837,10 @@ impl Interpreter {
         let (root, tail) = registered_components
             .split_first()
             .ok_or_else(|| anyhow!("internal error: expected rule path components"))?;
-        if root != "data" {
+        if root.value() != "data" {
             bail!("internal error: rule path must start with data");
         }
-        let tail: Vec<&str> = tail.iter().map(String::as_str).collect();
+        let tail: Vec<&str> = tail.iter().map(PathComponent::value).collect();
 
         let value = Self::get_value_chained(self.data.clone(), &tail);
         #[cfg(feature = "azure_policy")]
@@ -4861,6 +4882,7 @@ impl Interpreter {
         let loop_lookup = hoister.populate(compiled_policy.modules.as_ref())?;
         compiled_policy.loop_hoisting_table = loop_lookup;
 
+        crate::utils::limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
         Ok(self.compiled_policy.clone())
     }
 }

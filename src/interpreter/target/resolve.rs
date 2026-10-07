@@ -30,7 +30,7 @@ fn target_effect_path(
 ) -> Result<(Vec<String>, String), TargetCompileError> {
     let mut components = vec!["data".to_string()];
     components.extend(
-        Parser::parse_static_path_components(package)
+        Parser::parse_static_path_components(package, Parser::MAX_PATH_COMPONENTS)
             .map_err(|_| TargetCompileError::TargetNotFound(target_name.into()))?,
     );
     components.push(effect_name.to_string());
@@ -154,7 +154,10 @@ pub fn resolve_effect(interpreter: &mut Interpreter) -> Result<(), TargetCompile
                     .get(rule_path)
                     .is_some_and(|components| {
                         components.len() > expected_components.len()
-                            && components.starts_with(&expected_components)
+                            && components
+                                .iter()
+                                .zip(&expected_components)
+                                .all(|(component, expected)| component.value() == expected)
                     });
                 if is_sub_path {
                     // Sub-paths are not allowed for effects - they must be exact matches only
@@ -178,7 +181,10 @@ pub fn resolve_effect(interpreter: &mut Interpreter) -> Result<(), TargetCompile
                     .get(rule_path)
                     .is_some_and(|components| {
                         components.len() > expected_components.len()
-                            && components.starts_with(&expected_components)
+                            && components
+                                .iter()
+                                .zip(&expected_components)
+                                .all(|(component, expected)| component.value() == expected)
                     });
                 if is_sub_path {
                     // Sub-paths are not allowed for effects - they must be exact matches only

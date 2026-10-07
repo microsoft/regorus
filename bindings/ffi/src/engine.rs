@@ -909,6 +909,78 @@ mod namespace_tests {
     }
 
     #[test]
+    fn deep_bracketed_registered_path_matches_dotted_path_and_reuses_ffi_engine() {
+        let _poison_test_lock = crate::panic_guard::lock_poison_test_state();
+        crate::panic_guard::reset_poison();
+
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let package_components = (0..31).map(|index| format!("p{index}")).collect::<Vec<_>>();
+        let package_path = package_components.join(".");
+        let dotted_path = format!("data.{package_path}.value");
+        let mut bracketed_path = String::from("data");
+        for component in &package_components {
+            bracketed_path.push_str(&format!("[\"{component}\"]"));
+        }
+        bracketed_path.push_str("[\"value\"]");
+
+        let file = CString::new("deep.rego").expect("valid policy path");
+        let policy =
+            CString::new(format!("package {package_path}\nvalue := 7")).expect("valid policy");
+        let added = regorus_engine_add_policy(engine, file.as_ptr(), policy.as_ptr());
+        assert!(matches!(&added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let dotted = CString::new(dotted_path).expect("valid dotted path");
+        let dotted_result = regorus_engine_eval_rule(engine, dotted.as_ptr());
+        assert!(matches!(&dotted_result.status, RegorusStatus::Ok));
+        assert_eq!(
+            unsafe { CStr::from_ptr(dotted_result.output) }
+                .to_str()
+                .expect("UTF-8 result"),
+            "7"
+        );
+        regorus_result_drop(dotted_result);
+
+        let bracketed = CString::new(bracketed_path.clone()).expect("valid bracketed path");
+        let bracketed_result = regorus_engine_eval_rule(engine, bracketed.as_ptr());
+        assert!(
+            matches!(&bracketed_result.status, RegorusStatus::Ok),
+            "equivalent bracketed lookup failed: {:?}",
+            bracketed_result.status
+        );
+        assert_eq!(
+            unsafe { CStr::from_ptr(bracketed_result.output) }
+                .to_str()
+                .expect("UTF-8 result"),
+            "7"
+        );
+        regorus_result_drop(bracketed_result);
+
+        let missing_path = bracketed_path.replace("[\"value\"]", "[\"missing\"]");
+        let missing = CString::new(missing_path).expect("valid missing path");
+        let rejected = regorus_engine_eval_rule(engine, missing.as_ptr());
+        assert!(matches!(&rejected.status, RegorusStatus::Error));
+        regorus_result_drop(rejected);
+        assert!(
+            !crate::panic_guard::is_poisoned(),
+            "a lookup error must not poison the FFI engine"
+        );
+
+        let reused_result = regorus_engine_eval_rule(engine, bracketed.as_ptr());
+        assert!(matches!(&reused_result.status, RegorusStatus::Ok));
+        assert_eq!(
+            unsafe { CStr::from_ptr(reused_result.output) }
+                .to_str()
+                .expect("UTF-8 result"),
+            "7"
+        );
+        regorus_result_drop(reused_result);
+        regorus_engine_drop(engine);
+    }
+
+    #[test]
     fn overdeep_policy_path_returns_an_error_and_keeps_the_engine_usable() {
         let engine = regorus_engine_new();
         assert!(!engine.is_null());

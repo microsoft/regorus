@@ -160,11 +160,18 @@ For example, `graph["a.b"]` is distinct from `graph.a.b`. When a package path
 is returned by the Engine API or used as a rule entry point, non-identifier
 string components use JSON-escaped bracket notation.
 
-Each parsed path reference is limited to 32 components, counting its initial
-identifier as one. Every dotted identifier or bracketed string adds one
-component; dots inside a bracketed string do not. A 33rd component is rejected
-during parsing. `Engine::eval_rule` reports `not a valid rule path` for an
-overlong entry point, while parser and compiler APIs return an error.
+Policy-source path references are limited to 32 components, counting the
+initial identifier as one. Every dotted identifier or bracketed string adds
+one component; dots inside a bracketed string do not. A 33rd component is
+rejected by the general policy parser.
+
+Static public entry-point lookup uses a separate iterative parser rather than
+building the recursively nested policy AST. It accepts dotted and bracketed
+string spellings up to the longest registered rule path, so equivalent
+spellings remain consistent even when that path exceeds the policy parser's
+32-component limit. Paths that exceed the registered depth or do not identify
+a rule remain invalid; `Engine::eval_rule` reports `not a valid rule path`,
+while parser and compiler APIs return an error.
 
 referenced by:
 

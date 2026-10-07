@@ -4,6 +4,216 @@
 use anyhow::{bail, Result};
 use regorus::*;
 
+fn with_string_key_override_engine() -> Result<Engine> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "policy.rego".to_string(),
+        r#"
+        package policy
+        items[1].blocked := true
+        default allow := true
+        allow := false if {
+            data.policy.items[1].blocked with data.policy.items["1"] as {"blocked": false}
+        }
+        "#
+        .to_string(),
+    )?;
+    Ok(engine)
+}
+
+#[test]
+fn with_string_key_override_does_not_suppress_numeric_rule() -> Result<()> {
+    let mut engine = with_string_key_override_engine()?;
+
+    assert_eq!(
+        engine.eval_rule("data.policy.allow".to_string())?,
+        Value::Bool(false)
+    );
+    assert_eq!(
+        engine
+            .eval_query("data.policy.items[1].blocked".to_string(), false)?
+            .result[0]
+            .expressions[0]
+            .value,
+        Value::Bool(true),
+        "the with override must be restored before the next Engine query"
+    );
+    assert_eq!(
+        engine.eval_rule("data.policy.allow".to_string())?,
+        Value::Bool(false),
+        "the Engine remains reusable after evaluating the with modifier"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn compiled_interpreter_with_string_key_does_not_suppress_numeric_rule() -> Result<()> {
+    let mut engine = with_string_key_override_engine()?;
+    let compiled = engine.compile_with_entrypoint(&"data.policy.allow".into())?;
+
+    for _ in 0..2 {
+        assert_eq!(
+            compiled.eval_with_input(Value::new_object())?,
+            Value::Bool(false),
+            "the compiled policy remains reusable after a data override"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn with_string_overrides_do_not_suppress_boolean_or_null_rules() -> Result<()> {
+    for key in ["true", "null"] {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "policy.rego".to_string(),
+            format!(
+                r#"
+                package policy
+                items[{key}].blocked := true
+                default allow := true
+                allow := false if {{
+                    data.policy.items[{key}].blocked with data.policy.items["{key}"] as {{"blocked": false}}
+                }}
+                "#
+            ),
+        )?;
+        let compiled = engine.compile_with_entrypoint(&"data.policy.allow".into())?;
+
+        for _ in 0..2 {
+            assert_eq!(
+                engine.eval_rule("data.policy.allow".to_string())?,
+                Value::Bool(false),
+                "the string override must not suppress the {key} rule"
+            );
+            assert_eq!(
+                compiled.eval_with_input(Value::new_object())?,
+                Value::Bool(false),
+                "the compiled policy must preserve {key} rule identity"
+            );
+        }
+        assert_eq!(
+            engine
+                .eval_query(format!("data.policy.items[{key}].blocked"), false)?
+                .result[0]
+                .expressions[0]
+                .value,
+            Value::Bool(true),
+            "the original {key} rule is restored before the next query"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn mixed_scalar_rule_buckets_keep_override_identity_in_both_orders() -> Result<()> {
+    for key in ["true", "null"] {
+        for non_string_first in [true, false] {
+            let non_string_rule = format!("items[{key}].blocked := true");
+            let string_rule = format!("items[\"{key}\"].blocked := false");
+            let (first_rule, second_rule) = if non_string_first {
+                (non_string_rule, string_rule)
+            } else {
+                (string_rule, non_string_rule)
+            };
+            let policy = format!(
+                r#"
+                package policy
+                {first_rule}
+                {second_rule}
+                default allow := true
+                allow := false if {{
+                    data.policy.items[{key}].blocked with data.policy.items["{key}"] as {{"blocked": false}}
+                }}
+                string_override := true if {{
+                    data.policy.items["{key}"].blocked with data.policy.items["{key}"] as {{"blocked": true}}
+                }}
+                "#
+            );
+            let mut engine = Engine::new();
+            engine.add_policy("policy.rego".to_string(), policy)?;
+            let compiled = engine.compile_with_entrypoint(&"data.policy.allow".into())?;
+            let compiled_string_override =
+                engine.compile_with_entrypoint(&"data.policy.string_override".into())?;
+            let string_path = format!("data.policy.items[\"{key}\"].blocked");
+            let string_entrypoint: Rc<str> = string_path.clone().into();
+            let compiled_string_path = engine.compile_with_entrypoint(&string_entrypoint)?;
+
+            for _ in 0..2 {
+                assert_eq!(
+                    engine.eval_rule("data.policy.allow".to_string())?,
+                    Value::Bool(false),
+                    "the string override must not suppress the {key} rule; non-string first={non_string_first}"
+                );
+                assert_eq!(
+                    compiled.eval_with_input(Value::new_object())?,
+                    Value::Bool(false),
+                    "compiled result for {key}; non-string first={non_string_first}"
+                );
+                assert_eq!(
+                    engine.eval_rule("data.policy.string_override".to_string())?,
+                    Value::Bool(true),
+                    "the string-key rule remains overridable for {key}; non-string first={non_string_first}"
+                );
+                assert_eq!(
+                    compiled_string_override.eval_with_input(Value::new_object())?,
+                    Value::Bool(true),
+                    "compiled string-key override for {key}; non-string first={non_string_first}"
+                );
+                assert_eq!(
+                    compiled_string_path.eval_with_input(Value::new_object())?,
+                    Value::Bool(false),
+                    "compiled string-key value is restored for {key}; non-string first={non_string_first}"
+                );
+                assert_eq!(
+                    engine.eval_rule("data.policy.allow".to_string())?,
+                    Value::Bool(false),
+                    "the numeric or boolean rule remains visible after the string override for {key}; non-string first={non_string_first}"
+                );
+            }
+            assert_eq!(
+                engine.eval_rule(string_path)?,
+                Value::Bool(false),
+                "the original string-key rule is restored for {key}; non-string first={non_string_first}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn numeric_rule_paths_keep_integer_decimal_equivalence() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "policy.rego".to_string(),
+        r#"
+        package policy
+        items[1].blocked := true
+        allow := data.policy.items[1.0].blocked
+        "#
+        .to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&"data.policy.allow".into())?;
+
+    assert_eq!(
+        engine.eval_rule("data.policy.allow".to_string())?,
+        Value::Bool(true)
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            compiled.eval_with_input(Value::new_object())?,
+            Value::Bool(true),
+            "the compiled policy preserves 1 == 1.0 numeric path lookup"
+        );
+    }
+
+    Ok(())
+}
+
 #[test]
 fn namespace_literal_dot_rule_path_uses_bracketed_component() -> Result<()> {
     let mut engine = Engine::new();
@@ -1177,6 +1387,56 @@ fn rule_path_component_limit_preserves_engine_behavior() -> Result<()> {
             .to_string(),
         "not a valid rule path"
     );
+
+    Ok(())
+}
+
+#[test]
+fn bracketed_entrypoints_match_dotted_paths_at_supported_depths() -> Result<()> {
+    for (package_component_count, rule_component_count) in [(31, 1), (32, 1), (32, 32)] {
+        let package_components = (0..package_component_count)
+            .map(|index| format!("p{index}"))
+            .collect::<Vec<_>>();
+        let rule_components = (0..rule_component_count)
+            .map(|index| format!("r{index}"))
+            .collect::<Vec<_>>();
+        let package_path = package_components.join(".");
+        let rule_path = rule_components.join(".");
+        let dotted_path = format!("data.{package_path}.{rule_path}");
+        let mut bracketed_path = String::from("data");
+        for component in package_components.iter().chain(&rule_components) {
+            bracketed_path.push_str(&format!("[\"{component}\"]"));
+        }
+
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "deep.rego".to_string(),
+            format!("package {package_path}\n{rule_path} := 7"),
+        )?;
+
+        let dotted_entrypoint: Rc<str> = dotted_path.clone().into();
+        let compiled = engine.compile_with_entrypoint(&dotted_entrypoint)?;
+        assert_eq!(compiled.eval_with_input(Value::Null)?, Value::from(7));
+        assert_eq!(
+            engine.eval_rule(dotted_path.clone())?,
+            Value::from(7),
+            "dotted path with {package_component_count} package and {rule_component_count} rule components"
+        );
+
+        let bracketed_entrypoint: Rc<str> = bracketed_path.clone().into();
+        let bracketed_compiled = engine.compile_with_entrypoint(&bracketed_entrypoint)?;
+        assert_eq!(
+            bracketed_compiled.eval_with_input(Value::Null)?,
+            Value::from(7)
+        );
+        for _ in 0..2 {
+            assert_eq!(
+                engine.eval_rule(bracketed_path.clone())?,
+                Value::from(7),
+                "bracketed path with {package_component_count} package and {rule_component_count} rule components"
+            );
+        }
+    }
 
     Ok(())
 }
