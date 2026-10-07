@@ -154,10 +154,7 @@ pub fn resolve_effect(interpreter: &mut Interpreter) -> Result<(), TargetCompile
                     .get(rule_path)
                     .is_some_and(|components| {
                         components.len() > expected_components.len()
-                            && components
-                                .iter()
-                                .zip(&expected_components)
-                                .all(|(component, expected)| component.value() == expected)
+                            && components.starts_with(&expected_components)
                     });
                 if is_sub_path {
                     // Sub-paths are not allowed for effects - they must be exact matches only
@@ -181,10 +178,7 @@ pub fn resolve_effect(interpreter: &mut Interpreter) -> Result<(), TargetCompile
                     .get(rule_path)
                     .is_some_and(|components| {
                         components.len() > expected_components.len()
-                            && components
-                                .iter()
-                                .zip(&expected_components)
-                                .all(|(component, expected)| component.value() == expected)
+                            && components.starts_with(&expected_components)
                     });
                 if is_sub_path {
                     // Sub-paths are not allowed for effects - they must be exact matches only

@@ -237,10 +237,7 @@ impl<'a> Compiler<'a> {
                 .ok_or_else(|| CompilerError::General {
                     message: format!("invalid registered rule path '{rule_path}'"),
                 })?;
-        let package_refs: Vec<&str> = package_parts
-            .iter()
-            .map(crate::utils::PathComponent::value)
-            .collect();
+        let package_refs: Vec<&str> = package_parts.iter().map(String::as_str).collect();
         let package =
             format_string_path(&package_refs).map_err(|error| CompilerError::General {
                 message: format!("failed to format package path for '{rule_path}': {error}"),
@@ -754,15 +751,10 @@ impl<'a> Compiler<'a> {
                         .ok_or_else(|| CompilerError::General {
                             message: format!("invalid registered rule path '{rule_path}'"),
                         })?;
-                let package_path: Vec<String> = package_parts
-                    .iter()
-                    .map(|component| component.value().to_string())
-                    .collect();
-                let _ = self.program.add_rule_to_tree(
-                    &package_path,
-                    rule_name.value(),
-                    rule_index as usize,
-                );
+                let package_path = package_parts.to_vec();
+                let _ =
+                    self.program
+                        .add_rule_to_tree(&package_path, rule_name, rule_index as usize);
             }
 
             self.register_counter = saved_register_counter;
@@ -793,15 +785,10 @@ impl<'a> Compiler<'a> {
                         .ok_or_else(|| CompilerError::General {
                             message: format!("invalid registered rule path '{rule_path}'"),
                         })?;
-                let package_path: Vec<String> = package_parts
-                    .iter()
-                    .map(|component| component.value().to_string())
-                    .collect();
-                let _ = self.program.add_rule_to_tree(
-                    &package_path,
-                    rule_name.value(),
-                    rule_index as usize,
-                );
+                let package_path = package_parts.to_vec();
+                let _ =
+                    self.program
+                        .add_rule_to_tree(&package_path, rule_name, rule_index as usize);
             }
 
             self.register_counter = saved_register_counter;

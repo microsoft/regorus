@@ -13,7 +13,6 @@ pub mod limits;
 use crate::ast::*;
 use crate::builtins::*;
 use crate::lexer::SourceStr;
-use crate::number::Number;
 use crate::parser::Parser;
 use crate::*;
 
@@ -24,23 +23,12 @@ use anyhow::{bail, Result};
 pub(crate) enum PathComponent {
     String(String),
     Raw(String),
-    Number { lexeme: String, value: Number },
 }
 
 impl PathComponent {
     pub(crate) fn value(&self) -> &str {
         match self {
             Self::String(value) | Self::Raw(value) => value,
-            Self::Number { lexeme, .. } => lexeme,
-        }
-    }
-
-    pub(crate) fn matches_path_component(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::String(left), Self::String(right)) => left == right,
-            (Self::Raw(left), Self::Raw(right)) => left == right,
-            (Self::Number { value: left, .. }, Self::Number { value: right, .. }) => left == right,
-            _ => false,
         }
     }
 }
@@ -98,9 +86,6 @@ pub(crate) fn format_path_components(components: &[PathComponent]) -> Result<Str
         match component {
             PathComponent::String(value) => append_path_component_to(&mut path, value)?,
             PathComponent::Raw(value) => append_raw_path_component_to(&mut path, value),
-            PathComponent::Number { lexeme, .. } => {
-                append_raw_path_component_to(&mut path, lexeme);
-            }
         }
     }
     Ok(path)
@@ -138,16 +123,9 @@ pub(crate) fn get_rule_path_components(refr: &Expr) -> Result<Vec<PathComponent>
                     Expr::String { value, .. } => components.push(PathComponent::String(
                         value.as_string()?.as_ref().to_string(),
                     )),
-                    Expr::Number { span, value, .. } => {
-                        let Value::Number(number) = value else {
-                            bail!("internal error: number expression has non-numeric value");
-                        };
-                        components.push(PathComponent::Number {
-                            lexeme: span.text().to_string(),
-                            value: number.clone(),
-                        });
-                    }
-                    Expr::Bool { span, .. } | Expr::Null { span, .. } => {
+                    Expr::Number { span, .. }
+                    | Expr::Bool { span, .. }
+                    | Expr::Null { span, .. } => {
                         components.push(PathComponent::Raw(span.text().to_string()));
                     }
                     _ => {
@@ -168,33 +146,6 @@ pub(crate) fn get_rule_path_components(refr: &Expr) -> Result<Vec<PathComponent>
     let mut components = Vec::new();
     collect(refr, &mut components)?;
     Ok(components)
-}
-
-#[cfg(test)]
-mod path_component_tests {
-    use super::*;
-
-    #[test]
-    fn path_component_matching_preserves_scalar_identity_and_numeric_equality() {
-        let integer = PathComponent::Number {
-            lexeme: "1".to_string(),
-            value: Number::from(1_i64),
-        };
-        let decimal = PathComponent::Number {
-            lexeme: "1.0".to_string(),
-            value: Number::from(1.0_f64),
-        };
-        let string = PathComponent::String("1".to_string());
-        let boolean = PathComponent::Raw("true".to_string());
-        let boolean_string = PathComponent::String("true".to_string());
-        let null = PathComponent::Raw("null".to_string());
-        let null_string = PathComponent::String("null".to_string());
-
-        assert!(integer.matches_path_component(&decimal));
-        assert!(!integer.matches_path_component(&string));
-        assert!(!boolean.matches_path_component(&boolean_string));
-        assert!(!null.matches_path_component(&null_string));
-    }
 }
 
 pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {

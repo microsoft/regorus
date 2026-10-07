@@ -173,7 +173,7 @@ fn interpreter_rule_registration_checks_memory_and_can_retry() {
     let entrypoint: regorus::Rc<str> = entrypoint.into();
 
     for _ in 0..2 {
-        guard.set_with_additional_budget(16 * 1024);
+        guard.set_with_additional_budget(8 * 1024);
         let err = match engine.compile_with_entrypoint(&entrypoint) {
             Ok(_) => panic!("expected rule registration to hit the memory limit"),
             Err(err) => err,

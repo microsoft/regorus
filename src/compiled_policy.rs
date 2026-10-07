@@ -215,9 +215,7 @@ pub(crate) struct CompiledPolicyData {
     pub(crate) schedule: Option<Rc<Schedule>>,
     pub(crate) rules: Map<String, Vec<Ref<Rule>>>,
     pub(crate) default_rules: Map<String, Vec<DefaultRuleInfo>>,
-    pub(crate) rule_path_components: Map<String, Vec<PathComponent>>,
-    // Canonical string paths can coalesce rules with distinct typed selectors.
-    pub(crate) rule_path_components_by_rule: BTreeMap<Ref<Rule>, Vec<PathComponent>>,
+    pub(crate) rule_path_components: Map<String, Vec<String>>,
     pub(crate) imports: BTreeMap<String, Ref<Expr>>,
     pub(crate) functions: FunctionTable,
     pub(crate) rule_paths: MapSet<String>,
