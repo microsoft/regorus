@@ -161,9 +161,12 @@ impl TestFfiCommand {
         }
         test_args.push(OsString::from("--features"));
         test_args.push(OsString::from("contention_checks"));
+        // Global memory-limit tests share process-wide allocator counters.
+        test_args.push(OsString::from("--"));
+        test_args.push(OsString::from("--test-threads=1"));
         run_cargo_step(
             &ffi_dir,
-            "cargo test --features contention_checks (bindings/ffi)",
+            "cargo test --features contention_checks -- --test-threads=1 (bindings/ffi)",
             test_args,
         )?;
 
