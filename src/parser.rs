@@ -20,7 +20,8 @@ use crate::number::*;
 use crate::value::*;
 use crate::*;
 
-use alloc::collections::BTreeMap;
+use crate::utils::limits::PolicyLengthConfig;
+use alloc::collections::{BTreeMap, BTreeSet};
 use core::num::NonZeroU32;
 use core::str::FromStr;
 
@@ -29,6 +30,39 @@ use anyhow::{anyhow, bail, Result};
 #[inline]
 fn check_memory_limit() -> Result<()> {
     crate::utils::limits::check_memory_limit_if_needed().map_err(|err| anyhow!(err))
+}
+
+#[derive(Clone, Debug)]
+pub struct ParserContext {
+    rego_v1: bool,
+    future_keywords: BTreeSet<String>,
+    policy_length_config: PolicyLengthConfig,
+}
+
+impl ParserContext {
+    pub(crate) fn create_rule_selector_source(&self, selector: &str) -> Result<Source> {
+        Source::from_contents_with_limits(
+            "<rule-root>".to_string(),
+            selector.to_string(),
+            self.policy_length_config.max_file_bytes,
+            self.policy_length_config.max_lines,
+        )
+    }
+
+    pub(crate) fn parse_rule_selector(
+        &self,
+        source: &Source,
+        selector: &str,
+    ) -> Result<Vec<String>> {
+        let mut parser = Parser::new_with_max_col(source, self.policy_length_config.max_col)?;
+        parser.rego_v1 = self.rego_v1;
+        parser.future_keywords = self
+            .future_keywords
+            .iter()
+            .map(|keyword| (keyword.clone(), None))
+            .collect();
+        parser.parse_rule_selector(selector)
+    }
 }
 
 #[derive(Clone)]
@@ -59,7 +93,16 @@ const DEFAULT_MAX_EXPR_DEPTH: usize = 32;
 
 impl<'source> Parser<'source> {
     pub fn new(source: &'source Source) -> Result<Self> {
+        Self::from_lexer(source, Lexer::new(source))
+    }
+
+    fn new_with_max_col(source: &'source Source, max_col: NonZeroU32) -> Result<Self> {
         let mut lexer = Lexer::new(source);
+        lexer.set_max_col(max_col);
+        Self::from_lexer(source, lexer)
+    }
+
+    fn from_lexer(source: &'source Source, mut lexer: Lexer<'source>) -> Result<Self> {
         let tok = lexer.next_token()?;
         Ok(Self {
             source: source.clone(),
@@ -98,6 +141,17 @@ impl<'source> Parser<'source> {
 
     pub fn enable_rego_v1(&mut self) -> Result<()> {
         self.turn_on_rego_v1(&None)
+    }
+
+    pub(crate) fn snapshot_context(
+        &self,
+        policy_length_config: PolicyLengthConfig,
+    ) -> ParserContext {
+        ParserContext {
+            rego_v1: self.rego_v1,
+            future_keywords: self.future_keywords.keys().cloned().collect(),
+            policy_length_config,
+        }
     }
 
     fn turn_on_rego_v1(&mut self, span: &Option<Span>) -> Result<()> {
@@ -1591,6 +1645,38 @@ impl<'source> Parser<'source> {
         }
 
         Ok(term)
+    }
+
+    fn parse_rule_selector(&mut self, selector: &str) -> Result<Vec<String>> {
+        let expression = self.parse_rule_ref()?;
+        if self.tok.0 != TokenKind::Eof {
+            return Err(self.tok.1.error("expecting EOF"));
+        }
+
+        if !matches!(&expression, Expr::Var { .. } | Expr::RefDot { .. }) {
+            bail!("expected a rule-root selector");
+        }
+        let span = expression.span();
+        if span.start != 0 || span.text() != selector {
+            bail!("rule-root selector must match its complete input");
+        }
+
+        fn collect_components(expression: &Expr, components: &mut Vec<String>) -> Result<()> {
+            match expression {
+                Expr::Var { span, .. } => components.push(span.text().to_string()),
+                Expr::RefDot { refr, field, .. } => {
+                    collect_components(refr.as_ref(), components)?;
+                    components.push(field.0.text().to_string());
+                }
+                _ => bail!("expected a rule-root selector"),
+            }
+            check_memory_limit()?;
+            Ok(())
+        }
+
+        let mut components = Vec::new();
+        collect_components(&expression, &mut components)?;
+        Ok(components)
     }
 
     pub fn parse_rule_head(&mut self) -> Result<RuleHead> {

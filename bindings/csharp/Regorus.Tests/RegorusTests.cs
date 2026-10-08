@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System;
+using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -25,6 +26,26 @@ public class RegorusTests
         var result = engine.EvalRule("data.test.message");
 
         Assert.AreEqual("\"Hello\"", result);
+    }
+
+    [TestMethod]
+    public void AddPolicy_rejects_embedded_nul_in_path()
+    {
+        using var engine = new Engine();
+
+        Assert.ThrowsException<ArgumentException>(
+            () => engine.AddPolicy("a.rego\0suffix", "package test\nx := true"));
+    }
+
+    [TestMethod]
+    public void AddPolicyFromFile_rejects_embedded_nul_in_path()
+    {
+        using var engine = new Engine();
+        engine.SetRegoV0(true);
+
+        Assert.ThrowsException<ArgumentException>(
+            () => engine.AddPolicyFromFile(
+                Path.Combine(AppContext.BaseDirectory, "tests", "aci", "framework.rego") + "\0suffix"));
     }
 
     [TestMethod]
@@ -262,6 +283,107 @@ public class RegorusTests
 
         Assert.AreEqual("a", parameterName);
         Assert.AreEqual("b", modifierName);
+    }
+
+    [TestMethod]
+    public void HasDeclaredRuleRootedAt_checks_bare_and_dotted_prefixes()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy(
+            "metadata.rego",
+            "package customer\nmetadata.parameters.child := false");
+        engine.AddPolicy(
+            "default.rego",
+            "package customer\ndefault metadata.parameters = false");
+        engine.AddPolicy(
+            "function.rego",
+            "package customer\nmetadata.lookup(value) := value");
+        engine.AddPolicy(
+            "set.rego",
+            "package customer\nmetadata contains \"item\"");
+        engine.AddPolicy(
+            "lookalike.rego",
+            "package customer\nmetadataExtra := true");
+        engine.AddPolicy(
+            "reference.rego",
+            "package customer\nimport data.shared as metadata\nuse := metadata.value\nconfig := {\"metadata\": true}");
+
+        Assert.IsTrue(engine.HasDeclaredRuleRootedAt("metadata.rego", "metadata"));
+        Assert.IsTrue(engine.HasDeclaredRuleRootedAt("metadata.rego", "metadata.parameters"));
+        Assert.IsTrue(engine.HasDeclaredRuleRootedAt("default.rego", "metadata"));
+        Assert.IsTrue(engine.HasDeclaredRuleRootedAt("function.rego", "metadata"));
+        Assert.IsTrue(engine.HasDeclaredRuleRootedAt("set.rego", "metadata"));
+        Assert.IsFalse(engine.HasDeclaredRuleRootedAt("lookalike.rego", "metadata"));
+        Assert.IsFalse(engine.HasDeclaredRuleRootedAt("reference.rego", "metadata"));
+    }
+
+    [TestMethod]
+    public void HasDeclaredRuleRootedAt_maps_invalid_root_to_argument_exception()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy("a.rego", "package customer\nmetadata := true");
+
+        var error = Assert.ThrowsException<ArgumentException>(
+            () => engine.HasDeclaredRuleRootedAt("a.rego", "metadata..parameters"));
+        Assert.AreEqual("rootName", error.ParamName);
+    }
+
+    [TestMethod]
+    public void HasDeclaredRuleRootedAt_preserves_source_errors_and_string_guards()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy("duplicate.rego", "package customer\nmetadata := false");
+        engine.AddPolicy("duplicate.rego", "package customer\nx := true");
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => engine.HasDeclaredRuleRootedAt("duplicate.rego", "metadata..parameters"));
+        Assert.ThrowsException<InvalidOperationException>(
+            () => engine.HasDeclaredRuleRootedAt("missing.rego", "metadata..parameters"));
+        Assert.ThrowsException<ArgumentNullException>(
+            () => engine.HasDeclaredRuleRootedAt(null!, "metadata"));
+        Assert.ThrowsException<ArgumentNullException>(
+            () => engine.HasDeclaredRuleRootedAt("duplicate.rego", null!));
+        Assert.ThrowsException<ArgumentException>(
+            () => engine.HasDeclaredRuleRootedAt("duplicate.rego\0.rego", "metadata"));
+        Assert.ThrowsException<ArgumentException>(
+            () => engine.HasDeclaredRuleRootedAt("duplicate.rego", "metadata\0parameters"));
+    }
+
+    [TestMethod]
+    public void HasDeclaredRuleRootedAt_preserves_captured_file_limit_errors()
+    {
+        using var engine = new Engine();
+        engine.SetPolicyLengthConfig(new PolicyLengthConfig(128, (nuint)64, (nuint)4));
+        engine.AddPolicy("limits.rego", "package customer\nx := true");
+        engine.SetPolicyLengthConfig(new PolicyLengthConfig(128, (nuint)128, (nuint)4));
+
+        var rootName = new string('a', 65);
+        var error = Assert.ThrowsException<InvalidOperationException>(
+            () => engine.HasDeclaredRuleRootedAt("limits.rego", rootName));
+
+        StringAssert.Contains(error.Message, "maximum allowed policy file size 64 bytes");
+    }
+
+    [TestMethod]
+    public void HasDeclaredRuleRootedAt_keeps_unclassifiable_heads_as_operation_errors()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy(
+            "unclassifiable.rego",
+            "package customer\nmetadata := true\nbroken[lookup()] := true");
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => engine.HasDeclaredRuleRootedAt("unclassifiable.rego", "metadata"));
+    }
+
+    [TestMethod]
+    public void HasDeclaredRuleRootedAt_preserves_disposed_handle_behavior()
+    {
+        var engine = new Engine();
+        engine.Dispose();
+
+        Assert.ThrowsException<ObjectDisposedException>(
+            () => engine.HasDeclaredRuleRootedAt("a.rego", "metadata"));
     }
 
     [TestMethod]
