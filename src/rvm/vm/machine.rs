@@ -1215,9 +1215,7 @@ result := sprintf("%s%s", [
         let (exact_vm, exact_output) = resume_to_large_native_output(exact_vm)?;
         let exact_output = exact_output.expect("usage equal to budget succeeds");
         anyhow::ensure!(exact_output.as_bytes() == expected_output);
-        anyhow::ensure!(
-            exact_vm.last_memory_budget_usage_for_test == Some(sampled_usage)
-        );
+        anyhow::ensure!(exact_vm.last_memory_budget_usage_for_test == Some(sampled_usage));
 
         let one_byte_over_budget = sampled_usage
             .checked_sub(1)
