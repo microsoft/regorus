@@ -1166,11 +1166,10 @@ result := sprintf("%s%s", [
         let data = Value::from_json_str(&data_json)?;
 
         let mut engine = Engine::new();
-        engine
-            .add_policy(
-                "memory_budget.rego".into(),
-                NATIVE_RESUME_OUTPUT_POLICY.into(),
-            )?;
+        engine.add_policy(
+            "memory_budget.rego".into(),
+            NATIVE_RESUME_OUTPUT_POLICY.into(),
+        )?;
         let entry_point = Rc::from("data.limit.result");
         let compiled = engine.compile_with_entrypoint(&entry_point)?;
         let program = Compiler::compile_from_policy(&compiled, &[entry_point.as_ref()])?;
@@ -1181,10 +1180,9 @@ result := sprintf("%s%s", [
     fn resume_to_large_native_output(
         mut vm: RegoVM,
     ) -> anyhow::Result<(RegoVM, core::result::Result<CString, VmError>)> {
-        let initial = vm
-            .execute_entry_point_by_name_to_c_string_for_ffi("data.limit.result")?;
-        assert_eq!(initial.as_bytes_with_nul(), b"\"<undefined>\"\0");
-        assert!(matches!(
+        let initial = vm.execute_entry_point_by_name_to_c_string_for_ffi("data.limit.result")?;
+        anyhow::ensure!(initial.as_bytes_with_nul() == b"\"<undefined>\"\0");
+        anyhow::ensure!(matches!(
             vm.execution_state,
             super::super::execution_model::ExecutionState::Suspended { .. }
         ));
@@ -1201,16 +1199,13 @@ result := sprintf("%s%s", [
         let vm = native_resume_output_vm(&program, &data, NATIVE_OUTPUT_TEST_CAP_BYTES)?;
         let (vm, output) = resume_to_large_native_output(vm)?;
         let output = output.expect("budgeted native resume output succeeds");
-        assert_eq!(
-            output.as_bytes().len(),
-            NATIVE_RESUME_OUTPUT_BYTES.saturating_add(4)
-        );
+        anyhow::ensure!(output.as_bytes().len() == NATIVE_RESUME_OUTPUT_BYTES.saturating_add(4));
         let expected_output = output.as_bytes().to_vec();
         let sampled_usage = vm
             .last_memory_budget_usage_for_test
             .expect("final native output check should record its live usage");
-        assert!(sampled_usage >= u64::try_from(NATIVE_RESUME_OUTPUT_BYTES)?);
-        assert!(sampled_usage <= NATIVE_OUTPUT_TEST_CAP_BYTES);
+        anyhow::ensure!(sampled_usage >= u64::try_from(NATIVE_RESUME_OUTPUT_BYTES)?);
+        anyhow::ensure!(sampled_usage <= NATIVE_OUTPUT_TEST_CAP_BYTES);
         std::println!(
             "native_resume_final_output_check_usage={sampled_usage}; output_json_bytes={}",
             output.as_bytes().len()
@@ -1219,38 +1214,37 @@ result := sprintf("%s%s", [
         let exact_vm = native_resume_output_vm(&program, &data, sampled_usage)?;
         let (exact_vm, exact_output) = resume_to_large_native_output(exact_vm)?;
         let exact_output = exact_output.expect("usage equal to budget succeeds");
-        assert_eq!(exact_output.as_bytes(), expected_output);
-        assert_eq!(
-            exact_vm.last_memory_budget_usage_for_test,
-            Some(sampled_usage)
+        anyhow::ensure!(exact_output.as_bytes() == expected_output);
+        anyhow::ensure!(
+            exact_vm.last_memory_budget_usage_for_test == Some(sampled_usage)
         );
 
         let one_byte_over_budget = sampled_usage
             .checked_sub(1)
             .expect("fixture usage must exceed zero");
-        assert_eq!(sampled_usage, one_byte_over_budget.saturating_add(1));
+        anyhow::ensure!(sampled_usage == one_byte_over_budget.saturating_add(1));
         let over_budget_vm = native_resume_output_vm(&program, &data, one_byte_over_budget)?;
         let (mut over_budget_vm, over_budget_output) =
             resume_to_large_native_output(over_budget_vm)?;
-        assert!(matches!(
+        anyhow::ensure!(matches!(
             over_budget_output,
             Err(VmError::MemoryBudgetExceeded { usage, budget, .. })
                 if usage == sampled_usage && budget == one_byte_over_budget
         ));
-        assert!(matches!(
+        anyhow::ensure!(matches!(
             &over_budget_vm.execution_state,
             super::super::execution_model::ExecutionState::Error {
                 error: VmError::MemoryBudgetExceeded { usage, budget, .. }
             } if *usage == sampled_usage && *budget == one_byte_over_budget
         ));
-        assert!(over_budget_vm.execution_stack.is_empty());
-        assert!(over_budget_vm.host_await_responses.is_empty());
-        assert!(over_budget_vm.suspendable_memory_budget_account.is_none());
-        assert!(matches!(
+        anyhow::ensure!(over_budget_vm.execution_stack.is_empty());
+        anyhow::ensure!(over_budget_vm.host_await_responses.is_empty());
+        anyhow::ensure!(over_budget_vm.suspendable_memory_budget_account.is_none());
+        anyhow::ensure!(matches!(
             over_budget_vm.memory_budget_lifecycle,
             super::MemoryBudgetLifecycle::Inactive
         ));
-        assert!(!matches!(
+        anyhow::ensure!(!matches!(
             &over_budget_vm.execution_state,
             super::super::execution_model::ExecutionState::Completed { .. }
         ));
@@ -1260,7 +1254,7 @@ result := sprintf("%s%s", [
         further_resume
             .err()
             .ok_or_else(|| anyhow::anyhow!("further resume unexpectedly succeeded"))?;
-        assert!(matches!(
+        anyhow::ensure!(matches!(
             &over_budget_vm.execution_state,
             super::super::execution_model::ExecutionState::Error { .. }
         ));
@@ -1268,19 +1262,19 @@ result := sprintf("%s%s", [
         let plus_one_vm =
             native_resume_output_vm(&program, &data, sampled_usage.saturating_add(1))?;
         let (_, plus_one_output) = resume_to_large_native_output(plus_one_vm)?;
-        assert_eq!(
+        anyhow::ensure!(
             plus_one_output
                 .expect("budget one byte above usage succeeds")
-                .as_bytes(),
-            expected_output
+                .as_bytes()
+                == expected_output
         );
         Ok(())
     }
 
     #[allow(clippy::expect_used)]
     #[test]
-    fn large_native_resume_output_fails_at_the_final_check_and_allows_reuse(
-    ) -> anyhow::Result<()> {
+    fn large_native_resume_output_fails_at_the_final_check_and_allows_reuse() -> anyhow::Result<()>
+    {
         let (program, data) = compile_native_resume_output_fixture()?;
         let calibration_vm =
             native_resume_output_vm(&program, &data, NATIVE_OUTPUT_TEST_CAP_BYTES)?;
@@ -1292,14 +1286,14 @@ result := sprintf("%s%s", [
         let final_usage = calibration_vm
             .last_memory_budget_usage_for_test
             .expect("calibration records final native output check usage");
-        assert!(output_start_usage < final_usage);
+        anyhow::ensure!(output_start_usage < final_usage);
 
         let mut vm = native_resume_output_vm(&program, &data, output_start_usage)?;
         let initial = vm
             .execute_entry_point_by_name_to_c_string_for_ffi("data.limit.result")
             .expect("initial HostAwait output");
-        assert_eq!(initial.as_bytes_with_nul(), b"\"<undefined>\"\0");
-        assert!(matches!(
+        anyhow::ensure!(initial.as_bytes_with_nul() == b"\"<undefined>\"\0");
+        anyhow::ensure!(matches!(
             vm.execution_state,
             super::super::execution_model::ExecutionState::Suspended { .. }
         ));
@@ -1308,7 +1302,7 @@ result := sprintf("%s%s", [
             .as_ref()
             .expect("suspended execution has an account")
             .live_bytes();
-        assert!(before_resume_usage < output_start_usage);
+        anyhow::ensure!(before_resume_usage < output_start_usage);
 
         let response = String::from("\"ok\"");
         let error = vm
@@ -1320,23 +1314,23 @@ result := sprintf("%s%s", [
         let sampled_usage = vm
             .last_memory_budget_usage_for_test
             .expect("final output check should record live usage");
-        assert_eq!(observed_output_start, output_start_usage);
-        assert!(sampled_usage > output_start_usage);
-        assert!(matches!(
+        anyhow::ensure!(observed_output_start == output_start_usage);
+        anyhow::ensure!(sampled_usage > output_start_usage);
+        anyhow::ensure!(matches!(
             error,
             VmError::MemoryBudgetExceeded { usage, budget, .. }
                 if usage == sampled_usage && budget == output_start_usage
         ));
-        assert!(matches!(
+        anyhow::ensure!(matches!(
             &vm.execution_state,
             super::super::execution_model::ExecutionState::Error {
                 error: VmError::MemoryBudgetExceeded { usage, budget, .. }
             } if *usage == sampled_usage && *budget == output_start_usage
         ));
-        assert!(vm.execution_stack.is_empty());
-        assert!(vm.host_await_responses.is_empty());
-        assert!(vm.suspendable_memory_budget_account.is_none());
-        assert!(matches!(
+        anyhow::ensure!(vm.execution_stack.is_empty());
+        anyhow::ensure!(vm.host_await_responses.is_empty());
+        anyhow::ensure!(vm.suspendable_memory_budget_account.is_none());
+        anyhow::ensure!(matches!(
             vm.memory_budget_lifecycle,
             super::MemoryBudgetLifecycle::Inactive
         ));
@@ -1344,7 +1338,7 @@ result := sprintf("%s%s", [
         further_resume
             .err()
             .ok_or_else(|| anyhow::anyhow!("further resume unexpectedly succeeded"))?;
-        assert!(matches!(
+        anyhow::ensure!(matches!(
             &vm.execution_state,
             super::super::execution_model::ExecutionState::Error { .. }
         ));
@@ -1353,12 +1347,12 @@ result := sprintf("%s%s", [
             limit: NonZeroU64::new(NATIVE_OUTPUT_TEST_CAP_BYTES).unwrap_or(NonZeroU64::MIN),
         }));
         let (_, reused_output) = resume_to_large_native_output(vm)?;
-        assert_eq!(
+        anyhow::ensure!(
             reused_output
                 .expect("independent execution completes under its own budget")
                 .as_bytes()
-                .len(),
-            NATIVE_RESUME_OUTPUT_BYTES.saturating_add(4)
+                .len()
+                == NATIVE_RESUME_OUTPUT_BYTES.saturating_add(4)
         );
         Ok(())
     }
@@ -1371,17 +1365,17 @@ result := sprintf("%s%s", [
         let error = vm
             .execute_entry_point_by_name_to_c_string_for_ffi("data.limit.result")
             .expect_err("one-byte budget must not reach a valid HostAwait continuation");
-        assert!(matches!(error, VmError::MemoryBudgetExceeded { .. }));
-        assert!(matches!(
+        anyhow::ensure!(matches!(error, VmError::MemoryBudgetExceeded { .. }));
+        anyhow::ensure!(matches!(
             &vm.execution_state,
             super::super::execution_model::ExecutionState::Error {
                 error: VmError::MemoryBudgetExceeded { .. }
             }
         ));
-        assert!(vm.execution_stack.is_empty());
-        assert!(vm.host_await_responses.is_empty());
-        assert!(vm.suspendable_memory_budget_account.is_none());
-        assert!(matches!(
+        anyhow::ensure!(vm.execution_stack.is_empty());
+        anyhow::ensure!(vm.host_await_responses.is_empty());
+        anyhow::ensure!(vm.suspendable_memory_budget_account.is_none());
+        anyhow::ensure!(matches!(
             vm.memory_budget_lifecycle,
             super::MemoryBudgetLifecycle::Inactive
         ));
