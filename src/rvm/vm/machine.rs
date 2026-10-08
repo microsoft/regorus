@@ -590,12 +590,10 @@ impl RegoVM {
         if matches!(
             self.memory_budget_lifecycle,
             MemoryBudgetLifecycle::FfiResultSerialization
-        ) {
-            self.finish_active_memory_budget_execution();
-        } else if matches!(
+        ) || (matches!(
             self.memory_budget_lifecycle,
             MemoryBudgetLifecycle::SuspendableExecution
-        ) && !matches!(self.execution_state, ExecutionState::Suspended { .. })
+        ) && !matches!(self.execution_state, ExecutionState::Suspended { .. }))
         {
             self.finish_active_memory_budget_execution();
         }
@@ -700,7 +698,7 @@ impl RegoVM {
                             .vm()
                             .suspendable_memory_budget_account
                             .as_ref()
-                            .map(|account| account.live_bytes());
+                            .map(|sampled_account| sampled_account.live_bytes());
                     }
                     let json = value.to_json_str().map_err(VmError::from)?;
                     let output = CString::new(json).map_err(|_| VmError::Internal {
@@ -801,24 +799,22 @@ impl RegoVM {
     }
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    pub(super) const fn ensure_memory_budget_execution_mode(&self) -> Result<()> {
+    pub(super) const fn ensure_memory_budget_execution_mode() -> Result<()> {
         Ok(())
     }
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    pub(super) const fn ensure_memory_budget_resume_supported(&self) -> Result<()> {
+    pub(super) const fn ensure_memory_budget_resume_supported() -> Result<()> {
         Ok(())
     }
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
-    #[allow(clippy::unused_self)]
-    pub(super) const fn ensure_memory_budget_execution_mode(&self) -> Result<()> {
+    pub(super) const fn ensure_memory_budget_execution_mode() -> Result<()> {
         Ok(())
     }
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
-    #[allow(clippy::unused_self)]
-    pub(super) const fn ensure_memory_budget_resume_supported(&self) -> Result<()> {
+    pub(super) const fn ensure_memory_budget_resume_supported() -> Result<()> {
         Ok(())
     }
 
@@ -1149,48 +1145,44 @@ result := sprintf("%s%s", [
         program: &Arc<crate::rvm::program::Program>,
         data: &Value,
         budget: u64,
-    ) -> RegoVM {
+    ) -> anyhow::Result<RegoVM> {
         let mut vm = RegoVM::new();
         vm.set_execution_mode(ExecutionMode::Suspendable);
         vm.load_program(program.clone());
-        vm.set_data(data.clone()).expect("set fixture data");
-        vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+        vm.set_data(data.clone())?;
+        vm.set_input(Value::from_json_str(r#"{"value":"request"}"#)?);
         vm.set_memory_budget_config(Some(MemoryBudgetConfig {
             limit: NonZeroU64::new(budget).unwrap_or(NonZeroU64::MIN),
         }));
-        vm
+        Ok(vm)
     }
 
-    fn compile_native_resume_output_fixture() -> (Arc<crate::rvm::program::Program>, Value) {
+    fn compile_native_resume_output_fixture(
+    ) -> anyhow::Result<(Arc<crate::rvm::program::Program>, Value)> {
         let data_json = alloc::format!(
             r#"{{"limit":{{"large_text":"{}"}}}}"#,
             "x".repeat(NATIVE_RESUME_OUTPUT_BYTES)
         );
-        let data = Value::from_json_str(&data_json).expect("valid fixture data");
+        let data = Value::from_json_str(&data_json)?;
 
         let mut engine = Engine::new();
         engine
             .add_policy(
                 "memory_budget.rego".into(),
                 NATIVE_RESUME_OUTPUT_POLICY.into(),
-            )
-            .expect("add fixture policy");
+            )?;
         let entry_point = Rc::from("data.limit.result");
-        let compiled = engine
-            .compile_with_entrypoint(&entry_point)
-            .expect("compile fixture policy");
-        let program = Compiler::compile_from_policy(&compiled, &[entry_point.as_ref()])
-            .expect("compile fixture VM program");
+        let compiled = engine.compile_with_entrypoint(&entry_point)?;
+        let program = Compiler::compile_from_policy(&compiled, &[entry_point.as_ref()])?;
 
-        (program, data)
+        Ok((program, data))
     }
 
     fn resume_to_large_native_output(
         mut vm: RegoVM,
-    ) -> (RegoVM, core::result::Result<CString, VmError>) {
+    ) -> anyhow::Result<(RegoVM, core::result::Result<CString, VmError>)> {
         let initial = vm
-            .execute_entry_point_by_name_to_c_string_for_ffi("data.limit.result")
-            .expect("initial HostAwait output");
+            .execute_entry_point_by_name_to_c_string_for_ffi("data.limit.result")?;
         assert_eq!(initial.as_bytes_with_nul(), b"\"<undefined>\"\0");
         assert!(matches!(
             vm.execution_state,
@@ -1199,15 +1191,15 @@ result := sprintf("%s%s", [
 
         let response = String::from("\"ok\"");
         let output = vm.resume_to_c_string_for_ffi(move || Ok(Some(response)));
-        (vm, output)
+        Ok((vm, output))
     }
 
     #[allow(clippy::expect_used)]
     #[test]
-    fn native_resume_output_allows_exact_budget_and_rejects_one_byte_over() {
-        let (program, data) = compile_native_resume_output_fixture();
-        let vm = native_resume_output_vm(&program, &data, NATIVE_OUTPUT_TEST_CAP_BYTES);
-        let (vm, output) = resume_to_large_native_output(vm);
+    fn native_resume_output_allows_exact_budget_and_rejects_one_byte_over() -> anyhow::Result<()> {
+        let (program, data) = compile_native_resume_output_fixture()?;
+        let vm = native_resume_output_vm(&program, &data, NATIVE_OUTPUT_TEST_CAP_BYTES)?;
+        let (vm, output) = resume_to_large_native_output(vm)?;
         let output = output.expect("budgeted native resume output succeeds");
         assert_eq!(
             output.as_bytes().len(),
@@ -1217,15 +1209,15 @@ result := sprintf("%s%s", [
         let sampled_usage = vm
             .last_memory_budget_usage_for_test
             .expect("final native output check should record its live usage");
-        assert!(sampled_usage >= NATIVE_RESUME_OUTPUT_BYTES as u64);
+        assert!(sampled_usage >= u64::try_from(NATIVE_RESUME_OUTPUT_BYTES)?);
         assert!(sampled_usage <= NATIVE_OUTPUT_TEST_CAP_BYTES);
         std::println!(
             "native_resume_final_output_check_usage={sampled_usage}; output_json_bytes={}",
             output.as_bytes().len()
         );
 
-        let exact_vm = native_resume_output_vm(&program, &data, sampled_usage);
-        let (exact_vm, exact_output) = resume_to_large_native_output(exact_vm);
+        let exact_vm = native_resume_output_vm(&program, &data, sampled_usage)?;
+        let (exact_vm, exact_output) = resume_to_large_native_output(exact_vm)?;
         let exact_output = exact_output.expect("usage equal to budget succeeds");
         assert_eq!(exact_output.as_bytes(), expected_output);
         assert_eq!(
@@ -1237,9 +1229,9 @@ result := sprintf("%s%s", [
             .checked_sub(1)
             .expect("fixture usage must exceed zero");
         assert_eq!(sampled_usage, one_byte_over_budget.saturating_add(1));
-        let over_budget_vm = native_resume_output_vm(&program, &data, one_byte_over_budget);
+        let over_budget_vm = native_resume_output_vm(&program, &data, one_byte_over_budget)?;
         let (mut over_budget_vm, over_budget_output) =
-            resume_to_large_native_output(over_budget_vm);
+            resume_to_large_native_output(over_budget_vm)?;
         assert!(matches!(
             over_budget_output,
             Err(VmError::MemoryBudgetExceeded { usage, budget, .. })
@@ -1265,28 +1257,34 @@ result := sprintf("%s%s", [
 
         let further_resume =
             over_budget_vm.resume_to_c_string_for_ffi(|| Ok(Some(String::from("\"retry\""))));
-        assert!(further_resume.is_err());
+        further_resume
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("further resume unexpectedly succeeded"))?;
         assert!(matches!(
             &over_budget_vm.execution_state,
             super::super::execution_model::ExecutionState::Error { .. }
         ));
 
-        let plus_one_vm = native_resume_output_vm(&program, &data, sampled_usage.saturating_add(1));
-        let (_, plus_one_output) = resume_to_large_native_output(plus_one_vm);
+        let plus_one_vm =
+            native_resume_output_vm(&program, &data, sampled_usage.saturating_add(1))?;
+        let (_, plus_one_output) = resume_to_large_native_output(plus_one_vm)?;
         assert_eq!(
             plus_one_output
                 .expect("budget one byte above usage succeeds")
                 .as_bytes(),
             expected_output
         );
+        Ok(())
     }
 
     #[allow(clippy::expect_used)]
     #[test]
-    fn large_native_resume_output_fails_at_the_final_check_and_allows_reuse() {
-        let (program, data) = compile_native_resume_output_fixture();
-        let calibration_vm = native_resume_output_vm(&program, &data, NATIVE_OUTPUT_TEST_CAP_BYTES);
-        let (calibration_vm, calibration_output) = resume_to_large_native_output(calibration_vm);
+    fn large_native_resume_output_fails_at_the_final_check_and_allows_reuse(
+    ) -> anyhow::Result<()> {
+        let (program, data) = compile_native_resume_output_fixture()?;
+        let calibration_vm =
+            native_resume_output_vm(&program, &data, NATIVE_OUTPUT_TEST_CAP_BYTES)?;
+        let (calibration_vm, calibration_output) = resume_to_large_native_output(calibration_vm)?;
         calibration_output.expect("calibration output succeeds under large cap");
         let output_start_usage = calibration_vm
             .ffi_output_start_usage_for_test
@@ -1296,7 +1294,7 @@ result := sprintf("%s%s", [
             .expect("calibration records final native output check usage");
         assert!(output_start_usage < final_usage);
 
-        let mut vm = native_resume_output_vm(&program, &data, output_start_usage);
+        let mut vm = native_resume_output_vm(&program, &data, output_start_usage)?;
         let initial = vm
             .execute_entry_point_by_name_to_c_string_for_ffi("data.limit.result")
             .expect("initial HostAwait output");
@@ -1343,7 +1341,9 @@ result := sprintf("%s%s", [
             super::MemoryBudgetLifecycle::Inactive
         ));
         let further_resume = vm.resume_to_c_string_for_ffi(|| Ok(Some(String::from("\"retry\""))));
-        assert!(further_resume.is_err());
+        further_resume
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("further resume unexpectedly succeeded"))?;
         assert!(matches!(
             &vm.execution_state,
             super::super::execution_model::ExecutionState::Error { .. }
@@ -1352,7 +1352,7 @@ result := sprintf("%s%s", [
         vm.set_memory_budget_config(Some(MemoryBudgetConfig {
             limit: NonZeroU64::new(NATIVE_OUTPUT_TEST_CAP_BYTES).unwrap_or(NonZeroU64::MIN),
         }));
-        let (_, reused_output) = resume_to_large_native_output(vm);
+        let (_, reused_output) = resume_to_large_native_output(vm)?;
         assert_eq!(
             reused_output
                 .expect("independent execution completes under its own budget")
@@ -1360,13 +1360,14 @@ result := sprintf("%s%s", [
                 .len(),
             NATIVE_RESUME_OUTPUT_BYTES.saturating_add(4)
         );
+        Ok(())
     }
 
     #[allow(clippy::expect_used)]
     #[test]
-    fn one_byte_native_resume_budget_fails_and_terminalizes() {
-        let (program, data) = compile_native_resume_output_fixture();
-        let mut vm = native_resume_output_vm(&program, &data, 1);
+    fn one_byte_native_resume_budget_fails_and_terminalizes() -> anyhow::Result<()> {
+        let (program, data) = compile_native_resume_output_fixture()?;
+        let mut vm = native_resume_output_vm(&program, &data, 1)?;
         let error = vm
             .execute_entry_point_by_name_to_c_string_for_ffi("data.limit.result")
             .expect_err("one-byte budget must not reach a valid HostAwait continuation");
@@ -1384,6 +1385,7 @@ result := sprintf("%s%s", [
             vm.memory_budget_lifecycle,
             super::MemoryBudgetLifecycle::Inactive
         ));
+        Ok(())
     }
 
     #[test]

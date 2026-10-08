@@ -151,7 +151,7 @@ impl ResumeDeserializationLimitErrorCapture {
         }
     }
 
-    fn take(&self) -> Option<crate::utils::limits::LimitError> {
+    fn take(_capture: &Self) -> Option<crate::utils::limits::LimitError> {
         RESUME_DESERIALIZATION_LIMIT_ERROR_CAPTURE.with(|capture| {
             let mut state = capture.get();
             let error = state.error.take();

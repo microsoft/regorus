@@ -46,16 +46,25 @@ fn resume_deserialization_limit_error_capture_is_nested_thread_local_and_unwind_
 
     {
         let nested_capture = ResumeDeserializationLimitErrorCapture::new();
-        assert_eq!(nested_capture.take(), None);
+        assert_eq!(
+            ResumeDeserializationLimitErrorCapture::take(&nested_capture),
+            None
+        );
         record_resume_deserialization_limit_error(nested_error);
-        assert_eq!(nested_capture.take(), Some(nested_error));
+        assert_eq!(
+            ResumeDeserializationLimitErrorCapture::take(&nested_capture),
+            Some(nested_error)
+        );
     }
 
     let thread_result = std::thread::spawn(move || {
         let thread_capture = ResumeDeserializationLimitErrorCapture::new();
-        assert_eq!(thread_capture.take(), None);
+        assert_eq!(
+            ResumeDeserializationLimitErrorCapture::take(&thread_capture),
+            None
+        );
         record_resume_deserialization_limit_error(thread_error);
-        thread_capture.take()
+        ResumeDeserializationLimitErrorCapture::take(&thread_capture)
     })
     .join()
     .expect("thread-local capture test thread should complete");
@@ -67,11 +76,17 @@ fn resume_deserialization_limit_error_capture_is_nested_thread_local_and_unwind_
         panic!("exercise RAII restoration during unwind");
     });
     assert!(unwind_result.is_err());
-    assert_eq!(outer_capture.take(), Some(outer_error));
+    assert_eq!(
+        ResumeDeserializationLimitErrorCapture::take(&outer_capture),
+        Some(outer_error)
+    );
 
     drop(outer_capture);
     let subsequent_capture = ResumeDeserializationLimitErrorCapture::new();
-    assert_eq!(subsequent_capture.take(), None);
+    assert_eq!(
+        ResumeDeserializationLimitErrorCapture::take(&subsequent_capture),
+        None
+    );
 }
 
 fn val(i: u64) -> Value {

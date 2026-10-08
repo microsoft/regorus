@@ -17,7 +17,7 @@ use super::machine::RegoVM;
 impl RegoVM {
     pub fn execute(&mut self) -> Result<Value> {
         crate::utils::limits::without_memory_budget_scope(|| {
-            self.ensure_memory_budget_execution_mode()?;
+            Self::ensure_memory_budget_execution_mode()?;
             self.execution_mode = self.next_execution_mode;
             match self.execution_mode {
                 ExecutionMode::RunToCompletion => self.execute_run_to_completion(),
@@ -28,7 +28,7 @@ impl RegoVM {
 
     pub fn execute_entry_point_by_index(&mut self, index: usize) -> Result<Value> {
         crate::utils::limits::without_memory_budget_scope(|| {
-            self.ensure_memory_budget_execution_mode()?;
+            Self::ensure_memory_budget_execution_mode()?;
             let (entry_point_name, entry_point_pc) = {
                 let (name, &pc) = self.program.entry_points.get_index(index).ok_or(
                     VmError::InvalidEntryPointIndex {
@@ -84,7 +84,7 @@ impl RegoVM {
 
     pub fn execute_entry_point_by_name(&mut self, name: &str) -> Result<Value> {
         crate::utils::limits::without_memory_budget_scope(|| {
-            self.ensure_memory_budget_execution_mode()?;
+            Self::ensure_memory_budget_execution_mode()?;
             let entry_point_pc =
                 self.program
                     .get_entry_point(name)
@@ -275,7 +275,7 @@ impl RegoVM {
     }
 
     pub fn resume(&mut self, resume_value: Option<Value>) -> Result<Value> {
-        self.ensure_memory_budget_resume_supported()?;
+        Self::ensure_memory_budget_resume_supported()?;
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
         let budget_account = self.suspendable_memory_budget_account.clone();
 
