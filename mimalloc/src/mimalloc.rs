@@ -42,12 +42,8 @@ fn allocation_header_padding(align: usize) -> usize {
 fn allocation_header_layout(layout: Layout) -> Option<(usize, usize, usize)> {
     let header_size = size_of::<AllocationHeader>();
     let align = layout.align();
-    let Some(offset) = header_size.checked_add(allocation_header_padding(align)) else {
-        return None;
-    };
-    let Some(raw_size) = offset.checked_add(layout.size()) else {
-        return None;
-    };
+    let offset = header_size.checked_add(allocation_header_padding(align))?;
+    let raw_size = offset.checked_add(layout.size())?;
     let raw_align = align.max(align_of::<AllocationHeader>());
     Some((offset, raw_align, raw_size))
 }
@@ -371,7 +367,7 @@ mod tests {
     ) -> Result<(), Box<dyn Error>> {
         let allocator = Mimalloc;
         let outer = MemoryBudgetAccount::new();
-        let inner = MemoryBudgetAccount::new();
+        let inner = MemoryBudgetAccount::default();
         let unowned_layout = Layout::from_size_align(11, 8)?;
         let outer_layout = Layout::from_size_align(13, 8)?;
         let inner_layout = Layout::from_size_align(19, 64)?;

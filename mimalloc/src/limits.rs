@@ -106,6 +106,12 @@ impl MemoryBudgetAccount {
     }
 }
 
+impl Default for MemoryBudgetAccount {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Select no execution account for the duration of an independent synchronous operation.
 #[doc(hidden)]
 pub fn with_unowned_memory_budget_scope<R>(operation: impl FnOnce() -> R) -> R {

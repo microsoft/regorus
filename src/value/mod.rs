@@ -475,7 +475,7 @@ impl Value {
         Self::parse_json_str(json, false).map_err(ResumeJsonError::into_anyhow)
     }
 
-    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    #[cfg(all(feature = "rvm", feature = "allocator-memory-limits", not(miri)))]
     pub(crate) fn from_json_str_for_resume(
         json: &str,
     ) -> core::result::Result<Value, ResumeJsonError> {
