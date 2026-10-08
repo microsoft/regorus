@@ -79,24 +79,40 @@ fn namespace_literal_dot_rule_path_uses_bracketed_component() -> Result<()> {
 }
 
 #[test]
-fn namespace_literal_dot_package_metadata_is_unambiguous() -> Result<()> {
+fn namespace_literal_dot_package_metadata_preserves_legacy_dot_join() -> Result<()> {
     let mut engine = Engine::new();
     let package = engine.add_policy(
         "namespace.rego".to_string(),
-        r#"package graph.defUniqueName["1.0.0"]"#.to_string(),
+        r#"package graph.defUniqueName["1.0.0"]
+           value := 1"#
+            .to_string(),
+    )?;
+    let second_package = engine.add_policy(
+        "second.rego".to_string(),
+        "package second\nvalue := 2".to_string(),
     )?;
 
-    assert_eq!(package, "data.graph.defUniqueName[\"1.0.0\"]");
+    assert_eq!(package, "data.graph.defUniqueName.1.0.0");
+    assert_eq!(second_package, "data.second");
     assert_eq!(
         engine.get_packages()?,
-        vec!["data.graph.defUniqueName[\"1.0.0\"]"]
+        vec!["data.graph.defUniqueName.1.0.0", "data.second"]
     );
+    let path = r#"data.graph.defUniqueName["1.0.0"].value"#;
+    let compiled = engine.compile_with_entrypoint(&path.into())?;
+    for _ in 0..2 {
+        assert_eq!(engine.eval_rule(path.to_string())?, Value::from(1));
+        assert_eq!(
+            compiled.eval_with_input(Value::new_object())?,
+            Value::from(1)
+        );
+    }
 
     Ok(())
 }
 
 #[test]
-fn namespace_escaped_literal_component_uses_json_path_escaping() -> Result<()> {
+fn namespace_escaped_literal_component_metadata_preserves_escape_spelling() -> Result<()> {
     let mut engine = Engine::new();
     let package = engine.add_policy(
         "escaped.rego".to_string(),
@@ -105,11 +121,16 @@ fn namespace_escaped_literal_component_uses_json_path_escaping() -> Result<()> {
             .to_string(),
     )?;
 
-    assert_eq!(package, r#"data.graph["a\".b"]"#);
-    assert_eq!(
-        engine.eval_rule(r#"data.graph["a\".b"].value"#.to_string())?,
-        Value::from(1)
-    );
+    assert_eq!(package, r#"data.graph.a\".b"#);
+    let path = r#"data.graph["a\".b"].value"#;
+    let compiled = engine.compile_with_entrypoint(&path.into())?;
+    for _ in 0..2 {
+        assert_eq!(engine.eval_rule(path.to_string())?, Value::from(1));
+        assert_eq!(
+            compiled.eval_with_input(Value::new_object())?,
+            Value::from(1)
+        );
+    }
 
     Ok(())
 }
@@ -126,6 +147,72 @@ fn namespace_bracketed_identifier_path_is_equivalent_to_dotted_path() -> Result<
         engine.eval_rule("data.graph[\"defUniqueName\"].value".to_string())?,
         Value::Bool(true)
     );
+    Ok(())
+}
+
+#[test]
+fn namespace_bracketed_and_dotted_identifiers_share_legacy_metadata_projection() -> Result<()> {
+    let mut bracketed = Engine::new();
+    let package = bracketed.add_policy(
+        "bracketed-identifier.rego".to_string(),
+        "package graph[\"defUniqueName\"]\nvalue := true".to_string(),
+    )?;
+    assert_eq!(package, "data.graph.defUniqueName");
+    assert_eq!(bracketed.get_packages()?, vec!["data.graph.defUniqueName"]);
+    assert_eq!(
+        bracketed.eval_rule(r#"data.graph["defUniqueName"].value"#.to_string())?,
+        Value::Bool(true)
+    );
+
+    let mut dotted = Engine::new();
+    let package = dotted.add_policy(
+        "dotted-identifier.rego".to_string(),
+        "package graph.defUniqueName\nvalue := true".to_string(),
+    )?;
+    assert_eq!(package, "data.graph.defUniqueName");
+    assert_eq!(bracketed.get_packages()?, dotted.get_packages()?);
+    assert_eq!(dotted.get_packages()?, vec!["data.graph.defUniqueName"]);
+    assert_eq!(
+        dotted.eval_rule(r#"data.graph["defUniqueName"].value"#.to_string())?,
+        Value::Bool(true)
+    );
+
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "std")]
+fn namespace_file_package_metadata_preserves_legacy_source_spelling() -> Result<()> {
+    let mut engine = Engine::new();
+    let package =
+        engine.add_policy_from_file("tests/engine/fixtures/legacy_package_projection.rego")?;
+
+    assert_eq!(package, "data.graph.defUniqueName.1.0.0");
+    assert_eq!(
+        engine.get_packages()?,
+        vec!["data.graph.defUniqueName.1.0.0"]
+    );
+    #[cfg(feature = "azure_policy")]
+    {
+        let package_names = engine.get_policy_package_names()?;
+        assert_eq!(package_names.len(), 1);
+        assert_eq!(package_names[0].package_name, "graph.defUniqueName.1.0.0");
+        assert_eq!(
+            package_names[0].source_file,
+            "tests/engine/fixtures/legacy_package_projection.rego"
+        );
+    }
+
+    let path = r#"data.graph.defUniqueName["1.0.0"].value"#;
+    let compiled = engine.compile_with_entrypoint(&path.into())?;
+    for _ in 0..2 {
+        assert_eq!(engine.eval_rule(path.to_string())?, Value::from(23));
+        assert_eq!(
+            compiled.eval_with_input(Value::new_object())?,
+            Value::from(23)
+        );
+    }
+
     Ok(())
 }
 
@@ -1388,9 +1475,9 @@ fn extension_with_state() -> Result<()> {
 #[cfg_attr(docsrs, doc(cfg(feature = "azure_policy")))]
 fn get_policy_package_names() -> Result<()> {
     let mut engine = Engine::new();
-    engine.add_policy(
+    let package = engine.add_policy(
         "testPolicy1".to_string(),
-        r#"package test
+        r#"package test["1.0.0"]
                
                 deny if {
                     1 == 2
@@ -1398,6 +1485,7 @@ fn get_policy_package_names() -> Result<()> {
         "#
         .to_string(),
     )?;
+    assert_eq!(package, "data.test.1.0.0");
 
     engine.add_policy(
         "testPolicy2".to_string(),
@@ -1412,7 +1500,7 @@ fn get_policy_package_names() -> Result<()> {
     let package_names = engine.get_policy_package_names()?;
 
     assert_eq!(2, package_names.len());
-    assert_eq!("test", package_names[0].package_name);
+    assert_eq!("test.1.0.0", package_names[0].package_name);
     assert_eq!("testPolicy1", package_names[0].source_file);
 
     assert_eq!("test.nested.name", package_names[1].package_name);

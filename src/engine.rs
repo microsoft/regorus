@@ -8,9 +8,9 @@ use crate::interpreter::*;
 use crate::lexer::*;
 use crate::parser::*;
 use crate::scheduler::*;
+use crate::utils::gather_functions;
 use crate::utils::limits::PolicyLengthConfig;
 use crate::utils::limits::{self, fallback_execution_timer_config, ExecutionTimerConfig};
-use crate::utils::{gather_functions, get_path_string};
 use crate::value::*;
 use crate::*;
 use crate::{Extension, QueryResults};
@@ -57,6 +57,49 @@ pub struct PolicyParameters {
     pub source_file: String,
     pub parameters: Vec<PolicyParameter>,
     pub modifiers: Vec<PolicyModifier>,
+}
+
+fn legacy_package_metadata_projection<'a>(
+    reference: &'a Expr,
+    document: Option<&'a str>,
+) -> Result<String> {
+    let mut components = Vec::new();
+    let mut expr = Some(reference);
+
+    while let Some(node) = expr {
+        match *node {
+            Expr::RefDot {
+                ref refr,
+                ref field,
+                ..
+            } => {
+                components.push(field.0.text());
+                expr = Some(refr);
+            }
+            Expr::RefBrack {
+                ref refr,
+                ref index,
+                ..
+            } => match *index.as_ref() {
+                Expr::String { ref span, .. } => {
+                    components.push(span.text());
+                    expr = Some(refr);
+                }
+                _ => bail!(node.span().error("invalid ref expression")),
+            },
+            Expr::Var { ref span, .. } => {
+                components.push(span.text());
+                expr = None;
+            }
+            _ => bail!(node.span().error("invalid ref expression")),
+        }
+    }
+
+    if let Some(document) = document {
+        components.push(document);
+    }
+    components.reverse();
+    Ok(components.join("."))
 }
 
 /// Create a default engine.
@@ -217,9 +260,12 @@ impl Engine {
     ///
     /// The policy file will be parsed and converted to AST representation.
     /// Multiple policy files may be added to the engine.
-    /// Returns the Rego package name declared in the policy, formatted as a
-    /// canonical Rego path. String components that are not identifiers use
-    /// bracket notation, for example `data.graph["1.0.0"]`.
+    /// Returns the legacy public package-metadata projection, which joins
+    /// package component text with dots and prefixes `data`. String components
+    /// retain their source content without their delimiter quotes: for example,
+    /// `package graph["1.0.0"]` returns `data.graph.1.0.0`. This metadata
+    /// projection is not a canonical rule path; use
+    /// `data.graph["1.0.0"]` to look up a rule in that package.
     ///
     /// * `path`: A filename to be associated with the policy.
     /// * `rego`: The rego policy code.
@@ -254,16 +300,18 @@ impl Engine {
         Rc::make_mut(&mut self.modules).push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
-        get_path_string(&module.package.refr, Some("data"))
+        legacy_package_metadata_projection(&module.package.refr, Some("data"))
     }
 
     /// Add a policy from a given file.
     ///
     /// The policy file will be parsed and converted to AST representation.
     /// Multiple policy files may be added to the engine.
-    /// Returns the Rego package name declared in the policy, formatted as a
-    /// canonical Rego path (using bracket notation for non-identifier string
-    /// components).
+    /// Returns the legacy public package-metadata projection, joining package
+    /// component text with dots and prefixing `data`. String components retain
+    /// their source content without delimiter quotes. This is not a canonical
+    /// rule path: use bracket notation for literal string components when
+    /// looking up rules.
     ///
     /// * `path`: Path to the policy file (.rego).
     ///
@@ -294,15 +342,16 @@ impl Engine {
         Rc::make_mut(&mut self.modules).push(module.clone());
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
-        get_path_string(&module.package.refr, Some("data"))
+        legacy_package_metadata_projection(&module.package.refr, Some("data"))
     }
 
     /// Get the list of packages defined by loaded policies.
     ///
-    /// Each package is returned as a canonical Rego path. String components
-    /// that are not identifiers use JSON-escaped bracket notation, so a
-    /// literal component such as `"1.0.0"` is not confused with three nested
-    /// identifier components.
+    /// Each package uses the legacy public metadata projection: component text
+    /// is joined with dots and prefixed by `data`. Quoted string components
+    /// retain their source content without delimiter quotes, so
+    /// `["1.0.0"]` is reported as `.1.0.0`. This differs from canonical rule
+    /// lookup paths, which use bracket notation for string components.
     ///
     /// ```
     /// # use regorus::*;
@@ -323,7 +372,7 @@ impl Engine {
     pub fn get_packages(&self) -> Result<Vec<String>> {
         self.modules
             .iter()
-            .map(|m| get_path_string(&m.package.refr, Some("data")))
+            .map(|m| legacy_package_metadata_projection(&m.package.refr, Some("data")))
             .collect()
     }
 
@@ -1486,6 +1535,10 @@ impl Engine {
 
     /// Get the package names of each policy added to the engine.
     ///
+    /// `package_name` preserves the legacy source-content metadata projection
+    /// without a `data` prefix. String delimiters are omitted and components
+    /// are dot-joined. It is not a canonical rule lookup path; use bracket
+    /// notation for quoted string components when evaluating rules.
     ///
     /// ```rust
     /// # use regorus::*;
@@ -1507,7 +1560,7 @@ impl Engine {
     pub fn get_policy_package_names(&self) -> Result<Vec<PolicyPackageNameDefinition>> {
         let mut package_names = vec![];
         for m in self.modules.iter() {
-            let package_name = get_path_string(&m.package.refr, None)?;
+            let package_name = legacy_package_metadata_projection(&m.package.refr, None)?;
             package_names.push(PolicyPackageNameDefinition {
                 source_file: m.package.span.source.file().to_string(),
                 package_name,

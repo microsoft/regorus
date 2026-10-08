@@ -250,6 +250,9 @@ pub extern "C" fn regorus_engine_drop(engine: *mut RegorusEngine) {
 ///
 /// The policy is parsed into AST.
 /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.add_policy
+/// The returned package string is the legacy metadata projection: component
+/// text is dot-joined, and quoted strings omit their delimiter quotes. It is
+/// not a canonical rule lookup path.
 ///
 /// * `path`: A filename to be associated with the policy.
 /// * `rego`: Rego policy.
@@ -304,6 +307,9 @@ pub extern "C" fn regorus_engine_add_data_json(
 /// Get list of loaded Rego packages as JSON.
 ///
 /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.get_packages
+/// Package strings use the legacy dot-joined metadata projection; quoted string
+/// contents omit their delimiter quotes. Canonical rule lookups continue to
+/// use bracket notation for string keys.
 #[no_mangle]
 pub extern "C" fn regorus_engine_get_packages(engine: *mut RegorusEngine) -> RegorusResult {
     with_unwind_guard(|| {
@@ -661,6 +667,9 @@ pub extern "C" fn regorus_engine_get_ast_as_json(engine: *mut RegorusEngine) -> 
 /// Gets the package names defined in each policy added to the engine.
 ///
 /// See https://docs.rs/regorus/latest/regorus/coverage/struct.Engine.html#method.get_policy_package_names
+/// Each `package_name` uses the legacy dot-joined metadata projection without
+/// a `data` prefix; quoted string contents omit their delimiter quotes. It is
+/// not a canonical rule lookup path.
 #[no_mangle]
 #[cfg(feature = "azure_policy")]
 pub extern "C" fn regorus_engine_get_policy_package_names(
@@ -866,16 +875,19 @@ pub extern "C" fn regorus_engine_compile_program_with_entrypoints(
 
 #[cfg(all(test, feature = "std"))]
 mod namespace_tests {
+    #[cfg(feature = "azure_policy")]
+    use super::regorus_engine_get_policy_package_names;
     use super::{
         regorus_engine_add_policy, regorus_engine_compile_program_with_entrypoints,
-        regorus_engine_drop, regorus_engine_eval_rule, regorus_engine_new,
+        regorus_engine_drop, regorus_engine_eval_rule, regorus_engine_get_packages,
+        regorus_engine_new,
     };
     use crate::common::{regorus_result_drop, RegorusStatus};
     use core::ffi::CStr;
     use std::ffi::CString;
 
     #[test]
-    fn canonical_dotted_namespace_paths_cross_the_ffi_boundary() {
+    fn legacy_package_metadata_and_canonical_rule_paths_cross_the_ffi_boundary() {
         let engine = regorus_engine_new();
         assert!(!engine.is_null());
 
@@ -892,9 +904,42 @@ mod namespace_tests {
             let package = CStr::from_ptr(added.output)
                 .to_str()
                 .expect("UTF-8 package");
-            assert_eq!(package, "data.graph.defUniqueName[\"1.0.0\"]");
+            assert_eq!(package, "data.graph.defUniqueName.1.0.0");
         }
         regorus_result_drop(added);
+
+        let packages = regorus_engine_get_packages(engine);
+        assert!(matches!(packages.status, RegorusStatus::Ok));
+        unsafe {
+            let packages_json = CStr::from_ptr(packages.output)
+                .to_str()
+                .expect("UTF-8 package JSON");
+            assert_eq!(
+                serde_json::from_str::<Vec<String>>(packages_json).expect("valid package JSON"),
+                vec!["data.graph.defUniqueName.1.0.0"]
+            );
+        }
+        regorus_result_drop(packages);
+
+        #[cfg(feature = "azure_policy")]
+        {
+            let names = regorus_engine_get_policy_package_names(engine);
+            assert!(matches!(names.status, RegorusStatus::Ok));
+            unsafe {
+                let names_json = CStr::from_ptr(names.output)
+                    .to_str()
+                    .expect("UTF-8 package-name JSON");
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(names_json)
+                        .expect("valid package-name JSON"),
+                    serde_json::json!([{
+                        "source_file": "namespace.rego",
+                        "package_name": "graph.defUniqueName.1.0.0"
+                    }])
+                );
+            }
+            regorus_result_drop(names);
+        }
 
         let rule =
             CString::new("data.graph.defUniqueName[\"1.0.0\"].deny").expect("valid rule path");

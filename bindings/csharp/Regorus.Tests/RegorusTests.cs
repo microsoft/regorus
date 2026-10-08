@@ -52,7 +52,7 @@ public class RegorusTests
     }
 
     [TestMethod]
-    public void Dotted_package_metadata_and_rule_paths_remain_canonical()
+    public void Package_metadata_preserves_legacy_projection_while_rule_paths_remain_canonical()
     {
         using var engine = new Engine();
         var package = engine.AddPolicy(
@@ -64,7 +64,15 @@ public class RegorusTests
             deny := true if { input.blocked == true }
             """);
 
-        Assert.AreEqual("data.graph.defUniqueName[\"1.0.0\"]", package);
+        Assert.AreEqual("data.graph.defUniqueName.1.0.0", package);
+        var packageNames = JsonNode.Parse(engine.GetPolicyPackageNames()!);
+        Assert.AreEqual(
+            "graph.defUniqueName.1.0.0",
+            packageNames![0]!["package_name"]!.GetValue<string>());
+        Assert.AreEqual(
+            "namespace.rego",
+            packageNames[0]!["source_file"]!.GetValue<string>());
+
         engine.SetInputJson("""{"blocked":false}""");
         Assert.AreEqual(
             "false",
