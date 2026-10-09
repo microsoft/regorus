@@ -14,9 +14,10 @@ use super::{CompilationContext, Compiler, CompilerError, ContextType, Result, Wo
 use crate::ast::{Expr, ExprRef, Rule, RuleHead};
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
+use crate::parser::Parser;
 use crate::rvm::program::{Program, RuleType};
 use crate::rvm::Instruction;
-use crate::utils::get_path_string;
+use crate::utils::{format_string_path, get_path_string};
 use crate::Map;
 use crate::{CompiledPolicy, Value};
 use alloc::collections::BTreeSet;
@@ -222,15 +223,33 @@ impl<'a> Compiler<'a> {
             }
         }
 
-        let package = if let Some(last_dot) = rule_path.rfind('.') {
-            rule_path[..last_dot].to_string()
-        } else {
-            "data".to_string()
-        };
+        let package_components = self
+            .policy
+            .inner
+            .rule_path_components
+            .get(rule_path)
+            .ok_or_else(|| CompilerError::General {
+                message: format!("missing components for registered rule path '{rule_path}'"),
+            })?;
+        let (_, package_parts) =
+            package_components
+                .split_last()
+                .ok_or_else(|| CompilerError::General {
+                    message: format!("invalid registered rule path '{rule_path}'"),
+                })?;
+        let package_refs: Vec<&str> = package_parts.iter().map(String::as_str).collect();
+        let package =
+            format_string_path(&package_refs).map_err(|error| CompilerError::General {
+                message: format!("failed to format package path for '{rule_path}': {error}"),
+            })?;
         Ok((package, 0))
     }
 
-    /// Compile from a CompiledPolicy to RVM Program
+    /// Compile from a CompiledPolicy to RVM Program.
+    ///
+    /// Entry-point names are canonical Rego rule paths. Use bracketed string
+    /// components for literal keys that are not identifiers, such as
+    /// `data.graph.defUniqueName["1.0.0"].deny`.
     pub fn compile_from_policy(
         policy: &CompiledPolicy,
         entry_points: &[&str],
@@ -250,11 +269,38 @@ impl<'a> Compiler<'a> {
         }
         compiler.current_rule_path = "".to_string();
         let rules = policy.get_rules();
+        let max_components = policy
+            .inner
+            .rule_path_components
+            .values()
+            .map(Vec::len)
+            .max()
+            .unwrap_or_default();
 
         for &entry_point_name in entry_points {
             let instruction_index = compiler.program.instructions.len();
             let result_reg = compiler.alloc_register();
-            let rule_idx = compiler.get_or_assign_rule_index(entry_point_name)?;
+            let rule_path = if policy.inner.rule_paths.contains(entry_point_name) {
+                entry_point_name.to_string()
+            } else {
+                let components =
+                    Parser::parse_static_path_components(entry_point_name, max_components)
+                        .map_err(|error| CompilerError::General {
+                            message: error.to_string(),
+                        })?;
+                let component_refs: Vec<&str> = components.iter().map(String::as_str).collect();
+                let canonical_path = format_string_path(&component_refs).map_err(|error| {
+                    CompilerError::General {
+                        message: error.to_string(),
+                    }
+                })?;
+                if policy.inner.rule_paths.contains(&canonical_path) {
+                    canonical_path
+                } else {
+                    entry_point_name.to_string()
+                }
+            };
+            let rule_idx = compiler.get_or_assign_rule_index(&rule_path)?;
             compiler
                 .entry_points
                 .insert(entry_point_name.to_string(), instruction_index);
@@ -689,17 +735,26 @@ impl<'a> Compiler<'a> {
             self.rule_function_param_count[rule_index as usize] = rule_param_count;
 
             if rule_param_count.is_none() {
-                let rule_path_parts: Vec<&str> = rule_path.split('.').collect();
-                if let Some((rule_name, package_parts)) = rule_path_parts.split_last() {
-                    let package_path: Vec<String> =
-                        package_parts.iter().map(|s| s.to_string()).collect();
-
-                    let _ = self.program.add_rule_to_tree(
-                        &package_path,
-                        rule_name,
-                        rule_index as usize,
-                    );
-                }
+                let components = self
+                    .policy
+                    .inner
+                    .rule_path_components
+                    .get(rule_path)
+                    .ok_or_else(|| CompilerError::General {
+                        message: format!(
+                            "missing components for registered rule path '{rule_path}'"
+                        ),
+                    })?;
+                let (rule_name, package_parts) =
+                    components
+                        .split_last()
+                        .ok_or_else(|| CompilerError::General {
+                            message: format!("invalid registered rule path '{rule_path}'"),
+                        })?;
+                let package_path = package_parts.to_vec();
+                let _ =
+                    self.program
+                        .add_rule_to_tree(&package_path, rule_name, rule_index as usize);
             }
 
             self.register_counter = saved_register_counter;
@@ -714,17 +769,26 @@ impl<'a> Compiler<'a> {
                 }
 
                 // Add the rule to the data tree so it is discoverable.
-                let rule_path_parts: Vec<&str> = rule_path.split('.').collect();
-                if let Some((rule_name, package_parts)) = rule_path_parts.split_last() {
-                    let package_path: Vec<String> =
-                        package_parts.iter().map(|s| s.to_string()).collect();
-
-                    let _ = self.program.add_rule_to_tree(
-                        &package_path,
-                        rule_name,
-                        rule_index as usize,
-                    );
-                }
+                let components = self
+                    .policy
+                    .inner
+                    .rule_path_components
+                    .get(rule_path)
+                    .ok_or_else(|| CompilerError::General {
+                        message: format!(
+                            "missing components for registered rule path '{rule_path}'"
+                        ),
+                    })?;
+                let (rule_name, package_parts) =
+                    components
+                        .split_last()
+                        .ok_or_else(|| CompilerError::General {
+                            message: format!("invalid registered rule path '{rule_path}'"),
+                        })?;
+                let package_path = package_parts.to_vec();
+                let _ =
+                    self.program
+                        .add_rule_to_tree(&package_path, rule_name, rule_index as usize);
             }
 
             self.register_counter = saved_register_counter;

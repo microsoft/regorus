@@ -111,6 +111,12 @@ namespace Regorus
             });
         }
 
+        /// <summary>
+        /// Adds a policy and returns its legacy dot-joined package metadata.
+        /// Quoted string contents omit their delimiter quotes. This value is
+        /// not a canonical rule path; use bracket notation for string
+        /// components when evaluating a rule.
+        /// </summary>
         public string? AddPolicy(string path, string rego)
         {
             return Utf8Marshaller.WithUtf8(path, pathPtr =>
@@ -128,6 +134,11 @@ namespace Regorus
             });
         }
 
+        /// <summary>
+        /// Adds a policy file and returns its legacy dot-joined package
+        /// metadata, not a canonical rule path. Quoted string contents omit
+        /// their delimiter quotes.
+        /// </summary>
         public string? AddPolicyFromFile(string path)
         {
             return Utf8Marshaller.WithUtf8(path, pathPtr =>
@@ -261,6 +272,11 @@ namespace Regorus
             });
         }
 
+        /// <summary>
+        /// Returns policy package metadata with its legacy dot-joined text and
+        /// no <c>data</c> prefix. Quoted string contents omit their delimiter
+        /// quotes; use canonical bracketed paths for rule lookup.
+        /// </summary>
         public string? GetPolicyPackageNames()
         {
             return UseHandle(enginePtr =>

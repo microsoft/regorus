@@ -810,3 +810,27 @@ fn yaml_test(file: &str) -> Result<()> {
 fn run(path: &str) {
     yaml_test(path).unwrap()
 }
+
+#[test]
+fn path_ref_component_count_is_bounded_before_ast_growth() -> Result<()> {
+    for path in [
+        format!("package {}", ["segment"; 32].join(".")),
+        format!("package graph{}", r#"["literal.dot"]"#.repeat(31)),
+    ] {
+        let source = Source::from_contents("path-limit.rego".to_string(), path)?;
+        let mut parser = Parser::new(&source)?;
+        let package = parser.parse_package()?;
+        assert_eq!(Parser::get_path_ref_components(&package.refr)?.len(), 32);
+    }
+
+    for path in [
+        format!("package {}", ["segment"; 33].join(".")),
+        format!("package graph{}", r#"["literal.dot"]"#.repeat(32)),
+    ] {
+        let source = Source::from_contents("path-limit.rego".to_string(), path)?;
+        let mut parser = Parser::new(&source)?;
+        assert!(parser.parse_package().is_err());
+    }
+
+    Ok(())
+}
