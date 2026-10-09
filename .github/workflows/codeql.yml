@@ -132,6 +132,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake
 
+    - name: Check Rust guard diagnostic preservation
+      if: matrix.language == 'rust'
+      run: |
+        cargo test --locked -p regorus-mimalloc --features allocator-memory-limits mimalloc::tests::header_geometry_preserves_zeroed_aligned_reallocations -- --exact
+        cargo clippy --locked -p regorus-mimalloc --all-targets --features allocator-memory-limits -- -D warnings
+
     - name: Install Python build dependencies
       if: matrix.language == 'python'
       working-directory: ${{ matrix.working-directory }}

@@ -307,10 +307,13 @@ mod tests {
             );
 
             let ptr = unsafe { allocator.alloc_zeroed(old_layout) };
-            assert!(!ptr.is_null());
-            assert_eq!((ptr as usize) % align, 0);
-            assert!((0..old_layout.size()).all(|index| unsafe { *ptr.add(index) == 0 }));
-            unsafe { ptr.write_bytes(0x5a, old_layout.size()) };
+            if ptr.is_null() {
+                assert!(!ptr.is_null());
+            } else {
+                assert_eq!((ptr as usize) % align, 0);
+                assert!((0..old_layout.size()).all(|index| unsafe { *ptr.add(index) == 0 }));
+                unsafe { ptr.write_bytes(0x5a, old_layout.size()) };
+            }
 
             let new_size = 33;
             let ptr = unsafe { allocator.realloc(ptr, old_layout, new_size) };
