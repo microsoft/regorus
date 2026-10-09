@@ -66,7 +66,7 @@ jobs:
 
       - name: Upload analysis results to GitHub
         if: ${{ hashFiles('rust-clippy-results.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v3.29.11
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v3.29.11
         with:
           sarif_file: rust-clippy-results.sarif
           wait-for-processing: true
