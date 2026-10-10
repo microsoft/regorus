@@ -13,6 +13,7 @@ pub mod limits;
 use crate::ast::*;
 use crate::builtins::*;
 use crate::lexer::SourceStr;
+use crate::number::Number;
 use crate::parser::Parser;
 use crate::*;
 
@@ -22,13 +23,22 @@ use anyhow::{bail, Result};
 #[derive(Clone, Debug)]
 pub(crate) enum PathComponent {
     String(String),
+    Scalar(Value),
     Raw(String),
 }
 
 impl PathComponent {
-    pub(crate) fn value(&self) -> &str {
+    pub(crate) fn as_string(&self) -> Option<&str> {
         match self {
-            Self::String(value) | Self::Raw(value) => value,
+            Self::String(value) | Self::Raw(value) => Some(value),
+            Self::Scalar(_) => None,
+        }
+    }
+
+    pub(crate) fn to_value(&self) -> Value {
+        match self {
+            Self::String(value) | Self::Raw(value) => Value::String(value.as_str().into()),
+            Self::Scalar(value) => value.clone(),
         }
     }
 }
@@ -71,11 +81,8 @@ pub(crate) fn append_path_value_component(path: &str, component: &Value) -> Resu
     match component {
         Value::String(value) => append_path_component(path, value.as_ref()),
         value => {
-            if path.is_empty() {
-                Ok(value.to_string())
-            } else {
-                Ok(format!("{path}.{value}"))
-            }
+            let literal = value.to_json_str()?;
+            Ok(format!("{path}[{literal}]"))
         }
     }
 }
@@ -85,8 +92,22 @@ pub(crate) fn format_path_components(components: &[PathComponent]) -> Result<Str
     for component in components {
         match component {
             PathComponent::String(value) => append_path_component_to(&mut path, value)?,
+            PathComponent::Scalar(value) => {
+                let literal = value.to_json_str()?;
+                path.push('[');
+                path.push_str(&literal);
+                path.push(']');
+            }
             PathComponent::Raw(value) => append_raw_path_component_to(&mut path, value),
         }
+    }
+    Ok(path)
+}
+
+pub(crate) fn format_value_path_components(components: &[Value]) -> Result<String> {
+    let mut path = String::new();
+    for component in components {
+        path = append_path_value_component(&path, component)?;
     }
     Ok(path)
 }
@@ -107,6 +128,21 @@ pub(crate) fn split_canonical_path_root(path: &str) -> Option<(&str, &str)> {
     Some(path.split_at(root_end))
 }
 
+pub(crate) fn get_static_scalar_path_component(expr: &Expr) -> Result<Option<Value>> {
+    Ok(match expr {
+        Expr::String { value, .. }
+        | Expr::RawString { value, .. }
+        | Expr::Number { value, .. }
+        | Expr::Bool { value, .. }
+        | Expr::Null { value, .. } => Some(value.clone()),
+        Expr::UnaryExpr { expr, .. } => match get_static_scalar_path_component(expr)? {
+            Some(Value::Number(number)) => Some(Value::Number(Number::from(0_i64).sub(&number)?)),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
 pub(crate) fn get_rule_path_components(refr: &Expr) -> Result<Vec<PathComponent>> {
     fn collect(refr: &Expr, components: &mut Vec<PathComponent>) -> Result<()> {
         match refr {
@@ -120,21 +156,28 @@ pub(crate) fn get_rule_path_components(refr: &Expr) -> Result<Vec<PathComponent>
             Expr::RefBrack { refr, index, .. } => {
                 collect(refr, components)?;
                 match index.as_ref() {
-                    Expr::String { value, .. } => components.push(PathComponent::String(
-                        value.as_string()?.as_ref().to_string(),
-                    )),
-                    Expr::Number { span, .. }
-                    | Expr::Bool { span, .. }
-                    | Expr::Null { span, .. } => {
-                        components.push(PathComponent::Raw(span.text().to_string()));
+                    Expr::String { value, .. } | Expr::RawString { value, .. } => {
+                        components.push(PathComponent::String(
+                            value.as_string()?.as_ref().to_string(),
+                        ));
                     }
                     _ => {
-                        let index_components = Parser::get_path_ref_components(index)?;
-                        components.extend(
-                            index_components
-                                .iter()
-                                .map(|component| PathComponent::Raw(component.text().to_string())),
-                        );
+                        if let Some(value) = get_static_scalar_path_component(index)? {
+                            if matches!(value, Value::String(_)) {
+                                components.push(PathComponent::String(
+                                    value.as_string()?.as_ref().to_string(),
+                                ));
+                            } else {
+                                components.push(PathComponent::Scalar(value));
+                            }
+                        } else {
+                            let index_components = Parser::get_path_ref_components(index)?;
+                            components.extend(
+                                index_components.iter().map(|component| {
+                                    PathComponent::Raw(component.text().to_string())
+                                }),
+                            );
+                        }
                     }
                 }
             }

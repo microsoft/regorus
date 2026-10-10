@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
@@ -10,13 +11,206 @@ use super::super::types::{BuiltinInfo, RuleInfo, SourceFile, SpanInfo};
 use super::Program;
 use crate::rvm::instructions::InstructionData;
 use crate::rvm::Instruction;
-use crate::value::Value;
+use crate::value::{Object, Value};
 use indexmap::IndexMap;
+use serde_json::{Map as JsonMap, Value as JsonValue};
+
+const PROGRAM_JSON_VALUE_ENCODING: &str = "typed-keys-v1";
+
+fn needs_program_json_value_encoding(node: &Value) -> bool {
+    match *node {
+        Value::Undefined | Value::Set(_) => true,
+        Value::Array(ref items) => items.iter().any(needs_program_json_value_encoding),
+        Value::Object(ref fields) => fields.iter_sorted().any(|(key, value)| {
+            !matches!(key, Value::String(_))
+                || needs_program_json_value_encoding(key)
+                || needs_program_json_value_encoding(value)
+        }),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
+    }
+}
+
+fn program_json_memory_check(field: &str) -> Result<(), String> {
+    crate::utils::limits::check_memory_limit_if_needed()
+        .map_err(|error| format!("Program JSON `{field}` allocation failed: {error}"))
+}
+
+fn encode_program_json_value(node: &Value, field: &str) -> Result<JsonValue, String> {
+    match *node {
+        Value::Null => Ok(JsonValue::Null),
+        Value::Bool(value) => Ok(JsonValue::Bool(value)),
+        Value::Number(ref value) => serde_json::to_value(value)
+            .map_err(|error| format!("Program JSON `{field}` number encoding failed: {error}")),
+        Value::String(ref value) => Ok(JsonValue::String(value.to_string())),
+        Value::Array(ref values) => {
+            let mut encoded = Vec::with_capacity(values.len());
+            for value in values.iter() {
+                encoded.push(encode_program_json_value(value, field)?);
+                program_json_memory_check(field)?;
+            }
+            Ok(JsonValue::Array(encoded))
+        }
+        Value::Set(ref values) => {
+            let mut encoded_values = Vec::with_capacity(values.len());
+            for value in values.iter_sorted() {
+                encoded_values.push(encode_program_json_value(value, field)?);
+                program_json_memory_check(field)?;
+            }
+
+            let mut marker = JsonMap::new();
+            marker.insert("$set".to_string(), JsonValue::Array(encoded_values));
+            Ok(JsonValue::Object(marker))
+        }
+        Value::Object(ref fields) => {
+            let mut encoded_fields = JsonMap::new();
+            for (key, value) in fields.iter_sorted() {
+                let encoded_key = encode_program_json_value(key, field)?;
+                let encoded_key = serde_json::to_string(&encoded_key).map_err(|error| {
+                    format!("Program JSON `{field}` object-key encoding failed: {error}")
+                })?;
+                let encoded_value = encode_program_json_value(value, field)?;
+                if encoded_fields
+                    .insert(encoded_key.clone(), encoded_value)
+                    .is_some()
+                {
+                    return Err(format!(
+                        "Program JSON `{field}` has duplicate encoded object key {encoded_key}"
+                    ));
+                }
+                program_json_memory_check(field)?;
+            }
+            Ok(JsonValue::Object(encoded_fields))
+        }
+        Value::Undefined => {
+            let mut marker = JsonMap::new();
+            marker.insert("$undefined".to_string(), JsonValue::Null);
+            Ok(JsonValue::Object(marker))
+        }
+    }
+}
+
+fn decode_program_json_value(node: &JsonValue, field: &str) -> Result<Value, String> {
+    match *node {
+        JsonValue::Null => Ok(Value::Null),
+        JsonValue::Bool(value) => Ok(Value::Bool(value)),
+        JsonValue::Number(_) => serde_json::from_value(node.clone())
+            .map_err(|error| format!("Program JSON `{field}` number decoding failed: {error}")),
+        JsonValue::String(ref value) => Ok(Value::from(value.as_str())),
+        JsonValue::Array(ref values) => {
+            let mut decoded = Vec::with_capacity(values.len());
+            for value in values {
+                decoded.push(decode_program_json_value(value, field)?);
+                program_json_memory_check(field)?;
+            }
+            let decoded = Value::from(decoded);
+            program_json_memory_check(field)?;
+            Ok(decoded)
+        }
+        JsonValue::Object(ref fields) => {
+            let undefined = fields.get("$undefined");
+            let set = fields.get("$set");
+            match (undefined, set) {
+                (Some(payload), None) => {
+                    if fields.len() != 1 || !payload.is_null() {
+                        return Err(format!(
+                            "Program JSON `{field}` has a malformed $undefined sentinel"
+                        ));
+                    }
+                    return Ok(Value::Undefined);
+                }
+                (None, Some(payload)) => {
+                    if fields.len() != 1 {
+                        return Err(format!(
+                            "Program JSON `{field}` has a malformed $set sentinel"
+                        ));
+                    }
+                    let values = payload.as_array().ok_or_else(|| {
+                        format!("Program JSON `{field}` $set payload must be an array")
+                    })?;
+                    let mut decoded = BTreeSet::new();
+                    for value in values {
+                        let value = decode_program_json_value(value, field)?;
+                        if !decoded.insert(value) {
+                            return Err(format!(
+                                "Program JSON `{field}` $set payload contains a duplicate value"
+                            ));
+                        }
+                        program_json_memory_check(field)?;
+                    }
+                    let decoded = Value::from(decoded);
+                    program_json_memory_check(field)?;
+                    return Ok(decoded);
+                }
+                (Some(_), Some(_)) => {
+                    return Err(format!(
+                        "Program JSON `{field}` object cannot contain both $undefined and $set"
+                    ));
+                }
+                (None, None) => {}
+            }
+
+            let mut decoded = Object::new();
+            for (encoded_key, encoded_value) in fields {
+                let encoded_key: JsonValue =
+                    serde_json::from_str(encoded_key).map_err(|error| {
+                        format!(
+                            "Program JSON `{field}` contains an invalid encoded object key \
+                         {encoded_key:?}: {error}"
+                        )
+                    })?;
+                let key = decode_program_json_value(&encoded_key, field)?;
+                let value = decode_program_json_value(encoded_value, field)?;
+                if decoded.insert(key, value).is_some() {
+                    return Err(format!(
+                        "Program JSON `{field}` contains duplicate decoded object keys"
+                    ));
+                }
+                program_json_memory_check(field)?;
+            }
+            let decoded = Value::from(decoded);
+            program_json_memory_check(field)?;
+            Ok(decoded)
+        }
+    }
+}
+
+fn decode_program_json_literals(node: &JsonValue) -> Result<Vec<Value>, String> {
+    let values = node
+        .as_array()
+        .ok_or("Program JSON `literals` field must be an array")?;
+    let mut literals = Vec::with_capacity(values.len());
+    for value in values {
+        literals.push(decode_program_json_value(value, "literals")?);
+        program_json_memory_check("literals")?;
+    }
+    Ok(literals)
+}
 
 impl Program {
     /// Serialize to JSON format with complete program information and proper field names
     pub fn serialize_json(&self) -> Result<String, String> {
-        let json_data = serde_json::json!({
+        let use_value_encoding = self.literals.iter().any(needs_program_json_value_encoding)
+            || needs_program_json_value_encoding(&self.rule_tree);
+        let literals = if use_value_encoding {
+            let mut values = Vec::with_capacity(self.literals.len());
+            for value in &self.literals {
+                values.push(encode_program_json_value(value, "literals")?);
+                program_json_memory_check("literals")?;
+            }
+            JsonValue::Array(values)
+        } else {
+            serde_json::to_value(&self.literals)
+                .map_err(|error| format!("Program JSON `literals` serialization failed: {error}"))?
+        };
+        let rule_tree = if use_value_encoding {
+            encode_program_json_value(&self.rule_tree, "rule_tree")?
+        } else {
+            serde_json::to_value(&self.rule_tree).map_err(|error| {
+                format!("Program JSON `rule_tree` serialization failed: {error}")
+            })?
+        };
+
+        let mut json_data = serde_json::json!({
             "metadata": {
                 "compiler_version": self.metadata.compiler_version,
                 "compiled_at": self.metadata.compiled_at,
@@ -46,14 +240,23 @@ impl Program {
                 "chained_index_params": self.instruction_data.chained_index_params,
                 "comprehension_begin_params": self.instruction_data.comprehension_begin_params
             },
-            "literals": self.literals,
             "builtin_info_table": self.builtin_info_table,
             "entry_points": self.entry_points,
             "sources": self.sources,
             "rule_infos": self.rule_infos,
-            "instruction_spans": self.instruction_spans,
-            "rule_tree": self.rule_tree
+            "instruction_spans": self.instruction_spans
         });
+        let json_fields = json_data
+            .as_object_mut()
+            .ok_or("Program JSON root must be an object")?;
+        json_fields.insert("literals".to_string(), literals);
+        json_fields.insert("rule_tree".to_string(), rule_tree);
+        if use_value_encoding {
+            json_fields.insert(
+                "value_encoding".to_string(),
+                JsonValue::String(PROGRAM_JSON_VALUE_ENCODING.to_string()),
+            );
+        }
 
         serde_json::to_string_pretty(&json_data)
             .map_err(|e| format!("JSON serialization failed: {}", e))
@@ -63,6 +266,20 @@ impl Program {
     pub fn deserialize_json(data: &str) -> Result<Program, String> {
         let json_data: serde_json::Value =
             serde_json::from_str(data).map_err(|e| format!("JSON parsing failed: {}", e))?;
+        let use_value_encoding = match json_data.get("value_encoding") {
+            None => false,
+            Some(encoding) => match encoding.as_str() {
+                Some(PROGRAM_JSON_VALUE_ENCODING) => true,
+                Some(encoding) => {
+                    return Err(format!(
+                        "Unsupported Program JSON `value_encoding` marker: {encoding}"
+                    ));
+                }
+                None => {
+                    return Err("Program JSON `value_encoding` marker must be a string".to_string());
+                }
+            },
+        };
 
         let metadata = json_data
             .get("metadata")
@@ -158,10 +375,18 @@ impl Program {
             serde_json::from_value(instruction_data_json.clone())
                 .map_err(|e| format!("Failed to deserialize instruction_data: {}", e))?;
 
-        let literals: Vec<Value> = json_data
-            .get("literals")
-            .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
-            .unwrap_or_default();
+        let literals: Vec<Value> = if use_value_encoding {
+            let encoded_literals = json_data
+                .get("literals")
+                .ok_or("Program JSON `literals` field is missing")?;
+            decode_program_json_literals(encoded_literals)
+                .map_err(|error| format!("Program JSON `literals` decoding failed: {error}"))?
+        } else {
+            json_data
+                .get("literals")
+                .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
+                .unwrap_or_default()
+        };
 
         let builtin_info_table: Vec<BuiltinInfo> = json_data
             .get("builtin_info_table")
@@ -188,10 +413,18 @@ impl Program {
             .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
             .unwrap_or_default();
 
-        let rule_tree: Value = json_data
-            .get("rule_tree")
-            .map(|v| serde_json::from_value(v.clone()).unwrap_or_else(|_| Value::new_object()))
-            .unwrap_or_else(Value::new_object);
+        let rule_tree: Value = if use_value_encoding {
+            let encoded_rule_tree = json_data
+                .get("rule_tree")
+                .ok_or("Program JSON `rule_tree` field is missing")?;
+            decode_program_json_value(encoded_rule_tree, "rule_tree")
+                .map_err(|error| format!("Program JSON `rule_tree` decoding failed: {error}"))?
+        } else {
+            json_data
+                .get("rule_tree")
+                .map(|v| serde_json::from_value(v.clone()).unwrap_or_else(|_| Value::new_object()))
+                .unwrap_or_else(Value::new_object)
+        };
 
         let mut program = Program {
             instructions,

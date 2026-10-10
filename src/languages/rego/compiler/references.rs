@@ -14,7 +14,7 @@ use crate::rvm::instructions::{
     ChainedIndexParams, LiteralOrRegister, VirtualDataDocumentLookupParams,
 };
 use crate::rvm::Instruction;
-use crate::utils::{append_path_component, format_string_path};
+use crate::utils::{append_path_component, format_string_path, get_static_scalar_path_component};
 use crate::Value;
 use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
@@ -169,37 +169,46 @@ impl<'a> Compiler<'a> {
             let rule_candidate =
                 format_string_path(&static_prefix[0..=i]).map_err(CompilerError::from)?;
 
-            if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
-                // Found a rule match! Call the rule
-                let rule_result_reg = self.alloc_register();
-                self.emit_instruction(
-                    Instruction::CallRule {
-                        dest: rule_result_reg,
-                        rule_index,
-                    },
-                    span,
-                );
+            if self.policy.inner.rule_paths.contains(&rule_candidate) {
+                if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
+                    // Found a rule match! Call the rule
+                    let rule_result_reg = self.alloc_register();
+                    self.emit_instruction(
+                        Instruction::CallRule {
+                            dest: rule_result_reg,
+                            rule_index,
+                        },
+                        span,
+                    );
 
-                // Handle remaining components after the matched rule
-                let consumed_components = i;
-                if consumed_components < chain.components.len() {
-                    let remaining_components = &chain.components[consumed_components..];
-                    return self.compile_chain_access(rule_result_reg, remaining_components, span);
+                    // Handle remaining components after the matched rule
+                    let consumed_components = i;
+                    if consumed_components < chain.components.len() {
+                        let remaining_components = &chain.components[consumed_components..];
+                        return self.compile_chain_access(
+                            rule_result_reg,
+                            remaining_components,
+                            span,
+                        );
+                    }
+
+                    return Ok(rule_result_reg);
                 }
-
-                return Ok(rule_result_reg);
             }
         }
 
         // Check if this path could be a prefix of any rules (for virtual document lookup)
         // Convert the full chain to a pattern that includes wildcards for dynamic components
-        let path_pattern = self.create_path_pattern(&chain.components);
+        let path_pattern = self
+            .create_path_pattern(&chain.components)
+            .map_err(CompilerError::from)?;
         let matching_rules: BTreeSet<String> = self
             .policy
             .inner
             .rules
             .keys()
             .chain(self.policy.inner.default_rules.keys())
+            .filter(|rule_path| self.policy.inner.rule_paths.contains(*rule_path))
             .filter(|rule_path| self.matches_path_pattern(rule_path, &path_pattern))
             .cloned()
             .collect();
@@ -230,22 +239,29 @@ impl<'a> Compiler<'a> {
 
     /// Create a path pattern from access components, using '*' for dynamic components
     /// e.g., [Field("a"), Expression(...), Field("b")] becomes "data.a.*.b"
-    fn create_path_pattern(&self, components: &[AccessComponent]) -> Vec<Option<String>> {
-        let mut pattern_parts = vec![Some("data".to_string())];
+    fn create_path_pattern(
+        &self,
+        components: &[AccessComponent],
+    ) -> anyhow::Result<Vec<Option<Value>>> {
+        let mut pattern_parts = vec![Some(Value::String("data".into()))];
 
         for component in components {
             match component {
-                AccessComponent::Field(field) => pattern_parts.push(Some(field.clone())),
-                AccessComponent::Expression(_) => pattern_parts.push(None),
+                AccessComponent::Field(field) => {
+                    pattern_parts.push(Some(Value::String(field.as_str().into())));
+                }
+                AccessComponent::Expression(expr) => {
+                    pattern_parts.push(get_static_scalar_path_component(expr)?);
+                }
             }
         }
 
-        pattern_parts
+        Ok(pattern_parts)
     }
 
     /// Check if a rule path matches the given pattern with wildcards
     /// e.g., "data.test.users.alice_profile" matches "data.test.users.*"
-    fn matches_path_pattern(&self, rule_path: &str, pattern: &[Option<String>]) -> bool {
+    fn matches_path_pattern(&self, rule_path: &str, pattern: &[Option<Value>]) -> bool {
         let Some(rule_parts) = self.policy.inner.rule_path_components.get(rule_path) else {
             return false;
         };
@@ -256,12 +272,13 @@ impl<'a> Compiler<'a> {
         for i in 0..match_length {
             let rule_part = &rule_parts[i];
             let pattern_part = &pattern[i];
-            if pattern_part.is_none() {
-                // Wildcard in pattern matches any non-empty rule component exactly
-                if rule_part.is_empty() {
+            if let Some(pattern_part) = pattern_part {
+                if pattern_part != rule_part
+                    && !Self::matches_numeric_string_fallback(rule_part, pattern_part)
+                {
                     return false;
                 }
-            } else if pattern_part.as_ref() != Some(rule_part) {
+            } else if rule_part == &Value::Undefined {
                 return false;
             }
         }
@@ -271,6 +288,19 @@ impl<'a> Compiler<'a> {
         // 2. It matches all available components and the remaining pattern parts are wildcards
         rule_parts.len() >= pattern.len()
             || (match_length > 0 && pattern[match_length..].iter().all(Option::is_none))
+    }
+
+    /// Match the VM's number-to-canonical-string fallback for virtual data paths.
+    /// Typed rule keys remain unchanged; the string path is only an additional
+    /// candidate when a numeric selector is used to address a data namespace.
+    fn matches_numeric_string_fallback(rule_part: &Value, pattern_part: &Value) -> bool {
+        match (rule_part, pattern_part) {
+            (Value::String(rule_string), Value::Number(number)) => {
+                let fallback = Value::Number(number.clone()).to_string();
+                rule_string.as_ref() == fallback
+            }
+            _ => false,
+        }
     }
 
     /// Compile local variable access chain
@@ -325,7 +355,6 @@ impl<'a> Compiler<'a> {
                     let remaining_components = &chain.components[consumed_components..];
                     return self.compile_chain_access(rule_result_reg, remaining_components, span);
                 }
-
                 return Ok(rule_result_reg);
             }
         }

@@ -155,10 +155,18 @@ referenced by:
 path-ref ::= IDENT ( NO_WS ( '.' NO_WS IDENT | '[' STRING ']' ) )*
 ```
 
-String components in brackets retain their literal identity, including dots.
-For example, `graph["a.b"]` is distinct from `graph.a.b`. When a package path
-is returned by the Engine API or used as a rule entry point, non-identifier
-string components use JSON-escaped bracket notation.
+The `path-ref` production is used by package and import declarations; bracketed
+components there remain string-only. A string component retains its identity,
+including dots, so `graph["a.b"]` is distinct from `graph.a.b`. Public Engine
+package metadata keeps its legacy spelling and is not a canonical rule path.
+
+Rule paths and static rule entry points preserve scalar key types. Identifier
+strings may use dot notation; other strings use JSON-escaped brackets, while
+non-string scalar keys always use brackets, such as `graph[true]`,
+`graph[null]`, or `graph[10]`. These remain distinct from string keys such as
+`graph["true"]` and `graph["10"]`. Numeric indices are parsed before
+canonicalization, so equivalent spellings such as `1e1` and `10` identify the
+same numeric key and canonicalize as `[10]`.
 
 Policy-source path references are limited to 32 components, counting the
 initial identifier as one. Every dotted identifier or bracketed string adds
@@ -166,12 +174,12 @@ one component; dots inside a bracketed string do not. A 33rd component is
 rejected by the general policy parser.
 
 Static public entry-point lookup uses a separate iterative parser rather than
-building the recursively nested policy AST. It accepts dotted and bracketed
-string spellings up to the longest registered rule path, so equivalent
-spellings remain consistent even when that path exceeds the policy parser's
-32-component limit. Paths that exceed the registered depth or do not identify
-a rule remain invalid; `Engine::eval_rule` reports `not a valid rule path`,
-while parser and compiler APIs return an error.
+building the recursively nested policy AST. It accepts dotted strings and
+bracketed string or scalar spellings up to the longest registered rule path, so
+equivalent spellings remain consistent even when that path exceeds the policy
+parser's 32-component limit. Paths that exceed the registered depth or do not
+identify a rule remain invalid; `Engine::eval_rule` reports `not a valid rule
+path`, while parser and compiler APIs return an error.
 
 referenced by:
 
