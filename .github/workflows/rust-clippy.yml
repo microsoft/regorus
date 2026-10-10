@@ -47,8 +47,22 @@ jobs:
       - name: Fetch
         run: cargo fetch --locked
 
+      - name: Clear cached Clippy diagnostics
+        run: rm -f target/xtask/clippy.json
+
       - name: Run rust-clippy
+        id: clippy
         run: cargo xtask clippy --sarif rust-clippy-results.sarif
+
+      - name: Expose raw Clippy diagnostics on failure
+        if: ${{ failure() && steps.clippy.outcome == 'failure' }}
+        shell: bash
+        run: |
+          if [ -s target/xtask/clippy.json ]; then
+            cat target/xtask/clippy.json
+          else
+            echo "::warning::Clippy failed before producing a nonempty target/xtask/clippy.json"
+          fi
 
       - name: Upload analysis results to GitHub
         if: ${{ hashFiles('rust-clippy-results.sarif') != '' }}

@@ -132,6 +132,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake
 
+    - name: Check Rust guard diagnostic preservation
+      if: matrix.language == 'rust'
+      run: |
+        cargo test --locked -p regorus-mimalloc --features allocator-memory-limits mimalloc::tests::header_geometry_preserves_zeroed_aligned_reallocations -- --exact
+        cargo clippy --locked -p regorus-mimalloc --all-targets --features allocator-memory-limits -- -D warnings
+
     - name: Install Python build dependencies
       if: matrix.language == 'python'
       working-directory: ${{ matrix.working-directory }}
@@ -188,6 +194,18 @@ jobs:
       run: cargo xtask build-wasm --release
 
     - name: Perform CodeQL Analysis
+      id: analyze
       uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      env:
+        CODEQL_ACTION_EXTRA_OPTIONS: ${{ matrix.language == 'rust' && '{"database":{"interpret-results":["--max-paths=5"]}}' || '{}' }}
       with:
         category: "/language:${{matrix.language}}"
+
+    - name: Retain Rust SARIF
+      if: matrix.language == 'rust'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: codeql-rust-sarif-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ steps.analyze.outputs.sarif-output }}/*.sarif
+        if-no-files-found: error
+        retention-days: 1

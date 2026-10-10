@@ -91,6 +91,25 @@ quoted := sprintf("%q", [input])
 "#;
 
 #[cfg(feature = "rvm")]
+const SUSPENDABLE_HOST_AWAIT_MODULE: &str = r#"
+package limit
+import rego.v1
+
+result := __builtin_host_await(input.value, "first")
+"#;
+
+#[cfg(feature = "rvm")]
+const SUSPENDABLE_RESUME_BUDGET_MODULE: &str = r#"
+package limit
+import rego.v1
+
+result := count(__builtin_host_await([
+    __builtin_host_await(input.value, "first"),
+    json.unmarshal(data.limit.large_json)
+], "second"))
+"#;
+
+#[cfg(feature = "rvm")]
 const TIGHT_MEMORY_BUDGET_BYTES: u64 = 64 * 1024;
 
 #[cfg(feature = "rvm")]
@@ -303,30 +322,13 @@ fn memory_budget(limit: u64) -> MemoryBudgetConfig {
 }
 
 #[cfg(feature = "rvm")]
-fn host_await_program() -> Arc<Program> {
-    let mut program = Program::new();
-    program.dispatch_window_size = 3;
-    program.max_rule_window_size = 3;
-    program.entry_points.insert("main".to_string(), 0);
-    program.literals = vec![Value::from("id"), Value::from(1)];
-    program.instructions = vec![
-        Instruction::Load {
-            dest: 0,
-            literal_idx: 0,
-        },
-        Instruction::Load {
-            dest: 1,
-            literal_idx: 1,
-        },
-        Instruction::HostAwait {
-            dest: 2,
-            arg: 1,
-            id: 0,
-        },
-        Instruction::Return { value: 2 },
-    ];
-    program.instruction_spans = vec![None; program.instructions.len()];
-    Arc::new(program)
+fn compile_memory_budget_module(module: &str, entrypoint: &str) -> Arc<Program> {
+    let mut engine = new_engine_with_module(module);
+    let entrypoint = Rc::from(entrypoint);
+    let compiled = engine
+        .compile_with_entrypoint(&entrypoint)
+        .expect("compile policy for VM");
+    Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()]).expect("compile VM program")
 }
 
 #[test]
@@ -724,46 +726,495 @@ fn vm_memory_budget_does_not_receive_credit_from_previous_results() {
 
 #[cfg(feature = "rvm")]
 #[test]
-fn vm_memory_budget_rejects_suspendable_execution() {
+fn vm_memory_budget_accepts_compiled_suspendable_host_await() {
     let _guard = LimitGuard::lock();
     let mut vm = RegoVM::new();
     vm.set_execution_mode(regorus::rvm::vm::ExecutionMode::Suspendable);
-    vm.set_memory_budget_config(Some(memory_budget(1024)));
+    vm.load_program(compile_memory_budget_module(
+        SUSPENDABLE_HOST_AWAIT_MODULE,
+        "data.limit.result",
+    ));
+    vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+    vm.set_memory_budget_config(Some(memory_budget(1024 * 1024)));
 
-    match vm.execute() {
-        Err(VmError::MemoryBudgetUnsupportedInSuspendableExecution { .. }) => {}
-        Err(other) => panic!("expected unsupported memory budget error, got {other}"),
-        Ok(value) => panic!("expected unsupported memory budget error, got value {value:?}"),
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.limit.result")
+            .expect("budgeted suspendable execute"),
+        Value::Undefined
+    );
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+    assert_eq!(
+        vm.resume(Some(Value::from("response")))
+            .expect("budgeted suspendable resume"),
+        Value::from("response")
+    );
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn correction_unbudgeted_vm_entries_do_not_inherit_parent_account() {
+    let _guard = LimitGuard::lock();
+    let program = compile_memory_budget_module(SPRINTF_QUOTE_MODULE, "data.limit.quoted");
+    let outer = mimalloc::limits::MemoryBudgetAccount::new();
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        for entry_point in ["default", "name", "index"] {
+            let mut vm = RegoVM::new();
+            vm.set_execution_mode(mode);
+            vm.load_program(program.clone());
+            vm.set_input(Value::from("x".repeat(512)));
+
+            let result = outer.with_scope(|| {
+                let result = match entry_point {
+                    "default" => vm.execute(),
+                    "name" => vm.execute_entry_point_by_name("data.limit.quoted"),
+                    _ => vm.execute_entry_point_by_index(0),
+                }
+                .expect("unbudgeted child execution succeeds");
+                assert!(matches!(
+                    &result,
+                    Value::String(value) if value.len() > 512
+                ));
+                assert_eq!(
+                    outer.live_bytes(),
+                    0,
+                    "{mode:?} {entry_point} child allocations must remain unowned"
+                );
+
+                let parent_probe = vec![0_u8; 64];
+                core::hint::black_box(&parent_probe);
+                assert_eq!(outer.live_bytes(), 64);
+                drop(parent_probe);
+                assert_eq!(outer.live_bytes(), 0);
+                result
+            });
+
+            assert!(matches!(&result, Value::String(value) if value.len() > 512));
+        }
     }
 }
 
 #[cfg(feature = "rvm")]
 #[test]
-fn vm_memory_budget_rejects_resume_after_suspension() {
+fn correction_unbudgeted_native_host_await_conversion_restores_parent_account() {
     let _guard = LimitGuard::lock();
     let mut vm = RegoVM::new();
     vm.set_execution_mode(ExecutionMode::Suspendable);
-    vm.load_program(host_await_program());
+    vm.load_program(compile_memory_budget_module(
+        SUSPENDABLE_HOST_AWAIT_MODULE,
+        "data.limit.result",
+    ));
+    vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+    let outer = mimalloc::limits::MemoryBudgetAccount::new();
 
-    vm.execute().expect("suspend execution");
+    let (initial, resumed) = outer.with_scope(|| {
+        let initial = vm
+            .execute_to_c_string_for_ffi()
+            .expect("native execution suspends");
+        assert!(matches!(
+            vm.execution_state(),
+            ExecutionState::Suspended { .. }
+        ));
+        assert_eq!(outer.live_bytes(), 0);
+
+        let resumed = vm
+            .resume_to_c_string_for_ffi(|| Ok(Some("\"response\"".into())))
+            .expect("native resume and conversion succeed");
+        assert_eq!(resumed.as_bytes(), b"\"response\"");
+        assert_eq!(outer.live_bytes(), 0);
+
+        let parent_probe = vec![0_u8; 64];
+        core::hint::black_box(&parent_probe);
+        assert_eq!(outer.live_bytes(), 64);
+        drop(parent_probe);
+        assert_eq!(outer.live_bytes(), 0);
+        (initial, resumed)
+    });
+
+    assert!(!initial.as_bytes().is_empty());
+    assert_eq!(resumed.as_bytes(), b"\"response\"");
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn correction_malformed_native_resume_preserves_over_budget_continuation() {
+    let _guard = LimitGuard::lock();
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(compile_memory_budget_module(
+        SUSPENDABLE_HOST_AWAIT_MODULE,
+        "data.limit.result",
+    ));
+    vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+    vm.set_memory_budget_config(Some(memory_budget(1024 * 1024)));
+
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.limit.result")
+            .expect("initial execution suspends"),
+        Value::Undefined
+    );
     assert!(matches!(
         vm.execution_state(),
         ExecutionState::Suspended { .. }
     ));
 
-    vm.set_memory_budget_config(Some(memory_budget(1024 * 1024)));
-    vm.set_execution_mode(ExecutionMode::RunToCompletion);
+    let mut retained_probe = Vec::new();
+    let malformed = vm.resume_to_c_string_for_ffi(|| {
+        retained_probe.resize(1024 * 1024 + 1, 0);
+        Ok(Some("{".into()))
+    });
+    assert!(
+        matches!(malformed, Err(VmError::ArithmeticError { .. })),
+        "unexpected malformed input error: {malformed:?}"
+    );
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+
+    drop(retained_probe);
+    assert_eq!(
+        vm.resume_to_c_string_for_ffi(|| Ok(Some("\"response\"".into())))
+            .expect("valid resume after malformed input")
+            .as_bytes(),
+        b"\"response\""
+    );
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn vm_memory_limit_during_valid_native_resume_conversion_preserves_typed_error() {
+    let mut guard = LimitGuard::lock();
+    let program = compile_memory_budget_module(SUSPENDABLE_HOST_AWAIT_MODULE, "data.limit.result");
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(program.clone());
+    vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+    vm.set_memory_budget_config(Some(memory_budget(RELAXED_MEMORY_BUDGET_BYTES)));
+
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.limit.result")
+            .expect("initial execution suspends"),
+        Value::Undefined
+    );
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+
+    let mut json = String::with_capacity(2 + 2 * 4096);
+    json.push('[');
+    for index in 0..4096 {
+        if index > 0 {
+            json.push(',');
+        }
+        json.push('0');
+    }
+    json.push(']');
+    let retained_json = json.clone();
+
+    regorus::utils::limits::check_memory_limit_if_needed()
+        .expect("disabled global limit resets this thread's check state");
+    let baseline_usage = global_allocation_stats_snapshot().allocated as u64;
+    let global_limit = baseline_usage.saturating_add(32 * 1024);
+    guard.set_absolute_limit(global_limit);
+
+    let result = vm.resume_to_c_string_for_ffi(move || Ok(Some(json)));
+    let post_parse_usage = global_allocation_stats_snapshot().allocated as u64;
+    println!(
+        "resume conversion RED: baseline={baseline_usage}, limit={global_limit}, post_parse={post_parse_usage}, error={result:?}, state={:?}",
+        vm.execution_state()
+    );
+    core::hint::black_box(retained_json.as_str());
+    assert!(
+        post_parse_usage < global_limit,
+        "partial Value allocations should be gone while the retained JSON remains"
+    );
+
+    let error = result.expect_err("valid array parsing should hit the global limit");
+    assert!(
+        matches!(
+            error,
+            VmError::MemoryLimitExceeded {
+                usage,
+                limit: observed_limit,
+                ..
+            } if observed_limit == global_limit && usage > global_limit
+        ),
+        "expected the original over-limit error, got {error:?}"
+    );
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Error {
+            error: VmError::MemoryLimitExceeded { .. }
+        }
+    ));
+    assert!(vm.get_registers().is_empty());
+    assert!(vm.get_host_await_argument().is_none());
+    assert!(vm.get_host_await_identifier().is_none());
+    assert!(matches!(
+        vm.resume(Some(Value::from("rejected"))),
+        Err(VmError::InvalidResumeState { .. })
+    ));
+
+    regorus::set_global_memory_limit(None);
+    regorus::utils::limits::check_memory_limit_if_needed()
+        .expect("clearing the global limit resets this thread's check state");
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.limit.result")
+            .expect("same VM can start a fresh execution"),
+        Value::Undefined
+    );
+    assert_eq!(
+        vm.resume_to_c_string_for_ffi(|| Ok(Some(String::from("\"independent\""))))
+            .expect("fresh execution can resume")
+            .as_bytes(),
+        b"\"independent\""
+    );
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn correction_unbudgeted_initial_dispatch_limit_publishes_error() {
+    let mut guard = LimitGuard::lock();
+    let mut program = Program::new();
+    for _ in 0..31 {
+        program.add_instruction(Instruction::LoadTrue { dest: 0 }, None);
+    }
+    program.add_instruction(Instruction::Return { value: 0 }, None);
+
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(Arc::new(program));
+    regorus::utils::limits::check_memory_limit_if_needed()
+        .expect("reset disabled global check state");
+    guard.set_below_current_usage();
 
     assert!(matches!(
-        vm.resume(Some(Value::from(42))),
-        Err(VmError::MemoryBudgetUnsupportedInSuspendableExecution { .. })
+        vm.execute(),
+        Err(VmError::MemoryLimitExceeded { limit: 1, .. })
+    ));
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Error {
+            error: VmError::MemoryLimitExceeded { limit: 1, .. }
+        }
+    ));
+    assert_eq!(vm.get_registers().first(), Some(&Value::Bool(true)));
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn vm_memory_budget_is_enforced_during_compiled_host_await_resume() {
+    let _guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(SUSPENDABLE_RESUME_BUDGET_MODULE);
+    engine
+        .add_data(large_json_data(20_000))
+        .expect("add bounded resume data");
+
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(compile_memory_budget_module(
+        SUSPENDABLE_RESUME_BUDGET_MODULE,
+        "data.limit.result",
+    ));
+    vm.set_data(engine.get_data()).expect("set data");
+    vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+    vm.set_memory_budget_config(Some(memory_budget(TIGHT_MEMORY_BUDGET_BYTES)));
+
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.limit.result")
+            .expect("initial execution suspends"),
+        Value::Undefined
+    );
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+
+    assert!(matches!(
+        vm.resume(Some(Value::from("response"))),
+        Err(VmError::MemoryBudgetExceeded { .. })
+    ));
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Error {
+            error: VmError::MemoryBudgetExceeded { .. }
+        }
+    ));
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn vm_memory_budget_configuration_is_latched_until_suspendable_execution_finishes() {
+    let _guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(SUSPENDABLE_RESUME_BUDGET_MODULE);
+    engine
+        .add_data(large_json_data(20_000))
+        .expect("add bounded resume data");
+
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(compile_memory_budget_module(
+        SUSPENDABLE_RESUME_BUDGET_MODULE,
+        "data.limit.result",
+    ));
+    vm.set_data(engine.get_data()).expect("set data");
+    vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+    vm.set_memory_budget_config(Some(memory_budget(TIGHT_MEMORY_BUDGET_BYTES)));
+
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.limit.result")
+            .expect("initial execution suspends"),
+        Value::Undefined
+    );
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
     ));
 
     vm.set_memory_budget_config(None);
+    assert!(matches!(
+        vm.resume(Some(Value::from("response"))),
+        Err(VmError::MemoryBudgetExceeded { .. })
+    ));
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Error {
+            error: VmError::MemoryBudgetExceeded { .. }
+        }
+    ));
+
     assert_eq!(
-        vm.resume(Some(Value::from(42)))
-            .expect("resume after clearing budget"),
-        Value::from(42)
+        vm.execute_entry_point_by_name("data.limit.result")
+            .expect("next execution uses the cleared budget"),
+        Value::Undefined
+    );
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn vm_memory_budget_load_program_abandons_suspended_continuation() {
+    let _guard = LimitGuard::lock();
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(compile_memory_budget_module(
+        SUSPENDABLE_HOST_AWAIT_MODULE,
+        "data.limit.result",
+    ));
+    vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+    vm.set_memory_budget_config(Some(memory_budget(RELAXED_MEMORY_BUDGET_BYTES)));
+
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.limit.result")
+            .expect("initial execution suspends"),
+        Value::Undefined
+    );
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+
+    vm.load_program(compile_memory_budget_module(
+        SIMPLE_MODULE,
+        "data.limit.allow",
+    ));
+    assert!(matches!(
+        vm.resume(Some(Value::from("stale continuation"))),
+        Err(VmError::InvalidResumeState { .. })
+    ));
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.limit.allow")
+            .expect("new program can execute after abandonment"),
+        Value::Bool(true)
+    );
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn vm_suspendable_missing_resume_value_preserves_host_await_continuation() {
+    let _guard = LimitGuard::lock();
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(compile_memory_budget_module(
+        SUSPENDABLE_HOST_AWAIT_MODULE,
+        "data.limit.result",
+    ));
+    vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+    vm.set_memory_budget_config(Some(memory_budget(RELAXED_MEMORY_BUDGET_BYTES)));
+
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.limit.result")
+            .expect("initial execution suspends"),
+        Value::Undefined
+    );
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+
+    assert!(matches!(
+        vm.resume(None),
+        Err(VmError::MissingResumeValue { .. })
+    ));
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+    assert_eq!(
+        vm.resume(Some(Value::from("response")))
+            .expect("continuation remains resumable"),
+        Value::from("response")
+    );
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn vm_suspendable_unexpected_resume_value_preserves_step_continuation() {
+    let _guard = LimitGuard::lock();
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.set_step_mode(true);
+    vm.load_program(compile_memory_budget_module(
+        SIMPLE_MODULE,
+        "data.limit.allow",
+    ));
+    vm.set_memory_budget_config(Some(memory_budget(RELAXED_MEMORY_BUDGET_BYTES)));
+
+    vm.execute_entry_point_by_name("data.limit.allow")
+        .expect("first step");
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+
+    assert!(matches!(
+        vm.resume(Some(Value::from("unexpected"))),
+        Err(VmError::UnexpectedResumeValue { .. })
+    ));
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+
+    for _ in 0..32 {
+        if !matches!(vm.execution_state(), ExecutionState::Suspended { .. }) {
+            break;
+        }
+        vm.resume(None).expect("resume after rejected input");
+    }
+    assert_eq!(
+        vm.execution_state(),
+        &ExecutionState::Completed {
+            result: Value::Bool(true)
+        }
     );
 }
 

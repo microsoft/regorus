@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Rule-conflict diagnostics now retain the current source envelope and identify the previous rule by file, line, and column without nesting a second diagnostic; literal percent, CR, and LF characters in the previous file label are percent-encoded. RVM conflict result semantics are unchanged.
+- Suspendable RVM budgets remain immutable across host-await resumes, include native resume parsing and immediate result serialization, and leave malformed JSON syntax/EOF retryable; independent unbudgeted VM calls do not inherit a caller's account, and run-to-completion thread-baseline behavior remains unchanged.
 
 ## [0.12.0](https://github.com/microsoft/regorus/compare/regorus-v0.11.0...regorus-v0.12.0) - 2026-09-01
 
