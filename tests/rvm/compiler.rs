@@ -7,7 +7,7 @@ use regorus::rvm::instructions::GuardMode;
 use regorus::rvm::vm::{RegoVM, VmError};
 use regorus::rvm::Instruction;
 use regorus::{Engine, Rc, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Compile a single-rule Rego module and return the program.
 fn compile_rule(module: &str) -> std::sync::Arc<regorus::rvm::program::Program> {
@@ -70,6 +70,49 @@ fn rule_data_conflict_preserves_error_identity_and_pc() {
         VmError::RuleDataConflict { ref message, pc: 0 }
             if message.contains("rule defines path 'test.p'")
     ));
+}
+
+#[test]
+fn rule_data_conflict_detects_typed_scalar_key_and_allows_reuse() {
+    let program = compile_rule(
+        r#"
+        package test
+        graph[true].blocked := 1
+        p := data.test.graph[true].blocked
+    "#,
+    );
+    let object =
+        |entries: Vec<(Value, Value)>| Value::from(entries.into_iter().collect::<BTreeMap<_, _>>());
+    let data = object(vec![(
+        Value::from("test"),
+        object(vec![(
+            Value::from("graph"),
+            object(vec![(
+                Value::Bool(true),
+                object(vec![(Value::from("blocked"), Value::from(2))]),
+            )]),
+        )]),
+    )]);
+
+    assert_ne!(
+        program.rule_tree["data"]["test"]["graph"][&Value::Bool(true)]["blocked"],
+        Value::Undefined,
+        "the compiled rule tree must preserve the typed Bool component: {:?}",
+        program.rule_tree
+    );
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    let error = vm.set_data(data).unwrap_err();
+    assert!(matches!(
+        error,
+        VmError::RuleDataConflict { ref message, pc: 0 }
+            if message.contains("test.graph[true].blocked")
+    ));
+    vm.set_data(Value::new_object()).unwrap();
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.test.p").unwrap(),
+        Value::from(1)
+    );
 }
 
 fn run_rvm_policy(module: &str, input: &str) -> anyhow::Result<Value> {

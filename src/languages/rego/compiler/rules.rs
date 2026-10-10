@@ -17,7 +17,7 @@ use crate::lexer::Span;
 use crate::parser::Parser;
 use crate::rvm::program::{Program, RuleType};
 use crate::rvm::Instruction;
-use crate::utils::{format_string_path, get_path_string};
+use crate::utils::{format_value_path_components, get_path_string};
 use crate::Map;
 use crate::{CompiledPolicy, Value};
 use alloc::collections::BTreeSet;
@@ -27,6 +27,18 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 impl<'a> Compiler<'a> {
+    fn max_compiler_rule_tree_path_depth() -> Result<usize> {
+        Parser::MAX_PATH_COMPONENTS
+            .checked_mul(2)
+            .and_then(|depth| depth.checked_add(1))
+            .ok_or_else(|| {
+                CompilerError::General {
+                    message: "compiled rule-tree depth limit overflow".to_string(),
+                }
+                .into()
+            })
+    }
+
     /// Extract a compile-time constant `Value` from an optional expression.
     /// Returns `Some(Value::Bool(true))` for the implicit-true case (`expr_ref`
     /// is `None`), delegates to `try_eval_const` for actual expressions.
@@ -237,11 +249,11 @@ impl<'a> Compiler<'a> {
                 .ok_or_else(|| CompilerError::General {
                     message: format!("invalid registered rule path '{rule_path}'"),
                 })?;
-        let package_refs: Vec<&str> = package_parts.iter().map(String::as_str).collect();
-        let package =
-            format_string_path(&package_refs).map_err(|error| CompilerError::General {
+        let package = format_value_path_components(package_parts).map_err(|error| {
+            CompilerError::General {
                 message: format!("failed to format package path for '{rule_path}': {error}"),
-            })?;
+            }
+        })?;
         Ok((package, 0))
     }
 
@@ -284,16 +296,16 @@ impl<'a> Compiler<'a> {
                 entry_point_name.to_string()
             } else {
                 let components =
-                    Parser::parse_static_path_components(entry_point_name, max_components)
+                    Parser::parse_static_value_path_components(entry_point_name, max_components)
                         .map_err(|error| CompilerError::General {
                             message: error.to_string(),
                         })?;
-                let component_refs: Vec<&str> = components.iter().map(String::as_str).collect();
-                let canonical_path = format_string_path(&component_refs).map_err(|error| {
-                    CompilerError::General {
-                        message: error.to_string(),
-                    }
-                })?;
+                let canonical_path =
+                    format_value_path_components(&components).map_err(|error| {
+                        CompilerError::General {
+                            message: error.to_string(),
+                        }
+                    })?;
                 if policy.inner.rule_paths.contains(&canonical_path) {
                     canonical_path
                 } else {
@@ -734,7 +746,9 @@ impl<'a> Compiler<'a> {
 
             self.rule_function_param_count[rule_index as usize] = rule_param_count;
 
-            if rule_param_count.is_none() {
+            // Registration includes synthetic prefixes so lookups can discover
+            // descendants. Only real rule paths are leaves in the RVM rule tree.
+            if rule_param_count.is_none() && self.policy.inner.rule_paths.contains(rule_path) {
                 let components = self
                     .policy
                     .inner
@@ -752,9 +766,17 @@ impl<'a> Compiler<'a> {
                             message: format!("invalid registered rule path '{rule_path}'"),
                         })?;
                 let package_path = package_parts.to_vec();
-                let _ =
-                    self.program
-                        .add_rule_to_tree(&package_path, rule_name, rule_index as usize);
+                let max_path_depth = Self::max_compiler_rule_tree_path_depth()?;
+                self.program
+                    .add_rule_to_tree_with_values(
+                        &package_path,
+                        rule_name,
+                        rule_index as usize,
+                        max_path_depth,
+                    )
+                    .map_err(|error| CompilerError::General {
+                        message: format!("failed to add rule tree entry '{rule_path}': {error}"),
+                    })?;
             }
 
             self.register_counter = saved_register_counter;
@@ -768,27 +790,39 @@ impl<'a> Compiler<'a> {
                     self.rule_num_registers.push(0);
                 }
 
-                // Add the rule to the data tree so it is discoverable.
-                let components = self
-                    .policy
-                    .inner
-                    .rule_path_components
-                    .get(rule_path)
-                    .ok_or_else(|| CompilerError::General {
-                        message: format!(
-                            "missing components for registered rule path '{rule_path}'"
-                        ),
-                    })?;
-                let (rule_name, package_parts) =
-                    components
-                        .split_last()
+                // Synthetic prefixes are not rule-tree leaves.
+                if self.policy.inner.rule_paths.contains(rule_path) {
+                    let components = self
+                        .policy
+                        .inner
+                        .rule_path_components
+                        .get(rule_path)
                         .ok_or_else(|| CompilerError::General {
-                            message: format!("invalid registered rule path '{rule_path}'"),
+                            message: format!(
+                                "missing components for registered rule path '{rule_path}'"
+                            ),
                         })?;
-                let package_path = package_parts.to_vec();
-                let _ =
+                    let (rule_name, package_parts) =
+                        components
+                            .split_last()
+                            .ok_or_else(|| CompilerError::General {
+                                message: format!("invalid registered rule path '{rule_path}'"),
+                            })?;
+                    let package_path = package_parts.to_vec();
+                    let max_path_depth = Self::max_compiler_rule_tree_path_depth()?;
                     self.program
-                        .add_rule_to_tree(&package_path, rule_name, rule_index as usize);
+                        .add_rule_to_tree_with_values(
+                            &package_path,
+                            rule_name,
+                            rule_index as usize,
+                            max_path_depth,
+                        )
+                        .map_err(|error| CompilerError::General {
+                            message: format!(
+                                "failed to add default rule tree entry '{rule_path}': {error}"
+                            ),
+                        })?;
+                }
             }
 
             self.register_counter = saved_register_counter;

@@ -12,7 +12,7 @@ use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, SuspendReason};
 use regorus::test_utils::{check_output, process_value, value_or_vec_to_vec, ValueOrVec};
 use regorus::{CompiledPolicy, Engine, Rc, Value};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::sync::Arc;
 use test_generator::test_resources;
@@ -852,6 +852,11 @@ fn namespace_entrypoint_roundtrips_and_reuses_vm_state() -> Result<()> {
     let program = Compiler::compile_from_policy(&compiled, &[entrypoint])?;
 
     let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+    let json_value: serde_json::Value = serde_json::from_str(&json)?;
+    assert!(
+        json_value.get("value_encoding").is_none(),
+        "string-only Program JSON keeps the legacy marker-absent representation"
+    );
     let json_program = Program::deserialize_json(&json).map_err(anyhow::Error::msg)?;
     let binary = program.serialize_binary().map_err(anyhow::Error::msg)?;
     let binary_program = match Program::deserialize_binary(&binary).map_err(anyhow::Error::msg)? {
@@ -1276,6 +1281,250 @@ fn bracketed_identifier_entrypoint_roundtrips_and_executes_by_name_and_index() -
 }
 
 #[test]
+fn program_json_roundtrip_preserves_scalar_fixture_keys_and_execution() -> Result<()> {
+    let fixture: YamlTest = yaml_serde::from_str(include_str!("cases/scalar_path_identity.yaml"))?;
+    let case = fixture
+        .cases
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("scalar path identity fixture has no cases"))?;
+    let mut engine = Engine::new();
+    for (index, module) in case.modules.iter().enumerate() {
+        engine.add_policy(format!("scalar_path_identity_{index}.rego"), module.clone())?;
+    }
+
+    let entrypoint_ref: Rc<str> = case.query.as_str().into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint_ref)?;
+    let program = Compiler::compile_from_policy(&compiled, &[case.query.as_str()])?;
+    let expected = Value::from_json_str(
+        r#"{
+            "true_bool": "bool-true",
+            "true_string": "string-true",
+            "false_bool": "bool-false",
+            "false_string": "string-false",
+            "null_bool": "null",
+            "null_string": "string-null",
+            "default_allow": false
+        }"#,
+    )?;
+
+    let original_literals = program.literals.clone();
+    let original_rule_tree = program.rule_tree.clone();
+    let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+    let json_program = Program::deserialize_json(&json).map_err(anyhow::Error::msg)?;
+    let binary = program.serialize_binary().map_err(anyhow::Error::msg)?;
+    let binary_program = match Program::deserialize_binary(&binary).map_err(anyhow::Error::msg)? {
+        DeserializationResult::Complete(program) => program,
+        DeserializationResult::Partial(_) => {
+            anyhow::bail!("scalar path identity program unexpectedly needs recompilation")
+        }
+    };
+
+    let json_literals = json_program.literals.clone();
+    let json_rule_tree = json_program.rule_tree.clone();
+    let programs = [
+        (
+            "direct",
+            program.as_ref().clone(),
+            ExecutionMode::RunToCompletion,
+        ),
+        ("binary", binary_program, ExecutionMode::Suspendable),
+        ("JSON", json_program, ExecutionMode::RunToCompletion),
+    ];
+    let mut results = Vec::new();
+    for (source, program, mode) in programs {
+        println!(
+            "Program JSON parity {source}: raw rule_tree={:?}",
+            program.rule_tree
+        );
+        println!(
+            "Program JSON parity {source}: raw literals={:?}",
+            program.literals
+        );
+        let mut vm = RegoVM::new();
+        vm.load_program(Arc::new(program));
+        vm.set_data(Value::new_object())?;
+        vm.set_execution_mode(mode);
+        for iteration in 0..2 {
+            let named = vm.execute_entry_point_by_name(&case.query)?;
+            println!(
+                "Program JSON parity {source}: iteration={iteration} entry=named raw Value={named:?}"
+            );
+            results.push((format!("{source} named"), named));
+
+            let indexed = vm.execute_entry_point_by_index(0)?;
+            println!(
+                "Program JSON parity {source}: iteration={iteration} entry=indexed raw Value={indexed:?}"
+            );
+            results.push((format!("{source} indexed"), indexed));
+        }
+    }
+
+    assert_eq!(
+        json_rule_tree, original_rule_tree,
+        "Program JSON preserves the raw scalar-key rule tree"
+    );
+    assert_eq!(
+        json_literals, original_literals,
+        "Program JSON preserves raw literals, including Undefined"
+    );
+    for (source, actual) in results {
+        assert_eq!(actual, expected, "{source} result: {actual:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+fn program_json_roundtrip_preserves_typed_value_and_marker_lookalikes() -> Result<()> {
+    let mut keyed_values = BTreeMap::new();
+    keyed_values.insert(Value::Bool(true), Value::from("boolean key"));
+    keyed_values.insert(Value::from("true"), Value::from("string key"));
+    keyed_values.insert(Value::Null, Value::from("null key"));
+    keyed_values.insert(Value::from("null"), Value::from("string null key"));
+    keyed_values.insert(Value::from(10_i64), Value::from("numeric key"));
+    keyed_values.insert(Value::from("10"), Value::from("string numeric key"));
+    keyed_values.insert(
+        Value::from("quote\" slash\\ newline\n"),
+        Value::from("escaped key"),
+    );
+    keyed_values.insert(Value::from("$undefined"), Value::from("marker-looking key"));
+    keyed_values.insert(
+        Value::from("$set"),
+        Value::from("another marker-looking key"),
+    );
+
+    let nested = Value::from(keyed_values);
+    let set = Value::from(BTreeSet::from([
+        Value::Undefined,
+        Value::from("<undefined>"),
+    ]));
+    let values = Value::from(vec![
+        nested.clone(),
+        Value::from("<undefined>"),
+        Value::from("escaped \"value\" and \\ slash"),
+    ]);
+
+    let mut program = Program::new();
+    program.literals = vec![Value::Undefined, Value::from("<undefined>"), set, values];
+    program.rule_tree = nested;
+
+    let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+    let decoded = Program::deserialize_json(&json).map_err(anyhow::Error::msg)?;
+    assert_eq!(decoded.literals, program.literals);
+    assert_eq!(decoded.rule_tree, program.rule_tree);
+
+    let json_value: serde_json::Value = serde_json::from_str(&json)?;
+    assert_eq!(
+        json_value
+            .get("value_encoding")
+            .and_then(|value| value.as_str()),
+        Some("typed-keys-v1"),
+        "Program JSON marks values that need typed-key encoding"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn program_json_rejects_unknown_or_non_string_value_encoding_markers() -> Result<()> {
+    let serialized = Program::new()
+        .serialize_json()
+        .map_err(anyhow::Error::msg)?;
+    let original: serde_json::Value = serde_json::from_str(&serialized)?;
+
+    for marker in [
+        serde_json::Value::String("typed-keys-v2".to_string()),
+        serde_json::Value::Bool(true),
+    ] {
+        let mut candidate = original.clone();
+        candidate["value_encoding"] = marker;
+        let error = Program::deserialize_json(&candidate.to_string())
+            .expect_err("unknown or non-string Program JSON marker must be rejected");
+        assert!(
+            error.contains("value_encoding"),
+            "marker errors identify the value_encoding field: {error}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn program_json_rejects_malformed_encoded_literals_and_rule_tree_keys() -> Result<()> {
+    let serialized = Program::new()
+        .serialize_json()
+        .map_err(anyhow::Error::msg)?;
+    let original: serde_json::Value = serde_json::from_str(&serialized)?;
+
+    let mut malformed_literal = original.clone();
+    malformed_literal["value_encoding"] = serde_json::json!("typed-keys-v1");
+    malformed_literal["literals"] = serde_json::json!([{"$undefined": 1}]);
+    let error = Program::deserialize_json(&malformed_literal.to_string())
+        .expect_err("malformed Undefined sentinel payload must be rejected");
+    assert!(
+        error.contains("literals"),
+        "literal decoding errors identify the literals field: {error}"
+    );
+
+    let mut malformed_key = original;
+    malformed_key["value_encoding"] = serde_json::json!("typed-keys-v1");
+    malformed_key["rule_tree"] = serde_json::json!({"not-json": null});
+    let error = Program::deserialize_json(&malformed_key.to_string())
+        .expect_err("a non-JSON encoded object key must be rejected");
+    assert!(
+        error.contains("rule_tree"),
+        "rule-tree decoding errors identify the rule_tree field: {error}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn program_json_rejects_duplicate_decoded_object_keys() -> Result<()> {
+    let serialized = Program::new()
+        .serialize_json()
+        .map_err(anyhow::Error::msg)?;
+    let mut candidate: serde_json::Value = serde_json::from_str(&serialized)?;
+    candidate["value_encoding"] = serde_json::json!("typed-keys-v1");
+    candidate["rule_tree"] = serde_json::json!({
+        "\"duplicate\"": true,
+        " \"duplicate\" ": false
+    });
+
+    let error = Program::deserialize_json(&candidate.to_string())
+        .expect_err("encoded keys that decode to the same Value must not collapse");
+    assert!(
+        error.contains("rule_tree"),
+        "duplicate decoded keys identify the rule_tree field: {error}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn marker_absent_program_json_keeps_undefined_lookalikes_as_strings() -> Result<()> {
+    let serialized = Program::new()
+        .serialize_json()
+        .map_err(anyhow::Error::msg)?;
+    let mut legacy: serde_json::Value = serde_json::from_str(&serialized)?;
+    legacy["literals"] = serde_json::json!(["<undefined>"]);
+    legacy["rule_tree"] = serde_json::json!({"value": "<undefined>"});
+    legacy
+        .as_object_mut()
+        .expect("serialized Program is a JSON object")
+        .remove("value_encoding");
+
+    let decoded = Program::deserialize_json(&legacy.to_string()).map_err(anyhow::Error::msg)?;
+    assert_eq!(decoded.literals, vec![Value::from("<undefined>")]);
+    assert_eq!(
+        decoded.rule_tree,
+        Value::from_json_str(r#"{"value":"<undefined>"}"#)?
+    );
+
+    Ok(())
+}
+
+#[test]
 fn bracketed_entrypoints_match_dotted_paths_at_supported_depths_and_reuse_vm() -> Result<()> {
     for (package_component_count, rule_component_count) in [(31, 1), (32, 1), (32, 32)] {
         let package_components = (0..package_component_count)
@@ -1301,8 +1550,6 @@ fn bracketed_entrypoints_match_dotted_paths_at_supported_depths_and_reuse_vm() -
         let compiled = engine.compile_with_entrypoint(&dotted_entrypoint)?;
         let program = Compiler::compile_from_policy(&compiled, &[bracketed_path.as_str()])?;
 
-        let json = program.serialize_json().map_err(anyhow::Error::msg)?;
-        let json_program = Program::deserialize_json(&json).map_err(anyhow::Error::msg)?;
         let binary = program.serialize_binary().map_err(anyhow::Error::msg)?;
         let binary_program =
             match Program::deserialize_binary(&binary).map_err(anyhow::Error::msg)? {
@@ -1312,28 +1559,94 @@ fn bracketed_entrypoints_match_dotted_paths_at_supported_depths_and_reuse_vm() -
                 }
             };
 
-        for (program, mode) in [
-            (json_program, ExecutionMode::RunToCompletion),
-            (binary_program, ExecutionMode::Suspendable),
-        ] {
+        for typed_json in [false, true] {
+            let mut json_source = program.as_ref().clone();
+            if typed_json {
+                json_source.literals.push(Value::Undefined);
+            }
+
+            let json = json_source.serialize_json().map_err(anyhow::Error::msg)?;
+            let json_value: serde_json::Value = serde_json::from_str(&json)?;
+            assert_eq!(
+                json_value
+                    .get("value_encoding")
+                    .and_then(serde_json::Value::as_str),
+                if typed_json {
+                    Some("typed-keys-v1")
+                } else {
+                    None
+                },
+                "typed_json={typed_json} marker at depth ({package_component_count}, {rule_component_count})"
+            );
+            let json_program = Program::deserialize_json(&json).map_err(anyhow::Error::msg)?;
+            assert_eq!(
+                json_program.rule_tree, json_source.rule_tree,
+                "typed_json={typed_json} raw rule_tree at depth ({package_component_count}, {rule_component_count})"
+            );
+            assert_eq!(
+                json_program.literals, json_source.literals,
+                "typed_json={typed_json} raw literals at depth ({package_component_count}, {rule_component_count})"
+            );
+
             let mut vm = RegoVM::new();
-            vm.load_program(Arc::new(program));
+            vm.load_program(Arc::new(json_program));
             vm.set_data(Value::new_object())?;
-            vm.set_execution_mode(mode);
+            vm.set_execution_mode(ExecutionMode::RunToCompletion);
             for _ in 0..2 {
                 assert_eq!(
                     vm.execute_entry_point_by_name(&bracketed_path)?,
                     Value::from(7),
-                    "{mode:?} named path with {package_component_count} package and {rule_component_count} rule components"
+                    "JSON named path with typed_json={typed_json}, {package_component_count} package and {rule_component_count} rule components"
                 );
                 assert_eq!(
                     vm.execute_entry_point_by_index(0)?,
                     Value::from(7),
-                    "{mode:?} indexed path with {package_component_count} package and {rule_component_count} rule components"
+                    "JSON indexed path with typed_json={typed_json}, {package_component_count} package and {rule_component_count} rule components"
                 );
             }
         }
+
+        let mut vm = RegoVM::new();
+        vm.load_program(Arc::new(binary_program));
+        vm.set_data(Value::new_object())?;
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        for _ in 0..2 {
+            assert_eq!(
+                vm.execute_entry_point_by_name(&bracketed_path)?,
+                Value::from(7),
+                "binary named path with {package_component_count} package and {rule_component_count} rule components"
+            );
+            assert_eq!(
+                vm.execute_entry_point_by_index(0)?,
+                Value::from(7),
+                "binary indexed path with {package_component_count} package and {rule_component_count} rule components"
+            );
+        }
     }
+
+    Ok(())
+}
+
+#[test]
+fn public_rule_tree_api_keeps_its_manual_path_depth_limit() -> Result<()> {
+    let mut program = Program::new();
+    let accepted_path = (0..Program::MAX_PATH_DEPTH - 1)
+        .map(|index| format!("p{index}"))
+        .collect::<Vec<_>>();
+    program.add_rule_to_tree(&accepted_path, "rule", 0)?;
+
+    let rejected_path = (0..Program::MAX_PATH_DEPTH)
+        .map(|index| format!("p{index}"))
+        .collect::<Vec<_>>();
+    let error = program
+        .add_rule_to_tree(&rejected_path, "rule", 1)
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Rule path depth exceeds maximum"),
+        "the public manual path API retains its existing 32-component cap"
+    );
 
     Ok(())
 }

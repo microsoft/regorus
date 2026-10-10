@@ -34,6 +34,456 @@ fn numeric_rule_paths_keep_integer_decimal_equivalence() -> Result<()> {
 }
 
 #[test]
+fn static_entrypoints_reject_repeated_unary_scalar_indices() -> Result<()> {
+    let repeated_unary_path = format!("data.policy.items[{}1].blocked", "-".repeat(40));
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "policy.rego".to_string(),
+        r#"
+        package policy
+        items[1].blocked := "one"
+        items[-1].negative := true
+        items[1e1].exponent := "ten"
+        "#
+        .to_string(),
+    )?;
+
+    assert_eq!(
+        engine.eval_rule("data.policy.items[1].blocked".to_string())?,
+        Value::from("one"),
+        "the numeric control path must identify the registered rule"
+    );
+    let interpreter_result = engine.eval_rule(repeated_unary_path.clone());
+    let compiled_result = engine.compile_with_entrypoint(&repeated_unary_path.as_str().into());
+    assert!(
+        interpreter_result.is_err() && compiled_result.is_err(),
+        "static lookups must reject repeated unary indices, got interpreter={interpreter_result:?}, compiled={compiled_result:?}"
+    );
+    for (path, expected) in [
+        ("data.policy.items[-1].negative", Value::Bool(true)),
+        ("data.policy.items[1e1].exponent", Value::from("ten")),
+    ] {
+        assert_eq!(engine.eval_rule(path.to_string())?, expected);
+        let compiled = engine.compile_with_entrypoint(&path.into())?;
+        assert_eq!(compiled.eval_with_input(Value::new_object())?, expected);
+    }
+
+    for index in ["--1", "- -1", "--0", "- -0", "-true", "1+2"] {
+        let path = format!("data.policy.items[{index}].blocked");
+        assert!(
+            engine
+                .compile_with_entrypoint(&path.as_str().into())
+                .is_err(),
+            "static path index {index:?} is not a single literal"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn with_targets_reject_repeated_unary_scalar_indices() -> Result<()> {
+    let repeated_unary_target = format!("data.policy.items[{}1].blocked", "-".repeat(40));
+    let policy = format!(
+        "package policy\nimport rego.v1\nitems[1].blocked := \"one\"\nresult := true if {{ data.policy.items[1].blocked with {repeated_unary_target} as \"override\" }}"
+    );
+    let mut engine = Engine::new();
+
+    assert!(
+        engine
+            .add_policy("policy.rego".to_string(), policy)
+            .is_err(),
+        "WITH targets must reject repeated unary indices while parsing"
+    );
+    let spaced_target = "data.policy.items[- -1].blocked";
+    let spaced_policy = format!(
+        "package policy\nimport rego.v1\nitems[1].blocked := \"one\"\nresult := true if {{ data.policy.items[1].blocked with {spaced_target} as \"override\" }}"
+    );
+    assert!(
+        engine
+            .add_policy("spaced.rego".to_string(), spaced_policy)
+            .is_err(),
+        "WITH targets must reject spaced repeated unary indices while parsing"
+    );
+    Ok(())
+}
+
+#[test]
+fn with_targets_accept_negative_and_scientific_indices_after_parse_errors() -> Result<()> {
+    let mut engine = Engine::new();
+    for (file, target) in [
+        ("compact.rego", "data.policy.items[--1].blocked"),
+        ("spaced.rego", "data.policy.items[- -1].blocked"),
+    ] {
+        let policy = format!(
+            "package policy\nimport rego.v1\nitems[1].blocked := \"one\"\nresult := true if {{ data.policy.items[1].blocked with {target} as \"override\" }}"
+        );
+        assert!(
+            engine.add_policy(file.to_string(), policy).is_err(),
+            "invalid WITH target {target:?} must not prevent Engine reuse"
+        );
+    }
+
+    engine.add_policy(
+        "valid.rego".to_string(),
+        r#"
+        package policy
+        import rego.v1
+        items[-1].negative := "negative"
+        items[1e1].exponent := "ten"
+        negative_result := value if {
+            value := data.policy.items[-1].negative with data.policy.items[-1].negative as "override-negative"
+        }
+        exponent_result := value if {
+            value := data.policy.items[1e1].exponent with data.policy.items[1e1].exponent as "override-exponent"
+        }
+        "#
+        .to_string(),
+    )?;
+
+    for _ in 0..2 {
+        assert_eq!(
+            engine.eval_rule("data.policy.negative_result".to_string())?,
+            Value::from("override-negative")
+        );
+        assert_eq!(
+            engine.eval_rule("data.policy.exponent_result".to_string())?,
+            Value::from("override-exponent")
+        );
+        assert_eq!(
+            engine.eval_rule("data.policy.items[-1].negative".to_string())?,
+            Value::from("negative")
+        );
+        assert_eq!(
+            engine.eval_rule("data.policy.items[1e1].exponent".to_string())?,
+            Value::from("ten")
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn scalar_rule_prefixes_keep_boolean_and_null_keys_distinct_from_strings() -> Result<()> {
+    let booleans = r#"
+        package policy
+        graph[true].blocked := "bool-true"
+        graph[false].blocked := "bool-false"
+        graph[null].blocked := "null"
+    "#;
+    let booleans_reversed = r#"
+        package policy
+        graph[null].blocked := "null"
+        graph[false].blocked := "bool-false"
+        graph[true].blocked := "bool-true"
+    "#;
+    let strings = r#"
+        package policy
+        graph["true"].blocked := "string-true"
+        graph["false"].blocked := "string-false"
+        graph["null"].blocked := "string-null"
+    "#;
+    let strings_reversed = r#"
+        package policy
+        graph["null"].blocked := "string-null"
+        graph["false"].blocked := "string-false"
+        graph["true"].blocked := "string-true"
+    "#;
+    let result = r#"
+        package policy
+        default allow := false
+        result := {
+            "true_bool": data.policy.graph[true].blocked,
+            "true_string": data.policy.graph["true"].blocked,
+            "false_bool": data.policy.graph[false].blocked,
+            "false_string": data.policy.graph["false"].blocked,
+            "null_bool": data.policy.graph[null].blocked,
+            "null_string": data.policy.graph["null"].blocked,
+            "default_allow": data.policy.allow,
+        }
+    "#;
+    let expected = Value::from_json_str(
+        r#"{
+            "true_bool": "bool-true",
+            "true_string": "string-true",
+            "false_bool": "bool-false",
+            "false_string": "string-false",
+            "null_bool": "null",
+            "null_string": "string-null",
+            "default_allow": false
+        }"#,
+    )?;
+
+    for reverse in [false, true] {
+        let mut engine = Engine::new();
+        let modules = if reverse {
+            [
+                ("strings.rego", strings_reversed),
+                ("booleans.rego", booleans_reversed),
+                ("result.rego", result),
+            ]
+        } else {
+            [
+                ("booleans.rego", booleans),
+                ("strings.rego", strings),
+                ("result.rego", result),
+            ]
+        };
+        for (name, source) in modules {
+            engine.add_policy(name.to_string(), source.to_string())?;
+        }
+
+        assert_eq!(
+            engine.eval_rule("data.policy.result".to_string())?,
+            expected,
+            "interpreter result with reverse={reverse}"
+        );
+        let query = engine.eval_query("data.policy.result".to_string(), false)?;
+        assert_eq!(
+            query.result[0].expressions[0].value, expected,
+            "query result with reverse={reverse}"
+        );
+
+        let entrypoint: Rc<str> = "data.policy.result".into();
+        let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+        for _ in 0..2 {
+            assert_eq!(
+                compiled.eval_with_input(Value::new_object())?,
+                expected,
+                "compiled result with reverse={reverse}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn scalar_override_conflict_does_not_poison_boolean_rule_reuse() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "policy.rego".to_string(),
+        r#"
+        package policy
+        graph[true].blocked := true
+        graph["true"].blocked := false
+        graph["true"].blocked := true
+        "#
+        .to_string(),
+    )?;
+
+    assert_eq!(
+        engine.eval_rule("data.policy.graph[true].blocked".to_string())?,
+        Value::Bool(true)
+    );
+    assert!(
+        engine
+            .eval_rule("data.policy.graph[\"true\"].blocked".to_string())
+            .is_err(),
+        "conflicting string rules should remain isolated under their string key"
+    );
+    assert_eq!(
+        engine.eval_rule("data.policy.graph[true].blocked".to_string())?,
+        Value::Bool(true),
+        "a failed string-key evaluation must not poison the distinct boolean key"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn numeric_rule_paths_keep_typed_identity_for_terminal_and_nested_keys() -> Result<()> {
+    let numbers = r#"
+        package policy
+        exact_exp[1e1] := "numeric-ten"
+        exact_exp[10] := "numeric-ten"
+        exact_exp["1e1"] := "string-exponent"
+        exact_ten[10] := "numeric-ten"
+        exact_ten["10"] := "string-ten"
+        nested[1e1].blocked := "numeric-ten"
+        nested["1e1"].blocked := "nested-string-exponent"
+        nested[10].blocked := "numeric-ten"
+        nested["10"].blocked := "nested-string-integer"
+        nested[1].integer := "one-integer"
+        nested[1.0].decimal := "one-decimal"
+        nested["1"].string := "one-string"
+        nested[-1].negative := "negative"
+        nested[9007199254740993].precise := "high-precision"
+    "#;
+    let numbers_reversed = r#"
+        package policy
+        nested[9007199254740993].precise := "high-precision"
+        nested[-1].negative := "negative"
+        nested["1"].string := "one-string"
+        nested[1.0].decimal := "one-decimal"
+        nested[1].integer := "one-integer"
+        nested["10"].blocked := "nested-string-integer"
+        nested[10].blocked := "numeric-ten"
+        nested["1e1"].blocked := "nested-string-exponent"
+        nested[1e1].blocked := "numeric-ten"
+        exact_ten["10"] := "string-ten"
+        exact_ten[10] := "numeric-ten"
+        exact_exp["1e1"] := "string-exponent"
+        exact_exp[10] := "numeric-ten"
+        exact_exp[1e1] := "numeric-ten"
+    "#;
+    let result = r#"
+        package policy
+        default allow := false
+        result := {
+            "exact_exponent": data.policy.exact_exp[1e1],
+            "exact_string_exponent": data.policy.exact_exp["1e1"],
+            "exact_integer": data.policy.exact_ten[10],
+            "exact_string_integer": data.policy.exact_ten["10"],
+            "runtime_exponent": data.policy.exact_exp[input.exponent],
+            "runtime_integer": data.policy.exact_ten[input.integer],
+            "nested_exponent": data.policy.nested[1e1].blocked,
+            "nested_string_exponent": data.policy.nested["1e1"].blocked,
+            "nested_integer": data.policy.nested[10].blocked,
+            "nested_string_integer": data.policy.nested["10"].blocked,
+            "nested_one_integer": data.policy.nested[1].integer,
+            "nested_one_decimal": data.policy.nested[1.0].decimal,
+            "nested_one_string": data.policy.nested["1"].string,
+            "runtime_one_integer": data.policy.nested[input.one].integer,
+            "runtime_one_decimal": data.policy.nested[input.one_decimal].decimal,
+            "negative": data.policy.nested[-1].negative,
+            "high_precision": data.policy.nested[9007199254740993].precise,
+            "default_allow": data.policy.allow,
+        }
+    "#;
+    let input = Value::from_json_str(r#"{"exponent":1e1,"integer":10,"one":1,"one_decimal":1.0}"#)?;
+
+    for reverse in [false, true] {
+        let mut engine = Engine::new();
+        let number_module = if reverse { numbers_reversed } else { numbers };
+        for (name, source) in [("numbers.rego", number_module), ("result.rego", result)] {
+            engine.add_policy(name.to_string(), source.to_string())?;
+        }
+        engine.set_input(input.clone());
+
+        let expected = Value::from_json_str(
+            r#"{
+                "exact_exponent": "numeric-ten",
+                "exact_string_exponent": "string-exponent",
+                "exact_integer": "numeric-ten",
+                "exact_string_integer": "string-ten",
+                "runtime_exponent": "numeric-ten",
+                "runtime_integer": "numeric-ten",
+                "nested_exponent": "numeric-ten",
+                "nested_string_exponent": "nested-string-exponent",
+                "nested_integer": "numeric-ten",
+                "nested_string_integer": "nested-string-integer",
+                "nested_one_integer": "one-integer",
+                "nested_one_decimal": "one-decimal",
+                "nested_one_string": "one-string",
+                "runtime_one_integer": "one-integer",
+                "runtime_one_decimal": "one-decimal",
+                "negative": "negative",
+                "high_precision": "high-precision",
+                "default_allow": false
+            }"#,
+        )?;
+
+        assert_eq!(
+            engine.eval_rule("data.policy.result".to_string())?,
+            expected,
+            "interpreter result with reverse={reverse}"
+        );
+        let query = engine.eval_query("data.policy.result".to_string(), false)?;
+        assert_eq!(
+            query.result[0].expressions[0].value, expected,
+            "query result with reverse={reverse}"
+        );
+
+        let entrypoint: Rc<str> = "data.policy.result".into();
+        let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+        for _ in 0..2 {
+            assert_eq!(
+                compiled.eval_with_input(input.clone())?,
+                expected,
+                "compiled result with reverse={reverse}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn with_string_override_does_not_suppress_numeric_rule() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "policy.rego".to_string(),
+        r#"
+        package policy
+        items[1].blocked := true
+        default allow := true
+        allow := false if {
+            data.policy.items[1].blocked
+                with data.policy.items["1"] as {"blocked": false}
+        }
+        "#
+        .to_string(),
+    )?;
+    let entrypoint: Rc<str> = "data.policy.allow".into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+
+    assert_eq!(
+        engine.eval_rule("data.policy.allow".to_string())?,
+        Value::Bool(false)
+    );
+    assert_eq!(
+        compiled.eval_with_input(Value::new_object())?,
+        Value::Bool(false)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn nested_boolean_with_keeps_string_rule_available_and_reuses_engine() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "policy.rego".to_string(),
+        r#"
+        package policy
+        import rego.v1
+        graph[true].blocked := "boolean-rule"
+        graph["true"].blocked := "string-rule"
+        lookup := data.policy.graph["true"].blocked if {
+            data.policy.graph["true"].blocked with input.enabled as true
+        }
+        result := data.policy.lookup if {
+            data.policy.lookup with data.policy.graph[true] as {"blocked": "override"}
+        }
+        failing_lookup := data.policy.graph["true"].blocked if {
+            data.policy.graph["true"].blocked with input.enabled as (1 / 0)
+        }
+        failing_result := data.policy.failing_lookup if {
+            data.policy.failing_lookup with data.policy.graph[true] as {"blocked": "override"}
+        }
+        "#
+        .to_string(),
+    )?;
+
+    assert!(
+        engine
+            .eval_rule("data.policy.failing_result".to_string())
+            .is_err(),
+        "the nested WITH arithmetic error should be returned"
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            engine.eval_rule("data.policy.result".to_string())?,
+            Value::from("string-rule"),
+            "a nested WITH must not mistake a boolean path component for an override marker"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn namespace_literal_dot_rule_path_uses_bracketed_component() -> Result<()> {
     let mut engine = Engine::new();
     engine.add_policy(
