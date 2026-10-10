@@ -113,6 +113,22 @@ cases:
     query: data.rules.lookup
     want_result: "value"
 
+  - note: import escaped literal namespace and project its zero argument function
+    modules:
+      - |
+        package graph["a\".b"]
+        import rego.v1
+
+        value() := 7
+      - |
+        package consumer
+        import rego.v1
+        import data.graph["a\".b"] as escaped
+
+        result := escaped.value
+    query: data.consumer.result
+    want_result: 7
+
   - note: import alias shadowed by rule
     modules:
       - |
@@ -408,6 +424,38 @@ cases:
     query: data.rules.main
     want_result:
       from: lib2
+  - note: literal-dot package imports keep rule and function identities separate
+    modules:
+      - |
+        package graph["a.b"]
+        import rego.v1
+
+        default value := "literal default"
+        suffix() := "literal function"
+      - |
+        package graph.a.b
+        import rego.v1
+
+        default value := "nested default"
+        suffix() := "nested function"
+      - |
+        package consumer
+        import rego.v1
+        import data.graph["a.b"] as dotted
+        import data.graph.a.b as nested
+
+        result := {
+          "dotted": dotted.value,
+          "nested": nested.value,
+          "dotted_function": dotted.suffix(),
+          "nested_function": nested.suffix()
+        }
+    query: data.consumer.result
+    want_result:
+      dotted: literal default
+      nested: nested default
+      dotted_function: literal function
+      nested_function: nested function
   - note: with override target aliasing a non-function rule overrides the value
     modules:
       - |

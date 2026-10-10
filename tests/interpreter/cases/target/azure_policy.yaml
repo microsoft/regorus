@@ -77,3 +77,28 @@ cases:
         }
     query: data.azure.policy.invalid.allow
     want_result: false
+
+  - note: "Azure Policy target discovers an effect below a literal-dot package component"
+    data: {}
+    input:
+      type: "Microsoft.Storage/storageAccounts"
+      name: "literal-dot-account"
+      location: "East US"
+      properties:
+        supportsHttpsTrafficOnly: true
+    modules:
+      - |
+        package azure.policy["version.1"]
+
+        import rego.v1
+
+        __target__ := "target.tests.azure_policy"
+
+        default allow := false
+
+        allow if {
+          input.type == "Microsoft.Storage/storageAccounts"
+          input.properties.supportsHttpsTrafficOnly == true
+        }
+    query: data.azure.policy["version.1"].allow
+    want_result: true

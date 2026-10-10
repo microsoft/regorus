@@ -14,8 +14,9 @@ use crate::rvm::instructions::{
     ChainedIndexParams, LiteralOrRegister, VirtualDataDocumentLookupParams,
 };
 use crate::rvm::Instruction;
+use crate::utils::{append_path_component, format_string_path};
 use crate::Value;
-use alloc::format;
+use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -87,9 +88,15 @@ pub(super) fn parse_reference_chain(expr: &ExprRef) -> Result<ReferenceChain> {
             Expr::RefBrack { refr, index, .. } => {
                 // Bracket access - check if it's a string literal or dynamic
                 match index.as_ref() {
-                    Expr::String { span, .. } => {
+                    Expr::String { value, .. } => {
                         // String literal - treat as static field
-                        components.push(AccessComponent::Field(span.text().to_string()));
+                        components.push(AccessComponent::Field(
+                            value
+                                .as_string()
+                                .map_err(CompilerError::from)?
+                                .as_ref()
+                                .to_string(),
+                        ));
                     }
                     _ => {
                         // Dynamic expression
@@ -159,7 +166,8 @@ impl<'a> Compiler<'a> {
         // Start from the full path and work backwards
         for i in (1..static_prefix.len()).rev() {
             // Start from 1 to skip just "data"
-            let rule_candidate = static_prefix[0..=i].join(".");
+            let rule_candidate =
+                format_string_path(&static_prefix[0..=i]).map_err(CompilerError::from)?;
 
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
                 // Found a rule match! Call the rule
@@ -186,11 +194,12 @@ impl<'a> Compiler<'a> {
         // Check if this path could be a prefix of any rules (for virtual document lookup)
         // Convert the full chain to a pattern that includes wildcards for dynamic components
         let path_pattern = self.create_path_pattern(&chain.components);
-        let matching_rules: Vec<String> = self
+        let matching_rules: BTreeSet<String> = self
             .policy
             .inner
             .rules
             .keys()
+            .chain(self.policy.inner.default_rules.keys())
             .filter(|rule_path| self.matches_path_pattern(rule_path, &path_pattern))
             .cloned()
             .collect();
@@ -221,54 +230,38 @@ impl<'a> Compiler<'a> {
 
     /// Create a path pattern from access components, using '*' for dynamic components
     /// e.g., [Field("a"), Expression(...), Field("b")] becomes "data.a.*.b"
-    fn create_path_pattern(&self, components: &[AccessComponent]) -> String {
-        let mut pattern_parts = vec!["data"];
+    fn create_path_pattern(&self, components: &[AccessComponent]) -> Vec<Option<String>> {
+        let mut pattern_parts = vec![Some("data".to_string())];
 
         for component in components {
             match component {
-                AccessComponent::Field(field) => pattern_parts.push(field.as_str()),
-                AccessComponent::Expression(_) => pattern_parts.push("*"),
+                AccessComponent::Field(field) => pattern_parts.push(Some(field.clone())),
+                AccessComponent::Expression(_) => pattern_parts.push(None),
             }
         }
 
-        pattern_parts.join(".")
+        pattern_parts
     }
 
     /// Check if a rule path matches the given pattern with wildcards
     /// e.g., "data.test.users.alice_profile" matches "data.test.users.*"
-    fn matches_path_pattern(&self, rule_path: &str, pattern: &str) -> bool {
-        // Use simple string matching implementation that handles wildcard patterns
-        if pattern.contains('*') {
-            self.simple_wildcard_match(rule_path, pattern)
-        } else {
-            // Simple prefix match for patterns without wildcards
-            rule_path.starts_with(&format!("{}.", pattern)) || rule_path == pattern
-        }
-    }
-
-    /// Simple wildcard matching without regex dependencies
-    /// Checks if a rule path could be a prefix of the access pattern
-    /// e.g., rule "data.test.users.alice_data" matches pattern "data.*.*.*.*.* because
-    /// the rule could be accessed with the first 4 components of the pattern
-    /// Ensures exact component matching - "fee" will NOT match "feed"
-    fn simple_wildcard_match(&self, rule_path: &str, access_pattern: &str) -> bool {
-        let rule_parts: Vec<&str> = rule_path.split('.').collect();
-        let pattern_parts: Vec<&str> = access_pattern.split('.').collect();
-
+    fn matches_path_pattern(&self, rule_path: &str, pattern: &[Option<String>]) -> bool {
+        let Some(rule_parts) = self.policy.inner.rule_path_components.get(rule_path) else {
+            return false;
+        };
         // Check how many components of the pattern the rule can match
-        let match_length = rule_parts.len().min(pattern_parts.len());
+        let match_length = rule_parts.len().min(pattern.len());
 
         // Check if the rule matches the pattern up to the available components
         for i in 0..match_length {
-            let rule_part = rule_parts[i];
-            let pattern_part = pattern_parts[i];
-
-            if pattern_part == "*" {
+            let rule_part = &rule_parts[i];
+            let pattern_part = &pattern[i];
+            if pattern_part.is_none() {
                 // Wildcard in pattern matches any non-empty rule component exactly
                 if rule_part.is_empty() {
                     return false;
                 }
-            } else if rule_part != pattern_part {
+            } else if pattern_part.as_ref() != Some(rule_part) {
                 return false;
             }
         }
@@ -276,11 +269,8 @@ impl<'a> Compiler<'a> {
         // Rule matches if either:
         // 1. It's at least as long as the pattern, OR
         // 2. It matches all available components and the remaining pattern parts are wildcards
-        rule_parts.len() >= pattern_parts.len()
-            || (match_length > 0
-                && pattern_parts[match_length..]
-                    .iter()
-                    .all(|&part| part == "*"))
+        rule_parts.len() >= pattern.len()
+            || (match_length > 0 && pattern[match_length..].iter().all(Option::is_none))
     }
 
     /// Compile local variable access chain
@@ -299,20 +289,25 @@ impl<'a> Compiler<'a> {
         }
 
         // Check if there's a rule in the current package that matches
-        let current_pkg_prefix = format!("{}.{}", &self.current_package, root);
+        let current_pkg_prefix =
+            append_path_component(&self.current_package, root).map_err(CompilerError::from)?;
 
         // Build static path for rule matching
-        let mut rule_path_parts = vec![current_pkg_prefix.as_str()];
+        let mut static_fields = Vec::new();
         for component in &chain.components {
             match component {
-                AccessComponent::Field(field) => rule_path_parts.push(field.as_str()),
+                AccessComponent::Field(field) => static_fields.push(field.as_str()),
                 AccessComponent::Expression(_) => break, // Stop at first dynamic component
             }
         }
 
         // Try to find the longest matching rule prefix
-        for i in (0..rule_path_parts.len()).rev() {
-            let rule_candidate = rule_path_parts[0..=i].join(".");
+        for i in (0..=static_fields.len()).rev() {
+            let mut rule_candidate = current_pkg_prefix.clone();
+            for field in static_fields.iter().take(i) {
+                rule_candidate =
+                    append_path_component(&rule_candidate, field).map_err(CompilerError::from)?;
+            }
 
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
                 let rule_result_reg = self.alloc_register();
@@ -336,7 +331,8 @@ impl<'a> Compiler<'a> {
         }
 
         // No rule found; fall back to module-level imports.
-        let import_key = format!("{}.{}", &self.current_package, root);
+        let import_key =
+            append_path_component(&self.current_package, root).map_err(CompilerError::from)?;
         if let Some(import_expr) = self.policy.inner.imports.get(&import_key) {
             let import_reg =
                 self.compile_rego_expr_with_span(import_expr, import_expr.span(), false)?;

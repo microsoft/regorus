@@ -3,6 +3,7 @@
 
 use crate::rvm::instructions::LiteralOrRegister;
 use crate::value::Value;
+use alloc::string::ToString as _;
 use alloc::vec::Vec;
 use core::convert::TryFrom as _;
 
@@ -13,23 +14,27 @@ impl RegoVM {
     pub(super) fn execute_virtual_data_document_lookup_subobject(
         &mut self,
         path_components: &[LiteralOrRegister],
+        string_fallback_indices: &[usize],
+        data_subobject: Value,
         rule_tree_subobject: &Value,
     ) -> Result<Value> {
         let mut root_path = Vec::new();
-        for component in path_components {
-            let key_value = self.literal_or_register_value(component)?;
+        let mut fallback_indices = string_fallback_indices.iter().copied().peekable();
+        for (index, component) in path_components.iter().enumerate() {
+            let mut key_value = self.literal_or_register_value(component)?;
+            if fallback_indices
+                .peek()
+                .is_some_and(|fallback_index| *fallback_index == index)
+            {
+                let _ = fallback_indices.next();
+                key_value = Value::from(key_value.to_string());
+            }
             root_path.push(key_value);
         }
 
-        // Walk data tree by reference, only clone the leaf.
-        let mut data_ref = &self.data;
-        for path_component in &root_path {
-            data_ref = &data_ref[path_component];
-        }
-
-        let mut result_subobject = match *data_ref {
+        let mut result_subobject = match data_subobject {
             Value::Undefined => Value::new_object(),
-            _ => data_ref.clone(),
+            subobject => subobject,
         };
 
         self.traverse_rule_tree_subobject(rule_tree_subobject, &mut result_subobject, &root_path)?;
@@ -215,12 +220,26 @@ impl RegoVM {
             .clone();
 
         let mut current_node = &self.program.rule_tree["data"];
+        let mut data_ref = &self.data;
+        let mut string_fallback_indices = Vec::new();
         let mut components_consumed = 0;
 
         for (i, component) in params.path_components.iter().enumerate() {
-            let key_value = self.literal_or_register_value(component)?;
+            let mut key_value = self.literal_or_register_value(component)?;
 
-            current_node = &current_node[&key_value];
+            let mut rule_child = &current_node[&key_value];
+            let mut data_child = &data_ref[&key_value];
+            if *rule_child == Value::Undefined
+                && *data_child == Value::Undefined
+                && matches!(key_value, Value::Number(_))
+            {
+                string_fallback_indices.push(i);
+                key_value = Value::from(key_value.to_string());
+                rule_child = &current_node[&key_value];
+                data_child = &data_ref[&key_value];
+            }
+            current_node = rule_child;
+            data_ref = data_child;
             components_consumed = self.checked_add_one(i, "path components traversed")?;
 
             match *current_node {
@@ -259,25 +278,43 @@ impl RegoVM {
                     });
                 }
             }
-            Value::Undefined | Value::Object(_)
-                if components_consumed != params.path_components.len() =>
-            {
+            Value::Undefined => {
+                let mut result_ref = data_ref;
+                for component in params.path_components.iter().skip(components_consumed) {
+                    let key_value = self.literal_or_register_value(component)?;
+                    let mut child = &result_ref[&key_value];
+                    if *child == Value::Undefined && matches!(key_value, Value::Number(_)) {
+                        let string_key = Value::from(key_value.to_string());
+                        child = &result_ref[&string_key];
+                    }
+                    result_ref = child;
+                }
+                self.set_register(params.dest, result_ref.clone())?;
+            }
+            Value::Object(_) if components_consumed != params.path_components.len() => {
                 // Walk data tree by reference, clone only the leaf.
-                let mut data_ref = &self.data;
+                let mut result_data_ref = &self.data;
 
                 for component in &params.path_components {
                     let key_value = self.literal_or_register_value(component)?;
-                    data_ref = &data_ref[&key_value];
+                    let mut child = &result_data_ref[&key_value];
+                    if *child == Value::Undefined && matches!(key_value, Value::Number(_)) {
+                        let string_key = Value::from(key_value.to_string());
+                        child = &result_data_ref[&string_key];
+                    }
+                    result_data_ref = child;
                 }
 
-                let result = data_ref.clone();
+                let result = result_data_ref.clone();
                 self.set_register(params.dest, result)?;
             }
             Value::Object(_) => {
                 let rule_tree_subobject = current_node.clone();
-
+                let data_subobject = data_ref.clone();
                 let result = self.execute_virtual_data_document_lookup_subobject(
                     &params.path_components,
+                    &string_fallback_indices,
+                    data_subobject,
                     &rule_tree_subobject,
                 )?;
                 self.set_register(params.dest, result)?;
