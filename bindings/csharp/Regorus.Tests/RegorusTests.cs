@@ -15,6 +15,51 @@ public class RegorusTests
     private static readonly object LimitLock = new();
 
     [TestMethod]
+    public void Package_components_preserve_decoded_names_and_duplicate_modules()
+    {
+        using var engine = new Engine();
+        Assert.AreEqual("[]", engine.GetPolicyPackageComponents());
+        var legacy = engine.AddPolicy(
+            "same.rego",
+            """
+            package graph.definition["1.0.0"]
+            value := 1
+            """);
+        Assert.AreEqual(
+            legacy,
+            engine.AddPolicy("same.rego", """package graph.definition["1"]["0"]["0"]"""));
+        engine.AddPolicy("escaped.rego", """package graph["a\".b"]["c\\d"]["\u03bb"]""");
+
+        var expected = JsonNode.Parse("""
+            [
+              {"source_file":"same.rego","components":["graph","definition","1.0.0"]},
+              {"source_file":"same.rego","components":["graph","definition","1","0","0"]},
+              {"source_file":"escaped.rego","components":["graph","a\".b","c\\d","\u03bb"]}
+            ]
+            """);
+        for (var i = 0; i < 2; i++)
+        {
+            Assert.IsTrue(JsonNode.DeepEquals(
+                expected, JsonNode.Parse(engine.GetPolicyPackageComponents()!)));
+            Assert.AreEqual("1", engine.EvalRule("""data.graph.definition["1.0.0"].value"""));
+        }
+        Assert.AreEqual("data.graph.definition.1.0.0", legacy);
+    }
+
+    [TestMethod]
+    public void Package_components_failed_add_keeps_existing_snapshot()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy("policy.rego", "package policy");
+        var before = engine.GetPolicyPackageComponents();
+        Assert.ThrowsException<InvalidOperationException>(
+            () => engine.AddPolicy("invalid.rego", "package policy[1]"));
+        Assert.AreEqual(before, engine.GetPolicyPackageComponents());
+        engine.AddPolicy("next.rego", "package next");
+        Assert.AreEqual(2, JsonNode.Parse(engine.GetPolicyPackageComponents()!)!.AsArray().Count);
+    }
+
+    [TestMethod]
     public void Basic_evaluation_succeeds()
     {
         using var engine = new Engine();
