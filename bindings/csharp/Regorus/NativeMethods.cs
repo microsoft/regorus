@@ -408,6 +408,12 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_engine_get_ast_as_json(RegorusEngine* engine);
 
         /// <summary>
+        /// Gets each loaded module's source label and decoded package components as JSON.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_get_policy_package_components", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_get_policy_package_components(RegorusEngine* engine);
+
+        /// <summary>
         /// Gets the package names defined in each policy added to the engine.
         /// See https://docs.rs/regorus/latest/regorus/coverage/struct.Engine.html#method.get_policy_package_names
         /// </summary>
