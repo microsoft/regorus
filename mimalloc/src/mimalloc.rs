@@ -583,7 +583,9 @@ mod tests {
                     assert!(!next.is_null());
                 } else {
                     assert_eq!(current.live_bytes(), new_layout.size() as u64);
-                    assert!((0..old_layout.size()).all(|offset| unsafe { *next.add(offset) == 0x6b }));
+                    assert!(
+                        (0..old_layout.size()).all(|offset| unsafe { *next.add(offset) == 0x6b })
+                    );
                     unsafe { allocator.dealloc(next, new_layout) };
                     assert_eq!(current.live_bytes(), 0);
                     assert_eq!(global_allocation_stats_snapshot().allocated, global_before);
@@ -796,9 +798,8 @@ mod tests {
             assert!(!ptr.is_null());
         } else {
             let original = ptr;
-            let ptr = account.with_scope(|| unsafe {
-                allocator.realloc(ptr, old_layout, new_layout.size())
-            });
+            let ptr = account
+                .with_scope(|| unsafe { allocator.realloc(ptr, old_layout, new_layout.size()) });
             if ptr.is_null() {
                 assert!(!ptr.is_null());
             } else {
