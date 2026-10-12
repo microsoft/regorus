@@ -241,8 +241,11 @@ mod tests {
 
         unsafe {
             let ptr = alloc.alloc(layout);
-            assert!(!ptr.cast::<c_void>().is_null());
-            alloc.dealloc(ptr, layout);
+            if ptr.cast::<c_void>().is_null() {
+                assert!(!ptr.cast::<c_void>().is_null());
+            } else {
+                alloc.dealloc(ptr, layout);
+            }
         }
         Ok(())
     }
@@ -254,8 +257,11 @@ mod tests {
 
         unsafe {
             let ptr = alloc.alloc_zeroed(layout);
-            assert!(!ptr.cast::<c_void>().is_null());
-            alloc.dealloc(ptr, layout);
+            if ptr.cast::<c_void>().is_null() {
+                assert!(!ptr.cast::<c_void>().is_null());
+            } else {
+                alloc.dealloc(ptr, layout);
+            }
         }
         Ok(())
     }
@@ -313,15 +319,18 @@ mod tests {
                 assert_eq!((ptr as usize) % align, 0);
                 assert!((0..old_layout.size()).all(|index| unsafe { *ptr.add(index) == 0 }));
                 unsafe { ptr.write_bytes(0x5a, old_layout.size()) };
+
+                let new_size = 33;
+                let ptr = unsafe { allocator.realloc(ptr, old_layout, new_size) };
+                if ptr.is_null() {
+                    assert!(!ptr.is_null());
+                } else {
+                    assert_eq!((ptr as usize) % align, 0);
+                    assert!((0..old_layout.size()).all(|index| unsafe { *ptr.add(index) == 0x5a }));
+
+                    unsafe { allocator.dealloc(ptr, Layout::from_size_align(new_size, align)?) };
+                }
             }
-
-            let new_size = 33;
-            let ptr = unsafe { allocator.realloc(ptr, old_layout, new_size) };
-            assert!(!ptr.is_null());
-            assert_eq!((ptr as usize) % align, 0);
-            assert!((0..old_layout.size()).all(|index| unsafe { *ptr.add(index) == 0x5a }));
-
-            unsafe { allocator.dealloc(ptr, Layout::from_size_align(new_size, align)?) };
         }
         Ok(())
     }
@@ -459,34 +468,44 @@ mod tests {
 
         let mut ptr = first.with_scope(|| {
             let ptr = unsafe { allocator.alloc(old_layout) };
-            assert!(!ptr.is_null());
-            unsafe { ptr.write_bytes(0x5a, old_layout.size()) };
+            if ptr.is_null() {
+                assert!(!ptr.is_null());
+            } else {
+                unsafe { ptr.write_bytes(0x5a, old_layout.size()) };
+            }
             ptr
         });
-        assert_eq!(first.live_bytes(), 16);
+        if ptr.is_null() {
+            assert!(!ptr.is_null());
+        } else {
+            assert_eq!(first.live_bytes(), 16);
 
-        let global_before_failure = global_allocation_stats_snapshot().allocated;
-        let failed =
-            second.with_scope(|| unsafe { allocator.realloc(ptr, old_layout, usize::MAX) });
-        assert!(failed.is_null());
-        assert_eq!(first.live_bytes(), 16);
-        assert_eq!(second.live_bytes(), 0);
-        assert_eq!(
-            global_allocation_stats_snapshot().allocated,
-            global_before_failure
-        );
-        assert!((0..16).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
+            let global_before_failure = global_allocation_stats_snapshot().allocated;
+            let failed =
+                second.with_scope(|| unsafe { allocator.realloc(ptr, old_layout, usize::MAX) });
+            assert!(failed.is_null());
+            assert_eq!(first.live_bytes(), 16);
+            assert_eq!(second.live_bytes(), 0);
+            assert_eq!(
+                global_allocation_stats_snapshot().allocated,
+                global_before_failure
+            );
+            assert!((0..16).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
 
-        ptr =
-            second.with_scope(|| unsafe { allocator.realloc(ptr, old_layout, new_layout.size()) });
-        assert!(!ptr.is_null());
-        assert_eq!(first.live_bytes(), 0);
-        assert_eq!(second.live_bytes(), 64);
-        assert_eq!((ptr as usize) % new_layout.align(), 0);
-        assert!((0..16).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
+            ptr = second
+                .with_scope(|| unsafe { allocator.realloc(ptr, old_layout, new_layout.size()) });
+            if ptr.is_null() {
+                assert!(!ptr.is_null());
+            } else {
+                assert_eq!(first.live_bytes(), 0);
+                assert_eq!(second.live_bytes(), 64);
+                assert_eq!((ptr as usize) % new_layout.align(), 0);
+                assert!((0..16).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
 
-        unsafe { allocator.dealloc(ptr, new_layout) };
-        assert_eq!(second.live_bytes(), 0);
+                unsafe { allocator.dealloc(ptr, new_layout) };
+                assert_eq!(second.live_bytes(), 0);
+            }
+        }
         Ok(())
     }
 
@@ -503,56 +522,74 @@ mod tests {
 
         let ptr = first.with_scope(|| {
             let ptr = unsafe { allocator.alloc(old_layout) };
-            assert!(!ptr.is_null());
-            unsafe { ptr.write_bytes(0x5a, old_layout.size()) };
+            if ptr.is_null() {
+                assert!(!ptr.is_null());
+            } else {
+                unsafe { ptr.write_bytes(0x5a, old_layout.size()) };
+            }
             ptr
         });
-        assert_eq!(first.live_bytes(), old_layout.size() as u64);
-        assert_eq!(current.live_bytes(), 0);
-        assert_eq!(first.reference_count_for_test(), 2);
-        assert_eq!(current.reference_count_for_test(), 1);
+        if ptr.is_null() {
+            assert!(!ptr.is_null());
+        } else {
+            assert_eq!(first.live_bytes(), old_layout.size() as u64);
+            assert_eq!(current.live_bytes(), 0);
+            assert_eq!(first.reference_count_for_test(), 2);
+            assert_eq!(current.reference_count_for_test(), 1);
 
-        let failure = FailNextNativeReallocGuard::arm();
-        let result =
-            current.with_scope(|| unsafe { allocator.realloc(ptr, old_layout, new_layout.size()) });
-        drop(failure);
-        if !result.is_null() {
-            unsafe { allocator.dealloc(result, new_layout) };
+            let failure = FailNextNativeReallocGuard::arm();
+            let result = current
+                .with_scope(|| unsafe { allocator.realloc(ptr, old_layout, new_layout.size()) });
+            drop(failure);
+            if !result.is_null() {
+                unsafe { allocator.dealloc(result, new_layout) };
+            }
+            assert!(
+                result.is_null(),
+                "the fail-next test hook should force the native null-result path"
+            );
+            assert_eq!(first.live_bytes(), old_layout.size() as u64);
+            assert_eq!(current.live_bytes(), 0);
+            assert_eq!(first.reference_count_for_test(), 2);
+            assert_eq!(current.reference_count_for_test(), 1);
+            assert_eq!(
+                global_allocation_stats_snapshot().allocated,
+                global_before + old_layout.size() as u64
+            );
+            let header = unsafe { allocation_header(ptr).read() };
+            assert_eq!(header.requested_size, old_layout.size());
+            assert!(!header.account.is_null());
+            assert!((0..old_layout.size()).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
+
+            drop(first);
+            unsafe { allocator.dealloc(ptr, old_layout) };
+
+            let next = current.with_scope(|| {
+                let ptr = unsafe { allocator.alloc(old_layout) };
+                if ptr.is_null() {
+                    assert!(!ptr.is_null());
+                } else {
+                    unsafe { ptr.write_bytes(0x6b, old_layout.size()) };
+                }
+                ptr
+            });
+            if next.is_null() {
+                assert!(!next.is_null());
+            } else {
+                let next = current.with_scope(|| unsafe {
+                    allocator.realloc(next, old_layout, new_layout.size())
+                });
+                if next.is_null() {
+                    assert!(!next.is_null());
+                } else {
+                    assert_eq!(current.live_bytes(), new_layout.size() as u64);
+                    assert!((0..old_layout.size()).all(|offset| unsafe { *next.add(offset) == 0x6b }));
+                    unsafe { allocator.dealloc(next, new_layout) };
+                    assert_eq!(current.live_bytes(), 0);
+                    assert_eq!(global_allocation_stats_snapshot().allocated, global_before);
+                }
+            }
         }
-        assert!(
-            result.is_null(),
-            "the fail-next test hook should force the native null-result path"
-        );
-        assert_eq!(first.live_bytes(), old_layout.size() as u64);
-        assert_eq!(current.live_bytes(), 0);
-        assert_eq!(first.reference_count_for_test(), 2);
-        assert_eq!(current.reference_count_for_test(), 1);
-        assert_eq!(
-            global_allocation_stats_snapshot().allocated,
-            global_before + old_layout.size() as u64
-        );
-        let header = unsafe { allocation_header(ptr).read() };
-        assert_eq!(header.requested_size, old_layout.size());
-        assert!(!header.account.is_null());
-        assert!((0..old_layout.size()).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
-
-        drop(first);
-        unsafe { allocator.dealloc(ptr, old_layout) };
-
-        let next = current.with_scope(|| {
-            let ptr = unsafe { allocator.alloc(old_layout) };
-            assert!(!ptr.is_null());
-            unsafe { ptr.write_bytes(0x6b, old_layout.size()) };
-            ptr
-        });
-        let next = current
-            .with_scope(|| unsafe { allocator.realloc(next, old_layout, new_layout.size()) });
-        assert!(!next.is_null());
-        assert_eq!(current.live_bytes(), new_layout.size() as u64);
-        assert!((0..old_layout.size()).all(|offset| unsafe { *next.add(offset) == 0x6b }));
-        unsafe { allocator.dealloc(next, new_layout) };
-        assert_eq!(current.live_bytes(), 0);
-        assert_eq!(global_allocation_stats_snapshot().allocated, global_before);
         Ok(())
     }
 
@@ -566,8 +603,11 @@ mod tests {
         let mut layout = Layout::from_size_align(23, 64)?;
         let mut ptr = first.with_scope(|| {
             let ptr = unsafe { allocator.alloc(layout) };
-            assert!(!ptr.is_null());
-            unsafe { ptr.write_bytes(0x5a, layout.size()) };
+            if ptr.is_null() {
+                assert!(!ptr.is_null());
+            } else {
+                unsafe { ptr.write_bytes(0x5a, layout.size()) };
+            }
             ptr
         });
 
@@ -581,48 +621,59 @@ mod tests {
         ];
         for (next_owner, new_size) in transitions {
             let global_before = global_allocation_stats_snapshot().allocated;
-            ptr = if let Some(next_owner) = next_owner {
-                next_owner.with_scope(|| unsafe { allocator.realloc(ptr, layout, new_size) })
+            if ptr.is_null() {
+                assert!(!ptr.is_null());
             } else {
-                unsafe { allocator.realloc(ptr, layout, new_size) }
-            };
-            assert!(!ptr.is_null());
-            assert_eq!((ptr as usize) % layout.align(), 0);
-            assert!((0..23).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
-            assert_eq!(
-                global_allocation_stats_snapshot().allocated,
-                global_before - layout.size() as u64 + new_size as u64
-            );
+                ptr = if let Some(next_owner) = next_owner {
+                    next_owner.with_scope(|| unsafe { allocator.realloc(ptr, layout, new_size) })
+                } else {
+                    unsafe { allocator.realloc(ptr, layout, new_size) }
+                };
+                if ptr.is_null() {
+                    assert!(!ptr.is_null());
+                } else {
+                    assert_eq!((ptr as usize) % layout.align(), 0);
+                    assert!((0..23).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
+                    assert_eq!(
+                        global_allocation_stats_snapshot().allocated,
+                        global_before - layout.size() as u64 + new_size as u64
+                    );
 
-            layout = Layout::from_size_align(new_size, layout.align())?;
-            assert_eq!(
-                first.live_bytes(),
-                if next_owner.is_some_and(|owner| core::ptr::eq(owner, &first)) {
-                    new_size as u64
-                } else {
-                    0
+                    layout = Layout::from_size_align(new_size, layout.align())?;
+                    assert_eq!(
+                        first.live_bytes(),
+                        if next_owner.is_some_and(|owner| core::ptr::eq(owner, &first)) {
+                            new_size as u64
+                        } else {
+                            0
+                        }
+                    );
+                    assert_eq!(
+                        second.live_bytes(),
+                        if next_owner.is_some_and(|owner| core::ptr::eq(owner, &second)) {
+                            new_size as u64
+                        } else {
+                            0
+                        }
+                    );
+                    assert_eq!(
+                        third.live_bytes(),
+                        if next_owner.is_some_and(|owner| core::ptr::eq(owner, &third)) {
+                            new_size as u64
+                        } else {
+                            0
+                        }
+                    );
                 }
-            );
-            assert_eq!(
-                second.live_bytes(),
-                if next_owner.is_some_and(|owner| core::ptr::eq(owner, &second)) {
-                    new_size as u64
-                } else {
-                    0
-                }
-            );
-            assert_eq!(
-                third.live_bytes(),
-                if next_owner.is_some_and(|owner| core::ptr::eq(owner, &third)) {
-                    new_size as u64
-                } else {
-                    0
-                }
-            );
+            }
         }
 
-        unsafe { allocator.dealloc(ptr, layout) };
-        assert_eq!(third.live_bytes(), 0);
+        if ptr.is_null() {
+            assert!(!ptr.is_null());
+        } else {
+            unsafe { allocator.dealloc(ptr, layout) };
+            assert_eq!(third.live_bytes(), 0);
+        }
         Ok(())
     }
 
@@ -635,38 +686,57 @@ mod tests {
         let new_layout = Layout::from_size_align(257, 64)?;
         let ptr = first.with_scope(|| {
             let ptr = unsafe { Mimalloc.alloc(old_layout) };
-            assert!(!ptr.is_null());
-            unsafe { ptr.write_bytes(0x5a, old_layout.size()) };
+            if ptr.is_null() {
+                assert!(!ptr.is_null());
+            } else {
+                unsafe { ptr.write_bytes(0x5a, old_layout.size()) };
+            }
             ptr
         });
+        if ptr.is_null() {
+            assert!(!ptr.is_null());
+        } else {
+            let address = ptr as usize;
+            let worker_account = second.clone();
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let ptr = address as *mut u8;
+                if ptr.is_null() {
+                    assert!(!ptr.is_null());
+                } else {
+                    let ptr = worker_account.with_scope(|| unsafe {
+                        Mimalloc.realloc(ptr, old_layout, new_layout.size())
+                    });
+                    sender.send(ptr as usize).expect("send reallocated pointer");
+                }
+            });
+            worker.join().expect("cross-thread realloc");
+            let ptr = receiver.recv().expect("receive reallocated pointer") as *mut u8;
 
-        let address = ptr as usize;
-        let worker_account = second.clone();
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            let ptr = address as *mut u8;
-            let ptr = worker_account
-                .with_scope(|| unsafe { Mimalloc.realloc(ptr, old_layout, new_layout.size()) });
-            sender.send(ptr as usize).expect("send reallocated pointer");
-        });
-        worker.join().expect("cross-thread realloc");
-        let ptr = receiver.recv().expect("receive reallocated pointer") as *mut u8;
+            if ptr.is_null() {
+                assert!(!ptr.is_null());
+            } else {
+                assert_eq!(first.live_bytes(), 0);
+                assert_eq!(second.live_bytes(), new_layout.size() as u64);
+                assert_eq!((ptr as usize) % new_layout.align(), 0);
+                assert!((0..old_layout.size()).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
 
-        assert!(!ptr.is_null());
-        assert_eq!(first.live_bytes(), 0);
-        assert_eq!(second.live_bytes(), new_layout.size() as u64);
-        assert_eq!((ptr as usize) % new_layout.align(), 0);
-        assert!((0..old_layout.size()).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
-
-        let address = ptr as usize;
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let freer = std::thread::spawn(move || {
-            unsafe { Mimalloc.dealloc(address as *mut u8, new_layout) };
-            sender.send(()).expect("send free completion");
-        });
-        receiver.recv().expect("receive free completion");
-        freer.join().expect("cross-thread free");
-        assert_eq!(second.live_bytes(), 0);
+                let address = ptr as usize;
+                let (sender, receiver) = std::sync::mpsc::channel();
+                let freer = std::thread::spawn(move || {
+                    let ptr = address as *mut u8;
+                    if ptr.is_null() {
+                        assert!(!ptr.is_null());
+                    } else {
+                        unsafe { Mimalloc.dealloc(ptr, new_layout) };
+                    }
+                    sender.send(()).expect("send free completion");
+                });
+                receiver.recv().expect("receive free completion");
+                freer.join().expect("cross-thread free");
+                assert_eq!(second.live_bytes(), 0);
+            }
+        }
         Ok(())
     }
 
@@ -678,21 +748,31 @@ mod tests {
         let old_layout = Layout::from_size_align(32, 8)?;
         let ptr = account.with_scope(|| {
             let ptr = unsafe { allocator.alloc(old_layout) };
-            assert!(!ptr.is_null());
-            unsafe { ptr.write_bytes(0x5a, old_layout.size()) };
+            if ptr.is_null() {
+                assert!(!ptr.is_null());
+            } else {
+                unsafe { ptr.write_bytes(0x5a, old_layout.size()) };
+            }
             ptr
         });
 
-        // This characterizes vendored mimalloc's same-bin shrink, not GlobalAlloc pointer stability.
-        let original = ptr;
-        let ptr = account.with_scope(|| unsafe { allocator.realloc(ptr, old_layout, 31) });
-        assert!(!ptr.is_null());
-        assert_eq!(ptr, original);
-        assert_eq!(account.live_bytes(), 31);
-        assert!((0..31).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
+        if ptr.is_null() {
+            assert!(!ptr.is_null());
+        } else {
+            // This characterizes vendored mimalloc's same-bin shrink, not GlobalAlloc pointer stability.
+            let original = ptr;
+            let ptr = account.with_scope(|| unsafe { allocator.realloc(ptr, old_layout, 31) });
+            if ptr.is_null() {
+                assert!(!ptr.is_null());
+            } else {
+                assert_eq!(ptr, original);
+                assert_eq!(account.live_bytes(), 31);
+                assert!((0..31).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
 
-        unsafe { allocator.dealloc(ptr, Layout::from_size_align(31, 8)?) };
-        assert_eq!(account.live_bytes(), 0);
+                unsafe { allocator.dealloc(ptr, Layout::from_size_align(31, 8)?) };
+                assert_eq!(account.live_bytes(), 0);
+            }
+        }
         Ok(())
     }
 
@@ -705,25 +785,35 @@ mod tests {
         let new_layout = Layout::from_size_align(1024, 16)?;
         let ptr = account.with_scope(|| {
             let ptr = unsafe { allocator.alloc(old_layout) };
-            assert!(!ptr.is_null());
-            unsafe { ptr.write_bytes(0x5a, old_layout.size()) };
+            if ptr.is_null() {
+                assert!(!ptr.is_null());
+            } else {
+                unsafe { ptr.write_bytes(0x5a, old_layout.size()) };
+            }
             ptr
         });
-        let original = ptr;
+        if ptr.is_null() {
+            assert!(!ptr.is_null());
+        } else {
+            let original = ptr;
+            let ptr = account.with_scope(|| unsafe {
+                allocator.realloc(ptr, old_layout, new_layout.size())
+            });
+            if ptr.is_null() {
+                assert!(!ptr.is_null());
+            } else {
+                assert_ne!(
+                    ptr, original,
+                    "vendored aligned realloc must move when this growth needs a larger native block"
+                );
+                assert_eq!(account.live_bytes(), new_layout.size() as u64);
+                assert_eq!((ptr as usize) % new_layout.align(), 0);
+                assert!((0..old_layout.size()).all(|index| unsafe { *ptr.add(index) == 0x5a }));
 
-        let ptr =
-            account.with_scope(|| unsafe { allocator.realloc(ptr, old_layout, new_layout.size()) });
-        assert!(!ptr.is_null());
-        assert_ne!(
-            ptr, original,
-            "vendored aligned realloc must move when this growth needs a larger native block"
-        );
-        assert_eq!(account.live_bytes(), new_layout.size() as u64);
-        assert_eq!((ptr as usize) % new_layout.align(), 0);
-        assert!((0..old_layout.size()).all(|index| unsafe { *ptr.add(index) == 0x5a }));
-
-        unsafe { allocator.dealloc(ptr, new_layout) };
-        assert_eq!(account.live_bytes(), 0);
+                unsafe { allocator.dealloc(ptr, new_layout) };
+                assert_eq!(account.live_bytes(), 0);
+            }
+        }
         Ok(())
     }
 
