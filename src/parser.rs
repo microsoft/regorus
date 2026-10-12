@@ -54,8 +54,7 @@ impl ParserContext {
         source: &Source,
         selector: &str,
     ) -> Result<Vec<String>> {
-        let mut parser =
-            Parser::new_with_max_col(source, Some(self.policy_length_config.max_col))?;
+        let mut parser = Parser::new_with_max_col(source, Some(self.policy_length_config.max_col))?;
         parser.rego_v1 = self.rego_v1;
         parser.future_keywords = self
             .future_keywords
