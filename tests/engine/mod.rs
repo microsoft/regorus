@@ -4,6 +4,207 @@
 use anyhow::{bail, Result};
 use regorus::*;
 
+const WI_NUMERIC_POLICY: &str = "package policy\nitems[1].blocked := true";
+const WI_STRING_POLICY: &str = "package policy.items[\"1\"]\nblocked := false";
+
+fn add_wi_scalar_modules(engine: &mut Engine, string_first: bool) -> Result<()> {
+    let modules = if string_first {
+        [
+            ("string.rego", WI_STRING_POLICY),
+            ("numeric.rego", WI_NUMERIC_POLICY),
+        ]
+    } else {
+        [
+            ("numeric.rego", WI_NUMERIC_POLICY),
+            ("string.rego", WI_STRING_POLICY),
+        ]
+    };
+    for (path, source) in modules {
+        engine.add_policy(path.to_string(), source.to_string())?;
+    }
+    Ok(())
+}
+
+#[test]
+fn package_components_distinguish_literal_dots_from_nested_namespaces() -> Result<()> {
+    let mut engine = Engine::new();
+    let literal = engine.add_policy(
+        "literal.rego".into(),
+        r#"package graph.definition["1.0.0"]
+           value := 1"#
+            .into(),
+    )?;
+    let nested = engine.add_policy(
+        "nested.rego".into(),
+        r#"package graph.definition["1"]["0"]["0"]
+           value := 2"#
+            .into(),
+    )?;
+
+    assert_eq!(literal, "data.graph.definition.1.0.0");
+    assert_eq!(nested, literal);
+    assert_eq!(
+        serde_json::to_value(engine.get_policy_package_components()?)?,
+        serde_json::json!([
+            {
+                "source_file": "literal.rego",
+                "components": ["graph", "definition", "1.0.0"]
+            },
+            {
+                "source_file": "nested.rego",
+                "components": ["graph", "definition", "1", "0", "0"]
+            }
+        ])
+    );
+    assert_eq!(engine.get_packages()?, vec![literal, nested]);
+    #[cfg(feature = "azure_policy")]
+    {
+        let names = engine.get_policy_package_names()?;
+        assert_eq!(names[0].package_name, "graph.definition.1.0.0");
+        assert_eq!(names[1].package_name, names[0].package_name);
+    }
+    Ok(())
+}
+
+#[test]
+fn package_components_decode_strings_and_preserve_declared_data() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "escaped.rego".into(),
+        r#"package graph[""]["a\".b"]["c\\d"]["\u03bb"]"#.into(),
+    )?;
+    engine.add_policy("data.rego".into(), "package data.app".into())?;
+
+    let packages = engine.get_policy_package_components()?;
+    assert_eq!(packages[0].source_file, "escaped.rego");
+    assert_eq!(
+        packages[0].components,
+        vec!["graph", "", "a\".b", "c\\d", "\u{03bb}"]
+    );
+    assert_eq!(packages[1].components, vec!["data", "app"]);
+    assert_eq!(
+        engine.get_packages()?,
+        vec![r#"data.graph..a\".b.c\\d.\u03bb"#, "data.data.app"]
+    );
+    Ok(())
+}
+
+#[test]
+fn package_components_keep_module_order_duplicate_labels_and_ruleless_modules() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy("same.rego".into(), "package z.last".into())?;
+    engine.add_policy("same.rego".into(), r#"package a["first"]"#.into())?;
+    engine.add_policy("third.rego".into(), "package a.first".into())?;
+
+    assert_eq!(
+        engine.get_policy_package_components()?,
+        vec![
+            PolicyPackageComponents {
+                source_file: "same.rego".into(),
+                components: vec!["z".into(), "last".into()],
+            },
+            PolicyPackageComponents {
+                source_file: "same.rego".into(),
+                components: vec!["a".into(), "first".into()],
+            },
+            PolicyPackageComponents {
+                source_file: "third.rego".into(),
+                components: vec!["a".into(), "first".into()],
+            },
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn package_components_are_read_only_snapshots_and_allow_engine_reuse() -> Result<()> {
+    let mut engine = Engine::new();
+    assert!(engine.get_policy_package_components()?.is_empty());
+    assert_eq!(
+        serde_json::to_string(&engine.get_policy_package_components()?)?,
+        "[]"
+    );
+    engine.add_policy(
+        "policy.rego".into(),
+        "package policy\nallow := input.allowed".into(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"allowed":true}"#)?);
+    engine.add_data(Value::from_json_str(r#"{"unchanged":7}"#)?)?;
+    let before = engine.get_policy_package_components()?;
+    let legacy = engine.get_packages()?;
+
+    for allowed in [true, false, true] {
+        engine.set_input(Value::from_json_str(&format!(
+            r#"{{"allowed":{allowed}}}"#
+        ))?);
+        assert_eq!(engine.get_policy_package_components()?, before);
+        assert_eq!(
+            engine.eval_rule("data.policy.allow".into())?,
+            Value::Bool(allowed)
+        );
+        assert_eq!(engine.get_policy_package_components()?, before);
+        assert_eq!(engine.get_packages()?, legacy);
+        let data = engine.eval_query("data.unchanged".into(), false)?;
+        assert_eq!(data.result[0].expressions[0].value, Value::from(7));
+    }
+    assert!(engine
+        .add_policy("invalid.rego".into(), "package policy[1]".into())
+        .is_err());
+    assert_eq!(engine.get_policy_package_components()?, before);
+    engine.add_policy("next.rego".into(), "package next\nvalue := 8".into())?;
+    assert_eq!(before.len(), 1);
+    assert_eq!(engine.get_policy_package_components()?.len(), 2);
+    assert_eq!(engine.eval_rule("data.next.value".into())?, Value::from(8));
+    Ok(())
+}
+
+#[test]
+fn package_parser_rejects_non_string_components_and_engine_remains_reusable() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "stable.rego".into(),
+        "package graph[\"stable\"]\nvalue := 7".into(),
+    )?;
+    let stable = vec![PolicyPackageComponents {
+        source_file: "stable.rego".into(),
+        components: vec!["graph".into(), "stable".into()],
+    }];
+    assert_eq!(engine.get_policy_package_components()?, stable);
+
+    for (source, policy) in [
+        ("number.rego", "package graph[1]"),
+        ("boolean.rego", "package graph[true]"),
+        ("null.rego", "package graph[null]"),
+    ] {
+        assert!(
+            engine.add_policy(source.into(), policy.into()).is_err(),
+            "package with a non-string component should be rejected: {source}"
+        );
+        assert_eq!(engine.get_policy_package_components()?, stable);
+    }
+
+    engine.add_policy("next.rego".into(), "package graph.next\nvalue := 8".into())?;
+    assert_eq!(
+        engine.get_policy_package_components()?,
+        vec![
+            stable[0].clone(),
+            PolicyPackageComponents {
+                source_file: "next.rego".into(),
+                components: vec!["graph".into(), "next".into()],
+            },
+        ]
+    );
+    assert_eq!(
+        engine.eval_rule("data.graph.stable.value".into())?,
+        Value::from(7)
+    );
+    assert_eq!(
+        engine.eval_rule("data.graph.next.value".into())?,
+        Value::from(8)
+    );
+    Ok(())
+}
+
 #[test]
 fn numeric_rule_paths_keep_integer_decimal_equivalence() -> Result<()> {
     let mut engine = Engine::new();
@@ -30,6 +231,52 @@ fn numeric_rule_paths_keep_integer_decimal_equivalence() -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+#[test]
+fn rule_head_registration_rejects_repeated_unary_nonterminal_indices() -> Result<()> {
+    let mut cases = vec![
+        ("--1".to_string(), "1".to_string()),
+        ("- -1".to_string(), "1".to_string()),
+        ("- - 1".to_string(), "1".to_string()),
+        ("--0".to_string(), "0".to_string()),
+        ("- -0".to_string(), "0".to_string()),
+    ];
+    cases.push((format!("{}1", "- ".repeat(32)), "1".to_string()));
+
+    let mut admitted = Vec::new();
+    let mut outcomes = Vec::new();
+    for (index, registered_index) in cases {
+        let mut engine = Engine::new();
+        if let Err(error) = engine.add_policy(
+            "malformed.rego".to_string(),
+            format!("package policy\nitems[{index}].blocked := true"),
+        ) {
+            outcomes.push(format!(
+                "{index:?}: Engine::add_policy rejected the rule: {error}"
+            ));
+            continue;
+        }
+
+        let entrypoint = format!("data.policy.items[{registered_index}].blocked");
+        match engine.compile_with_entrypoint(&entrypoint.as_str().into()) {
+            Ok(_) => {
+                outcomes.push(format!(
+                    "{index:?}: Engine preparation admitted the malformed rule"
+                ));
+                admitted.push(index);
+            }
+            Err(error) => outcomes.push(format!(
+                "{index:?}: Engine preparation rejected the malformed rule: {error}"
+            )),
+        }
+    }
+
+    assert!(
+        admitted.is_empty(),
+        "Engine preparation must reject repeated unary nonterminal rule indices; admitted: {admitted:?}; outcomes: {outcomes:?}"
+    );
     Ok(())
 }
 
@@ -75,6 +322,55 @@ fn static_entrypoints_reject_repeated_unary_scalar_indices() -> Result<()> {
                 .compile_with_entrypoint(&path.as_str().into())
                 .is_err(),
             "static path index {index:?} is not a single literal"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn signed_scientific_rule_path_prefixes_match_equivalent_numeric_lookups() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "policy.rego".to_string(),
+        r#"
+        package policy
+        items[-1e1].blocked := "negative ten"
+        items[-1e-1].blocked := "negative tenth"
+        "#
+        .to_string(),
+    )?;
+
+    for (path, expected) in [
+        (
+            "data.policy.items[-1e1].blocked",
+            Value::from("negative ten"),
+        ),
+        (
+            "data.policy.items[-10].blocked",
+            Value::from("negative ten"),
+        ),
+        (
+            "data.policy.items[-1e-1].blocked",
+            Value::from("negative tenth"),
+        ),
+        (
+            "data.policy.items[-0.1].blocked",
+            Value::from("negative tenth"),
+        ),
+    ] {
+        assert_eq!(
+            engine.eval_rule(path.to_string())?,
+            expected,
+            "Engine lookup for {path}"
+        );
+
+        let entrypoint: Rc<str> = path.into();
+        let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+        assert_eq!(
+            compiled.eval_with_input(Value::new_object())?,
+            expected,
+            "compiled interpreter lookup for {path}"
         );
     }
 
@@ -435,6 +731,151 @@ fn with_string_override_does_not_suppress_numeric_rule() -> Result<()> {
     assert_eq!(
         compiled.eval_with_input(Value::new_object())?,
         Value::Bool(false)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn wi_numeric_and_string_rule_paths_stay_typed_in_both_module_orders() -> Result<()> {
+    for string_first in [false, true] {
+        let mut engine = Engine::new();
+        add_wi_scalar_modules(&mut engine, string_first)?;
+
+        for (path, expected) in [
+            ("data.policy.items[1].blocked", Value::Bool(true)),
+            ("data.policy.items[1.0].blocked", Value::Bool(true)),
+            ("data.policy.items[\"1\"].blocked", Value::Bool(false)),
+        ] {
+            assert_eq!(
+                engine.eval_rule(path.to_string())?,
+                expected,
+                "Engine lookup for {path} with string_first={string_first}"
+            );
+
+            let query = engine.eval_query(path.to_string(), false)?;
+            let query_value = query
+                .result
+                .first()
+                .and_then(|result| result.expressions.first())
+                .map(|expression| expression.value.clone())
+                .ok_or_else(|| anyhow::anyhow!("query {path} returned no expressions"))?;
+            assert_eq!(
+                query_value, expected,
+                "query lookup for {path} with string_first={string_first}"
+            );
+
+            let entrypoint: Rc<str> = path.into();
+            let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+            assert_eq!(
+                compiled.eval_with_input(Value::new_object())?,
+                expected,
+                "compiled interpreter lookup for {path} with string_first={string_first}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn wi_string_target_with_only_replaces_string_leaf_and_restores_it() -> Result<()> {
+    let caller_policy = r#"
+        package consumer
+        import rego.v1
+        numeric_with := value if {
+            value := data.policy.items[1].blocked
+                with data.policy.items["1"] as {"blocked": false}
+        }
+        string_with := value if {
+            value := data.policy.items["1"].blocked
+                with data.policy.items["1"] as {"blocked": true}
+        }
+    "#;
+
+    for string_first in [false, true] {
+        let mut engine = Engine::new();
+        add_wi_scalar_modules(&mut engine, string_first)?;
+        engine.add_policy("caller.rego".to_string(), caller_policy.to_string())?;
+
+        for path in ["data.consumer.numeric_with", "data.consumer.string_with"] {
+            assert_eq!(
+                engine.eval_rule(path.to_string())?,
+                Value::Bool(true),
+                "Engine WITH result for {path} with string_first={string_first}"
+            );
+            let entrypoint: Rc<str> = path.into();
+            let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+            assert_eq!(
+                compiled.eval_with_input(Value::new_object())?,
+                Value::Bool(true),
+                "compiled interpreter WITH result for {path} with string_first={string_first}"
+            );
+        }
+
+        assert_eq!(
+            engine.eval_rule("data.policy.items[1].blocked".to_string())?,
+            Value::Bool(true),
+            "numeric leaf must remain unchanged with string_first={string_first}"
+        );
+        assert_eq!(
+            engine.eval_rule("data.policy.items[\"1\"].blocked".to_string())?,
+            Value::Bool(false),
+            "string leaf replacement must be restored with string_first={string_first}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn failed_rule_registration_retries_without_stale_paths_and_preserves_compiled_snapshot(
+) -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "valid.rego".to_string(),
+        "package policy\nitems[1].blocked := true".to_string(),
+    )?;
+    let entrypoint: Rc<str> = "data.policy.items[1].blocked".into();
+    let snapshot = engine.compile_with_entrypoint(&entrypoint)?;
+    assert_eq!(
+        snapshot.eval_with_input(Value::new_object())?,
+        Value::Bool(true)
+    );
+
+    engine.add_policy(
+        "malformed.rego".to_string(),
+        "package policy\nitems[--1].blocked := true".to_string(),
+    )?;
+    let first_preparation = engine.compile_with_entrypoint(&entrypoint);
+    let snapshot_after_first = snapshot.eval_with_input(Value::new_object())?;
+    let immediate_retry = engine.compile_with_entrypoint(&entrypoint);
+    let snapshot_after_immediate_retry = snapshot.eval_with_input(Value::new_object())?;
+    engine.add_policy(
+        "reprepare.rego".to_string(),
+        "package reprepare\nready := true".to_string(),
+    )?;
+    let forced_reprepare = engine.compile_with_entrypoint(&entrypoint);
+    let snapshot_after_forced_reprepare = snapshot.eval_with_input(Value::new_object())?;
+    let first_outcome = match &first_preparation {
+        Ok(_) => "accepted".to_string(),
+        Err(error) => format!("rejected: {error}"),
+    };
+    let immediate_retry_outcome = match &immediate_retry {
+        Ok(_) => "accepted".to_string(),
+        Err(error) => format!("rejected: {error}"),
+    };
+    let forced_reprepare_outcome = match &forced_reprepare {
+        Ok(_) => "accepted".to_string(),
+        Err(error) => format!("rejected: {error}"),
+    };
+
+    assert_eq!(snapshot_after_first, Value::Bool(true));
+    assert_eq!(snapshot_after_immediate_retry, Value::Bool(true));
+    assert_eq!(snapshot_after_forced_reprepare, Value::Bool(true));
+    assert!(
+        first_preparation.is_err() && immediate_retry.is_err() && forced_reprepare.is_err(),
+        "each preparation must reject malformed registration instead of reusing stale paths; first={first_outcome:?}, immediate retry={immediate_retry_outcome:?}, forced reprepare={forced_reprepare_outcome:?}"
     );
 
     Ok(())

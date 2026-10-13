@@ -167,6 +167,8 @@ non-string scalar keys always use brackets, such as `graph[true]`,
 `graph["true"]` and `graph["10"]`. Numeric indices are parsed before
 canonicalization, so equivalent spellings such as `1e1` and `10` identify the
 same numeric key and canonicalize as `[10]`.
+Repeated unary-minus prefixes in nonterminal rule heads, such as
+`items[--1].blocked`, are rejected.
 
 Policy-source path references are limited to 32 components, counting the
 initial identifier as one. Every dotted identifier or bracketed string adds

@@ -135,8 +135,13 @@ pub(crate) fn get_static_scalar_path_component(expr: &Expr) -> Result<Option<Val
         | Expr::Number { value, .. }
         | Expr::Bool { value, .. }
         | Expr::Null { value, .. } => Some(value.clone()),
-        Expr::UnaryExpr { expr, .. } => match get_static_scalar_path_component(expr)? {
-            Some(Value::Number(number)) => Some(Value::Number(Number::from(0_i64).sub(&number)?)),
+        Expr::UnaryExpr { expr, .. } => match expr.as_ref() {
+            Expr::Number {
+                value: Value::Number(number),
+                ..
+            } if !expr.span().text().starts_with('-') => {
+                Some(Value::Number(Number::from(0_i64).sub(number)?))
+            }
             _ => None,
         },
         _ => None,

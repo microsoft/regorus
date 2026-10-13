@@ -30,6 +30,18 @@ pub struct Engine {
     policy_length_config: PolicyLengthConfig,
 }
 
+/// A loaded module's source label and lossless, decoded package components.
+///
+/// The label is supplied when adding the policy and need not be unique.
+/// Components describe the declared package, without a synthetic `data` prefix.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PolicyPackageComponents {
+    /// The source-file label supplied when the module was loaded.
+    pub source_file: String,
+    /// Semantic string components, preserving literal dots and decoded escapes.
+    pub components: Vec<String>,
+}
+
 #[cfg(feature = "azure_policy")]
 #[derive(Debug, Clone, Serialize)]
 pub struct PolicyPackageNameDefinition {
@@ -374,6 +386,51 @@ impl Engine {
             .iter()
             .map(|m| legacy_package_metadata_projection(&m.package.refr, Some("data")))
             .collect()
+    }
+
+    /// Get lossless package components for each loaded policy module.
+    ///
+    /// Rows follow insertion order, including modules without rules and repeated
+    /// package declarations or source labels. A source label is not a unique
+    /// module identifier. No synthetic `data` prefix is added.
+    ///
+    /// String escapes are decoded and literal dots remain inside their component.
+    /// Unlike [`Engine::get_packages`], this distinguishes `graph["1.0.0"]`
+    /// from `graph["1"]["0"]["0"]`. This reads the existing parsed modules
+    /// without preparing, evaluating or compiling the engine. An empty engine
+    /// returns an empty vector.
+    ///
+    /// ```
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = regorus::Engine::new();
+    /// engine.add_policy("policy.rego".into(), r#"package graph["1.0.0"]"#.into())?;
+    /// let packages = engine.get_policy_package_components()?;
+    /// assert_eq!(packages[0].source_file, "policy.rego");
+    /// assert_eq!(packages[0].components, vec!["graph", "1.0.0"]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_policy_package_components(&self) -> Result<Vec<PolicyPackageComponents>> {
+        let mut packages = Vec::new();
+        for module in self.modules.iter() {
+            limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
+            let components = crate::utils::get_rule_path_components(&module.package.refr)?
+                .into_iter()
+                .map(|component| match component {
+                    crate::utils::PathComponent::String(value) => Ok(value),
+                    crate::utils::PathComponent::Scalar(_)
+                    | crate::utils::PathComponent::Raw(_) => {
+                        bail!("internal error: package component is not a string")
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?;
+            packages.push(PolicyPackageComponents {
+                source_file: module.package.span.source.file().to_string(),
+                components,
+            });
+        }
+        limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
+        Ok(packages)
     }
 
     /// Get the list of policy files.
