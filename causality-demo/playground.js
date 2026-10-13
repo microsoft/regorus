@@ -1,4 +1,4 @@
-import { evaluateCustom, formatJson, initRuntime, renderConditionCards, renderAssumptionCards, renderResidualQueries } from "./demo-core.js";
+import { evaluateCustom, formatJson, initRuntime, renderConditionCards, renderAssumptionCards, renderResidualQueries, renderErrorBanner } from "./demo-core.js";
 import { createCodeEditor } from "./code-editor.js";
 import {
   buildShareUrl,
@@ -147,7 +147,7 @@ async function runPlayground() {
     runtimeChip.textContent = "error";
     resultView.textContent = error.message;
     whyView.textContent = error.message;
-    conditionsView.innerHTML = `<div class="error-banner">${error.message}</div>`;
+    renderErrorBanner(conditionsView, error);
     requestAnimationFrame(focusAnalysis);
   } finally {
     runButton.disabled = false;
@@ -298,7 +298,7 @@ async function bootstrap() {
     runtimeChip.textContent = "error";
     resultView.textContent = error.message;
     whyView.textContent = error.message;
-    conditionsView.innerHTML = `<div class="error-banner">${error.message}</div>`;
+    renderErrorBanner(conditionsView, error);
     runButton.disabled = true;
   }
 }

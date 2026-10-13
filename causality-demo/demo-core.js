@@ -13,6 +13,13 @@ export function formatJson(value) {
   return JSON.stringify(value, null, 2);
 }
 
+export function renderErrorBanner(container, error) {
+  const banner = document.createElement("div");
+  banner.className = "error-banner";
+  banner.textContent = error instanceof Error ? error.message : String(error);
+  container.replaceChildren(banner);
+}
+
 function parseJsonText(label, text) {
   try {
     return JSON.stringify(JSON.parse(text || "{}"));

@@ -44,7 +44,8 @@ impl Program {
                 "set_create_params": self.instruction_data.set_create_params,
                 "virtual_data_document_lookup_params": self.instruction_data.virtual_data_document_lookup_params,
                 "chained_index_params": self.instruction_data.chained_index_params,
-                "comprehension_begin_params": self.instruction_data.comprehension_begin_params
+                "comprehension_begin_params": self.instruction_data.comprehension_begin_params,
+                "object_deep_set_params": self.instruction_data.object_deep_set_params
             },
             "literals": self.literals,
             "builtin_info_table": self.builtin_info_table,

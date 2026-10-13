@@ -319,6 +319,7 @@ pub struct InstructionData {
     /// Comprehension parameter table for ComprehensionBegin instructions
     pub comprehension_begin_params: Vec<ComprehensionBeginParams>,
     /// Object deep set parameter table for ObjectDeepSet instructions
+    #[serde(default)]
     pub object_deep_set_params: Vec<ObjectDeepSetParams>,
 }
 

@@ -1,4 +1,4 @@
-import { evaluateScenario, formatJson, renderConditionCards, renderAssumptionCards, renderResidualQueries, initRuntime } from "./demo-core.js";
+import { evaluateScenario, formatJson, renderConditionCards, renderAssumptionCards, renderResidualQueries, renderErrorBanner, initRuntime } from "./demo-core.js";
 import { createCodeEditor } from "./code-editor.js";
 import { scenarios } from "./scenarios.js";
 
@@ -268,7 +268,7 @@ async function runCurrentScenario() {
     heroResult.textContent = "error";
     analysisStatus.textContent = "error";
     tabContent.textContent = error.message;
-    conditionList.innerHTML = `<div class="error-banner">${error.message}</div>`;
+    renderErrorBanner(conditionList, error);
     requestAnimationFrame(focusAnalysis);
   } finally {
     runAnalysis.disabled = false;
@@ -296,7 +296,7 @@ async function bootstrap() {
     serverStatus.textContent = "Wasm runtime ready. Scenarios execute entirely in the browser.";
   } catch (error) {
     serverStatus.textContent = "Failed to initialize the wasm runtime.";
-    conditionList.innerHTML = `<div class="error-banner">${error.message}</div>`;
+    renderErrorBanner(conditionList, error);
     runAnalysis.disabled = true;
   }
 }
