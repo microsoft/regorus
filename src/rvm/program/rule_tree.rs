@@ -6,6 +6,7 @@ use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 use anyhow::Result as AnyResult;
 
+use crate::utils::format_value_path_components;
 use crate::value::Value;
 
 use super::Program;
@@ -29,12 +30,39 @@ impl Program {
             ));
         }
 
+        let typed_path = path
+            .iter()
+            .map(|component| Value::String(component.as_str().into()))
+            .collect::<Vec<_>>();
+        self.add_rule_to_tree_with_values(
+            &typed_path,
+            &Value::String(rule_name.into()),
+            rule_index,
+            Program::MAX_PATH_DEPTH,
+        )
+    }
+
+    pub(crate) fn add_rule_to_tree_with_values(
+        &mut self,
+        path: &[Value],
+        rule_name: &Value,
+        rule_index: usize,
+        max_path_depth: usize,
+    ) -> AnyResult<()> {
+        if path.len() >= max_path_depth {
+            return Err(anyhow::anyhow!(
+                "Rule path depth exceeds maximum ({} >= {})",
+                path.len(),
+                max_path_depth
+            ));
+        }
+
         let capacity = path.len().checked_add(1).unwrap_or(path.len());
         let mut full_path = Vec::with_capacity(capacity);
-        full_path.extend(path.iter().map(|s| s.as_str()));
-        full_path.push(rule_name);
+        full_path.extend(path.iter().cloned());
+        full_path.push(rule_name.clone());
 
-        let target = self.rule_tree.make_or_get_value_mut(&full_path)?;
+        let target = self.rule_tree.make_or_get_value_mut_for_keys(&full_path)?;
         *target = Value::Number(rule_index.into());
 
         Ok(())
@@ -57,58 +85,61 @@ impl Program {
     fn check_conflicts_recursive(
         rule_tree: &Value,
         data: &Value,
-        current_path: &mut Vec<String>,
+        current_path: &mut Vec<Value>,
     ) -> Result<(), crate::rvm::vm::VmError> {
         match *rule_tree {
             Value::Object(ref rule_obj) => {
                 for (key, rule_value) in rule_obj.iter() {
-                    if let Value::String(ref key_str) = *key {
-                        current_path.push(key_str.to_string());
-
-                        let data_value = &data[key];
-
-                        match *rule_value {
-                            Value::Number(_) => {
-                                if data_value != &Value::Undefined {
-                                    return Err(crate::rvm::vm::VmError::RuleDataConflict {
-                                        message: format!(
-                                            "Conflict: rule defines path '{}' but data also provides this path",
-                                            current_path.join("."),
-                                        ),
-                                        pc: 0,
-                                    });
-                                }
+                    current_path.push(key.clone());
+                    let display_path =
+                        format_value_path_components(current_path).map_err(|error| {
+                            crate::rvm::vm::VmError::RuleDataConflict {
+                                message: format!("Invalid rule path: {error}"),
+                                pc: 0,
                             }
-                            Value::Object(_) => {
-                                if let Value::Object(_) = *data_value {
-                                    Self::check_conflicts_recursive(
-                                        rule_value,
-                                        data_value,
-                                        current_path,
-                                    )?;
-                                } else if data_value != &Value::Undefined {
-                                    return Err(crate::rvm::vm::VmError::RuleDataConflict {
-                                        message: format!(
-                                            "Conflict: rule defines subpaths under '{}' but data provides a non-object value at this path",
-                                            current_path.join("."),
-                                        ),
-                                        pc: 0,
-                                    });
-                                }
-                            }
-                            _ => {
+                        })?;
+                    let data_value = &data[key];
+
+                    match *rule_value {
+                        Value::Number(_) => {
+                            if data_value != &Value::Undefined {
                                 return Err(crate::rvm::vm::VmError::RuleDataConflict {
                                     message: format!(
-                                        "Invalid rule tree structure at path '{}'",
-                                        current_path.join("."),
+                                        "Conflict: rule defines path '{}' but data also provides this path",
+                                        display_path,
                                     ),
                                     pc: 0,
                                 });
                             }
                         }
-
-                        current_path.pop();
+                        Value::Object(_) => {
+                            if let Value::Object(_) = *data_value {
+                                Self::check_conflicts_recursive(
+                                    rule_value,
+                                    data_value,
+                                    current_path,
+                                )?;
+                            } else if data_value != &Value::Undefined {
+                                return Err(crate::rvm::vm::VmError::RuleDataConflict {
+                                    message: format!(
+                                        "Conflict: rule defines subpaths under '{}' but data provides a non-object value at this path",
+                                        display_path,
+                                    ),
+                                    pc: 0,
+                                });
+                            }
+                        }
+                        _ => {
+                            return Err(crate::rvm::vm::VmError::RuleDataConflict {
+                                message: format!(
+                                    "Invalid rule tree structure at path '{}'",
+                                    display_path,
+                                ),
+                                pc: 0,
+                            });
+                        }
                     }
+                    current_path.pop();
                 }
             }
             _ => {

@@ -1369,6 +1369,39 @@ impl Value {
 const MAX_MERGE_DEPTH: usize = 128;
 
 impl Value {
+    pub(crate) fn make_or_get_value_mut_for_keys<'a>(
+        &'a mut self,
+        keys: &[Value],
+    ) -> Result<&'a mut Value> {
+        let Some((key, tail)) = keys.split_first() else {
+            return Ok(self);
+        };
+
+        if self == &Value::Undefined {
+            *self = Value::new_object();
+        }
+        if let Value::Object(map) = self {
+            if map.get(key).is_none() {
+                Rc::make_mut(map).insert(key.clone(), Value::Undefined);
+                crate::utils::limits::check_memory_limit_if_needed()?;
+            }
+        }
+
+        match self {
+            Value::Object(map) => match Rc::make_mut(map).get_mut(key) {
+                Some(value) if tail.is_empty() => Ok(value),
+                Some(value) => value.make_or_get_value_mut_for_keys(tail),
+                None => bail!("internal error: missing typed path component"),
+            },
+            Value::Undefined if !tail.is_empty() => {
+                *self = Value::new_object();
+                self.make_or_get_value_mut_for_keys(keys)
+            }
+            Value::Undefined => Ok(self),
+            _ => bail!("internal error: make: not an object {self:?}"),
+        }
+    }
+
     pub(crate) fn make_or_get_value_mut<'a>(&'a mut self, paths: &[&str]) -> Result<&'a mut Value> {
         if paths.is_empty() {
             return Ok(self);

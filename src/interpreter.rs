@@ -21,8 +21,8 @@ use crate::utils::*;
 #[cfg(not(feature = "std"))]
 use crate::utils::{
     append_path_component, append_path_value_component, format_path_components, format_string_path,
-    get_extra_arg, get_path_string, get_root_var, get_rule_path_components,
-    split_canonical_path_root, FunctionTable, PathComponent,
+    format_value_path_components, get_extra_arg, get_path_string, get_root_var,
+    get_rule_path_components, split_canonical_path_root, FunctionTable, PathComponent,
 };
 use crate::value::*;
 use crate::*;
@@ -76,11 +76,6 @@ enum RuleValueMerge {
 }
 
 type RuleValues = BTreeMap<Vec<Value>, (Value, Ref<Expr>)>;
-
-// Path components in processed_paths are strings, and the ordinary processed marker uses
-// Undefined. This boolean key records an explicit data WITH replacement without colliding
-// with either.
-const EXPLICIT_DATA_WITH_OVERRIDE_MARKER: Value = Value::Bool(true);
 
 #[derive(Debug)]
 pub struct Interpreter {
@@ -1292,8 +1287,8 @@ impl Interpreter {
     fn copy_explicit_data_with_override_markers(
         &mut self,
         paths: &Value,
-        path: &mut Vec<String>,
-        overridden_paths: &mut Vec<Vec<String>>,
+        path: &mut Vec<Value>,
+        overridden_paths: &mut Vec<Vec<Value>>,
     ) -> Result<Value> {
         let mut inherited_paths = Value::new_object();
         let Value::Object(entries) = paths else {
@@ -1303,30 +1298,34 @@ impl Interpreter {
         for (key, value) in entries.iter() {
             self.check_execution_time()?;
             self.memory_check()?;
-            if key == &EXPLICIT_DATA_WITH_OVERRIDE_MARKER {
-                inherited_paths
-                    .as_object_mut()?
-                    .insert(key.clone(), value.clone());
-                let mut overridden_path = vec!["data".to_string()];
-                overridden_path.extend(path.iter().cloned());
-                overridden_paths.push(overridden_path);
-                self.memory_check()?;
-            } else if let Value::String(component) = key {
-                path.push(component.to_string());
-                let child =
-                    self.copy_explicit_data_with_override_markers(value, path, overridden_paths)?;
-                let _ = path.pop();
-                if !child.as_object()?.is_empty() {
-                    inherited_paths.as_object_mut()?.insert(key.clone(), child);
+            if key == &Value::Undefined {
+                if value == &Value::Bool(true) {
+                    inherited_paths
+                        .as_object_mut()?
+                        .insert(key.clone(), value.clone());
+                    let mut overridden_path = vec![Value::String("data".into())];
+                    overridden_path.extend(path.iter().cloned());
+                    overridden_paths.push(overridden_path);
                     self.memory_check()?;
                 }
+                // Undefined is processed-path metadata, never a child path.
+                continue;
+            }
+
+            path.push(key.clone());
+            let child =
+                self.copy_explicit_data_with_override_markers(value, path, overridden_paths)?;
+            let _ = path.pop();
+            if !child.as_object()?.is_empty() {
+                inherited_paths.as_object_mut()?.insert(key.clone(), child);
+                self.memory_check()?;
             }
         }
 
         Ok(inherited_paths)
     }
 
-    fn suppress_rules_under_data_override(&mut self, overridden_path: &[String]) -> Result<()> {
+    fn suppress_rules_under_data_override(&mut self, overridden_path: &[Value]) -> Result<()> {
         let compiled_policy = self.compiled_policy.clone();
         for (rule_path, rules) in &compiled_policy.rules {
             self.check_execution_time()?;
@@ -1375,7 +1374,7 @@ impl Interpreter {
 
             let processed_paths =
                 core::mem::replace(&mut self.processed_paths, Value::new_object());
-            let mut inherited_overrides: Vec<Vec<String>> = Vec::new();
+            let mut inherited_overrides: Vec<Vec<Value>> = Vec::new();
             let inherited_paths = match self.copy_explicit_data_with_override_markers(
                 &processed_paths,
                 &mut Vec::new(),
@@ -1434,8 +1433,8 @@ impl Interpreter {
                     let mut target_is_function = self.lookup_function_by_name(&target).is_some()
                         || Self::is_builtin(wm.refr.span(), &target);
 
-                    let root = path.first().map(PathComponent::value).unwrap_or_default();
-                    if !target_is_function && root != "data" && root != "input" {
+                    let root = path.first().and_then(PathComponent::as_string);
+                    if !target_is_function && !matches!(root, Some("data") | Some("input")) {
                         // target must be a function.
                         if self.lookup_function_by_name(&target).is_none()
                             && !Self::is_builtin(wm.refr.span(), &target)
@@ -1490,7 +1489,10 @@ impl Interpreter {
                         let Some(first) = path.first() else {
                             bail!(wm.refr.span().error("empty path in with modifier"));
                         };
-                        if first.value() == "input" || first.value() == "data" {
+                        let Some(root_string) = first.as_string() else {
+                            bail!(wm.refr.span().error("not a valid target for with modifier"));
+                        };
+                        if root_string == "input" || root_string == "data" {
                             // Override existing values in case of conflict.
                             let mut obj = &mut self.with_document;
                             for component in &path {
@@ -1498,27 +1500,20 @@ impl Interpreter {
                                     *obj = Value::new_object();
                                 }
 
-                                obj = obj.as_object_mut()?.get_or_insert_with(
-                                    Value::String(component.value().to_string().into()),
-                                    Value::new_object,
-                                );
+                                let key = component.to_value();
+                                obj = obj
+                                    .as_object_mut()?
+                                    .get_or_insert_with(key, Value::new_object);
                             }
                             *obj = value;
 
-                            if first.value() == "data" {
-                                let overridden_path: Vec<String> = path
-                                    .iter()
-                                    .map(|component| component.value().to_string())
-                                    .collect();
+                            if root_string == "data" {
+                                let overridden_path: Vec<Value> =
+                                    path.iter().map(PathComponent::to_value).collect();
                                 let (_, overridden_subtree) = overridden_path
                                     .split_first()
                                     .ok_or_else(|| anyhow!("empty path in with modifier"))?;
-                                self.mark_data_with_override(
-                                    &overridden_subtree
-                                        .iter()
-                                        .map(String::as_str)
-                                        .collect::<Vec<_>>(),
-                                )?;
+                                self.mark_data_with_override(overridden_subtree)?;
                                 self.suppress_rules_under_data_override(&overridden_path)?;
                             }
                         } else {
@@ -3260,71 +3255,92 @@ impl Interpreter {
                 .get(&path)
                 .cloned()
                 .ok_or_else(|| anyhow!("missing components for registered rule path {path}"))?;
-            let comps: Vec<&str> = components.iter().map(String::as_str).collect();
-            let (_, tail) = comps
+            let (_, tail) = components
                 .split_first()
                 .ok_or_else(|| anyhow!("internal error: expected rule path components"))?;
-            self.mark_processed(tail)?;
+            self.mark_processed_values(tail)?;
         }
         Ok(())
     }
 
     fn is_processed(&self, path: &[&str]) -> Result<bool> {
+        let values = path
+            .iter()
+            .map(|component| Value::String((*component).into()))
+            .collect::<Vec<_>>();
+        self.is_processed_values(&values)
+    }
+
+    fn is_processed_values(&self, path: &[Value]) -> Result<bool> {
         let mut obj = &self.processed_paths;
         for p in path {
             // Prefix has already been processed.
-            if obj[&Value::Undefined] == Value::Null {
+            if matches!(obj[&Value::Undefined], Value::Null | Value::Bool(true)) {
                 return Ok(true);
             }
 
-            match &obj[*p] {
+            match &obj[p] {
                 // Prefix and its suffixes including path have not been processed.
                 Value::Undefined => return Ok(false),
                 v => obj = v,
             }
         }
 
-        Ok(obj[&Value::Undefined] == Value::Null)
+        Ok(matches!(
+            obj[&Value::Undefined],
+            Value::Null | Value::Bool(true)
+        ))
     }
 
     fn mark_processed(&mut self, path: &[&str]) -> Result<()> {
-        let obj = self.processed_paths.make_or_get_value_mut(path)?;
+        let values = path
+            .iter()
+            .map(|component| Value::String((*component).into()))
+            .collect::<Vec<_>>();
+        self.mark_processed_values(&values)
+    }
+
+    fn mark_processed_values(&mut self, path: &[Value]) -> Result<()> {
+        let obj = self.processed_paths.make_or_get_value_mut_for_keys(path)?;
         if obj == &Value::Undefined {
             *obj = Value::new_object();
         }
-        obj.as_object_mut()?.insert(Value::Undefined, Value::Null);
+        let processed_marker = obj.as_object()?.get(&Value::Undefined);
+        if processed_marker != Some(&Value::Bool(true)) {
+            obj.as_object_mut()?.insert(Value::Undefined, Value::Null);
+        }
         Ok(())
     }
 
-    fn mark_data_with_override(&mut self, path: &[&str]) -> Result<()> {
-        self.mark_processed(path)?;
-        let obj = self.processed_paths.make_or_get_value_mut(path)?;
+    fn mark_data_with_override(&mut self, path: &[Value]) -> Result<()> {
+        self.mark_processed_values(path)?;
+        let obj = self.processed_paths.make_or_get_value_mut_for_keys(path)?;
         obj.as_object_mut()?
-            .insert(EXPLICIT_DATA_WITH_OVERRIDE_MARKER.clone(), Value::Null);
+            .insert(Value::Undefined, Value::Bool(true));
         Ok(())
     }
 
     fn has_explicit_data_with_override_ancestor(&self, path: &[&str]) -> Result<bool> {
+        let values = path
+            .iter()
+            .map(|component| Value::String((*component).into()))
+            .collect::<Vec<_>>();
+        self.has_explicit_data_with_override_ancestor_values(&values)
+    }
+
+    fn has_explicit_data_with_override_ancestor_values(&self, path: &[Value]) -> Result<bool> {
         let mut obj = &self.processed_paths;
-        if obj
-            .as_object()?
-            .get(&EXPLICIT_DATA_WITH_OVERRIDE_MARKER)
-            .is_some()
-        {
+        if obj.as_object()?.get(&Value::Undefined) == Some(&Value::Bool(true)) {
             return Ok(true);
         }
 
         for component in path {
-            match &obj[*component] {
+            match &obj[component] {
                 Value::Undefined => return Ok(false),
                 value => obj = value,
             }
 
-            if obj
-                .as_object()?
-                .get(&EXPLICIT_DATA_WITH_OVERRIDE_MARKER)
-                .is_some()
-            {
+            if obj.as_object()?.get(&Value::Undefined) == Some(&Value::Bool(true)) {
                 return Ok(true);
             }
         }
@@ -3765,6 +3781,13 @@ impl Interpreter {
         obj
     }
 
+    fn get_value_chained_values(mut obj: Value, path: &[Value]) -> Value {
+        for component in path {
+            obj = obj[component].clone();
+        }
+        obj
+    }
+
     #[inline]
     pub fn make_or_get_value_mut<'a>(obj: &'a mut Value, paths: &[&str]) -> Result<&'a mut Value> {
         let (first, tail) = match paths.split_first() {
@@ -3959,7 +3982,7 @@ impl Interpreter {
             };
 
             path.extend(get_rule_path_components(refr)?);
-            let paths: Vec<&str> = path.iter().map(PathComponent::value).collect();
+            let paths: Vec<Value> = path.iter().map(PathComponent::to_value).collect();
 
             Self::check_default_value(value)?;
             let value = self.eval_expr(value)?;
@@ -3973,7 +3996,7 @@ impl Interpreter {
                 let mut object = Value::new_object();
                 object.as_object_mut()?.insert(index.clone(), value);
 
-                let vref = Self::make_or_get_value_mut(&mut self.data, &paths)?;
+                let vref = self.data.make_or_get_value_mut_for_keys(&paths)?;
 
                 if let Value::Object(btree) = &vref {
                     if !btree.contains_key(&index) {
@@ -3983,7 +4006,7 @@ impl Interpreter {
                     Self::merge_rule_value(span, vref, object)?;
                 }
             } else {
-                let vref = Self::make_or_get_value_mut(&mut self.data, &paths)?;
+                let vref = self.data.make_or_get_value_mut_for_keys(&paths)?;
                 if let Value::Undefined = &vref {
                     Self::merge_rule_value(span, vref, value)?;
                 }
@@ -4028,11 +4051,10 @@ impl Interpreter {
                                 registered_components.split_first().ok_or_else(|| {
                                     anyhow!("internal error: expected rule path components")
                                 })?;
-                            if root != "data" {
+                            if root != &Value::String("data".into()) {
                                 bail!("internal error: rule path must start with data");
                             }
-                            let value_path: Vec<&str> = tail.iter().map(String::as_str).collect();
-                            let value = Self::get_value_chained(self.data.clone(), &value_path);
+                            let value = Self::get_value_chained_values(self.data.clone(), tail);
 
                             if value != Value::Undefined {
                                 return Ok(value);
@@ -4473,14 +4495,14 @@ impl Interpreter {
         for (index, component) in rule_components.iter().enumerate() {
             path_components.push(component.clone());
             let path = format_path_components(&path_components)?;
-            let string_components = path_components
+            let value_components = path_components
                 .iter()
-                .map(|path_component| path_component.value().to_string())
+                .map(PathComponent::to_value)
                 .collect();
             let compiled_policy = self.compiled_policy_mut();
             compiled_policy
                 .rule_path_components
-                .insert(path.clone(), string_components);
+                .insert(path.clone(), value_components);
             if index == rule_components.len().saturating_sub(1) {
                 compiled_policy.rule_paths.insert(path.clone());
             }
@@ -4502,21 +4524,21 @@ impl Interpreter {
         &mut self,
         refr: &Ref<Expr>,
         rule: &Ref<Rule>,
-        index: Option<String>,
+        index: Option<Value>,
     ) -> Result<()> {
         let rule_components = get_rule_path_components(refr)?;
         let mut path_components = self.current_module_data_path_components()?;
         for (idx, component) in rule_components.iter().enumerate() {
             path_components.push(component.clone());
             let path = format_path_components(&path_components)?;
-            let string_components = path_components
+            let value_components = path_components
                 .iter()
-                .map(|path_component| path_component.value().to_string())
+                .map(PathComponent::to_value)
                 .collect();
             let compiled_policy = self.compiled_policy_mut();
             compiled_policy
                 .rule_path_components
-                .insert(path.clone(), string_components);
+                .insert(path.clone(), value_components);
             if idx == rule_components.len().saturating_sub(1) {
                 compiled_policy.rule_paths.insert(path.clone());
             }
@@ -4634,7 +4656,7 @@ impl Interpreter {
 
                                     let index = self.eval_expr(index)?;
 
-                                    (refr, Some(index.to_string()))
+                                    (refr, Some(index))
                                 }
                                 _ => (refr, None),
                             };
@@ -4824,11 +4846,10 @@ impl Interpreter {
             .map(Vec::len)
             .max()
             .unwrap_or_default();
-        let requested_components = Parser::parse_static_path_components(path, max_components)
+        let requested_components = Parser::parse_static_value_path_components(path, max_components)
             .map_err(|_| anyhow!("not a valid rule path"))?;
-        let component_refs: Vec<&str> = requested_components.iter().map(String::as_str).collect();
-        let canonical_path =
-            format_string_path(&component_refs).map_err(|_| anyhow!("not a valid rule path"))?;
+        let canonical_path = format_value_path_components(&requested_components)
+            .map_err(|_| anyhow!("not a valid rule path"))?;
         if !self.compiled_policy.rule_paths.contains(&canonical_path) {
             bail!("not a valid rule path");
         }
@@ -4849,12 +4870,11 @@ impl Interpreter {
         let (root, tail) = registered_components
             .split_first()
             .ok_or_else(|| anyhow!("internal error: expected rule path components"))?;
-        if root != "data" {
+        if root != &Value::String("data".into()) {
             bail!("internal error: rule path must start with data");
         }
-        let tail: Vec<&str> = tail.iter().map(String::as_str).collect();
 
-        let value = Self::get_value_chained(self.data.clone(), &tail);
+        let value = Self::get_value_chained_values(self.data.clone(), tail);
         #[cfg(feature = "azure_policy")]
         {
             if let Some(target_info) = &self.compiled_policy.target_info {

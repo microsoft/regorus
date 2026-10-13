@@ -7,7 +7,7 @@ use regorus::rvm::instructions::GuardMode;
 use regorus::rvm::vm::{RegoVM, VmError};
 use regorus::rvm::Instruction;
 use regorus::{Engine, Rc, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Compile a single-rule Rego module and return the program.
 fn compile_rule(module: &str) -> std::sync::Arc<regorus::rvm::program::Program> {
@@ -70,6 +70,216 @@ fn rule_data_conflict_preserves_error_identity_and_pc() {
         VmError::RuleDataConflict { ref message, pc: 0 }
             if message.contains("rule defines path 'test.p'")
     ));
+}
+
+#[test]
+fn rule_data_conflict_detects_typed_scalar_key_and_allows_reuse() {
+    let program = compile_rule(
+        r#"
+        package test
+        graph[true].blocked := 1
+        p := data.test.graph[true].blocked
+    "#,
+    );
+    let object =
+        |entries: Vec<(Value, Value)>| Value::from(entries.into_iter().collect::<BTreeMap<_, _>>());
+    let data = object(vec![(
+        Value::from("test"),
+        object(vec![(
+            Value::from("graph"),
+            object(vec![(
+                Value::Bool(true),
+                object(vec![(Value::from("blocked"), Value::from(2))]),
+            )]),
+        )]),
+    )]);
+
+    assert_ne!(
+        program.rule_tree["data"]["test"]["graph"][&Value::Bool(true)]["blocked"],
+        Value::Undefined,
+        "the compiled rule tree must preserve the typed Bool component: {:?}",
+        program.rule_tree
+    );
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    let error = vm.set_data(data).unwrap_err();
+    assert!(matches!(
+        error,
+        VmError::RuleDataConflict { ref message, pc: 0 }
+            if message.contains("test.graph[true].blocked")
+    ));
+    vm.set_data(Value::new_object()).unwrap();
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.test.p").unwrap(),
+        Value::from(1)
+    );
+}
+
+#[test]
+fn rvm_rejects_repeated_unary_nonterminal_rule_indices() -> anyhow::Result<()> {
+    let mut cases = vec![
+        ("--1".to_string(), 1_i64),
+        ("- -1".to_string(), 1),
+        ("- - 1".to_string(), 1),
+        ("--0".to_string(), 0),
+        ("- -0".to_string(), 0),
+    ];
+    cases.push((format!("{}1", "- ".repeat(32)), 1));
+
+    let mut engine_admissions = Vec::new();
+    let mut outcomes = Vec::new();
+    for (index, registered_index) in cases {
+        let mut engine = Engine::new();
+        if let Err(error) = engine.add_policy(
+            "malformed.rego".to_string(),
+            format!("package test\nitems[{index}].blocked := true"),
+        ) {
+            outcomes.push(format!(
+                "{index:?}: Engine::add_policy rejected the rule: {error}"
+            ));
+            continue;
+        }
+
+        let entrypoint = format!("data.test.items[{registered_index}].blocked");
+        let compiled = engine.compile_with_entrypoint(&Rc::<str>::from(entrypoint.as_str()));
+        let compiled = match compiled {
+            Err(error) => {
+                outcomes.push(format!(
+                    "{index:?}: Engine preparation rejected the rule: {error}"
+                ));
+                continue;
+            }
+            Ok(compiled) => compiled,
+        };
+
+        engine_admissions.push(index.clone());
+        match Compiler::compile_from_policy(&compiled, &[entrypoint.as_str()]) {
+            Err(error) => outcomes.push(format!(
+                "{index:?}: Engine preparation admitted the rule; RVM compilation rejected it: {error}"
+            )),
+            Ok(program) => {
+                let leaf = &program.rule_tree["data"]["test"]["items"]
+                    [&Value::from(registered_index)]["blocked"];
+                assert_ne!(
+                    leaf,
+                    &Value::Undefined,
+                    "RVM Program must contain the numeric leaf for malformed head {index:?}"
+                );
+                let leaf_description = format!("{leaf:?}");
+
+                let mut vm = RegoVM::new();
+                vm.load_program(program);
+                let actual = vm.execute_entry_point_by_name(&entrypoint)?;
+                assert_eq!(
+                    actual,
+                    Value::Bool(true),
+                    "RVM lookup for malformed head {index:?} at numeric key {registered_index}"
+                );
+                outcomes.push(format!(
+                    "{index:?}: Engine preparation and RVM compilation admitted the rule; Program leaf at numeric key {registered_index} = {leaf_description}; VM lookup = {actual:?}"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        engine_admissions.is_empty(),
+        "Engine preparation must reject repeated unary nonterminal rule indices before RVM admission; admitted by Engine: {engine_admissions:?}; stage outcomes: {outcomes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn rvm_preserves_wi_numeric_and_string_paths_in_both_module_orders() -> anyhow::Result<()> {
+    const NUMERIC_POLICY: &str = "package policy\nitems[1].blocked := true";
+    const STRING_POLICY: &str = "package policy.items[\"1\"]\nblocked := false";
+    const NUMERIC_PATH: &str = "data.policy.items[1].blocked";
+    const DECIMAL_PATH: &str = "data.policy.items[1.0].blocked";
+    const STRING_PATH: &str = "data.policy.items[\"1\"].blocked";
+
+    let entry_points = [NUMERIC_PATH, DECIMAL_PATH, STRING_PATH];
+    for string_first in [false, true] {
+        let modules = if string_first {
+            [
+                ("string.rego", STRING_POLICY),
+                ("numeric.rego", NUMERIC_POLICY),
+            ]
+        } else {
+            [
+                ("numeric.rego", NUMERIC_POLICY),
+                ("string.rego", STRING_POLICY),
+            ]
+        };
+        let mut engine = Engine::new();
+        for (path, source) in modules {
+            engine.add_policy(path.to_string(), source.to_string())?;
+        }
+
+        let entrypoint: Rc<str> = NUMERIC_PATH.into();
+        let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+        let program = Compiler::compile_from_policy(&compiled, &entry_points)?;
+        let items = &program.rule_tree["data"]["policy"]["items"];
+        assert_ne!(
+            items[&Value::from(1)]["blocked"],
+            Value::Undefined,
+            "Program must retain the numeric rule leaf with string_first={string_first}"
+        );
+        assert_ne!(
+            items[&Value::from("1")]["blocked"],
+            Value::Undefined,
+            "Program must retain the String rule leaf with string_first={string_first}"
+        );
+
+        let mut vm = RegoVM::new();
+        vm.load_program(program);
+        for (path, expected) in [
+            (NUMERIC_PATH, Value::Bool(true)),
+            (DECIMAL_PATH, Value::Bool(true)),
+            (STRING_PATH, Value::Bool(false)),
+        ] {
+            assert_eq!(
+                vm.execute_entry_point_by_name(path)?,
+                expected,
+                "RVM lookup for {path} with string_first={string_first}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn rvm_preserves_signed_scientific_rule_path_prefixes() -> anyhow::Result<()> {
+    const POLICY: &str = "package policy\nitems[-1e1].blocked := \"negative ten\"\nitems[-1e-1].blocked := \"negative tenth\"";
+    const ENTRY_POINTS: [&str; 4] = [
+        "data.policy.items[-1e1].blocked",
+        "data.policy.items[-10].blocked",
+        "data.policy.items[-1e-1].blocked",
+        "data.policy.items[-0.1].blocked",
+    ];
+
+    let mut engine = Engine::new();
+    engine.add_policy("policy.rego".to_string(), POLICY.to_string())?;
+    let entrypoint: Rc<str> = ENTRY_POINTS[0].into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let program = Compiler::compile_from_policy(&compiled, &ENTRY_POINTS)?;
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+
+    for (path, expected) in [
+        (ENTRY_POINTS[0], Value::from("negative ten")),
+        (ENTRY_POINTS[1], Value::from("negative ten")),
+        (ENTRY_POINTS[2], Value::from("negative tenth")),
+        (ENTRY_POINTS[3], Value::from("negative tenth")),
+    ] {
+        assert_eq!(
+            vm.execute_entry_point_by_name(path)?,
+            expected,
+            "RVM lookup for {path}"
+        );
+    }
+
+    Ok(())
 }
 
 fn run_rvm_policy(module: &str, input: &str) -> anyhow::Result<Value> {

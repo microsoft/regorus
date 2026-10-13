@@ -418,7 +418,8 @@ impl Engine {
                 .into_iter()
                 .map(|component| match component {
                     crate::utils::PathComponent::String(value) => Ok(value),
-                    crate::utils::PathComponent::Raw(_) => {
+                    crate::utils::PathComponent::Scalar(_)
+                    | crate::utils::PathComponent::Raw(_) => {
                         bail!("internal error: package component is not a string")
                     }
                 })

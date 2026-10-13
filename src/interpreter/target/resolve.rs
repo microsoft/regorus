@@ -27,15 +27,16 @@ fn target_effect_path(
     package: &str,
     effect_name: &str,
     target_name: &str,
-) -> Result<(Vec<String>, String), TargetCompileError> {
-    let mut components = vec!["data".to_string()];
+) -> Result<(Vec<Value>, String), TargetCompileError> {
+    let mut components = vec![Value::String("data".into())];
     components.extend(
         Parser::parse_static_path_components(package, Parser::MAX_PATH_COMPONENTS)
-            .map_err(|_| TargetCompileError::TargetNotFound(target_name.into()))?,
+            .map_err(|_| TargetCompileError::TargetNotFound(target_name.into()))?
+            .into_iter()
+            .map(|component| Value::String(component.into())),
     );
-    components.push(effect_name.to_string());
-    let refs: Vec<&str> = components.iter().map(String::as_str).collect();
-    let path = crate::utils::format_string_path(&refs)
+    components.push(Value::String(effect_name.into()));
+    let path = crate::utils::format_value_path_components(&components)
         .map_err(|_| TargetCompileError::TargetNotFound(target_name.into()))?;
     Ok((components, path))
 }

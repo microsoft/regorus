@@ -105,6 +105,24 @@ preserving enough artifact data to trigger a recompilation. Successful loads
 call `Program::initialize_resolved_builtins` so host runtimes can plug in their
 builtin implementations.
 
+The Program JSON representation (`Program::serialize_json` and
+`Program::deserialize_json`) is separate from this binary envelope. It adds the
+top-level `value_encoding: "typed-keys-v1"` marker only when `literals` or
+`rule_tree` contains a non-string object key, `Undefined`, or a set. With the
+marker present, arrays and scalar values keep their JSON forms, while each
+object key is encoded as the JSON text of its recursively encoded `Value`.
+`Undefined` and sets use reserved singleton objects (`{"$undefined":null}` and
+`{"$set":[...]}`) so they remain distinct from strings and marker-looking
+ordinary object keys. The reader validates this marked representation and
+returns an error for an unknown marker or malformed encoded value.
+
+When the marker is absent, the reader uses the legacy Program JSON
+representation. In that form, strings such as `"<undefined>"` remain strings;
+they are not interpreted as typed sentinels. This selective encoding applies
+only to the Program JSON `literals` and `rule_tree` fields. It does not change
+the standalone `Value` JSON representation or the binary format described
+above.
+
 ---
 
 ## 2. Runtime Subsystems

@@ -1,0 +1,176 @@
+cases:
+  - note: RVM preserves boolean and null rule prefixes against string keys
+    modules:
+      - |
+        package policy
+        graph[true].blocked := "bool-true"
+        graph[false].blocked := "bool-false"
+        graph[null].blocked := "null"
+      - |
+        package policy
+        graph["true"].blocked := "string-true"
+        graph["false"].blocked := "string-false"
+        graph["null"].blocked := "string-null"
+      - |
+        package policy
+        default allow := false
+        result := {
+          "true_bool": data.policy.graph[true].blocked,
+          "true_string": data.policy.graph["true"].blocked,
+          "false_bool": data.policy.graph[false].blocked,
+          "false_string": data.policy.graph["false"].blocked,
+          "null_bool": data.policy.graph[null].blocked,
+          "null_string": data.policy.graph["null"].blocked,
+          "default_allow": data.policy.allow
+        }
+    query: data.policy.result
+    want_result:
+      true_bool: bool-true
+      true_string: string-true
+      false_bool: bool-false
+      false_string: string-false
+      null_bool: "null"
+      null_string: string-null
+      default_allow: false
+
+  - note: RVM scalar path results do not depend on file or rule order
+    modules:
+      - |
+        package policy
+        default allow := false
+        result := {
+          "true_bool": data.policy.graph[true].blocked,
+          "true_string": data.policy.graph["true"].blocked,
+          "false_bool": data.policy.graph[false].blocked,
+          "false_string": data.policy.graph["false"].blocked,
+          "null_bool": data.policy.graph[null].blocked,
+          "null_string": data.policy.graph["null"].blocked,
+          "default_allow": data.policy.allow
+        }
+      - |
+        package policy
+        graph["null"].blocked := "string-null"
+        graph["false"].blocked := "string-false"
+        graph["true"].blocked := "string-true"
+      - |
+        package policy
+        graph[null].blocked := "null"
+        graph[false].blocked := "bool-false"
+        graph[true].blocked := "bool-true"
+    query: data.policy.result
+    want_result:
+      true_bool: bool-true
+      true_string: string-true
+      false_bool: bool-false
+      false_string: string-false
+      null_bool: "null"
+      null_string: string-null
+      default_allow: false
+
+  - note: RVM resolves numeric rule prefixes separately from numeric strings
+    input:
+      exponent: 1e1
+      integer: 10
+      one: 1
+      one_decimal: 1.0
+    modules:
+      - |
+        package policy
+        nested[1e1].blocked := "numeric-ten"
+        nested["1e1"].blocked := "nested-string-exponent"
+        nested[10].blocked := "numeric-ten"
+        nested["10"].blocked := "nested-string-integer"
+        nested[1].integer := "one-integer"
+        nested[1.0].decimal := "one-decimal"
+        nested["1"].string := "one-string"
+        nested[-1].negative := "negative"
+        nested[9007199254740993].precise := "high-precision"
+      - |
+        package policy
+        default allow := false
+        result := {
+          "nested_exponent": data.policy.nested[1e1].blocked,
+          "nested_string_exponent": data.policy.nested["1e1"].blocked,
+          "nested_integer": data.policy.nested[10].blocked,
+          "nested_string_integer": data.policy.nested["10"].blocked,
+          "nested_one_integer": data.policy.nested[1].integer,
+          "nested_one_decimal": data.policy.nested[1.0].decimal,
+          "nested_one_string": data.policy.nested["1"].string,
+          "runtime_exponent": data.policy.nested[input.exponent].blocked,
+          "runtime_integer": data.policy.nested[input.integer].blocked,
+          "runtime_one_integer": data.policy.nested[input.one].integer,
+          "runtime_one_decimal": data.policy.nested[input.one_decimal].decimal,
+          "negative": data.policy.nested[-1].negative,
+          "high_precision": data.policy.nested[9007199254740993].precise,
+          "default_allow": data.policy.allow
+        }
+    query: data.policy.result
+    want_result:
+      nested_exponent: numeric-ten
+      nested_string_exponent: nested-string-exponent
+      nested_integer: numeric-ten
+      nested_string_integer: nested-string-integer
+      nested_one_integer: one-integer
+      nested_one_decimal: one-decimal
+      nested_one_string: one-string
+      runtime_exponent: numeric-ten
+      runtime_integer: numeric-ten
+      runtime_one_integer: one-integer
+      runtime_one_decimal: one-decimal
+      negative: negative
+      high_precision: high-precision
+      default_allow: false
+
+  - note: RVM numeric path keeps equivalent numbers distinct from string keys in reverse file order
+    input:
+      exponent: 1e1
+      integer: 10
+      one: 1
+      one_decimal: 1.0
+    modules:
+      - |
+        package policy
+        default allow := false
+        result := {
+          "nested_exponent": data.policy.nested[1e1].blocked,
+          "nested_string_exponent": data.policy.nested["1e1"].blocked,
+          "nested_integer": data.policy.nested[10].blocked,
+          "nested_string_integer": data.policy.nested["10"].blocked,
+          "nested_one_integer": data.policy.nested[1].integer,
+          "nested_one_decimal": data.policy.nested[1.0].decimal,
+          "nested_one_string": data.policy.nested["1"].string,
+          "runtime_exponent": data.policy.nested[input.exponent].blocked,
+          "runtime_integer": data.policy.nested[input.integer].blocked,
+          "runtime_one_integer": data.policy.nested[input.one].integer,
+          "runtime_one_decimal": data.policy.nested[input.one_decimal].decimal,
+          "negative": data.policy.nested[-1].negative,
+          "high_precision": data.policy.nested[9007199254740993].precise,
+          "default_allow": data.policy.allow
+        }
+      - |
+        package policy
+        nested[9007199254740993].precise := "high-precision"
+        nested[-1].negative := "negative"
+        nested["1"].string := "one-string"
+        nested[1.0].decimal := "one-decimal"
+        nested[1].integer := "one-integer"
+        nested["10"].blocked := "nested-string-integer"
+        nested[10].blocked := "numeric-ten"
+        nested["1e1"].blocked := "nested-string-exponent"
+        nested[1e1].blocked := "numeric-ten"
+    query: data.policy.result
+    want_result:
+      nested_exponent: numeric-ten
+      nested_string_exponent: nested-string-exponent
+      nested_integer: numeric-ten
+      nested_string_integer: nested-string-integer
+      nested_one_integer: one-integer
+      nested_one_decimal: one-decimal
+      nested_one_string: one-string
+      runtime_exponent: numeric-ten
+      runtime_integer: numeric-ten
+      runtime_one_integer: one-integer
+      runtime_one_decimal: one-decimal
+      negative: negative
+      high_precision: high-precision
+      default_allow: false

@@ -225,14 +225,9 @@ impl<'source> Parser<'source> {
             Expr::Var { span: v, .. } => comps.push(v.clone()),
             Expr::String { span: s, .. } => comps.push(s.clone()),
             Expr::Bool { span: s, .. } | Expr::Null { span: s, .. } => comps.push(s.clone()),
-            Expr::Number { span, value, .. } => {
-                // Ensure that the span will be the serialized representation.
-                if span.text() == value.to_json_str()? {
-                    comps.push(span.clone());
-                } else {
-                    bail!(refr.span().error("not a valid ref"));
-                }
-            }
+            // The AST already carries the parsed number. Preserve its source span here
+            // without requiring a particular spelling (for example, `1e1`).
+            Expr::Number { span, .. } => comps.push(span.clone()),
 
             _ => bail!(refr.span().error("not a valid ref")),
         }
@@ -271,10 +266,24 @@ impl<'source> Parser<'source> {
         Ok(components)
     }
 
+    #[cfg(feature = "azure_policy")]
     pub(crate) fn parse_static_path_components(
         path: &str,
         max_components: usize,
     ) -> Result<Vec<String>> {
+        Self::parse_static_value_path_components(path, max_components)?
+            .into_iter()
+            .map(|component| match component {
+                Value::String(value) => Ok(value.as_ref().to_string()),
+                _ => bail!("expected string path component"),
+            })
+            .collect()
+    }
+
+    pub(crate) fn parse_static_value_path_components(
+        path: &str,
+        max_components: usize,
+    ) -> Result<Vec<Value>> {
         let max_col = path
             .len()
             .checked_add(1)
@@ -286,7 +295,11 @@ impl<'source> Parser<'source> {
         let mut components = Vec::new();
 
         let root = parser.parse_var()?;
-        Self::push_static_path_component(&mut components, root.text().to_string(), max_components)?;
+        Self::push_static_value_path_component(
+            &mut components,
+            Value::String(root.text().to_string().into()),
+            max_components,
+        )?;
 
         loop {
             match parser.token_text() {
@@ -314,27 +327,18 @@ impl<'source> Parser<'source> {
                             )
                         );
                     }
-                    Self::push_static_path_component(
+                    Self::push_static_value_path_component(
                         &mut components,
-                        field.text().to_string(),
+                        Value::String(field.text().to_string().into()),
                         max_components,
                     )?;
                 }
                 "[" => {
                     parser.next_token()?;
-                    if parser.tok.0 != TokenKind::String {
-                        bail!(parser.tok.1.error("expected string"));
-                    }
-                    let index = parser.parse_scalar_or_var()?;
+                    let index = parser.parse_static_scalar_path_component()?;
                     parser.expect("]", "while parsing bracketed reference")?;
-                    let Expr::String { value, .. } = index else {
-                        bail!("internal error: static path component is not a string");
-                    };
-                    Self::push_static_path_component(
-                        &mut components,
-                        value.as_string()?.as_ref().to_string(),
-                        max_components,
-                    )?;
+                    let value = Self::static_path_component_value(&index)?;
+                    Self::push_static_value_path_component(&mut components, value, max_components)?;
                 }
                 _ => break,
             }
@@ -345,9 +349,14 @@ impl<'source> Parser<'source> {
         Ok(components)
     }
 
-    fn push_static_path_component(
-        components: &mut Vec<String>,
-        component: String,
+    fn static_path_component_value(expr: &Expr) -> Result<Value> {
+        crate::utils::get_static_scalar_path_component(expr)?
+            .ok_or_else(|| anyhow!("expected scalar path component"))
+    }
+
+    fn push_static_value_path_component(
+        components: &mut Vec<Value>,
+        component: Value,
         max_components: usize,
     ) -> Result<()> {
         if components.len() >= max_components {
@@ -585,6 +594,42 @@ impl<'source> Parser<'source> {
         };
         self.next_token()?;
         Ok(node)
+    }
+
+    fn parse_static_scalar_path_component(&mut self) -> Result<Expr> {
+        if self.token_text() == "-" {
+            let mut span = self.tok.1.clone();
+            self.next_token()?;
+            if self.tok.0 != TokenKind::Number || self.tok.1.text().starts_with('-') {
+                return Err(self.source.error(
+                    self.tok.1.line,
+                    self.tok.1.col,
+                    "expected number after unary minus",
+                ));
+            }
+            let number = self.parse_scalar_or_var()?;
+            span.end = self.end;
+            return Ok(Expr::UnaryExpr {
+                span,
+                expr: Ref::new(number),
+                eidx: self.next_eidx(),
+            });
+        }
+
+        let is_scalar = match self.tok.0 {
+            TokenKind::Number | TokenKind::String | TokenKind::RawString => true,
+            TokenKind::Ident => matches!(self.token_text(), "true" | "false" | "null"),
+            _ => false,
+        };
+        if !is_scalar {
+            return Err(self.source.error(
+                self.tok.1.line,
+                self.tok.1.col,
+                "expected scalar path component",
+            ));
+        }
+
+        self.parse_scalar_or_var()
     }
 
     fn parse_compr(&mut self, delim: &str) -> Result<(Expr, Query)> {
@@ -1259,7 +1304,7 @@ impl<'source> Parser<'source> {
         while self.token_text() == "with" {
             let mut span = self.tok.1.clone();
             self.next_token()?;
-            let refr = self.parse_path_ref()?;
+            let refr = self.parse_static_path_ref()?;
             self.expect("as", "while parsing with-modifier expression")?;
             let r#as = self.parse_in_expr()?;
             span.end = self.end;
@@ -1554,6 +1599,14 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_path_ref(&mut self) -> Result<Expr> {
+        self.parse_path_ref_with_scalar_indices(false)
+    }
+
+    fn parse_static_path_ref(&mut self) -> Result<Expr> {
+        self.parse_path_ref_with_scalar_indices(true)
+    }
+
+    fn parse_path_ref_with_scalar_indices(&mut self, allow_scalar_indices: bool) -> Result<Expr> {
         let start = self.tok.1.start;
         let var = self.parse_var()?;
         let mut component_count = 1;
@@ -1610,16 +1663,21 @@ impl<'source> Parser<'source> {
                     self.check_path_component_limit(component_count)?;
                     component_count = component_count.saturating_add(1);
                     self.next_token()?;
-                    let index = match &self.tok.0 {
-                        TokenKind::String => self.parse_scalar_or_var()?,
-                        _ => {
-                            return Err(self.source.error(
-                                self.tok.1.line,
-                                self.tok.1.col,
-                                "expected string",
-                            ));
-                        }
+                    let index = if allow_scalar_indices {
+                        self.parse_static_scalar_path_component()?
+                    } else if self.tok.0 == TokenKind::String {
+                        self.parse_scalar_or_var()?
+                    } else {
+                        let expected = if allow_scalar_indices {
+                            "expected scalar path component"
+                        } else {
+                            "expected string"
+                        };
+                        return Err(self.source.error(self.tok.1.line, self.tok.1.col, expected));
                     };
+                    if allow_scalar_indices {
+                        Self::static_path_component_value(&index)?;
+                    }
                     self.expect("]", "while parsing bracketed reference")?;
                     span.end = self.end;
                     refr = Expr::RefBrack {
