@@ -754,6 +754,11 @@ impl RegoVM {
                             self.current_conjunction_id(),
                         );
 
+                        if matches!(mode, LoopMode::Every) {
+                            self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
+                            return Ok(None);
+                        }
+
                         // For Any/ForEach modes, create a phantom iteration
                         // with Undefined key/value so the loop body executes
                         // once and downstream assumptions can fire.
