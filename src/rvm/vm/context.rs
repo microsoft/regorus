@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 use crate::rvm::instructions::{ComprehensionMode, LoopMode};
+#[cfg(feature = "explanations")]
+use crate::value::Value;
 use crate::value::{Array, Object, ObjectCursor, Set, SetCursor};
 use crate::Rc;
 

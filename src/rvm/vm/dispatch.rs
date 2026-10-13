@@ -4,7 +4,6 @@
 use crate::rvm::instructions::{GuardMode, Instruction, LiteralOrRegister};
 use crate::rvm::program::Program;
 use crate::value::Value;
-use alloc::collections::BTreeSet;
 #[cfg(feature = "explanations")]
 use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
@@ -1878,12 +1877,7 @@ impl RegoVM {
 
         if remaining_keys.is_empty() {
             if multi_value {
-                let leaf = match object.entry(first_key.clone()) {
-                    alloc::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                    alloc::collections::btree_map::Entry::Vacant(entry) => {
-                        entry.insert(Value::new_set())
-                    }
-                };
+                let leaf = object.get_or_insert_with(first_key.clone(), Value::new_set);
 
                 let leaf_snapshot = leaf.clone();
                 let set = leaf.as_set_mut().map_err(|_| VmError::RegisterNotSet {
@@ -1899,12 +1893,7 @@ impl RegoVM {
             return Ok(());
         }
 
-        let child = match object.entry(first_key.clone()) {
-            alloc::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-            alloc::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(Value::new_object())
-            }
-        };
+        let child = object.get_or_insert_with(first_key.clone(), Value::new_object);
 
         if !matches!(child, Value::Object(_)) {
             return Err(VmError::RegisterNotObject {

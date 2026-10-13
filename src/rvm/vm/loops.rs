@@ -578,6 +578,23 @@ impl RegoVM {
                 let has_next =
                     self.setup_next_iteration(&mut iteration_state, key_reg, value_reg)?;
 
+                #[cfg(feature = "explanations")]
+                if has_next {
+                    let cp = self.execution_stack.last().and_then(|frame| {
+                        if let FrameKind::Loop { ref context, .. } = frame.kind {
+                            context.collection_provenance.clone()
+                        } else {
+                            None
+                        }
+                    });
+                    self.update_loop_iteration_provenance(
+                        &iteration_state,
+                        key_reg,
+                        value_reg,
+                        &cp,
+                    );
+                }
+
                 // `setup_next_iteration` advances Object's internal cursor;
                 // the owning frame holds the iteration_state, so we must
                 // write the updated state back. (Array/Set are unchanged by
@@ -592,22 +609,6 @@ impl RegoVM {
                 }
 
                 if has_next {
-                    #[cfg(feature = "explanations")]
-                    {
-                        let cp = self.execution_stack.last().and_then(|frame| {
-                            if let FrameKind::Loop { ref context, .. } = frame.kind {
-                                context.collection_provenance.clone()
-                            } else {
-                                None
-                            }
-                        });
-                        self.update_loop_iteration_provenance(
-                            &iteration_state,
-                            key_reg,
-                            value_reg,
-                            &cp,
-                        );
-                    }
                     if let Some(frame) = self.execution_stack.last_mut() {
                         if let FrameKind::Loop { ref context, .. } = frame.kind {
                             frame.pc = context.body_resume_pc;
@@ -783,7 +784,7 @@ impl RegoVM {
                             let loop_context = LoopContext {
                                 mode: *mode,
                                 iteration_state: IterationState::Array {
-                                    items: crate::Rc::new(alloc::vec![]),
+                                    items: crate::Rc::new(alloc::vec![].into()),
                                     index: 0,
                                 },
                                 key_reg: params.key_reg,
