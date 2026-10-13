@@ -273,6 +273,26 @@ namespace Regorus
         }
 
         /// <summary>
+        /// Returns JSON rows with <c>source_file</c> and decoded string
+        /// <c>components</c> for every loaded module, in insertion order.
+        /// Repeated packages and source labels are retained; labels are not unique IDs.
+        /// No synthetic <c>data</c> prefix is added. Literal dots stay within their
+        /// component. An empty engine returns <c>[]</c>; the engine is not evaluated
+        /// or prepared.
+        /// </summary>
+        /// <exception cref="EntryPointNotFoundException">
+        /// The native library does not provide this export. Update the native library
+        /// together with the managed binding; legacy package strings are not a fallback.
+        /// </exception>
+        public string? GetPolicyPackageComponents()
+        {
+            return UseHandle(enginePtr =>
+            {
+                return CheckAndDropResult(Regorus.Internal.API.regorus_engine_get_policy_package_components((Regorus.Internal.RegorusEngine*)enginePtr));
+            });
+        }
+
+        /// <summary>
         /// Returns policy package metadata with its legacy dot-joined text and
         /// no <c>data</c> prefix. Quoted string contents omit their delimiter
         /// quotes; use canonical bracketed paths for rule lookup.

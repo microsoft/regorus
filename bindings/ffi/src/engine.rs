@@ -321,6 +321,25 @@ pub extern "C" fn regorus_engine_get_packages(engine: *mut RegorusEngine) -> Reg
     })
 }
 
+/// Get loaded modules' lossless package components as JSON.
+///
+/// Each row contains `source_file` and decoded string `components`, without a
+/// synthetic `data` prefix. Module insertion order and duplicates are preserved.
+/// An empty engine returns `[]`. This does not prepare or evaluate the engine.
+#[no_mangle]
+pub extern "C" fn regorus_engine_get_policy_package_components(
+    engine: *mut RegorusEngine,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        to_regorus_string_result(|| -> Result<String> {
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
+            let guard = engine.try_read()?;
+            serde_json::to_string_pretty(&guard.get_policy_package_components()?)
+                .map_err(anyhow::Error::msg)
+        }())
+    })
+}
+
 /// Get list of policies as JSON.
 ///
 /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.get_policies
@@ -880,11 +899,83 @@ mod namespace_tests {
     use super::{
         regorus_engine_add_policy, regorus_engine_compile_program_with_entrypoints,
         regorus_engine_drop, regorus_engine_eval_rule, regorus_engine_get_packages,
-        regorus_engine_new,
+        regorus_engine_get_policy_package_components, regorus_engine_new,
     };
     use crate::common::{regorus_result_drop, RegorusStatus};
     use core::ffi::CStr;
     use std::ffi::CString;
+
+    #[test]
+    fn package_components_preserve_module_identity_and_engine_reuse() {
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+        let empty = regorus_engine_get_policy_package_components(engine);
+        assert!(matches!(&empty.status, RegorusStatus::Ok));
+        assert_eq!(unsafe { CStr::from_ptr(empty.output) }.to_bytes(), b"[]");
+        regorus_result_drop(empty);
+
+        let file = CString::new("same.rego").expect("valid file");
+        for policy in [
+            r#"package graph.definition["1.0.0"]
+               value := 1"#,
+            r#"package graph.definition["1"]["0"]["0"]"#,
+            r#"package graph["a\".b"]["c\\d"]["\u03bb"]"#,
+        ] {
+            let policy = CString::new(policy).expect("valid policy");
+            let added = regorus_engine_add_policy(engine, file.as_ptr(), policy.as_ptr());
+            assert!(matches!(&added.status, RegorusStatus::Ok));
+            regorus_result_drop(added);
+        }
+        for _ in 0..2 {
+            let result = regorus_engine_get_policy_package_components(engine);
+            assert!(matches!(&result.status, RegorusStatus::Ok));
+            let json = unsafe { CStr::from_ptr(result.output) }
+                .to_str()
+                .expect("UTF-8 result");
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(json).expect("valid JSON"),
+                serde_json::json!([
+                    {
+                        "source_file": "same.rego",
+                        "components": ["graph", "definition", "1.0.0"]
+                    },
+                    {
+                        "source_file": "same.rego",
+                        "components": ["graph", "definition", "1", "0", "0"]
+                    },
+                    {
+                        "source_file": "same.rego",
+                        "components": ["graph", "a\".b", "c\\d", "\u{03bb}"]
+                    }
+                ])
+            );
+            regorus_result_drop(result);
+            let rule = CString::new(r#"data.graph.definition["1.0.0"].value"#).expect("valid rule");
+            let value = regorus_engine_eval_rule(engine, rule.as_ptr());
+            assert!(matches!(&value.status, RegorusStatus::Ok));
+            assert_eq!(unsafe { CStr::from_ptr(value.output) }.to_bytes(), b"1");
+            regorus_result_drop(value);
+        }
+        regorus_engine_drop(engine);
+    }
+
+    #[test]
+    fn package_components_null_engine_errors_without_poisoning() {
+        let _poison_test_lock = crate::panic_guard::lock_poison_test_state();
+        crate::panic_guard::reset_poison();
+        let rejected = regorus_engine_get_policy_package_components(core::ptr::null_mut());
+        assert!(matches!(&rejected.status, RegorusStatus::Error));
+        assert!(!rejected.error_message.is_null());
+        regorus_result_drop(rejected);
+        assert!(!crate::panic_guard::is_poisoned());
+
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+        let result = regorus_engine_get_policy_package_components(engine);
+        assert!(matches!(&result.status, RegorusStatus::Ok));
+        regorus_result_drop(result);
+        regorus_engine_drop(engine);
+    }
 
     #[test]
     fn legacy_package_metadata_and_canonical_rule_paths_cross_the_ffi_boundary() {
