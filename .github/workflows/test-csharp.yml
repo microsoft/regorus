@@ -210,12 +210,12 @@ jobs:
           cp bindings/csharp/Regorus/bin/Release/*.nupkg bindings/csharp/local-packages/
           dotnet restore bindings/csharp/ExperimentalCoexistenceApp/ExperimentalCoexistenceApp.csproj \
             --configfile bindings/csharp/nuget.config \
-            /p:UsePackageReference=true \
-            /p:RestorePackagesPath=bindings/csharp/.nuget/packages
+            -p:UsePackageReference=true \
+            -p:RestorePackagesPath=bindings/csharp/.nuget/packages
           dotnet run --project bindings/csharp/ExperimentalCoexistenceApp/ExperimentalCoexistenceApp.csproj \
             --no-restore \
             --configuration Release \
-            /p:UsePackageReference=true \
-            /p:RestorePackagesPath=bindings/csharp/.nuget/packages
+            -p:UsePackageReference=true \
+            -p:RestorePackagesPath=bindings/csharp/.nuget/packages
 
       
