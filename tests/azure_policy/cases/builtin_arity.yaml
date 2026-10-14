@@ -1,0 +1,126 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Builtin call arity boundary suite.
+#
+# The compiler emits at most eight argument registers per builtin call. `and`
+# and `or` forward their arguments one-to-one and therefore exercise the
+# actual emitted-register boundary.
+
+cases:
+  - note: and_eight_args_compiles_and_evaluates
+    policy_rule: |
+      {
+        "if": {
+          "value": "[and(equals('a','a'), equals('b','b'), equals('c','c'), equals('d','d'), equals('e','e'), equals('f','f'), equals('g','g'), equals('h','h'))]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: and_eight_args_false_argument_does_not_match
+    policy_rule: |
+      {
+        "if": {
+          "value": "[and(equals('a','a'), equals('b','b'), equals('c','c'), equals('d','d'), equals('e','e'), equals('f','f'), equals('g','g'), equals('h','MISMATCH'))]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_undefined: true
+
+  - note: and_nine_args_is_rejected_with_actionable_error
+    policy_rule: |
+      {
+        "if": {
+          "value": "[and(equals('a','a'), equals('b','b'), equals('c','c'), equals('d','d'), equals('e','e'), equals('f','f'), equals('g','g'), equals('h','h'), equals('i','i'))]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_compile_error_contains: "and() does not support more than 8 arguments (got 9)"
+
+  - note: or_nine_args_is_rejected_with_actionable_error
+    policy_rule: |
+      {
+        "if": {
+          "value": "[or(equals('a','z'), equals('b','z'), equals('c','z'), equals('d','z'), equals('e','z'), equals('f','z'), equals('g','z'), equals('h','z'), equals('i','i'))]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_compile_error_contains: "or() does not support more than 8 arguments (got 9)"
+
+  - note: generic_dispatch_overflow_names_the_arm_function
+    policy_rule: |
+      {
+        "if": {
+          "value": "[union(createObject('a', 1), createObject('b', 2), createObject('c', 3), createObject('d', 4), createObject('e', 5), createObject('f', 6), createObject('g', 7), createObject('h', 8), createObject('i', 9))]",
+          "equals": {}
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_compile_error_contains: "union() does not support more than 8 arguments (got 9)"
+
+  - note: uppercase_function_name_reports_lowercase_arm_name
+    policy_rule: |
+      {
+        "if": {
+          "value": "[AND(equals('a','a'), equals('b','b'), equals('c','c'), equals('d','d'), equals('e','e'), equals('f','f'), equals('g','g'), equals('h','h'), equals('i','i'))]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_compile_error_contains: "and() does not support more than 8 arguments (got 9)"
+
+  - note: packed_concat_accepts_more_than_eight_arguments
+    policy_rule: |
+      {
+        "if": {
+          "value": "[concat('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i')]",
+          "equals": "abcdefghi"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
+
+  - note: nested_overflow_is_attributed_to_the_inner_function
+    policy_rule: |
+      {
+        "if": {
+          "value": "[and(equals('a','a'), format('{0}{1}{2}{3}{4}{5}{6}{7}', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'))]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_compile_error_contains: "format() does not support more than 8 arguments (got 9)"
+
+  - note: overflow_after_completed_nested_call_names_the_caller
+    policy_rule: |
+      {
+        "if": {
+          "value": "[and(format('{0}', 'a'), equals('b','b'), equals('c','c'), equals('d','d'), equals('e','e'), equals('f','f'), equals('g','g'), equals('h','h'), equals('i','i'))]",
+          "equals": true
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_compile_error_contains: "and() does not support more than 8 arguments (got 9)"
