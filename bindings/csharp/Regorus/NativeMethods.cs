@@ -309,6 +309,12 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_engine_add_policy(RegorusEngine* engine, byte* path, byte* rego);
 
         /// <summary>
+        /// Check whether the policy module at the exact source path declares a rule at rootName or a component-wise descendant.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_has_declared_rule_rooted_at", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_has_declared_rule_rooted_at(RegorusEngine* engine, byte* path, byte* rootName);
+
+        /// <summary>
         /// Add a policy from file.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_engine_add_policy_from_file", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -430,6 +436,12 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_engine_get_ast_as_json", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_engine_get_ast_as_json(RegorusEngine* engine);
+
+        /// <summary>
+        /// Gets each loaded module's source label and decoded package components as JSON.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_get_policy_package_components", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_get_policy_package_components(RegorusEngine* engine);
 
         /// <summary>
         /// Gets the package names defined in each policy added to the engine.

@@ -20,7 +20,8 @@ use crate::number::*;
 use crate::value::*;
 use crate::*;
 
-use alloc::collections::BTreeMap;
+use crate::utils::limits::PolicyLengthConfig;
+use alloc::collections::{BTreeMap, BTreeSet};
 use core::num::NonZeroU32;
 use core::str::FromStr;
 
@@ -29,6 +30,39 @@ use anyhow::{anyhow, bail, Result};
 #[inline]
 fn check_memory_limit() -> Result<()> {
     crate::utils::limits::check_memory_limit_if_needed().map_err(|err| anyhow!(err))
+}
+
+#[derive(Clone, Debug)]
+pub struct ParserContext {
+    rego_v1: bool,
+    future_keywords: BTreeSet<String>,
+    policy_length_config: PolicyLengthConfig,
+}
+
+impl ParserContext {
+    pub(crate) fn create_rule_selector_source(&self, selector: &str) -> Result<Source> {
+        Source::from_contents_with_limits(
+            "<rule-root>".to_string(),
+            selector.to_string(),
+            self.policy_length_config.max_file_bytes,
+            self.policy_length_config.max_lines,
+        )
+    }
+
+    pub(crate) fn parse_rule_selector(
+        &self,
+        source: &Source,
+        selector: &str,
+    ) -> Result<Vec<String>> {
+        let mut parser = Parser::new_with_max_col(source, Some(self.policy_length_config.max_col))?;
+        parser.rego_v1 = self.rego_v1;
+        parser.future_keywords = self
+            .future_keywords
+            .iter()
+            .map(|keyword| (keyword.clone(), None))
+            .collect();
+        parser.parse_rule_selector(selector)
+    }
 }
 
 #[derive(Clone)]
@@ -69,6 +103,10 @@ impl<'source> Parser<'source> {
         if let Some(max_col) = max_col {
             lexer.set_max_col(max_col);
         }
+        Self::from_lexer(source, lexer)
+    }
+
+    fn from_lexer(source: &'source Source, mut lexer: Lexer<'source>) -> Result<Self> {
         let tok = lexer.next_token()?;
         Ok(Self {
             source: source.clone(),
@@ -107,6 +145,17 @@ impl<'source> Parser<'source> {
 
     pub fn enable_rego_v1(&mut self) -> Result<()> {
         self.turn_on_rego_v1(&None)
+    }
+
+    pub(crate) fn snapshot_context(
+        &self,
+        policy_length_config: PolicyLengthConfig,
+    ) -> ParserContext {
+        ParserContext {
+            rego_v1: self.rego_v1,
+            future_keywords: self.future_keywords.keys().cloned().collect(),
+            policy_length_config,
+        }
     }
 
     fn turn_on_rego_v1(&mut self, span: &Option<Span>) -> Result<()> {
@@ -213,28 +262,40 @@ impl<'source> Parser<'source> {
     }
 
     pub fn get_path_ref_components_into(refr: &Ref<Expr>, comps: &mut Vec<Span>) -> Result<()> {
-        match refr.as_ref() {
-            Expr::RefDot { refr, field, .. } => {
-                Self::get_path_ref_components_into(refr, comps)?;
-                comps.push(field.0.clone());
-            }
-            Expr::RefBrack { refr, index, .. } => {
-                Self::get_path_ref_components_into(refr, comps)?;
-                Self::get_path_ref_components_into(index, comps)?;
-            }
-            Expr::Var { span: v, .. } => comps.push(v.clone()),
-            Expr::String { span: s, .. } => comps.push(s.clone()),
-            Expr::Bool { span: s, .. } | Expr::Null { span: s, .. } => comps.push(s.clone()),
-            Expr::Number { span, value, .. } => {
-                // Ensure that the span will be the serialized representation.
-                if span.text() == value.to_json_str()? {
-                    comps.push(span.clone());
-                } else {
-                    bail!(refr.span().error("not a valid ref"));
-                }
-            }
+        enum ComponentAction<'a> {
+            Visit(&'a Expr),
+            Append(&'a Span),
+        }
 
-            _ => bail!(refr.span().error("not a valid ref")),
+        let mut pending = alloc::vec![ComponentAction::Visit(refr.as_ref())];
+        while let Some(action) = pending.pop() {
+            match action {
+                ComponentAction::Visit(expression) => match expression {
+                    Expr::RefDot { refr, field, .. } => {
+                        pending.push(ComponentAction::Append(&field.0));
+                        pending.push(ComponentAction::Visit(refr.as_ref()));
+                    }
+                    Expr::RefBrack { refr, index, .. } => {
+                        pending.push(ComponentAction::Visit(index.as_ref()));
+                        pending.push(ComponentAction::Visit(refr.as_ref()));
+                    }
+                    Expr::Var { span, .. }
+                    | Expr::String { span, .. }
+                    | Expr::Bool { span, .. }
+                    | Expr::Null { span, .. } => comps.push(span.clone()),
+                    Expr::Number { span, value, .. } => {
+                        // Ensure that the span will be the serialized representation.
+                        if span.text() == value.to_json_str()? {
+                            comps.push(span.clone());
+                        } else {
+                            bail!(expression.span().error("not a valid ref"));
+                        }
+                    }
+                    _ => bail!(expression.span().error("not a valid ref")),
+                },
+                ComponentAction::Append(span) => comps.push(span.clone()),
+            }
+            check_memory_limit()?;
         }
         Ok(())
     }
@@ -327,7 +388,7 @@ impl<'source> Parser<'source> {
                     }
                     let index = parser.parse_scalar_or_var()?;
                     parser.expect("]", "while parsing bracketed reference")?;
-                    let Expr::String { value, .. } = index else {
+                    let Expr::String { ref value, .. } = index else {
                         bail!("internal error: static path component is not a string");
                     };
                     Self::push_static_path_component(
@@ -1723,6 +1784,41 @@ impl<'source> Parser<'source> {
         Ok(term)
     }
 
+    fn parse_rule_selector(&mut self, selector: &str) -> Result<Vec<String>> {
+        let expression = self.parse_rule_ref()?;
+        if self.tok.0 != TokenKind::Eof {
+            return Err(self.tok.1.error("expecting EOF"));
+        }
+
+        if !matches!(&expression, Expr::Var { .. } | Expr::RefDot { .. }) {
+            bail!("expected a rule-root selector");
+        }
+        let span = expression.span();
+        if span.start != 0 || span.text() != selector {
+            bail!("rule-root selector must match its complete input");
+        }
+
+        let mut components = Vec::new();
+        let mut expression = &expression;
+        loop {
+            match expression {
+                Expr::Var { span, .. } => {
+                    components.push(span.text().to_string());
+                    check_memory_limit()?;
+                    break;
+                }
+                Expr::RefDot { refr, field, .. } => {
+                    components.push(field.0.text().to_string());
+                    check_memory_limit()?;
+                    expression = refr.as_ref();
+                }
+                _ => bail!("expected a rule-root selector"),
+            }
+        }
+        components.reverse();
+        Ok(components)
+    }
+
     pub fn parse_rule_head(&mut self) -> Result<RuleHead> {
         let mut span = self.tok.1.clone();
 
@@ -2316,5 +2412,71 @@ impl<'source> Parser<'source> {
     }
     pub fn num_queries(&self) -> u32 {
         self.qidx
+    }
+}
+
+#[cfg(test)]
+mod iterative_path_tests {
+    #![allow(clippy::panic_in_result_fn)]
+
+    use super::*;
+    use anyhow::Result;
+
+    #[test]
+    fn path_components_preserve_bracket_order_and_numeric_validation() -> Result<()> {
+        let source =
+            Source::from_contents("path.rego".to_string(), "root[\"key\"][1]".to_string())?;
+        let mut parser = Parser::new(&source)?;
+        let reference = Ref::new(parser.parse_rule_ref()?);
+        let components = Parser::get_path_ref_components(&reference)?;
+        let component_text = components
+            .iter()
+            .map(|component| component.text())
+            .collect::<Vec<_>>();
+
+        assert_eq!(component_text, alloc::vec!["root", "key", "1"]);
+
+        let invalid_source =
+            Source::from_contents("invalid-number.rego".to_string(), "root01".to_string())?;
+        let root = Ref::new(Expr::Var {
+            span: Span {
+                source: invalid_source.clone(),
+                line: 1,
+                col: 1,
+                start: 0,
+                end: 4,
+            },
+            value: Value::from("root"),
+            eidx: 0,
+        });
+        let invalid_number = Ref::new(Expr::Number {
+            span: Span {
+                source: invalid_source.clone(),
+                line: 1,
+                col: 5,
+                start: 4,
+                end: 6,
+            },
+            value: Value::from(1_i64),
+            eidx: 0,
+        });
+        let invalid_reference = Ref::new(Expr::RefBrack {
+            span: Span {
+                source: invalid_source,
+                line: 1,
+                col: 1,
+                start: 0,
+                end: 6,
+            },
+            refr: root,
+            index: invalid_number,
+            eidx: 0,
+        });
+        let error = Parser::get_path_ref_components(&invalid_reference)
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("non-canonical numeric references must fail"))?;
+        assert!(error.to_string().contains("not a valid ref"));
+
+        Ok(())
     }
 }

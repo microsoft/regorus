@@ -34,13 +34,17 @@ namespace Regorus.Internal
             }
         }
 
-        internal static bool GetBoolResult(RegorusResult result)
+        internal static bool GetBoolResult(RegorusResult result, string? invalidArgumentParamName = null)
         {
             try
             {
                 if (result.status != RegorusStatus.Ok)
                 {
                     var message = Utf8Marshaller.FromUtf8(result.error_message);
+                    if (result.status == RegorusStatus.InvalidArgument && invalidArgumentParamName is not null)
+                    {
+                        throw new ArgumentException(message, invalidArgumentParamName);
+                    }
                     throw result.status.CreateException(message);
                 }
 
