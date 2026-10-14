@@ -98,6 +98,10 @@ impl<T> NodeRef<T> {
     pub fn new(t: T) -> Self {
         Self { r: Rc::new(t) }
     }
+
+    fn into_inner(self) -> Option<T> {
+        Rc::into_inner(self.r)
+    }
 }
 
 pub type Ref<T> = NodeRef<T>;
@@ -264,6 +268,55 @@ pub enum Expr {
 }
 
 impl Expr {
+    fn detach_reference_children(&mut self, pending: &mut Vec<Ref<Expr>>) {
+        match *self {
+            Self::RefDot {
+                ref span,
+                ref mut refr,
+                ..
+            } => {
+                let placeholder = Ref::new(Self::Null {
+                    span: span.clone(),
+                    value: Value::Null,
+                    eidx: 0,
+                });
+                pending.push(core::mem::replace(refr, placeholder));
+            }
+            Self::RefBrack {
+                ref span,
+                ref mut refr,
+                ref mut index,
+                ..
+            } => {
+                let placeholder = Ref::new(Self::Null {
+                    span: span.clone(),
+                    value: Value::Null,
+                    eidx: 0,
+                });
+                pending.push(core::mem::replace(refr, placeholder.clone()));
+                pending.push(core::mem::replace(index, placeholder));
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Drop for Expr {
+    fn drop(&mut self) {
+        let mut pending = Vec::new();
+        self.detach_reference_children(&mut pending);
+
+        while let Some(reference) = pending.pop() {
+            // `into_inner` elects exactly one final owner during concurrent Arc releases.
+            if let Some(mut expression) = reference.into_inner() {
+                expression.detach_reference_children(&mut pending);
+                drop(expression);
+            }
+        }
+    }
+}
+
+impl Expr {
     pub const fn span(&self) -> &Span {
         match *self {
             Self::String { ref span, .. }
@@ -318,6 +371,171 @@ impl Expr {
             #[cfg(feature = "rego-extensions")]
             Self::OrExpr { eidx, .. } => eidx,
         }
+    }
+}
+
+#[cfg(test)]
+mod reference_ownership_tests {
+    #![allow(clippy::panic_in_result_fn)]
+
+    use super::*;
+    use anyhow::Result;
+
+    fn source_span() -> Result<Span> {
+        let source = Source::from_contents("ast-drop.rego".to_string(), "root".to_string())?;
+        Ok(Span {
+            source,
+            line: 1,
+            col: 1,
+            start: 0,
+            end: 4,
+        })
+    }
+
+    fn variable(span: Span, name: &str) -> Expr {
+        Expr::Var {
+            span,
+            value: Value::from(name),
+            eidx: 0,
+        }
+    }
+
+    fn deep_brack_chain(span: &Span, depth: usize) -> Ref<Expr> {
+        let mut reference = Ref::new(variable(span.clone(), "root"));
+        for _ in 0..depth {
+            reference = Ref::new(Expr::RefBrack {
+                span: span.clone(),
+                refr: reference,
+                index: Ref::new(variable(span.clone(), "index")),
+                eidx: 0,
+            });
+        }
+        reference
+    }
+
+    fn deep_refdot_chain(span: &Span, depth: usize) -> Ref<Expr> {
+        let mut reference = Ref::new(variable(span.clone(), "root"));
+        for _ in 0..depth {
+            reference = Ref::new(Expr::RefDot {
+                span: span.clone(),
+                refr: reference,
+                field: (span.clone(), Value::from("field")),
+                eidx: 0,
+            });
+        }
+        reference
+    }
+
+    #[test]
+    fn plain_expression_references_keep_their_shared_owner() -> Result<()> {
+        let reference = Ref::new(variable(source_span()?, "root"));
+        let clone = reference.clone();
+
+        assert_eq!(reference, clone);
+        drop(reference);
+        assert!(matches!(clone.as_ref(), Expr::Var { .. }));
+        drop(clone);
+
+        Ok(())
+    }
+
+    #[test]
+    fn refdot_drop_preserves_a_shared_reference_until_its_final_owner() -> Result<()> {
+        let span = source_span()?;
+        let child = Ref::new(variable(span.clone(), "root"));
+        let weak = Rc::downgrade(&child.r);
+        let retained = child.clone();
+        let identity = Rc::as_ptr(&child.r);
+        let parent = Expr::RefDot {
+            span: span.clone(),
+            refr: child,
+            field: (span, Value::from("field")),
+            eidx: 0,
+        };
+
+        drop(parent);
+        assert_eq!(identity, Rc::as_ptr(&retained.r));
+        assert!(weak.upgrade().is_some());
+        drop(retained);
+        assert!(weak.upgrade().is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn deep_shared_refdot_preserves_identity_until_the_final_owner() -> Result<()> {
+        const DEPTH: usize = 20_000;
+
+        let span = source_span()?;
+        let child = deep_refdot_chain(&span, DEPTH);
+        let weak = Rc::downgrade(&child.r);
+        let retained = child.clone();
+        let identity = Rc::as_ptr(&child.r);
+        let parent = Expr::RefDot {
+            span: span.clone(),
+            refr: child,
+            field: (span, Value::from("parent")),
+            eidx: 0,
+        };
+
+        drop(parent);
+        assert_eq!(identity, Rc::as_ptr(&retained.r));
+        assert!(weak.upgrade().is_some());
+        drop(retained);
+        assert!(weak.upgrade().is_none());
+
+        Ok(())
+    }
+
+    #[cfg(feature = "arc")]
+    #[test]
+    fn concurrent_deep_shared_refdot_final_release_drops_iteratively() -> Result<()> {
+        const DEPTH: usize = 20_000;
+        const OWNER_COUNT: usize = 8;
+
+        let span = source_span()?;
+        let child = deep_refdot_chain(&span, DEPTH);
+        let weak = Rc::downgrade(&child.r);
+        let mut parents = Vec::with_capacity(OWNER_COUNT);
+        for _ in 0..OWNER_COUNT {
+            parents.push(Expr::RefDot {
+                span: span.clone(),
+                refr: child.clone(),
+                field: (span.clone(), Value::from("parent")),
+                eidx: 0,
+            });
+        }
+        drop(child);
+
+        let barrier = std::sync::Barrier::new(OWNER_COUNT);
+        std::thread::scope(|scope| {
+            for parent in parents {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    drop(parent);
+                });
+            }
+        });
+
+        assert!(weak.upgrade().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn deeply_bracketed_reference_and_index_drop_iteratively() -> Result<()> {
+        const DEPTH: usize = 20_000;
+
+        let span = source_span()?;
+        let root = Ref::new(Expr::RefBrack {
+            span: span.clone(),
+            refr: deep_brack_chain(&span, DEPTH),
+            index: deep_brack_chain(&span, DEPTH),
+            eidx: 0,
+        });
+
+        drop(root);
+        Ok(())
     }
 }
 

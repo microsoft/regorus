@@ -4,6 +4,7 @@
 use crate::{Engine, InvalidRuleRootError, LimitError, PolicyLengthConfig, Source, Value};
 use alloc::boxed::Box;
 use alloc::format;
+use alloc::string::String;
 use alloc::string::ToString as _;
 use alloc::sync::Arc;
 use anyhow::Result;
@@ -12,6 +13,21 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 fn is_invalid_root(error: &anyhow::Error) -> bool {
     error.downcast_ref::<InvalidRuleRootError>().is_some()
+}
+
+fn make_policy_length_config(
+    max_col: u32,
+    max_file_bytes: usize,
+    max_lines: usize,
+) -> Result<PolicyLengthConfig> {
+    Ok(PolicyLengthConfig {
+        max_col: NonZeroU32::new(max_col)
+            .ok_or_else(|| anyhow::anyhow!("max_col must be non-zero"))?,
+        max_file_bytes: NonZeroUsize::new(max_file_bytes)
+            .ok_or_else(|| anyhow::anyhow!("max_file_bytes must be non-zero"))?,
+        max_lines: NonZeroUsize::new(max_lines)
+            .ok_or_else(|| anyhow::anyhow!("max_lines must be non-zero"))?,
+    })
 }
 
 #[test]
@@ -885,6 +901,82 @@ fn has_declared_rule_rooted_at_does_not_evaluate_rule_bodies() -> Result<()> {
     anyhow::ensure!(
         calls.load(Ordering::SeqCst) == 0,
         "declaration detection must not invoke extensions"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn has_declared_rule_rooted_at_handles_twenty_thousand_component_selector_and_reuse() -> Result<()>
+{
+    const COMPONENT_COUNT: usize = 20_000;
+
+    let mut engine = Engine::new();
+    engine.set_policy_length_config(make_policy_length_config(524_288, 524_288, 4)?);
+    engine.add_policy(
+        "shallow.rego".to_string(),
+        "package customer\nmetadata := true".to_string(),
+    )?;
+
+    let mut selector = String::from("metadata");
+    for index in 0..COMPONENT_COUNT {
+        selector.push_str(&format!(".segment_{index:05}"));
+    }
+    anyhow::ensure!(
+        !engine.has_declared_rule_rooted_at("shallow.rego", &selector)?,
+        "a deep descendant selector must not match a shallow head"
+    );
+
+    let malformed_selector = format!("{selector}[\"invalid\"]");
+    let malformed_error = engine
+        .has_declared_rule_rooted_at("shallow.rego", &malformed_selector)
+        .err()
+        .ok_or_else(|| anyhow::anyhow!("bracketed selectors must remain invalid"))?;
+    anyhow::ensure!(
+        is_invalid_root(&malformed_error),
+        "a malformed selector must retain invalid-root classification"
+    );
+    anyhow::ensure!(
+        engine.has_declared_rule_rooted_at("shallow.rego", "metadata")?,
+        "the engine must remain reusable after deep and malformed selectors"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn has_declared_rule_rooted_at_handles_32_component_heads_and_cloned_load_context() -> Result<()> {
+    let mut full_head = String::from("metadata");
+    for index in 0..31 {
+        full_head.push_str(&format!(".segment_{index:02}"));
+    }
+
+    let mut engine = Engine::new();
+    engine.set_policy_length_config(make_policy_length_config(2048, 4096, 4)?);
+    engine.add_policy(
+        "loaded_deep_head.rego".to_string(),
+        format!("package customer\n{full_head} := true"),
+    )?;
+    engine.set_policy_length_config(make_policy_length_config(1, 1, 1)?);
+
+    for (selector, expected) in [
+        ("metadata", true),
+        ("metadata.segment_00", true),
+        ("metadata.segment_00.segment_01", true),
+        ("metadata.segment_01.segment_00", false),
+        ("metadata.segment_00.segment_02", false),
+        (full_head.as_str(), true),
+    ] {
+        anyhow::ensure!(
+            engine.has_declared_rule_rooted_at("loaded_deep_head.rego", selector)? == expected,
+            "selector {selector} returned an unexpected declaration result"
+        );
+    }
+
+    let clone = engine.clone();
+    anyhow::ensure!(
+        clone.has_declared_rule_rooted_at("loaded_deep_head.rego", &full_head)?,
+        "a cloned engine must retain the module's load-time selector context"
     );
 
     Ok(())

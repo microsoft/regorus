@@ -28,74 +28,169 @@ fn rule_head_matches_selector_prefix(
     selector_components: &[String],
     matched_components: &mut usize,
 ) -> Result<bool> {
-    match *expression {
-        Expr::Var {
-            value: Value::String(ref root),
-            ..
-        } => {
-            let Some(expected) = selector_components.get(*matched_components) else {
-                return Ok(true);
-            };
-            if root.as_ref() != expected {
-                return Ok(false);
+    let mut pending = Vec::new();
+    let mut current_expression = expression;
+    let root = loop {
+        match *current_expression {
+            Expr::RefDot { ref refr, .. } | Expr::RefBrack { ref refr, .. } => {
+                pending.push(current_expression);
+                crate::utils::limits::check_memory_limit_if_needed()
+                    .map_err(|error| anyhow!(error))?;
+                current_expression = refr.as_ref();
             }
-            *matched_components = matched_components.saturating_add(1);
-            Ok(true)
+            Expr::Var {
+                value: Value::String(ref root),
+                ..
+            } => break root,
+            Expr::Var { .. } => return Ok(false),
+            _ => bail!("cannot classify rule-head reference"),
         }
-        Expr::Var { .. } => Ok(false),
-        Expr::RefDot {
-            ref refr,
-            ref field,
-            ..
-        } => {
-            if !rule_head_matches_selector_prefix(
-                refr.as_ref(),
-                selector_components,
-                matched_components,
-            )? {
-                return Ok(false);
+    };
+
+    let Some(expected_root) = selector_components.get(*matched_components) else {
+        return Ok(true);
+    };
+    if root.as_ref() != expected_root {
+        return Ok(false);
+    }
+    *matched_components = matched_components.saturating_add(1);
+
+    while let Some(expression_node) = pending.pop() {
+        let Some(expected_component) = selector_components.get(*matched_components) else {
+            return Ok(true);
+        };
+        match *expression_node {
+            Expr::RefDot { ref field, .. } => {
+                let name = field.1.as_string()?;
+                if name.as_ref() != expected_component {
+                    return Ok(false);
+                }
+                *matched_components = matched_components.saturating_add(1);
             }
-            let Some(expected) = selector_components.get(*matched_components) else {
-                return Ok(true);
-            };
-            let name = field.1.as_string()?;
-            if name.as_ref() != expected {
-                return Ok(false);
-            }
-            *matched_components = matched_components.saturating_add(1);
-            Ok(true)
-        }
-        Expr::RefBrack {
-            ref refr,
-            ref index,
-            ..
-        } => {
-            if !rule_head_matches_selector_prefix(
-                refr.as_ref(),
-                selector_components,
-                matched_components,
-            )? {
-                return Ok(false);
-            }
-            let Some(expected) = selector_components.get(*matched_components) else {
-                return Ok(true);
-            };
-            match *index.as_ref() {
+            Expr::RefBrack { ref index, .. } => match *index.as_ref() {
                 Expr::String {
                     value: Value::String(ref name),
                     ..
                 } => {
-                    if name.as_ref() != expected {
+                    if name.as_ref() != expected_component {
                         return Ok(false);
                     }
                     *matched_components = matched_components.saturating_add(1);
-                    Ok(true)
                 }
-                Expr::Bool { .. } | Expr::Null { .. } | Expr::Number { .. } => Ok(false),
+                Expr::Bool { .. } | Expr::Null { .. } | Expr::Number { .. } => return Ok(false),
                 _ => bail!("cannot classify unresolved bracketed rule-head component"),
-            }
+            },
+            _ => bail!("cannot classify rule-head reference"),
         }
-        _ => bail!("cannot classify rule-head reference"),
+    }
+
+    Ok(true)
+}
+
+#[cfg(test)]
+mod iterative_selector_tests {
+    use super::*;
+    use anyhow::Result;
+
+    fn engine_with_deep_authored_head(depth: usize) -> Result<Engine> {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "deep_head.rego".to_string(),
+            "package customer\nmetadata := true".to_string(),
+        )?;
+
+        let (package, target, rego_v1, rule_span, root_span) = {
+            let module = engine
+                .modules
+                .first()
+                .ok_or_else(|| anyhow!("loaded module is missing"))?;
+            let rule = module
+                .policy
+                .first()
+                .ok_or_else(|| anyhow!("loaded rule is missing"))?;
+            let (rule_span, root_span) = match *rule.as_ref() {
+                Rule::Spec {
+                    ref span,
+                    head: RuleHead::Compr { ref refr, .. },
+                    ..
+                } => match *refr.as_ref() {
+                    Expr::Var {
+                        span: ref root_span,
+                        ..
+                    } => (span.clone(), root_span.clone()),
+                    _ => bail!("loaded rule head is not a variable"),
+                },
+                _ => bail!("loaded rule is not a complete rule"),
+            };
+
+            (
+                Package {
+                    span: module.package.span.clone(),
+                    refr: module.package.refr.clone(),
+                },
+                module.target.clone(),
+                module.rego_v1,
+                rule_span,
+                root_span,
+            )
+        };
+
+        let mut deep_head = Ref::new(Expr::Var {
+            span: root_span.clone(),
+            value: Value::from("metadata"),
+            eidx: 0,
+        });
+        for index in 0..depth {
+            let component = alloc::format!("segment_{index:05}");
+            deep_head = Ref::new(Expr::RefDot {
+                span: rule_span.clone(),
+                refr: deep_head,
+                field: (root_span.clone(), Value::from(component.as_str())),
+                eidx: 0,
+            });
+        }
+
+        let module = Module {
+            package,
+            imports: alloc::vec![],
+            policy: alloc::vec![Ref::new(Rule::Spec {
+                span: rule_span.clone(),
+                head: RuleHead::Compr {
+                    span: rule_span,
+                    refr: deep_head,
+                    assign: None,
+                },
+                bodies: alloc::vec![],
+            })],
+            rego_v1,
+            target,
+            num_expressions: 0,
+            num_statements: 0,
+            num_queries: 0,
+        };
+        engine.modules = Rc::new(alloc::vec![Ref::new(module)]);
+
+        Ok(engine)
+    }
+
+    #[test]
+    fn deep_authored_refdot_head_matches_prefixes_and_engine_drop_is_iterative() -> Result<()> {
+        const COMPONENT_COUNT: usize = 20_000;
+
+        let engine = engine_with_deep_authored_head(COMPONENT_COUNT)?;
+        for (selector, expected) in [
+            ("metadata", true),
+            ("metadata.segment_00000.segment_00001", true),
+            ("metadata.segment_00001.segment_00000", false),
+        ] {
+            anyhow::ensure!(
+                engine.has_declared_rule_rooted_at("deep_head.rego", selector)? == expected,
+                "selector {selector} returned an unexpected declaration result"
+            );
+        }
+
+        drop(engine);
+        Ok(())
     }
 }
 

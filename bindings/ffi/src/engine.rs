@@ -469,6 +469,55 @@ mod declared_rule_tests {
 
         regorus_engine_drop(engine);
     }
+
+    #[test]
+    fn deep_declared_rule_selector_preserves_result_lock_and_engine_reuse() {
+        const COMPONENT_COUNT: usize = 20_000;
+
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+        let engine_ref = unsafe { &*engine };
+        {
+            let mut guard = engine_ref.try_write().expect("engine write lock");
+            guard.set_policy_length_config(::regorus::PolicyLengthConfig {
+                max_col: NonZeroU32::new(524_288).expect("nonzero"),
+                max_file_bytes: NonZeroUsize::new(524_288).expect("nonzero"),
+                max_lines: NonZeroUsize::new(4).expect("nonzero"),
+            });
+        }
+
+        let path = CString::new("shallow.rego").expect("valid path");
+        let policy = CString::new("package customer\nmetadata := true").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, path.as_ptr(), policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let mut selector = String::from("metadata");
+        for index in 0..COMPONENT_COUNT {
+            selector.push_str(&format!(".segment_{index:05}"));
+        }
+        let selector = CString::new(selector).expect("valid selector");
+        let deep =
+            regorus_engine_has_declared_rule_rooted_at(engine, path.as_ptr(), selector.as_ptr());
+        assert!(matches!(deep.status, RegorusStatus::Ok));
+        assert!(matches!(deep.data_type, RegorusDataType::Boolean));
+        assert!(!deep.bool_value);
+        regorus_result_drop(deep);
+        assert!(
+            engine_ref.try_write().is_ok(),
+            "dropping the result must release the engine lock"
+        );
+
+        let root = CString::new("metadata").expect("valid root");
+        let subsequent =
+            regorus_engine_has_declared_rule_rooted_at(engine, path.as_ptr(), root.as_ptr());
+        assert!(matches!(subsequent.status, RegorusStatus::Ok));
+        assert!(matches!(subsequent.data_type, RegorusDataType::Boolean));
+        assert!(subsequent.bool_value);
+        regorus_result_drop(subsequent);
+
+        regorus_engine_drop(engine);
+    }
 }
 
 #[no_mangle]
