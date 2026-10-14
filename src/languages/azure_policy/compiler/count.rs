@@ -6,7 +6,6 @@
 
 use alloc::format;
 use alloc::string::{String, ToString as _};
-use alloc::vec::Vec;
 
 use anyhow::{anyhow, bail, Result};
 
@@ -111,9 +110,8 @@ impl Compiler {
                             .map_err(|e| span.error(&e.to_string()))?;
                         let inner_collection = inner_collection.to_ascii_lowercase();
                         let parts = split_path_without_wildcards(&inner_collection)?;
-                        let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
                         let collection_reg =
-                            self.emit_chained_index_literal_path(binding.current_reg, &refs, span)?;
+                            self.emit_chained_index_segments(binding.current_reg, &parts, span)?;
                         let inner_prefix = format!("{}[*].{}", lc_prefix, inner_collection);
                         return Ok((collection_reg, inner_prefix));
                     }
@@ -174,8 +172,7 @@ impl Compiler {
         let collection_reg = match base_reg {
             Some(base) => {
                 let parts = split_path_without_wildcards(&collection_lower)?;
-                let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-                self.emit_chained_index_literal_path(base, &refs, span)?
+                self.emit_chained_index_segments(base, &parts, span)?
             }
             None => self.compile_resource_path_value(&collection_lower, span)?,
         };
@@ -329,8 +326,7 @@ impl Compiler {
         let collection_reg = match base_reg {
             Some(base) => {
                 let parts = split_path_without_wildcards(&collection_lower)?;
-                let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-                self.emit_chained_index_literal_path(base, &refs, span)?
+                self.emit_chained_index_segments(base, &parts, span)?
             }
             None => self.compile_resource_path_value(&collection_lower, span)?,
         };
@@ -900,8 +896,7 @@ impl Compiler {
         // Lowercase to match normalizer-lowercased keys.
         let nav_path = nav_path.to_ascii_lowercase();
         let parts = split_path_without_wildcards(&nav_path)?;
-        let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-        self.emit_chained_index_literal_path(base_reg, &refs, span)
+        self.emit_chained_index_segments(base_reg, &parts, span)
     }
 
     /// Compile a `current('key')` reference inside a count's where clause.
@@ -943,9 +938,8 @@ impl Compiler {
                     let name_dot = format!("{}.", lc_name);
                     if let Some(suffix) = lc_candidate.strip_prefix(&name_dot) {
                         let parts = split_path_without_wildcards(suffix)?;
-                        let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
                         return compiler
-                            .emit_chained_index_literal_path(binding.current_reg, &refs, span)
+                            .emit_chained_index_segments(binding.current_reg, &parts, span)
                             .map(Some);
                     }
                 }
