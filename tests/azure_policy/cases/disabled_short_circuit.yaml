@@ -1,0 +1,136 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# A parameterized Disabled cross-resource effect must return Undefined before
+# asking the host for related resources. Both cases omit host responses so
+# reaching the lookup is observable as HostAwaitResponseMissing.
+
+cases:
+  - note: disabled_cross_resource_effect_never_reaches_the_host
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "existenceCondition": {
+              "field": "properties.type",
+              "equals": "IaaSAntimalware"
+            }
+          }
+        }
+      }
+    parameters:
+      effect: "Disabled"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_undefined: true
+
+  - note: non_disabled_cross_resource_effect_reaches_the_host
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "existenceCondition": {
+              "field": "properties.type",
+              "equals": "IaaSAntimalware"
+            }
+          }
+        }
+      }
+    parameters:
+      effect: "AuditIfNotExists"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_eval_error_contains: "HostAwait executed but no response provided"
+
+  # Effect names are case-insensitive.
+  - note: lowercase_disabled_never_reaches_the_host
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "existenceCondition": {
+              "field": "properties.type",
+              "equals": "IaaSAntimalware"
+            }
+          }
+        }
+      }
+    parameters:
+      effect: "disabled"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_undefined: true
+
+  - note: disabled_deploy_if_not_exists_never_reaches_the_host
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "roleDefinitionIds": ["/providers/Microsoft.Authorization/roleDefinitions/contributor"],
+            "existenceCondition": {
+              "field": "properties.type",
+              "equals": "IaaSAntimalware"
+            },
+            "deployment": {
+              "properties": { "mode": "incremental", "template": {} }
+            }
+          }
+        }
+      }
+    parameters:
+      effect: "Disabled"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_undefined: true
+
+  - note: deploy_if_not_exists_reaches_the_host
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "[parameters('effect')]",
+          "details": {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "roleDefinitionIds": ["/providers/Microsoft.Authorization/roleDefinitions/contributor"],
+            "existenceCondition": {
+              "field": "properties.type",
+              "equals": "IaaSAntimalware"
+            },
+            "deployment": {
+              "properties": { "mode": "incremental", "template": {} }
+            }
+          }
+        }
+      }
+    parameters:
+      effect: "DeployIfNotExists"
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    want_eval_error_contains: "HostAwait executed but no response provided"
