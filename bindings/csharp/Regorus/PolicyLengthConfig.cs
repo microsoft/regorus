@@ -3,7 +3,11 @@
 
 using System;
 
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
     /// <summary>
     /// Policy source length limits enforced when loading policy files.

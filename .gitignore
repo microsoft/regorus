@@ -22,8 +22,11 @@ worktrees/
 # Generated C, C++ headers
 bindings/ffi/regorus.h
 bindings/ffi/regorus.ffi.hpp
+bindings/ffi/regorus.experimental.h
+bindings/ffi/regorus.experimental.ffi.hpp
 
 bindings/*/target
+bindings/*/target-experimental
 
 # Temporary commit message files
 .commit-msg.txt

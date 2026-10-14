@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <None Include="../../../tests/**/*.*" Link="tests/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Remove="AssumptionTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

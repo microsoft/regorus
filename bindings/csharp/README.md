@@ -35,6 +35,31 @@ The `cargo xtask` runner provides helpers for local builds:
 2. `cargo xtask nuget` reuses those artefacts to pack the C# library. It defaults to debug builds for the host but accepts `--target`, `--release`, `--artifacts-dir <path>` to reuse existing binaries, and `--enforce-artifacts` to require every officially supported platform.
 3. `cargo xtask test-csharp` ensures a NuGet is available (rebuilding when required or when `--force-nuget` is passed) and then runs `Regorus.Tests`, `TestApp`, and `TargetExampleApp` against it. The command accepts the same build flags as `cargo xtask nuget`.
 
+## Experimental explanations package
+
+Explanation and partial-evaluation APIs are distributed separately from the standard package:
+
+- `Microsoft.Regorus` loads `regorus_ffi` and does not expose explanation APIs.
+- `Microsoft.Regorus.Experimental` uses the `Regorus.Experimental` namespace, loads
+  `regorus_experimental_ffi`, and exposes the opt-in explanation APIs.
+
+The packages can coexist in one application. They load separate native runtimes, so process-global
+settings are also separate: configure memory limits, cache settings, and fallback execution timers
+through both namespaces when both runtimes are used. Exception types are distinct as well; code
+that handles both runtimes must catch the corresponding standard and experimental exceptions.
+
+Experimental package versions use the same base version as the standard package with an
+`-experimental.N` suffix. Experimental APIs and report formats may change before stabilization.
+
+Build the experimental native and managed artifacts with:
+
+```console
+cargo xtask build-ffi --release --experimental
+cargo xtask build-csharp --release --experimental
+```
+
+These commands create local artifacts only; publishing remains a separate release operation.
+
 ## Memory Usage Safeguards
 
 The C# bindings expose allocator-backed memory tracking utilities via the static `Regorus.MemoryLimits` helper. Typical usage:

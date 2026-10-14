@@ -37,7 +37,6 @@ default = [
 	"regorus/full-opa",
 	"cache",
 	"contention_checks",
-	"explanations",
 ]
 ast = ["regorus/ast"]
 azure_policy = ["regorus/azure_policy"]

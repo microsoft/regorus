@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <PackageId>Microsoft.Regorus.Experimental</PackageId>
+        <AssemblyName>Regorus.Experimental</AssemblyName>
+        <RootNamespace>Regorus.Experimental</RootNamespace>
+        <TargetFrameworks>netstandard2.0;netstandard2.1</TargetFrameworks>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <LangVersion>10.0</LangVersion>
+        <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+        <DefineConstants>$(DefineConstants);REGORUS_EXPERIMENTAL</DefineConstants>
+        <PackageVersion>$(RegorusPackageVersion)-$(RegorusExperimentalPackageVersionSuffix)</PackageVersion>
+        <Version>$(RegorusPackageVersion)-$(RegorusExperimentalPackageVersionSuffix)</Version>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageLicenseExpression>MIT AND Apache-2.0 AND BSD-3-Clause</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/microsoft/regorus</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/microsoft/regorus</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <Authors>Microsoft</Authors>
+        <Company>Microsoft</Company>
+        <PackageTags>rego;policy;engine;authorization;opa;experimental</PackageTags>
+        <Description>Experimental Regorus APIs for explanations and partial evaluation. APIs and report formats may change before stabilization.</Description>
+        <Copyright>Copyright (c) Microsoft Corporation.</Copyright>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <RegorusFFIArtifactsProfile Condition="'$(RegorusFFIArtifactsProfile)' == ''">release</RegorusFFIArtifactsProfile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="../Regorus/*.cs" Link="%(Filename)%(Extension)" />
+        <PackageReference Include="System.Text.Json" />
+    </ItemGroup>
+
+    <PropertyGroup Condition="'$(EnableRegorusTestHooks)' == 'true'">
+        <DefineConstants>$(DefineConstants);REGORUS_FFI_TEST_HOOKS</DefineConstants>
+    </PropertyGroup>
+
+    <Target Name="ChecksRegorusExperimentalFFIArtifactsDir" BeforeTargets="Pack" Condition="'$(IgnoreMissingArtifacts)' == ''">
+        <Error Text="RegorusFFIArtifactsDir must be supplied." Condition="'$(RegorusFFIArtifactsDir)' == ''" />
+        <Error Text="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_experimental_ffi.dll missing."
+            Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_experimental_ffi.dll')" />
+        <Error Text="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_experimental_ffi.pdb missing."
+            Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_experimental_ffi.pdb')" />
+        <Error Text="$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/$(RegorusFFIArtifactsProfile)/libregorus_experimental_ffi.so missing."
+            Condition="!Exists('$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/$(RegorusFFIArtifactsProfile)/libregorus_experimental_ffi.so')" />
+        <Error Text="$(RegorusFFIArtifactsDir)/aarch64-apple-darwin/$(RegorusFFIArtifactsProfile)/libregorus_experimental_ffi.dylib missing."
+            Condition="!Exists('$(RegorusFFIArtifactsDir)/aarch64-apple-darwin/$(RegorusFFIArtifactsProfile)/libregorus_experimental_ffi.dylib')" />
+    </Target>
+
+    <ItemGroup Condition="'$(RegorusFFIArtifactsDir)' != ''">
+        <None Include="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_experimental_ffi.dll" Pack="true" PackagePath="runtimes/win-x64/native/" Condition="Exists('$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_experimental_ffi.dll')" />
+        <None Include="$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_experimental_ffi.pdb" Pack="true" PackagePath="runtimes/win-x64/native/" Condition="Exists('$(RegorusFFIArtifactsDir)/x86_64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_experimental_ffi.pdb')" />
+        <None Include="$(RegorusFFIArtifactsDir)/aarch64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_experimental_ffi.dll" Pack="true" PackagePath="runtimes/win-arm64/native/" Condition="Exists('$(RegorusFFIArtifactsDir)/aarch64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_experimental_ffi.dll')" />
+        <None Include="$(RegorusFFIArtifactsDir)/aarch64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_experimental_ffi.pdb" Pack="true" PackagePath="runtimes/win-arm64/native/" Condition="Exists('$(RegorusFFIArtifactsDir)/aarch64-pc-windows-msvc/$(RegorusFFIArtifactsProfile)/regorus_experimental_ffi.pdb')" />
+        <None Include="$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/$(RegorusFFIArtifactsProfile)/libregorus_experimental_ffi.so" Pack="true" PackagePath="runtimes/linux-x64/native/" Condition="Exists('$(RegorusFFIArtifactsDir)/x86_64-unknown-linux-gnu/$(RegorusFFIArtifactsProfile)/libregorus_experimental_ffi.so')" />
+        <None Include="$(RegorusFFIArtifactsDir)/aarch64-apple-darwin/$(RegorusFFIArtifactsProfile)/libregorus_experimental_ffi.dylib" Pack="true" PackagePath="runtimes/osx-arm64/native/" Condition="Exists('$(RegorusFFIArtifactsDir)/aarch64-apple-darwin/$(RegorusFFIArtifactsProfile)/libregorus_experimental_ffi.dylib')" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="README.md" Pack="true" PackagePath="/" />
+        <None Include="../../../LICENSE" Pack="true" PackagePath="/" />
+    </ItemGroup>
+</Project>

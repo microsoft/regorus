@@ -34,7 +34,6 @@ default = [
 	"regorus/uuid",
 	"regorus/urlquery",
 	"regorus/yaml",
-	"explanations",
 	"cache"
 ]
 ast = ["regorus/ast"]

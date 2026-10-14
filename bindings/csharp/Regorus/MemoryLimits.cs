@@ -5,7 +5,11 @@ using System;
 using Regorus.Internal;
 
 #nullable enable
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
     /// <summary>
     /// Helpers for configuring and inspecting Regorus memory limits via the native allocator bridge.

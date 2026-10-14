@@ -6,7 +6,11 @@ using System.Collections.Generic;
 using Regorus.Internal;
 
 #nullable enable
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
     /// <summary>
     /// Execution mode for the RVM runtime.
@@ -336,6 +340,7 @@ namespace Regorus
             });
         }
 
+#if REGORUS_EXPERIMENTAL
         /// <summary>
         /// Set explanation settings for causality tracking.
         /// </summary>
@@ -372,6 +377,7 @@ namespace Regorus
                 return CheckAndDropResult(API.regorus_rvm_take_causality_report((RegorusRvm*)vmPtr));
             });
         }
+#endif
 
         private static Rvm GetRvmResult(RegorusResult result)
         {

@@ -182,6 +182,8 @@ jobs:
         # Restore NuGet packages and build .NET assemblies in release mode
         dotnet restore Regorus/Regorus.csproj
         dotnet build Regorus/Regorus.csproj --no-restore /p:Configuration=Release /p:IgnoreMissingArtifacts=true
+        dotnet restore Regorus.Experimental/Regorus.Experimental.csproj
+        dotnet build Regorus.Experimental/Regorus.Experimental.csproj --no-restore /p:Configuration=Release /p:IgnoreMissingArtifacts=true
 
     - name: Build WASM bindings via xtask
       if: matrix.language == 'javascript-typescript'

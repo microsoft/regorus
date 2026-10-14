@@ -4,8 +4,9 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Regorus.Experimental;
 
-namespace Regorus.Tests;
+namespace Regorus.Experimental.Tests;
 
 [TestClass]
 public sealed class AssumptionTests

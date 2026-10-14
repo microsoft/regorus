@@ -15,7 +15,11 @@ namespace Regorus.Internal
     /// </summary>
     internal static unsafe partial class API
     {
+#if REGORUS_EXPERIMENTAL
+        private const string LibraryName = "regorus_experimental_ffi";
+#else
         private const string LibraryName = "regorus_ffi";
+#endif
 
         #region Common Methods
 
@@ -216,6 +220,7 @@ namespace Regorus.Internal
         [DllImport(LibraryName, EntryPoint = "regorus_rvm_get_execution_state", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_rvm_get_execution_state(RegorusRvm* vm);
 
+#if REGORUS_EXPERIMENTAL
         /// <summary>
         /// Set explanation settings for causality tracking on the RVM.
         /// </summary>
@@ -227,6 +232,7 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_rvm_take_causality_report", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_rvm_take_causality_report(RegorusRvm* vm);
+#endif
 
         /// <summary>
         /// Set the maximum instruction limit.
@@ -404,6 +410,7 @@ namespace Regorus.Internal
         [DllImport(LibraryName, EntryPoint = "regorus_engine_clear_coverage_data", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_engine_clear_coverage_data(RegorusEngine* engine);
 
+#if REGORUS_EXPERIMENTAL
         /// <summary>
         /// Set explanation settings for causality tracking.
         /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.set_explanation_settings
@@ -417,6 +424,7 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_engine_take_causality_report", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_engine_take_causality_report(RegorusEngine* engine);
+#endif
 
         /// <summary>
         /// Whether to gather output of print statements.

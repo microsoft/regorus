@@ -43,6 +43,10 @@ pub struct BuildNugetCommand {
     /// Build a symbols package (snupkg).
     #[arg(long)]
     pub include_symbols: bool,
+
+    /// Build the coexisting explanations-enabled experimental package.
+    #[arg(long)]
+    pub experimental: bool,
 }
 
 /// Parsed build options shared across tasks that need a NuGet package.
@@ -55,6 +59,7 @@ pub struct BuildNugetConfig {
     pub enforce_artifacts: bool,
     pub repository_commit: Option<String>,
     pub include_symbols: bool,
+    pub experimental: bool,
 }
 
 /// Result of a NuGet build, including generated artefacts.
@@ -77,9 +82,17 @@ pub fn build_nuget_package(config: &BuildNugetConfig) -> Result<BuildNugetResult
         dir.clone()
     } else {
         let targets = ffi::resolve_targets(config.targets.clone())?;
-        ffi::build_targets(&workspace_root, &targets, config.release)?;
+        if config.experimental {
+            ffi::build_experimental_targets(&workspace_root, &targets, config.release)?;
+        } else {
+            ffi::build_targets(&workspace_root, &targets, config.release)?;
+        }
 
-        workspace_root.join("bindings/ffi/target")
+        workspace_root.join(if config.experimental {
+            "bindings/ffi/target-experimental"
+        } else {
+            "bindings/ffi/target"
+        })
     };
 
     let artifacts_dir = base_artifacts_dir.canonicalize().with_context(|| {
@@ -93,11 +106,8 @@ pub fn build_nuget_package(config: &BuildNugetConfig) -> Result<BuildNugetResult
         &workspace_root,
         &artifacts_dir,
         configuration,
-        &profile,
-        !config.enforce_artifacts,
-        config.clean,
-        config.repository_commit.as_deref(),
-        config.include_symbols,
+        profile,
+        config,
     )?;
 
     let packages = find_packages(&package_dir)?;
@@ -142,26 +152,28 @@ fn invoke_dotnet_pack(
     artifacts_dir: &Path,
     configuration: &str,
     profile: &str,
-    ignore_missing: bool,
-    clean: bool,
-    repository_commit: Option<&str>,
-    include_symbols: bool,
+    config: &BuildNugetConfig,
 ) -> Result<PathBuf> {
-    let project_dir = root.join("bindings/csharp/Regorus");
-    let artifacts_dir_str = artifacts_dir
-        .to_str()
-        .ok_or_else(|| anyhow!("artefact directory path contains invalid UTF-8"))?;
+    let project_dir = root.join(if config.experimental {
+        "bindings/csharp/Regorus.Experimental"
+    } else {
+        "bindings/csharp/Regorus"
+    });
+    let artifacts_dir_str = msbuild_path(artifacts_dir)?;
 
     let profile_arg = format!("/p:RegorusFFIArtifactsProfile={}", profile);
     let dir_arg = format!("/p:RegorusFFIArtifactsDir={}", artifacts_dir_str);
-    let repo_commit_arg = repository_commit.map(|sha| format!("/p:RepositoryCommit={}", sha));
-    let symbols_args = if include_symbols {
+    let repo_commit_arg = config
+        .repository_commit
+        .as_deref()
+        .map(|sha| format!("/p:RepositoryCommit={}", sha));
+    let symbols_args = if config.include_symbols {
         Some(("/p:IncludeSymbols=true", "/p:SymbolPackageFormat=snupkg"))
     } else {
         None
     };
 
-    if clean {
+    if config.clean {
         clean_msbuild_project(&project_dir)?;
         let artefact_root = project_dir.join("bin").join(configuration);
         if artefact_root.exists() {
@@ -192,7 +204,7 @@ fn invoke_dotnet_pack(
     if let Some(arg) = &repo_commit_arg {
         build.arg(arg);
     }
-    if ignore_missing {
+    if !config.enforce_artifacts {
         build.arg("/p:IgnoreMissingArtifacts=true");
     }
     run_command(build, "dotnet build")?;
@@ -212,12 +224,56 @@ fn invoke_dotnet_pack(
         pack.arg(include_symbols_arg);
         pack.arg(symbols_format_arg);
     }
-    if ignore_missing {
+    if !config.enforce_artifacts {
         pack.arg("/p:IgnoreMissingArtifacts=true");
     }
     run_command(pack, "dotnet pack")?;
 
     Ok(project_dir.join("bin").join(configuration))
+}
+
+fn msbuild_path(path: &Path) -> Result<String> {
+    let path = path
+        .to_str()
+        .ok_or_else(|| anyhow!("artefact directory path contains invalid UTF-8"))?;
+    #[cfg(windows)]
+    {
+        return Ok(normalize_windows_msbuild_path(path));
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(path.to_string())
+    }
+}
+
+#[cfg(windows)]
+fn normalize_windows_msbuild_path(path: &str) -> String {
+    if let Some(unc_path) = path.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{unc_path}");
+    }
+    path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::normalize_windows_msbuild_path;
+
+    #[test]
+    fn msbuild_path_normalizes_verbatim_drive_path() {
+        assert_eq!(
+            normalize_windows_msbuild_path(r"\\?\C:\source tree\artifacts"),
+            r"C:\source tree\artifacts"
+        );
+    }
+
+    #[test]
+    fn msbuild_path_normalizes_verbatim_unc_path() {
+        assert_eq!(
+            normalize_windows_msbuild_path(r"\\?\UNC\server\share\artifacts"),
+            r"\\server\share\artifacts"
+        );
+    }
 }
 
 impl BuildNugetCommand {
@@ -249,6 +305,7 @@ impl BuildNugetCommand {
             enforce_artifacts: self.enforce_artifacts,
             repository_commit: self.repository_commit.clone(),
             include_symbols: self.include_symbols,
+            experimental: self.experimental,
         }
     }
 }
@@ -320,6 +377,10 @@ pub struct TestCsharpCommand {
     /// Emit console logger output for dotnet test.
     #[arg(long = "console-logger")]
     pub console_logger: bool,
+
+    /// Build and test the coexisting explanations-enabled experimental package.
+    #[arg(long)]
+    pub experimental: bool,
 }
 
 impl TestCsharpCommand {
@@ -341,7 +402,11 @@ impl TestCsharpCommand {
             }
         } else {
             workspace
-                .join("bindings/csharp/Regorus/bin")
+                .join(if self.experimental {
+                    "bindings/csharp/Regorus.Experimental/bin"
+                } else {
+                    "bindings/csharp/Regorus/bin"
+                })
                 .join(configuration)
         };
 
@@ -353,6 +418,7 @@ impl TestCsharpCommand {
             enforce_artifacts: self.enforce_artifacts,
             repository_commit: None,
             include_symbols: false,
+            experimental: self.experimental,
         };
 
         let mut packages = find_packages(&package_dir)?;
@@ -397,17 +463,24 @@ impl TestCsharpCommand {
 
         let mut package_versions = HashSet::new();
         for package in &packages {
-            if let Some(version) = package
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .and_then(|stem| stem.strip_prefix("Microsoft.Regorus."))
-            {
-                package_versions.insert(version.to_owned());
+            if let Some(stem) = package.file_stem().and_then(|stem| stem.to_str()) {
+                for (prefix, cache_name) in [
+                    (
+                        "Microsoft.Regorus.Experimental.",
+                        "microsoft.regorus.experimental",
+                    ),
+                    ("Microsoft.Regorus.", "microsoft.regorus"),
+                ] {
+                    if let Some(version) = stem.strip_prefix(prefix) {
+                        package_versions.insert((cache_name.to_owned(), version.to_owned()));
+                        break;
+                    }
+                }
             }
         }
 
-        for version in &package_versions {
-            let cache_entry = package_cache.join("microsoft.regorus").join(version);
+        for (package_name, version) in &package_versions {
+            let cache_entry = package_cache.join(package_name).join(version);
             if cache_entry.exists() {
                 fs::remove_dir_all(&cache_entry).with_context(|| {
                     format!(
@@ -418,17 +491,106 @@ impl TestCsharpCommand {
             }
         }
 
-        run_regorus_tests(
-            &workspace,
-            configuration,
-            &package_dir,
-            self.clean,
-            &package_cache,
-            self.test_filter.as_deref(),
-            self.skip_apps,
-            self.console_logger,
+        if self.experimental {
+            Self::run_experimental_regorus_tests(
+                &workspace,
+                configuration,
+                &package_dir,
+                self.clean,
+                &package_cache,
+                self.test_filter.as_deref(),
+                self.console_logger,
+            )?;
+        } else {
+            run_regorus_tests(
+                &workspace,
+                configuration,
+                &package_dir,
+                self.clean,
+                &package_cache,
+                self.test_filter.as_deref(),
+                self.skip_apps,
+                self.console_logger,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn run_experimental_regorus_tests(
+        workspace: &Path,
+        configuration: &str,
+        package_dir: &Path,
+        clean: bool,
+        package_cache: &Path,
+        test_filter: Option<&str>,
+        console_logger: bool,
+    ) -> Result<()> {
+        let local_packages = workspace.join("bindings/csharp/local-packages");
+        if local_packages.exists() {
+            fs::remove_dir_all(&local_packages)?;
+        }
+        fs::create_dir_all(&local_packages)?;
+        Self::copy_nuget_packages(package_dir, &local_packages)?;
+
+        let nuget_config = workspace.join("bindings/csharp/nuget.config");
+        let cache_path = package_cache
+            .to_str()
+            .ok_or_else(|| anyhow!("NuGet cache path contains invalid UTF-8"))?;
+        let properties = [
+            format!("/p:RestorePackagesPath={cache_path}"),
+            "/p:UsePackageReference=true".to_string(),
+            "/p:RestoreIgnoreFailedSources=true".to_string(),
+        ];
+        let property_args: Vec<&str> = properties.iter().map(String::as_str).collect();
+        let tests = workspace.join("bindings/csharp/Regorus.Experimental.Tests");
+        if clean {
+            clean_msbuild_project(&tests)?;
+        }
+        restore_with_source(
+            &tests,
+            &property_args,
+            "Regorus.Experimental.Tests",
+            package_cache,
+            &nuget_config,
         )?;
 
+        let mut test = Command::new("dotnet");
+        test.current_dir(&tests);
+        test.arg("test");
+        test.arg("--no-restore");
+        test.arg("-c");
+        test.arg(configuration);
+        test.arg("--arch");
+        test.arg(dotnet_host_arch());
+        for property in &property_args {
+            test.arg(property);
+        }
+        if console_logger {
+            test.arg("--logger");
+            test.arg("console;verbosity=detailed");
+        }
+        if let Some(filter) = test_filter {
+            test.arg("--");
+            test.arg("--filter");
+            test.arg(filter);
+        }
+        test.env("NUGET_PACKAGES", package_cache);
+        run_command(test, "dotnet test (Regorus.Experimental.Tests)")
+    }
+
+    fn copy_nuget_packages(package_dir: &Path, local_packages: &Path) -> Result<()> {
+        for entry in fs::read_dir(package_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("nupkg"))
+            {
+                fs::copy(&path, local_packages.join(entry.file_name()))?;
+            }
+        }
         Ok(())
     }
 }

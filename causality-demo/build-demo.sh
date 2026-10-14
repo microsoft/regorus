@@ -14,4 +14,4 @@ fi
 echo "Building browser wasm package into causality-demo/pkg"
 mkdir -p "$DEMO_PKG_DIR"
 cd "$WASM_DIR"
-wasm-pack build --target web --release --out-dir ../../causality-demo/pkg
+wasm-pack build --target web --release --out-dir ../../causality-demo/pkg -- --features explanations

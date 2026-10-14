@@ -8,8 +8,13 @@ using Regorus.Internal;
 
 
 #nullable enable
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
+#if REGORUS_EXPERIMENTAL
     /// <summary>
     /// Controls whether explanation bindings keep or redact secret-looking values.
     /// </summary>
@@ -47,6 +52,7 @@ namespace Regorus
         Standard = 1,
         Full = 2,
     }
+#endif
 
     /// <summary>
     /// C# Wrapper for the Regorus engine.
@@ -328,6 +334,7 @@ namespace Regorus
             });
         }
 
+#if REGORUS_EXPERIMENTAL
         public void SetExplanationSettings(bool enabled, ExplanationValueMode valueMode = ExplanationValueMode.Redacted, ExplanationConditionMode conditionMode = ExplanationConditionMode.PrimaryOnly, ExplanationScope scope = ExplanationScope.AllEmissions, ExplanationDetail detail = ExplanationDetail.Standard, uint? emissionIndex = null, string? emissionValueJson = null, bool assumeUnknownInput = false)
         {
             if (emissionValueJson is null)
@@ -356,6 +363,7 @@ namespace Regorus
                 return CheckAndDropResult(Regorus.Internal.API.regorus_engine_take_causality_report((Regorus.Internal.RegorusEngine*)enginePtr));
             });
         }
+#endif
 
         public void SetGatherPrints(bool enable)
         {

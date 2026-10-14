@@ -5,7 +5,11 @@ using System;
 using Regorus.Internal;
 
 #nullable enable
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
     /// <summary>
     /// Provides static methods for compiling Azure Policy JSON definitions
