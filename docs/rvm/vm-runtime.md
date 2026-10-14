@@ -36,6 +36,7 @@ fields to responsibilities.
 | `execution_mode`                      | `RunToCompletion` or `Suspendable`.                         | `execution.rs` |
 | `frame_pc_overridden`                 | Tracks manual PC updates inside frames.                     | `execution.rs`, `loops.rs`, `comprehension.rs` |
 | `strict_builtin_errors`               | Configures builtin failure handling (error vs `undefined`).  | `machine.rs`, `arithmetic.rs`, `dispatch.rs` |
+| `builtin_policy`                       | Instance-scoped exact native builtin restrictions.          | `builtin_policy.rs`, `functions.rs`, `dispatch.rs` |
 
 ### Key methods
 
@@ -52,6 +53,10 @@ fields to responsibilities.
   FIFO order when `HostAwait` executes in run-to-completion mode.
 - `set_strict_builtin_errors`: toggles builtin failure semantics between
   `VmError::ArithmeticError` and returning `Value::Undefined`.
+- `set_builtin_policy`: atomically replaces the VM's native builtin policy.
+  Changes are rejected while the VM is running or suspended; a valid change
+  in any other state clears prior execution/cache state and returns to `Ready`.
+- `get_builtin_policy`: returns the VM's immutable builtin policy.
 - Accessors (`get_pc`, `get_registers`, `get_loop_stack`, etc.) aid debugging
   and visualisation tooling.
 - `get_host_await_argument`: when the VM is suspended on a `HostAwait`, returns
@@ -67,7 +72,47 @@ fields to responsibilities.
 
 ---
 
-## 2. Execution modes
+## 2. Builtin policy
+
+`BuiltinPolicy` is allow-all by default and stores exact disabled native builtin
+names validated against the builtins registered in the current feature
+configuration. `CompilerOptions` applies it during RVM compilation:
+
+```rust
+use regorus::languages::rego::compiler::{Compiler, CompilerOptions};
+use regorus::rvm::BuiltinPolicy;
+
+let policy = BuiltinPolicy::from_disabled_names(&["http.send"])?;
+let options = CompilerOptions {
+    builtin_policy: policy,
+    ..CompilerOptions::default()
+};
+let program =
+    Compiler::compile_from_policy_with_options(&compiled_policy, &entry_points, &options)?;
+```
+
+Compile-time validation examines calls in every loaded module, including unused
+rules, without compiling those rules into the program. Resolved disabled calls
+produce a source-spanned compilation error. The same-name registered host-await
+implementation and statically named raw `__builtin_host_await` calls are also
+rejected. Dynamic host identifiers are checked at runtime before a response is
+read or the VM suspends.
+
+Each `RegoVM` owns its own policy, separate from its shared `Program`. Runtime
+dispatch raises `VmError::BuiltinDisabled` even for precompiled or deserialized
+programs, before builtin undefined-argument handling, cache reads, and
+non-strict error fallback. The default policy preserves existing behavior.
+Program serialization does not include a VM policy. This name-based control is
+not a sandbox for other host capabilities.
+
+Rust RVM, the C ABI and its generated C++ FFI header (`bindings/ffi`), and the
+C# binding expose this opt-in control. Higher-level Python, WASM, Java, Go,
+Ruby, C++ convenience, and C no_std APIs remain unchanged and use their existing
+allow-all behavior; interpreter APIs do not accept this RVM policy.
+
+---
+
+## 3. Execution modes
 
 ### Run-to-completion
 
@@ -277,4 +322,3 @@ internal runtime field and is not a public C# getter.
   combines nested loops, comprehensions, function calls, and host awaits.
 
 ---
-

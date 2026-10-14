@@ -10,6 +10,8 @@ use crate::limits::RegorusExecutionTimerConfig;
 use crate::limits::RegorusPolicyLengthConfig;
 use crate::lock::{new_handle, read, try_read, try_write, Handle, ReadGuard, WriteGuard};
 use crate::panic_guard::with_unwind_guard;
+#[cfg(feature = "rvm")]
+use crate::rvm::{convert_c_compiler_options, RegorusCompilerOptions};
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
@@ -873,6 +875,66 @@ pub extern "C" fn regorus_engine_compile_program_with_entrypoints(
     })
 }
 
+/// Compile an RVM program from the engine state with compiler options.
+///
+/// This additive entry point accepts the same compiler options as
+/// `regorus_program_compile_from_modules_with_options`.
+#[cfg(feature = "rvm")]
+#[no_mangle]
+pub extern "C" fn regorus_engine_compile_program_with_options(
+    engine: *mut RegorusEngine,
+    entry_points: *const *const c_char,
+    entry_points_len: usize,
+    options: *const RegorusCompilerOptions,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        let result = || -> Result<Arc<Program>> {
+            if entry_points_len == 0 {
+                return Err(anyhow!("entry_points must contain at least one entry"));
+            }
+            if entry_points.is_null() {
+                return Err(anyhow!("null entry_points pointer"));
+            }
+
+            let mut entry_points_vec = Vec::new();
+            entry_points_vec
+                .try_reserve(entry_points_len)
+                .map_err(|_| anyhow!("failed to reserve capacity for entry points"))?;
+            for i in 0..entry_points_len {
+                let entry = from_c_str(unsafe { *entry_points.add(i) })?;
+                entry_points_vec.push(entry);
+            }
+            let entry_points_ref: Vec<&str> = entry_points_vec.iter().map(String::as_str).collect();
+            let rule = entry_points_ref
+                .first()
+                .ok_or_else(|| anyhow!("entry_points must contain at least one entry"))?;
+            let rule_rc: regorus::Rc<str> = (*rule).into();
+            let compiler_options = convert_c_compiler_options(to_shared_ref(options)?)?;
+
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
+            let mut guard = engine.try_write()?;
+            let compiled_policy = guard.compile_with_entrypoint(&rule_rc)?;
+            Ok(Compiler::compile_from_policy_with_options(
+                &compiled_policy,
+                &entry_points_ref,
+                &compiler_options,
+            )?)
+        }();
+
+        match result {
+            Ok(program) => {
+                let wrapped = crate::rvm::RegorusProgram { program };
+                let boxed = Box::new(wrapped);
+                RegorusResult::ok_pointer(Box::into_raw(boxed) as *mut c_void)
+            }
+            Err(error) => RegorusResult::err_with_message(
+                RegorusStatus::CompilationFailed,
+                format!("Failed to compile RVM program: {error}"),
+            ),
+        }
+    })
+}
+
 #[cfg(all(test, feature = "std"))]
 mod namespace_tests {
     #[cfg(feature = "azure_policy")]
@@ -1188,6 +1250,51 @@ mod namespace_tests {
 
         regorus_rvm_drop(vm);
         regorus_program_drop(program);
+        regorus_engine_drop(engine);
+    }
+}
+
+#[cfg(all(test, feature = "rvm"))]
+mod builtin_policy_tests {
+    use super::{
+        regorus_engine_add_policy, regorus_engine_compile_program_with_options,
+        regorus_engine_drop, regorus_engine_new,
+    };
+    use crate::common::{regorus_result_drop, RegorusStatus};
+    use crate::rvm::{RegorusBuiltinPolicy, RegorusCompilerOptions};
+    use alloc::ffi::CString;
+    use core::ptr;
+
+    #[test]
+    fn engine_compilation_rejects_disabled_builtin_with_options() {
+        let engine = regorus_engine_new();
+        let module_id = CString::new("policy.rego").expect("module ID CString");
+        let source = CString::new("package demo\nallow := count([]) == 0").expect("source CString");
+        let added = regorus_engine_add_policy(engine, module_id.as_ptr(), source.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let entry_point = CString::new("data.demo.allow").expect("entry point CString");
+        let entry_points = [entry_point.as_ptr()];
+        let disabled_name = CString::new("count").expect("builtin name CString");
+        let disabled_names = [disabled_name.as_ptr()];
+        let options = RegorusCompilerOptions {
+            host_await_builtins: ptr::null(),
+            host_await_builtins_len: 0,
+            host_await_builtin_size: core::mem::size_of::<crate::rvm::RegorusHostAwaitBuiltin>(),
+            builtin_policy: RegorusBuiltinPolicy {
+                disabled_names: disabled_names.as_ptr(),
+                disabled_names_len: disabled_names.len(),
+            },
+        };
+        let result = regorus_engine_compile_program_with_options(
+            engine,
+            entry_points.as_ptr(),
+            entry_points.len(),
+            &options,
+        );
+        assert!(matches!(result.status, RegorusStatus::CompilationFailed));
+        regorus_result_drop(result);
         regorus_engine_drop(engine);
     }
 }

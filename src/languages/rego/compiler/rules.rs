@@ -10,7 +10,10 @@
     clippy::pattern_type_mismatch
 )]
 
-use super::{CompilationContext, Compiler, CompilerError, ContextType, Result, WorklistEntry};
+use super::{
+    CompilationContext, Compiler, CompilerError, CompilerOptions, ContextType, Result,
+    WorklistEntry,
+};
 use crate::ast::{Expr, ExprRef, Rule, RuleHead};
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
@@ -25,6 +28,49 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+
+fn collect_callable_default_function_paths(policy: &CompiledPolicy) -> Result<BTreeSet<String>> {
+    let mut paths = BTreeSet::new();
+    if policy.inner.default_rules.is_empty() {
+        return Ok(paths);
+    }
+
+    for module in policy.get_modules() {
+        let mut module_path = None;
+        for rule in &module.policy {
+            if let Rule::Default { refr, args, .. } = rule.as_ref() {
+                if args.is_empty() {
+                    continue;
+                }
+
+                if module_path.is_none() {
+                    module_path = Some(
+                        get_path_string(&module.package.refr, Some("data")).map_err(|error| {
+                            CompilerError::General {
+                                message: format!("Failed to get package path for module: {error}"),
+                            }
+                            .at(module.package.refr.span())
+                        })?,
+                    );
+                }
+                let Some(module_path) = module_path.as_deref() else {
+                    return Err(CompilerError::General {
+                        message: "Failed to prepare module path for default function".to_string(),
+                    }
+                    .at(refr.span()));
+                };
+                let path = get_path_string(refr, Some(module_path)).map_err(|error| {
+                    CompilerError::General {
+                        message: format!("Failed to get default function path: {error}"),
+                    }
+                    .at(refr.span())
+                })?;
+                paths.insert(path);
+            }
+        }
+    }
+    Ok(paths)
+}
 
 impl<'a> Compiler<'a> {
     /// Extract a compile-time constant `Value` from an optional expression.
@@ -263,9 +309,30 @@ impl<'a> Compiler<'a> {
         entry_points: &[&str],
         host_await_builtins: &[(&str, usize)],
     ) -> Result<Arc<Program>> {
+        let options = CompilerOptions {
+            host_await_builtins: host_await_builtins
+                .iter()
+                .map(|(name, arg_count)| ((*name).to_string(), *arg_count))
+                .collect(),
+            builtin_policy: crate::rvm::BuiltinPolicy::default(),
+        };
+        Self::compile_from_policy_with_options(policy, entry_points, &options)
+    }
+
+    /// Compile from a CompiledPolicy with host-await registrations and a builtin policy.
+    pub fn compile_from_policy_with_options(
+        policy: &CompiledPolicy,
+        entry_points: &[&str],
+        options: &CompilerOptions,
+    ) -> Result<Arc<Program>> {
         let mut compiler = Compiler::with_policy(policy);
-        for &(name, arg_count) in host_await_builtins {
-            compiler.register_host_await_builtin(name, arg_count)?;
+        for (name, arg_count) in &options.host_await_builtins {
+            compiler.register_host_await_builtin(name, *arg_count)?;
+        }
+        compiler.builtin_policy = options.builtin_policy.clone();
+        compiler.default_function_paths = collect_callable_default_function_paths(policy)?;
+        if !compiler.builtin_policy.disabled_names().is_empty() {
+            super::function_calls::validate_all_modules(&compiler)?;
         }
         compiler.current_rule_path = "".to_string();
         let rules = policy.get_rules();

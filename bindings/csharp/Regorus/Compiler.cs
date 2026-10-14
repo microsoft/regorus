@@ -46,8 +46,8 @@ namespace Regorus
     /// level (use object packing to pass multiple values). The argument count is
     /// therefore not exposed here.
     ///
-    /// Host-await builtins are not yet supported via the <c>CompileFromEngine</c>
-    /// path; only <c>CompileFromModules</c> accepts them today.
+    /// Host-await builtins are supported by the module overload and by
+    /// <c>Program.CompileFromEngineWithOptions</c>.
     /// </remarks>
     public readonly struct HostAwaitBuiltin
     {

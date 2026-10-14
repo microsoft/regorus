@@ -54,6 +54,12 @@ impl RegoVM {
                 available: program.builtin_info_table.len(),
             },
         )?;
+        if self.builtin_policy.is_disabled(&builtin_info.name) {
+            return Err(VmError::BuiltinDisabled {
+                name: builtin_info.name.clone(),
+                pc: self.pc,
+            });
+        }
 
         let mut args = core::mem::take(&mut self.cached_builtin_args);
         args.clear();
@@ -162,5 +168,59 @@ impl RegoVM {
         self.memory_check()?;
 
         Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "time"))]
+mod tests {
+    use super::{RegoVM, VmError};
+    use crate::languages::rego::compiler::Compiler;
+    use crate::rvm::instructions::Instruction;
+    use crate::rvm::BuiltinPolicy;
+    use crate::{Engine, Rc, Value};
+    use alloc::vec;
+
+    #[allow(clippy::expect_used)]
+    #[test]
+    fn disabled_cached_builtin_fails_before_cache_lookup() {
+        let mut engine = Engine::new();
+        engine
+            .add_policy(
+                "test.rego".into(),
+                "package test\nresult := time.now_ns()".into(),
+            )
+            .expect("add policy");
+        let entry_point = "data.test.result";
+        let compiled = engine
+            .compile_with_entrypoint(&Rc::from(entry_point))
+            .expect("compile policy");
+        let program =
+            Compiler::compile_from_policy(&compiled, &[entry_point]).expect("compile to RVM");
+        let params_index = program
+            .instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                &Instruction::BuiltinCall { params_index } => Some(params_index),
+                _ => None,
+            })
+            .expect("builtin call instruction");
+
+        let mut vm = RegoVM::new();
+        vm.load_program(program);
+        vm.set_builtin_policy(
+            BuiltinPolicy::from_disabled_names(&["time.now_ns"]).expect("valid policy"),
+        )
+        .expect("set builtin policy");
+        vm.builtins_cache
+            .insert("time.now_ns", vec![(vec![], Value::from(7))]);
+
+        assert!(matches!(
+            vm.execute_builtin_call(params_index),
+            Err(VmError::BuiltinDisabled { name, .. }) if name == "time.now_ns"
+        ));
+        assert!(
+            vm.builtins_cache.contains_key("time.now_ns"),
+            "the preloaded cache entry should not be consumed or removed"
+        );
     }
 }

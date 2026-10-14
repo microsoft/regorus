@@ -26,7 +26,8 @@ impl<'a> Compiler<'a> {
 
     /// Check if a function path is a user-defined function rule
     pub(super) fn is_user_defined_function(&self, rule_path: &str) -> bool {
-        self.policy.inner.rules.contains_key(rule_path)
+        self.policy.inner.functions.contains_key(rule_path)
+            || self.default_function_paths.contains(rule_path)
     }
 
     /// Get builtin index for a builtin function

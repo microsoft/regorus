@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using Regorus.Internal;
 
 #nullable enable
@@ -143,6 +144,74 @@ namespace Regorus
         public void SetExecutionMode(ExecutionMode mode)
         {
             SetExecutionMode((byte)mode);
+        }
+
+        /// <summary>
+        /// Atomically replace the VM's disabled native builtin policy.
+        /// </summary>
+        /// <remarks>
+        /// The policy is independent of the loaded program and survives program
+        /// loads. Replacement is rejected while execution is running or suspended.
+        /// </remarks>
+        public void SetBuiltinPolicy(BuiltinPolicy policy)
+        {
+            if (policy is null)
+            {
+                throw new ArgumentNullException(nameof(policy));
+            }
+
+            using var pinnedNames = ModuleMarshalling.PinUtf8Strings(policy.DisabledNames);
+            UseHandle(vmPtr =>
+            {
+                fixed (IntPtr* disabledNamesPtr = pinnedNames.Buffer)
+                {
+                    RegorusResult result;
+                    try
+                    {
+                        result = API.regorus_rvm_set_builtin_policy(
+                            (RegorusRvm*)vmPtr,
+                            (byte**)disabledNamesPtr,
+                            (UIntPtr)pinnedNames.Length);
+                    }
+                    catch (EntryPointNotFoundException error)
+                    {
+                        throw NativeCompatibility.BuiltinPolicyUnsupported(error);
+                    }
+                    CheckAndDropResult(result);
+                }
+                return 0;
+            });
+        }
+
+        /// <summary>
+        /// Get a copy of the VM's current builtin policy.
+        /// </summary>
+        public BuiltinPolicy GetBuiltinPolicy()
+        {
+            return UseHandle(vmPtr =>
+            {
+                RegorusResult result;
+                try
+                {
+                    result = API.regorus_rvm_get_builtin_policy((RegorusRvm*)vmPtr);
+                }
+                catch (EntryPointNotFoundException error)
+                {
+                    throw NativeCompatibility.BuiltinPolicyUnsupported(error);
+                }
+                var json = CheckAndDropResult(result);
+                if (json is null)
+                {
+                    throw new InvalidOperationException("Expected builtin policy JSON from the native library.");
+                }
+
+                var names = JsonSerializer.Deserialize<string[]>(json);
+                if (names is null)
+                {
+                    throw new InvalidOperationException("The native builtin policy was not a JSON string array.");
+                }
+                return new BuiltinPolicy(names);
+            });
         }
 
         /// <summary>

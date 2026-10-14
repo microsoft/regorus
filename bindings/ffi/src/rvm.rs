@@ -18,12 +18,13 @@ use alloc::vec::Vec;
 use anyhow::{anyhow, Result};
 use core::ffi::{c_char, c_void};
 use core::ptr;
-use regorus::languages::rego::compiler::Compiler;
+use regorus::languages::rego::compiler::{Compiler, CompilerOptions};
 use regorus::rvm::program::{
     generate_assembly_listing, generate_tabular_assembly_listing, AssemblyListingConfig,
     DeserializationResult, Program,
 };
 use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, VmError};
+use regorus::rvm::BuiltinPolicy;
 use regorus::utils::limits::check_memory_limit_if_needed;
 use regorus::PolicyModule;
 use regorus::Value;
@@ -172,17 +173,14 @@ pub extern "C" fn regorus_program_compile_from_policy(
 }
 
 /// Shared implementation for compiling an RVM program from data/modules/entry-points
-/// with optional host-await builtins.
-#[allow(clippy::too_many_arguments)]
+/// with optional host-await builtins and disabled native builtins.
 fn compile_from_modules_inner(
     data_json: *const c_char,
     modules: *const RegorusPolicyModule,
     modules_len: usize,
     entry_points: *const *const c_char,
     entry_points_len: usize,
-    host_await_builtins: *const RegorusHostAwaitBuiltin,
-    host_await_builtins_len: usize,
-    host_await_builtin_size: usize,
+    options: Option<&RegorusCompilerOptions>,
 ) -> Result<*mut RegorusProgram> {
     if entry_points_len == 0 {
         return Err(anyhow!("entry_points must contain at least one entry"));
@@ -201,21 +199,14 @@ fn compile_from_modules_inner(
     let compiled_policy =
         regorus::compile_policy_with_entrypoint(data, &policy_modules, entry_rule.into())?;
 
-    // `Compiler::compile_from_policy_with_host_await` with an empty builtins
-    // slice is equivalent to `compile_from_policy`, so both FFI entry points
-    // route through this single path. A null `host_await_builtins` pointer
-    // with `len == 0` is the canonical "no builtins" shape.
-    let ha_builtins = convert_c_host_await_builtins(
-        host_await_builtins,
-        host_await_builtins_len,
-        host_await_builtin_size,
-    )?;
-    let ha_ref: Vec<(&str, usize)> = ha_builtins.iter().map(|(n, a)| (n.as_str(), *a)).collect();
-
-    let program = Compiler::compile_from_policy_with_host_await(
+    let compiler_options = match options {
+        Some(options) => convert_c_compiler_options(options)?,
+        None => CompilerOptions::default(),
+    };
+    let program = Compiler::compile_from_policy_with_options(
         &compiled_policy,
         &entry_points_ref,
-        &ha_ref,
+        &compiler_options,
     )?;
     Ok(Box::into_raw(Box::new(RegorusProgram { program })))
 }
@@ -252,9 +243,7 @@ pub extern "C" fn regorus_program_compile_from_modules(
             modules_len,
             entry_points,
             entry_points_len,
-            core::ptr::null(),
-            0,
-            core::mem::size_of::<RegorusHostAwaitBuiltin>(),
+            None,
         ))
     })
 }
@@ -525,6 +514,42 @@ pub extern "C" fn regorus_rvm_set_execution_mode(vm: *mut RegorusRvm, mode: u8) 
             guard.set_execution_mode(mode);
             Ok(())
         }())
+    })
+}
+
+/// Atomically replace the VM's disabled native builtin policy.
+///
+/// The configured exact names are validated before the VM is locked. A policy
+/// change is rejected while the VM is running or suspended.
+#[no_mangle]
+pub extern "C" fn regorus_rvm_set_builtin_policy(
+    vm: *mut RegorusRvm,
+    disabled_names: *const *const c_char,
+    disabled_names_len: usize,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        let output = || -> Result<()> {
+            let policy = convert_c_builtin_policy(disabled_names, disabled_names_len)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
+            let mut guard = vm.try_write()?;
+            guard.set_builtin_policy(policy)?;
+            Ok(())
+        }();
+        to_regorus_result(output)
+    })
+}
+
+/// Return the VM's disabled native builtin names as a JSON string array.
+#[no_mangle]
+pub extern "C" fn regorus_rvm_get_builtin_policy(vm: *mut RegorusRvm) -> RegorusResult {
+    with_unwind_guard(|| {
+        let output = || -> Result<String> {
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
+            let guard = vm.try_read()?;
+            serde_json::to_string(guard.get_builtin_policy().disabled_names())
+                .map_err(|error| anyhow!("failed to serialize builtin policy: {error}"))
+        }();
+        crate::common::to_regorus_string_result(output)
     })
 }
 
@@ -1016,6 +1041,180 @@ fn convert_c_modules_to_rust(
     Ok(policy_modules)
 }
 
+#[cfg(test)]
+mod builtin_policy_tests {
+    use super::{
+        regorus_program_compile_from_modules_with_options, regorus_program_drop, regorus_rvm_drop,
+        regorus_rvm_execute_entry_point_by_name, regorus_rvm_get_builtin_policy,
+        regorus_rvm_load_program, regorus_rvm_new, regorus_rvm_set_builtin_policy,
+        RegorusBuiltinPolicy, RegorusCompilerOptions, RegorusPolicyModule, RegorusProgram,
+        RegorusRvm,
+    };
+    use crate::common::{regorus_result_drop, RegorusStatus};
+    use alloc::boxed::Box;
+    use alloc::ffi::CString;
+    use alloc::string::String;
+    use alloc::vec::Vec;
+    use core::ffi::CStr;
+    use core::ptr;
+    use regorus::languages::rego::compiler::Compiler;
+    use regorus::rvm::vm::RegoVM;
+    use regorus::{Engine, Rc};
+
+    #[test]
+    fn ffi_compilation_rejects_disabled_native_builtin() {
+        let data = CString::new("{}").expect("data CString");
+        let module_id = CString::new("policy.rego").expect("module ID CString");
+        let source = CString::new(
+            "package demo\nimport rego.v1\ncount := true\ndefault count.child(_) := \"fallback\"\nallow := true\nunused := count([])",
+        )
+        .expect("source CString");
+        let entry_point = CString::new("data.demo.allow").expect("entry point CString");
+        let disabled_name = CString::new("count").expect("builtin name CString");
+        let modules = [RegorusPolicyModule {
+            id: module_id.as_ptr(),
+            content: source.as_ptr(),
+        }];
+        let entry_points = [entry_point.as_ptr()];
+        let disabled_names = [disabled_name.as_ptr()];
+        let options = RegorusCompilerOptions {
+            host_await_builtins: ptr::null(),
+            host_await_builtins_len: 0,
+            host_await_builtin_size: core::mem::size_of::<super::RegorusHostAwaitBuiltin>(),
+            builtin_policy: RegorusBuiltinPolicy {
+                disabled_names: disabled_names.as_ptr(),
+                disabled_names_len: disabled_names.len(),
+            },
+        };
+
+        let result = regorus_program_compile_from_modules_with_options(
+            data.as_ptr(),
+            modules.as_ptr(),
+            modules.len(),
+            entry_points.as_ptr(),
+            entry_points.len(),
+            &options,
+        );
+        assert!(matches!(result.status, RegorusStatus::CompilationFailed));
+        assert!(result.pointer_value.is_null());
+        let message = unsafe { CStr::from_ptr(result.error_message) }
+            .to_str()
+            .expect("compilation error UTF-8");
+        assert!(
+            message.contains("Builtin 'count' is disabled"),
+            "unexpected compilation error: {message}"
+        );
+        regorus_result_drop(result);
+    }
+
+    #[test]
+    fn ffi_builtin_policy_setter_preserves_policy_after_invalid_names() {
+        let vm = regorus_rvm_new();
+        let valid_name = CString::new("count").expect("builtin name CString");
+        let valid_names = [valid_name.as_ptr()];
+        let set_valid = regorus_rvm_set_builtin_policy(vm, valid_names.as_ptr(), 1);
+        assert!(matches!(set_valid.status, RegorusStatus::Ok));
+        regorus_result_drop(set_valid);
+
+        let invalid_name = CString::new(" count ").expect("invalid builtin name CString");
+        let invalid_names = [invalid_name.as_ptr()];
+        let set_invalid = regorus_rvm_set_builtin_policy(vm, invalid_names.as_ptr(), 1);
+        assert!(!matches!(set_invalid.status, RegorusStatus::Ok));
+        regorus_result_drop(set_invalid);
+
+        let invalid_utf8 = CString::new(alloc::vec![0xff]).expect("invalid UTF-8 CString");
+        let invalid_utf8_names = [invalid_utf8.as_ptr()];
+        let set_invalid_utf8 = regorus_rvm_set_builtin_policy(vm, invalid_utf8_names.as_ptr(), 1);
+        assert!(!matches!(set_invalid_utf8.status, RegorusStatus::Ok));
+        regorus_result_drop(set_invalid_utf8);
+
+        let current = regorus_rvm_get_builtin_policy(vm);
+        assert!(matches!(current.status, RegorusStatus::Ok));
+        let current_json = unsafe { CStr::from_ptr(current.output) }
+            .to_str()
+            .expect("policy JSON UTF-8");
+        assert_eq!(current_json, r#"["count"]"#);
+        regorus_result_drop(current);
+        regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn ffi_builtin_policy_setter_rejects_null_name_array_without_mutation() {
+        let vm = regorus_rvm_new();
+        let malformed = regorus_rvm_set_builtin_policy(vm, ptr::null(), 1);
+        assert!(!matches!(malformed.status, RegorusStatus::Ok));
+        regorus_result_drop(malformed);
+
+        let current = regorus_rvm_get_builtin_policy(vm);
+        assert!(matches!(current.status, RegorusStatus::Ok));
+        let current_json = unsafe { CStr::from_ptr(current.output) }
+            .to_str()
+            .expect("policy JSON UTF-8");
+        assert_eq!(current_json, "[]");
+        regorus_result_drop(current);
+        regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn ffi_builtin_policy_getter_uses_json_array_encoding() {
+        let vm = regorus_rvm_new();
+        let names: [*const core::ffi::c_char; 0] = [];
+        let result = regorus_rvm_set_builtin_policy(vm, names.as_ptr(), names.len());
+        assert!(matches!(result.status, RegorusStatus::Ok));
+        regorus_result_drop(result);
+        let current = regorus_rvm_get_builtin_policy(vm);
+        assert!(matches!(current.status, RegorusStatus::Ok));
+        let json = unsafe { CStr::from_ptr(current.output) }
+            .to_str()
+            .expect("policy JSON UTF-8");
+        let parsed: Vec<String> = serde_json::from_str(json).expect("policy JSON");
+        assert!(parsed.is_empty());
+        regorus_result_drop(current);
+        regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn ffi_runtime_disabled_builtin_returns_generic_error_status() {
+        let entry_point = Rc::from("data.demo.value");
+        let entry_point_c = CString::new("data.demo.value").expect("entry point CString");
+        let mut engine = Engine::new();
+        engine
+            .add_policy(
+                "policy.rego".into(),
+                "package demo\nvalue := count([])".into(),
+            )
+            .expect("add policy");
+        let compiled = engine
+            .compile_with_entrypoint(&entry_point)
+            .expect("compile policy");
+        let program = Compiler::compile_from_policy(&compiled, &[entry_point.as_ref()])
+            .expect("compile to RVM");
+        let vm = Box::into_raw(Box::new(RegorusRvm::new(RegoVM::new())));
+        let program = Box::into_raw(Box::new(RegorusProgram { program }));
+
+        let loaded = regorus_rvm_load_program(vm, program);
+        assert!(matches!(loaded.status, RegorusStatus::Ok));
+        regorus_result_drop(loaded);
+        regorus_program_drop(program);
+
+        let disabled_name = CString::new("count").expect("builtin name CString");
+        let disabled_names = [disabled_name.as_ptr()];
+        let set_policy = regorus_rvm_set_builtin_policy(vm, disabled_names.as_ptr(), 1);
+        assert!(matches!(set_policy.status, RegorusStatus::Ok));
+        regorus_result_drop(set_policy);
+
+        let result = regorus_rvm_execute_entry_point_by_name(vm, entry_point_c.as_ptr());
+        assert!(matches!(result.status, RegorusStatus::Error));
+        assert!(!result.error_message.is_null());
+        let message = unsafe { CStr::from_ptr(result.error_message) }
+            .to_str()
+            .expect("runtime error UTF-8");
+        assert!(message.contains("disabled"), "unexpected error: {message}");
+        regorus_result_drop(result);
+        regorus_rvm_drop(vm);
+    }
+}
+
 /// A registered host-awaitable builtin passed via FFI.
 ///
 /// The argument count is currently fixed to 1 by the compiler (see
@@ -1027,6 +1226,30 @@ fn convert_c_modules_to_rust(
 pub struct RegorusHostAwaitBuiltin {
     /// Null-terminated UTF-8 builtin name.
     pub name: *const c_char,
+}
+
+/// Exact native builtin names disabled for a compiler or VM.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RegorusBuiltinPolicy {
+    /// Null-terminated UTF-8 builtin names.
+    pub disabled_names: *const *const c_char,
+    /// Number of entries in `disabled_names`.
+    pub disabled_names_len: usize,
+}
+
+/// Compiler options for RVM program compilation.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RegorusCompilerOptions {
+    /// Registered host-awaitable builtins.
+    pub host_await_builtins: *const RegorusHostAwaitBuiltin,
+    /// Number of entries in `host_await_builtins`.
+    pub host_await_builtins_len: usize,
+    /// `sizeof(RegorusHostAwaitBuiltin)` as seen by the caller.
+    pub host_await_builtin_size: usize,
+    /// Native builtin restrictions.
+    pub builtin_policy: RegorusBuiltinPolicy,
 }
 
 /// Compile an RVM program from data/modules and entry points, with registered
@@ -1052,16 +1275,51 @@ pub extern "C" fn regorus_program_compile_from_modules_with_host_await(
     host_await_builtin_size: usize,
 ) -> RegorusResult {
     with_unwind_guard(|| {
+        let options = RegorusCompilerOptions {
+            host_await_builtins,
+            host_await_builtins_len,
+            host_await_builtin_size,
+            builtin_policy: RegorusBuiltinPolicy {
+                disabled_names: core::ptr::null(),
+                disabled_names_len: 0,
+            },
+        };
         compile_from_modules_result(compile_from_modules_inner(
             data_json,
             modules,
             modules_len,
             entry_points,
             entry_points_len,
-            host_await_builtins,
-            host_await_builtins_len,
-            host_await_builtin_size,
+            Some(&options),
         ))
+    })
+}
+
+/// Compile an RVM program from data/modules and entry points using options.
+///
+/// * `options` - host-await registrations and disabled native builtin names
+#[no_mangle]
+pub extern "C" fn regorus_program_compile_from_modules_with_options(
+    data_json: *const c_char,
+    modules: *const RegorusPolicyModule,
+    modules_len: usize,
+    entry_points: *const *const c_char,
+    entry_points_len: usize,
+    options: *const RegorusCompilerOptions,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        let output = || -> Result<*mut RegorusProgram> {
+            let options = to_shared_ref(options)?;
+            compile_from_modules_inner(
+                data_json,
+                modules,
+                modules_len,
+                entry_points,
+                entry_points_len,
+                Some(options),
+            )
+        }();
+        compile_from_modules_result(output)
     })
 }
 
@@ -1350,6 +1608,60 @@ pub(crate) fn convert_c_host_await_builtins(
         check_memory_limit_if_needed()?;
     }
     Ok(result)
+}
+
+pub(crate) fn convert_c_builtin_policy(
+    disabled_names: *const *const c_char,
+    len: usize,
+) -> Result<BuiltinPolicy> {
+    if disabled_names.is_null() && len > 0 {
+        return Err(anyhow!("null disabled builtin names pointer"));
+    }
+    validate_array_stride(
+        disabled_names,
+        len,
+        core::mem::size_of::<*const c_char>(),
+        "disabled_builtin_name_size",
+        "disabled builtin name",
+    )?;
+
+    let mut names = Vec::new();
+    names
+        .try_reserve(len)
+        .map_err(|_| anyhow!("failed to reserve capacity for {len} disabled builtin names"))?;
+    for index in 0..len {
+        let name_pointer = unsafe { *disabled_names.add(index) };
+        let name = from_c_str(name_pointer)
+            .map_err(|error| anyhow!("invalid disabled builtin name at index {index}: {error}"))?;
+        names.push(name);
+        check_memory_limit_if_needed()?;
+    }
+
+    let mut name_refs = Vec::new();
+    name_refs
+        .try_reserve(names.len())
+        .map_err(|_| anyhow!("failed to reserve capacity for disabled builtin name references"))?;
+    name_refs.extend(names.iter().map(String::as_str));
+    BuiltinPolicy::from_disabled_names(&name_refs)
+        .map_err(|error| anyhow!("invalid builtin policy: {error}"))
+}
+
+pub(crate) fn convert_c_compiler_options(
+    options: &RegorusCompilerOptions,
+) -> Result<CompilerOptions> {
+    let host_await_builtins = convert_c_host_await_builtins(
+        options.host_await_builtins,
+        options.host_await_builtins_len,
+        options.host_await_builtin_size,
+    )?;
+    let builtin_policy = convert_c_builtin_policy(
+        options.builtin_policy.disabled_names,
+        options.builtin_policy.disabled_names_len,
+    )?;
+    Ok(CompilerOptions {
+        host_await_builtins,
+        builtin_policy,
+    })
 }
 
 #[cfg(test)]
