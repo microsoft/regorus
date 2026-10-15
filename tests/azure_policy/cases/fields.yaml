@@ -193,6 +193,22 @@ cases:
           "123": "enabled"
     want_effect: "audit"
 
+  - note: field_quoted_key_preserves_literal_inner_apostrophes
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.config[\"'123'\"]",
+          "equals": "development"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        config:
+          "123": "production"
+          "'123'": "development"
+    want_effect: "audit"
+
   - note: field_tags_bracket_notation
     policy_rule: |
       {

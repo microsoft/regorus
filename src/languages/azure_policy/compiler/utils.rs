@@ -64,6 +64,15 @@ pub(super) enum PathSegment {
     Index(u64),
 }
 
+fn strip_matching_outer_quotes(s: &str) -> Option<&str> {
+    s.strip_prefix('\'')
+        .and_then(|inner| inner.strip_suffix('\''))
+        .or_else(|| {
+            s.strip_prefix('"')
+                .and_then(|inner| inner.strip_suffix('"'))
+        })
+}
+
 /// Split a dotted path (without `[*]` wildcards) into its component segments.
 ///
 /// Handles bracket notation:
@@ -125,19 +134,17 @@ pub(super) fn split_path_without_wildcards(path: &str) -> Result<Vec<PathSegment
                 in_bracket = false;
                 after_bracket = true;
                 let raw = bracket.trim();
-                let quoted = raw.len() >= 2
-                    && ((raw.starts_with('"') && raw.ends_with('"'))
-                        || (raw.starts_with('\'') && raw.ends_with('\'')));
-                let cleaned = raw.trim_matches('"').trim_matches('\'').to_string();
-                if cleaned.is_empty() {
+                if raw.is_empty() {
                     bail!("empty bracket in path: {}", path);
                 }
-                let segment = if quoted {
-                    PathSegment::Key(cleaned)
+                let segment = if let Some(key) = strip_matching_outer_quotes(raw) {
+                    if key.is_empty() {
+                        bail!("empty bracket in path: {}", path);
+                    }
+                    PathSegment::Key(key.to_string())
                 } else {
-                    cleaned
-                        .parse::<u64>()
-                        .map_or(PathSegment::Key(cleaned.clone()), PathSegment::Index)
+                    raw.parse::<u64>()
+                        .map_or_else(|_| PathSegment::Key(raw.to_string()), PathSegment::Index)
                 };
                 parts.push(segment);
                 bracket.clear();
@@ -415,6 +422,30 @@ mod tests {
         assert_eq!(
             split_path_without_wildcards("tags[\"123\"]").unwrap(),
             vec![key("tags"), key("123")]
+        );
+    }
+
+    #[test]
+    fn path_bracket_preserves_quotes_inside_delimiters() {
+        assert_eq!(
+            split_path_without_wildcards("properties.config[\"'123'\"]").unwrap(),
+            vec![key("properties"), key("config"), key("'123'")]
+        );
+        assert_eq!(
+            split_path_without_wildcards("properties.config['\"123\"']").unwrap(),
+            vec![key("properties"), key("config"), key("\"123\"")]
+        );
+    }
+
+    #[test]
+    fn path_bracket_preserves_mismatched_quotes() {
+        assert_eq!(
+            split_path_without_wildcards("properties.config[\"123']").unwrap(),
+            vec![key("properties"), key("config"), key("\"123'")]
+        );
+        assert_eq!(
+            split_path_without_wildcards("properties.config['123\"]").unwrap(),
+            vec![key("properties"), key("config"), key("'123\"")]
         );
     }
 
