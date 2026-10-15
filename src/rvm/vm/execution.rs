@@ -63,6 +63,7 @@ impl RegoVM {
                             }
                         })?;
 
+                        self.check_initial_memory_limit()?;
                         let result = self
                             .jump_to(entry_point_pc_u32)
                             .map_err(|err| self.apply_memory_budget_precedence(err))?;
@@ -117,6 +118,7 @@ impl RegoVM {
                             }
                         })?;
 
+                        self.check_initial_memory_limit()?;
                         let result = self
                             .jump_to(entry_point_pc_u32)
                             .map_err(|err| self.apply_memory_budget_precedence(err))?;
@@ -191,6 +193,7 @@ impl RegoVM {
             self.reset_run_to_completion_state()?;
             self.reset_execution_timer_state();
             self.execution_state = ExecutionState::Running;
+            self.check_initial_memory_limit()?;
             self.jump_to(0_u32)
                 .map_err(|err| self.apply_memory_budget_precedence(err))
                 .and_then(|value| {
@@ -227,7 +230,7 @@ impl RegoVM {
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
         self.begin_suspendable_memory_budget_execution();
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-        let budget_account = self.suspendable_memory_budget_account.clone();
+        let allocation_scope = self.suspendable_memory_budget.clone();
         let mut run = || {
             self.initialize_execution_state();
             #[cfg(debug_assertions)]
@@ -240,7 +243,7 @@ impl RegoVM {
                 if validate_vm_state {
                     self.validate_vm_state()?;
                 }
-                self.check_memory_budget()
+                self.check_initial_memory_limit()
             })()
             .and_then(|()| self.run_stackless_from(start_pc))
             .and_then(|value| {
@@ -265,8 +268,8 @@ impl RegoVM {
         };
 
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-        if let Some(account) = budget_account.as_ref() {
-            account.with_scope(run)
+        if let Some(allocation_scope) = allocation_scope.as_ref() {
+            allocation_scope.with_scope(run)
         } else {
             run()
         }
@@ -277,7 +280,7 @@ impl RegoVM {
     pub fn resume(&mut self, resume_value: Option<Value>) -> Result<Value> {
         Self::ensure_memory_budget_resume_supported()?;
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-        let budget_account = self.suspendable_memory_budget_account.clone();
+        let allocation_scope = self.suspendable_memory_budget.clone();
 
         let resume = || {
             let result = self
@@ -314,8 +317,8 @@ impl RegoVM {
         };
 
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-        if let Some(account) = budget_account.as_ref() {
-            account.with_scope(resume)
+        if let Some(allocation_scope) = allocation_scope.as_ref() {
+            allocation_scope.with_scope(resume)
         } else {
             crate::utils::limits::without_memory_budget_scope(resume)
         }

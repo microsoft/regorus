@@ -169,7 +169,7 @@ pub struct RegoVM {
 
     /// Requested-byte account retained across suspendable execution segments.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    pub(super) suspendable_memory_budget_account: Option<MemoryBudgetAccount>,
+    pub(super) suspendable_memory_budget: Option<MemoryBudgetAccount>,
 
     /// Current-thread live-byte baseline captured at execution start
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
@@ -280,7 +280,7 @@ impl RegoVM {
             #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
             active_memory_budget_config: None,
             #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-            suspendable_memory_budget_account: None,
+            suspendable_memory_budget: None,
             #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
             memory_budget_baseline: 0,
             #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
@@ -512,10 +512,10 @@ impl RegoVM {
     pub(super) fn begin_suspendable_memory_budget_execution(&mut self) {
         self.active_memory_budget_config = self.memory_budget_config;
         self.memory_budget_baseline = 0;
-        self.suspendable_memory_budget_account = self
+        self.suspendable_memory_budget = self
             .active_memory_budget_config
             .map(|_| MemoryBudgetAccount::new());
-        self.memory_budget_lifecycle = if self.suspendable_memory_budget_account.is_some() {
+        self.memory_budget_lifecycle = if self.suspendable_memory_budget.is_some() {
             MemoryBudgetLifecycle::SuspendableExecution
         } else {
             MemoryBudgetLifecycle::Inactive
@@ -531,7 +531,7 @@ impl RegoVM {
             return;
         }
 
-        self.suspendable_memory_budget_account = None;
+        self.suspendable_memory_budget = None;
         self.active_memory_budget_config = self.memory_budget_config;
         self.memory_budget_baseline = if self.active_memory_budget_config.is_some() {
             limits::current_thread_live_bytes()
@@ -575,7 +575,7 @@ impl RegoVM {
         }
 
         self.active_memory_budget_config = self.memory_budget_config;
-        self.suspendable_memory_budget_account = None;
+        self.suspendable_memory_budget = None;
         self.memory_budget_baseline = if self.active_memory_budget_config.is_some() {
             limits::current_thread_live_bytes()
         } else {
@@ -603,7 +603,7 @@ impl RegoVM {
     pub(super) fn finish_active_memory_budget_execution(&mut self) {
         self.memory_budget_baseline = 0;
         self.active_memory_budget_config = None;
-        self.suspendable_memory_budget_account = None;
+        self.suspendable_memory_budget = None;
         self.memory_budget_lifecycle = MemoryBudgetLifecycle::Inactive;
     }
 
@@ -645,7 +645,7 @@ impl RegoVM {
         {
             self.begin_ffi_result_serialization_memory_budget();
             let mut budget = FfiResultSerializationBudget { vm: self };
-            let account = budget.vm().suspendable_memory_budget_account.clone();
+            let allocation_scope = budget.vm().suspendable_memory_budget.clone();
 
             let process = || {
                 let resume_json = match parse_resume_json() {
@@ -696,9 +696,9 @@ impl RegoVM {
                     {
                         budget.vm().ffi_output_start_usage_for_test = budget
                             .vm()
-                            .suspendable_memory_budget_account
+                            .suspendable_memory_budget
                             .as_ref()
-                            .map(|sampled_account| sampled_account.live_bytes());
+                            .map(|scope| scope.live_bytes());
                     }
                     let json = value.to_json_str().map_err(VmError::from)?;
                     let output = CString::new(json).map_err(|_| VmError::Internal {
@@ -718,8 +718,8 @@ impl RegoVM {
                 }
             };
 
-            if let Some(account) = account.as_ref() {
-                account.with_scope(process)
+            if let Some(allocation_scope) = allocation_scope.as_ref() {
+                allocation_scope.with_scope(process)
             } else {
                 crate::utils::limits::without_memory_budget_scope(process)
             }
@@ -750,12 +750,12 @@ impl RegoVM {
         let mut budget = FfiResultSerializationBudget { vm: self };
         let output = (|| {
             let value = execute(budget.vm())?;
-            let account = budget.vm().suspendable_memory_budget_account.clone();
+            let allocation_scope = budget.vm().suspendable_memory_budget.clone();
             let serialize = || {
                 #[cfg(test)]
                 {
                     budget.vm().ffi_output_start_usage_for_test =
-                        account.as_ref().map(|account| account.live_bytes());
+                        allocation_scope.as_ref().map(|scope| scope.live_bytes());
                 }
                 let json = value.to_json_str().map_err(VmError::from)?;
                 let output = CString::new(json).map_err(|_| VmError::Internal {
@@ -765,8 +765,8 @@ impl RegoVM {
                 budget.vm().check_memory_budget()?;
                 Ok(output)
             };
-            if let Some(account) = account.as_ref() {
-                account.with_scope(serialize)
+            if let Some(allocation_scope) = allocation_scope.as_ref() {
+                allocation_scope.with_scope(serialize)
             } else {
                 crate::utils::limits::without_memory_budget_scope(serialize)
             }
@@ -828,7 +828,7 @@ impl RegoVM {
         let usage = match self.memory_budget_lifecycle {
             MemoryBudgetLifecycle::Inactive => return Ok(()),
             MemoryBudgetLifecycle::SuspendableExecution => self
-                .suspendable_memory_budget_account
+                .suspendable_memory_budget
                 .as_ref()
                 .ok_or_else(|| VmError::Internal {
                     message: String::from("active suspendable memory budget has no account"),
@@ -1043,6 +1043,34 @@ impl RegoVM {
     }
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    pub(super) fn check_initial_memory_limit(&mut self) -> Result<()> {
+        self.check_memory_budget()?;
+        limits::enforce_memory_limit()
+            .map_err(|err| self.map_global_memory_limit_error(err))
+            .map_err(|err| self.apply_memory_budget_precedence(err))
+    }
+
+    #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
+    pub(super) const fn check_initial_memory_limit(&mut self) -> Result<()> {
+        self.check_memory_budget()
+    }
+
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    fn map_global_memory_limit_error(&self, err: LimitError) -> VmError {
+        match err {
+            LimitError::MemoryLimitExceeded { usage, limit } => VmError::MemoryLimitExceeded {
+                usage,
+                limit,
+                pc: self.pc,
+            },
+            other => VmError::Internal {
+                message: format!("unexpected limit error: {other}"),
+                pc: self.pc,
+            },
+        }
+    }
+
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn memory_check(&mut self) -> Result<()> {
         #[cfg(test)]
         {
@@ -1050,17 +1078,7 @@ impl RegoVM {
         }
         self.check_memory_budget()?;
         limits::check_memory_limit_if_needed()
-            .map_err(|err| match err {
-                LimitError::MemoryLimitExceeded { usage, limit } => VmError::MemoryLimitExceeded {
-                    usage,
-                    limit,
-                    pc: self.pc,
-                },
-                other => VmError::Internal {
-                    message: format!("unexpected limit error: {other}"),
-                    pc: self.pc,
-                },
-            })
+            .map_err(|err| self.map_global_memory_limit_error(err))
             .map_err(|err| self.apply_memory_budget_precedence(err))
     }
 
@@ -1237,7 +1255,7 @@ result := sprintf("%s%s", [
         ));
         anyhow::ensure!(over_budget_vm.execution_stack.is_empty());
         anyhow::ensure!(over_budget_vm.host_await_responses.is_empty());
-        anyhow::ensure!(over_budget_vm.suspendable_memory_budget_account.is_none());
+        anyhow::ensure!(over_budget_vm.suspendable_memory_budget.is_none());
         anyhow::ensure!(matches!(
             over_budget_vm.memory_budget_lifecycle,
             super::MemoryBudgetLifecycle::Inactive
@@ -1296,7 +1314,7 @@ result := sprintf("%s%s", [
             super::super::execution_model::ExecutionState::Suspended { .. }
         ));
         let before_resume_usage = vm
-            .suspendable_memory_budget_account
+            .suspendable_memory_budget
             .as_ref()
             .expect("suspended execution has an account")
             .live_bytes();
@@ -1327,7 +1345,7 @@ result := sprintf("%s%s", [
         ));
         anyhow::ensure!(vm.execution_stack.is_empty());
         anyhow::ensure!(vm.host_await_responses.is_empty());
-        anyhow::ensure!(vm.suspendable_memory_budget_account.is_none());
+        anyhow::ensure!(vm.suspendable_memory_budget.is_none());
         anyhow::ensure!(matches!(
             vm.memory_budget_lifecycle,
             super::MemoryBudgetLifecycle::Inactive
@@ -1372,7 +1390,7 @@ result := sprintf("%s%s", [
         ));
         anyhow::ensure!(vm.execution_stack.is_empty());
         anyhow::ensure!(vm.host_await_responses.is_empty());
-        anyhow::ensure!(vm.suspendable_memory_budget_account.is_none());
+        anyhow::ensure!(vm.suspendable_memory_budget.is_none());
         anyhow::ensure!(matches!(
             vm.memory_budget_lifecycle,
             super::MemoryBudgetLifecycle::Inactive

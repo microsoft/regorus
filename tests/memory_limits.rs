@@ -367,6 +367,71 @@ fn vm_memory_limit_on_entry() {
     }
 }
 
+#[cfg(feature = "rvm")]
+#[test]
+fn vm_global_memory_limit_is_enforced_before_short_initial_dispatches() {
+    #[derive(Clone, Copy)]
+    enum EntryPoint {
+        Default,
+        Named,
+        Indexed,
+    }
+
+    let mut guard = LimitGuard::lock();
+    let mut program = Program::new();
+    program.add_instruction(Instruction::LoadTrue { dest: 0 }, None);
+    program.add_instruction(Instruction::Return { value: 0 }, None);
+    program.add_entry_point(String::from("entry"), 0);
+    let program = Arc::new(program);
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        for entry_point in [EntryPoint::Default, EntryPoint::Named, EntryPoint::Indexed] {
+            let mut vm = RegoVM::new();
+            vm.set_execution_mode(mode);
+            vm.load_program(program.clone());
+
+            regorus::flush_thread_memory_counters();
+            regorus::utils::limits::check_memory_limit_if_needed()
+                .expect("disabled global limit resets this thread's check state");
+            guard.set_absolute_limit(1);
+
+            let execute = |vm: &mut RegoVM| match entry_point {
+                EntryPoint::Default => vm.execute(),
+                EntryPoint::Named => vm.execute_entry_point_by_name("entry"),
+                EntryPoint::Indexed => vm.execute_entry_point_by_index(0),
+            };
+
+            match execute(&mut vm) {
+                Err(VmError::MemoryLimitExceeded { limit: 1, .. }) => {}
+                Err(other) => panic!("expected VM memory limit error, got {other}"),
+                Ok(value) => panic!("expected VM memory limit error, got value {value:?}"),
+            }
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Error {
+                    error: VmError::MemoryLimitExceeded { limit: 1, .. }
+                }
+            ));
+            assert_eq!(vm.get_pc(), 0);
+            match mode {
+                ExecutionMode::RunToCompletion => assert!(vm.get_registers().is_empty()),
+                ExecutionMode::Suspendable => {
+                    assert_eq!(vm.get_registers().first(), Some(&Value::Undefined));
+                }
+            }
+
+            guard.disable_limit();
+            regorus::flush_thread_memory_counters();
+            regorus::utils::limits::check_memory_limit_if_needed()
+                .expect("disabled global limit resets this thread's check state");
+            assert_eq!(
+                execute(&mut vm).expect("same VM succeeds after raising the limit"),
+                Value::Bool(true)
+            );
+        }
+    }
+}
+
 #[test]
 fn interpreter_memory_limit_during_large_allocation() {
     let mut guard = LimitGuard::lock();
@@ -978,7 +1043,7 @@ fn vm_memory_limit_during_valid_native_resume_conversion_preserves_typed_error()
 
 #[cfg(feature = "rvm")]
 #[test]
-fn correction_unbudgeted_initial_dispatch_limit_publishes_error() {
+fn correction_unbudgeted_initial_entry_limit_publishes_error() {
     let mut guard = LimitGuard::lock();
     let mut program = Program::new();
     for _ in 0..31 {
@@ -1003,7 +1068,8 @@ fn correction_unbudgeted_initial_dispatch_limit_publishes_error() {
             error: VmError::MemoryLimitExceeded { limit: 1, .. }
         }
     ));
-    assert_eq!(vm.get_registers().first(), Some(&Value::Bool(true)));
+    assert_eq!(vm.get_pc(), 0);
+    assert_eq!(vm.get_registers().first(), Some(&Value::Undefined));
 }
 
 #[cfg(feature = "rvm")]

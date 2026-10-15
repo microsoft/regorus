@@ -5,6 +5,139 @@ use anyhow::{bail, Result};
 use regorus::*;
 
 #[test]
+fn package_components_distinguish_literal_dots_from_nested_namespaces() -> Result<()> {
+    let mut engine = Engine::new();
+    let literal = engine.add_policy(
+        "literal.rego".into(),
+        r#"package graph.definition["1.0.0"]
+           value := 1"#
+            .into(),
+    )?;
+    let nested = engine.add_policy(
+        "nested.rego".into(),
+        r#"package graph.definition["1"]["0"]["0"]
+           value := 2"#
+            .into(),
+    )?;
+
+    assert_eq!(literal, "data.graph.definition.1.0.0");
+    assert_eq!(nested, literal);
+    assert_eq!(
+        serde_json::to_value(engine.get_policy_package_components()?)?,
+        serde_json::json!([
+            {
+                "source_file": "literal.rego",
+                "components": ["graph", "definition", "1.0.0"]
+            },
+            {
+                "source_file": "nested.rego",
+                "components": ["graph", "definition", "1", "0", "0"]
+            }
+        ])
+    );
+    assert_eq!(engine.get_packages()?, vec![literal, nested]);
+    #[cfg(feature = "azure_policy")]
+    {
+        let names = engine.get_policy_package_names()?;
+        assert_eq!(names[0].package_name, "graph.definition.1.0.0");
+        assert_eq!(names[1].package_name, names[0].package_name);
+    }
+    Ok(())
+}
+
+#[test]
+fn package_components_decode_strings_and_preserve_declared_data() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "escaped.rego".into(),
+        r#"package graph[""]["a\".b"]["c\\d"]["\u03bb"]"#.into(),
+    )?;
+    engine.add_policy("data.rego".into(), "package data.app".into())?;
+
+    let packages = engine.get_policy_package_components()?;
+    assert_eq!(packages[0].source_file, "escaped.rego");
+    assert_eq!(
+        packages[0].components,
+        vec!["graph", "", "a\".b", "c\\d", "\u{03bb}"]
+    );
+    assert_eq!(packages[1].components, vec!["data", "app"]);
+    assert_eq!(
+        engine.get_packages()?,
+        vec![r#"data.graph..a\".b.c\\d.\u03bb"#, "data.data.app"]
+    );
+    Ok(())
+}
+
+#[test]
+fn package_components_keep_module_order_duplicate_labels_and_ruleless_modules() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy("same.rego".into(), "package z.last".into())?;
+    engine.add_policy("same.rego".into(), r#"package a["first"]"#.into())?;
+    engine.add_policy("third.rego".into(), "package a.first".into())?;
+
+    assert_eq!(
+        engine.get_policy_package_components()?,
+        vec![
+            PolicyPackageComponents {
+                source_file: "same.rego".into(),
+                components: vec!["z".into(), "last".into()],
+            },
+            PolicyPackageComponents {
+                source_file: "same.rego".into(),
+                components: vec!["a".into(), "first".into()],
+            },
+            PolicyPackageComponents {
+                source_file: "third.rego".into(),
+                components: vec!["a".into(), "first".into()],
+            },
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn package_components_are_read_only_snapshots_and_allow_engine_reuse() -> Result<()> {
+    let mut engine = Engine::new();
+    assert!(engine.get_policy_package_components()?.is_empty());
+    assert_eq!(
+        serde_json::to_string(&engine.get_policy_package_components()?)?,
+        "[]"
+    );
+    engine.add_policy(
+        "policy.rego".into(),
+        "package policy\nallow := input.allowed".into(),
+    )?;
+    engine.set_input(Value::from_json_str(r#"{"allowed":true}"#)?);
+    engine.add_data(Value::from_json_str(r#"{"unchanged":7}"#)?)?;
+    let before = engine.get_policy_package_components()?;
+    let legacy = engine.get_packages()?;
+
+    for allowed in [true, false, true] {
+        engine.set_input(Value::from_json_str(&format!(
+            r#"{{"allowed":{allowed}}}"#
+        ))?);
+        assert_eq!(engine.get_policy_package_components()?, before);
+        assert_eq!(
+            engine.eval_rule("data.policy.allow".into())?,
+            Value::Bool(allowed)
+        );
+        assert_eq!(engine.get_policy_package_components()?, before);
+        assert_eq!(engine.get_packages()?, legacy);
+        let data = engine.eval_query("data.unchanged".into(), false)?;
+        assert_eq!(data.result[0].expressions[0].value, Value::from(7));
+    }
+    assert!(engine
+        .add_policy("invalid.rego".into(), "package policy[1]".into())
+        .is_err());
+    assert_eq!(engine.get_policy_package_components()?, before);
+    engine.add_policy("next.rego".into(), "package next\nvalue := 8".into())?;
+    assert_eq!(before.len(), 1);
+    assert_eq!(engine.get_policy_package_components()?.len(), 2);
+    assert_eq!(engine.eval_rule("data.next.value".into())?, Value::from(8));
+    Ok(())
+}
+
+#[test]
 fn numeric_rule_paths_keep_integer_decimal_equivalence() -> Result<()> {
     let mut engine = Engine::new();
     engine.add_policy(

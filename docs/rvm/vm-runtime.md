@@ -115,6 +115,9 @@ fields to responsibilities.
   return or unwind. This does not alter run-to-completion thread-baseline
   accounting. Initial suspendable failures publish `ExecutionState::Error`;
   unbudgeted failures retain the legacy register contents.
+- With `allocator-memory-limits`, each valid initial entry point checks the
+  global memory ceiling after setup and validation, immediately before dispatch.
+  Per-instruction checks remain throttled, and resume behavior is unchanged.
 
 `execution_model.rs` defines the frame types and state machine:
 

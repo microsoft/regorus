@@ -6,10 +6,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/microsoft/regorus/compare/regorus-v0.12.0...regorus-v0.13.0) - 2026-10-14
+
+### Changed
+
+- Package and import paths are now limited to 32 components. Previously accepted longer paths are rejected, making this a breaking release for the `0.12.x` compatibility line.
+- Rule lookups and compilation entrypoints use canonical paths that preserve literal namespace components. For `package graph["1.0.0"]`, use `data.graph["1.0.0"].deny`, not the flattened package-metadata string `data.graph.1.0.0.deny`.
+
+### Added
+
+- Add source-scoped, nonexecuting rule-declaration detection through `HasDeclaredRuleRootedAt` in Rust, FFI, and C#, including dotted-prefix matching and load-time parser context preservation ([#826](https://github.com/microsoft/regorus/pull/826))
+- expose lossless package components ([#834](https://github.com/microsoft/regorus/pull/834))
+- *(sprintf)* support Go-compatible %q for strings ([#809](https://github.com/microsoft/regorus/pull/809))
+- *(csharp)* expose RVM instruction budget setter ([#811](https://github.com/microsoft/regorus/pull/811))
+- *(compiler)* FFI and C# bindings for RVM, incl. host-await built-ins ([#672](https://github.com/microsoft/regorus/pull/672))
+
 ### Fixed
 
+- preserve literal namespace components across evaluation paths ([#827](https://github.com/microsoft/regorus/pull/827))
+- *(rego)* schedule comprehensions in rule outputs ([#825](https://github.com/microsoft/regorus/pull/825))
+- disambiguate prior rule file labels ([#824](https://github.com/microsoft/regorus/pull/824))
+- keep prior rule locations in concise conflict diagnostics ([#820](https://github.com/microsoft/regorus/pull/820))
 - Rule-conflict diagnostics now retain the current source envelope and identify the previous rule by file, line, and column without nesting a second diagnostic; literal percent, CR, and LF characters in the previous file label are percent-encoded. RVM conflict result semantics are unchanged.
 - Suspendable RVM budgets remain immutable across host-await resumes, include native resume parsing and immediate result serialization, and leave malformed JSON syntax/EOF retryable; independent unbudgeted VM calls do not inherit a caller's account, and run-to-completion thread-baseline behavior remains unchanged.
+
+### Other
+
+- *(deps)* bump the github-actions group across 1 directory with 5 updates ([#828](https://github.com/microsoft/regorus/pull/828))
+- *(deps)* bump the rust-dependencies group across 6 directories with 13 updates ([#832](https://github.com/microsoft/regorus/pull/832))
+- *(deps)* bump the github-actions group with 3 updates ([#822](https://github.com/microsoft/regorus/pull/822))
+- *(deps)* bump the github-actions group with 5 updates ([#818](https://github.com/microsoft/regorus/pull/818))
+- *(deps)* bump the rust-dependencies group across 5 directories with 5 updates ([#813](https://github.com/microsoft/regorus/pull/813))
+- *(deps)* bump MarcoIeni/release-plz-action in the github-actions group ([#814](https://github.com/microsoft/regorus/pull/814))
+- *(deps)* bump the github-actions group with 4 updates ([#807](https://github.com/microsoft/regorus/pull/807))
+- *(deps)* bump the rust-dependencies group across 5 directories with 9 updates ([#808](https://github.com/microsoft/regorus/pull/808))
 
 ## [0.12.0](https://github.com/microsoft/regorus/compare/regorus-v0.11.0...regorus-v0.12.0) - 2026-09-01
 

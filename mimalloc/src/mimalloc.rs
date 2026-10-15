@@ -49,7 +49,7 @@ fn allocation_header_layout(layout: Layout) -> Option<(usize, usize, usize)> {
 }
 
 #[cfg(feature = "allocator-memory-limits")]
-unsafe fn allocate_with_account(layout: Layout, account: *mut c_void, zeroed: bool) -> *mut u8 {
+unsafe fn allocate_with_budget(layout: Layout, account: *mut c_void, zeroed: bool) -> *mut u8 {
     let Some((offset, raw_align, raw_size)) = allocation_header_layout(layout) else {
         return ptr::null_mut();
     };
@@ -97,7 +97,7 @@ unsafe impl GlobalAlloc for Mimalloc {
         #[cfg(feature = "allocator-memory-limits")]
         let ptr = {
             let account = current_memory_budget_account();
-            let ptr = allocate_with_account(layout, account, false);
+            let ptr = allocate_with_budget(layout, account, false);
             if !ptr.is_null() {
                 record_memory_budget_alloc(account, layout.size());
                 record_alloc(layout.size());
@@ -114,6 +114,9 @@ unsafe impl GlobalAlloc for Mimalloc {
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
         #[cfg(feature = "allocator-memory-limits")]
         {
+            if ptr.is_null() {
+                return;
+            }
             let header = allocation_header(ptr).read();
             let base = allocation_base(ptr, _layout.align());
             record_memory_budget_free(header.account, header.requested_size);
@@ -134,7 +137,7 @@ unsafe impl GlobalAlloc for Mimalloc {
         #[cfg(feature = "allocator-memory-limits")]
         let ptr = {
             let account = current_memory_budget_account();
-            let ptr = allocate_with_account(layout, account, true);
+            let ptr = allocate_with_budget(layout, account, true);
             if !ptr.is_null() {
                 record_memory_budget_alloc(account, layout.size());
                 record_alloc(layout.size());
@@ -152,6 +155,9 @@ unsafe impl GlobalAlloc for Mimalloc {
         debug_assert!(layout.align() < MI_ALIGNMENT_MAX);
         #[cfg(feature = "allocator-memory-limits")]
         let result = {
+            if ptr.is_null() {
+                return ptr::null_mut();
+            }
             let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
                 return ptr::null_mut();
             };
