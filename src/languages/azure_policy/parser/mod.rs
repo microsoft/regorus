@@ -163,6 +163,15 @@ fn unwrap(s: &str, prefix_len: usize, suffix_len: usize) -> &str {
     s.get(prefix_len..end).unwrap_or_default()
 }
 
+fn strip_matching_outer_quotes(s: &str) -> Option<&str> {
+    s.strip_prefix('\'')
+        .and_then(|inner| inner.strip_suffix('\''))
+        .or_else(|| {
+            s.strip_prefix('"')
+                .and_then(|inner| inner.strip_suffix('"'))
+        })
+}
+
 /// Classify a field string into a [`FieldKind`].
 pub(super) fn classify_field(
     text: &str,
@@ -183,16 +192,23 @@ pub(super) fn classify_field(
         )),
         "apiversion" => Ok(FieldKind::ApiVersion),
         _ if lower.starts_with("tags.") => Ok(FieldKind::Tag(tail(text, "tags.".len()).into())),
-        _ if lower.starts_with("tags['") && text.ends_with("']") => Ok(FieldKind::Tag(
-            unwrap(text, "tags['".len(), "']".len()).into(),
-        )),
         // Tags[tagName] — bracket notation without quotes.
         // Tag name is everything between the first '[' and the LAST ']'.
         // e.g. Tags[Dept.Name]] → tag name "Dept.Name]"
-        // Exclude tags[*] which is a wildcard iteration, not a tag name.
-        _ if lower.starts_with("tags[") && text.ends_with(']') && !text.contains("[*]") => Ok(
-            FieldKind::Tag(unwrap(text, "tags[".len(), "]".len()).into()),
-        ),
+        _ if lower.starts_with("tags[") && text.ends_with(']') => {
+            let tag = unwrap(text, "tags[".len(), "]".len());
+            let kind = strip_matching_outer_quotes(tag).map_or_else(
+                || {
+                    if text.contains("[*]") {
+                        FieldKind::Alias(text.into())
+                    } else {
+                        FieldKind::Tag(tag.into())
+                    }
+                },
+                |quoted_tag| FieldKind::Tag(quoted_tag.into()),
+            );
+            Ok(kind)
+        }
         _ if is_template_expr(text) => {
             let inner = unwrap(text, 1, 1);
             let expr = ExprParser::parse_from_brackets(inner, span).map_err(|e| {
@@ -270,6 +286,51 @@ mod tests {
             classify_field("location", &span),
             Ok(FieldKind::Location)
         ));
+    }
+
+    #[test]
+    fn test_classify_field_tag_bracket_quotes() {
+        let span = dummy_span();
+
+        for (field, expected) in [
+            ("tags['123']", "123"),
+            ("tags[\"123\"]", "123"),
+            ("tags['environment']", "environment"),
+            ("tags[\"environment\"]", "environment"),
+            ("tags[unquoted]", "unquoted"),
+            ("tags['embedded\"quote']", "embedded\"quote"),
+            ("tags['dept[*]']", "dept[*]"),
+            ("tags[\"dept[*]\"]", "dept[*]"),
+        ] {
+            match classify_field(field, &span) {
+                Ok(FieldKind::Tag(actual)) => assert_eq!(actual, expected),
+                other => panic!("expected Tag for {field:?}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_classify_field_tag_bracket_preserves_unmatched_quotes() {
+        let span = dummy_span();
+
+        for (field, expected) in [("tags[\"123']", "\"123'"), ("tags['123\"]", "'123\"")] {
+            match classify_field(field, &span) {
+                Ok(FieldKind::Tag(actual)) => assert_eq!(actual, expected),
+                other => panic!("expected Tag for {field:?}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_classify_field_unquoted_tag_wildcards_are_not_tag_names() {
+        let span = dummy_span();
+
+        for field in ["tags[*]", "tags[a[*]]", "tags[*][*]"] {
+            match classify_field(field, &span) {
+                Ok(FieldKind::Alias(actual)) => assert_eq!(actual, field),
+                other => panic!("expected Alias for unquoted tag wildcard, got {other:?}"),
+            }
+        }
     }
 
     #[test]

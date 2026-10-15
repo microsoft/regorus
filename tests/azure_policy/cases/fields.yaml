@@ -148,6 +148,62 @@ cases:
         "123": "production"
     want_effect: "audit"
 
+  - note: field_tags_double_quoted_bracket_value_differs
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\"environment\"]",
+          "equals": "production"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "development"
+    want_undefined: true
+
+  - note: field_tags_double_quoted_bracket_missing_tag
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\"environment\"]",
+          "exists": false
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        owner: "team"
+    want_effect: "deny"
+
+  - note: field_tags_double_quoted_bracket_present_tag_exists
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\"environment\"]",
+          "exists": false
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_undefined: true
+
+  - note: field_tags_numeric_key_double_quoted_bracket
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\"123\"]",
+          "equals": "production"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        "123": "production"
+    want_effect: "audit"
+
   - note: field_tags_numeric_key_bracket_value_differs
     policy_rule: |
       {
@@ -222,6 +278,48 @@ cases:
       tags:
         environment: "production"
     want_effect: "deny"
+
+  - note: field_tags_double_quoted_bracket_notation
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\"environment\"]",
+          "equals": "production"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        environment: "production"
+    want_effect: "deny"
+
+  - note: field_tags_single_quoted_key_containing_wildcard_text
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags['dept[*]']",
+          "equals": "production"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        "dept[*]": "production"
+    want_effect: "audit"
+
+  - note: field_tags_double_quoted_key_containing_wildcard_text
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\"dept[*]\"]",
+          "equals": "production"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        "dept[*]": "production"
+    want_effect: "audit"
 
   - note: field_tags_dot_hyphen
     policy_rule: |
