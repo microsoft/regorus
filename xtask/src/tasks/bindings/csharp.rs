@@ -266,7 +266,7 @@ fn print_package_listing(packages: &[PathBuf]) -> Result<()> {
             let file = archive.by_index(index).with_context(|| {
                 format!("failed to access entry {index} in {}", package.display())
             })?;
-            entries.push(file.name().to_string());
+            entries.push(file.name()?.into_owned());
         }
 
         entries.sort();
