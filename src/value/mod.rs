@@ -196,6 +196,15 @@ impl<'de> Visitor<'de> for ValueVisitor {
     where
         E: de::Error,
     {
+        // A non-finite float in the domain makes the Ord-backed containers disagree with
+        // `==`: a Set orders NaN as a single element (`count({nan, nan}) == 1`) while
+        // `NaN == NaN` is false, and no JSON representation exists for it. OPA rejects
+        // non-finite at every boundary, so reject it where a document enters the domain.
+        if !v.is_finite() {
+            return Err(de::Error::custom(format!(
+                "invalid non-finite number in input: {v}"
+            )));
+        }
         Ok(Value::from(Number::from(v)))
     }
 
@@ -680,7 +689,31 @@ impl From<f64> for Value {
     ///
     /// If additional precision is required, keep the raw data as strings or use an external
     /// arbitrary-precision numeric type before converting it into [`Value`].
+    ///
+    /// `NaN` and `±Inf` produce [`Value::Null`] instead of a [`Value::Number`]. This conversion
+    /// cannot report an error, and a non-finite number in the domain is worse than no value: the
+    /// `Ord`-backed containers collapse NaN keys (`count({nan, nan}) == 1`) while `==` reports
+    /// `NaN != NaN`, and such a number has no JSON representation. `Null` is chosen over
+    /// [`Value::Undefined`] because it is a defined, JSON-representable value: a policy guard such
+    /// as `allow if not input.x` fails closed for `null` but fails **open** for `Undefined` (the
+    /// corrupt value behaves like missing data). Ingress that can fail - [`Value::from_json_str`],
+    /// [`Value::from_yaml_str`], [`Value::from_numeric_string`] - rejects non-finite text with an
+    /// error, as OPA does. Rust code can still bypass this conversion by explicitly constructing
+    /// the public `Value::Number` variant with an inferred internal number; callers must not use
+    /// that route to inject non-finite values.
+    /// ```
+    /// # use regorus::*;
+    /// # fn main() -> anyhow::Result<()> {
+    /// assert_eq!(Value::from(f64::NAN), Value::Null);
+    /// assert_eq!(Value::from(f64::INFINITY), Value::Null);
+    /// assert_eq!(Value::from(f64::NEG_INFINITY), Value::Null);
+    /// # Ok(())
+    /// # }
+    /// ```
     fn from(n: f64) -> Self {
+        if !n.is_finite() {
+            return Value::Null;
+        }
         Value::Number(Number::from(n))
     }
 }
