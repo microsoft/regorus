@@ -406,10 +406,10 @@ impl FromStr for Number {
             return Ok(Number::from_bigint_owned(value));
         }
 
-        normalized_ref
-            .parse::<f64>()
-            .map(Number::Float)
-            .map_err(|_| ParseNumberError)
+        match normalized_ref.parse::<f64>() {
+            Ok(value) if value.is_finite() => Ok(Number::Float(value)),
+            _ => Err(ParseNumberError),
+        }
     }
 }
 

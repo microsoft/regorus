@@ -241,6 +241,15 @@ impl<'de> Visitor<'de> for BinaryValueVisitor {
             }
             (BinaryVariant::NumberF64, variant) => {
                 let value = variant.newtype_variant::<f64>()?;
+                // A hand-made or stale blob can carry a number that every ingress path rejects.
+                // `Value::from(f64)` cannot report that (it yields `Value::Null`), and a
+                // non-finite number in a loaded program has no JSON representation and is ordered
+                // outside the finite domain, so reject the blob instead of loading it.
+                if !value.is_finite() {
+                    return Err(de::Error::custom(format!(
+                        "invalid non-finite number in serialized program: {value}"
+                    )));
+                }
                 Ok(BinaryValue(Value::from(value)))
             }
             (BinaryVariant::String, variant) => {
@@ -298,4 +307,45 @@ pub fn binaries_to_values(binaries: Vec<BinaryValue>) -> Result<Vec<Value>, Stri
 
 pub fn binary_to_value(binary: BinaryValue) -> Result<Value, String> {
     Ok(binary.into_value())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)] // tests expect()/expect_err() to assert deserialization results
+
+    use super::*;
+    use alloc::vec;
+
+    /// A blob is untrusted input: the `NumberF64` variant must not be able to put a non-finite
+    /// `Number` into the loaded program. The value has no JSON representation and
+    /// `Value::from(f64)` would silently turn it into `Value::Null`, so the load must fail instead.
+    ///
+    /// The bytes are forged rather than produced by `BinaryValueRef`: this crate's serializer
+    /// cannot emit a non-finite `NumberF64` because `Number::as_f64` rejects non-finite, which
+    /// sends such a value to the `Number` string variant (`format_scientific` -> "inf") that
+    /// `Number::from_str` already rejects. The guard below is what closes the hand-made-blob path.
+    ///
+    /// Removing the `is_finite` check makes each forged blob deserialize (as `Value::Null`) and
+    /// this test fail.
+    #[test]
+    fn non_finite_float_in_a_blob_is_rejected() {
+        let forged_number_f64 = |value: f64| {
+            let mut bytes = vec![u8::try_from(VARIANT_NUMBER_F64).expect("variant fits in u8")];
+            bytes.extend_from_slice(&value.to_le_bytes());
+            bytes
+        };
+
+        for value in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            // postcard maps a custom `de::Error` to `DeserializeError::SerdeDeCustom` and drops
+            // the text, so the observable contract is simply that the load fails.
+            postcard::from_bytes::<BinaryValue>(&forged_number_f64(value))
+                .expect_err(&format!("a blob carrying {value} must not load"));
+        }
+
+        // Teeth: a finite f64 still round-trips.
+        let bytes =
+            postcard::to_allocvec(&BinaryValueRef(&Value::from(1.5_f64))).expect("serializing 1.5");
+        let value: BinaryValue = postcard::from_bytes(&bytes).expect("loading 1.5");
+        assert_eq!(value.into_value(), Value::from(1.5_f64));
+    }
 }
