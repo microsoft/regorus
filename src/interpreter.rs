@@ -2866,6 +2866,56 @@ impl Interpreter {
                 }
             }
         };
+        let expected_args = if let Some(function_rule) = fcns_rules.first() {
+            match function_rule.as_ref() {
+                Rule::Spec {
+                    head: RuleHead::Func { args, .. },
+                    ..
+                } => Some(args.len()),
+                _ => None,
+            }
+        } else {
+            let default_function_path = if self
+                .compiled_policy
+                .default_rules
+                .contains_key(&selected_fcn_path)
+            {
+                Some(selected_fcn_path.clone())
+            } else {
+                let alternate_path = get_path_string(fcn, Some(&self.current_module_path))?;
+                self.compiled_policy
+                    .default_rules
+                    .contains_key(&alternate_path)
+                    .then_some(alternate_path)
+            };
+            let expected_args = default_function_path
+                .as_deref()
+                .and_then(|path| self.compiled_policy.default_rules.get(path))
+                .and_then(|rules| {
+                    rules.iter().find_map(|(rule, _)| match rule.as_ref() {
+                        Rule::Default { args, .. } if !args.is_empty() => Some(args.len()),
+                        _ => None,
+                    })
+                });
+            expected_args
+        };
+        if let Some(expected_args) = expected_args {
+            if param_values.len() != expected_args {
+                if let Some(with_functions) = with_functions_saved.take() {
+                    self.with_functions = with_functions;
+                }
+                return Err(span.source.error(
+                    span.line,
+                    span.col,
+                    format!(
+                        "mismatch in number of arguments. supplied {}, expected {}",
+                        param_values.len(),
+                        expected_args
+                    )
+                    .as_str(),
+                ));
+            }
+        }
         if param_values.iter().any(|v| v == &Value::Undefined) {
             if let Some(with_functions) = with_functions_saved {
                 self.with_functions = with_functions;
@@ -3056,7 +3106,21 @@ impl Interpreter {
                 if let Some(rules) = rules {
                     for (rule, _) in rules.iter() {
                         if let Rule::Default { value, .. } = rule.as_ref() {
-                            match self.eval_expr(value) {
+                            let previous_module = self.module.clone();
+                            let previous_module_path = self.current_module_path.clone();
+                            let previous_module_index = self.current_module_index;
+                            let previous_scopes =
+                                core::mem::replace(&mut self.scopes, vec![Scope::new()]);
+                            let evaluated = (|| {
+                                let owning_module = self.get_rule_module(rule)?;
+                                self.set_current_module(Some(owning_module))?;
+                                self.eval_expr(value)
+                            })();
+                            self.module = previous_module;
+                            self.current_module_path = previous_module_path;
+                            self.current_module_index = previous_module_index;
+                            self.scopes = previous_scopes;
+                            match evaluated {
                                 Ok(v) => results.push(v),
                                 Err(e) => errors.push(e),
                             }

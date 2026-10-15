@@ -244,41 +244,47 @@ impl RegoVM {
         };
 
         let result_reg = comprehension_context.result_reg;
-        // Take ownership of the result register so Rc refcount stays at 1,
-        // allowing Rc::make_mut to mutate in-place instead of deep-cloning.
-        let mut current_result = self.take_register(result_reg)?;
+        if value_to_add != Value::Undefined
+            && key_value
+                .as_ref()
+                .is_none_or(|key| key != &Value::Undefined)
+        {
+            // Take ownership of the result register so Rc refcount stays at 1,
+            // allowing Rc::make_mut to mutate in-place instead of deep-cloning.
+            let mut current_result = self.take_register(result_reg)?;
 
-        match (&comprehension_context.mode, &mut current_result) {
-            (&ComprehensionMode::Set, &mut Value::Set(ref mut set)) => {
-                crate::Rc::make_mut(set).insert(value_to_add);
-            }
-            (&ComprehensionMode::Array, &mut Value::Array(ref mut arr)) => {
-                crate::Rc::make_mut(arr).push(value_to_add);
-            }
-            (&ComprehensionMode::Object, &mut Value::Object(ref mut obj)) => {
-                if let Some(key) = key_value {
-                    crate::Rc::make_mut(obj).insert(key, value_to_add);
-                } else {
+            match (&comprehension_context.mode, &mut current_result) {
+                (&ComprehensionMode::Set, &mut Value::Set(ref mut set)) => {
+                    crate::Rc::make_mut(set).insert(value_to_add);
+                }
+                (&ComprehensionMode::Array, &mut Value::Array(ref mut arr)) => {
+                    crate::Rc::make_mut(arr).push(value_to_add);
+                }
+                (&ComprehensionMode::Object, &mut Value::Object(ref mut obj)) => {
+                    if let Some(key) = key_value {
+                        crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    } else {
+                        self.set_register(result_reg, current_result)?;
+                        self.comprehension_stack.push(comprehension_context);
+                        return Err(VmError::InvalidIteration {
+                            value: Value::String(Arc::from("Object comprehension requires key")),
+                            pc: self.pc,
+                        });
+                    }
+                }
+                (_mode, other) => {
+                    let offending = core::mem::replace(other, Value::Undefined);
                     self.set_register(result_reg, current_result)?;
                     self.comprehension_stack.push(comprehension_context);
                     return Err(VmError::InvalidIteration {
-                        value: Value::String(Arc::from("Object comprehension requires key")),
+                        value: offending,
                         pc: self.pc,
                     });
                 }
             }
-            (_mode, other) => {
-                let offending = core::mem::replace(other, Value::Undefined);
-                self.set_register(result_reg, current_result)?;
-                self.comprehension_stack.push(comprehension_context);
-                return Err(VmError::InvalidIteration {
-                    value: offending,
-                    pc: self.pc,
-                });
-            }
-        }
 
-        self.set_register(result_reg, current_result)?;
+            self.set_register(result_reg, current_result)?;
+        }
 
         if let Some(iter_state) = comprehension_context.iteration_state.as_mut() {
             iter_state.advance();
@@ -356,39 +362,45 @@ impl RegoVM {
             }
         };
 
-        // Take ownership of the result register so Rc refcount stays at 1,
-        // allowing Rc::make_mut to mutate in-place instead of deep-cloning.
-        let mut current_result = self.take_register(result_reg_idx)?;
+        if value_to_add != Value::Undefined
+            && key_value
+                .as_ref()
+                .is_none_or(|key| key != &Value::Undefined)
+        {
+            // Take ownership of the result register so Rc refcount stays at 1,
+            // allowing Rc::make_mut to mutate in-place instead of deep-cloning.
+            let mut current_result = self.take_register(result_reg_idx)?;
 
-        match (&mode, &mut current_result) {
-            (&ComprehensionMode::Set, &mut Value::Set(ref mut set)) => {
-                crate::Rc::make_mut(set).insert(value_to_add);
-            }
-            (&ComprehensionMode::Array, &mut Value::Array(ref mut arr)) => {
-                crate::Rc::make_mut(arr).push(value_to_add);
-            }
-            (&ComprehensionMode::Object, &mut Value::Object(ref mut obj)) => {
-                if let Some(key) = key_value {
-                    crate::Rc::make_mut(obj).insert(key, value_to_add);
-                } else {
+            match (&mode, &mut current_result) {
+                (&ComprehensionMode::Set, &mut Value::Set(ref mut set)) => {
+                    crate::Rc::make_mut(set).insert(value_to_add);
+                }
+                (&ComprehensionMode::Array, &mut Value::Array(ref mut arr)) => {
+                    crate::Rc::make_mut(arr).push(value_to_add);
+                }
+                (&ComprehensionMode::Object, &mut Value::Object(ref mut obj)) => {
+                    if let Some(key) = key_value {
+                        crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    } else {
+                        self.set_register(result_reg_idx, current_result)?;
+                        return Err(VmError::InvalidIteration {
+                            value: Value::String(Arc::from("Object comprehension requires key")),
+                            pc: self.pc,
+                        });
+                    }
+                }
+                (_mode, other) => {
+                    let offending = core::mem::replace(other, Value::Undefined);
                     self.set_register(result_reg_idx, current_result)?;
                     return Err(VmError::InvalidIteration {
-                        value: Value::String(Arc::from("Object comprehension requires key")),
+                        value: offending,
                         pc: self.pc,
                     });
                 }
             }
-            (_mode, other) => {
-                let offending = core::mem::replace(other, Value::Undefined);
-                self.set_register(result_reg_idx, current_result)?;
-                return Err(VmError::InvalidIteration {
-                    value: offending,
-                    pc: self.pc,
-                });
-            }
-        }
 
-        self.set_register(result_reg_idx, current_result)?;
+            self.set_register(result_reg_idx, current_result)?;
+        }
 
         let (iteration_state_snapshot, body_start, comprehension_end) = {
             let frame = self.execution_stack.get_mut(comprehension_index).ok_or(

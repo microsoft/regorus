@@ -156,6 +156,13 @@ pub enum VmError {
         pc: usize,
     },
 
+    #[error("Function expects exactly {expected} arguments, got {actual} (pc={pc})")]
+    FunctionArgumentMismatch {
+        expected: u32,
+        actual: usize,
+        pc: usize,
+    },
+
     #[error("Builtin function not resolved: {name} (pc={pc})")]
     BuiltinNotResolved { name: String, pc: usize },
 

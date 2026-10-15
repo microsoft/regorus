@@ -275,6 +275,11 @@ possible. Run-to-completion mode returns the error immediately.
 assertion messages. When an internal invariant fails, the error message includes
 `self.get_debug_state()` to help diagnose the issue.
 
+`VmError` and the RVM compiler's `CompilerError` are public exhaustive Rust
+enums. Adding a variant can require downstream exhaustive `match` statements
+to be updated; preserving C and C# ABI/signature compatibility is a separate
+compatibility claim.
+
 ---
 
 ## 8. Operational guidance

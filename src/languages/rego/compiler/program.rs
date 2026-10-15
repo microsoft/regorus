@@ -159,7 +159,15 @@ impl<'a> Compiler<'a> {
             .collect();
 
         for (rule_path, rule_index) in rule_paths_to_evaluate {
-            if let Some(default_literal_index) = self.evaluate_default_rule(&rule_path) {
+            let stored_default_literal_index = self
+                .rule_default_literal_indices
+                .get(rule_index)
+                .and_then(|index| *index);
+            let default_literal_index = match stored_default_literal_index {
+                Some(index) => Some(index),
+                None => self.evaluate_default_rule(&rule_path)?,
+            };
+            if let Some(default_literal_index) = default_literal_index {
                 if let Some(rule_info) = rule_infos_map.get_mut(&rule_index) {
                     rule_info.set_default_literal_index(default_literal_index);
                 }
@@ -191,24 +199,34 @@ impl<'a> Compiler<'a> {
         Ok(self.program)
     }
 
-    fn evaluate_default_rule(&mut self, rule_path: &str) -> Option<u16> {
+    fn evaluate_default_rule(&mut self, rule_path: &str) -> Result<Option<u16>> {
         if !self.policy.inner.default_rules.contains_key(rule_path) {
-            return None;
+            return Ok(None);
         }
 
-        let mut interpreter = Interpreter::new_from_compiled_policy(self.policy.inner.clone());
+        let computed_value = if self.default_function_paths.contains(rule_path) {
+            let Some((_, _, value)) = self.callable_default_function(rule_path) else {
+                return Ok(None);
+            };
+            super::expressions::try_eval_const(value.as_ref())
+        } else {
+            let mut interpreter = Interpreter::new_from_compiled_policy(self.policy.inner.clone());
+            let value = interpreter
+                .eval_default_rule_for_compiler(rule_path)
+                .map_err(|error| CompilerError::General {
+                    message: error.to_string(),
+                })?;
+            Some(value)
+        };
 
-        match interpreter.eval_default_rule_for_compiler(rule_path) {
-            Ok(computed_value) => {
-                if computed_value != Value::Undefined {
-                    let literal_index = self.add_literal(computed_value);
-                    return Some(literal_index);
-                }
-            }
-            Err(_e) => {}
+        let Some(computed_value) = computed_value else {
+            return Ok(None);
+        };
+        if computed_value == Value::Undefined {
+            return Ok(None);
         }
 
-        None
+        Ok(Some(self.add_literal(computed_value)))
     }
 
     fn extract_destructuring_blocks(&self, rule_index: u16) -> Vec<Option<u32>> {

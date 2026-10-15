@@ -6,6 +6,7 @@ use crate::value::Value;
 use super::errors::{Result, VmError};
 use super::execution_model::ExecutionMode;
 use super::machine::RegoVM;
+use core::convert::TryFrom as _;
 
 impl RegoVM {
     pub(super) fn execute_function_call(&mut self, params_index: u16) -> Result<()> {
@@ -19,6 +20,32 @@ impl RegoVM {
                 pc: self.pc,
                 available: self.program.instruction_data.function_call_params.len(),
             })?;
+
+        if let Some(function_info) = self
+            .program
+            .rule_infos
+            .get(usize::from(params.func_rule_index))
+            .and_then(|rule_info| rule_info.function_info.as_ref())
+        {
+            let expected = usize::try_from(function_info.num_params).unwrap_or(usize::MAX);
+            let actual = params.arg_count();
+            if actual != expected {
+                return Err(VmError::FunctionArgumentMismatch {
+                    expected: function_info.num_params,
+                    actual,
+                    pc: self.pc,
+                });
+            }
+
+            for &argument_register in params.arg_registers() {
+                if self.get_register(argument_register)? == &Value::Undefined {
+                    self.set_register(params.dest, Value::Undefined)?;
+                    self.memory_check()?;
+                    return Ok(());
+                }
+            }
+        }
+
         let call_result = match self.execution_mode {
             ExecutionMode::RunToCompletion => {
                 self.execute_call_rule_common(params.dest, params.func_rule_index, Some(&params))
