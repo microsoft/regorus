@@ -679,7 +679,9 @@ impl RegoVM {
                 let mut set_value = self.take_register(set)?;
 
                 if let Ok(set_mut) = set_value.as_set_mut() {
-                    set_mut.insert(value_to_add);
+                    if !matches!(value_to_add, Value::Undefined) {
+                        set_mut.insert(value_to_add);
+                    }
                     self.set_register(set, set_value)?;
                 } else {
                     let offending = set_value.clone();
