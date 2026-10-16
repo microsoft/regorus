@@ -250,7 +250,9 @@ impl RegoVM {
 
         match (&comprehension_context.mode, &mut current_result) {
             (&ComprehensionMode::Set, &mut Value::Set(ref mut set)) => {
-                crate::Rc::make_mut(set).insert(value_to_add);
+                if !matches!(value_to_add, Value::Undefined) {
+                    crate::Rc::make_mut(set).insert(value_to_add);
+                }
             }
             (&ComprehensionMode::Array, &mut Value::Array(ref mut arr)) => {
                 crate::Rc::make_mut(arr).push(value_to_add);
@@ -362,7 +364,9 @@ impl RegoVM {
 
         match (&mode, &mut current_result) {
             (&ComprehensionMode::Set, &mut Value::Set(ref mut set)) => {
-                crate::Rc::make_mut(set).insert(value_to_add);
+                if !matches!(value_to_add, Value::Undefined) {
+                    crate::Rc::make_mut(set).insert(value_to_add);
+                }
             }
             (&ComprehensionMode::Array, &mut Value::Array(ref mut arr)) => {
                 crate::Rc::make_mut(arr).push(value_to_add);
