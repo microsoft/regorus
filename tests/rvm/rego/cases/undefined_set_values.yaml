@@ -1,0 +1,74 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: partial_set_omits_undefined_head
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        values contains input.missing if { true }
+    query: data.test.values
+    want_result:
+      set!: []
+
+  - note: partial_set_omits_undefined_head_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        values contains input.missing if { true }
+    query: data.test.values
+    want_result:
+      set!: []
+
+  - note: partial_set_preserves_defined_values
+    data: {}
+    input:
+      items: [null, false, 0, "", false]
+    modules:
+      - |
+        package test
+        values contains item if { some item in input.items }
+    query: data.test.values
+    want_result:
+      set!: [null, false, 0, ""]
+
+  - note: partial_set_preserves_defined_values_suspendable
+    execution_mode: suspendable
+    data: {}
+    input:
+      items: [null, false, 0, "", false]
+    modules:
+      - |
+        package test
+        values contains item if { some item in input.items }
+    query: data.test.values
+    want_result:
+      set!: [null, false, 0, ""]
+
+  - note: set_comprehension_omits_undefined_values
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        values := {input.missing | true}
+    query: data.test.values
+    want_result:
+      set!: []
+
+  - note: set_comprehension_omits_undefined_values_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        values := {input.missing | true}
+    query: data.test.values
+    want_result:
+      set!: []
