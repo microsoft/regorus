@@ -2,6 +2,10 @@
 // Licensed under the MIT License.
 
 using System;
+#if REGORUS_EXPERIMENTAL
+using RegorusMemoryBudgetExceededException = Regorus.Experimental.RegorusMemoryBudgetExceededException;
+using RegorusMemoryBudgetUnsupportedException = Regorus.Experimental.RegorusMemoryBudgetUnsupportedException;
+#endif
 
 #nullable enable
 

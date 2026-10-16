@@ -1,0 +1,8 @@
+{
+  "identity": {
+    "name": "alex"
+  },
+  "release": {
+    "service": "checkout"
+  }
+}

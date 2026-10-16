@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Nullable>Enable</Nullable>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableMSTestRunner>true</EnableMSTestRunner>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <TestingPlatformShowTestsFailure>true</TestingPlatformShowTestsFailure>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <UsePackageReference Condition="'$(UsePackageReference)' == ''">false</UsePackageReference>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../Regorus.Tests/AssumptionTests.cs" Link="AssumptionTests.cs" />
+    <PackageReference Include="MSTest" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UsePackageReference)' != 'true'">
+    <ProjectReference Include="../Regorus.Experimental/Regorus.Experimental.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UsePackageReference)' == 'true'">
+    <PackageReference Include="Microsoft.Regorus.Experimental" />
+  </ItemGroup>
+</Project>

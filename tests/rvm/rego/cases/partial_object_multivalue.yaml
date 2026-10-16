@@ -1,0 +1,150 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Partial Object Multi-Value Rules Test Suite
+# Tests `foo[key] contains value` patterns that produce objects with set values
+# Previously these were incorrectly compiled as flat partial sets.
+
+cases:
+  - note: simple_multivalue_partial_object
+    data: {}
+    modules:
+      - |
+        package test
+
+        servers := {"s1": ["p1", "p2"], "s2": ["p3"]}
+
+        ports[server] contains port if {
+          some server, port_list in servers
+          some port in port_list
+        }
+    query: data.test.ports
+    want_result:
+      s1:
+        set!: ["p1", "p2"]
+      s2:
+        set!: ["p3"]
+
+  - note: multivalue_partial_object_with_input
+    data: {}
+    input:
+      hosts:
+        web1:
+          ports: [80, 443]
+        web2:
+          ports: [80, 8080]
+        db1:
+          ports: [5432]
+    modules:
+      - |
+        package test
+
+        host_ports[host] contains port if {
+          some host, info in input.hosts
+          some port in info.ports
+        }
+    query: data.test.host_ports
+    want_result:
+      web1:
+        set!: [80, 443]
+      web2:
+        set!: [80, 8080]
+      db1:
+        set!: [5432]
+
+  - note: multivalue_partial_object_single_element_sets
+    data: {}
+    modules:
+      - |
+        package test
+
+        groups := {"a": ["x"], "b": ["y"]}
+
+        items[g] contains v if {
+          some g, vals in groups
+          some v in vals
+        }
+    query: data.test.items
+    want_result:
+      a:
+        set!: ["x"]
+      b:
+        set!: ["y"]
+
+  - note: multivalue_partial_object_with_filter
+    data: {}
+    modules:
+      - |
+        package test
+
+        data_map := {
+          "alice": [1, 2, 3, 4, 5],
+          "bob": [2, 4, 6, 8, 10]
+        }
+
+        even_values[name] contains v if {
+          some name, values in data_map
+          some v in values
+          v % 2 == 0
+        }
+    query: data.test.even_values
+    want_result:
+      alice:
+        set!: [2, 4]
+      bob:
+        set!: [2, 4, 6, 8, 10]
+
+  - note: multivalue_partial_object_overlapping_values
+    data: {}
+    modules:
+      - |
+        package test
+
+        tags[category] contains tag if {
+          some category, tag in {
+            "colors": "red",
+            "colors": "blue",
+          }
+        }
+
+        tags[category] contains tag if {
+          some category, tag in {
+            "sizes": "small",
+            "sizes": "large",
+          }
+        }
+    query: data.test.tags
+    want_result:
+      colors:
+        set!: ["blue"]
+      sizes:
+        set!: ["large"]
+
+  - note: regular_partial_object_still_works
+    data: {}
+    modules:
+      - |
+        package test
+
+        info[name] := count if {
+          counts := {"a": 1, "b": 2, "c": 3}
+          some name, count in counts
+        }
+    query: data.test.info
+    want_result:
+      a: 1
+      b: 2
+      c: 3
+
+  - note: simple_partial_set_still_works
+    data: {}
+    modules:
+      - |
+        package test
+
+        items contains x if {
+          some x in [1, 2, 3]
+        }
+    query: data.test.items
+    want_result:
+      set!: [1, 2, 3]

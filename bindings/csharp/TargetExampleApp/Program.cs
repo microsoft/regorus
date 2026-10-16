@@ -235,6 +235,7 @@ allow if {
 
         Console.WriteLine("\n9. Azure Policy JSON compilation:");
         DemonstrateAzurePolicyJsonCompilation();
+
     }
 
     static void DemonstrateConcurrentEvaluation(Regorus.CompiledPolicy compiledPolicy)
@@ -571,4 +572,5 @@ allow if {
         var binary = program.SerializeBinary();
         Console.WriteLine($"Serialized program size: {binary.Length} bytes");
     }
+
 }

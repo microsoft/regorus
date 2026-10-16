@@ -44,7 +44,8 @@ impl Program {
                 "set_create_params": self.instruction_data.set_create_params,
                 "virtual_data_document_lookup_params": self.instruction_data.virtual_data_document_lookup_params,
                 "chained_index_params": self.instruction_data.chained_index_params,
-                "comprehension_begin_params": self.instruction_data.comprehension_begin_params
+                "comprehension_begin_params": self.instruction_data.comprehension_begin_params,
+                "object_deep_set_params": self.instruction_data.object_deep_set_params
             },
             "literals": self.literals,
             "builtin_info_table": self.builtin_info_table,
@@ -219,6 +220,12 @@ impl Program {
             has_host_await,
             needs_recompilation,
             rego_v0,
+            #[cfg(feature = "explanations")]
+            condition_infos: Vec::new(),
+            #[cfg(feature = "explanations")]
+            register_provenances: Vec::new(),
+            #[cfg(feature = "explanations")]
+            binding_infos: Vec::new(),
         };
 
         // Recompute has_host_await when it was not provided in the JSON input

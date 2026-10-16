@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 use crate::rvm::instructions::{ComprehensionMode, LoopMode};
+#[cfg(feature = "explanations")]
+use crate::value::Value;
 use crate::value::{Array, Object, ObjectCursor, Set, SetCursor};
 use crate::Rc;
 
@@ -20,6 +22,18 @@ pub struct LoopContext {
     pub success_count: usize,
     pub total_iterations: usize,
     pub current_iteration_failed: bool, // Track if current iteration had condition failures
+    /// Sample key from the first successful iteration (for causality witness).
+    #[cfg(feature = "explanations")]
+    pub sample_key: Option<Value>,
+    /// Sample value from the first successful iteration (for causality witness).
+    #[cfg(feature = "explanations")]
+    pub sample_value: Option<Value>,
+    /// Runtime provenance path for the collection being iterated.
+    #[cfg(feature = "explanations")]
+    pub collection_provenance: Option<crate::Rc<str>>,
+    /// Current iteration index (0-based) for PE mode disjunct grouping.
+    #[cfg(feature = "explanations")]
+    pub iteration_index: u32,
 }
 
 /// Iterator state for different collection types.
@@ -98,6 +112,7 @@ pub struct CallRuleContext {
     pub rule_type: crate::rvm::program::RuleType,
     pub current_definition_index: usize,
     pub current_body_index: usize,
+    pub current_body_condition_start: usize,
 }
 
 /// Context for tracking active comprehensions
@@ -119,6 +134,15 @@ pub(super) struct ComprehensionContext {
     pub(super) iteration_state: Option<IterationState>,
     /// Resume location for the parent frame once this comprehension completes
     pub(super) resume_pc: usize,
+    /// Whether any yield during this comprehension depended on assumptions (PE mode).
+    #[cfg(feature = "explanations")]
+    pub(super) has_assumption_dependent_yield: bool,
+    /// Number of assumptions in trace when comprehension started.
+    #[cfg(feature = "explanations")]
+    pub(super) assumptions_count_at_start: usize,
+    /// First input-derived provenance path seen in a yield value (PE mode).
+    #[cfg(feature = "explanations")]
+    pub(super) input_provenance_hint: Option<alloc::string::String>,
 }
 
 #[cfg(test)]

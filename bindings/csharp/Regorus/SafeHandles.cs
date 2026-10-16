@@ -6,7 +6,11 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
 #nullable enable
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
     internal sealed class RegorusEngineHandle : SafeHandleZeroOrMinusOneIsInvalid
     {

@@ -47,6 +47,7 @@ contention_checks = ["parking_lot"]
 rvm = ["regorus/rvm"]
 rbac = ["regorus/azure-rbac"]
 cache = ["regorus/cache"]
+explanations = ["regorus/explanations"]
 custom_allocator = []
 
 [build-dependencies]

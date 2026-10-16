@@ -53,7 +53,8 @@ impl RegoVM {
         rule_definitions: &[Vec<u32>],
         rule_info: &RuleInfo,
         function_call_params: Option<&FunctionCallParams>,
-    ) -> Result<(Value, bool)> {
+        #[cfg(feature = "explanations")] rule_index: u16,
+    ) -> Result<(Value, bool, Option<crate::Rc<str>>)> {
         let mut first_successful_result: Option<Value> = None;
         let mut rule_failed_due_to_inconsistency = false;
         let is_function_call = rule_info.function_info.is_some();
@@ -79,8 +80,21 @@ impl RegoVM {
             },
         };
 
+        #[cfg(feature = "explanations")]
+        let arg_provenance: Vec<Option<crate::Rc<str>>> =
+            function_call_params.map_or_else(Vec::new, |params| {
+                params
+                    .arg_registers()
+                    .iter()
+                    .map(|&arg| self.provenance.get(arg).cloned())
+                    .collect()
+            });
+
         let mut previous_registers = Vec::default();
         mem::swap(&mut previous_registers, &mut self.registers);
+
+        #[cfg(feature = "explanations")]
+        let previous_provenance = self.provenance.take_paths();
 
         let mut previous_loop_stack = Vec::default();
         mem::swap(&mut previous_loop_stack, &mut self.loop_stack);
@@ -92,13 +106,43 @@ impl RegoVM {
         );
 
         self.register_stack.push(previous_registers);
+        #[cfg(feature = "explanations")]
+        self.provenance_stack.push(previous_provenance);
         self.registers = register_window;
+        #[cfg(feature = "explanations")]
+        {
+            self.provenance.resize(self.registers.len());
+            for (i, prov) in arg_provenance.into_iter().enumerate() {
+                let callee_reg = u8::try_from(i.saturating_add(1)).unwrap_or(u8::MAX);
+                self.provenance.set_path(callee_reg, prov);
+            }
+        }
+
+        #[cfg(feature = "explanations")]
+        let mut pe_any_def_resolved = false;
+        #[cfg(feature = "explanations")]
+        let mut pe_any_def_has_assumptions = false;
 
         'outer: for (def_idx, definition_bodies) in rule_definitions.iter().enumerate() {
+            // Each definition gets its own conjunction scope so that assumptions
+            // from different definitions form separate disjuncts in the DNF output.
+            #[cfg(feature = "explanations")]
+            self.push_conjunction_scope();
+
+            #[cfg(feature = "explanations")]
+            let def_assumptions_start = self.trace.assumptions.len();
+
+            #[cfg(feature = "explanations")]
+            let mut def_succeeded = false;
+
             for (body_entry_point_idx, body_entry_point) in definition_bodies.iter().enumerate() {
                 if let Some(ctx) = self.call_rule_stack.last_mut() {
                     ctx.current_body_index = body_entry_point_idx;
                     ctx.current_definition_index = def_idx;
+                    #[cfg(feature = "explanations")]
+                    {
+                        ctx.current_body_condition_start = self.trace.condition_outcomes.len();
+                    }
                 }
 
                 self.registers
@@ -125,6 +169,10 @@ impl RegoVM {
 
                 match self.jump_to(*body_entry_point) {
                     Ok(_) => {
+                        #[cfg(feature = "explanations")]
+                        {
+                            def_succeeded = true;
+                        }
                         if matches!(rule_info.rule_type, RuleType::Complete) || is_function_call {
                             let current_result = self.get_register(result_reg)?.clone();
                             if current_result != Value::Undefined {
@@ -136,12 +184,44 @@ impl RegoVM {
                                     }
                                 } else {
                                     first_successful_result = Some(current_result.clone());
-                                    // All definitions produce the same static value;
-                                    // no need to verify consistency with the rest.
-                                    if rule_info.early_exit_on_first_success {
+                                    // In PE mode, do NOT short-circuit — explore
+                                    // all definitions to produce complete disjuncts.
+                                    #[cfg(feature = "explanations")]
+                                    let is_pe = self.explanation_settings.eval_mode
+                                        == crate::evaluation_trace::EvaluationMode::PartialEval;
+                                    #[cfg(not(feature = "explanations"))]
+                                    let is_pe = false;
+
+                                    if rule_info.early_exit_on_first_success && !is_pe {
+                                        // Record per-definition outcome before exiting early.
+                                        #[cfg(feature = "explanations")]
+                                        if self.explanation_settings.enabled {
+                                            self.trace.record_rule_outcome(
+                                                rule_index,
+                                                u16::try_from(def_idx).unwrap_or(u16::MAX),
+                                                true,
+                                                None,
+                                            );
+                                        }
+                                        #[cfg(feature = "explanations")]
+                                        self.pop_conjunction_scope();
                                         break 'outer;
                                     }
                                 }
+                            }
+                        }
+
+                        // Track whether this definition resolved without
+                        // assumptions (PE definitiveness detection).
+                        #[cfg(feature = "explanations")]
+                        if self.explanation_settings.eval_mode
+                            == crate::evaluation_trace::EvaluationMode::PartialEval
+                            && self.call_rule_stack.len() == 1
+                        {
+                            if self.trace.assumptions.len() == def_assumptions_start {
+                                pe_any_def_resolved = true;
+                            } else {
+                                pe_any_def_has_assumptions = true;
                             }
                         }
 
@@ -178,7 +258,55 @@ impl RegoVM {
             }
 
             if rule_failed_due_to_inconsistency {
+                #[cfg(feature = "explanations")]
+                {
+                    if self.explanation_settings.enabled {
+                        self.trace.record_rule_outcome(
+                            rule_index,
+                            u16::try_from(def_idx).unwrap_or(u16::MAX),
+                            def_succeeded,
+                            None,
+                        );
+                    }
+                    self.pop_conjunction_scope();
+                }
                 break;
+            }
+
+            #[cfg(feature = "explanations")]
+            {
+                if self.explanation_settings.enabled {
+                    self.trace.record_rule_outcome(
+                        rule_index,
+                        u16::try_from(def_idx).unwrap_or(u16::MAX),
+                        def_succeeded,
+                        None,
+                    );
+                }
+                self.pop_conjunction_scope();
+            }
+        }
+
+        // PE definitiveness: if at least one definition resolved without
+        // assumptions, mark the result as definitive.
+        // - Complete / function rules (OR semantics): ANY resolved → definitive.
+        // - PartialSet / PartialObject (UNION semantics): ALL resolved → definitive.
+        #[cfg(feature = "explanations")]
+        if self.explanation_settings.eval_mode
+            == crate::evaluation_trace::EvaluationMode::PartialEval
+            && self.call_rule_stack.len() == 1
+            && pe_any_def_resolved
+        {
+            let is_definitive =
+                if matches!(rule_info.rule_type, RuleType::Complete) || is_function_call {
+                    // OR semantics: any single resolved def makes result definitive.
+                    true
+                } else {
+                    // UNION semantics: definitive only if NO def had assumptions.
+                    !pe_any_def_has_assumptions
+                };
+            if is_definitive {
+                self.trace.definitive_result = true;
             }
         }
 
@@ -190,18 +318,35 @@ impl RegoVM {
             self.get_register(result_reg)?.clone()
         };
 
+        #[cfg(feature = "explanations")]
+        let return_provenance = self.provenance.get(result_reg).cloned();
+
         if let Some(restored_registers) = self.register_stack.pop() {
             let mut current_register_window = Vec::default();
             mem::swap(&mut current_register_window, &mut self.registers);
             self.return_register_window(current_register_window);
 
             self.registers = restored_registers;
+
+            #[cfg(feature = "explanations")]
+            if let Some(restored_provenance) = self.provenance_stack.pop() {
+                self.provenance.restore_paths(restored_provenance);
+            }
         }
 
         self.loop_stack = previous_loop_stack;
         self.comprehension_stack = previous_comprehension_stack;
 
-        Ok((final_result, rule_failed_due_to_inconsistency))
+        Ok((final_result, rule_failed_due_to_inconsistency, {
+            #[cfg(feature = "explanations")]
+            {
+                return_provenance
+            }
+            #[cfg(not(feature = "explanations"))]
+            {
+                None
+            }
+        }))
     }
 
     pub(super) fn execute_call_rule_common(
@@ -244,8 +389,20 @@ impl RegoVM {
                         available: self.rule_cache.len(),
                     })?;
             if *computed {
-                self.set_register(dest, cached_result.clone())?;
-                return Ok(());
+                #[cfg(feature = "explanations")]
+                if self.explanation_settings.enabled {
+                    // Re-evaluate when explanations are enabled so live runtime
+                    // provenance is preserved for downstream causality and
+                    // assumption reporting.
+                } else {
+                    self.set_register(dest, cached_result.clone())?;
+                    return Ok(());
+                }
+                #[cfg(not(feature = "explanations"))]
+                {
+                    self.set_register(dest, cached_result.clone())?;
+                    return Ok(());
+                }
             }
         }
 
@@ -284,10 +441,26 @@ impl RegoVM {
             rule_type: rule_type.clone(),
             current_definition_index: 0,
             current_body_index: 0,
+            current_body_condition_start: 0,
         });
 
-        let (final_result, rule_failed_due_to_inconsistency) = self
-            .execute_rule_definitions_common(&rule_definitions, &rule_info, function_call_params)?;
+        #[cfg(feature = "explanations")]
+        let assumptions_before = self.trace.assumptions.len();
+
+        #[allow(unused)]
+        let (final_result, rule_failed_due_to_inconsistency, return_provenance) = self
+            .execute_rule_definitions_common(
+                &rule_definitions,
+                &rule_info,
+                function_call_params,
+                #[cfg(feature = "explanations")]
+                rule_index,
+            )?;
+
+        #[cfg(feature = "explanations")]
+        let assumptions_after = self.trace.assumptions.len();
+        #[cfg(feature = "explanations")]
+        let result_is_assumption_dependent = assumptions_after > assumptions_before;
 
         self.set_register(dest, Value::Undefined)?;
 
@@ -317,6 +490,19 @@ impl RegoVM {
         };
 
         self.set_register(dest, result_from_rule.clone())?;
+        #[cfg(feature = "explanations")]
+        self.provenance.set_path(dest, return_provenance);
+
+        #[cfg(feature = "explanations")]
+        if self.explanation_settings.enabled {
+            let succeeded = result_from_rule != Value::Undefined;
+            self.trace
+                .record_rule_summary(rule_index, succeeded, Some(result_from_rule.clone()));
+            // Track assumption-dependent depth so negation handling can detect it.
+            if succeeded && result_is_assumption_dependent {
+                self.assumption_dependent_depth = self.assumption_dependent_depth.saturating_add(1);
+            }
+        }
 
         if self.get_register(dest)? == &Value::Undefined && !rule_failed_due_to_inconsistency {
             match call_context.rule_type {
@@ -491,6 +677,7 @@ impl RegoVM {
             rule_type: rule_info.rule_type.clone(),
             current_definition_index: 0,
             current_body_index: 0,
+            current_body_condition_start: 0,
         });
 
         let mut frame_data = RuleFrameData {
@@ -512,6 +699,16 @@ impl RegoVM {
             saved_registers,
             saved_loop_stack,
             saved_comprehension_stack,
+            #[cfg(feature = "explanations")]
+            assumptions_at_def_start: 0,
+            #[cfg(feature = "explanations")]
+            pe_any_def_resolved: false,
+            #[cfg(feature = "explanations")]
+            pe_any_def_has_assumptions: false,
+            #[cfg(feature = "explanations")]
+            conjunction_scope_active: false,
+            #[cfg(feature = "explanations")]
+            current_def_succeeded: false,
         };
 
         let initial_pc = self
@@ -572,6 +769,8 @@ impl RegoVM {
         rule_info: &RuleInfo,
     ) -> Result<Option<usize>> {
         if frame_data.rule_failed_due_to_inconsistency {
+            #[cfg(feature = "explanations")]
+            self.pop_conjunction_scope_for_frame(frame_data);
             frame_data.phase = RuleFramePhase::Finalizing;
             return Ok(None);
         }
@@ -589,9 +788,21 @@ impl RegoVM {
             };
 
             if frame_data.current_body_index < definition_bodies.len() {
+                // Push a conjunction scope for the first body of each definition.
+                #[cfg(feature = "explanations")]
+                if frame_data.current_body_index == 0 && !frame_data.conjunction_scope_active {
+                    self.push_conjunction_scope();
+                    frame_data.conjunction_scope_active = true;
+                    frame_data.assumptions_at_def_start = self.trace.assumptions.len();
+                }
+
                 if let Some(ctx) = self.call_rule_stack.last_mut() {
                     ctx.current_definition_index = frame_data.current_definition_index;
                     ctx.current_body_index = frame_data.current_body_index;
+                    #[cfg(feature = "explanations")]
+                    {
+                        ctx.current_body_condition_start = self.trace.condition_outcomes.len();
+                    }
                 }
 
                 self.registers
@@ -623,7 +834,11 @@ impl RegoVM {
                     "rule definition index",
                 )?;
                 frame_data.current_body_index = 0;
+                #[cfg(feature = "explanations")]
+                self.pop_conjunction_scope_for_frame(frame_data);
             } else {
+                #[cfg(feature = "explanations")]
+                self.pop_conjunction_scope_for_frame(frame_data);
                 self.increment_counter(
                     &mut frame_data.current_definition_index,
                     "rule definition index",
@@ -662,6 +877,48 @@ impl RegoVM {
         }
     }
 
+    /// Pop the conjunction scope for the current definition in a suspendable
+    /// rule frame, and track PE definitiveness.
+    #[cfg(feature = "explanations")]
+    fn pop_conjunction_scope_for_frame(&mut self, frame_data: &mut RuleFrameData) {
+        if !frame_data.conjunction_scope_active {
+            return;
+        }
+        frame_data.conjunction_scope_active = false;
+        self.pop_conjunction_scope();
+
+        // Record a per-definition outcome so the causality report can
+        // surface one entry per evaluated definition body (Causality-3).
+        // We only emit once per definition; subsequent body iterations
+        // (e.g. multi-body definitions) collapse into the single outcome
+        // for the definition.
+        let def_idx = u16::try_from(frame_data.current_definition_index).unwrap_or(u16::MAX);
+        if !self.trace.rule_outcomes.iter().any(|o| {
+            !o.is_summary && o.rule_index == frame_data.rule_index && o.definition_index == def_idx
+        }) {
+            self.trace.record_rule_outcome(
+                frame_data.rule_index,
+                def_idx,
+                frame_data.current_def_succeeded,
+                None,
+            );
+        }
+
+        // Track per-definition assumption resolution for PE definitiveness.
+        if self.explanation_settings.eval_mode
+            == crate::evaluation_trace::EvaluationMode::PartialEval
+            && self.call_rule_stack.len() == 1
+            && frame_data.current_def_succeeded
+        {
+            if self.trace.assumptions.len() == frame_data.assumptions_at_def_start {
+                frame_data.pe_any_def_resolved = true;
+            } else {
+                frame_data.pe_any_def_has_assumptions = true;
+            }
+        }
+        frame_data.current_def_succeeded = false;
+    }
+
     fn rule_frame_after_failure(
         &mut self,
         frame_data: &mut RuleFrameData,
@@ -677,6 +934,10 @@ impl RegoVM {
         rule_info: &RuleInfo,
     ) -> Result<Option<usize>> {
         frame_data.any_body_succeeded = true;
+        #[cfg(feature = "explanations")]
+        {
+            frame_data.current_def_succeeded = true;
+        }
 
         if matches!(frame_data.rule_type, RuleType::Complete) || frame_data.is_function_rule {
             let current_result = self
@@ -697,9 +958,14 @@ impl RegoVM {
                     }
                 } else {
                     frame_data.accumulated_result = Some(current_result);
-                    // All definitions produce the same static value;
-                    // skip remaining definitions.
-                    if rule_info.early_exit_on_first_success {
+                    // In PE mode, do NOT short-circuit — explore all definitions.
+                    #[cfg(feature = "explanations")]
+                    let is_pe = self.explanation_settings.eval_mode
+                        == crate::evaluation_trace::EvaluationMode::PartialEval;
+                    #[cfg(not(feature = "explanations"))]
+                    let is_pe = false;
+
+                    if rule_info.early_exit_on_first_success && !is_pe {
                         frame_data.current_definition_index = frame_data.total_definitions;
                         frame_data.phase = RuleFramePhase::Finalizing;
                         return Ok(None);
@@ -719,7 +985,21 @@ impl RegoVM {
         self.rule_frame_schedule_segment(frame_data, rule_info)
     }
 
-    pub(super) fn finalize_rule_frame_data(&mut self, frame_data: RuleFrameData) -> Result<Value> {
+    #[allow(unused_mut)]
+    pub(super) fn finalize_rule_frame_data(
+        &mut self,
+        mut frame_data: RuleFrameData,
+    ) -> Result<Value> {
+        // Pop any active conjunction scope before finalization.
+        #[cfg(feature = "explanations")]
+        self.pop_conjunction_scope_for_frame(&mut frame_data);
+
+        // Extract PE definitiveness state before destructuring.
+        #[cfg(feature = "explanations")]
+        let pe_any_def_resolved = frame_data.pe_any_def_resolved;
+        #[cfg(feature = "explanations")]
+        let pe_any_def_has_assumptions = frame_data.pe_any_def_has_assumptions;
+
         let RuleFrameData {
             return_pc,
             dest_reg,
@@ -757,6 +1037,13 @@ impl RegoVM {
                 .cloned()
                 .unwrap_or(Value::Undefined)
         };
+
+        #[cfg(feature = "explanations")]
+        if self.explanation_settings.enabled {
+            let succeeded = result_from_rule != Value::Undefined;
+            self.trace
+                .record_rule_summary(rule_index, succeeded, Some(result_from_rule.clone()));
+        }
 
         let mut current_window = Vec::default();
         mem::swap(&mut current_window, &mut self.registers);
@@ -870,6 +1157,22 @@ impl RegoVM {
         }
 
         self.pc = return_pc;
+
+        // PE definitiveness for suspendable path.
+        #[cfg(feature = "explanations")]
+        if self.explanation_settings.eval_mode
+            == crate::evaluation_trace::EvaluationMode::PartialEval
+            && pe_any_def_resolved
+        {
+            let is_definitive = if matches!(rule_type, RuleType::Complete) || is_function_rule {
+                true
+            } else {
+                !pe_any_def_has_assumptions
+            };
+            if is_definitive {
+                self.trace.definitive_result = true;
+            }
+        }
 
         Ok(final_value)
     }

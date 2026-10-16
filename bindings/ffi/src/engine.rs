@@ -999,6 +999,132 @@ pub extern "C" fn regorus_engine_clear_coverage_data(engine: *mut RegorusEngine)
     })
 }
 
+/// Set explanation settings.
+///
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.set_explanation_settings
+///
+/// * `enabled`: Whether to enable explanation capture.
+/// * `value_mode`: 0 = Redacted, 1 = Full.
+/// * `condition_mode`: 0 = PrimaryOnly, 1 = AllContributing.
+/// * `scope_mode`: 0 = AllEmissions, 1 = SingleEmission, 2 = RuleSummary.
+/// * `detail_mode`: 0 = Compact, 1 = Standard, 2 = Full.
+/// * `has_emission_index`: Whether `emission_index` should be used.
+/// * `emission_index`: 0-based emission index when `scope_mode` is SingleEmission.
+/// * `has_emission_value`: Whether `emission_value_json` should be used.
+/// * `emission_value_json`: JSON literal or raw string to match against emitted values.
+/// * `assume_unknown_input`: Whether to assume unknown input fields exist.
+#[no_mangle]
+#[cfg(feature = "explanations")]
+pub extern "C" fn regorus_engine_set_explanation_settings(
+    engine: *mut RegorusEngine,
+    enabled: bool,
+    value_mode: u8,
+    condition_mode: u8,
+    scope_mode: u8,
+    detail_mode: u8,
+    has_emission_index: bool,
+    emission_index: u32,
+    has_emission_value: bool,
+    emission_value_json: *const c_char,
+    assume_unknown_input: bool,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        to_regorus_result(|| -> Result<()> {
+            let engine = to_ref(engine)?;
+            let mut guard = engine.try_write()?;
+            let vm = match value_mode {
+                0 => regorus::evaluation_trace::ValueMode::Redacted,
+                1 => regorus::evaluation_trace::ValueMode::Full,
+                _ => {
+                    return Err(anyhow!(
+                        "invalid value_mode; expected 0 (Redacted) or 1 (Full)"
+                    ))
+                }
+            };
+            let cm = match condition_mode {
+                0 => regorus::evaluation_trace::ConditionMode::PrimaryOnly,
+                1 => regorus::evaluation_trace::ConditionMode::AllContributing,
+                _ => {
+                    return Err(anyhow!(
+                        "invalid condition_mode; expected 0 (PrimaryOnly) or 1 (AllContributing)"
+                    ))
+                }
+            };
+            let scope = match scope_mode {
+                0 => regorus::evaluation_trace::ExplanationScope::AllEmissions,
+                1 => regorus::evaluation_trace::ExplanationScope::SingleEmission,
+                2 => regorus::evaluation_trace::ExplanationScope::RuleSummary,
+                _ => {
+                    return Err(anyhow!(
+                        "invalid scope_mode; expected 0 (AllEmissions), 1 (SingleEmission), or 2 (RuleSummary)"
+                    ))
+                }
+            };
+            let detail = match detail_mode {
+                0 => regorus::evaluation_trace::ExplanationDetail::Compact,
+                1 => regorus::evaluation_trace::ExplanationDetail::Standard,
+                2 => regorus::evaluation_trace::ExplanationDetail::Full,
+                _ => {
+                    return Err(anyhow!(
+                        "invalid detail_mode; expected 0 (Compact), 1 (Standard), or 2 (Full)"
+                    ))
+                }
+            };
+            let emission_index = if has_emission_index {
+                Some(
+                    usize::try_from(emission_index)
+                        .map_err(|_| anyhow!("emission_index is out of range"))?,
+                )
+            } else {
+                None
+            };
+            let emission_value = if has_emission_value {
+                let raw = from_c_str(emission_value_json)?;
+                Some(
+                    regorus::Value::from_json_str(&raw)
+                        .unwrap_or_else(|_| regorus::Value::from(raw)),
+                )
+            } else {
+                None
+            };
+            guard.set_explanation_settings(regorus::evaluation_trace::ExplanationSettings {
+                enabled,
+                value_mode: vm,
+                condition_mode: cm,
+                scope,
+                detail,
+                emission_index,
+                emission_value,
+                assume_unknown_input,
+                eval_mode: regorus::evaluation_trace::EvaluationMode::default(),
+                unknowns: alloc::vec![String::from("input")],
+            });
+            Ok(())
+        }())
+    })
+}
+
+/// Take the causality report from the most recent evaluation as JSON.
+///
+/// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.take_causality_report
+#[no_mangle]
+#[cfg(feature = "explanations")]
+pub extern "C" fn regorus_engine_take_causality_report(
+    engine: *mut RegorusEngine,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        let output = || -> Result<String> {
+            let engine = to_ref(engine)?;
+            let mut guard = engine.try_write()?;
+            guard.take_causality_report()
+        }();
+        match output {
+            Ok(out) => RegorusResult::ok_string(out),
+            Err(e) => to_regorus_result(Err(e)),
+        }
+    })
+}
+
 /// Whether to gather output of print statements.
 ///
 /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.set_gather_prints

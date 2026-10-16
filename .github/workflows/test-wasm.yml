@@ -42,3 +42,6 @@ jobs:
 
       - name: Test wasm binding via xtask
         run: cargo xtask test-wasm --release --frozen --node node
+
+      - name: Test experimental wasm binding via xtask
+        run: cargo xtask test-wasm --release --frozen --experimental --node node

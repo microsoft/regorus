@@ -94,6 +94,12 @@ impl RegoVM {
             comprehension_end: params.comprehension_end,
             iteration_state,
             resume_pc,
+            #[cfg(feature = "explanations")]
+            has_assumption_dependent_yield: false,
+            #[cfg(feature = "explanations")]
+            assumptions_count_at_start: self.trace.assumptions.len(),
+            #[cfg(feature = "explanations")]
+            input_provenance_hint: None,
         };
 
         if auto_iterate {
@@ -177,6 +183,12 @@ impl RegoVM {
             comprehension_end: params.comprehension_end,
             iteration_state,
             resume_pc,
+            #[cfg(feature = "explanations")]
+            has_assumption_dependent_yield: false,
+            #[cfg(feature = "explanations")]
+            assumptions_count_at_start: self.trace.assumptions.len(),
+            #[cfg(feature = "explanations")]
+            input_provenance_hint: None,
         };
 
         let next_pc = if auto_iterate {
@@ -244,6 +256,11 @@ impl RegoVM {
         };
 
         let result_reg = comprehension_context.result_reg;
+
+        // Check before value_to_add is moved into the collection.
+        #[cfg(feature = "explanations")]
+        let value_is_undefined = value_to_add == Value::Undefined;
+
         // Take ownership of the result register so Rc refcount stays at 1,
         // allowing Rc::make_mut to mutate in-place instead of deep-cloning.
         let mut current_result = self.take_register(result_reg)?;
@@ -279,6 +296,25 @@ impl RegoVM {
         }
 
         self.set_register(result_reg, current_result)?;
+
+        // Track if this yield was produced via assumptions (PE soundness warning).
+        #[cfg(feature = "explanations")]
+        if self.assumption_dependent_depth > 0
+            || self.trace.assumptions.len() > comprehension_context.assumptions_count_at_start
+            || (value_is_undefined && self.explanation_settings.assume_unknown_input)
+        {
+            comprehension_context.has_assumption_dependent_yield = true;
+            // Capture input provenance from the value register if available.
+            if comprehension_context.input_provenance_hint.is_none() {
+                let prov = self.provenance.get(value_reg);
+                if let Some(path) = prov {
+                    if self.explanation_settings.is_unknown_path(path.as_ref()) {
+                        comprehension_context.input_provenance_hint =
+                            Some(alloc::string::String::from(path.as_ref()));
+                    }
+                }
+            }
+        }
 
         if let Some(iter_state) = comprehension_context.iteration_state.as_mut() {
             iter_state.advance();
@@ -389,6 +425,32 @@ impl RegoVM {
         }
 
         self.set_register(result_reg_idx, current_result)?;
+
+        // Track if this yield was produced via assumptions (PE soundness warning).
+        #[cfg(feature = "explanations")]
+        {
+            let assumption_dependent =
+                if let Some(frame) = self.execution_stack.get(comprehension_index) {
+                    if let FrameKind::Comprehension { ref context, .. } = frame.kind {
+                        self.assumption_dependent_depth > 0
+                            || self.trace.assumptions.len() > context.assumptions_count_at_start
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+            if assumption_dependent {
+                if let Some(frame) = self.execution_stack.get_mut(comprehension_index) {
+                    if let FrameKind::Comprehension {
+                        ref mut context, ..
+                    } = frame.kind
+                    {
+                        context.has_assumption_dependent_yield = true;
+                    }
+                }
+            }
+        }
 
         let (iteration_state_snapshot, body_start, comprehension_end) = {
             let frame = self.execution_stack.get_mut(comprehension_index).ok_or(
@@ -518,14 +580,44 @@ impl RegoVM {
         // `ComprehensionEnd` is reached from a loaded program; an empty stack
         // here means malformed user-supplied bytecode, which must still surface
         // as a typed error rather than a panic — including in debug builds.
-        // The accumulated result already resides in its result register and needs
-        // no post-processing, so popping the context to unwind the stack suffices.
-        self.comprehension_stack
+        #[allow(unused)]
+        let context = self
+            .comprehension_stack
             .pop()
             .ok_or_else(|| VmError::InvalidIteration {
                 value: Value::String(Arc::from("No active comprehension context")),
                 pc: self.pc,
             })?;
+        #[cfg(feature = "explanations")]
+        if context.has_assumption_dependent_yield
+            && self.explanation_settings.enabled
+            && self.explanation_settings.eval_mode
+                == crate::evaluation_trace::EvaluationMode::PartialEval
+        {
+            self.trace.warnings.push(alloc::format!(
+                "comprehension result at PC {} is conditional on assumed inputs; \
+                 aggregations over this result may be unsound",
+                self.pc
+            ));
+            // Record an assumption that the comprehension depends on unknown input.
+            if let Some(ref hint) = context.input_provenance_hint {
+                let (rule_index, definition_index) = self.current_rule_scope();
+                let iteration_index = self.current_loop_iteration_index();
+                self.trace.record_assumption(
+                    crate::evaluation_trace::AssumptionKind::Exists,
+                    hint.clone(),
+                    alloc::format!("{} is defined", hint),
+                    u32::try_from(self.pc).unwrap_or(u32::MAX),
+                    None,
+                    None,
+                    rule_index,
+                    definition_index,
+                    iteration_index,
+                    self.current_conjunction_id(),
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -558,7 +650,35 @@ impl RegoVM {
                     context,
                 } => {
                     // The accumulated result already resides in `result_reg`; no
-                    // post-processing is required before resuming.
+                    // result-register post-processing is required before resuming.
+                    #[cfg(feature = "explanations")]
+                    if context.has_assumption_dependent_yield
+                        && self.explanation_settings.enabled
+                        && self.explanation_settings.eval_mode
+                            == crate::evaluation_trace::EvaluationMode::PartialEval
+                    {
+                        self.trace.warnings.push(alloc::format!(
+                            "comprehension result at PC {} is conditional on assumed inputs; \
+                             aggregations over this result may be unsound",
+                            self.pc
+                        ));
+                        if let Some(ref hint) = context.input_provenance_hint {
+                            let (rule_index, definition_index) = self.current_rule_scope();
+                            let iteration_index = self.current_loop_iteration_index();
+                            self.trace.record_assumption(
+                                crate::evaluation_trace::AssumptionKind::Exists,
+                                hint.clone(),
+                                alloc::format!("{} is defined", hint),
+                                u32::try_from(self.pc).unwrap_or(u32::MAX),
+                                None,
+                                None,
+                                rule_index,
+                                definition_index,
+                                iteration_index,
+                                self.current_conjunction_id(),
+                            );
+                        }
+                    }
                     let raw_target = context.resume_pc;
                     let resume_pc = if raw_target <= self.pc {
                         self.pc.saturating_add(1)

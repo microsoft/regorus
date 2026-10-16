@@ -3,7 +3,11 @@
 
 using System;
 
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
     /// <summary>
     /// Configures the additional live-memory budget for one RVM execution.

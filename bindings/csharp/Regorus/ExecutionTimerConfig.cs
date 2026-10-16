@@ -3,7 +3,11 @@
 
 using System;
 
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
     /// <summary>
     /// Managed representation of the execution timer configuration used by the engine.

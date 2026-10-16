@@ -6,7 +6,11 @@ using System.Collections.Generic;
 using Regorus.Internal;
 
 #nullable enable
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
     /// <summary>
     /// Execution mode for the RVM runtime.
@@ -335,6 +339,45 @@ namespace Regorus
                 return 0;
             });
         }
+
+#if REGORUS_EXPERIMENTAL
+        /// <summary>
+        /// Set explanation settings for causality tracking.
+        /// </summary>
+        public void SetExplanationSettings(bool enabled, ExplanationValueMode valueMode = ExplanationValueMode.Redacted, ExplanationConditionMode conditionMode = ExplanationConditionMode.PrimaryOnly, ExplanationScope scope = ExplanationScope.AllEmissions, ExplanationDetail detail = ExplanationDetail.Standard, uint? emissionIndex = null, string? emissionValueJson = null, bool assumeUnknownInput = false)
+        {
+            if (emissionValueJson is null)
+            {
+                UseHandle(vmPtr =>
+                {
+                    CheckAndDropResult(API.regorus_rvm_set_explanation_settings((RegorusRvm*)vmPtr, enabled, (byte)valueMode, (byte)conditionMode, (byte)scope, (byte)detail, emissionIndex.HasValue, emissionIndex.GetValueOrDefault(), false, null, assumeUnknownInput));
+                    return 0;
+                });
+
+                return;
+            }
+
+            Utf8Marshaller.WithUtf8(emissionValueJson, emissionValuePtr =>
+            {
+                UseHandle(vmPtr =>
+                {
+                    CheckAndDropResult(API.regorus_rvm_set_explanation_settings((RegorusRvm*)vmPtr, enabled, (byte)valueMode, (byte)conditionMode, (byte)scope, (byte)detail, emissionIndex.HasValue, emissionIndex.GetValueOrDefault(), true, (byte*)emissionValuePtr, assumeUnknownInput));
+                    return 0;
+                });
+            });
+        }
+
+        /// <summary>
+        /// Take the causality report from the most recent evaluation as JSON.
+        /// </summary>
+        public string? TakeCausalityReport()
+        {
+            return UseHandle(vmPtr =>
+            {
+                return CheckAndDropResult(API.regorus_rvm_take_causality_report((RegorusRvm*)vmPtr));
+            });
+        }
+#endif
 
         private static Rvm GetRvmResult(RegorusResult result)
         {

@@ -8,7 +8,11 @@ using System.Runtime.InteropServices;
 using Regorus.Internal;
 
 #nullable enable
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
     /// <summary>
     /// Represents a compiled RVM program.

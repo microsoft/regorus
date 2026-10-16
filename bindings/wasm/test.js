@@ -1,7 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-var regorus = require('./pkg/regorusjs');
+const path = require('path');
+const packageDir = process.env.REGORUS_WASM_PACKAGE_DIR || 'pkg';
+const experimental = process.env.REGORUS_WASM_EXPERIMENTAL === '1';
+var regorus = require(path.resolve(__dirname, packageDir, 'regorusjs'));
+
+if (experimental && typeof regorus.Rvm.prototype.setExplanationOptions !== 'function') {
+  throw new Error('Experimental WASM package does not expose explanation APIs');
+}
+if (!experimental && typeof regorus.Rvm.prototype.setExplanationOptions === 'function') {
+  throw new Error('Standard WASM package unexpectedly exposes explanation APIs');
+}
 
 // Configure the global pattern caches.
 regorus.setCacheConfig({ regex: 256, glob: 128 });
@@ -147,7 +157,36 @@ const rehydrated = deserialized.program();
 const vm = new regorus.Rvm();
 vm.loadProgram(rehydrated);
 vm.setInputJson('{"user":"alice","active":true}');
-console.log(vm.execute());
+if (experimental) {
+  vm.setExplanationOptions(
+    true,
+    "redacted",
+    "primary_only",
+    false,
+    "standard",
+    "causality",
+    [],
+  );
+}
+const executionResult = JSON.parse(vm.execute());
+if (executionResult !== true) {
+  throw new Error(`Unexpected RVM result: ${JSON.stringify(executionResult)}`);
+}
+console.log(executionResult);
+if (experimental) {
+  const report = JSON.parse(vm.takeCausalityReport());
+  if (!Array.isArray(report.rules) || report.rules.length === 0) {
+    throw new Error('Experimental WASM report contained no evaluated rules');
+  }
+  const allowRule = report.rules.find(rule => rule.name === 'data.demo.allow');
+  if (!allowRule || allowRule.result !== true) {
+    throw new Error(`Experimental WASM report did not contain the successful allow rule: ${JSON.stringify(report)}`);
+  }
+  const conditions = allowRule.definitions?.flatMap(definition => definition.conditions || []) || [];
+  if (conditions.length === 0) {
+    throw new Error('Experimental WASM report contained no evaluated conditions');
+  }
+}
 }
 
 // RVM HostAwait example

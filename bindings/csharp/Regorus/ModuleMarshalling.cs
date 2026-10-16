@@ -5,7 +5,11 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+#if REGORUS_EXPERIMENTAL
+using Regorus.Experimental;
+#else
 using Regorus;
+#endif
 
 #nullable enable
 

@@ -5,7 +5,11 @@ using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 #nullable enable
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
     /// <summary>
     /// Information about a compiled policy, including metadata about modules,

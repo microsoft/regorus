@@ -7,7 +7,11 @@ using System.Text.Json;
 using Regorus.Internal;
 
 #nullable enable
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
     /// <summary>
     /// Provides static methods for managing the global target registry.

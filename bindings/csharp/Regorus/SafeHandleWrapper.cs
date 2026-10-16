@@ -5,7 +5,11 @@ using System;
 using System.Runtime.InteropServices;
 
 #nullable enable
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
     /// <summary>
     /// Base class for native handle wrappers that coordinates handle usage and disposal.

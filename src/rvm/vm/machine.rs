@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#[cfg(feature = "explanations")]
+use crate::evaluation_trace::{EvaluationTrace, ExplanationSettings};
 use crate::rvm::program::Program;
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 use crate::utils::limits;
@@ -12,6 +14,8 @@ use crate::utils::limits::{
 };
 use crate::value::Value;
 use crate::CompiledPolicy;
+#[cfg(feature = "explanations")]
+use crate::Rc;
 use alloc::collections::{btree_map::Entry, BTreeMap, VecDeque};
 use alloc::ffi::CString;
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
@@ -34,6 +38,113 @@ pub(super) enum MemoryBudgetLifecycle {
     Inactive,
     ImplicitExecution,
     FfiResultSerialization,
+}
+
+#[cfg(feature = "explanations")]
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub(super) struct RuntimeProvenanceTracker {
+    paths: Vec<Option<Rc<str>>>,
+}
+
+#[cfg(feature = "explanations")]
+#[allow(dead_code)]
+impl RuntimeProvenanceTracker {
+    pub(super) fn resize(&mut self, len: usize) {
+        self.paths.resize(len, None);
+    }
+
+    pub(super) fn clear_reg(&mut self, index: u8) {
+        if let Some(slot) = self.paths.get_mut(usize::from(index)) {
+            *slot = None;
+        }
+    }
+
+    pub(super) fn get(&self, index: u8) -> Option<&Rc<str>> {
+        self.paths.get(usize::from(index)).and_then(Option::as_ref)
+    }
+
+    pub(super) fn set_root(&mut self, index: u8, root: &str) {
+        self.set_path(index, Some(Rc::from(root)));
+    }
+
+    pub(super) fn copy(&mut self, dest: u8, src: u8) {
+        self.set_path(dest, self.get(src).cloned());
+    }
+
+    pub(super) fn set_path(&mut self, index: u8, path: Option<Rc<str>>) {
+        let index_usize = usize::from(index);
+        if self.paths.len() <= index_usize {
+            self.paths.resize(index_usize.saturating_add(1), None);
+        }
+        if let Some(slot) = self.paths.get_mut(index_usize) {
+            *slot = path;
+        }
+    }
+
+    pub(super) fn append_index(&mut self, dest: u8, container: u8, key: &Value) {
+        let path = self
+            .get(container)
+            .map(|base| Rc::from(Self::append_path_component(base.as_ref(), key)));
+        self.set_path(dest, path);
+    }
+
+    pub(super) fn append_index_with_base(&mut self, dest: u8, base: &str, key: &Value) {
+        let path = Rc::from(Self::append_path_component(base, key));
+        self.set_path(dest, Some(path));
+    }
+
+    pub(super) fn append_field(&mut self, dest: u8, container: u8, field: &str) {
+        let path = self.get(container).map(|base| {
+            let mut value = String::from(base.as_ref());
+            value.push('.');
+            value.push_str(field);
+            Rc::from(value.as_str())
+        });
+        self.set_path(dest, path);
+    }
+
+    /// Copy provenance from the first register that has one, or from the second.
+    pub(super) fn copy_first_available(&mut self, dest: u8, first: u8, second: u8) {
+        let path = self.get(first).or_else(|| self.get(second)).cloned();
+        self.set_path(dest, path);
+    }
+
+    pub(super) fn take_paths(&mut self) -> Vec<Option<Rc<str>>> {
+        core::mem::take(&mut self.paths)
+    }
+
+    pub(super) fn restore_paths(&mut self, paths: Vec<Option<Rc<str>>>) {
+        self.paths = paths;
+    }
+
+    fn append_path_component(base: &str, key: &Value) -> String {
+        match *key {
+            Value::String(ref segment) if Self::is_simple_path_segment(segment.as_ref()) => {
+                let mut path = String::from(base);
+                path.push('.');
+                path.push_str(segment.as_ref());
+                path
+            }
+            _ => {
+                let mut path = String::from(base);
+                path.push('[');
+                path.push_str(&alloc::format!("{key}"));
+                path.push(']');
+                path
+            }
+        }
+    }
+
+    fn is_simple_path_segment(segment: &str) -> bool {
+        let mut chars = segment.chars();
+        match chars.next() {
+            Some(first) if first == '_' || first.is_ascii_alphabetic() => {}
+            _ => return false,
+        }
+
+        chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    }
 }
 
 /// The Rego Virtual Machine
@@ -73,6 +184,22 @@ pub struct RegoVM {
 
     /// Register stack for isolated register spaces during rule calls
     pub(super) register_stack: Vec<Vec<Value>>,
+
+    /// Runtime provenance for live registers.
+    #[cfg(feature = "explanations")]
+    pub(super) provenance: RuntimeProvenanceTracker,
+
+    /// Saved provenance windows for nested rule/function calls.
+    #[cfg(feature = "explanations")]
+    pub(super) provenance_stack: Vec<Vec<Option<Rc<str>>>>,
+
+    /// Runtime input/data path provenance for each live register.
+    #[cfg(feature = "explanations")]
+    pub(super) register_paths: Vec<Option<String>>,
+
+    /// Saved register path windows for nested rule/function calls.
+    #[cfg(feature = "explanations")]
+    pub(super) register_path_stack: Vec<Vec<Option<String>>>,
 
     /// Comprehension execution stack for tracking active comprehensions
     /// Note: Comprehensions can be nested within each other, forming a proper nesting hierarchy.
@@ -179,6 +306,30 @@ pub struct RegoVM {
     /// Cached `Value` representation of `program.metadata`, computed once in
     /// `load_program()` and reused by `LoadMetadata` instructions.
     pub(super) metadata_value: Value,
+
+    /// Explanation settings controlling what is captured.
+    #[cfg(feature = "explanations")]
+    pub(super) explanation_settings: ExplanationSettings,
+
+    /// Runtime evaluation trace (append-only log of outcomes).
+    #[cfg(feature = "explanations")]
+    pub(super) trace: EvaluationTrace,
+
+    /// Tracks nesting depth of rule calls whose success depends on assumptions.
+    /// When > 0, the current execution context is "assumption-dependent".
+    #[cfg(feature = "explanations")]
+    pub(super) assumption_dependent_depth: u32,
+
+    /// Stack of conjunction scope IDs. Sub-rule calls inherit the parent's
+    /// conjunction_id so their assumptions group with the caller's body.
+    #[cfg(feature = "explanations")]
+    pub(super) conjunction_id_stack: Vec<u32>,
+
+    /// Pending data lookup context from the last ChainedIndex that indexed a
+    /// concrete data object with an unknown input key.  Consumed by the next
+    /// assumption recording (in `record_runtime_comparison_assumption`).
+    #[cfg(feature = "explanations")]
+    pub(super) pending_data_lookup: Option<crate::evaluation_trace::DataLookupContext>,
 }
 
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
@@ -223,6 +374,14 @@ impl RegoVM {
             loop_stack: Vec::new(),
             call_rule_stack: Vec::new(),
             register_stack: Vec::new(),
+            #[cfg(feature = "explanations")]
+            provenance: RuntimeProvenanceTracker::default(),
+            #[cfg(feature = "explanations")]
+            provenance_stack: Vec::new(),
+            #[cfg(feature = "explanations")]
+            register_paths: Vec::new(),
+            #[cfg(feature = "explanations")]
+            register_path_stack: Vec::new(),
             comprehension_stack: Vec::new(),
             base_register_count: 2, // Default to 2 registers for basic operations
             register_window_pool: Vec::new(), // Initialize register window pool
@@ -255,12 +414,25 @@ impl RegoVM {
             cached_builtin_args: Vec::new(),
             virtual_element_on_non_collection: false,
             metadata_value: Value::Undefined,
+            #[cfg(feature = "explanations")]
+            explanation_settings: ExplanationSettings::default(),
+            #[cfg(feature = "explanations")]
+            trace: EvaluationTrace::new(),
+            #[cfg(feature = "explanations")]
+            assumption_dependent_depth: 0,
+            #[cfg(feature = "explanations")]
+            conjunction_id_stack: Vec::new(),
+            #[cfg(feature = "explanations")]
+            pending_data_lookup: None,
         }
     }
 
     /// Create a new virtual machine with compiled policy for default rule support
     pub fn new_with_policy(compiled_policy: CompiledPolicy) -> Self {
         let mut vm = Self::new();
+        if let Some(data) = compiled_policy.inner.data.clone() {
+            vm.data = data;
+        }
         vm.compiled_policy = Some(compiled_policy);
         vm
     }
@@ -276,6 +448,14 @@ impl RegoVM {
         // Resize registers to match program requirements
         self.registers.clear();
         self.registers.resize(dispatch_size, Value::Undefined);
+        #[cfg(feature = "explanations")]
+        {
+            self.provenance.resize(dispatch_size);
+            self.provenance_stack.clear();
+            self.register_paths.clear();
+            self.register_paths.resize(dispatch_size, None);
+            self.register_path_stack.clear();
+        }
 
         // Initialize rule cache
         self.rule_cache = vec![(false, Value::Undefined); program.rule_infos.len()];
@@ -294,6 +474,9 @@ impl RegoVM {
 
     /// Set the compiled policy for default rule evaluation
     pub fn set_compiled_policy(&mut self, compiled_policy: CompiledPolicy) {
+        if let Some(data) = compiled_policy.inner.data.clone() {
+            self.data = data;
+        }
         self.compiled_policy = Some(compiled_policy);
     }
 
@@ -309,6 +492,10 @@ impl RegoVM {
         if !self.registers.is_empty() {
             self.registers
                 .resize(self.base_register_count, Value::Undefined);
+            #[cfg(feature = "explanations")]
+            self.provenance.resize(self.base_register_count);
+            #[cfg(feature = "explanations")]
+            self.register_paths.resize(self.base_register_count, None);
         }
     }
 
@@ -681,6 +868,44 @@ impl RegoVM {
         err
     }
 
+    /// Configure explanation/causality capture settings.
+    #[cfg(feature = "explanations")]
+    pub fn set_explanation_settings(&mut self, settings: ExplanationSettings) {
+        self.explanation_settings = settings;
+    }
+
+    /// Take the causality report for the most recent evaluation.
+    ///
+    /// Returns a JSON string. Clears the internal trace.
+    #[cfg(feature = "explanations")]
+    pub fn take_causality_report(
+        &mut self,
+        query_result: Value,
+    ) -> core::result::Result<String, alloc::string::String> {
+        let report = crate::causality_report::materialize(
+            &self.program,
+            &self.trace,
+            &self.explanation_settings,
+            query_result,
+        );
+        self.trace.clear();
+        serde_json::to_string_pretty(&report).map_err(|e| alloc::format!("{e}"))
+    }
+
+    /// Take the partial evaluation result for the most recent evaluation.
+    ///
+    /// Returns a JSON string with DNF residual queries. Clears the internal trace.
+    #[cfg(feature = "explanations")]
+    pub fn take_partial_eval_result(
+        &mut self,
+        query_result: Value,
+    ) -> core::result::Result<String, alloc::string::String> {
+        let report =
+            crate::causality_report::materialize_pe(&self.program, &self.trace, query_result);
+        self.trace.clear();
+        serde_json::to_string_pretty(&report).map_err(|e| alloc::format!("{e}"))
+    }
+
     pub(super) fn reset_execution_timer_state(&mut self) {
         let config = self.effective_execution_timer_config();
         self.execution_timer = ExecutionTimer::new(config);
@@ -816,14 +1041,24 @@ impl RegoVM {
     pub(super) fn take_register(&mut self, index: u8) -> Result<Value> {
         let register_count = self.registers.len();
 
-        let slot = self.registers.get_mut(usize::from(index)).ok_or(
-            VmError::RegisterIndexOutOfBounds {
-                index,
-                pc: self.pc,
-                register_count,
-            },
-        )?;
-        Ok(core::mem::replace(slot, Value::Undefined))
+        let value = {
+            let slot = self.registers.get_mut(usize::from(index)).ok_or(
+                VmError::RegisterIndexOutOfBounds {
+                    index,
+                    pc: self.pc,
+                    register_count,
+                },
+            )?;
+            core::mem::replace(slot, Value::Undefined)
+        };
+
+        #[cfg(feature = "explanations")]
+        self.provenance.clear_reg(index);
+
+        #[cfg(feature = "explanations")]
+        self.clear_register_path(index)?;
+
+        Ok(value)
     }
 
     #[inline]
@@ -831,15 +1066,116 @@ impl RegoVM {
     pub(super) fn set_register(&mut self, index: u8, value: Value) -> Result<()> {
         let register_count = self.registers.len();
 
-        let slot = self.registers.get_mut(usize::from(index)).ok_or(
+        {
+            let slot = self.registers.get_mut(usize::from(index)).ok_or(
+                VmError::RegisterIndexOutOfBounds {
+                    index,
+                    pc: self.pc,
+                    register_count,
+                },
+            )?;
+            *slot = value;
+        }
+
+        #[cfg(feature = "explanations")]
+        self.provenance.clear_reg(index);
+
+        #[cfg(feature = "explanations")]
+        self.clear_register_path(index)?;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "explanations")]
+    #[allow(dead_code)]
+    pub(super) fn sync_register_paths_len(&mut self) {
+        self.register_paths.resize(self.registers.len(), None);
+    }
+
+    #[cfg(feature = "explanations")]
+    #[allow(dead_code)]
+    pub(super) fn get_register_path(&self, index: u8) -> Option<&str> {
+        self.register_paths
+            .get(usize::from(index))
+            .and_then(|path| path.as_deref())
+    }
+
+    #[cfg(feature = "explanations")]
+    #[allow(dead_code)]
+    pub(super) fn clear_register_path(&mut self, index: u8) -> Result<()> {
+        self.set_register_path(index, None)
+    }
+
+    #[cfg(feature = "explanations")]
+    #[allow(dead_code)]
+    pub(super) fn set_register_path(&mut self, index: u8, path: Option<String>) -> Result<()> {
+        self.sync_register_paths_len();
+
+        let register_count = self.register_paths.len();
+        let slot = self.register_paths.get_mut(usize::from(index)).ok_or(
             VmError::RegisterIndexOutOfBounds {
                 index,
                 pc: self.pc,
                 register_count,
             },
         )?;
-        *slot = value;
+        *slot = path;
         Ok(())
+    }
+
+    #[cfg(feature = "explanations")]
+    #[allow(dead_code)]
+    pub(super) fn copy_register_path(&mut self, dest: u8, src: u8) -> Result<()> {
+        self.set_register_path(dest, self.get_register_path(src).map(String::from))
+    }
+
+    #[cfg(feature = "explanations")]
+    #[allow(dead_code)]
+    pub(super) fn set_register_root_path(&mut self, index: u8, root: &str) -> Result<()> {
+        self.set_register_path(index, Some(String::from(root)))
+    }
+
+    #[cfg(feature = "explanations")]
+    #[allow(dead_code)]
+    pub(super) fn derive_path_from_container_and_key(
+        &self,
+        container: u8,
+        key: &Value,
+    ) -> Option<String> {
+        let base = self.get_register_path(container)?;
+        Some(Self::append_path_component(base, key))
+    }
+
+    #[cfg(feature = "explanations")]
+    #[allow(dead_code)]
+    pub(super) fn append_path_component(base: &str, key: &Value) -> String {
+        match *key {
+            Value::String(ref segment) if Self::is_simple_path_segment(segment.as_ref()) => {
+                let mut path = String::from(base);
+                path.push('.');
+                path.push_str(segment.as_ref());
+                path
+            }
+            _ => {
+                let mut path = String::from(base);
+                path.push('[');
+                path.push_str(&alloc::format!("{key}"));
+                path.push(']');
+                path
+            }
+        }
+    }
+
+    #[cfg(feature = "explanations")]
+    #[allow(dead_code)]
+    fn is_simple_path_segment(segment: &str) -> bool {
+        let mut chars = segment.chars();
+        match chars.next() {
+            Some(first) if first == '_' || first.is_ascii_alphabetic() => {}
+            _ => return false,
+        }
+
+        chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
     }
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]

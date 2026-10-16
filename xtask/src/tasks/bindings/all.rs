@@ -38,6 +38,7 @@ impl BuildAllBindingsCommand {
             enforce_artifacts: false,
             repository_commit: None,
             include_symbols: false,
+            experimental: false,
         })?;
 
         if nuget_result.packages.is_empty() {
@@ -60,6 +61,7 @@ impl BuildAllBindingsCommand {
             release,
             target: "nodejs".to_string(),
             out_dir: None,
+            experimental: false,
         }
         .run()?;
 
@@ -124,6 +126,7 @@ impl TestAllBindingsCommand {
             node: self.node.clone(),
             frozen: false,
             skip_build: false,
+            experimental: false,
         }
         .run()?;
 
@@ -138,6 +141,7 @@ impl TestAllBindingsCommand {
             test_filter: None,
             skip_apps: false,
             console_logger: false,
+            experimental: false,
         }
         .run()?;
 

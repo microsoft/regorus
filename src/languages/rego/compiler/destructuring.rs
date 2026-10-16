@@ -9,6 +9,8 @@ use crate::compiler::destructuring_planner::plans::{
 use crate::lexer::Span;
 use crate::rvm::instructions::{GuardMode, Instruction};
 use crate::value::Value;
+#[cfg(feature = "explanations")]
+use alloc::string::ToString as _;
 use anyhow::{bail, Result};
 
 #[derive(Clone, Copy, Debug)]
@@ -351,6 +353,19 @@ impl<'a> Compiler<'a> {
             },
             span,
         );
+
+        #[cfg(feature = "explanations")]
+        {
+            let move_pc = self.program.instructions.len().saturating_sub(1);
+            let infos = &mut self.program.binding_infos;
+            if infos.len() <= move_pc {
+                infos.resize(move_pc.saturating_add(1), None);
+            }
+            if let Some(slot) = infos.get_mut(move_pc) {
+                *slot = Some(var_name.to_string());
+            }
+        }
+
         self.add_variable(var_name, dest);
 
         if context.require_defined_values() {

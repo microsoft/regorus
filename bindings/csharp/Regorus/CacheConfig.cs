@@ -3,7 +3,11 @@
 
 using System;
 
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
     /// <summary>
     /// Global configuration for compiled pattern caches used by regex and glob builtins.

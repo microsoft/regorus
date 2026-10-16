@@ -56,6 +56,73 @@ enum LoopAction {
 }
 
 impl RegoVM {
+    /// Record loop completion statistics in the evaluation trace.
+    #[cfg(feature = "explanations")]
+    fn record_loop_trace(
+        &mut self,
+        total_iterations: usize,
+        success_count: usize,
+        sample_key: Option<Value>,
+        sample_value: Option<Value>,
+    ) {
+        if !self.explanation_settings.enabled {
+            return;
+        }
+        let anchor = self
+            .trace
+            .condition_outcomes
+            .len()
+            .checked_sub(1)
+            .and_then(|idx| u32::try_from(idx).ok());
+        self.trace.record_loop(
+            u32::try_from(self.pc).unwrap_or(u32::MAX),
+            anchor,
+            u32::try_from(total_iterations).unwrap_or(u32::MAX),
+            u32::try_from(success_count).unwrap_or(u32::MAX),
+            sample_key,
+            sample_value,
+        );
+    }
+
+    /// Update provenance paths for the loop iteration variable register.
+    #[cfg(feature = "explanations")]
+    fn update_loop_iteration_provenance(
+        &mut self,
+        state: &IterationState,
+        key_reg: u8,
+        value_reg: u8,
+        collection_provenance: &Option<crate::Rc<str>>,
+    ) {
+        if !self.explanation_settings.enabled {
+            return;
+        }
+        let Some(base) = collection_provenance.as_deref() else {
+            return;
+        };
+        let key = if key_reg != value_reg {
+            if let Ok(k) = self.get_register(key_reg) {
+                k.clone()
+            } else {
+                return;
+            }
+        } else {
+            match *state {
+                IterationState::Array { index, .. } => Value::from(index),
+                IterationState::Set { .. } => {
+                    if let Ok(v) = self.get_register(value_reg) {
+                        v.clone()
+                    } else {
+                        return;
+                    }
+                }
+                IterationState::Object { .. } => return,
+                IterationState::Single { .. } => return,
+            }
+        };
+        self.provenance
+            .append_index_with_base(value_reg, base, &key);
+    }
+
     pub(super) fn execute_loop_start(&mut self, mode: &LoopMode, params: LoopParams) -> Result<()> {
         match self.execution_mode {
             ExecutionMode::RunToCompletion => {
@@ -102,6 +169,17 @@ impl RegoVM {
             return Ok(());
         }
 
+        #[cfg(feature = "explanations")]
+        let collection_provenance = self.provenance.get(params.collection).cloned();
+
+        #[cfg(feature = "explanations")]
+        self.update_loop_iteration_provenance(
+            &iteration_state,
+            params.key_reg,
+            params.value_reg,
+            &collection_provenance,
+        );
+
         let loop_next_pc = params.loop_end.saturating_sub(1);
         let body_resume_pc = compute_body_resume_pc(self.pc, params.body_start);
 
@@ -118,6 +196,18 @@ impl RegoVM {
             success_count: 0,
             total_iterations: 0,
             current_iteration_failed: false,
+            #[cfg(feature = "explanations")]
+            sample_key: None,
+            #[cfg(feature = "explanations")]
+            sample_value: None,
+            #[cfg(feature = "explanations")]
+            collection_provenance,
+            #[cfg(feature = "explanations")]
+            iteration_index: {
+                let id = self.trace.next_iteration_id;
+                self.trace.next_iteration_id = id.saturating_add(1);
+                id
+            },
         };
 
         self.loop_stack.push(loop_context);
@@ -142,12 +232,38 @@ impl RegoVM {
 
             if iteration_succeeded {
                 loop_ctx.success_count = loop_ctx.success_count.saturating_add(1);
+                #[cfg(feature = "explanations")]
+                if loop_ctx.sample_value.is_none() {
+                    loop_ctx.sample_key = self.get_register(loop_ctx.key_reg).ok().cloned();
+                    loop_ctx.sample_value = self.get_register(loop_ctx.value_reg).ok().cloned();
+                }
             }
 
-            let action = Self::determine_loop_action(&loop_ctx.mode, iteration_succeeded);
+            #[allow(unused_mut)]
+            let mut action = Self::determine_loop_action(&loop_ctx.mode, iteration_succeeded);
+
+            // In PE mode, don't short-circuit on first success for LoopMode::Any.
+            // Each iteration that succeeds may produce different assumptions, so we
+            // continue iterating to collect all disjuncts.
+            #[cfg(feature = "explanations")]
+            if matches!(action, LoopAction::ExitWithSuccess)
+                && matches!(loop_ctx.mode, LoopMode::Any)
+                && self.explanation_settings.enabled
+                && self.explanation_settings.eval_mode
+                    == crate::evaluation_trace::EvaluationMode::PartialEval
+            {
+                action = LoopAction::Continue;
+            }
 
             match action {
                 LoopAction::ExitWithSuccess | LoopAction::ExitWithFailure => {
+                    #[cfg(feature = "explanations")]
+                    self.record_loop_trace(
+                        loop_ctx.total_iterations,
+                        loop_ctx.success_count,
+                        loop_ctx.sample_key.clone(),
+                        loop_ctx.sample_value.clone(),
+                    );
                     let result_value = matches!(action, LoopAction::ExitWithSuccess);
                     self.set_register(loop_ctx.result_reg, Value::Bool(result_value))?;
                     self.pc = usize::from(loop_end_local.saturating_sub(1));
@@ -166,6 +282,23 @@ impl RegoVM {
             if has_next {
                 loop_ctx.current_iteration_failed = false;
 
+                #[cfg(feature = "explanations")]
+                {
+                    // Assign a globally unique iteration ID for PE mode disjunct grouping
+                    // so that assumptions recorded during the next body execution
+                    // get a unique iteration index, even across nested loops.
+                    loop_ctx.iteration_index = self.trace.next_iteration_id;
+                    self.trace.next_iteration_id = self.trace.next_iteration_id.saturating_add(1);
+                }
+
+                #[cfg(feature = "explanations")]
+                self.update_loop_iteration_provenance(
+                    &loop_ctx.iteration_state,
+                    loop_ctx.key_reg,
+                    loop_ctx.value_reg,
+                    &loop_ctx.collection_provenance,
+                );
+
                 self.loop_stack.push(loop_ctx);
                 self.pc = usize::from(body_start.saturating_sub(1));
             } else {
@@ -176,6 +309,14 @@ impl RegoVM {
                     }
                     LoopMode::ForEach => Value::Bool(loop_ctx.success_count > 0),
                 };
+
+                #[cfg(feature = "explanations")]
+                self.record_loop_trace(
+                    loop_ctx.total_iterations,
+                    loop_ctx.success_count,
+                    loop_ctx.sample_key.clone(),
+                    loop_ctx.sample_value.clone(),
+                );
 
                 self.set_register(loop_ctx.result_reg, final_result)?;
 
@@ -208,6 +349,17 @@ impl RegoVM {
             return Ok(());
         }
 
+        #[cfg(feature = "explanations")]
+        let collection_provenance = self.provenance.get(params.collection).cloned();
+
+        #[cfg(feature = "explanations")]
+        self.update_loop_iteration_provenance(
+            &iteration_state,
+            params.key_reg,
+            params.value_reg,
+            &collection_provenance,
+        );
+
         let loop_next_pc = params.loop_end.saturating_sub(1);
         let body_resume_pc = compute_body_resume_pc(self.pc, params.body_start);
 
@@ -224,6 +376,18 @@ impl RegoVM {
             success_count: 0,
             total_iterations: 0,
             current_iteration_failed: false,
+            #[cfg(feature = "explanations")]
+            sample_key: None,
+            #[cfg(feature = "explanations")]
+            sample_value: None,
+            #[cfg(feature = "explanations")]
+            collection_provenance,
+            #[cfg(feature = "explanations")]
+            iteration_index: {
+                let id = self.trace.next_iteration_id;
+                self.trace.next_iteration_id = id.saturating_add(1);
+                id
+            },
         };
 
         let frame = ExecutionFrame::new(
@@ -283,10 +447,64 @@ impl RegoVM {
             }
         };
 
-        let action = Self::determine_loop_action(&loop_mode, iteration_succeeded);
+        #[allow(unused_mut)]
+        let mut action = Self::determine_loop_action(&loop_mode, iteration_succeeded);
+
+        // In PE mode, don't short-circuit on first success for LoopMode::Any.
+        #[cfg(feature = "explanations")]
+        if matches!(action, LoopAction::ExitWithSuccess)
+            && matches!(loop_mode, LoopMode::Any)
+            && self.explanation_settings.enabled
+            && self.explanation_settings.eval_mode
+                == crate::evaluation_trace::EvaluationMode::PartialEval
+        {
+            action = LoopAction::Continue;
+        }
+
+        // Capture sample key/value on successful iteration (before borrow ends)
+        #[cfg(feature = "explanations")]
+        if iteration_succeeded {
+            if let Some(frame) = self.execution_stack.last_mut() {
+                if let FrameKind::Loop {
+                    ref mut context, ..
+                } = frame.kind
+                {
+                    if context.sample_value.is_none() {
+                        context.sample_key =
+                            self.registers.get(usize::from(context.key_reg)).cloned();
+                        context.sample_value =
+                            self.registers.get(usize::from(context.value_reg)).cloned();
+                    }
+                }
+            }
+        }
 
         match action {
             LoopAction::ExitWithSuccess | LoopAction::ExitWithFailure => {
+                #[cfg(feature = "explanations")]
+                {
+                    let (total_iterations, success_count, sample_key, sample_value) = self
+                        .execution_stack
+                        .last()
+                        .map_or((0, 0, None, None), |frame| {
+                            if let FrameKind::Loop { ref context, .. } = frame.kind {
+                                (
+                                    context.total_iterations,
+                                    context.success_count,
+                                    context.sample_key.clone(),
+                                    context.sample_value.clone(),
+                                )
+                            } else {
+                                (0, 0, None, None)
+                            }
+                        });
+                    self.record_loop_trace(
+                        total_iterations,
+                        success_count,
+                        sample_key,
+                        sample_value,
+                    );
+                }
                 let result_value = matches!(action, LoopAction::ExitWithSuccess);
                 self.set_register(result_reg, Value::Bool(result_value))?;
                 let completed_frame = self
@@ -337,6 +555,13 @@ impl RegoVM {
                             context.iteration_state.advance();
                             context.current_iteration_failed = false;
 
+                            #[cfg(feature = "explanations")]
+                            {
+                                context.iteration_index = self.trace.next_iteration_id;
+                                self.trace.next_iteration_id =
+                                    self.trace.next_iteration_id.saturating_add(1);
+                            }
+
                             (
                                 mode,
                                 success_count,
@@ -352,6 +577,23 @@ impl RegoVM {
 
                 let has_next =
                     self.setup_next_iteration(&mut iteration_state, key_reg, value_reg)?;
+
+                #[cfg(feature = "explanations")]
+                if has_next {
+                    let cp = self.execution_stack.last().and_then(|frame| {
+                        if let FrameKind::Loop { ref context, .. } = frame.kind {
+                            context.collection_provenance.clone()
+                        } else {
+                            None
+                        }
+                    });
+                    self.update_loop_iteration_provenance(
+                        &iteration_state,
+                        key_reg,
+                        value_reg,
+                        &cp,
+                    );
+                }
 
                 // `setup_next_iteration` advances Object's internal cursor;
                 // the owning frame holds the iteration_state, so we must
@@ -382,6 +624,24 @@ impl RegoVM {
                         LoopMode::Every => Value::Bool(success_count == total_iterations),
                         LoopMode::ForEach => Value::Bool(success_count > 0),
                     };
+
+                    #[cfg(feature = "explanations")]
+                    {
+                        let (sample_key, sample_value) =
+                            self.execution_stack.last().map_or((None, None), |frame| {
+                                if let FrameKind::Loop { ref context, .. } = frame.kind {
+                                    (context.sample_key.clone(), context.sample_value.clone())
+                                } else {
+                                    (None, None)
+                                }
+                            });
+                        self.record_loop_trace(
+                            total_iterations,
+                            success_count,
+                            sample_key,
+                            sample_value,
+                        );
+                    }
 
                     self.set_register(result_reg, final_result)?;
 
@@ -465,6 +725,107 @@ impl RegoVM {
                 }))
             }
             _ => {
+                // In PE mode, if the collection register traces to an unknown
+                // input path, record an assumption instead of silently
+                // returning vacuous true (Every) or false (Any/ForEach).
+                #[cfg(feature = "explanations")]
+                if self.explanation_settings.assume_unknown_input {
+                    if let Some(input_path) = self.runtime_path_for_register(params.collection) {
+                        let (rule_index, definition_index) = self.current_rule_scope();
+                        let iteration_index = self.current_loop_iteration_index();
+                        let condition_text =
+                            alloc::format!("collection at {input_path} exists for iteration");
+                        if matches!(mode, LoopMode::Every) {
+                            self.trace.warnings.push(alloc::format!(
+                                "every over unknown collection '{input_path}' at PC {} is vacuously true; result may be unsound",
+                                self.pc
+                            ));
+                        }
+                        self.trace.record_assumption(
+                            crate::evaluation_trace::AssumptionKind::CollectionExists,
+                            input_path,
+                            condition_text,
+                            u32::try_from(self.pc).unwrap_or(u32::MAX),
+                            None,
+                            None,
+                            rule_index,
+                            definition_index,
+                            iteration_index,
+                            self.current_conjunction_id(),
+                        );
+
+                        if matches!(mode, LoopMode::Every) {
+                            self.handle_empty_collection(mode, params.result_reg, params.loop_end)?;
+                            return Ok(None);
+                        }
+
+                        // For Any/ForEach modes, create a phantom iteration
+                        // with Undefined key/value so the loop body executes
+                        // once and downstream assumptions can fire.
+                        if matches!(mode, LoopMode::Any | LoopMode::ForEach) {
+                            // Set key/value registers to Undefined for the
+                            // phantom iteration.
+                            self.set_register(params.key_reg, Value::Undefined)?;
+                            if params.value_reg != params.key_reg {
+                                self.set_register(params.value_reg, Value::Undefined)?;
+                            }
+
+                            // Set provenance on the value register so
+                            // downstream Guards can trace back to the
+                            // unknown input collection.
+                            if let Some(base) = self.provenance.get(params.collection).cloned() {
+                                let element_path = {
+                                    let mut p = alloc::string::String::from(base.as_ref());
+                                    p.push_str("[_]");
+                                    crate::Rc::from(p.as_str())
+                                };
+                                self.provenance
+                                    .set_path(params.value_reg, Some(element_path));
+                            }
+
+                            let loop_next_pc = params.loop_end.saturating_sub(1);
+                            let body_resume_pc = compute_body_resume_pc(self.pc, params.body_start);
+
+                            let loop_context = LoopContext {
+                                mode: *mode,
+                                iteration_state: IterationState::Array {
+                                    items: crate::Rc::new(alloc::vec![].into()),
+                                    index: 0,
+                                },
+                                key_reg: params.key_reg,
+                                value_reg: params.value_reg,
+                                result_reg: params.result_reg,
+                                body_start: params.body_start,
+                                loop_end: params.loop_end,
+                                loop_next_pc,
+                                body_resume_pc,
+                                success_count: 0,
+                                total_iterations: 0,
+                                current_iteration_failed: false,
+                                #[cfg(feature = "explanations")]
+                                sample_key: None,
+                                #[cfg(feature = "explanations")]
+                                sample_value: None,
+                                #[cfg(feature = "explanations")]
+                                collection_provenance: self
+                                    .provenance
+                                    .get(params.collection)
+                                    .cloned(),
+                                #[cfg(feature = "explanations")]
+                                iteration_index: {
+                                    let id = self.trace.next_iteration_id;
+                                    self.trace.next_iteration_id = id.saturating_add(1);
+                                    id
+                                },
+                            };
+
+                            self.loop_stack.push(loop_context);
+                            self.pc = usize::from(params.body_start.saturating_sub(1));
+                            return Ok(None);
+                        }
+                    }
+                }
+
                 if self.virtual_element_on_non_collection && *mode == LoopMode::Every {
                     // Azure Policy: allOf [*] on non-collection iterates once
                     // over a virtual null element.
@@ -621,6 +982,15 @@ impl RegoVM {
                     self.pc = usize::from(loop_next_pc.saturating_sub(1));
                 }
                 LoopMode::Every => {
+                    #[cfg(feature = "explanations")]
+                    if let Some(ctx) = self.loop_stack.last() {
+                        self.record_loop_trace(
+                            ctx.total_iterations,
+                            ctx.success_count,
+                            ctx.sample_key.clone(),
+                            ctx.sample_value.clone(),
+                        );
+                    }
                     self.loop_stack.pop();
                     self.pc = usize::from(loop_end.saturating_sub(1));
                     self.set_register(result_reg, Value::Bool(false))?;
@@ -697,6 +1067,31 @@ impl RegoVM {
                     }) = self.execution_stack.last_mut()
                     {
                         ctx.current_iteration_failed = true;
+                    }
+
+                    #[cfg(feature = "explanations")]
+                    {
+                        let (total_iterations, success_count, sample_key, sample_value) = self
+                            .execution_stack
+                            .last()
+                            .map_or((0, 0, None, None), |frame| {
+                                if let FrameKind::Loop { ref context, .. } = frame.kind {
+                                    (
+                                        context.total_iterations,
+                                        context.success_count,
+                                        context.sample_key.clone(),
+                                        context.sample_value.clone(),
+                                    )
+                                } else {
+                                    (0, 0, None, None)
+                                }
+                            });
+                        self.record_loop_trace(
+                            total_iterations,
+                            success_count,
+                            sample_key,
+                            sample_value,
+                        );
                     }
 
                     self.set_register(result_reg, Value::Bool(false))?;

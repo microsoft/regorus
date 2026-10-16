@@ -8,8 +8,52 @@ using Regorus.Internal;
 
 
 #nullable enable
+#if REGORUS_EXPERIMENTAL
+namespace Regorus.Experimental
+#else
 namespace Regorus
+#endif
 {
+#if REGORUS_EXPERIMENTAL
+    /// <summary>
+    /// Controls whether explanation bindings keep or redact secret-looking values.
+    /// </summary>
+    public enum ExplanationValueMode : byte
+    {
+        Redacted = 0,
+        Full = 1,
+    }
+
+    /// <summary>
+    /// Controls whether reasons include only the primary condition or all contributing conditions.
+    /// </summary>
+    public enum ExplanationConditionMode : byte
+    {
+        PrimaryOnly = 0,
+        AllContributing = 1,
+    }
+
+    /// <summary>
+    /// Controls which portion of the explanation is materialized.
+    /// </summary>
+    public enum ExplanationScope : byte
+    {
+        AllEmissions = 0,
+        SingleEmission = 1,
+        RuleSummary = 2,
+    }
+
+    /// <summary>
+    /// Controls the amount of explanation detail to include.
+    /// </summary>
+    public enum ExplanationDetail : byte
+    {
+        Compact = 0,
+        Standard = 1,
+        Full = 2,
+    }
+#endif
+
     /// <summary>
     /// C# Wrapper for the Regorus engine.
     /// This class is not thread-safe. For multithreaded use, prefer cloning after adding policies and data to an instance.
@@ -289,6 +333,37 @@ namespace Regorus
                 return CheckAndDropResult(Regorus.Internal.API.regorus_engine_get_coverage_report_pretty((Regorus.Internal.RegorusEngine*)enginePtr));
             });
         }
+
+#if REGORUS_EXPERIMENTAL
+        public void SetExplanationSettings(bool enabled, ExplanationValueMode valueMode = ExplanationValueMode.Redacted, ExplanationConditionMode conditionMode = ExplanationConditionMode.PrimaryOnly, ExplanationScope scope = ExplanationScope.AllEmissions, ExplanationDetail detail = ExplanationDetail.Standard, uint? emissionIndex = null, string? emissionValueJson = null, bool assumeUnknownInput = false)
+        {
+            if (emissionValueJson is null)
+            {
+                UseHandle(enginePtr =>
+                {
+                    CheckAndDropResult(Regorus.Internal.API.regorus_engine_set_explanation_settings((Regorus.Internal.RegorusEngine*)enginePtr, enabled, (byte)valueMode, (byte)conditionMode, (byte)scope, (byte)detail, emissionIndex.HasValue, emissionIndex.GetValueOrDefault(), false, null, assumeUnknownInput));
+                });
+
+                return;
+            }
+
+            Utf8Marshaller.WithUtf8(emissionValueJson, emissionValuePtr =>
+            {
+                UseHandle(enginePtr =>
+                {
+                    CheckAndDropResult(Regorus.Internal.API.regorus_engine_set_explanation_settings((Regorus.Internal.RegorusEngine*)enginePtr, enabled, (byte)valueMode, (byte)conditionMode, (byte)scope, (byte)detail, emissionIndex.HasValue, emissionIndex.GetValueOrDefault(), true, (byte*)emissionValuePtr, assumeUnknownInput));
+                });
+            });
+        }
+
+        public string? TakeCausalityReport()
+        {
+            return UseHandle(enginePtr =>
+            {
+                return CheckAndDropResult(Regorus.Internal.API.regorus_engine_take_causality_report((Regorus.Internal.RegorusEngine*)enginePtr));
+            });
+        }
+#endif
 
         public void SetGatherPrints(bool enable)
         {
