@@ -263,7 +263,9 @@ impl<'a> Compiler<'a> {
         let original_path = get_path_string(fcn, None)
             .map_err(|_| CompilerError::InvalidFunctionExpression.at(span))?;
 
-        let full_path = if self.policy.inner.rules.contains_key(&original_path) {
+        let full_path = if self.policy.inner.rules.contains_key(&original_path)
+            || self.is_user_defined_function(&original_path)
+        {
             original_path.clone()
         } else if let Some(resolved) =
             self.resolve_fcn_path_through_imports(&original_path, current_package)

@@ -205,18 +205,27 @@ impl<'a> Compiler<'a> {
         }
 
         let computed_value = if self.default_function_paths.contains(rule_path) {
-            let Some((_, _, value)) = self.callable_default_function(rule_path) else {
+            let Some((_, _, value)) = self.callable_default_function(rule_path)? else {
                 return Ok(None);
             };
             super::expressions::try_eval_const(value.as_ref())
         } else {
-            let mut interpreter = Interpreter::new_from_compiled_policy(self.policy.inner.clone());
-            let value = interpreter
-                .eval_default_rule_for_compiler(rule_path)
-                .map_err(|error| CompilerError::General {
-                    message: error.to_string(),
-                })?;
-            Some(value)
+            let exact_default_rules = self.exact_default_rules(rule_path)?;
+            if exact_default_rules.is_empty() {
+                Some(Value::Undefined)
+            } else {
+                let mut policy = self.policy.inner.clone();
+                Rc::make_mut(&mut policy)
+                    .default_rules
+                    .insert(rule_path.to_string(), exact_default_rules);
+                let mut interpreter = Interpreter::new_from_compiled_policy(policy);
+                let value = interpreter
+                    .eval_default_rule_for_compiler(rule_path)
+                    .map_err(|error| CompilerError::General {
+                        message: error.to_string(),
+                    })?;
+                Some(value)
+            }
         };
 
         let Some(computed_value) = computed_value else {

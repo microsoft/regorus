@@ -30,6 +30,16 @@ impl<'a> Compiler<'a> {
             || self.default_function_paths.contains(rule_path)
     }
 
+    pub(super) fn is_parameterized_user_function(&self, rule_path: &str) -> bool {
+        self.default_function_paths.contains(rule_path)
+            || self
+                .policy
+                .inner
+                .functions
+                .get(rule_path)
+                .is_some_and(|function| function.1 > 0)
+    }
+
     /// Get builtin index for a builtin function
     pub(super) fn get_builtin_index(&mut self, builtin_name: &str) -> Result<u16> {
         if !self.is_builtin(builtin_name) {

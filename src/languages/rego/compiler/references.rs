@@ -10,6 +10,7 @@
 
 use super::{Compiler, CompilerError, Register, Result, WorklistEntry};
 use crate::lexer::Span;
+use crate::parser::Parser;
 use crate::rvm::instructions::{
     ChainedIndexParams, LiteralOrRegister, VirtualDataDocumentLookupParams,
 };
@@ -17,6 +18,7 @@ use crate::rvm::Instruction;
 use crate::utils::{append_path_component, format_string_path};
 use crate::Value;
 use alloc::collections::BTreeSet;
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -150,6 +152,46 @@ impl<'a> Compiler<'a> {
         self.compile_chain_access(input_reg, &chain.components, span)
     }
 
+    pub(super) fn compile_parameterized_function_document_path(
+        &mut self,
+        rule_path: &str,
+        suffix: &[AccessComponent],
+        span: &Span,
+    ) -> Result<Register> {
+        let max_components = self
+            .policy
+            .inner
+            .rule_path_components
+            .values()
+            .map(Vec::len)
+            .max()
+            .unwrap_or_default();
+        let path_components = Parser::parse_static_path_components(rule_path, max_components)
+            .map_err(|error| CompilerError::General {
+                message: error.to_string(),
+            })?;
+        let mut components = path_components.into_iter();
+        let root = components.next().ok_or_else(|| CompilerError::General {
+            message: format!("empty rule path '{rule_path}'"),
+        })?;
+        if root != "data" {
+            return Err(CompilerError::General {
+                message: format!("parameterized function path '{rule_path}' is not under data"),
+            }
+            .into());
+        }
+
+        let mut components = components.map(AccessComponent::Field).collect::<Vec<_>>();
+        components.extend_from_slice(suffix);
+        self.compile_data_chain(
+            &ReferenceChain {
+                root: ReferenceRoot::Variable(root),
+                components,
+            },
+            span,
+        )
+    }
+
     /// Compile data namespace access chain (may involve rules)
     fn compile_data_chain(&mut self, chain: &ReferenceChain, span: &Span) -> Result<Register> {
         if chain.components.is_empty() {
@@ -168,6 +210,12 @@ impl<'a> Compiler<'a> {
             // Start from 1 to skip just "data"
             let rule_candidate =
                 format_string_path(&static_prefix[0..=i]).map_err(CompilerError::from)?;
+
+            if !self.policy.inner.rule_paths.contains(&rule_candidate)
+                || self.is_parameterized_user_function(&rule_candidate)
+            {
+                continue;
+            }
 
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
                 // Found a rule match! Call the rule
@@ -200,6 +248,8 @@ impl<'a> Compiler<'a> {
             .rules
             .keys()
             .chain(self.policy.inner.default_rules.keys())
+            .filter(|rule_path| self.policy.inner.rule_paths.contains(*rule_path))
+            .filter(|rule_path| !self.is_parameterized_user_function(rule_path))
             .filter(|rule_path| self.matches_path_pattern(rule_path, &path_pattern))
             .cloned()
             .collect();
@@ -307,6 +357,14 @@ impl<'a> Compiler<'a> {
             for field in static_fields.iter().take(i) {
                 rule_candidate =
                     append_path_component(&rule_candidate, field).map_err(CompilerError::from)?;
+            }
+
+            if self.is_parameterized_user_function(&rule_candidate) {
+                return self.compile_parameterized_function_document_path(
+                    &rule_candidate,
+                    &chain.components[i..],
+                    span,
+                );
             }
 
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {

@@ -1770,6 +1770,55 @@ struct RgpInputObservations {
     suspendable: Vec<Result<Value, String>>,
 }
 
+#[derive(Debug)]
+struct RgpDataObservations {
+    interpreter: Result<Value, String>,
+    run_to_completion: Result<Value, String>,
+    suspendable: Result<Value, String>,
+}
+
+fn observe_rgp_data_case(
+    modules: &[(&str, &str)],
+    entry_point: &str,
+    data: &Value,
+    input: &Value,
+) -> anyhow::Result<RgpDataObservations> {
+    let mut engine = Engine::new();
+    for (module_id, content) in modules {
+        engine.add_policy((*module_id).to_string(), (*content).to_string())?;
+    }
+    engine.add_data(data.clone())?;
+    engine.set_input(input.clone());
+    let interpreter = engine
+        .eval_rule(entry_point.to_string())
+        .map_err(|error| error.to_string());
+
+    let program = compile_modules_with_options(modules, entry_point, &CompilerOptions::default())?;
+    let mut vm_results = Vec::new();
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_data(data.clone())?;
+        vm.set_input(input.clone());
+        vm_results.push(
+            vm.execute_entry_point_by_name(entry_point)
+                .map_err(|error| error.to_string()),
+        );
+    }
+
+    let mut vm_results = vm_results.into_iter();
+    Ok(RgpDataObservations {
+        interpreter,
+        run_to_completion: vm_results
+            .next()
+            .expect("RunToCompletion observations were collected"),
+        suspendable: vm_results
+            .next()
+            .expect("Suspendable observations were collected"),
+    })
+}
+
 fn observe_rgp_input_cases(
     modules: &[(&str, &str)],
     entry_point: &str,
@@ -1819,6 +1868,461 @@ fn observe_rgp_input_cases(
             .next()
             .expect("Suspendable observations were collected"),
     })
+}
+
+#[test]
+fn r842_parameterized_function_paths_preserve_data_and_function_calls() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+
+default defaulted(_) := input.fallback
+ordinary(value) := value
+zero() := "zero"
+
+p := {
+    "defaulted_data": data.test.defaulted,
+    "ordinary_data": data.test.ordinary,
+    "defaulted_call": defaulted(0),
+    "ordinary_call": ordinary("ordinary"),
+    "zero_arity_call": zero()
+}
+"#;
+    let modules = [("main.rego", source)];
+    let data = Value::from_json_str(
+        r#"{"test":{"defaulted":"base-default","ordinary":"base-ordinary"}}"#,
+    )?;
+    let input = Value::from_json_str(r#"{"fallback":"default-call"}"#)?;
+    let expected = Value::from_json_str(
+        r#"{"defaulted_data":"base-default","ordinary_data":"base-ordinary","defaulted_call":"default-call","ordinary_call":"ordinary","zero_arity_call":"zero"}"#,
+    )?;
+
+    let observations = observe_rgp_data_case(&modules, "data.test.p", &data, &input)?;
+    assert_eq!(
+        observations.interpreter.as_ref().ok(),
+        Some(&expected),
+        "the interpreter is the oracle for base-data reads and callable rules"
+    );
+    assert_eq!(
+        observations.run_to_completion.as_ref().ok(),
+        Some(&expected),
+        "RunToCompletion must read base data at parameterized function paths and still call them"
+    );
+    assert_eq!(
+        observations.suspendable.as_ref().ok(),
+        Some(&expected),
+        "Suspendable must read base data at parameterized function paths and still call them"
+    );
+    Ok(())
+}
+
+#[test]
+fn r842_parameterized_default_entrypoints_read_base_data_or_undefined() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default constant_default(_) := "called-constant"
+default dynamic_default(_) := input.fallback
+"#;
+    let modules = [("main.rego", source)];
+    let no_data = Value::new_object();
+    let base_data = Value::from_json_str(
+        r#"{"test":{"constant_default":"constant-base","dynamic_default":"dynamic-base"}}"#,
+    )?;
+    let input = Value::from_json_str(r#"{"fallback":"called-dynamic"}"#)?;
+    let undefined = Value::Undefined;
+    let constant_base = Value::from_json_str(r#""constant-base""#)?;
+    let dynamic_base = Value::from_json_str(r#""dynamic-base""#)?;
+    let cases = [
+        ("data.test.constant_default", &no_data, &undefined),
+        ("data.test.dynamic_default", &no_data, &undefined),
+        ("data.test.constant_default", &base_data, &constant_base),
+        ("data.test.dynamic_default", &base_data, &dynamic_base),
+    ];
+
+    for (entry_point, data, expected) in cases {
+        let observations = observe_rgp_data_case(&modules, entry_point, data, &input)?;
+        let expected = Ok(expected.clone());
+        assert_eq!(
+            observations.interpreter, expected,
+            "interpreter document result for {entry_point} with data {data:?}"
+        );
+        assert_eq!(
+            observations.run_to_completion, expected,
+            "RunToCompletion document result for {entry_point} with data {data:?}"
+        );
+        assert_eq!(
+            observations.suspendable, expected,
+            "Suspendable document result for {entry_point} with data {data:?}"
+        );
+    }
+
+    let entry_point = "data.test.constant_default";
+    let program = compile_modules_with_options(&modules, entry_point, &CompilerOptions::default())?;
+    let binary = program.serialize_binary().map_err(anyhow::Error::msg)?;
+    assert_eq!(
+        u16::from_le_bytes([binary[4], binary[5]]),
+        6,
+        "document entrypoints must remain in the existing Program v6 format"
+    );
+    let round_tripped_program = match regorus::rvm::program::Program::deserialize_binary(&binary)
+        .map_err(anyhow::Error::msg)?
+    {
+        regorus::rvm::program::DeserializationResult::Complete(program) => {
+            std::sync::Arc::new(program)
+        }
+        regorus::rvm::program::DeserializationResult::Partial(_) => {
+            anyhow::bail!("document entrypoint v6 program unexpectedly needs recompilation")
+        }
+    };
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(round_tripped_program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_data(base_data.clone())?;
+        vm.set_input(input.clone());
+        assert_eq!(
+            vm.execute_entry_point_by_name(entry_point)?,
+            constant_base,
+            "{mode:?} result after the existing-v6 round trip"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn r842_parameterized_default_entrypoint_data_registers_are_scoped_per_entrypoint(
+) -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := true
+default g(_) := false
+"#;
+    let data = Value::from_json_str(r#"{"test":{"f":"base-f","g":"base-g"}}"#)?;
+    let expected_f = Value::from_json_str(r#""base-f""#)?;
+    let expected_g = Value::from_json_str(r#""base-g""#)?;
+
+    for entry_points in [
+        ["data.test.f", "data.test.g"],
+        ["data.test.g", "data.test.f"],
+    ] {
+        let mut engine = Engine::new();
+        engine.add_policy("test.rego".to_string(), source.to_string())?;
+        engine.add_data(data.clone())?;
+        assert_eq!(
+            engine.eval_rule("data.test.f".to_string())?,
+            expected_f,
+            "interpreter value for data.test.f"
+        );
+        assert_eq!(
+            engine.eval_rule("data.test.g".to_string())?,
+            expected_g,
+            "interpreter value for data.test.g"
+        );
+
+        let compiled = engine.compile_with_entrypoint(&Rc::from(entry_points[0]))?;
+        let program = Compiler::compile_from_policy(&compiled, &entry_points)?;
+        let expected_for = |entry_point| match entry_point {
+            "data.test.f" => &expected_f,
+            "data.test.g" => &expected_g,
+            _ => unreachable!(),
+        };
+        let first_entry_point = entry_points[0];
+        let second_entry_point = entry_points[1];
+
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            vm.set_data(data.clone())?;
+
+            assert_eq!(
+                vm.execute_entry_point_by_name(second_entry_point)?,
+                *expected_for(second_entry_point),
+                "{mode:?} second entrypoint {second_entry_point} on a fresh VM"
+            );
+            assert_eq!(
+                vm.execute_entry_point_by_name(first_entry_point)?,
+                *expected_for(first_entry_point),
+                "{mode:?} first entrypoint {first_entry_point} after the second"
+            );
+            assert_eq!(
+                vm.execute_entry_point_by_name(second_entry_point)?,
+                *expected_for(second_entry_point),
+                "{mode:?} second entrypoint {second_entry_point} after the first"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn r842_local_references_to_parameterized_functions_read_documents() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := true
+default dynamic(_) := input.fallback
+ordinary(value) := value
+zero() := "zero-value"
+value := "value-result"
+
+allow := data.test.f
+local_constant := f
+local_dynamic := dynamic
+local_ordinary := ordinary
+called_default := f(0)
+called_ordinary := ordinary("ordinary-call")
+"#;
+    let modules = [("main.rego", source)];
+    let no_data = Value::new_object();
+    let base_data = Value::from_json_str(
+        r#"{"test":{"f":"base-constant","dynamic":"base-dynamic","ordinary":"base-ordinary"}}"#,
+    )?;
+    let input = Value::from_json_str(r#"{"fallback":"called-dynamic"}"#)?;
+    let undefined = Value::Undefined;
+    let base_constant = Value::from_json_str(r#""base-constant""#)?;
+    let base_dynamic = Value::from_json_str(r#""base-dynamic""#)?;
+    let base_ordinary = Value::from_json_str(r#""base-ordinary""#)?;
+    let cases = [
+        ("data.test.allow", &no_data, &undefined),
+        ("data.test.local_constant", &no_data, &undefined),
+        ("data.test.local_dynamic", &no_data, &undefined),
+        ("data.test.local_ordinary", &no_data, &undefined),
+        ("data.test.allow", &base_data, &base_constant),
+        ("data.test.local_constant", &base_data, &base_constant),
+        ("data.test.local_dynamic", &base_data, &base_dynamic),
+        ("data.test.local_ordinary", &base_data, &base_ordinary),
+    ];
+
+    for (entry_point, data, expected) in cases {
+        let observations = observe_rgp_data_case(&modules, entry_point, data, &input)?;
+        let expected = Ok(expected.clone());
+        assert_eq!(
+            observations.interpreter, expected,
+            "interpreter document result for {entry_point} with data {data:?}"
+        );
+        assert_eq!(
+            observations.run_to_completion, expected,
+            "RunToCompletion document result for {entry_point} with data {data:?}"
+        );
+        assert_eq!(
+            observations.suspendable, expected,
+            "Suspendable document result for {entry_point} with data {data:?}"
+        );
+    }
+
+    for (entry_point, expected) in [
+        ("data.test.called_default", Value::Bool(true)),
+        (
+            "data.test.called_ordinary",
+            Value::from_json_str(r#""ordinary-call""#)?,
+        ),
+        ("data.test.zero", Value::from_json_str(r#""zero-value""#)?),
+        (
+            "data.test.value",
+            Value::from_json_str(r#""value-result""#)?,
+        ),
+    ] {
+        let observations = observe_rgp_data_case(&modules, entry_point, &no_data, &input)?;
+        let expected = Ok(expected);
+        assert_eq!(
+            observations.interpreter, expected,
+            "interpreter control {entry_point}"
+        );
+        assert_eq!(
+            observations.run_to_completion, expected,
+            "RunToCompletion control {entry_point}"
+        );
+        assert_eq!(
+            observations.suspendable, expected,
+            "Suspendable control {entry_point}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn r842_indexed_default_materializes_parent_and_timeout_field() -> anyhow::Result<()> {
+    let bracket_default = r#"package test
+import rego.v1
+default config["timeout"] := 30
+p := {
+    "whole": config,
+    "field_bracket": config["timeout"],
+    "field_dot": config.timeout
+}
+"#;
+    let expected =
+        Value::from_json_str(r#"{"whole":{"timeout":30},"field_bracket":30,"field_dot":30}"#)?;
+    let data = Value::new_object();
+    let input = Value::new_object();
+
+    let modules = [("main.rego", bracket_default)];
+    let observations = observe_rgp_data_case(&modules, "data.test.p", &data, &input)?;
+    assert_eq!(
+        observations.interpreter,
+        Ok(expected.clone()),
+        "the interpreter materializes the literal-string indexed default"
+    );
+    assert_eq!(
+        observations.run_to_completion,
+        Ok(expected.clone()),
+        "RunToCompletion materializes the indexed default for whole-object and dotted/bracket field reads"
+    );
+    assert_eq!(
+        observations.suspendable,
+        Ok(expected),
+        "Suspendable materializes the indexed default for whole-object and dotted/bracket field reads"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn r842_qualified_default_only_calls_execute_the_exact_module_path() -> anyhow::Result<()> {
+    let helper = r#"package helpers
+import rego.v1
+default constant(_) := "target-constant"
+default dynamic(_) := input.target
+"#;
+    let shadow = r#"package main.data.helpers
+import rego.v1
+default constant(_) := "shadow-constant"
+default dynamic(_) := input.shadow
+"#;
+    let main = r#"package main
+import rego.v1
+p := {
+    "constant": data.helpers.constant(0),
+    "dynamic": data.helpers.dynamic(0)
+}
+"#;
+    let entry_point = "data.main.p";
+    let inputs = [Value::from_json_str(
+        r#"{"target":"target-dynamic","shadow":"shadow-dynamic"}"#,
+    )?];
+    let expected =
+        Value::from_json_str(r#"{"constant":"target-constant","dynamic":"target-dynamic"}"#)?;
+
+    for modules in [
+        [
+            ("helper.rego", helper),
+            ("shadow.rego", shadow),
+            ("main.rego", main),
+        ],
+        [
+            ("main.rego", main),
+            ("shadow.rego", shadow),
+            ("helper.rego", helper),
+        ],
+    ] {
+        let observations = observe_rgp_input_cases(&modules, entry_point, &inputs)?;
+        assert_eq!(
+            observations.interpreter,
+            vec![Ok(expected.clone())],
+            "fully qualified calls must address the helper defaults regardless of module order"
+        );
+        assert_eq!(
+            observations.run_to_completion,
+            vec![Ok(expected.clone())],
+            "RunToCompletion must execute the exact constant and dynamic defaults"
+        );
+        assert_eq!(
+            observations.suspendable,
+            vec![Ok(expected.clone())],
+            "Suspendable must execute the exact constant and dynamic defaults"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn r842_parent_value_rule_does_not_select_child_callable_default() -> anyhow::Result<()> {
+    let parent_first = r#"package test
+import rego.v1
+a := true
+default a.child(_) := [input.items | true]
+p := a
+"#;
+    let child_first = r#"package test
+import rego.v1
+default a.child(_) := [input.items | true]
+a := true
+p := a
+"#;
+    let input = Value::from_json_str(r#"{"items":["child"]}"#)?;
+    let inputs = [input.clone()];
+    let expected = Value::Bool(true);
+
+    for source in [child_first, parent_first] {
+        let modules = [("main.rego", source)];
+        let mut engine = Engine::new();
+        engine.add_policy("main.rego".to_string(), source.to_string())?;
+        engine.set_input(input.clone());
+        assert_eq!(
+            engine.eval_rule("data.test.p".to_string())?,
+            expected,
+            "the interpreter must keep the parent value rule distinct from its child function default"
+        );
+
+        let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+        assert_eq!(
+            observations.interpreter,
+            vec![Ok(expected.clone())],
+            "the parent value rule remains distinct from its child function default"
+        );
+        assert_eq!(
+            observations.run_to_completion,
+            vec![Ok(expected.clone())],
+            "RunToCompletion must retain the parent value rule"
+        );
+        assert_eq!(
+            observations.suspendable,
+            vec![Ok(expected.clone())],
+            "Suspendable must retain the parent value rule"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn r842_parent_value_default_does_not_select_child_callable_default() -> anyhow::Result<()> {
+    let parent_first = r#"package test
+import rego.v1
+default f := true
+default f.child(_) := input.child
+p := data.test.f
+"#;
+    let child_first = r#"package test
+import rego.v1
+default f.child(_) := input.child
+default f := true
+p := data.test.f
+"#;
+    let inputs = [Value::from_json_str(r#"{"child":"child-default"}"#)?];
+    let expected = Value::Bool(true);
+
+    for source in [child_first, parent_first] {
+        let modules = [("main.rego", source)];
+        let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+        assert_eq!(
+            observations.interpreter,
+            vec![Ok(expected.clone())],
+            "the exact parent value default is the interpreter result"
+        );
+        assert_eq!(
+            observations.run_to_completion,
+            vec![Ok(expected.clone())],
+            "RunToCompletion must resolve the parent document, not its child function"
+        );
+        assert_eq!(
+            observations.suspendable,
+            vec![Ok(expected.clone())],
+            "Suspendable must resolve the parent document, not its child function"
+        );
+    }
+    Ok(())
 }
 
 #[test]

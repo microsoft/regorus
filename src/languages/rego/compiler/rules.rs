@@ -32,6 +32,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::convert::TryFrom as _;
 
+type CallableDefaultFunction = (crate::ast::NodeRef<Rule>, Vec<ExprRef>, ExprRef);
+
 fn collect_callable_default_function_paths(policy: &CompiledPolicy) -> Result<BTreeSet<String>> {
     let mut paths = BTreeSet::new();
     if policy.inner.default_rules.is_empty() {
@@ -270,18 +272,59 @@ impl<'a> Compiler<'a> {
     pub(super) fn callable_default_function(
         &self,
         rule_path: &str,
-    ) -> Option<(crate::ast::NodeRef<Rule>, Vec<ExprRef>, ExprRef)> {
-        self.policy
-            .inner
-            .default_rules
-            .get(rule_path)?
-            .iter()
-            .find_map(|(rule, _)| match rule.as_ref() {
-                Rule::Default { args, value, .. } if !args.is_empty() => {
-                    Some((rule.clone(), args.clone(), value.clone()))
+    ) -> Result<Option<CallableDefaultFunction>> {
+        for (rule, _) in self.exact_default_rules(rule_path)? {
+            if let Rule::Default { args, value, .. } = rule.as_ref() {
+                if !args.is_empty() {
+                    return Ok(Some((rule.clone(), args.clone(), value.clone())));
                 }
-                _ => None,
-            })
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub(super) fn exact_default_rules(
+        &self,
+        rule_path: &str,
+    ) -> Result<Vec<(crate::ast::NodeRef<Rule>, Option<String>)>> {
+        let Some(default_rules) = self.policy.inner.default_rules.get(rule_path) else {
+            return Ok(Vec::new());
+        };
+        let mut exact_rules = Vec::new();
+
+        for (rule, index) in default_rules {
+            if let Rule::Default { refr, args, .. } = rule.as_ref() {
+                let (module_package, _) = self.find_module_package_for_rule_ref(rule)?;
+                let registration_refr = if args.is_empty() {
+                    match (index, refr.as_ref()) {
+                        (Some(_), Expr::RefBrack { refr, .. }) => refr,
+                        (Some(_), _) => {
+                            return Err(CompilerError::General {
+                                message: "indexed default rule has no bracket reference"
+                                    .to_string(),
+                            }
+                            .at(refr.span()));
+                        }
+                        (None, _) => refr,
+                    }
+                } else {
+                    refr
+                };
+                let default_path = get_path_string(registration_refr, Some(&module_package))
+                    .map_err(|error| {
+                        CompilerError::General {
+                            message: format!("Failed to get default rule path: {error}"),
+                        }
+                        .at(registration_refr.span())
+                    })?;
+                if default_path == rule_path {
+                    exact_rules.push((rule.clone(), index.clone()));
+                }
+            }
+        }
+
+        Ok(exact_rules)
     }
 
     fn find_module_package_for_rule_ref(
@@ -613,7 +656,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_default_selector(&mut self, rule_path: &str, source_path: &str) -> Result<()> {
-        let Some((default_rule, _args, _value)) = self.callable_default_function(source_path)
+        let Some((default_rule, _args, _value)) = self.callable_default_function(source_path)?
         else {
             return Err(CompilerError::General {
                 message: format!("missing callable default for '{source_path}'"),
@@ -718,18 +761,8 @@ impl<'a> Compiler<'a> {
 
         if !self.policy.inner.rules.contains_key(rule_path) {
             let default_function_param_count = self
-                .policy
-                .inner
-                .default_rules
-                .get(rule_path)
-                .and_then(|default_rules| {
-                    default_rules
-                        .iter()
-                        .find_map(|(rule, _)| match rule.as_ref() {
-                            Rule::Default { args, .. } if !args.is_empty() => Some(args.len()),
-                            _ => None,
-                        })
-                });
+                .callable_default_function(rule_path)?
+                .map(|(_, args, _)| args.len());
             if let Some(param_count) = default_function_param_count {
                 self.rule_function_param_count[usize::from(index)] = Some(param_count);
             }
@@ -860,8 +893,8 @@ impl<'a> Compiler<'a> {
             .unwrap_or_default();
 
         for &entry_point_name in entry_points {
+            compiler.reset_rule_definition_registers();
             let instruction_index = compiler.program.instructions.len();
-            let result_reg = compiler.alloc_register();
             let rule_path = if policy.inner.rule_paths.contains(entry_point_name) {
                 entry_point_name.to_string()
             } else {
@@ -882,12 +915,28 @@ impl<'a> Compiler<'a> {
                     entry_point_name.to_string()
                 }
             };
-            let rule_idx = compiler.get_or_assign_rule_index(&rule_path)?;
+
+            let result_reg = if compiler.is_parameterized_user_function(&rule_path) {
+                let span = policy
+                    .get_modules()
+                    .first()
+                    .map(|module| module.package.refr.span())
+                    .ok_or_else(|| CompilerError::General {
+                        message: format!(
+                            "parameterized entrypoint '{entry_point_name}' has no source module"
+                        ),
+                    })?;
+                compiler.compile_parameterized_function_document_path(&rule_path, &[], span)?
+            } else {
+                let result_reg = compiler.alloc_register();
+                let rule_idx = compiler.get_or_assign_rule_index(&rule_path)?;
+                compiler.emit_call_rule(result_reg, rule_idx);
+                result_reg
+            };
+
             compiler
                 .entry_points
                 .insert(entry_point_name.to_string(), instruction_index);
-            compiler.emit_call_rule(result_reg, rule_idx);
-
             compiler.emit_return(result_reg);
         }
 
@@ -989,7 +1038,7 @@ impl<'a> Compiler<'a> {
             Some(PrivateRuleKind::OrdinaryResult { .. })
         );
 
-        if let Some((default_rule, args, value)) = self.callable_default_function(rule_path) {
+        if let Some((default_rule, args, value)) = self.callable_default_function(rule_path)? {
             if super::expressions::try_eval_const(value.as_ref()).is_none() {
                 if rules.contains_key(rule_path) {
                     return self.compile_dynamic_default_wrapper(rule_path, default_rule, args);
