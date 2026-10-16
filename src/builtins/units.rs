@@ -95,6 +95,10 @@ fn parse(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
     // a stable representation that includes an explicit leading digit.
     let canonical_part = canonicalize_number_part(number_part);
 
+    if exponent_too_large(canonical_part.as_ref()) {
+        bail!(params[0].span().error("units.parse: exponent too large"));
+    }
+
     if let Some(e) = ten_exp(suffix) {
         let combined = combine_decimal_exponent(canonical_part.as_ref(), e)
             .ok_or_else(|| params[0].span().error("could not parse number"))?;
@@ -168,6 +172,12 @@ fn parse_bytes(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) 
     // Canonicalize quirky literals (e.g. ".5", "-.1") so downstream parsing always sees
     // a stable representation that includes an explicit leading digit.
     let canonical_part = canonicalize_number_part(number_part);
+
+    if exponent_too_large(canonical_part.as_ref()) {
+        bail!(params[0]
+            .span()
+            .error("units.parse_bytes: exponent too large"));
+    }
 
     if let Some(e) = twob_exp(suffix) {
         let mut number = match Number::from_str(canonical_part.as_ref()) {
@@ -244,4 +254,12 @@ fn split_decimal_exponent(number: &str) -> Option<(&str, i32)> {
     }
     let exponent = exp_part.parse::<i32>().ok()?;
     Some((mantissa, exponent))
+}
+
+fn exponent_too_large(number: &str) -> bool {
+    number
+        .find(['e', 'E'])
+        .and_then(|idx| number.get(idx + 1..))
+        .map(|exponent| exponent.strip_prefix(['+', '-']).unwrap_or(exponent))
+        .is_some_and(|digits| digits.len() > 6)
 }
