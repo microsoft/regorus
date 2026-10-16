@@ -150,7 +150,7 @@ jobs:
     - name: Install WASM build dependencies
       if: matrix.language == 'javascript-typescript'
       run: |
-        cargo install wasm-pack
+        cargo install wasm-pack --locked
 
     # Manual build steps for different languages
     - name: Build C/C++ bindings via xtask
