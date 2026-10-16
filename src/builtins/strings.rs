@@ -21,6 +21,12 @@ use crate::*;
 use anyhow::{bail, Result};
 
 mod go_is_print;
+mod sprintf_format;
+
+// Keep formatting directives bounded even when allocator memory limits are
+// disabled. This caps both parsed width/precision values and the padding helper
+// that materializes width.
+const MAX_SPRINTF_WIDTH_OR_PRECISION: usize = 1_000_000;
 
 pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("concat", (concat, 2));
@@ -227,6 +233,37 @@ enum Width {
     Decimals(usize),
 }
 
+#[derive(Clone, Copy, Default)]
+struct FormatFlags {
+    alternate: bool,
+    zero: bool,
+    plus: bool,
+    minus: bool,
+    space: bool,
+}
+
+#[derive(Clone, Copy, Default)]
+struct FormatSpec {
+    flags: FormatFlags,
+    width: Option<usize>,
+    precision: Option<usize>,
+    bad_precision: bool,
+    bad_index: bool,
+}
+
+impl FormatSpec {
+    fn legacy_width(self) -> Width {
+        match (self.width, self.precision) {
+            (_, Some(precision)) => Width::Decimals(precision),
+            (Some(width), None) if self.flags.zero && !self.flags.minus => {
+                Width::LeadingZeros(width)
+            }
+            (Some(width), None) => Width::Cell(width),
+            (None, None) => Width::None,
+        }
+    }
+}
+
 fn apply_width(w: Width, s: String) -> String {
     match w {
         Width::LeadingZeros(n) if n > s.len() => "0".repeat(n - s.len()) + &s,
@@ -237,29 +274,62 @@ fn apply_width(w: Width, s: String) -> String {
 
 const LOWER_HEX: &[u8; 16] = b"0123456789abcdef";
 
-// Append a string quoted like Go's `strconv.Quote` (and therefore OPA's `%q`).
-// Precision truncates the input by Unicode scalar values before quoting, while
-// width pads the quoted result by Unicode scalar values.
-fn append_go_quoted(out: &mut String, input: &str, width: Width) -> Result<()> {
-    let input = match width {
-        Width::Decimals(precision) => truncate_chars(input, precision),
-        _ => input,
+// Append a string quoted like Go's fmt `%q`. Precision truncates the input by
+// Unicode scalar values before quoting, while width pads the quoted result by
+// Unicode scalar values. `%+q` forces ASCII escapes and `%#q` uses a raw string
+// whenever strconv.CanBackquote permits it.
+fn append_go_quoted(out: &mut String, input: &str, spec: FormatSpec) -> Result<()> {
+    let input = spec
+        .precision
+        .map_or(input, |precision| truncate_chars(input, precision));
+    let raw = spec.flags.alternate && can_backquote(input);
+    let content_len = if raw {
+        input.chars().count().saturating_add(2)
+    } else {
+        go_quoted_len(input, spec.flags.plus, '"')
+    };
+    let padding = spec.width.unwrap_or_default().saturating_sub(content_len);
+    let padding_char = if spec.flags.zero && !spec.flags.minus {
+        '0'
+    } else {
+        ' '
     };
 
-    let (padding, padding_char) = match width {
-        Width::Cell(width) => (width.saturating_sub(go_quoted_len(input)), ' '),
-        Width::LeadingZeros(width) => (width.saturating_sub(go_quoted_len(input)), '0'),
-        Width::None | Width::Decimals(_) => (0, ' '),
-    };
-    for _ in 0..padding {
-        out.push(padding_char);
-        enforce_limit()?;
+    if !spec.flags.minus {
+        append_padding(out, padding, padding_char)?;
     }
 
-    out.push('"');
+    if raw {
+        out.push('`');
+        for c in input.chars() {
+            out.push(c);
+            enforce_limit()?;
+        }
+        out.push('`');
+        enforce_limit()?;
+    } else {
+        append_go_quoted_body(out, input, spec.flags.plus, '"')?;
+    }
+
+    if spec.flags.minus {
+        append_padding(out, padding, ' ')?;
+    }
+    Ok(())
+}
+
+fn append_go_quoted_body(
+    out: &mut String,
+    input: &str,
+    ascii_only: bool,
+    quote: char,
+) -> Result<()> {
+    out.push(quote);
     for c in input.chars() {
         match c {
-            '"' => out.push_str("\\\""),
+            c if c == quote => {
+                out.push('\\');
+                out.push(c);
+            }
             '\\' => out.push_str("\\\\"),
             '\u{0007}' => out.push_str("\\a"),
             '\u{0008}' => out.push_str("\\b"),
@@ -268,15 +338,31 @@ fn append_go_quoted(out: &mut String, input: &str, width: Width) -> Result<()> {
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
             '\u{000B}' => out.push_str("\\v"),
-            c if go_is_print::is_print(c) => out.push(c),
+            c if go_is_print::is_print(c) && (!ascii_only || c.is_ascii()) => out.push(c),
             c if (c as u32) <= 0x7f => append_hex_escape(out, 'x', c as u32, 2),
             c if (c as u32) <= 0xffff => append_hex_escape(out, 'u', c as u32, 4),
             c => append_hex_escape(out, 'U', c as u32, 8),
         }
         enforce_limit()?;
     }
-    out.push('"');
+    out.push(quote);
     enforce_limit()
+}
+
+fn append_padding(out: &mut String, count: usize, padding_char: char) -> Result<()> {
+    if count > MAX_SPRINTF_WIDTH_OR_PRECISION {
+        bail!("sprintf padding is outside the supported range");
+    }
+    for _ in 0..count {
+        out.push(padding_char);
+        enforce_limit()?;
+    }
+    Ok(())
+}
+
+fn can_backquote(s: &str) -> bool {
+    s.chars()
+        .all(|c| c != '`' && c != '\u{FEFF}' && c != '\u{007F}' && (c >= ' ' || c == '\t'))
 }
 
 fn truncate_chars(s: &str, count: usize) -> &str {
@@ -285,19 +371,195 @@ fn truncate_chars(s: &str, count: usize) -> &str {
         .map_or(s, |(byte_index, _)| &s[..byte_index])
 }
 
-fn go_quoted_len(s: &str) -> usize {
+fn go_quoted_len(s: &str, ascii_only: bool, quote: char) -> usize {
     s.chars().fold(2usize, |len, c| {
         let escaped_len = match c {
-            '"' | '\\' | '\u{0007}' | '\u{0008}' | '\u{000C}' | '\n' | '\r' | '\t' | '\u{000B}' => {
-                2
-            }
-            c if go_is_print::is_print(c) => 1,
+            c if c == quote => 2,
+            '\\' | '\u{0007}' | '\u{0008}' | '\u{000C}' | '\n' | '\r' | '\t' | '\u{000B}' => 2,
+            c if go_is_print::is_print(c) && (!ascii_only || c.is_ascii()) => 1,
             c if (c as u32) <= 0x7f => 4,
             c if (c as u32) <= 0xffff => 6,
             _ => 10,
         };
         len.saturating_add(escaped_len)
     })
+}
+
+fn append_go_quoted_rune(out: &mut String, value: i64, spec: FormatSpec) -> Result<()> {
+    let rune = u32::try_from(value)
+        .ok()
+        .and_then(char::from_u32)
+        .unwrap_or('\u{FFFD}');
+    let mut encoded = [0u8; 4];
+    let rune = rune.encode_utf8(&mut encoded);
+    let content_len = go_quoted_len(rune, spec.flags.plus, '\'');
+    let padding = spec.width.unwrap_or_default().saturating_sub(content_len);
+    let padding_char = if spec.flags.zero && !spec.flags.minus {
+        '0'
+    } else {
+        ' '
+    };
+
+    if !spec.flags.minus {
+        append_padding(out, padding, padding_char)?;
+    }
+    append_go_quoted_body(out, rune, spec.flags.plus, '\'')?;
+    if spec.flags.minus {
+        append_padding(out, padding, ' ')?;
+    }
+    Ok(())
+}
+
+fn append_go_quoted_value(out: &mut String, value: &Value, spec: FormatSpec) -> Result<()> {
+    match value {
+        Value::String(value) => append_go_quoted(out, value.as_ref(), spec),
+        Value::Number(Number::Int(value)) => append_go_quoted_rune(out, *value, spec),
+        Value::Number(Number::UInt(value)) if *value <= i64::MAX as u64 => {
+            append_go_quoted_rune(out, *value as i64, spec)
+        }
+        Value::Number(number @ (Number::UInt(_) | Number::BigInt(_))) => {
+            out.push_str("%!q(big.Int=");
+            out.push_str(&number.format_decimal());
+            out.push(')');
+            enforce_limit()
+        }
+        Value::Number(Number::Float(value)) => {
+            out.push_str("%!q(float64=");
+            append_go_float_value(out, value, spec)?;
+            out.push(')');
+            enforce_limit()
+        }
+        value => {
+            let mut rendered = String::new();
+            append_value_string(&mut rendered, value, false)?;
+            append_go_quoted(out, &rendered, spec)
+        }
+    }
+}
+
+// Go renders an invalid %q float operand using the supplied flags, width, and
+// precision as a nested %v conversion.
+fn append_go_float_value(out: &mut String, value: &f64, spec: FormatSpec) -> Result<()> {
+    let value = if let Some(precision) = spec.precision {
+        format_go_float_v(*value, precision, spec.flags.alternate)
+    } else {
+        format_go_float_v(*value, 6, spec.flags.alternate)
+    };
+    let padding = spec.width.unwrap_or_default().saturating_sub(value.len());
+    let padding_char = if spec.flags.zero && !spec.flags.minus {
+        '0'
+    } else {
+        ' '
+    };
+    if !spec.flags.minus {
+        append_padding(out, padding, padding_char)?;
+    }
+    out.push_str(&value);
+    enforce_limit()?;
+    if spec.flags.minus {
+        append_padding(out, padding, ' ')?;
+    }
+    Ok(())
+}
+
+// Go's %v precision for floats is the number of significant digits, using the
+// same general-format threshold as %g. The alternate form retains trailing
+// zeroes up to that precision.
+fn format_go_float_v(value: f64, precision: usize, alternate: bool) -> String {
+    if !value.is_finite() || value == 0.0 {
+        return value.to_string();
+    }
+    let precision = precision.max(1);
+    let exponent = decimal_exponent(value);
+    let scientific = exponent >= precision as i32 || exponent < -4;
+    let mut rendered = if scientific {
+        let fraction_digits = precision - 1;
+        let rendered = format!("{value:.fraction_digits$e}");
+        let (mantissa, exponent) = rendered
+            .split_once('e')
+            .expect("scientific format has exponent");
+        let mantissa = if alternate {
+            mantissa.to_owned()
+        } else {
+            trim_fraction_zeros(mantissa).to_owned()
+        };
+        let exponent = exponent.parse::<i32>().expect("Rust exponent is numeric");
+        format!("{mantissa}e{exponent:+03}")
+    } else {
+        let fraction_digits = (precision as i32 - exponent - 1).max(0) as usize;
+        format!("{value:.fraction_digits$}")
+    };
+    if !alternate && !scientific {
+        rendered = trim_fraction_zeros(&rendered).to_owned();
+    }
+    rendered
+}
+
+// `f64::log10` requires libm in genuine no_std builds. Rust's core formatter
+// already computes the normalized scientific representation we need, so parse
+// its small decimal exponent instead of introducing a platform math symbol.
+fn decimal_exponent(value: f64) -> i32 {
+    format!("{value:e}")
+        .rsplit_once('e')
+        .and_then(|(_, exponent)| exponent.parse().ok())
+        .unwrap_or_default()
+}
+
+fn trim_fraction_zeros(value: &str) -> &str {
+    if value.contains('.') {
+        value.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        value
+    }
+}
+
+fn append_value_string(out: &mut String, value: &Value, unescape: bool) -> Result<()> {
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(value) => out.push_str(&value.to_string()),
+        Value::String(value) if unescape => out.push_str(
+            &serde_json::to_string(value.as_ref()).unwrap_or_else(|_| value.as_ref().to_string()),
+        ),
+        Value::String(value) => out.push_str(value.as_ref()),
+        Value::Number(value) => out.push_str(&value.format_decimal()),
+        Value::Array(values) => {
+            out.push('[');
+            for (index, value) in values.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                append_value_string(out, value, true)?;
+                enforce_limit()?;
+            }
+            out.push(']');
+        }
+        Value::Set(values) => {
+            out.push('{');
+            for (index, value) in values.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                append_value_string(out, value, true)?;
+                enforce_limit()?;
+            }
+            out.push('}');
+        }
+        Value::Object(values) => {
+            out.push('{');
+            for (index, (key, value)) in values.iter_sorted().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                append_value_string(out, key, true)?;
+                out.push_str(": ");
+                append_value_string(out, value, true)?;
+                enforce_limit()?;
+            }
+            out.push('}');
+        }
+        Value::Undefined => out.push_str("#undefined"),
+    }
+    enforce_limit()
 }
 
 fn append_hex_escape(out: &mut String, prefix: char, value: u32, digits: usize) {
@@ -317,57 +579,57 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
 
     let mut s = String::default();
     let mut args_idx = 0usize;
-    let mut chars = fmt.chars().peekable();
+    let mut cursor = 0usize;
+    let mut reordered = false;
     let args_span = params[1].span();
+    let format_span = params[0].span();
     loop {
-        let (verb, width) = match chars.next() {
-            Some('%') => match chars.next() {
-                Some('%') => {
-                    s.push('%');
-                    continue;
-                }
-                Some(c) if c == '.' || c.is_numeric() => {
-                    let first_char = c;
-                    let mut w = 0;
-                    if c != '.' {
-                        w = c.to_digit(10).expect("could not get digit from char");
-                    }
-
-                    while chars.peek().map(|c| c.is_numeric()) == Some(true) {
-                        w = w * 10
-                            + chars
-                                .next()
-                                .expect("could not get next digit")
-                                .to_digit(10)
-                                .expect("could not get digit from char");
-                    }
-                    let width = match first_char {
-                        '0' => Width::LeadingZeros(w as usize),
-                        '.' => Width::Decimals(w as usize),
-                        _ => Width::Cell(w as usize),
-                    };
-                    match chars.next() {
-                        Some(c) => (c, width),
-                        _ => {
-                            let span = params[0].span();
-                            bail!(span.error(
-                                "missing format verb after `%width` at end of format string"
-                            ));
-                        }
-                    }
-                }
-                Some(c) => (c, Width::None),
-                None => {
-                    let span = params[0].span();
-                    bail!(span.error("missing format verb after `%` at end of format string"));
-                }
-            },
-            Some(c) => {
-                s.push(c);
-                continue;
-            }
-            None => break,
+        let Some(percent_offset) = fmt[cursor..].find('%') else {
+            s.push_str(&fmt[cursor..]);
+            enforce_limit()?;
+            break;
         };
+        let percent = cursor + percent_offset;
+        s.push_str(&fmt[cursor..percent]);
+        enforce_limit()?;
+
+        let (spec, verb, next_cursor) = sprintf_format::parse(
+            fmt.as_ref(),
+            percent + 1,
+            args.as_ref(),
+            &mut args_idx,
+            &mut reordered,
+            args_span,
+            format_span,
+        )?;
+        cursor = next_cursor;
+
+        if verb == '%' {
+            s.push('%');
+            enforce_limit()?;
+            continue;
+        }
+
+        if spec.bad_index {
+            s.push_str("%!");
+            s.push(verb);
+            s.push_str("(BADINDEX)");
+            enforce_limit()?;
+            continue;
+        }
+
+        if verb != 'q'
+            && (spec.flags.alternate || spec.flags.plus || spec.flags.minus || spec.flags.space)
+        {
+            bail!(format_span.error(
+                "sprintf flags '#', '+', '-' and space are currently supported only for %q"
+            ));
+        }
+
+        if verb != 'q' && spec.width.is_some() && spec.precision.is_some() {
+            bail!(format_span
+                .error("sprintf combined width and precision are currently supported only for %q"));
+        }
 
         if args_idx >= args.len() {
             bail!(args_span
@@ -375,13 +637,15 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
         }
         let arg = &args[args_idx];
         args_idx += 1;
+        if spec.bad_precision {
+            s.push_str("%!(BADPREC)");
+            enforce_limit()?;
+        }
+        let width = spec.legacy_width();
 
         // Handle Golang flags.
         let emit_sign = false;
         let leave_space_for_elided_sign = false;
-        // Note: Golang flags come BEFORE the format verb, not after.
-        // This code was incorrectly consuming characters after the verb.
-        // Removing the incorrect flag handling to fix sprintf spacing.
 
         let get_sign_value = |f: &Number| match (emit_sign, f) {
             (_, v) if v < &Number::from(0.0) => ("-", v.clone()),
@@ -480,25 +744,20 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
                     s += format!("{v}").as_str()
                 }
             }
+            ('q', value) => append_go_quoted_value(&mut s, value, spec)?,
+
             (_, Value::Number(_)) => {
                 bail!(args_span.error(&format!("number specified for format verb {verb}.")));
             }
 
-            ('q', Value::String(sv)) => append_go_quoted(&mut s, sv.as_ref(), width)?,
-
-            ('+', _) if chars.next() == Some('v') => {
-                bail!(args_span.error("Go-syntax fields names format verm %#v is not supported."));
-            }
-            ('T', _) | ('#', _) | ('q', _) | ('p', _) => {
-                bail!(
-                    args_span.error("Go-syntax format verbs %#v. %q, %p and %T are not supported.")
-                );
+            ('T', _) | ('p', _) => {
+                bail!(args_span.error("Go-syntax format verbs %#v, %p and %T are not supported."));
             }
             _ => {}
         }
     }
 
-    if args_idx < args.len() {
+    if !reordered && args_idx < args.len() {
         bail!(args_span.error(
             format!(
                 "extra arguments ({}) specified for {args_idx} format verbs.",
@@ -761,7 +1020,7 @@ mod tests {
 
     fn go_quote_string(s: &str) -> String {
         let mut out = String::new();
-        append_go_quoted(&mut out, s, Width::None).expect("quoting must succeed");
+        append_go_quoted(&mut out, s, FormatSpec::default()).expect("quoting must succeed");
         out
     }
 
@@ -811,17 +1070,101 @@ mod tests {
 
     #[test]
     fn quote_string_applies_supported_width_and_precision() {
-        let quote = |input, width| {
+        let quote = |input, spec| {
             let mut out = String::new();
-            append_go_quoted(&mut out, input, width).expect("quoting must succeed");
+            append_go_quoted(&mut out, input, spec).expect("quoting must succeed");
             out
         };
 
-        assert_eq!(quote("foo", Width::Cell(10)), "     \"foo\"");
-        assert_eq!(quote("a", Width::LeadingZeros(5)), "00\"a\"");
-        assert_eq!(quote("abcdef", Width::Decimals(3)), "\"abc\"");
-        assert_eq!(quote("abc", Width::Decimals(0)), "\"\"");
-        assert_eq!(quote("\u{1F642}", Width::Cell(6)), "   \"\u{1F642}\"");
-        assert_eq!(quote("\u{1F642}x", Width::Decimals(1)), "\"\u{1F642}\"");
+        assert_eq!(
+            quote(
+                "foo",
+                FormatSpec {
+                    width: Some(10),
+                    ..FormatSpec::default()
+                }
+            ),
+            "     \"foo\""
+        );
+        assert_eq!(
+            quote(
+                "a",
+                FormatSpec {
+                    flags: FormatFlags {
+                        zero: true,
+                        ..FormatFlags::default()
+                    },
+                    width: Some(5),
+                    precision: None,
+                    ..FormatSpec::default()
+                }
+            ),
+            "00\"a\""
+        );
+        assert_eq!(
+            quote(
+                "abcdef",
+                FormatSpec {
+                    precision: Some(3),
+                    ..FormatSpec::default()
+                }
+            ),
+            "\"abc\""
+        );
+        assert_eq!(
+            quote(
+                "abc",
+                FormatSpec {
+                    precision: Some(0),
+                    ..FormatSpec::default()
+                }
+            ),
+            "\"\""
+        );
+        assert_eq!(
+            quote(
+                "\u{1F642}",
+                FormatSpec {
+                    width: Some(6),
+                    ..FormatSpec::default()
+                }
+            ),
+            "   \"\u{1F642}\""
+        );
+        assert_eq!(
+            quote(
+                "\u{1F642}x",
+                FormatSpec {
+                    precision: Some(1),
+                    ..FormatSpec::default()
+                }
+            ),
+            "\"\u{1F642}\""
+        );
+    }
+
+    #[test]
+    fn float_diagnostics_use_no_std_general_formatting() {
+        assert_eq!(format_go_float_v(10.0, 6, false), "10");
+        assert_eq!(format_go_float_v(100.0, 6, false), "100");
+        assert_eq!(format_go_float_v(9.99, 2, false), "10");
+        assert_eq!(format_go_float_v(0.0001, 2, false), "0.0001");
+        assert_eq!(format_go_float_v(0.00001, 2, false), "1e-05");
+        assert_eq!(format_go_float_v(1e20, 6, false), "1e+20");
+        assert_eq!(decimal_exponent(f64::MIN_POSITIVE), -308);
+        assert_eq!(decimal_exponent(f64::from_bits(1)), -324);
+    }
+
+    #[test]
+    fn padding_has_a_hard_limit_without_allocator_limits() {
+        let error = append_padding(
+            &mut String::new(),
+            MAX_SPRINTF_WIDTH_OR_PRECISION.saturating_add(1),
+            ' ',
+        )
+        .expect_err("oversized padding must be rejected");
+        assert!(error
+            .to_string()
+            .contains("sprintf padding is outside the supported range"));
     }
 }
