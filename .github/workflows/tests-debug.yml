@@ -29,5 +29,12 @@ jobs:
         shared-key: ${{ runner.os }}-regorus
     - name: Fetch dependencies
       run: cargo fetch --locked
+    - name: Check allocator features and lifecycle tests
+      run: |
+        cargo check --frozen --no-default-features --features std,arc,full-opa,rvm,allocator-memory-limits
+        cargo test --manifest-path mimalloc/Cargo.toml --features allocator-memory-limits --frozen execution_budget_
+        cargo test --manifest-path mimalloc/Cargo.toml --features allocator-memory-limits --frozen header_
+        cargo test --frozen --no-default-features --features std,arc,full-opa,rvm,allocator-memory-limits --lib native_resume_
+        cargo test --frozen --no-default-features --features std,arc,full-opa,rvm,allocator-memory-limits --lib resume_deserialization_limit_error_capture_
     - name: Run debug CI suite
       run: cargo xtask ci-debug --frozen

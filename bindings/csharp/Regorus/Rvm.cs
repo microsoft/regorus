@@ -176,7 +176,7 @@ namespace Regorus
         }
 
         /// <summary>
-        /// Configure a fresh memory budget for every run-to-completion execution.
+        /// Configure the memory budget for the next initial RVM execution.
         /// </summary>
         /// <param name="config">Memory-budget configuration.</param>
         public void SetMemoryBudgetConfig(MemoryBudgetConfig config)

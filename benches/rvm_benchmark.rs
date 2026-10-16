@@ -75,7 +75,7 @@ struct EvalConfig {
     memory_budget: bool,
 }
 
-const EVAL_CONFIGS: [EvalConfig; 5] = [
+const EVAL_CONFIGS: [EvalConfig; 6] = [
     EvalConfig {
         name: "regular_no_limits",
         mode: ExecutionMode::RunToCompletion,
@@ -105,6 +105,12 @@ const EVAL_CONFIGS: [EvalConfig; 5] = [
         mode: ExecutionMode::Suspendable,
         limits: true,
         memory_budget: false,
+    },
+    EvalConfig {
+        name: "suspendable_memory_budget",
+        mode: ExecutionMode::Suspendable,
+        limits: false,
+        memory_budget: true,
     },
 ];
 

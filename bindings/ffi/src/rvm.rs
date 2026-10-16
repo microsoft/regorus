@@ -24,7 +24,9 @@ use regorus::rvm::program::{
     DeserializationResult, Program,
 };
 use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, VmError};
-use regorus::utils::limits::check_memory_limit_if_needed;
+use regorus::utils::limits::{
+    check_memory_limit_if_needed, with_unowned_memory_budget_scope_for_ffi,
+};
 use regorus::PolicyModule;
 use regorus::Value;
 
@@ -57,19 +59,9 @@ impl RegorusRvm {
     }
 }
 
-fn to_rvm_string_result(output: Result<String>) -> RegorusResult {
-    match output {
-        Ok(json) => RegorusResult::ok_string(json),
-        Err(err) => to_rvm_error_result(err),
-    }
-}
-
 fn to_rvm_error_result(err: anyhow::Error) -> RegorusResult {
     let status = match err.downcast_ref::<VmError>() {
         Some(VmError::MemoryBudgetExceeded { .. }) => RegorusStatus::MemoryBudgetExceeded,
-        Some(VmError::MemoryBudgetUnsupportedInSuspendableExecution { .. }) => {
-            RegorusStatus::MemoryBudgetUnsupportedInSuspendableExecution
-        }
         _ => RegorusStatus::Error,
     };
     RegorusResult::err_with_message(status, err.to_string())
@@ -647,37 +639,44 @@ pub extern "C" fn regorus_rvm_resume(
     has_value: bool,
 ) -> RegorusResult {
     with_unwind_guard(|| {
-        let output = || -> Result<String> {
+        let output = || -> Result<RegorusResult> {
             let vm = to_shared_ref(vm as *const RegorusRvm)?;
             let mut guard = vm.try_write()?;
-            let value = if has_value {
-                Some(Value::from_json_str(&from_c_str(resume_value_json)?)?)
-            } else {
-                None
-            };
-            let result = guard.resume(value)?;
-            result.to_json_str()
+            let output = guard.resume_to_c_string_for_ffi(|| {
+                if has_value {
+                    let resume_json = from_c_str(resume_value_json).map_err(VmError::from)?;
+                    Ok(Some(resume_json))
+                } else {
+                    Ok(None)
+                }
+            })?;
+            Ok(RegorusResult::ok_c_string(output))
         }();
 
-        to_rvm_string_result(output)
+        match output {
+            Ok(result) => result,
+            Err(err) => to_rvm_error_result(err),
+        }
     })
 }
 
 /// Get the current execution state of the VM.
 #[no_mangle]
 pub extern "C" fn regorus_rvm_get_execution_state(vm: *mut RegorusRvm) -> RegorusResult {
-    with_unwind_guard(|| {
-        let output = || -> Result<String> {
-            let vm = to_shared_ref(vm as *const RegorusRvm)?;
-            let guard = vm.try_read()?;
-            let state: ExecutionState = guard.execution_state().clone();
-            Ok(format!("{:?}", state))
-        }();
+    with_unowned_memory_budget_scope_for_ffi(|| {
+        with_unwind_guard(|| {
+            let output = || -> Result<String> {
+                let vm = to_shared_ref(vm as *const RegorusRvm)?;
+                let guard = vm.try_read()?;
+                let state: ExecutionState = guard.execution_state().clone();
+                Ok(format!("{:?}", state))
+            }();
 
-        match output {
-            Ok(json) => RegorusResult::ok_string(json),
-            Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
-        }
+            match output {
+                Ok(json) => RegorusResult::ok_string(json),
+                Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
+            }
+        })
     })
 }
 
@@ -685,22 +684,25 @@ pub extern "C" fn regorus_rvm_get_execution_state(vm: *mut RegorusRvm) -> Regoru
 mod tests {
     use super::{
         regorus_rvm_drop, regorus_rvm_execute, regorus_rvm_execute_entry_point_by_index,
-        regorus_rvm_execute_entry_point_by_name, regorus_rvm_get_execution_state, regorus_rvm_new,
-        regorus_rvm_resume, regorus_rvm_set_data, regorus_rvm_set_memory_budget_config, RegorusRvm,
+        regorus_rvm_execute_entry_point_by_name, regorus_rvm_get_execution_state,
+        regorus_rvm_get_host_await_argument, regorus_rvm_get_host_await_identifier,
+        regorus_rvm_new, regorus_rvm_resume, regorus_rvm_set_data, regorus_rvm_set_execution_mode,
+        regorus_rvm_set_memory_budget_config, RegorusRvm,
     };
     use crate::common::{regorus_result_drop, RegorusResult, RegorusStatus};
     use crate::limits::RegorusMemoryBudgetConfig;
     use alloc::boxed::Box;
     use alloc::ffi::CString;
+    use alloc::string::String;
     use alloc::string::ToString;
     use alloc::sync::Arc;
     use alloc::vec;
+    use alloc::vec::Vec;
     use core::ffi::CStr;
-    use core::ptr;
     use regorus::languages::rego::compiler::Compiler;
     use regorus::rvm::instructions::Instruction;
     use regorus::rvm::program::Program;
-    use regorus::rvm::vm::{ExecutionMode, RegoVM};
+    use regorus::rvm::vm::{ExecutionMode, RegoVM, VmError};
     use regorus::{Engine, MemoryBudgetConfig, Rc, Value};
 
     const POLICY: &str = r#"
@@ -710,7 +712,27 @@ import rego.v1
 copy := [value | some value in input]
 "#;
 
+    const SUSPENDABLE_HOST_AWAIT_POLICY: &str = r#"
+package limits.memory
+import rego.v1
+
+result := count(__builtin_host_await(
+    __builtin_host_await(input.value, "first"),
+    "second"
+))
+"#;
+
+    const SUSPENDABLE_REPEAT_RESULT_POLICY: &str = r#"
+package limits.memory
+import rego.v1
+
+value := __builtin_host_await(input.value, "first")
+result := [value, value, value, value, value, value, value, value]
+"#;
+
     const TIGHT_MEMORY_BUDGET_BYTES: u64 = 64 * 1024;
+    const NESTED_GETTER_MEMORY_BUDGET_BYTES: u64 = 8 * 1024;
+    const NESTED_GETTER_REPETITIONS: usize = 2048;
 
     fn memory_budget(limit: u64) -> MemoryBudgetConfig {
         MemoryBudgetConfig {
@@ -739,30 +761,96 @@ copy := [value | some value in input]
         regorus_result_drop(state);
     }
 
-    fn host_await_program() -> Arc<Program> {
-        let mut program = Program::new();
-        program.dispatch_window_size = 3;
-        program.max_rule_window_size = 3;
-        program.entry_points.insert("main".to_string(), 0);
-        program.literals = vec![Value::from("id"), Value::from(1)];
-        program.instructions = vec![
-            Instruction::Load {
-                dest: 0,
-                literal_idx: 0,
-            },
-            Instruction::Load {
-                dest: 1,
-                literal_idx: 1,
-            },
-            Instruction::HostAwait {
-                dest: 2,
-                arg: 1,
-                id: 0,
-            },
-            Instruction::Return { value: 2 },
-        ];
-        program.instruction_spans = vec![None; program.instructions.len()];
-        Arc::new(program)
+    fn compiled_suspendable_host_await_program() -> Arc<Program> {
+        let entrypoint = Rc::from("data.limits.memory.result");
+        let mut engine = Engine::new();
+        engine
+            .add_policy(
+                "memory_budget.rego".into(),
+                SUSPENDABLE_HOST_AWAIT_POLICY.into(),
+            )
+            .expect("add policy");
+        let compiled = engine
+            .compile_with_entrypoint(&entrypoint)
+            .expect("compile policy");
+        Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()])
+            .expect("compile VM program")
+    }
+
+    fn compiled_suspendable_repeat_result_program() -> Arc<Program> {
+        let entrypoint = Rc::from("data.limits.memory.result");
+        let mut engine = Engine::new();
+        engine
+            .add_policy(
+                "memory_budget.rego".into(),
+                SUSPENDABLE_REPEAT_RESULT_POLICY.into(),
+            )
+            .expect("add policy");
+        let compiled = engine
+            .compile_with_entrypoint(&entrypoint)
+            .expect("compile policy");
+        Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()])
+            .expect("compile VM program")
+    }
+
+    fn suspendable_host_await_vm(program: &Arc<Program>, budget: Option<u64>) -> RegoVM {
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.load_program(Arc::clone(program));
+        vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+        if let Some(limit) = budget {
+            vm.set_memory_budget_config(Some(memory_budget(limit)));
+        }
+        vm
+    }
+
+    fn assert_getter_scope_restored(
+        program: &Arc<Program>,
+        child_vm: *mut RegorusRvm,
+        getter: extern "C" fn(*mut RegorusRvm) -> RegorusResult,
+        expected_output: &str,
+        expected_output_is_prefix: bool,
+    ) {
+        let mut outer_vm =
+            suspendable_host_await_vm(program, Some(NESTED_GETTER_MEMORY_BUDGET_BYTES));
+        outer_vm
+            .execute()
+            .expect("outer VM should suspend at HostAwait within its budget");
+
+        let mut getter_result = None;
+        let mut parent_probe: Option<Vec<u8>> = None;
+        let result = outer_vm.resume_to_c_string_for_ffi(|| {
+            getter_result = Some(getter(child_vm));
+            parent_probe = Some(vec![0u8; NESTED_GETTER_MEMORY_BUDGET_BYTES as usize]);
+            core::hint::black_box(parent_probe.as_ref());
+            Err(VmError::Internal {
+                message: String::from("stop after the post-getter parent allocation"),
+                pc: 0,
+            })
+        });
+
+        let is_budget_error = match &result {
+            Err(VmError::MemoryBudgetExceeded { .. }) => true,
+            Ok(_) => false,
+            Err(_) => false,
+        };
+        assert!(
+            is_budget_error,
+            "post-getter parent allocation should be charged before result serialization: {result:?}"
+        );
+
+        let getter_result = getter_result.expect("getter should be invoked");
+        assert!(matches!(getter_result.status, RegorusStatus::Ok));
+        assert!(!getter_result.output.is_null());
+        let output = unsafe { CStr::from_ptr(getter_result.output) }
+            .to_str()
+            .expect("getter output UTF-8");
+        if expected_output_is_prefix {
+            assert!(output.starts_with(expected_output));
+        } else {
+            assert_eq!(output, expected_output);
+        }
+        regorus_result_drop(getter_result);
     }
 
     fn preloaded_result_program() -> Arc<Program> {
@@ -903,29 +991,364 @@ copy := [value | some value in input]
     }
 
     #[test]
-    fn ffi_resume_reports_unsupported_memory_budget_status() {
+    fn ffi_suspendable_budget_spans_host_await_resumes_and_charges_json_input() {
         let mut vm = RegoVM::new();
         vm.set_execution_mode(ExecutionMode::Suspendable);
-        vm.load_program(host_await_program());
-        vm.execute().expect("suspend execution");
-
+        vm.load_program(compiled_suspendable_host_await_program());
+        vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+        vm.set_memory_budget_config(Some(memory_budget(768 * 1024)));
         let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
-        let set_result = regorus_rvm_set_memory_budget_config(
-            vm,
-            true,
-            RegorusMemoryBudgetConfig {
-                limit_bytes: 1024 * 1024,
-            },
-        );
-        assert!(matches!(set_result.status, RegorusStatus::Ok));
-        regorus_result_drop(set_result);
 
-        let result = regorus_rvm_resume(vm, ptr::null(), false);
-        assert!(matches!(
-            result.status,
-            RegorusStatus::MemoryBudgetUnsupportedInSuspendableExecution
-        ));
-        regorus_result_drop(result);
+        let mode = regorus_rvm_set_execution_mode(vm, 1);
+        assert!(matches!(mode.status, RegorusStatus::Ok));
+        regorus_result_drop(mode);
+        let execute = regorus_rvm_execute(vm);
+        assert!(matches!(execute.status, RegorusStatus::Ok));
+        regorus_result_drop(execute);
+
+        let mode = regorus_rvm_set_execution_mode(vm, 0);
+        assert!(matches!(mode.status, RegorusStatus::Ok));
+        regorus_result_drop(mode);
+        let clear_budget = regorus_rvm_set_memory_budget_config(
+            vm,
+            false,
+            RegorusMemoryBudgetConfig { limit_bytes: 0 },
+        );
+        assert!(matches!(clear_budget.status, RegorusStatus::Ok));
+        regorus_result_drop(clear_budget);
+
+        let first_resume =
+            CString::new(format!("\"{}\"", "x".repeat(450 * 1024))).expect("first resume JSON");
+        let first = regorus_rvm_resume(vm, first_resume.as_ptr(), true);
+        assert!(matches!(first.status, RegorusStatus::Ok));
+        regorus_result_drop(first);
+
+        let second_resume =
+            CString::new(format!("\"{}\"", "y".repeat(450 * 1024))).expect("second resume JSON");
+        assert_memory_budget_failure_state(
+            vm,
+            regorus_rvm_resume(vm, second_resume.as_ptr(), true),
+        );
+        regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn ffi_suspendable_resume_validation_errors_preserve_host_await_continuation() {
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.load_program(compiled_suspendable_host_await_program());
+        vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+        vm.set_memory_budget_config(Some(memory_budget(2 * 1024 * 1024)));
+        let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
+
+        let execute = regorus_rvm_execute(vm);
+        assert!(matches!(execute.status, RegorusStatus::Ok));
+        regorus_result_drop(execute);
+        assert_execution_state(vm, "Suspended {");
+
+        let missing = regorus_rvm_resume(vm, core::ptr::null(), false);
+        assert!(!matches!(missing.status, RegorusStatus::Ok));
+        regorus_result_drop(missing);
+        assert_execution_state(vm, "Suspended {");
+
+        let malformed_json = CString::new("{").expect("malformed JSON CString");
+        let malformed = regorus_rvm_resume(vm, malformed_json.as_ptr(), true);
+        assert!(!matches!(malformed.status, RegorusStatus::Ok));
+        regorus_result_drop(malformed);
+        assert_execution_state(vm, "Suspended {");
+
+        let first_resume = CString::new("\"first\"").expect("first resume JSON");
+        let first = regorus_rvm_resume(vm, first_resume.as_ptr(), true);
+        assert!(matches!(first.status, RegorusStatus::Ok));
+        regorus_result_drop(first);
+        assert_execution_state(vm, "Suspended {");
+
+        let second_resume = CString::new("\"second\"").expect("second resume JSON");
+        let second = regorus_rvm_resume(vm, second_resume.as_ptr(), true);
+        assert!(matches!(second.status, RegorusStatus::Ok));
+        regorus_result_drop(second);
+        assert_execution_state(vm, "Completed {");
+
+        regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn correction_ffi_malformed_resume_is_retryable_under_global_memory_pressure() {
+        let _lock = crate::TEST_GLOBAL_MEMORY_LIMIT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        struct ResetGlobalMemoryLimit;
+        impl Drop for ResetGlobalMemoryLimit {
+            fn drop(&mut self) {
+                regorus::set_global_memory_limit(None);
+            }
+        }
+
+        let _reset_global_limit = ResetGlobalMemoryLimit;
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.load_program(compiled_suspendable_host_await_program());
+        vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+        vm.set_memory_budget_config(Some(memory_budget(2 * 1024 * 1024)));
+        let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
+
+        let execute = regorus_rvm_execute(vm);
+        assert!(matches!(execute.status, RegorusStatus::Ok));
+        regorus_result_drop(execute);
+        assert_execution_state(vm, "Suspended {");
+
+        regorus::set_global_memory_limit(Some(1));
+        let malformed_json = CString::new("{").expect("malformed JSON CString");
+        let malformed = regorus_rvm_resume(vm, malformed_json.as_ptr(), true);
+        assert!(matches!(malformed.status, RegorusStatus::Error));
+        regorus_result_drop(malformed);
+        regorus::set_global_memory_limit(None);
+
+        assert_execution_state(vm, "Suspended {");
+        let valid_resume = CString::new("\"response\"").expect("valid resume JSON");
+        let resumed = regorus_rvm_resume(vm, valid_resume.as_ptr(), true);
+        assert!(matches!(resumed.status, RegorusStatus::Ok));
+        regorus_result_drop(resumed);
+        assert_execution_state(vm, "Suspended {");
+        let second_resume = CString::new("\"done\"").expect("second resume JSON");
+        let completed = regorus_rvm_resume(vm, second_resume.as_ptr(), true);
+        assert!(matches!(completed.status, RegorusStatus::Ok));
+        regorus_result_drop(completed);
+        assert_execution_state(vm, "Completed {");
+        regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn ffi_valid_resume_global_limit_failure_terminalizes_with_generic_error_status() {
+        let _lock = crate::TEST_GLOBAL_MEMORY_LIMIT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        struct ResetGlobalMemoryLimit;
+        impl Drop for ResetGlobalMemoryLimit {
+            fn drop(&mut self) {
+                regorus::set_global_memory_limit(None);
+            }
+        }
+
+        let _reset_global_limit = ResetGlobalMemoryLimit;
+        regorus::set_global_memory_limit(None);
+        regorus::utils::limits::check_memory_limit_if_needed()
+            .expect("disabled global limit resets check state");
+
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.load_program(compiled_suspendable_host_await_program());
+        vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+        vm.set_memory_budget_config(Some(memory_budget(128 * 1024 * 1024)));
+        let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
+
+        let execute = regorus_rvm_execute(vm);
+        assert!(matches!(execute.status, RegorusStatus::Ok));
+        regorus_result_drop(execute);
+        assert_execution_state(vm, "Suspended {");
+
+        let mut json = String::with_capacity(2 + 2 * 4096);
+        json.push('[');
+        for index in 0..4096 {
+            if index > 0 {
+                json.push(',');
+            }
+            json.push('0');
+        }
+        json.push(']');
+        let json = CString::new(json).expect("valid numeric array JSON");
+
+        regorus::set_global_memory_limit(Some(1));
+        let baseline_usage = match regorus::utils::limits::check_global_memory_limit() {
+            Err(regorus::LimitError::MemoryLimitExceeded { usage, limit: 1 }) => usage,
+            other => panic!("expected to observe current usage above one byte, got {other:?}"),
+        };
+        let global_limit = baseline_usage.saturating_add(32 * 1024);
+        regorus::set_global_memory_limit(Some(global_limit));
+
+        let failure = regorus_rvm_resume(vm, json.as_ptr(), true);
+        let post_parse_check = regorus::utils::limits::check_global_memory_limit();
+        println!(
+            "FFI resume conversion RED: baseline={baseline_usage}, limit={global_limit}, post_parse_check={post_parse_check:?}, status={:?}",
+            failure.status
+        );
+        assert!(matches!(failure.status, RegorusStatus::Error));
+        assert!(failure.output.is_null());
+        regorus_result_drop(failure);
+        assert!(
+            post_parse_check.is_ok(),
+            "partial Value allocations should be gone while the input CString remains"
+        );
+        assert_execution_state(vm, "Error { error: MemoryLimitExceeded");
+
+        let rejected_json = CString::new("\"rejected\"").expect("rejected resume JSON");
+        let rejected = regorus_rvm_resume(vm, rejected_json.as_ptr(), true);
+        assert!(matches!(rejected.status, RegorusStatus::Error));
+        assert!(rejected.output.is_null());
+        regorus_result_drop(rejected);
+        assert_execution_state(vm, "Error { error: MemoryLimitExceeded");
+
+        regorus::set_global_memory_limit(None);
+        regorus::utils::limits::check_memory_limit_if_needed()
+            .expect("clearing the global limit resets check state");
+        let restarted = regorus_rvm_execute(vm);
+        assert!(matches!(restarted.status, RegorusStatus::Ok));
+        regorus_result_drop(restarted);
+        assert_execution_state(vm, "Suspended {");
+        let first_resume = CString::new("\"independent\"").expect("first resume JSON");
+        let first = regorus_rvm_resume(vm, first_resume.as_ptr(), true);
+        assert!(matches!(first.status, RegorusStatus::Ok));
+        regorus_result_drop(first);
+        let second_resume = CString::new("\"done\"").expect("second resume JSON");
+        let second = regorus_rvm_resume(vm, second_resume.as_ptr(), true);
+        assert!(matches!(second.status, RegorusStatus::Ok));
+        regorus_result_drop(second);
+        assert_execution_state(vm, "Completed {");
+
+        regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn ffi_read_only_getters_exclude_nested_output_and_restore_parent_budget_scope() {
+        let program = compiled_suspendable_host_await_program();
+        let mut child_vm = suspendable_host_await_vm(&program, None);
+        child_vm
+            .execute()
+            .expect("child VM should suspend at HostAwait");
+        let child_vm = Box::into_raw(Box::new(RegorusRvm::new(child_vm)));
+
+        let mut outer_vm =
+            suspendable_host_await_vm(&program, Some(NESTED_GETTER_MEMORY_BUDGET_BYTES));
+        outer_vm
+            .execute()
+            .expect("outer VM should suspend at HostAwait within its budget");
+
+        let mut getter_results = Vec::with_capacity(NESTED_GETTER_REPETITIONS * 3);
+        let mut parent_allocation = None;
+        let resumed = outer_vm.resume_to_c_string_for_ffi(|| {
+            for _ in 0..NESTED_GETTER_REPETITIONS {
+                getter_results.push(regorus_rvm_get_execution_state(child_vm));
+                getter_results.push(regorus_rvm_get_host_await_argument(child_vm));
+                getter_results.push(regorus_rvm_get_host_await_identifier(child_vm));
+            }
+            parent_allocation = Some(vec![0u8; 64]);
+            core::hint::black_box(parent_allocation.as_ref());
+            Ok(Some(String::from("\"response\"")))
+        });
+
+        assert!(
+            resumed.is_ok(),
+            "getter serialization should be excluded from the unrelated outer budget: {resumed:?}"
+        );
+        assert!(!resumed
+            .expect("outer resume should succeed")
+            .as_bytes()
+            .is_empty());
+        assert!(
+            alloc::format!("{:?}", outer_vm.execution_state()).starts_with("Suspended {"),
+            "outer continuation should remain suspended after its first resume"
+        );
+        assert_eq!(
+            getter_results.len(),
+            NESTED_GETTER_REPETITIONS * 3,
+            "all three getters should run for every retained output"
+        );
+        for result in &getter_results {
+            assert!(matches!(result.status, RegorusStatus::Ok));
+            assert!(!result.output.is_null());
+        }
+
+        let mut retained_c_string_bytes = [0usize; 3];
+        for getter_results in getter_results.chunks_exact(3) {
+            for (total, result) in retained_c_string_bytes.iter_mut().zip(getter_results) {
+                let bytes_with_nul = unsafe { CStr::from_ptr(result.output) }
+                    .to_bytes_with_nul()
+                    .len();
+                *total = total
+                    .checked_add(bytes_with_nul)
+                    .expect("retained getter output byte count");
+            }
+        }
+        for (getter, bytes) in [
+            ("execution state", retained_c_string_bytes[0]),
+            ("HostAwait argument", retained_c_string_bytes[1]),
+            ("HostAwait identifier", retained_c_string_bytes[2]),
+        ] {
+            assert!(
+                bytes > NESTED_GETTER_MEMORY_BUDGET_BYTES as usize,
+                "{getter} CString bytes {bytes} must exceed the outer budget of \
+                 {NESTED_GETTER_MEMORY_BUDGET_BYTES}"
+            );
+        }
+
+        let mut first_outputs = getter_results.iter();
+        let state = first_outputs.next().expect("execution-state output");
+        let argument = first_outputs.next().expect("HostAwait argument output");
+        let identifier = first_outputs.next().expect("HostAwait identifier output");
+        assert!(unsafe { CStr::from_ptr(state.output) }
+            .to_str()
+            .expect("execution-state UTF-8")
+            .starts_with("Suspended {"));
+        assert_eq!(
+            unsafe { CStr::from_ptr(argument.output) }
+                .to_str()
+                .expect("HostAwait argument UTF-8"),
+            "\"request\""
+        );
+        assert_eq!(
+            unsafe { CStr::from_ptr(identifier.output) }
+                .to_str()
+                .expect("HostAwait identifier UTF-8"),
+            "first"
+        );
+
+        for result in getter_results.drain(..) {
+            regorus_result_drop(result);
+        }
+
+        assert_getter_scope_restored(
+            &program,
+            child_vm,
+            regorus_rvm_get_execution_state,
+            "Suspended {",
+            true,
+        );
+        assert_getter_scope_restored(
+            &program,
+            child_vm,
+            regorus_rvm_get_host_await_argument,
+            "\"request\"",
+            false,
+        );
+        assert_getter_scope_restored(
+            &program,
+            child_vm,
+            regorus_rvm_get_host_await_identifier,
+            "first",
+            false,
+        );
+
+        regorus_rvm_drop(child_vm);
+    }
+
+    #[test]
+    fn ffi_suspendable_result_serialization_uses_active_memory_budget() {
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.load_program(compiled_suspendable_repeat_result_program());
+        vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+        vm.set_memory_budget_config(Some(memory_budget(512 * 1024)));
+        let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
+
+        let execute = regorus_rvm_execute(vm);
+        assert!(matches!(execute.status, RegorusStatus::Ok));
+        regorus_result_drop(execute);
+        assert_execution_state(vm, "Suspended {");
+
+        let large_resume =
+            CString::new(format!("\"{}\"", "x".repeat(128 * 1024))).expect("large resume JSON");
+        assert_memory_budget_failure_state(vm, regorus_rvm_resume(vm, large_resume.as_ptr(), true));
+
         regorus_rvm_drop(vm);
     }
 
@@ -1243,21 +1666,23 @@ pub extern "C" fn regorus_rvm_set_host_await_responses(
 /// or None if the VM is not in a HostAwait-suspended state.
 #[no_mangle]
 pub extern "C" fn regorus_rvm_get_host_await_argument(vm: *mut RegorusRvm) -> RegorusResult {
-    with_unwind_guard(|| {
-        let output = || -> Result<Option<String>> {
-            let vm = to_shared_ref(vm as *const RegorusRvm)?;
-            let guard = vm.try_read()?;
-            match guard.get_host_await_argument() {
-                Some(arg) => Ok(Some(arg.to_json_str()?)),
-                None => Ok(None),
-            }
-        }();
+    with_unowned_memory_budget_scope_for_ffi(|| {
+        with_unwind_guard(|| {
+            let output = || -> Result<Option<String>> {
+                let vm = to_shared_ref(vm as *const RegorusRvm)?;
+                let guard = vm.try_read()?;
+                match guard.get_host_await_argument() {
+                    Some(arg) => Ok(Some(arg.to_json_str()?)),
+                    None => Ok(None),
+                }
+            }();
 
-        match output {
-            Ok(Some(json)) => RegorusResult::ok_string(json),
-            Ok(None) => RegorusResult::ok_void(),
-            Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
-        }
+            match output {
+                Ok(Some(json)) => RegorusResult::ok_string(json),
+                Ok(None) => RegorusResult::ok_void(),
+                Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
+            }
+        })
     })
 }
 
@@ -1296,18 +1721,20 @@ fn host_await_identifier_string(identifier: Option<&Value>) -> Result<Option<Str
 /// they cannot be round-tripped through the C string ABI.
 #[no_mangle]
 pub extern "C" fn regorus_rvm_get_host_await_identifier(vm: *mut RegorusRvm) -> RegorusResult {
-    with_unwind_guard(|| {
-        let output = || -> Result<Option<String>> {
-            let vm = to_shared_ref(vm as *const RegorusRvm)?;
-            let guard = vm.try_read()?;
-            host_await_identifier_string(guard.get_host_await_identifier())
-        }();
+    with_unowned_memory_budget_scope_for_ffi(|| {
+        with_unwind_guard(|| {
+            let output = || -> Result<Option<String>> {
+                let vm = to_shared_ref(vm as *const RegorusRvm)?;
+                let guard = vm.try_read()?;
+                host_await_identifier_string(guard.get_host_await_identifier())
+            }();
 
-        match output {
-            Ok(Some(identifier)) => RegorusResult::ok_string(identifier),
-            Ok(None) => RegorusResult::ok_void(),
-            Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
-        }
+            match output {
+                Ok(Some(identifier)) => RegorusResult::ok_string(identifier),
+                Ok(None) => RegorusResult::ok_void(),
+                Err(err) => RegorusResult::err_with_message(RegorusStatus::Error, err.to_string()),
+            }
+        })
     })
 }
 

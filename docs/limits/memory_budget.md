@@ -1,8 +1,12 @@
 # RVM memory budgets
 
-RVM run-to-completion evaluation supports an optional memory budget when Regorus is built with the `allocator-memory-limits` feature.
+RVM run-to-completion and suspendable execution support an optional memory
+budget when Regorus is built with the `allocator-memory-limits` feature.
 
-The budget limits additional live bytes on the execution thread. Regorus captures a baseline when execution starts and compares later live-byte samples with that baseline. Each Rust `execute`, `execute_entry_point_by_name`, or `execute_entry_point_by_index` call starts with a fresh execution-only budget.
+Each accepted initial `execute` or entry-point execution snapshots the configured
+budget. `set_memory_budget_config` and `set_execution_mode` configure the next
+initial execution; changing or clearing either setting while a suspendable run
+is suspended does not change that run. Resuming never starts a new budget.
 
 ```rust
 use core::num::NonZeroU64;
@@ -15,42 +19,83 @@ vm.set_memory_budget_config(Some(MemoryBudgetConfig {
 }));
 ```
 
-No configured budget preserves existing RVM behavior. A zero-byte budget is not representable in Rust and is rejected by language bindings.
+A zero-byte budget is not representable in Rust and is rejected by language
+bindings. With no configured budget, existing RVM behavior is unchanged.
 
-## Included work
+## Accounting scope
 
-The `execute*` APIs start their budget when RVM execution begins. Fresh execution-state initialization, rule evaluation, and allocations retained by the result count against the budget.
+Run-to-completion execution retains its existing thread-baseline accounting:
+sampled live bytes are observed on the execution thread, with the baseline
+ratcheted downward when usage falls. Cross-thread frees can therefore skew its
+observations. Suspendable execution instead snapshots one thread-safe account
+for the accepted execution. It tracks currently live requested bytes allocated
+while that execution is selected, including retained VM frames, registers,
+caches, continuations, and allocations made synchronously by builtins or
+callbacks. Allocator metadata and allocator-rounded capacity are not charged.
 
-Program compilation, program loading, data loading, input loading, and context loading happen before and outside the execution baseline and are not charged.
+The account is selected only during each synchronous execution segment. Each
+allocation records its requested size and account; freeing the block debits that
+same account on any thread, including after the VM or execution has ended.
+Nested and concurrent executions therefore have independent accounts, and a
+resume may run on a different thread without moving or resetting its budget.
+The account remains alive while any attributed allocation remains live.
+An independent unbudgeted VM entry, resume, or immediate native conversion
+temporarily selects no execution account, even when nested inside a budgeted
+callback; the previous selector is restored on return or unwind. This selector
+is separate from run-to-completion thread-baseline accounting.
 
-The C FFI keeps an internal execution window open through immediate native result JSON serialization and `CString` allocation, then closes it on success, error, or unwinding. The C# binding receives that native string after the window has closed, so managed UTF-8 decoding and managed `string` allocation are excluded.
+A successful `realloc` is treated as replacing the old block: its old account is
+debited and the full new requested size is charged to the account selected for
+the reallocation, or to no execution if none is selected. A failed `realloc`
+preserves the old block and its attribution. Allocations made before execution
+are not charged unless a successful reallocation replaces them during that
+execution.
 
-There is no public multi-call begin/end memory-budget scope. Public scopes could be abandoned or move across threads while allocator counters are thread-local. Rust, C FFI, and C# are supported by this API; other bindings require follow-up work.
+Program compilation and loading, data/input/context loading, host I/O, cache
+getter serialization, managed C# encoding/decoding, other allocators, and
+detached work are outside the budget. For native FFI execute and resume calls,
+the C-string copy and JSON parsing of resume input, VM resume work, immediate
+result JSON serialization, and native `CString` allocation are included.
+Managed C# string allocation after the native call returns is excluded.
 
-## Enforcement
+The process-global requested-byte limit remains independent and its counters
+are not changed by per-execution attribution. At shared checkpoints the
+per-execution budget takes precedence over a global memory-limit error.
 
-Regorus samples memory at VM instruction checkpoints and once before returning a successful result. The C FFI also samples after native result JSON serialization and `CString` allocation. Enforcement is cooperative and checkpoint-based, not an allocation-time peak-memory hard cap. One instruction, builtin, result serialization, or `CString` allocation can temporarily overshoot the configured limit before the next sample. For example, a builtin can allocate far more than its remaining headroom and be rejected only after it returns; an allocation created and freed entirely between samples may not be observed at all. Callers should configure enough headroom for this overshoot.
+## Enforcement and lifecycle
 
-Accounting uses the execution thread's live-byte counter rather than allocation ownership. Allocations and frees performed by synchronous host callbacks or builtins on that thread affect the observation. Objects allocated on one thread and freed on another can temporarily skew thread-level observations while allocator counters are reconciled. The control therefore bounds observed additional live bytes on the execution thread, not memory owned by a query or attributed across threads.
+Enforcement is cooperative, not an allocation-time peak-memory cap. Regorus
+checks before instruction dispatch, after resume input conversion, before
+returning from a suspension point, after terminal execution, and after native
+result serialization. A single instruction, builtin, callback, input parse, or
+serialization operation can temporarily overshoot before the next check.
+Usage equal to the configured limit succeeds; usage greater than it fails.
 
-When a sampled live-byte count falls below the current baseline, Regorus lowers the baseline so an observed same-thread free does not grant headroom to later allocations. This downward ratchet is never restored during the execution and can make the effective budget stricter than configured after unrelated or legitimate frees. A foreign free can still offset evaluation allocations when both occur between samples.
+Exhaustion returns `VmError::MemoryBudgetExceeded`, including the observed live
+requested bytes, configured budget, and VM program counter. A terminal failure
+of a budgeted suspendable execution invalidates retained and completed
+results, releases execution state, and records `ExecutionState::Error`.
+Unbudgeted initial failures also record `Error` while preserving legacy
+register contents. Missing or unexpected resume values and native JSON
+syntax/EOF errors are retryable and preserve a valid suspended continuation.
+A later global or per-execution counter observation does not turn malformed
+syntax into a terminal resource failure; actual typed resource failures during
+conversion remain terminal.
 
-A fresh budget means a new baseline is captured for each execution, not that the VM is returned to a newly constructed state. Reused VMs retain capacities and pools that are already live before the baseline. An identical policy and input can therefore allocate differently, and may have a different budget outcome, on a warm VM than on a fresh VM.
+The C FFI reports `RegorusStatus::MemoryBudgetExceeded` (status 10), including
+when native resume parsing or immediate result serialization exceeds the
+budget. Status 11 remains reserved for ABI compatibility. C# throws
+`RegorusMemoryBudgetExceededException`. The FFI budget window closes on success,
+terminal error, or unwinding; allocations already returned to a host remain
+attributed until freed.
 
-Exhaustion returns `VmError::MemoryBudgetExceeded`, including:
+Loading a new program while a budgeted suspendable execution is active abandons
+that continuation and retires its budget. Starting another initial execution
+also abandons any prior continuation. Terminal success retires enforcement,
+but the allocation account remains available to debit outstanding exported
+blocks. Run-to-completion accounting and ordinary no-budget execution retain
+their existing behavior.
 
-- `usage`, the observed execution-thread live-byte increase above the ratcheted baseline; this is diagnostic thread-level change, not exact query-owned memory
-- configured budget
-- VM program counter
-
-The VM transitions to `ExecutionState::Error` and releases values retained by a failed execution. The C FFI reports `RegorusStatus::MemoryBudgetExceeded`, including when native result serialization or `CString` allocation exceeds the budget. The C# binding throws `RegorusMemoryBudgetExceededException`. Every terminal path clears its execution window, and reused VMs get a fresh budget for the next execution.
-
-## Execution modes
-
-The first implementation supports run-to-completion execution only. Configuring a budget and starting or resuming suspendable execution returns `VmError::MemoryBudgetUnsupportedInSuspendableExecution`. The FFI reports `RegorusStatus::MemoryBudgetUnsupportedInSuspendableExecution`, and C# throws `RegorusMemoryBudgetUnsupportedException`.
-
-Suspendable execution may resume on another thread. A thread-local baseline cannot safely span that migration without evaluation-owned allocation attribution.
-
-## Process-global limit
-
-The existing process-global memory limit remains separate. It protects the process as a whole and is not an isolation mechanism for individual evaluations. When both controls are configured, the per-evaluation budget is checked first.
+There is no public multi-call begin/end memory-budget scope; the RVM owns the
+account and retires enforcement with its execution lifecycle. Rust, C FFI, and
+C# are supported; other bindings require follow-up work.

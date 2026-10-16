@@ -286,6 +286,9 @@ mod tests {
 
     #[test]
     fn ffi_roundtrips_global_limit() {
+        let _lock = crate::TEST_GLOBAL_MEMORY_LIMIT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let limit = 456_u64;
         let result = regorus_set_global_memory_limit(limit, true);
         assert!(matches!(result.status, RegorusStatus::Ok));

@@ -37,7 +37,11 @@ use crate::number::Number;
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+use core::cell::Cell;
 use core::fmt;
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+use core::marker::PhantomData;
 use core::ops;
 
 use core::convert::AsRef;
@@ -99,7 +103,80 @@ fn enforce_limit_anyhow() -> Result<()> {
 
 #[inline]
 fn enforce_limit_for<E: DeError>() -> core::result::Result<(), E> {
-    crate::utils::limits::check_memory_limit_if_needed().map_err(|err| E::custom(err.to_string()))
+    crate::utils::limits::check_memory_limit_if_needed().map_err(|err| {
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        record_resume_deserialization_limit_error(err);
+        E::custom(err.to_string())
+    })
+}
+
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+#[derive(Clone, Copy)]
+struct ResumeDeserializationLimitErrorCaptureState {
+    active: bool,
+    error: Option<crate::utils::limits::LimitError>,
+}
+
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+std::thread_local! {
+    static RESUME_DESERIALIZATION_LIMIT_ERROR_CAPTURE: Cell<ResumeDeserializationLimitErrorCaptureState> =
+        const {
+            Cell::new(ResumeDeserializationLimitErrorCaptureState {
+                active: false,
+                error: None,
+            })
+        };
+}
+
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+struct ResumeDeserializationLimitErrorCapture {
+    previous: ResumeDeserializationLimitErrorCaptureState,
+    _thread_bound: PhantomData<alloc::rc::Rc<()>>,
+}
+
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+impl ResumeDeserializationLimitErrorCapture {
+    fn new() -> Self {
+        let previous = RESUME_DESERIALIZATION_LIMIT_ERROR_CAPTURE.with(|capture| {
+            let previous = capture.get();
+            capture.set(ResumeDeserializationLimitErrorCaptureState {
+                active: true,
+                error: None,
+            });
+            previous
+        });
+        Self {
+            previous,
+            _thread_bound: PhantomData,
+        }
+    }
+
+    fn take(_capture: &Self) -> Option<crate::utils::limits::LimitError> {
+        RESUME_DESERIALIZATION_LIMIT_ERROR_CAPTURE.with(|capture| {
+            let mut state = capture.get();
+            let error = state.error.take();
+            capture.set(state);
+            error
+        })
+    }
+}
+
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+impl Drop for ResumeDeserializationLimitErrorCapture {
+    fn drop(&mut self) {
+        RESUME_DESERIALIZATION_LIMIT_ERROR_CAPTURE.with(|capture| capture.set(self.previous));
+    }
+}
+
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+fn record_resume_deserialization_limit_error(error: crate::utils::limits::LimitError) {
+    RESUME_DESERIALIZATION_LIMIT_ERROR_CAPTURE.with(|capture| {
+        let mut state = capture.get();
+        if state.active && state.error.is_none() {
+            state.error = Some(error);
+            capture.set(state);
+        }
+    });
 }
 
 #[doc(hidden)]
@@ -351,6 +428,19 @@ impl Value {
     }
 }
 
+pub(crate) enum ResumeJsonError {
+    Malformed(anyhow::Error),
+    Other(anyhow::Error),
+}
+
+impl ResumeJsonError {
+    fn into_anyhow(self) -> anyhow::Error {
+        match self {
+            Self::Malformed(error) | Self::Other(error) => error,
+        }
+    }
+}
+
 impl Value {
     /// Deserialize a [`Value`] from JSON.
     /// ```
@@ -382,25 +472,59 @@ impl Value {
     /// # }
     /// ```
     pub fn from_json_str(json: &str) -> Result<Value> {
+        Self::parse_json_str(json, false).map_err(ResumeJsonError::into_anyhow)
+    }
+
+    #[cfg(all(feature = "rvm", feature = "allocator-memory-limits", not(miri)))]
+    pub(crate) fn from_json_str_for_resume(
+        json: &str,
+    ) -> core::result::Result<Value, ResumeJsonError> {
+        Self::parse_json_str(json, true)
+    }
+
+    fn parse_json_str(
+        json: &str,
+        keep_malformed_retryable: bool,
+    ) -> core::result::Result<Value, ResumeJsonError> {
         // Intern object keys for the duration of the parse: a homogeneous array
         // of N objects sharing K keys allocates K key strings instead of N * K.
         #[cfg(feature = "std")]
         let _guard = interning::InternGuard::install();
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        let limit_error_capture =
+            keep_malformed_retryable.then(ResumeDeserializationLimitErrorCapture::new);
         match serde_json::from_str::<Value>(json) {
             Ok(value) => Ok(value),
             Err(err) => {
+                if keep_malformed_retryable
+                    && matches!(
+                        err.classify(),
+                        serde_json::error::Category::Syntax | serde_json::error::Category::Eof
+                    )
+                {
+                    return Err(ResumeJsonError::Malformed(anyhow!(err)));
+                }
+
+                #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+                if let Some(limit_error) = limit_error_capture
+                    .as_ref()
+                    .and_then(ResumeDeserializationLimitErrorCapture::take)
+                {
+                    return Err(ResumeJsonError::Other(anyhow!(limit_error)));
+                }
+
                 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
                 {
                     // Re-validate allocator limits when serde parsing fails to surface LimitError.
                     match crate::utils::limits::check_global_memory_limit() {
-                        Err(limit_err) => Err(anyhow!(limit_err)),
-                        Ok(_) => Err(anyhow!(err)),
+                        Err(limit_err) => Err(ResumeJsonError::Other(anyhow!(limit_err))),
+                        Ok(_) => Err(ResumeJsonError::Other(anyhow!(err))),
                     }
                 }
 
                 #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
                 {
-                    Err(anyhow!(err))
+                    Err(ResumeJsonError::Other(anyhow!(err)))
                 }
             }
         }
