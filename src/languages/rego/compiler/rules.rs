@@ -759,7 +759,13 @@ impl<'a> Compiler<'a> {
         let entry = WorklistEntry::new(rule_path.to_string(), self.current_call_stack.clone());
         self.rule_worklist.push(entry);
 
-        if !self.policy.inner.rules.contains_key(rule_path) {
+        let has_ordinary_function = self
+            .policy
+            .inner
+            .functions
+            .get(rule_path)
+            .is_some_and(|(definitions, _, _)| !definitions.is_empty());
+        if !has_ordinary_function {
             let default_function_param_count = self
                 .callable_default_function(rule_path)?
                 .map(|(_, args, _)| args.len());
@@ -790,6 +796,15 @@ impl<'a> Compiler<'a> {
         rule_path: &str,
         rules: &Map<String, Vec<crate::ast::NodeRef<Rule>>>,
     ) -> Result<(String, u32)> {
+        if let Some((function_definitions, _, _)) = self.policy.inner.functions.get(rule_path) {
+            if let Some(first_definition) = function_definitions.first() {
+                return self.find_module_package_for_rule_ref(first_definition);
+            }
+            if let Some((default_rule, _, _)) = self.callable_default_function(rule_path)? {
+                return self.find_module_package_for_rule_ref(&default_rule);
+            }
+        }
+
         if let Some(rule_definitions) = rules.get(rule_path) {
             if let Some(first_rule_ref) = rule_definitions.first() {
                 let rule = first_rule_ref.as_ref();
@@ -926,7 +941,7 @@ impl<'a> Compiler<'a> {
                             "parameterized entrypoint '{entry_point_name}' has no source module"
                         ),
                     })?;
-                compiler.compile_parameterized_function_document_path(&rule_path, &[], span)?
+                compiler.compile_rule_document_path(&rule_path, &[], span)?
             } else {
                 let result_reg = compiler.alloc_register();
                 let rule_idx = compiler.get_or_assign_rule_index(&rule_path)?;
@@ -1040,7 +1055,13 @@ impl<'a> Compiler<'a> {
 
         if let Some((default_rule, args, value)) = self.callable_default_function(rule_path)? {
             if super::expressions::try_eval_const(value.as_ref()).is_none() {
-                if rules.contains_key(rule_path) {
+                let has_ordinary_function = self
+                    .policy
+                    .inner
+                    .functions
+                    .get(rule_path)
+                    .is_some_and(|(definitions, _, _)| !definitions.is_empty());
+                if has_ordinary_function {
                     return self.compile_dynamic_default_wrapper(rule_path, default_rule, args);
                 }
                 return self.compile_dynamic_default_function(rule_path, default_rule, args);
@@ -1056,7 +1077,12 @@ impl<'a> Compiler<'a> {
         self.current_module_index = module_index;
 
         let saved_register_counter = self.register_counter;
-        if let Some(rule_definitions) = rules.get(source_rule_path) {
+        let function_definitions = self.policy.inner.functions.get(source_rule_path);
+        let rule_definitions = match function_definitions {
+            Some((definitions, _, _)) => (!definitions.is_empty()).then_some(definitions),
+            None => rules.get(source_rule_path),
+        };
+        if let Some(rule_definitions) = rule_definitions {
             let Some(rule_index) = self.rule_index_map.get(rule_path).copied() else {
                 return Err(CompilerError::General {
                     message: format!(

@@ -107,6 +107,16 @@ pub(crate) fn split_canonical_path_root(path: &str) -> Option<(&str, &str)> {
     Some(path.split_at(root_end))
 }
 
+pub(crate) fn canonical_function_path(path: &str, module: Option<&str>) -> String {
+    if matches!(split_canonical_path_root(path), Some(("data", _))) {
+        path.to_string()
+    } else if let Some(module) = module.filter(|module| !module.is_empty()) {
+        format!("{module}.{path}")
+    } else {
+        path.to_string()
+    }
+}
+
 pub(crate) fn get_rule_path_components(refr: &Expr) -> Result<Vec<PathComponent>> {
     fn collect(refr: &Expr, components: &mut Vec<PathComponent>) -> Result<()> {
         match refr {
@@ -188,20 +198,28 @@ fn get_extra_arg_impl(
     expr: &Expr,
     module: Option<&str>,
     functions: &FunctionTable,
+    imports: Option<&BTreeMap<String, Ref<Expr>>>,
 ) -> Result<Option<Ref<Expr>>> {
     if let Expr::Call { fcn, params, .. } = expr {
-        let full_path = get_path_string(fcn, module)?;
-        let n_args = if let Some((_, n_args, _)) = functions.get(&full_path) {
-            *n_args
-        } else {
-            let path = get_path_string(fcn, None)?;
-            if let Some((_, n_args, _)) = functions.get(&path) {
-                *n_args
-            } else if let Some((_, n_args)) = BUILTINS.get(path.as_str()) {
-                *n_args
-            } else {
-                return Ok(None);
+        let path = get_path_string(fcn, None)?;
+        let imported_arity = match (module, imports, split_canonical_path_root(&path)) {
+            (Some(module), Some(imports), Some((alias, suffix))) if alias != "data" => {
+                let import_key = append_path_component(module, alias)?;
+                imports.get(&import_key).and_then(|import| {
+                    let mut imported_path = get_path_string(import.as_ref(), None).ok()?;
+                    imported_path.push_str(suffix);
+                    functions.get(&imported_path).map(|(_, n_args, _)| *n_args)
+                })
             }
+            _ => None,
+        };
+        let full_path = canonical_function_path(&path, module);
+        let n_args = imported_arity
+            .or_else(|| functions.get(&full_path).map(|(_, n_args, _)| *n_args))
+            .or_else(|| functions.get(&path).map(|(_, n_args, _)| *n_args))
+            .or_else(|| BUILTINS.get(path.as_str()).map(|(_, n_args)| *n_args));
+        let Some(n_args) = n_args else {
+            return Ok(None);
         };
         if (n_args as usize) + 1 == params.len() {
             return Ok(params.last().cloned());
@@ -215,7 +233,16 @@ pub fn get_extra_arg(
     module: Option<&str>,
     functions: &FunctionTable,
 ) -> Option<Ref<Expr>> {
-    get_extra_arg_impl(expr, module, functions).unwrap_or_default()
+    get_extra_arg_impl(expr, module, functions, None).unwrap_or_default()
+}
+
+pub(crate) fn get_extra_arg_with_imports(
+    expr: &Expr,
+    module: Option<&str>,
+    functions: &FunctionTable,
+    imports: &BTreeMap<String, Ref<Expr>>,
+) -> Option<Ref<Expr>> {
+    get_extra_arg_impl(expr, module, functions, Some(imports)).unwrap_or_default()
 }
 
 pub fn gather_functions(modules: &[Ref<Module>]) -> Result<FunctionTable> {
@@ -249,6 +276,34 @@ pub fn gather_functions(modules: &[Ref<Module>]) -> Result<FunctionTable> {
             }
         }
     }
+
+    for module in modules {
+        let module_path = get_path_string(&module.package.refr, Some("data"))?;
+        for rule in &module.policy {
+            if let Rule::Default {
+                span, refr, args, ..
+            } = rule.as_ref()
+            {
+                if args.is_empty() {
+                    continue;
+                }
+
+                let full_path = get_path_string(refr, Some(module_path.as_str()))?;
+                if let Some((functions, arity, _)) = table.get(&full_path) {
+                    if functions.is_empty() && args.len() as u8 != *arity {
+                        bail!(span.error(
+                            format!("{full_path} was previously defined with {arity} arguments.")
+                                .as_str()
+                        ));
+                    }
+                    continue;
+                }
+
+                table.insert(full_path, (vec![], args.len() as u8, module.clone()));
+            }
+        }
+    }
+
     Ok(table)
 }
 

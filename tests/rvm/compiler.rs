@@ -3612,3 +3612,800 @@ fn disabled_native_error_during_resume_leaves_vm_in_error_state() {
         } if name == "count"
     ));
 }
+
+#[test]
+fn rgp_05_parent_default_ignores_ordinary_child_on_reused_vm() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := [input.x | true]
+f.child(_) := true
+p := f(0)
+"#;
+    let modules = [("test.rego", source)];
+    let inputs = [
+        Value::from_json_str(r#"{"x":7}"#)?,
+        Value::from_json_str(r#"{"x":9}"#)?,
+    ];
+    let expected = vec![
+        Ok(Value::from_json_str("[7]")?),
+        Ok(Value::from_json_str("[9]")?),
+    ];
+
+    let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "a child function must not turn the parent default into an ordinary wrapper"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_dynamic_default_wrapper_compiles_only_exact_parent_functions() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := [input.x | true]
+f(x) := "parent" if x == 1
+f.child(x) := "child" if x == 1
+p := {
+    "parent_hit": f(1),
+    "parent_miss": f(2),
+    "child_hit": f.child(1)
+}
+child_miss if { f.child(2) }
+"#;
+    let modules = [("test.rego", source)];
+    let inputs = [Value::from_json_str(r#"{"x":7}"#)?];
+    let expected =
+        Value::from_json_str(r#"{"parent_hit":"parent","parent_miss":[7],"child_hit":"child"}"#)?;
+
+    let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+    let expected = vec![Ok(expected)];
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "the private ordinary-result helper must exclude descendant functions"
+    );
+    let child_miss = observe_rgp_input_cases(&modules, "data.test.child_miss", &inputs)?;
+    let expected_miss = vec![Ok(Value::Undefined)];
+    assert_eq!(
+        (
+            child_miss.interpreter,
+            child_miss.run_to_completion,
+            child_miss.suspendable
+        ),
+        (expected_miss.clone(), expected_miss.clone(), expected_miss),
+        "a missed child function must not become a parent definition"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_constant_default_keeps_exact_parent_and_child_functions() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := "fallback"
+f(x) := "parent" if x == 1
+f.child(x) := "child" if x == 1
+p := {
+    "parent_hit": f(1),
+    "parent_miss": f(2),
+    "child_hit": f.child(1)
+}
+child_miss if { f.child(2) }
+"#;
+    let modules = [("test.rego", source)];
+    let inputs = [Value::new_object()];
+    let expected = Value::from_json_str(
+        r#"{"parent_hit":"parent","parent_miss":"fallback","child_hit":"child"}"#,
+    )?;
+
+    let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+    let expected = vec![Ok(expected)];
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "a constant parent default must not absorb child definitions"
+    );
+    let child_miss =
+        observe_rgp_input_cases(&modules, "data.test.child_miss", &[Value::new_object()])?;
+    let expected_miss = vec![Ok(Value::Undefined)];
+    assert_eq!(
+        (
+            child_miss.interpreter,
+            child_miss.run_to_completion,
+            child_miss.suspendable
+        ),
+        (expected_miss.clone(), expected_miss.clone(), expected_miss),
+        "a missed child function must remain undefined"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_output_argument_literals_match_and_mismatch() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := true
+matched if { f(0, true) }
+mismatched if { f(0, false) }
+"#;
+    let modules = [("test.rego", source)];
+
+    for (entry_point, expected) in [
+        ("data.test.matched", Value::Bool(true)),
+        ("data.test.mismatched", Value::Undefined),
+    ] {
+        let observations = observe_rgp_input_cases(&modules, entry_point, &[Value::new_object()])?;
+        let expected = vec![Ok(expected)];
+        assert_eq!(
+            (
+                observations.interpreter,
+                observations.run_to_completion,
+                observations.suspendable
+            ),
+            (expected.clone(), expected.clone(), expected),
+            "default-only output literal at {entry_point}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_output_binding_and_v6_round_trip() -> anyhow::Result<()> {
+    use regorus::rvm::program::{DeserializationResult, Program};
+
+    let source = r#"package test
+import rego.v1
+default f(_) := true
+p := result if { f(0, result) }
+"#;
+    let modules = [("test.rego", source)];
+    let entry_point = "data.test.p";
+    let expected = Value::Bool(true);
+    let observations = observe_rgp_input_cases(&modules, entry_point, &[Value::new_object()])?;
+    let expected_observations = vec![Ok(expected.clone())];
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (
+            expected_observations.clone(),
+            expected_observations.clone(),
+            expected_observations
+        ),
+        "an unbound output variable must be assigned by a default-only function"
+    );
+
+    let program = compile_modules_with_options(&modules, entry_point, &CompilerOptions::default())?;
+    let binary = program.serialize_binary().map_err(anyhow::Error::msg)?;
+    assert_eq!(
+        u16::from_le_bytes([binary[4], binary[5]]),
+        6,
+        "default-only output calls must keep the existing Program v6 format"
+    );
+    let program = match Program::deserialize_binary(&binary).map_err(anyhow::Error::msg)? {
+        DeserializationResult::Complete(program) => std::sync::Arc::new(program),
+        DeserializationResult::Partial(_) => {
+            anyhow::bail!("default-only output-call v6 program unexpectedly needs recompilation")
+        }
+    };
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_input(Value::new_object());
+        assert_eq!(
+            vm.execute_entry_point_by_name(entry_point)?,
+            expected,
+            "{mode:?} result after the existing-v6 round trip"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_output_literals_resolve_qualified_and_aliased_calls() -> anyhow::Result<()> {
+    let helper = r#"package helpers
+import rego.v1
+default f(_) := true
+"#;
+    let main = r#"package main
+import rego.v1
+import data.helpers as helper
+qualified_match if { data.helpers.f(0, true) }
+qualified_mismatch if { data.helpers.f(0, false) }
+aliased_match if { helper.f(0, true) }
+aliased_mismatch if { helper.f(0, false) }
+"#;
+    let modules = [("helper.rego", helper), ("main.rego", main)];
+
+    for (entry_point, expected) in [
+        ("data.main.qualified_match", Value::Bool(true)),
+        ("data.main.qualified_mismatch", Value::Undefined),
+        ("data.main.aliased_match", Value::Bool(true)),
+        ("data.main.aliased_mismatch", Value::Undefined),
+    ] {
+        let observations = observe_rgp_input_cases(&modules, entry_point, &[Value::new_object()])?;
+        let expected = vec![Ok(expected)];
+        assert_eq!(
+            (
+                observations.interpreter,
+                observations.run_to_completion,
+                observations.suspendable
+            ),
+            (expected.clone(), expected.clone(), expected),
+            "default-only output literal at {entry_point}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_output_binding_resolves_fully_qualified_call() -> anyhow::Result<()> {
+    let helper = r#"package helpers
+import rego.v1
+default f(_) := true
+"#;
+    let main = r#"package main
+import rego.v1
+p := result if { data.helpers.f(0, result) }
+"#;
+    let modules = [("helper.rego", helper), ("main.rego", main)];
+    let observations = observe_rgp_input_cases(&modules, "data.main.p", &[Value::new_object()])?;
+    let expected = vec![Ok(Value::Bool(true))];
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "fully qualified default-only calls must bind their output argument"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_output_binding_resolves_import_alias() -> anyhow::Result<()> {
+    let helper = r#"package helpers
+import rego.v1
+default f(_) := true
+"#;
+    let main = r#"package main
+import rego.v1
+import data.helpers as helper
+p := result if { helper.f(0, result) }
+"#;
+    let modules = [("helper.rego", helper), ("main.rego", main)];
+    let observations = observe_rgp_input_cases(&modules, "data.main.p", &[Value::new_object()])?;
+    let expected = vec![Ok(Value::Bool(true))];
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "import-aliased default-only calls must bind their output argument"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_function_rejects_wrong_arity_before_undefined() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := true
+p := f(input.missing, 0, 0)
+"#;
+    let entry_point = "data.test.p";
+    let mut engine = Engine::new();
+    engine.add_policy("test.rego".to_string(), source.to_string())?;
+    engine.set_input(Value::new_object());
+    let interpreter = engine
+        .eval_rule(entry_point.to_string())
+        .map_err(|error| error.to_string());
+    assert!(
+        interpreter
+            .as_ref()
+            .expect_err("wrong arity must be an interpreter error")
+            .contains("mismatch in number of arguments"),
+        "wrong arity must be checked before Undefined propagation: {interpreter:?}"
+    );
+
+    let modules = [("test.rego", source)];
+    let program = compile_modules_with_options(&modules, entry_point, &CompilerOptions::default())?;
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_input(Value::new_object());
+        assert!(
+            matches!(
+                vm.execute_entry_point_by_name(entry_point),
+                Err(VmError::FunctionArgumentMismatch {
+                    expected: 1,
+                    actual: 3,
+                    ..
+                })
+            ),
+            "{mode:?} must check wrong arity before Undefined propagation"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_builtin_name_shadow_uses_user_function_arity() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default count(_, _) := true
+p if { count(0, 0, true) }
+"#;
+    let modules = [("test.rego", source)];
+    let observations = observe_rgp_input_cases(&modules, "data.test.p", &[Value::new_object()])?;
+    let expected = vec![Ok(Value::Bool(true))];
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "the user default must shadow native count arity when resolving its output argument"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_local_namespace_default_materializes_from_dotted_rule() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default config.timeout := 30
+p := config
+"#;
+    let modules = [("test.rego", source)];
+    let observations = observe_rgp_data_case(
+        &modules,
+        "data.test.p",
+        &Value::new_object(),
+        &Value::new_object(),
+    )?;
+    let expected = Ok(Value::from_json_str(r#"{"timeout":30}"#)?);
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "a local namespace prefix must materialize its dotted value default"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_local_namespace_document_merges_rules_and_data_without_callables() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default config.timeout := 30
+default config.retries := 5
+config.timeout := 42
+config.mode := "strict"
+default config.render(_) := input.render
+p := config
+callable := config.render(0)
+"#;
+    let modules = [("test.rego", source)];
+    let data = Value::from_json_str(r#"{"test":{"config":{"base":"data"}}}"#)?;
+    let input = Value::from_json_str(r#"{"render":"called"}"#)?;
+    let expected = Ok(Value::from_json_str(
+        r#"{"base":"data","retries":5,"timeout":42,"mode":"strict"}"#,
+    )?);
+
+    let observations = observe_rgp_data_case(&modules, "data.test.p", &data, &input)?;
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "namespace materialization must merge value rules and base data, but omit callable descendants"
+    );
+
+    let callable = observe_rgp_data_case(&modules, "data.test.callable", &data, &input)?;
+    let expected_callable = Ok(Value::from_json_str(r#""called""#)?);
+    assert_eq!(
+        (
+            callable.interpreter,
+            callable.run_to_completion,
+            callable.suspendable
+        ),
+        (
+            expected_callable.clone(),
+            expected_callable.clone(),
+            expected_callable
+        ),
+        "the callable descendant remains available as a function"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_parent_and_child_use_exact_arities_in_module_orders() -> anyhow::Result<()> {
+    let parent = r#"package test
+import rego.v1
+default f(_) := true
+"#;
+    let child = r#"package test
+import rego.v1
+default f.child(_, _) := true
+"#;
+    let main = r#"package main
+import rego.v1
+p := {
+    "parent": data.test.f(0),
+    "child": data.test.f.child(0, 0)
+}
+"#;
+    let expected = Value::from_json_str(r#"{"parent":true,"child":true}"#)?;
+
+    for modules in [
+        [
+            ("parent.rego", parent),
+            ("child.rego", child),
+            ("main.rego", main),
+        ],
+        [
+            ("child.rego", child),
+            ("parent.rego", parent),
+            ("main.rego", main),
+        ],
+    ] {
+        let observations =
+            observe_rgp_input_cases(&modules, "data.main.p", &[Value::new_object()])?;
+        let expected = vec![Ok(expected.clone())];
+        assert_eq!(
+            (
+                observations.interpreter,
+                observations.run_to_completion,
+                observations.suspendable
+            ),
+            (expected.clone(), expected.clone(), expected),
+            "default-only parent and child arities must remain exact across module order"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rgp_06_interpreter_function_arity_is_lossless_at_u8_boundaries() -> anyhow::Result<()> {
+    let arguments = |values: &[String]| {
+        values
+            .chunks(16)
+            .map(|chunk| format!("    {}", chunk.join(", ")))
+            .collect::<Vec<_>>()
+            .join(",\n")
+    };
+    let mut results = Vec::new();
+
+    for arity in [255, 256, 257] {
+        let params = (1..=arity)
+            .map(|index| format!("a{index}"))
+            .collect::<Vec<_>>();
+        let values = (1..=arity)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let source = format!(
+            "package test\n\
+             import rego.v1\n\
+             ordinary(\n{params}\n) := true\n\
+             default default_only(\n{params}\n) := true\n\
+             p := ordinary(\n{values}\n)\n\
+             q := default_only(\n{values}\n)\n",
+            params = arguments(&params),
+            values = arguments(&values),
+        );
+        let mut engine = Engine::new();
+        engine.add_policy("test.rego".to_string(), source)?;
+        let ordinary = engine
+            .eval_rule("data.test.p".to_string())
+            .map_err(|error| error.to_string());
+        let default_only = engine
+            .eval_rule("data.test.q".to_string())
+            .map_err(|error| error.to_string());
+        results.push((arity, ordinary, default_only));
+    }
+
+    assert_eq!(
+        results,
+        vec![
+            (255, Ok(Value::Bool(true)), Ok(Value::Bool(true)),),
+            (256, Ok(Value::Bool(true)), Ok(Value::Bool(true)),),
+            (257, Ok(Value::Bool(true)), Ok(Value::Bool(true)),),
+        ],
+        "valid ordinary and default-only calls must preserve AST arity beyond u8"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_06_explicit_data_target_uses_its_arity_for_input_and_output_calls() -> anyhow::Result<()> {
+    let helper_two_args = r#"package helpers
+import rego.v1
+default f(_, _) := true
+"#;
+    let helper_one_arg = r#"package helpers
+import rego.v1
+default f(_) := true
+"#;
+    let shadow_one_arg = r#"package main.data.helpers
+import rego.v1
+default f(_) := false
+"#;
+    let shadow_two_args = r#"package main.data.helpers
+import rego.v1
+default f(_, _) := false
+"#;
+    let direct_input = r#"package main
+import rego.v1
+p if { data.helpers.f(0, 0) }
+"#;
+
+    let mut direct_observations = Vec::new();
+    for (module_order, modules) in [
+        [
+            ("helper.rego", helper_two_args),
+            ("shadow.rego", shadow_one_arg),
+            ("main.rego", direct_input),
+        ],
+        [
+            ("shadow.rego", shadow_one_arg),
+            ("helper.rego", helper_two_args),
+            ("main.rego", direct_input),
+        ],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let observations =
+            observe_rgp_input_cases(&modules, "data.main.p", &[Value::new_object()])?;
+        direct_observations.push((
+            module_order,
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable,
+        ));
+    }
+    let expected_direct = vec![Ok(Value::Bool(true))];
+    let expected_direct_observations = vec![
+        (
+            0,
+            expected_direct.clone(),
+            expected_direct.clone(),
+            expected_direct.clone(),
+        ),
+        (
+            1,
+            expected_direct.clone(),
+            expected_direct.clone(),
+            expected_direct,
+        ),
+    ];
+
+    let outputs = r#"package main
+import rego.v1
+matched if { data.helpers.f(0, true) }
+mismatched if { data.helpers.f(0, false) }
+bound := result if { data.helpers.f(0, result) }
+"#;
+    let mut output_observations = Vec::new();
+    for (module_order, modules) in [
+        [
+            ("helper.rego", helper_one_arg),
+            ("shadow.rego", shadow_two_args),
+            ("main.rego", outputs),
+        ],
+        [
+            ("shadow.rego", shadow_two_args),
+            ("helper.rego", helper_one_arg),
+            ("main.rego", outputs),
+        ],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for (entry_point, expected) in [
+            ("data.main.matched", Value::Bool(true)),
+            ("data.main.mismatched", Value::Undefined),
+            ("data.main.bound", Value::Bool(true)),
+        ] {
+            let observations =
+                observe_rgp_input_cases(&modules, entry_point, &[Value::new_object()])?;
+            output_observations.push((
+                module_order,
+                entry_point,
+                expected,
+                observations.interpreter,
+                observations.run_to_completion,
+                observations.suspendable,
+            ));
+        }
+    }
+    let expected_output_observations = vec![
+        (
+            0,
+            "data.main.matched",
+            Value::Bool(true),
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+        ),
+        (
+            0,
+            "data.main.mismatched",
+            Value::Undefined,
+            vec![Ok(Value::Undefined)],
+            vec![Ok(Value::Undefined)],
+            vec![Ok(Value::Undefined)],
+        ),
+        (
+            0,
+            "data.main.bound",
+            Value::Bool(true),
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+        ),
+        (
+            1,
+            "data.main.matched",
+            Value::Bool(true),
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+        ),
+        (
+            1,
+            "data.main.mismatched",
+            Value::Undefined,
+            vec![Ok(Value::Undefined)],
+            vec![Ok(Value::Undefined)],
+            vec![Ok(Value::Undefined)],
+        ),
+        (
+            1,
+            "data.main.bound",
+            Value::Bool(true),
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+        ),
+    ];
+    assert_eq!(
+        (direct_observations, output_observations),
+        (expected_direct_observations, expected_output_observations),
+        "the explicit target's arity must preserve direct inputs and output arguments in both module orders and VM modes"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_06_callable_default_fallback_uses_exact_parent_and_child_paths() -> anyhow::Result<()> {
+    let parent = r#"package test
+import rego.v1
+default f(_) := false
+"#;
+    let child = r#"package test
+import rego.v1
+default f.child(_, _) := true
+"#;
+    let main = r#"package main
+import rego.v1
+p := {
+    "parent": data.test.f(0),
+    "child": data.test.f.child(0, 0)
+}
+"#;
+    let expected_value = Value::from_json_str(r#"{"parent":false,"child":true}"#)?;
+
+    let mut observations_by_order = Vec::new();
+    for (module_order, modules) in [
+        [
+            ("parent.rego", parent),
+            ("child.rego", child),
+            ("main.rego", main),
+        ],
+        [
+            ("child.rego", child),
+            ("parent.rego", parent),
+            ("main.rego", main),
+        ],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let observations =
+            observe_rgp_input_cases(&modules, "data.main.p", &[Value::new_object()])?;
+        observations_by_order.push((
+            module_order,
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable,
+        ));
+    }
+    let expected = vec![Ok(expected_value)];
+    assert_eq!(
+        observations_by_order,
+        vec![
+            (0, expected.clone(), expected.clone(), expected.clone(),),
+            (1, expected.clone(), expected.clone(), expected),
+        ],
+        "parent and child callable defaults must keep distinct exact values in both orders"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_metadata_does_not_replace_ordinary_function_module() -> anyhow::Result<()> {
+    let defaults = r#"package helpers
+import rego.v1
+default f(_) := "fallback"
+"#;
+    let ordinary = r#"package helpers
+import rego.v1
+f({"kind": "ordinary"}) := "ordinary"
+"#;
+    let main = r#"package main
+import rego.v1
+import data.helpers as helper
+p := {
+    "hit": helper.f({"kind": "ordinary"}),
+    "miss": helper.f({"kind": "miss"})
+}
+"#;
+    let expected = Value::from_json_str(r#"{"hit":"ordinary","miss":"fallback"}"#)?;
+
+    for modules in [
+        [
+            ("defaults.rego", defaults),
+            ("ordinary.rego", ordinary),
+            ("main.rego", main),
+        ],
+        [
+            ("ordinary.rego", ordinary),
+            ("defaults.rego", defaults),
+            ("main.rego", main),
+        ],
+    ] {
+        let observations =
+            observe_rgp_input_cases(&modules, "data.main.p", &[Value::new_object()])?;
+        let expected = vec![Ok(expected.clone())];
+        assert_eq!(
+            (
+                observations.interpreter,
+                observations.run_to_completion,
+                observations.suspendable
+            ),
+            (expected.clone(), expected.clone(), expected),
+            "ordinary function definitions must retain their owning module"
+        );
+    }
+    Ok(())
+}

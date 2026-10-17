@@ -152,7 +152,7 @@ impl<'a> Compiler<'a> {
         self.compile_chain_access(input_reg, &chain.components, span)
     }
 
-    pub(super) fn compile_parameterized_function_document_path(
+    pub(super) fn compile_rule_document_path(
         &mut self,
         rule_path: &str,
         suffix: &[AccessComponent],
@@ -190,6 +190,18 @@ impl<'a> Compiler<'a> {
             },
             span,
         )
+    }
+
+    fn is_known_rule_path_prefix(&self, path: &str) -> bool {
+        self.policy
+            .inner
+            .rule_path_components
+            .keys()
+            .any(|rule_path| {
+                rule_path
+                    .strip_prefix(path)
+                    .is_some_and(|suffix| suffix.starts_with('.') || suffix.starts_with('['))
+            })
     }
 
     /// Compile data namespace access chain (may involve rules)
@@ -351,6 +363,12 @@ impl<'a> Compiler<'a> {
             }
         }
 
+        if !self.policy.inner.rule_paths.contains(&current_pkg_prefix)
+            && self.is_known_rule_path_prefix(&current_pkg_prefix)
+        {
+            return self.compile_rule_document_path(&current_pkg_prefix, &chain.components, span);
+        }
+
         // Try to find the longest matching rule prefix
         for i in (0..=static_fields.len()).rev() {
             let mut rule_candidate = current_pkg_prefix.clone();
@@ -360,31 +378,43 @@ impl<'a> Compiler<'a> {
             }
 
             if self.is_parameterized_user_function(&rule_candidate) {
-                return self.compile_parameterized_function_document_path(
+                return self.compile_rule_document_path(
                     &rule_candidate,
                     &chain.components[i..],
                     span,
                 );
             }
 
-            if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
-                let rule_result_reg = self.alloc_register();
-                self.emit_instruction(
-                    Instruction::CallRule {
-                        dest: rule_result_reg,
-                        rule_index,
-                    },
+            if self.policy.inner.rule_paths.contains(&rule_candidate) {
+                if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
+                    let rule_result_reg = self.alloc_register();
+                    self.emit_instruction(
+                        Instruction::CallRule {
+                            dest: rule_result_reg,
+                            rule_index,
+                        },
+                        span,
+                    );
+
+                    // Handle remaining components after the matched rule
+                    let consumed_components = i; // Number of components consumed by the rule (excluding root)
+                    if consumed_components < chain.components.len() {
+                        let remaining_components = &chain.components[consumed_components..];
+                        return self.compile_chain_access(
+                            rule_result_reg,
+                            remaining_components,
+                            span,
+                        );
+                    }
+
+                    return Ok(rule_result_reg);
+                }
+            } else if self.is_known_rule_path_prefix(&rule_candidate) {
+                return self.compile_rule_document_path(
+                    &rule_candidate,
+                    &chain.components[i..],
                     span,
                 );
-
-                // Handle remaining components after the matched rule
-                let consumed_components = i; // Number of components consumed by the rule (excluding root)
-                if consumed_components < chain.components.len() {
-                    let remaining_components = &chain.components[consumed_components..];
-                    return self.compile_chain_access(rule_result_reg, remaining_components, span);
-                }
-
-                return Ok(rule_result_reg);
             }
         }
 
