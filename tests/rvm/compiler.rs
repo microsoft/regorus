@@ -2,9 +2,12 @@
 // Licensed under the MIT License.
 #![cfg(feature = "rvm")]
 
-use regorus::languages::rego::compiler::Compiler;
+use regorus::languages::rego::compiler::{
+    Compiler, CompilerError, CompilerOptions, SpannedCompilerError,
+};
 use regorus::rvm::instructions::GuardMode;
-use regorus::rvm::vm::{RegoVM, VmError};
+use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, VmError};
+use regorus::rvm::BuiltinPolicy;
 use regorus::rvm::Instruction;
 use regorus::{Engine, Rc, Value};
 use std::collections::BTreeSet;
@@ -19,6 +22,21 @@ fn compile_rule(module: &str) -> std::sync::Arc<regorus::rvm::program::Program> 
         .compile_with_entrypoint(&Rc::from("data.test.p"))
         .expect("failed to compile policy");
     Compiler::compile_from_policy(&compiled, &["data.test.p"]).expect("failed to compile to RVM")
+}
+
+fn compile_rule_with_options(
+    module: &str,
+    options: &CompilerOptions,
+) -> std::sync::Arc<regorus::rvm::program::Program> {
+    let mut engine = Engine::new();
+    engine
+        .add_policy("test.rego".to_string(), module.to_string())
+        .expect("failed to add policy");
+    let compiled = engine
+        .compile_with_entrypoint(&Rc::from("data.test.p"))
+        .expect("failed to compile policy");
+    Compiler::compile_from_policy_with_options(&compiled, &["data.test.p"], options)
+        .expect("failed to compile to RVM")
 }
 
 /// Assert that the program's instruction stream contains no collection-create
@@ -85,6 +103,234 @@ fn run_interpreter_policy(module: &str, input: &str) -> anyhow::Result<Value> {
     engine.add_policy("test.rego".to_string(), module.to_string())?;
     engine.set_input(Value::from_json_str(input)?);
     engine.eval_rule("data.test.p".to_string())
+}
+
+#[derive(Clone, Copy, Debug)]
+enum R3DefaultDiagStyle {
+    Plain,
+    Literal,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum R3DefaultDiagModuleOrder {
+    HelperFirst,
+    MainFirst,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum R3DefaultDiagBuiltinPolicy {
+    Default,
+    Disabled,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum R3DefaultDiagBehavior {
+    Value,
+    Undefined,
+    Output,
+    Arity,
+}
+
+#[derive(Debug)]
+struct R3DefaultDiagObservations {
+    compilation: Result<(), String>,
+    interpreter: Result<Value, String>,
+    run_to_completion: Option<Result<Value, VmError>>,
+    suspendable: Option<Result<Value, VmError>>,
+}
+
+fn run_r3_default_diag_vm(
+    program: std::sync::Arc<regorus::rvm::program::Program>,
+    entry_point: &str,
+    execution_mode: ExecutionMode,
+    builtin_policy: R3DefaultDiagBuiltinPolicy,
+) -> Result<Value, VmError> {
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(execution_mode);
+    vm.load_program(program);
+    vm.set_input(Value::new_object());
+    if matches!(builtin_policy, R3DefaultDiagBuiltinPolicy::Disabled) {
+        vm.set_builtin_policy(
+            BuiltinPolicy::from_disabled_names(&["count"]).expect("count is a registered builtin"),
+        )?;
+    }
+    vm.execute_entry_point_by_name(entry_point)
+}
+
+fn observe_r3_default_diag(
+    style: R3DefaultDiagStyle,
+    module_order: R3DefaultDiagModuleOrder,
+    builtin_policy: R3DefaultDiagBuiltinPolicy,
+    behavior: R3DefaultDiagBehavior,
+) -> R3DefaultDiagObservations {
+    let (helper_package, main_package, helper_import, entry_point) = match style {
+        R3DefaultDiagStyle::Plain => (
+            "helpers",
+            "main",
+            "import data.helpers.count as count",
+            "data.main.p",
+        ),
+        R3DefaultDiagStyle::Literal => (
+            "helpers[\"1.0.0\"]",
+            "main[\"2.0.0\"]",
+            "import data.helpers[\"1.0.0\"].count as count",
+            "data.main[\"2.0.0\"].p",
+        ),
+    };
+    let helper =
+        format!("package {helper_package}\nimport rego.v1\ndefault count(_) := \"fallback\"\n");
+    let expression = match behavior {
+        R3DefaultDiagBehavior::Value => "p := count([])",
+        R3DefaultDiagBehavior::Undefined => "p := count(input.missing)",
+        R3DefaultDiagBehavior::Output => "p := result if { count([], result) }",
+        R3DefaultDiagBehavior::Arity => "p := count([], [], [])",
+    };
+    let main = format!("package {main_package}\nimport rego.v1\n{helper_import}\n{expression}\n");
+    let modules = match module_order {
+        R3DefaultDiagModuleOrder::HelperFirst => vec![
+            ("helper.rego", helper.as_str()),
+            ("main.rego", main.as_str()),
+        ],
+        R3DefaultDiagModuleOrder::MainFirst => vec![
+            ("main.rego", main.as_str()),
+            ("helper.rego", helper.as_str()),
+        ],
+    };
+
+    let mut engine = Engine::new();
+    let mut interpreter_setup = Ok(());
+    for (module_path, module) in &modules {
+        if let Err(error) = engine.add_policy((*module_path).to_string(), (*module).to_string()) {
+            interpreter_setup = Err(error.to_string());
+            break;
+        }
+    }
+    engine.set_input(Value::new_object());
+    let interpreter = interpreter_setup.and_then(|()| {
+        engine
+            .eval_rule(entry_point.to_string())
+            .map_err(|error| error.to_string())
+    });
+
+    let options = match builtin_policy {
+        R3DefaultDiagBuiltinPolicy::Default => CompilerOptions::default(),
+        R3DefaultDiagBuiltinPolicy::Disabled => disabled_count_options(),
+    };
+    let compiled_program = compile_modules_with_options(&modules, entry_point, &options);
+    match compiled_program {
+        Ok(program) => R3DefaultDiagObservations {
+            compilation: Ok(()),
+            interpreter,
+            run_to_completion: Some(run_r3_default_diag_vm(
+                program.clone(),
+                entry_point,
+                ExecutionMode::RunToCompletion,
+                builtin_policy,
+            )),
+            suspendable: Some(run_r3_default_diag_vm(
+                program,
+                entry_point,
+                ExecutionMode::Suspendable,
+                builtin_policy,
+            )),
+        },
+        Err(error) => {
+            let error = format!("RVM compilation failed: {error}");
+            R3DefaultDiagObservations {
+                compilation: Err(error.clone()),
+                interpreter,
+                run_to_completion: None,
+                suspendable: None,
+            }
+        }
+    }
+}
+
+fn assert_r3_default_diag(
+    test_name: &str,
+    behavior: R3DefaultDiagBehavior,
+    observations: &R3DefaultDiagObservations,
+) {
+    assert!(
+        observations.compilation.is_ok(),
+        "{test_name}: RVM compilation must succeed before each execution; observations: {observations:?}"
+    );
+
+    let run_to_completion = observations
+        .run_to_completion
+        .as_ref()
+        .expect("RunToCompletion VM must execute after successful compilation");
+    let suspendable = observations
+        .suspendable
+        .as_ref()
+        .expect("Suspendable VM must execute after successful compilation");
+
+    match behavior {
+        R3DefaultDiagBehavior::Value | R3DefaultDiagBehavior::Output => {
+            let expected = Value::from("fallback");
+            assert_eq!(
+                observations.interpreter.as_ref().ok(),
+                Some(&expected),
+                "{test_name} (interpreter): observations: {observations:?}"
+            );
+            assert_eq!(
+                run_to_completion.as_ref().ok(),
+                Some(&expected),
+                "{test_name} (RunToCompletion): observations: {observations:?}"
+            );
+            assert_eq!(
+                suspendable.as_ref().ok(),
+                Some(&expected),
+                "{test_name} (Suspendable): observations: {observations:?}"
+            );
+        }
+        R3DefaultDiagBehavior::Undefined => {
+            let expected = Value::Undefined;
+            assert_eq!(
+                observations.interpreter.as_ref().ok(),
+                Some(&expected),
+                "{test_name} (interpreter): observations: {observations:?}"
+            );
+            assert_eq!(
+                run_to_completion.as_ref().ok(),
+                Some(&expected),
+                "{test_name} (RunToCompletion): observations: {observations:?}"
+            );
+            assert_eq!(
+                suspendable.as_ref().ok(),
+                Some(&expected),
+                "{test_name} (Suspendable): observations: {observations:?}"
+            );
+        }
+        R3DefaultDiagBehavior::Arity => {
+            assert!(
+                observations.interpreter.is_err(),
+                "{test_name} (interpreter): wrong arity must be rejected; observations: {observations:?}"
+            );
+            assert!(
+                matches!(
+                    run_to_completion,
+                    Err(VmError::FunctionArgumentMismatch {
+                        expected: 1,
+                        actual: 3,
+                        ..
+                    })
+                ),
+                "{test_name} (RunToCompletion): wrong arity must produce a function-argument error; observations: {observations:?}"
+            );
+            assert!(
+                matches!(
+                    suspendable,
+                    Err(VmError::FunctionArgumentMismatch {
+                        expected: 1,
+                        actual: 3,
+                        ..
+                    })
+                ),
+                "{test_name} (Suspendable): wrong arity must produce a function-argument error; observations: {observations:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -461,4 +707,3705 @@ fn early_exit_set_for_implicit_true_function() {
         ri.early_exit_on_first_success,
         "implicit-true function with 2 defs should set early_exit_on_first_success"
     );
+}
+
+#[test]
+fn builtin_policy_normalizes_duplicates_and_rejects_invalid_names() {
+    let policy = BuiltinPolicy::from_disabled_names(&["count", "count"])
+        .expect("count is a registered builtin");
+    let disabled_names = policy
+        .disabled_names()
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(disabled_names, ["count"]);
+    assert!(BuiltinPolicy::default().disabled_names().is_empty());
+
+    for invalid_name in [
+        "",
+        " count",
+        "count ",
+        "count..value",
+        "unknown_builtin_xyz",
+    ] {
+        assert!(
+            BuiltinPolicy::from_disabled_names(&[invalid_name]).is_err(),
+            "expected {invalid_name:?} to be rejected"
+        );
+    }
+}
+
+#[test]
+fn disabled_native_builtin_is_rejected_with_a_source_span() {
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "test.rego".to_string(),
+            "package test\np := count([])".to_string(),
+        )
+        .expect("failed to add policy");
+    let compiled = engine
+        .compile_with_entrypoint(&Rc::from("data.test.p"))
+        .expect("failed to compile policy");
+    let options = CompilerOptions {
+        host_await_builtins: Vec::new(),
+        builtin_policy: BuiltinPolicy::from_disabled_names(&["count"])
+            .expect("count is a registered builtin"),
+    };
+
+    let error = Compiler::compile_from_policy_with_options(&compiled, &["data.test.p"], &options)
+        .expect_err("disabled native call must fail compilation");
+    assert!(matches!(
+        error.error,
+        CompilerError::BuiltinDisabled { ref name } if name == "count"
+    ));
+    assert!(
+        error.span.is_some(),
+        "disabled calls must retain source spans"
+    );
+}
+
+fn compile_modules_with_options(
+    modules: &[(&str, &str)],
+    entry_point: &str,
+    options: &CompilerOptions,
+) -> anyhow::Result<std::sync::Arc<regorus::rvm::program::Program>> {
+    let mut engine = Engine::new();
+    for (id, content) in modules {
+        engine.add_policy((*id).to_string(), (*content).to_string())?;
+    }
+    let compiled = engine.compile_with_entrypoint(&Rc::from(entry_point))?;
+    Ok(Compiler::compile_from_policy_with_options(
+        &compiled,
+        &[entry_point],
+        options,
+    )?)
+}
+
+fn disabled_count_options() -> CompilerOptions {
+    CompilerOptions {
+        host_await_builtins: Vec::new(),
+        builtin_policy: BuiltinPolicy::from_disabled_names(&["count"])
+            .expect("count is a registered builtin"),
+    }
+}
+
+fn assert_count_is_disabled(
+    result: anyhow::Result<std::sync::Arc<regorus::rvm::program::Program>>,
+) {
+    let error = result.expect_err("disabled count call must fail compilation");
+    assert!(
+        error.to_string().contains("Builtin 'count' is disabled"),
+        "unexpected compilation error: {error}"
+    );
+}
+
+fn assert_builtin_disabled_with_span(
+    result: anyhow::Result<std::sync::Arc<regorus::rvm::program::Program>>,
+    name: &str,
+    source_path: &str,
+    source: &str,
+    call: &str,
+    line: u32,
+) {
+    let error = result.expect_err("disabled native call must fail compilation");
+    let error = error
+        .downcast_ref::<SpannedCompilerError>()
+        .expect("compilation must preserve the typed spanned error");
+    assert!(matches!(
+        &error.error,
+        CompilerError::BuiltinDisabled { name: disabled } if disabled == name
+    ));
+
+    let span = error
+        .span
+        .as_ref()
+        .expect("disabled call must retain its span");
+    assert_eq!(span.source.get_path(), source_path);
+    assert_eq!(span.line, line);
+    assert_eq!(
+        span.start,
+        u32::try_from(source.find(call).expect("call must exist in fixture"))
+            .expect("fixture offset fits in u32")
+    );
+    assert_eq!(span.text(), call);
+}
+
+#[test]
+fn disabled_builtin_call_is_not_hidden_by_same_name_value_rule() {
+    let source = "package test\ncount := true\np := true\nunused := count([])";
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("main.rego", source)],
+            "data.test.p",
+            &disabled_count_options(),
+        ),
+        "count",
+        "main.rego",
+        source,
+        "count([])",
+        4,
+    );
+}
+
+#[test]
+fn disabled_builtin_call_is_not_hidden_by_rule_prefix_in_unused_module() {
+    let main = "package main\np := true";
+    let unused = "package unused\ncount.child := true\nq := count([])";
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("main.rego", main), ("unused.rego", unused)],
+            "data.main.p",
+            &disabled_count_options(),
+        ),
+        "count",
+        "unused.rego",
+        unused,
+        "count([])",
+        3,
+    );
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn disabled_http_send_calls_are_not_hidden_by_value_or_prefix_rules() {
+    let options = CompilerOptions {
+        host_await_builtins: Vec::new(),
+        builtin_policy: BuiltinPolicy::from_disabled_names(&["http.send"])
+            .expect("http.send is registered with the http feature"),
+    };
+
+    let value_rule = "package test\nhttp.send := true\np := true\nunused := http.send({})";
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(&[("value.rego", value_rule)], "data.test.p", &options),
+        "http.send",
+        "value.rego",
+        value_rule,
+        "http.send({})",
+        4,
+    );
+
+    let main = "package main\np := true";
+    let unused = "package unused\nhttp.send.child := true\nq := http.send({})";
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("main.rego", main), ("unused.rego", unused)],
+            "data.main.p",
+            &options,
+        ),
+        "http.send",
+        "unused.rego",
+        unused,
+        "http.send({})",
+        3,
+    );
+}
+
+#[test]
+fn empty_builtin_policy_preserves_value_and_prefix_rule_collisions() {
+    let empty_options = CompilerOptions {
+        host_await_builtins: Vec::new(),
+        builtin_policy: BuiltinPolicy::from_disabled_names(&[])
+            .expect("an empty builtin policy is valid"),
+    };
+
+    for options in [CompilerOptions::default(), empty_options] {
+        let value_rule_program = compile_modules_with_options(
+            &[(
+                "main.rego",
+                "package main\ncount := true\np := true\nunused := count([])",
+            )],
+            "data.main.p",
+            &options,
+        )
+        .expect("default and explicit-empty policies preserve value-rule compilation");
+        let mut vm = RegoVM::new();
+        vm.load_program(value_rule_program);
+        assert_eq!(
+            vm.execute_entry_point_by_name("data.main.p")
+                .expect("evaluate entry point"),
+            Value::from(true)
+        );
+
+        let prefix_rule_program = compile_modules_with_options(
+            &[
+                ("main.rego", "package main\np := true"),
+                (
+                    "unused.rego",
+                    "package unused\ncount.child := true\nq := count([])",
+                ),
+            ],
+            "data.main.p",
+            &options,
+        )
+        .expect("default and explicit-empty policies preserve prefix-rule compilation");
+        let mut vm = RegoVM::new();
+        vm.load_program(prefix_rule_program);
+        assert_eq!(
+            vm.execute_entry_point_by_name("data.main.p")
+                .expect("evaluate entry point"),
+            Value::from(true)
+        );
+    }
+}
+
+#[test]
+fn disabled_builtin_name_preserves_local_default_function() {
+    let main = r#"package main
+import rego.v1
+
+default count(_) := "fallback"
+count(value) := "local" if value == "local"
+
+p := count("local")
+"#;
+    let program = compile_modules_with_options(
+        &[("main.rego", main)],
+        "data.main.p",
+        &disabled_count_options(),
+    )
+    .expect("a local default function takes precedence over a disabled builtin name");
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.main.p")
+            .expect("evaluate local function"),
+        Value::from("local")
+    );
+}
+
+#[test]
+fn disabled_builtin_name_preserves_unused_local_default_function() {
+    let main = r#"package main
+import rego.v1
+
+default count(_) := "fallback"
+p := true
+unused := count([])
+"#;
+    let program = compile_modules_with_options(
+        &[("main.rego", main)],
+        "data.main.p",
+        &disabled_count_options(),
+    )
+    .expect("an unused local default function must not be mistaken for the disabled builtin");
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.main.p")
+            .expect("evaluate entry point"),
+        Value::from(true)
+    );
+}
+
+#[test]
+fn disabled_builtin_name_preserves_unused_imported_default_functions() {
+    let helper = r#"package helpers
+import rego.v1
+default count(_) := "fallback"
+"#;
+    let main = "package main\np := true";
+    let qualified = r#"package qualified
+import rego.v1
+unused := data.helpers.count([])
+"#;
+    let imported = r#"package imported
+import rego.v1
+import data.helpers
+unused := helpers.count([])
+"#;
+    let aliased = r#"package aliased
+import rego.v1
+import data.helpers as h
+unused := h.count([])
+"#;
+    let program = compile_modules_with_options(
+        &[
+            ("helpers.rego", helper),
+            ("main.rego", main),
+            ("qualified.rego", qualified),
+            ("imported.rego", imported),
+            ("aliased.rego", aliased),
+        ],
+        "data.main.p",
+        &disabled_count_options(),
+    )
+    .expect(
+        "unused calls through package paths and import aliases must resolve to default functions",
+    );
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.main.p")
+            .expect("evaluate entry point"),
+        Value::from(true)
+    );
+}
+
+#[test]
+fn disabled_builtin_name_preserves_unused_directly_imported_default_function() {
+    let helper = r#"package helpers
+import rego.v1
+default count(_) := "fallback"
+"#;
+    let main = "package main\np := true";
+    let imported = r#"package direct_import
+import rego.v1
+import data.helpers.count as count
+unused := count([])
+"#;
+    let program = compile_modules_with_options(
+        &[
+            ("helpers.rego", helper),
+            ("main.rego", main),
+            ("direct_import.rego", imported),
+        ],
+        "data.main.p",
+        &disabled_count_options(),
+    )
+    .expect("a direct import alias to a default function is not the disabled builtin");
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.main.p")
+            .expect("evaluate entry point"),
+        Value::from(true)
+    );
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn disabled_http_send_preserves_unused_import_alias_to_default_function() {
+    let helper = r#"package helpers
+import rego.v1
+default send(_) := "fallback"
+"#;
+    let main = r#"package main
+import rego.v1
+import data.helpers as http
+p := true
+unused := http.send({})
+"#;
+    let options = CompilerOptions {
+        host_await_builtins: Vec::new(),
+        builtin_policy: BuiltinPolicy::from_disabled_names(&["http.send"])
+            .expect("http.send is registered with the http feature"),
+    };
+    let program = compile_modules_with_options(
+        &[("helper.rego", helper), ("main.rego", main)],
+        "data.main.p",
+        &options,
+    )
+    .expect("an alias targeting a default user function is not the disabled native builtin");
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.main.p")
+            .expect("evaluate entry point"),
+        Value::from(true)
+    );
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn disabled_http_send_is_not_hidden_by_imported_default_value_or_function_prefix() {
+    let main = r#"package main
+import rego.v1
+import data.helpers as http
+p := true
+unused := http.send({})
+"#;
+    let options = CompilerOptions {
+        host_await_builtins: Vec::new(),
+        builtin_policy: BuiltinPolicy::from_disabled_names(&["http.send"])
+            .expect("http.send is registered with the http feature"),
+    };
+
+    let default_value = r#"package helpers
+import rego.v1
+default send := true
+"#;
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("value.rego", default_value), ("main.rego", main)],
+            "data.main.p",
+            &options,
+        ),
+        "http.send",
+        "main.rego",
+        main,
+        "http.send({})",
+        5,
+    );
+
+    let default_function = r#"package helpers
+import rego.v1
+default send.child(_) := "fallback"
+"#;
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("function.rego", default_function), ("main.rego", main)],
+            "data.main.p",
+            &options,
+        ),
+        "http.send",
+        "main.rego",
+        main,
+        "http.send({})",
+        5,
+    );
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn r3_local_http_send_value_and_default_child_do_not_hide_disabled_builtin() {
+    let source = r#"package main
+import rego.v1
+http.send := true
+default http.send.child(_) := "fallback"
+p := true
+unused := http.send({})
+"#;
+    let options = CompilerOptions {
+        host_await_builtins: Vec::new(),
+        builtin_policy: BuiltinPolicy::from_disabled_names(&["http.send"])
+            .expect("http.send is registered with the http feature"),
+    };
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(&[("main.rego", source)], "data.main.p", &options),
+        "http.send",
+        "main.rego",
+        source,
+        "http.send({})",
+        6,
+    );
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn r3_local_default_value_and_default_child_do_not_hide_disabled_builtin() {
+    let source = r#"package main
+import rego.v1
+default http.send := true
+default http.send.child(_) := "fallback"
+p := true
+unused := http.send({})
+"#;
+    let options = CompilerOptions {
+        host_await_builtins: Vec::new(),
+        builtin_policy: BuiltinPolicy::from_disabled_names(&["http.send"])
+            .expect("http.send is registered with the http feature"),
+    };
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(&[("main.rego", source)], "data.main.p", &options),
+        "http.send",
+        "main.rego",
+        source,
+        "http.send({})",
+        6,
+    );
+}
+
+#[test]
+fn r3_local_count_value_and_default_child_do_not_hide_disabled_builtin() {
+    let source = r#"package main
+import rego.v1
+count := true
+default count.child(_) := "fallback"
+p := true
+unused := count([])
+"#;
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("main.rego", source)],
+            "data.main.p",
+            &disabled_count_options(),
+        ),
+        "count",
+        "main.rego",
+        source,
+        "count([])",
+        6,
+    );
+}
+
+#[test]
+fn r3_local_default_count_value_and_default_child_do_not_hide_disabled_builtin() {
+    let source = r#"package main
+import rego.v1
+default count := true
+default count.child(_) := "fallback"
+p := true
+unused := count([])
+"#;
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("main.rego", source)],
+            "data.main.p",
+            &disabled_count_options(),
+        ),
+        "count",
+        "main.rego",
+        source,
+        "count([])",
+        6,
+    );
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn r3_imported_http_send_value_and_default_child_do_not_hide_disabled_builtin() {
+    let helper = r#"package helpers
+import rego.v1
+send := true
+default send.child(_) := "fallback"
+"#;
+    let main = r#"package main
+import rego.v1
+import data.helpers as http
+p := true
+unused := http.send({})
+"#;
+    let options = CompilerOptions {
+        host_await_builtins: Vec::new(),
+        builtin_policy: BuiltinPolicy::from_disabled_names(&["http.send"])
+            .expect("http.send is registered with the http feature"),
+    };
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("helper.rego", helper), ("main.rego", main)],
+            "data.main.p",
+            &options,
+        ),
+        "http.send",
+        "main.rego",
+        main,
+        "http.send({})",
+        5,
+    );
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn r3_imported_default_http_send_value_and_default_child_do_not_hide_disabled_builtin() {
+    let helper = r#"package helpers
+import rego.v1
+default send := true
+default send.child(_) := "fallback"
+"#;
+    let main = r#"package main
+import rego.v1
+import data.helpers as http
+p := true
+unused := http.send({})
+"#;
+    let options = CompilerOptions {
+        host_await_builtins: Vec::new(),
+        builtin_policy: BuiltinPolicy::from_disabled_names(&["http.send"])
+            .expect("http.send is registered with the http feature"),
+    };
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("helper.rego", helper), ("main.rego", main)],
+            "data.main.p",
+            &options,
+        ),
+        "http.send",
+        "main.rego",
+        main,
+        "http.send({})",
+        5,
+    );
+}
+
+#[test]
+fn r3_directly_imported_count_value_and_default_child_do_not_hide_disabled_builtin() {
+    let helper = r#"package helpers
+import rego.v1
+count := true
+default count.child(_) := "fallback"
+"#;
+    let main = r#"package main
+import rego.v1
+import data.helpers.count as count
+p := true
+unused := count([])
+"#;
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("helper.rego", helper), ("main.rego", main)],
+            "data.main.p",
+            &disabled_count_options(),
+        ),
+        "count",
+        "main.rego",
+        main,
+        "count([])",
+        5,
+    );
+}
+
+#[test]
+fn r3_directly_imported_default_count_value_and_default_child_do_not_hide_disabled_builtin() {
+    let helper = r#"package helpers
+import rego.v1
+default count := true
+default count.child(_) := "fallback"
+"#;
+    let main = r#"package main
+import rego.v1
+import data.helpers.count as count
+p := true
+unused := count([])
+"#;
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("helper.rego", helper), ("main.rego", main)],
+            "data.main.p",
+            &disabled_count_options(),
+        ),
+        "count",
+        "main.rego",
+        main,
+        "count([])",
+        5,
+    );
+}
+
+#[test]
+fn r3_default_function_path_is_owned_by_its_package_in_either_module_order() {
+    let helper = r#"package helpers
+import rego.v1
+default count(_) := "helper"
+"#;
+    let main = r#"package main
+import rego.v1
+count := true
+default count.child(_) := "fallback"
+p := true
+unused := count([])
+"#;
+    let options = disabled_count_options();
+
+    for modules in [
+        [("helper.rego", helper), ("main.rego", main)],
+        [("main.rego", main), ("helper.rego", helper)],
+    ] {
+        assert_builtin_disabled_with_span(
+            compile_modules_with_options(&modules, "data.main.p", &options),
+            "count",
+            "main.rego",
+            main,
+            "count([])",
+            6,
+        );
+    }
+}
+
+#[test]
+fn r3_unused_module_value_and_default_child_do_not_hide_disabled_builtin() {
+    let main = "package main\np := true";
+    let unused = r#"package unused
+import rego.v1
+count := true
+default count.child(_) := "fallback"
+q := count([])
+"#;
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("main.rego", main), ("unused.rego", unused)],
+            "data.main.p",
+            &disabled_count_options(),
+        ),
+        "count",
+        "unused.rego",
+        unused,
+        "count([])",
+        5,
+    );
+}
+
+#[test]
+fn empty_builtin_policy_preserves_unused_default_function_call() {
+    let main = r#"package main
+import rego.v1
+default count(_) := "fallback"
+p := true
+unused := count([])
+"#;
+    let empty_options = CompilerOptions {
+        host_await_builtins: Vec::new(),
+        builtin_policy: BuiltinPolicy::from_disabled_names(&[])
+            .expect("an empty builtin policy is valid"),
+    };
+
+    for options in [CompilerOptions::default(), empty_options] {
+        let program = compile_modules_with_options(&[("main.rego", main)], "data.main.p", &options)
+            .expect("default and explicit-empty policies preserve default-function compilation");
+        let mut vm = RegoVM::new();
+        vm.load_program(program);
+        assert_eq!(
+            vm.execute_entry_point_by_name("data.main.p")
+                .expect("evaluate entry point"),
+            Value::from(true)
+        );
+    }
+}
+
+#[test]
+fn disabled_builtin_call_is_not_hidden_by_default_value_rule() {
+    let source =
+        "package main\nimport rego.v1\ndefault count := true\np := true\nunused := count([])";
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("main.rego", source)],
+            "data.main.p",
+            &disabled_count_options(),
+        ),
+        "count",
+        "main.rego",
+        source,
+        "count([])",
+        5,
+    );
+}
+
+#[test]
+fn disabled_builtin_call_is_not_hidden_by_default_function_under_rule_prefix() {
+    let source =
+        "package unused\nimport rego.v1\ndefault count.child(_) := \"fallback\"\nq := count([])";
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(
+            &[("unused.rego", source)],
+            "data.unused.q",
+            &disabled_count_options(),
+        ),
+        "count",
+        "unused.rego",
+        source,
+        "count([])",
+        4,
+    );
+}
+
+#[test]
+fn r3_namespace_import_resolves_callable_default_with_disabled_native_builtin() {
+    let helper = r#"package helpers["1.0.0"]
+import rego.v1
+default count(_) := "fallback"
+"#;
+    let main = r#"package main["2.0.0"]
+import rego.v1
+import data.helpers["1.0.0"].count as count
+p := count([])
+"#;
+    let entry_point = r#"data.main["2.0.0"].p"#;
+    let module_orders = [
+        [("helper.rego", helper), ("main.rego", main)],
+        [("main.rego", main), ("helper.rego", helper)],
+    ];
+
+    for modules in module_orders {
+        let program =
+            compile_modules_with_options(&modules, entry_point, &disabled_count_options())
+                .expect("an imported callable default must take precedence over disabled count");
+        let mut vm = RegoVM::new();
+        vm.load_program(program);
+        assert_eq!(
+            vm.execute_entry_point_by_name(entry_point)
+                .expect("evaluate versioned namespace entry point"),
+            Value::from("fallback")
+        );
+    }
+}
+
+macro_rules! r3_default_diag_test {
+    ($name:ident, $style:ident, $order:ident, $policy:ident, $behavior:ident) => {
+        #[test]
+        fn $name() {
+            let observations = observe_r3_default_diag(
+                R3DefaultDiagStyle::$style,
+                R3DefaultDiagModuleOrder::$order,
+                R3DefaultDiagBuiltinPolicy::$policy,
+                R3DefaultDiagBehavior::$behavior,
+            );
+            assert_r3_default_diag(
+                stringify!($name),
+                R3DefaultDiagBehavior::$behavior,
+                &observations,
+            );
+        }
+    };
+}
+
+r3_default_diag_test!(
+    r3_default_diag_plain_helper_first_default_value,
+    Plain,
+    HelperFirst,
+    Default,
+    Value
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_helper_first_default_undefined,
+    Plain,
+    HelperFirst,
+    Default,
+    Undefined
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_helper_first_default_output,
+    Plain,
+    HelperFirst,
+    Default,
+    Output
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_helper_first_default_arity,
+    Plain,
+    HelperFirst,
+    Default,
+    Arity
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_helper_first_disabled_value,
+    Plain,
+    HelperFirst,
+    Disabled,
+    Value
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_helper_first_disabled_undefined,
+    Plain,
+    HelperFirst,
+    Disabled,
+    Undefined
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_helper_first_disabled_output,
+    Plain,
+    HelperFirst,
+    Disabled,
+    Output
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_helper_first_disabled_arity,
+    Plain,
+    HelperFirst,
+    Disabled,
+    Arity
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_main_first_default_value,
+    Plain,
+    MainFirst,
+    Default,
+    Value
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_main_first_default_undefined,
+    Plain,
+    MainFirst,
+    Default,
+    Undefined
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_main_first_default_output,
+    Plain,
+    MainFirst,
+    Default,
+    Output
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_main_first_default_arity,
+    Plain,
+    MainFirst,
+    Default,
+    Arity
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_main_first_disabled_value,
+    Plain,
+    MainFirst,
+    Disabled,
+    Value
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_main_first_disabled_undefined,
+    Plain,
+    MainFirst,
+    Disabled,
+    Undefined
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_main_first_disabled_output,
+    Plain,
+    MainFirst,
+    Disabled,
+    Output
+);
+r3_default_diag_test!(
+    r3_default_diag_plain_main_first_disabled_arity,
+    Plain,
+    MainFirst,
+    Disabled,
+    Arity
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_helper_first_default_value,
+    Literal,
+    HelperFirst,
+    Default,
+    Value
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_helper_first_default_undefined,
+    Literal,
+    HelperFirst,
+    Default,
+    Undefined
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_helper_first_default_output,
+    Literal,
+    HelperFirst,
+    Default,
+    Output
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_helper_first_default_arity,
+    Literal,
+    HelperFirst,
+    Default,
+    Arity
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_helper_first_disabled_value,
+    Literal,
+    HelperFirst,
+    Disabled,
+    Value
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_helper_first_disabled_undefined,
+    Literal,
+    HelperFirst,
+    Disabled,
+    Undefined
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_helper_first_disabled_output,
+    Literal,
+    HelperFirst,
+    Disabled,
+    Output
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_helper_first_disabled_arity,
+    Literal,
+    HelperFirst,
+    Disabled,
+    Arity
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_main_first_default_value,
+    Literal,
+    MainFirst,
+    Default,
+    Value
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_main_first_default_undefined,
+    Literal,
+    MainFirst,
+    Default,
+    Undefined
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_main_first_default_output,
+    Literal,
+    MainFirst,
+    Default,
+    Output
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_main_first_default_arity,
+    Literal,
+    MainFirst,
+    Default,
+    Arity
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_main_first_disabled_value,
+    Literal,
+    MainFirst,
+    Disabled,
+    Value
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_main_first_disabled_undefined,
+    Literal,
+    MainFirst,
+    Disabled,
+    Undefined
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_main_first_disabled_output,
+    Literal,
+    MainFirst,
+    Disabled,
+    Output
+);
+r3_default_diag_test!(
+    r3_default_diag_literal_main_first_disabled_arity,
+    Literal,
+    MainFirst,
+    Disabled,
+    Arity
+);
+
+#[derive(Debug)]
+struct RgpInputObservations {
+    interpreter: Vec<Result<Value, String>>,
+    run_to_completion: Vec<Result<Value, String>>,
+    suspendable: Vec<Result<Value, String>>,
+}
+
+#[derive(Debug)]
+struct RgpDataObservations {
+    interpreter: Result<Value, String>,
+    run_to_completion: Result<Value, String>,
+    suspendable: Result<Value, String>,
+}
+
+fn observe_rgp_data_case(
+    modules: &[(&str, &str)],
+    entry_point: &str,
+    data: &Value,
+    input: &Value,
+) -> anyhow::Result<RgpDataObservations> {
+    let mut engine = Engine::new();
+    for (module_id, content) in modules {
+        engine.add_policy((*module_id).to_string(), (*content).to_string())?;
+    }
+    engine.add_data(data.clone())?;
+    engine.set_input(input.clone());
+    let interpreter = engine
+        .eval_rule(entry_point.to_string())
+        .map_err(|error| error.to_string());
+
+    let program = compile_modules_with_options(modules, entry_point, &CompilerOptions::default())?;
+    let mut vm_results = Vec::new();
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_data(data.clone())?;
+        vm.set_input(input.clone());
+        vm_results.push(
+            vm.execute_entry_point_by_name(entry_point)
+                .map_err(|error| error.to_string()),
+        );
+    }
+
+    let mut vm_results = vm_results.into_iter();
+    Ok(RgpDataObservations {
+        interpreter,
+        run_to_completion: vm_results
+            .next()
+            .expect("RunToCompletion observations were collected"),
+        suspendable: vm_results
+            .next()
+            .expect("Suspendable observations were collected"),
+    })
+}
+
+fn observe_rgp_input_cases(
+    modules: &[(&str, &str)],
+    entry_point: &str,
+    inputs: &[Value],
+) -> anyhow::Result<RgpInputObservations> {
+    let mut engine = Engine::new();
+    for (module_id, content) in modules {
+        engine.add_policy((*module_id).to_string(), (*content).to_string())?;
+    }
+
+    let mut interpreter = Vec::new();
+    for input in inputs {
+        engine.set_input(input.clone());
+        interpreter.push(
+            engine
+                .eval_rule(entry_point.to_string())
+                .map_err(|error| error.to_string()),
+        );
+    }
+
+    let program = compile_modules_with_options(modules, entry_point, &CompilerOptions::default())?;
+    let mut vm_observations = Vec::new();
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_data(Value::new_object())?;
+
+        let mut results = Vec::new();
+        for input in inputs {
+            vm.set_input(input.clone());
+            results.push(
+                vm.execute_entry_point_by_name(entry_point)
+                    .map_err(|error| error.to_string()),
+            );
+        }
+        vm_observations.push(results);
+    }
+
+    let mut vm_observations = vm_observations.into_iter();
+    Ok(RgpInputObservations {
+        interpreter,
+        run_to_completion: vm_observations
+            .next()
+            .expect("RunToCompletion observations were collected"),
+        suspendable: vm_observations
+            .next()
+            .expect("Suspendable observations were collected"),
+    })
+}
+
+#[test]
+fn r842_parameterized_function_paths_preserve_data_and_function_calls() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+
+default defaulted(_) := input.fallback
+ordinary(value) := value
+zero() := "zero"
+
+p := {
+    "defaulted_data": data.test.defaulted,
+    "ordinary_data": data.test.ordinary,
+    "defaulted_call": defaulted(0),
+    "ordinary_call": ordinary("ordinary"),
+    "zero_arity_call": zero()
+}
+"#;
+    let modules = [("main.rego", source)];
+    let data = Value::from_json_str(
+        r#"{"test":{"defaulted":"base-default","ordinary":"base-ordinary"}}"#,
+    )?;
+    let input = Value::from_json_str(r#"{"fallback":"default-call"}"#)?;
+    let expected = Value::from_json_str(
+        r#"{"defaulted_data":"base-default","ordinary_data":"base-ordinary","defaulted_call":"default-call","ordinary_call":"ordinary","zero_arity_call":"zero"}"#,
+    )?;
+
+    let observations = observe_rgp_data_case(&modules, "data.test.p", &data, &input)?;
+    assert_eq!(
+        observations.interpreter.as_ref().ok(),
+        Some(&expected),
+        "the interpreter is the oracle for base-data reads and callable rules"
+    );
+    assert_eq!(
+        observations.run_to_completion.as_ref().ok(),
+        Some(&expected),
+        "RunToCompletion must read base data at parameterized function paths and still call them"
+    );
+    assert_eq!(
+        observations.suspendable.as_ref().ok(),
+        Some(&expected),
+        "Suspendable must read base data at parameterized function paths and still call them"
+    );
+    Ok(())
+}
+
+#[test]
+fn r842_parameterized_default_entrypoints_read_base_data_or_undefined() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default constant_default(_) := "called-constant"
+default dynamic_default(_) := input.fallback
+"#;
+    let modules = [("main.rego", source)];
+    let no_data = Value::new_object();
+    let base_data = Value::from_json_str(
+        r#"{"test":{"constant_default":"constant-base","dynamic_default":"dynamic-base"}}"#,
+    )?;
+    let input = Value::from_json_str(r#"{"fallback":"called-dynamic"}"#)?;
+    let undefined = Value::Undefined;
+    let constant_base = Value::from_json_str(r#""constant-base""#)?;
+    let dynamic_base = Value::from_json_str(r#""dynamic-base""#)?;
+    let cases = [
+        ("data.test.constant_default", &no_data, &undefined),
+        ("data.test.dynamic_default", &no_data, &undefined),
+        ("data.test.constant_default", &base_data, &constant_base),
+        ("data.test.dynamic_default", &base_data, &dynamic_base),
+    ];
+
+    for (entry_point, data, expected) in cases {
+        let observations = observe_rgp_data_case(&modules, entry_point, data, &input)?;
+        let expected = Ok(expected.clone());
+        assert_eq!(
+            observations.interpreter, expected,
+            "interpreter document result for {entry_point} with data {data:?}"
+        );
+        assert_eq!(
+            observations.run_to_completion, expected,
+            "RunToCompletion document result for {entry_point} with data {data:?}"
+        );
+        assert_eq!(
+            observations.suspendable, expected,
+            "Suspendable document result for {entry_point} with data {data:?}"
+        );
+    }
+
+    let entry_point = "data.test.constant_default";
+    let program = compile_modules_with_options(&modules, entry_point, &CompilerOptions::default())?;
+    let binary = program.serialize_binary().map_err(anyhow::Error::msg)?;
+    assert_eq!(
+        u16::from_le_bytes([binary[4], binary[5]]),
+        6,
+        "document entrypoints must remain in the existing Program v6 format"
+    );
+    let round_tripped_program = match regorus::rvm::program::Program::deserialize_binary(&binary)
+        .map_err(anyhow::Error::msg)?
+    {
+        regorus::rvm::program::DeserializationResult::Complete(program) => {
+            std::sync::Arc::new(program)
+        }
+        regorus::rvm::program::DeserializationResult::Partial(_) => {
+            anyhow::bail!("document entrypoint v6 program unexpectedly needs recompilation")
+        }
+    };
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(round_tripped_program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_data(base_data.clone())?;
+        vm.set_input(input.clone());
+        assert_eq!(
+            vm.execute_entry_point_by_name(entry_point)?,
+            constant_base,
+            "{mode:?} result after the existing-v6 round trip"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn r842_parameterized_default_entrypoint_data_registers_are_scoped_per_entrypoint(
+) -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := true
+default g(_) := false
+"#;
+    let data = Value::from_json_str(r#"{"test":{"f":"base-f","g":"base-g"}}"#)?;
+    let expected_f = Value::from_json_str(r#""base-f""#)?;
+    let expected_g = Value::from_json_str(r#""base-g""#)?;
+
+    for entry_points in [
+        ["data.test.f", "data.test.g"],
+        ["data.test.g", "data.test.f"],
+    ] {
+        let mut engine = Engine::new();
+        engine.add_policy("test.rego".to_string(), source.to_string())?;
+        engine.add_data(data.clone())?;
+        assert_eq!(
+            engine.eval_rule("data.test.f".to_string())?,
+            expected_f,
+            "interpreter value for data.test.f"
+        );
+        assert_eq!(
+            engine.eval_rule("data.test.g".to_string())?,
+            expected_g,
+            "interpreter value for data.test.g"
+        );
+
+        let compiled = engine.compile_with_entrypoint(&Rc::from(entry_points[0]))?;
+        let program = Compiler::compile_from_policy(&compiled, &entry_points)?;
+        let expected_for = |entry_point| match entry_point {
+            "data.test.f" => &expected_f,
+            "data.test.g" => &expected_g,
+            _ => unreachable!(),
+        };
+        let first_entry_point = entry_points[0];
+        let second_entry_point = entry_points[1];
+
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            vm.set_data(data.clone())?;
+
+            assert_eq!(
+                vm.execute_entry_point_by_name(second_entry_point)?,
+                *expected_for(second_entry_point),
+                "{mode:?} second entrypoint {second_entry_point} on a fresh VM"
+            );
+            assert_eq!(
+                vm.execute_entry_point_by_name(first_entry_point)?,
+                *expected_for(first_entry_point),
+                "{mode:?} first entrypoint {first_entry_point} after the second"
+            );
+            assert_eq!(
+                vm.execute_entry_point_by_name(second_entry_point)?,
+                *expected_for(second_entry_point),
+                "{mode:?} second entrypoint {second_entry_point} after the first"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn r842_local_references_to_parameterized_functions_read_documents() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := true
+default dynamic(_) := input.fallback
+ordinary(value) := value
+zero() := "zero-value"
+value := "value-result"
+
+allow := data.test.f
+local_constant := f
+local_dynamic := dynamic
+local_ordinary := ordinary
+called_default := f(0)
+called_ordinary := ordinary("ordinary-call")
+"#;
+    let modules = [("main.rego", source)];
+    let no_data = Value::new_object();
+    let base_data = Value::from_json_str(
+        r#"{"test":{"f":"base-constant","dynamic":"base-dynamic","ordinary":"base-ordinary"}}"#,
+    )?;
+    let input = Value::from_json_str(r#"{"fallback":"called-dynamic"}"#)?;
+    let undefined = Value::Undefined;
+    let base_constant = Value::from_json_str(r#""base-constant""#)?;
+    let base_dynamic = Value::from_json_str(r#""base-dynamic""#)?;
+    let base_ordinary = Value::from_json_str(r#""base-ordinary""#)?;
+    let cases = [
+        ("data.test.allow", &no_data, &undefined),
+        ("data.test.local_constant", &no_data, &undefined),
+        ("data.test.local_dynamic", &no_data, &undefined),
+        ("data.test.local_ordinary", &no_data, &undefined),
+        ("data.test.allow", &base_data, &base_constant),
+        ("data.test.local_constant", &base_data, &base_constant),
+        ("data.test.local_dynamic", &base_data, &base_dynamic),
+        ("data.test.local_ordinary", &base_data, &base_ordinary),
+    ];
+
+    for (entry_point, data, expected) in cases {
+        let observations = observe_rgp_data_case(&modules, entry_point, data, &input)?;
+        let expected = Ok(expected.clone());
+        assert_eq!(
+            observations.interpreter, expected,
+            "interpreter document result for {entry_point} with data {data:?}"
+        );
+        assert_eq!(
+            observations.run_to_completion, expected,
+            "RunToCompletion document result for {entry_point} with data {data:?}"
+        );
+        assert_eq!(
+            observations.suspendable, expected,
+            "Suspendable document result for {entry_point} with data {data:?}"
+        );
+    }
+
+    for (entry_point, expected) in [
+        ("data.test.called_default", Value::Bool(true)),
+        (
+            "data.test.called_ordinary",
+            Value::from_json_str(r#""ordinary-call""#)?,
+        ),
+        ("data.test.zero", Value::from_json_str(r#""zero-value""#)?),
+        (
+            "data.test.value",
+            Value::from_json_str(r#""value-result""#)?,
+        ),
+    ] {
+        let observations = observe_rgp_data_case(&modules, entry_point, &no_data, &input)?;
+        let expected = Ok(expected);
+        assert_eq!(
+            observations.interpreter, expected,
+            "interpreter control {entry_point}"
+        );
+        assert_eq!(
+            observations.run_to_completion, expected,
+            "RunToCompletion control {entry_point}"
+        );
+        assert_eq!(
+            observations.suspendable, expected,
+            "Suspendable control {entry_point}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn r842_indexed_default_materializes_parent_and_timeout_field() -> anyhow::Result<()> {
+    let bracket_default = r#"package test
+import rego.v1
+default config["timeout"] := 30
+p := {
+    "whole": config,
+    "field_bracket": config["timeout"],
+    "field_dot": config.timeout
+}
+"#;
+    let expected =
+        Value::from_json_str(r#"{"whole":{"timeout":30},"field_bracket":30,"field_dot":30}"#)?;
+    let data = Value::new_object();
+    let input = Value::new_object();
+
+    let modules = [("main.rego", bracket_default)];
+    let observations = observe_rgp_data_case(&modules, "data.test.p", &data, &input)?;
+    assert_eq!(
+        observations.interpreter,
+        Ok(expected.clone()),
+        "the interpreter materializes the literal-string indexed default"
+    );
+    assert_eq!(
+        observations.run_to_completion,
+        Ok(expected.clone()),
+        "RunToCompletion materializes the indexed default for whole-object and dotted/bracket field reads"
+    );
+    assert_eq!(
+        observations.suspendable,
+        Ok(expected),
+        "Suspendable materializes the indexed default for whole-object and dotted/bracket field reads"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn r842_qualified_default_only_calls_execute_the_exact_module_path() -> anyhow::Result<()> {
+    let helper = r#"package helpers
+import rego.v1
+default constant(_) := "target-constant"
+default dynamic(_) := input.target
+"#;
+    let shadow = r#"package main.data.helpers
+import rego.v1
+default constant(_) := "shadow-constant"
+default dynamic(_) := input.shadow
+"#;
+    let main = r#"package main
+import rego.v1
+p := {
+    "constant": data.helpers.constant(0),
+    "dynamic": data.helpers.dynamic(0)
+}
+"#;
+    let entry_point = "data.main.p";
+    let inputs = [Value::from_json_str(
+        r#"{"target":"target-dynamic","shadow":"shadow-dynamic"}"#,
+    )?];
+    let expected =
+        Value::from_json_str(r#"{"constant":"target-constant","dynamic":"target-dynamic"}"#)?;
+
+    for modules in [
+        [
+            ("helper.rego", helper),
+            ("shadow.rego", shadow),
+            ("main.rego", main),
+        ],
+        [
+            ("main.rego", main),
+            ("shadow.rego", shadow),
+            ("helper.rego", helper),
+        ],
+    ] {
+        let observations = observe_rgp_input_cases(&modules, entry_point, &inputs)?;
+        assert_eq!(
+            observations.interpreter,
+            vec![Ok(expected.clone())],
+            "fully qualified calls must address the helper defaults regardless of module order"
+        );
+        assert_eq!(
+            observations.run_to_completion,
+            vec![Ok(expected.clone())],
+            "RunToCompletion must execute the exact constant and dynamic defaults"
+        );
+        assert_eq!(
+            observations.suspendable,
+            vec![Ok(expected.clone())],
+            "Suspendable must execute the exact constant and dynamic defaults"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn r842_parent_value_rule_does_not_select_child_callable_default() -> anyhow::Result<()> {
+    let parent_first = r#"package test
+import rego.v1
+a := true
+default a.child(_) := [input.items | true]
+p := a
+"#;
+    let child_first = r#"package test
+import rego.v1
+default a.child(_) := [input.items | true]
+a := true
+p := a
+"#;
+    let input = Value::from_json_str(r#"{"items":["child"]}"#)?;
+    let inputs = [input.clone()];
+    let expected = Value::Bool(true);
+
+    for source in [child_first, parent_first] {
+        let modules = [("main.rego", source)];
+        let mut engine = Engine::new();
+        engine.add_policy("main.rego".to_string(), source.to_string())?;
+        engine.set_input(input.clone());
+        assert_eq!(
+            engine.eval_rule("data.test.p".to_string())?,
+            expected,
+            "the interpreter must keep the parent value rule distinct from its child function default"
+        );
+
+        let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+        assert_eq!(
+            observations.interpreter,
+            vec![Ok(expected.clone())],
+            "the parent value rule remains distinct from its child function default"
+        );
+        assert_eq!(
+            observations.run_to_completion,
+            vec![Ok(expected.clone())],
+            "RunToCompletion must retain the parent value rule"
+        );
+        assert_eq!(
+            observations.suspendable,
+            vec![Ok(expected.clone())],
+            "Suspendable must retain the parent value rule"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn r842_parent_value_default_does_not_select_child_callable_default() -> anyhow::Result<()> {
+    let parent_first = r#"package test
+import rego.v1
+default f := true
+default f.child(_) := input.child
+p := data.test.f
+"#;
+    let child_first = r#"package test
+import rego.v1
+default f.child(_) := input.child
+default f := true
+p := data.test.f
+"#;
+    let inputs = [Value::from_json_str(r#"{"child":"child-default"}"#)?];
+    let expected = Value::Bool(true);
+
+    for source in [child_first, parent_first] {
+        let modules = [("main.rego", source)];
+        let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+        assert_eq!(
+            observations.interpreter,
+            vec![Ok(expected.clone())],
+            "the exact parent value default is the interpreter result"
+        );
+        assert_eq!(
+            observations.run_to_completion,
+            vec![Ok(expected.clone())],
+            "RunToCompletion must resolve the parent document, not its child function"
+        );
+        assert_eq!(
+            observations.suspendable,
+            vec![Ok(expected.clone())],
+            "Suspendable must resolve the parent document, not its child function"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rgp_01_callable_default_falls_back_after_ordinary_definition_misses_for_literal_import(
+) -> anyhow::Result<()> {
+    let helper = r#"package helpers["1.0.0"]
+import rego.v1
+default f(_) := true
+f(x) := false if x == 1
+"#;
+    let main = r#"package main["2.0.0"]
+import rego.v1
+import data.helpers["1.0.0"].f as f
+p := f(input.x)
+"#;
+    let modules = [("helper.rego", helper), ("main.rego", main)];
+    let entry_point = r#"data.main["2.0.0"].p"#;
+    let inputs = [
+        Value::from_json_str(r#"{"x":1}"#)?,
+        Value::from_json_str(r#"{"x":2}"#)?,
+        Value::new_object(),
+    ];
+    let expected: Vec<Result<Value, String>> = vec![
+        Ok(Value::Bool(false)),
+        Ok(Value::Bool(true)),
+        Ok(Value::Undefined),
+    ];
+
+    let observations = observe_rgp_input_cases(&modules, entry_point, &inputs)?;
+    assert_eq!(
+        observations.interpreter, expected,
+        "literal-package interpreter results"
+    );
+    assert_eq!(
+        (observations.run_to_completion, observations.suspendable),
+        (expected.clone(), expected),
+        "literal-package VM results for both execution modes"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_01_callable_default_output_does_not_bind_undefined_argument() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := true
+f(x) := false if x == 1
+p := result if { f(input.x, result) }
+"#;
+    let modules = [("test.rego", source)];
+    let inputs = [Value::new_object()];
+    let expected = vec![Ok(Value::Undefined)];
+
+    let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+    assert_eq!(
+        observations.interpreter, expected,
+        "interpreter output binding with a missing argument"
+    );
+    assert_eq!(
+        (observations.run_to_completion, observations.suspendable),
+        (expected.clone(), expected),
+        "VM output binding with a missing argument in both execution modes"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_01_callable_default_rejects_wrong_arity_after_ordinary_definition() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := true
+f(x) := false if x == 1
+p := f(0, 1, 2)
+"#;
+    let modules = [("test.rego", source)];
+    let entry_point = "data.test.p";
+    let program = compile_modules_with_options(&modules, entry_point, &CompilerOptions::default())?;
+
+    let mut engine = Engine::new();
+    engine.add_policy("test.rego".to_string(), source.to_string())?;
+    engine.set_input(Value::new_object());
+    let interpreter = engine
+        .eval_rule(entry_point.to_string())
+        .map_err(|error| error.to_string());
+    assert!(
+        interpreter.is_err(),
+        "interpreter must report wrong arity instead of using the default: {interpreter:?}"
+    );
+
+    let mut vm_results = Vec::new();
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_data(Value::new_object())?;
+        vm_results.push((mode, vm.execute_entry_point_by_name(entry_point)));
+    }
+
+    assert!(
+        vm_results.iter().all(|(_, result)| matches!(
+            result,
+            Err(VmError::FunctionArgumentMismatch {
+                expected: 1,
+                actual: 3,
+                ..
+            })
+        )),
+        "both VM modes must report wrong arity instead of using the default: {vm_results:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_04_ordinary_wrong_arity_precedes_undefined_argument() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := true
+f(x) := false if x == 1
+p := f(input.missing, 0, 0)
+"#;
+    let entry_point = "data.test.p";
+
+    let mut engine = Engine::new();
+    engine.add_policy("test.rego".to_string(), source.to_string())?;
+    engine.set_input(Value::new_object());
+    let interpreter = engine
+        .eval_rule(entry_point.to_string())
+        .map_err(|error| error.to_string());
+    assert!(
+        interpreter.is_err(),
+        "ordinary function arity must be checked before Undefined propagation; got {interpreter:?}"
+    );
+    assert!(
+        interpreter
+            .as_ref()
+            .expect_err("wrong arity must be an interpreter error")
+            .contains("mismatch in number of arguments"),
+        "unexpected interpreter error: {interpreter:?}"
+    );
+
+    let modules = [("test.rego", source)];
+    let program = compile_modules_with_options(&modules, entry_point, &CompilerOptions::default())?;
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(mode);
+        vm.load_program(program.clone());
+        vm.set_input(Value::new_object());
+        assert!(
+            matches!(
+                vm.execute_entry_point_by_name(entry_point),
+                Err(VmError::FunctionArgumentMismatch {
+                    expected: 1,
+                    actual: 3,
+                    ..
+                })
+            ),
+            "{mode:?} must reject wrong arity before Undefined propagation"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn rgp_04_ordinary_function_without_default_checks_arity_before_undefined() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+f(x) := false if x == 1
+p := f(input.missing, 0, 0)
+"#;
+    let entry_point = "data.test.p";
+
+    let mut engine = Engine::new();
+    engine.add_policy("test.rego".to_string(), source.to_string())?;
+    engine.set_input(Value::new_object());
+    let interpreter = engine
+        .eval_rule(entry_point.to_string())
+        .map_err(|error| error.to_string());
+    assert!(
+        interpreter.is_err(),
+        "ordinary function arity must be checked before Undefined propagation; got {interpreter:?}"
+    );
+
+    let modules = [("test.rego", source)];
+    let program = compile_modules_with_options(&modules, entry_point, &CompilerOptions::default())?;
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(mode);
+        vm.load_program(program.clone());
+        vm.set_input(Value::new_object());
+        assert!(
+            matches!(
+                vm.execute_entry_point_by_name(entry_point),
+                Err(VmError::FunctionArgumentMismatch {
+                    expected: 1,
+                    actual: 3,
+                    ..
+                })
+            ),
+            "{mode:?} must reject wrong arity before Undefined propagation"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn rgp_02_default_only_comprehension_reads_runtime_input_on_reused_vm() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := [input.x | true]
+p := f(0)
+"#;
+    let modules = [("test.rego", source)];
+    let inputs = [
+        Value::from_json_str(r#"{"x":7}"#)?,
+        Value::from_json_str(r#"{"x":9}"#)?,
+    ];
+    let expected: Vec<Result<Value, String>> = vec![
+        Ok(Value::from_json_str("[7]")?),
+        Ok(Value::from_json_str("[9]")?),
+    ];
+
+    let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+    assert_eq!(
+        observations.interpreter, expected,
+        "interpreter input values"
+    );
+    assert_eq!(
+        (observations.run_to_completion, observations.suspendable),
+        (expected.clone(), expected),
+        "results in both VM modes while reusing the program and VM"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_02_default_comprehension_after_ordinary_miss_reads_runtime_input() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := [input.x | true]
+f(x) := ["ordinary"] if x == 1
+p := f(0)
+"#;
+    let modules = [("test.rego", source)];
+    let inputs = [
+        Value::from_json_str(r#"{"x":7}"#)?,
+        Value::from_json_str(r#"{"x":9}"#)?,
+    ];
+    let expected: Vec<Result<Value, String>> = vec![
+        Ok(Value::from_json_str("[7]")?),
+        Ok(Value::from_json_str("[9]")?),
+    ];
+
+    let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+    assert_eq!(
+        observations.interpreter, expected,
+        "interpreter input values"
+    );
+    assert_eq!(
+        (observations.run_to_completion, observations.suspendable),
+        (expected.clone(), expected),
+        "results in both VM modes after an ordinary definition misses"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_02_default_comprehension_reads_runtime_data_on_reused_vm() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := [value | some value in data.values]
+p := f(0)
+"#;
+    let modules = [("test.rego", source)];
+    let entry_point = "data.test.p";
+    let data_cases = [
+        (
+            Value::from_json_str(r#"{"values":[7]}"#)?,
+            Value::from_json_str("[7]")?,
+        ),
+        (
+            Value::from_json_str(r#"{"values":[9]}"#)?,
+            Value::from_json_str("[9]")?,
+        ),
+    ];
+    let expected: Vec<Result<Value, String>> = data_cases
+        .iter()
+        .map(|(_, value)| Ok(value.clone()))
+        .collect();
+    let program = compile_modules_with_options(&modules, entry_point, &CompilerOptions::default())?;
+
+    let mut interpreter_observations = Vec::new();
+    for (data, _) in &data_cases {
+        let mut engine = Engine::new();
+        engine.add_policy("test.rego".to_string(), source.to_string())?;
+        engine.add_data(data.clone())?;
+        engine.set_input(Value::new_object());
+        interpreter_observations.push(
+            engine
+                .eval_rule(entry_point.to_string())
+                .map_err(|error| error.to_string()),
+        );
+    }
+    assert_eq!(
+        interpreter_observations, expected,
+        "interpreter results for runtime data"
+    );
+
+    let mut vm_observations = Vec::new();
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_input(Value::new_object());
+
+        let mut results = Vec::new();
+        for (data, _) in &data_cases {
+            vm.set_data(data.clone())?;
+            results.push(
+                vm.execute_entry_point_by_name(entry_point)
+                    .map_err(|error| error.to_string()),
+            );
+        }
+        vm_observations.push((mode, results));
+    }
+
+    assert!(
+        vm_observations
+            .iter()
+            .all(|(_, results)| results == &expected),
+        "both VM modes must read current data while reusing the program and VM: {vm_observations:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_02_nested_input_and_data_defaults_survive_v6_round_trips() -> anyhow::Result<()> {
+    use regorus::rvm::program::{DeserializationResult, Program};
+
+    let source = r#"package test
+import rego.v1
+default nested(_) := [[input.x | true] | true]
+default values(_) := [value | some value in data.values]
+p := {"nested": nested(0), "values": values(0)}
+"#;
+    let modules = [("test.rego", source)];
+    let entry_point = "data.test.p";
+    let program = compile_modules_with_options(&modules, entry_point, &CompilerOptions::default())?;
+    let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+    let json_program =
+        std::sync::Arc::new(Program::deserialize_json(&json).map_err(anyhow::Error::msg)?);
+    let binary = program.serialize_binary().map_err(anyhow::Error::msg)?;
+    assert_eq!(
+        u16::from_le_bytes([binary[4], binary[5]]),
+        6,
+        "dynamic defaults must remain in the existing Program v6 format"
+    );
+    let binary_program = match Program::deserialize_binary(&binary).map_err(anyhow::Error::msg)? {
+        DeserializationResult::Complete(program) => std::sync::Arc::new(program),
+        DeserializationResult::Partial(_) => {
+            anyhow::bail!("dynamic-default v6 program unexpectedly needs recompilation")
+        }
+    };
+
+    let inputs = [
+        Value::from_json_str(r#"{"x":7}"#)?,
+        Value::from_json_str(r#"{"x":9}"#)?,
+        Value::new_object(),
+    ];
+    let expected_results = [
+        Value::from_json_str(r#"{"nested":[[7]],"values":[3]}"#)?,
+        Value::from_json_str(r#"{"nested":[[9]],"values":[5]}"#)?,
+        Value::from_json_str(r#"{"nested":[[]],"values":[]}"#)?,
+    ];
+    let data_cases = [
+        Value::from_json_str(r#"{"values":[3]}"#)?,
+        Value::from_json_str(r#"{"values":[5]}"#)?,
+        Value::new_object(),
+    ];
+
+    for ((input, data), expected) in inputs
+        .iter()
+        .zip(data_cases.iter())
+        .zip(expected_results.iter())
+    {
+        let mut engine = Engine::new();
+        engine.add_policy("test.rego".to_string(), source.to_string())?;
+        engine.add_data(data.clone())?;
+        engine.set_input(input.clone());
+        assert_eq!(
+            engine.eval_rule(entry_point.to_string())?,
+            *expected,
+            "interpreter result for input {input:?} and data {data:?}"
+        );
+    }
+
+    for round_tripped_program in [json_program, binary_program] {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(round_tripped_program.clone());
+            vm.set_execution_mode(mode);
+
+            for ((input, data), expected) in inputs
+                .iter()
+                .zip(data_cases.iter())
+                .zip(expected_results.iter())
+            {
+                vm.set_input(input.clone());
+                vm.set_data(data.clone())?;
+                let result = vm.execute_entry_point_by_name(entry_point)?;
+                assert_eq!(result, *expected, "{mode:?} result after v6 round trip");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn rgp_02_dynamic_default_preserves_multiple_definition_results_and_else() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default choose(_) := [value | some value in input.fallback]
+choose(x) := false if x == "false"
+choose(x) := null if x == "null"
+choose(x) := [] if x == "empty"
+choose(x) := "same" if x == "same"
+choose(x) := "same" if x == "same"
+default branch(_) := [value | some value in input.fallback]
+branch(x) := "one" if x == 1
+else := "two" if x == 2
+default patterned(_) := [value | some value in input.fallback]
+patterned({"kind": "match"}) := "matched"
+p := {
+    "false": choose("false"),
+    "null": choose("null"),
+    "empty": choose("empty"),
+    "equal": choose("same"),
+    "one": branch(1),
+    "two": branch(2),
+    "branch_fallback": branch(3),
+    "pattern_match": patterned({"kind": "match"}),
+    "pattern_fallback": patterned({"kind": "miss"})
+}
+"#;
+    let modules = [("test.rego", source)];
+    let entry_point = "data.test.p";
+    let inputs = [Value::from_json_str(r#"{"fallback":["fallback"]}"#)?];
+    let expected = Value::from_json_str(
+        r#"{"false":false,"null":null,"empty":[],"equal":"same","one":"one","two":"two","branch_fallback":["fallback"],"pattern_match":"matched","pattern_fallback":["fallback"]}"#,
+    )?;
+    let observations = observe_rgp_input_cases(&modules, entry_point, &inputs)?;
+
+    assert_eq!(observations.interpreter, vec![Ok(expected.clone())]);
+    assert_eq!(
+        observations.run_to_completion,
+        vec![Ok(expected.clone())],
+        "RunToCompletion must preserve distinct and equal ordinary results"
+    );
+    assert_eq!(
+        observations.suspendable,
+        vec![Ok(expected)],
+        "Suspendable must preserve distinct and equal ordinary results"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_02_conflicting_ordinary_results_do_not_select_dynamic_default() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := [input.fallback | true]
+f(x) := "first" if x == 1
+f(x) := "second" if x == 1
+p := f(1)
+"#;
+    let modules = [("test.rego", source)];
+    let inputs = [Value::from_json_str(r#"{"fallback":"default"}"#)?];
+    let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+
+    assert!(
+        observations.interpreter[0].is_err(),
+        "the interpreter must preserve its existing conflict error: {:?}",
+        observations.interpreter
+    );
+    let expected_vm = vec![Ok(Value::Undefined)];
+    assert_eq!(
+        observations.run_to_completion, expected_vm,
+        "a VM conflict must remain Undefined rather than selecting the default"
+    );
+    assert_eq!(
+        observations.suspendable, expected_vm,
+        "a suspendable VM conflict must remain Undefined rather than selecting the default"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_02_default_expression_uses_its_owning_module_imports_in_either_order() -> anyhow::Result<()>
+{
+    let helper = r#"package helpers
+import rego.v1
+import data.owner as source
+default f(_) := source.value
+"#;
+    let main = r#"package main
+import rego.v1
+import data.caller as source
+import data.helpers.f as f
+p := f(0)
+"#;
+    let module_orders = [
+        [("helper.rego", helper), ("main.rego", main)],
+        [("main.rego", main), ("helper.rego", helper)],
+    ];
+    let expected = Value::from("owner");
+
+    for modules in module_orders {
+        let mut engine = Engine::new();
+        for (module_id, content) in &modules {
+            engine.add_policy((*module_id).to_string(), (*content).to_string())?;
+        }
+        engine.add_data(Value::from_json_str(
+            r#"{"owner":{"value":"owner"},"caller":{"value":"caller"}}"#,
+        )?)?;
+        assert_eq!(
+            engine.eval_rule("data.main.p".to_string())?,
+            expected,
+            "interpreter default must resolve imports in its defining module"
+        );
+
+        let entry_point = "data.main.p";
+        let compiled = engine.compile_with_entrypoint(&Rc::from(entry_point))?;
+        let program = Compiler::compile_from_policy(&compiled, &[entry_point])?;
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            vm.set_data(Value::from_json_str(
+                r#"{"owner":{"value":"owner"},"caller":{"value":"caller"}}"#,
+            )?)?;
+            assert_eq!(
+                vm.execute_entry_point_by_name(entry_point)?,
+                expected,
+                "{mode:?} default must resolve imports in its defining module"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn rgp_e1_dynamic_default_comprehension_undefined_yields_survive_v6_round_trips(
+) -> anyhow::Result<()> {
+    use regorus::rvm::program::{DeserializationResult, Program};
+
+    let helper = r#"package helpers
+import rego.v1
+import data.owner as source
+default f(_) := {
+    "set_count": count({item.value | some item in source.items}),
+    "set_drop_key": "drop-key" in {item.value | some item in source.items},
+    "set_false": false in {item.value | some item in source.items},
+    "set_null": null in {item.value | some item in source.items},
+    "set_kept": "kept" in {item.value | some item in source.items},
+    "object": {item.key: item.value | some item in source.items}
+}
+f(x) := "ordinary" if x == 1
+"#;
+    let main = r#"package main
+import rego.v1
+import data.caller as source
+import data.helpers.f as f
+p := f(input.argument)
+"#;
+    let module_orders = [
+        [("helper.rego", helper), ("main.rego", main)],
+        [("main.rego", main), ("helper.rego", helper)],
+    ];
+    let data = Value::from_json_str(
+        r#"{"owner":{"items":[{"key":"drop-value"},{"value":"drop-key"},{"key":"false","value":false},{"key":"null","value":null},{"key":"valid","value":"kept"}]},"caller":{"items":[{"key":"caller","value":"wrong"}]}}"#,
+    )?;
+    let inputs = [
+        Value::from_json_str(r#"{"argument":1}"#)?,
+        Value::from_json_str(r#"{"argument":0}"#)?,
+    ];
+    let expected = [
+        Value::from("ordinary"),
+        Value::from_json_str(
+            r#"{"set_count":4,"set_drop_key":true,"set_false":true,"set_null":true,"set_kept":true,"object":{"false":false,"null":null,"valid":"kept"}}"#,
+        )?,
+    ];
+
+    for modules in module_orders {
+        let entry_point = "data.main.p";
+        let mut engine = Engine::new();
+        for (module_path, module) in &modules {
+            engine.add_policy((*module_path).to_string(), (*module).to_string())?;
+        }
+        engine.add_data(data.clone())?;
+
+        for (input, expected) in inputs.iter().zip(expected.iter()) {
+            engine.set_input(input.clone());
+            assert_eq!(
+                engine.eval_rule(entry_point.to_string())?,
+                *expected,
+                "interpreter result for input {input:?}"
+            );
+        }
+
+        let compiled = engine.compile_with_entrypoint(&Rc::from(entry_point))?;
+        let program = Compiler::compile_from_policy(&compiled, &[entry_point])?;
+        let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+        let json_program =
+            std::sync::Arc::new(Program::deserialize_json(&json).map_err(anyhow::Error::msg)?);
+        let binary = program.serialize_binary().map_err(anyhow::Error::msg)?;
+        assert_eq!(
+            u16::from_le_bytes([binary[4], binary[5]]),
+            6,
+            "helper-bearing dynamic defaults must remain in Program v6"
+        );
+        let binary_program =
+            match Program::deserialize_binary(&binary).map_err(anyhow::Error::msg)? {
+                DeserializationResult::Complete(program) => std::sync::Arc::new(program),
+                DeserializationResult::Partial(_) => {
+                    anyhow::bail!("helper-bearing dynamic-default v6 program needs recompilation")
+                }
+            };
+
+        for (program, graph) in [
+            (program, "compiled"),
+            (json_program, "JSON round trip"),
+            (binary_program, "binary round trip"),
+        ] {
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                vm.set_data(data.clone())?;
+
+                for (input, expected) in inputs.iter().zip(expected.iter()) {
+                    vm.set_input(input.clone());
+                    assert_eq!(
+                        vm.execute_entry_point_by_name(entry_point)?,
+                        *expected,
+                        "{graph} {mode:?} result for input {input:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn rgp_02_host_await_runs_only_for_default_fallback_and_resumes_once() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := [count(input.value) | true]
+f(x) := "ordinary" if x == 1
+p := f(input.value)
+"#;
+    let options = CompilerOptions {
+        host_await_builtins: vec![("count".to_string(), 1)],
+        ..CompilerOptions::default()
+    };
+    let modules = [("test.rego", source)];
+    let program = compile_modules_with_options(&modules, "data.test.p", &options)?;
+
+    let mut run_to_completion = RegoVM::new();
+    run_to_completion.load_program(program.clone());
+    run_to_completion
+        .set_host_await_responses([(Value::from("count"), [Value::from("host-result")])]);
+    run_to_completion.set_input(Value::from_json_str(r#"{"value":1}"#)?);
+    assert_eq!(
+        run_to_completion.execute_entry_point_by_name("data.test.p")?,
+        Value::from("ordinary"),
+        "an ordinary success must not execute the default host call"
+    );
+    run_to_completion.set_input(Value::from_json_str(r#"{"value":2}"#)?);
+    assert_eq!(
+        run_to_completion.execute_entry_point_by_name("data.test.p")?,
+        Value::from_json_str(r#"["host-result"]"#)?,
+        "the fallback host call must consume exactly one response"
+    );
+    run_to_completion.set_input(Value::from_json_str(r#"{"value":3}"#)?);
+    assert_eq!(
+        run_to_completion.execute_entry_point_by_name("data.test.p")?,
+        Value::Undefined,
+        "a missing default host response remains a failed rule result"
+    );
+
+    let mut suspendable = RegoVM::new();
+    suspendable.load_program(program);
+    suspendable.set_execution_mode(ExecutionMode::Suspendable);
+    suspendable.set_input(Value::from_json_str(r#"{"value":1}"#)?);
+    assert_eq!(
+        suspendable.execute_entry_point_by_name("data.test.p")?,
+        Value::from("ordinary")
+    );
+    suspendable.set_input(Value::from_json_str(r#"{"value":2}"#)?);
+    let _suspended_result = suspendable.execute_entry_point_by_name("data.test.p")?;
+    assert!(matches!(
+        suspendable.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+    assert_eq!(
+        suspendable.resume(Some(Value::from("resumed")))?,
+        Value::from_json_str(r#"["resumed"]"#)?
+    );
+    suspendable.set_input(Value::from_json_str(r#"{"value":1}"#)?);
+    assert_eq!(
+        suspendable.execute_entry_point_by_name("data.test.p")?,
+        Value::from("ordinary"),
+        "the VM must remain reusable after resume"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_02_dynamic_default_does_not_absorb_policy_or_resource_errors() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := [count(input.values) | true]
+f(x) := "ordinary" if x == 1
+p := f(input.value)
+"#;
+    let modules = [("test.rego", source)];
+    let program =
+        compile_modules_with_options(&modules, "data.test.p", &CompilerOptions::default())?;
+    let disabled_count =
+        BuiltinPolicy::from_disabled_names(&["count"]).expect("count is a registered builtin");
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_input(Value::from_json_str(r#"{"value":2,"values":[]}"#)?);
+        vm.set_builtin_policy(disabled_count.clone())?;
+        assert!(matches!(
+            vm.execute_entry_point_by_name("data.test.p"),
+            Err(VmError::BuiltinDisabled { name, .. }) if name == "count"
+        ));
+    }
+
+    let mut limited = RegoVM::new();
+    limited.load_program(program);
+    limited.set_input(Value::from_json_str(r#"{"value":2,"values":[]}"#)?);
+    limited.set_max_instructions(0);
+    assert!(matches!(
+        limited.execute_entry_point_by_name("data.test.p"),
+        Err(VmError::InstructionLimitExceeded { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn r3_namespace_import_rejects_value_and_prefix_alias_as_disabled_builtin() {
+    let helper = r#"package helpers["1.0.0"]
+import rego.v1
+count := true
+default count.child(_) := "fallback"
+"#;
+    let main = r#"package main["2.0.0"]
+import rego.v1
+import data.helpers["1.0.0"].count as count
+p := true
+unused := count([])
+"#;
+    let module_orders = [
+        [("helper.rego", helper), ("main.rego", main)],
+        [("main.rego", main), ("helper.rego", helper)],
+    ];
+
+    for modules in module_orders {
+        assert_builtin_disabled_with_span(
+            compile_modules_with_options(
+                &modules,
+                r#"data.main["2.0.0"].p"#,
+                &disabled_count_options(),
+            ),
+            "count",
+            "main.rego",
+            main,
+            "count([])",
+            5,
+        );
+    }
+}
+
+#[test]
+fn disabled_registered_host_keeps_precedence_over_same_name_default_function() {
+    let source = "package main\nimport rego.v1\ndefault count(_) := \"fallback\"\np := true\nunused := count([])";
+    let mut options = disabled_count_options();
+    options.host_await_builtins = vec![("count".to_string(), 1)];
+    assert_builtin_disabled_with_span(
+        compile_modules_with_options(&[("main.rego", source)], "data.main.p", &options),
+        "count",
+        "main.rego",
+        source,
+        "count([])",
+        5,
+    );
+}
+
+#[test]
+fn disabled_builtin_name_preserves_qualified_and_imported_user_functions() {
+    let helper = r#"package helpers
+count(_) := "helper"
+"#;
+    let main = r#"package main
+import rego.v1
+import data.helpers
+
+p := {
+    "qualified": data.helpers.count("argument"),
+    "imported": helpers.count("argument"),
+}
+"#;
+    let program = compile_modules_with_options(
+        &[("helper.rego", helper), ("main.rego", main)],
+        "data.main.p",
+        &disabled_count_options(),
+    )
+    .expect("genuine functions must take precedence over disabled builtin names");
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.main.p")
+            .expect("evaluate qualified and imported functions"),
+        Value::from_json_str(r#"{"qualified":"helper","imported":"helper"}"#)
+            .expect("valid expected object")
+    );
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn disabled_http_send_allows_import_alias_to_genuine_user_send() {
+    let helper = r#"package helpers
+send(_) := "user send"
+"#;
+    let main = r#"package main
+import data.helpers as http
+p := http.send({})
+"#;
+    let options = CompilerOptions {
+        host_await_builtins: Vec::new(),
+        builtin_policy: BuiltinPolicy::from_disabled_names(&["http.send"])
+            .expect("http.send is registered with the http feature"),
+    };
+    let program = compile_modules_with_options(
+        &[("helper.rego", helper), ("main.rego", main)],
+        "data.main.p",
+        &options,
+    )
+    .expect("an import alias targeting a genuine function is not a builtin call");
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.main.p")
+            .expect("evaluate aliased user function"),
+        Value::from("user send")
+    );
+}
+
+#[test]
+fn disabled_native_calls_are_rejected_in_all_loaded_modules_and_rules() {
+    let options = disabled_count_options();
+
+    assert_count_is_disabled(compile_modules_with_options(
+        &[("main.rego", "package main\np := true\nunused := count([])")],
+        "data.main.p",
+        &options,
+    ));
+
+    assert_count_is_disabled(compile_modules_with_options(
+        &[
+            ("main.rego", "package main\np := true"),
+            ("unused.rego", "package unused\nq := count([])"),
+        ],
+        "data.main.p",
+        &options,
+    ));
+
+    assert_count_is_disabled(compile_modules_with_options(
+        &[
+            ("helpers.rego", "package helpers\nsize(xs) := count(xs)"),
+            (
+                "main.rego",
+                "package main\nimport data.helpers as h\np := h.size([])",
+            ),
+        ],
+        "data.main.p",
+        &options,
+    ));
+}
+
+#[test]
+fn disabled_native_calls_are_found_in_nested_ast_paths() {
+    let options = disabled_count_options();
+    let modules = [
+        (
+            "comprehension.rego",
+            "package test\np := true\nq := [count([]) | some x in [1]]",
+        ),
+        (
+            "default.rego",
+            "package test\np := true\ndefault q := count([])",
+        ),
+        (
+            "else.rego",
+            "package test\np := true\nq := true if { false } else := count([]) if { true }",
+        ),
+        (
+            "every.rego",
+            "package test\nimport rego.v1\np := true\nq if { every x in [1] { count([]) == 0 } }",
+        ),
+        (
+            "with.rego",
+            "package test\np := true\nq if { data.test.p with input as count([]) }",
+        ),
+    ];
+
+    for (id, module) in modules {
+        assert_count_is_disabled(compile_modules_with_options(
+            &[(id, module)],
+            "data.test.p",
+            &options,
+        ));
+    }
+}
+
+#[test]
+fn disabled_builtin_policy_preserves_user_functions_and_ignores_text() {
+    let options = disabled_count_options();
+    let program = compile_modules_with_options(
+        &[(
+            "test.rego",
+            r#"package test
+count(xs) := "user"
+p := count([])
+q := "count([])" # count([])
+unused := unknown_function([])
+"#,
+        )],
+        "data.test.p",
+        &options,
+    )
+    .expect("user functions, strings, comments, and unused unknown calls are not builtins");
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.test.p").unwrap(),
+        Value::from("user")
+    );
+}
+
+#[test]
+fn disabled_registered_and_static_host_calls_are_rejected() {
+    let registered = CompilerOptions {
+        host_await_builtins: vec![("count".to_string(), 1)],
+        builtin_policy: BuiltinPolicy::from_disabled_names(&["count"])
+            .expect("count is a registered builtin"),
+    };
+    assert_count_is_disabled(compile_modules_with_options(
+        &[("test.rego", "package test\np := count([])")],
+        "data.test.p",
+        &registered,
+    ));
+
+    let options = disabled_count_options();
+    assert_count_is_disabled(compile_modules_with_options(
+        &[(
+            "test.rego",
+            r#"package test
+p := __builtin_host_await([], "count")
+"#,
+        )],
+        "data.test.p",
+        &options,
+    ));
+}
+
+#[test]
+fn runtime_disabled_builtin_is_hard_before_undefined_arguments() {
+    let program = compile_rule(
+        r#"
+        package test
+        p := count(input.missing)
+    "#,
+    );
+    let policy =
+        BuiltinPolicy::from_disabled_names(&["count"]).expect("count is a registered builtin");
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        for strict in [false, true] {
+            for entry_point in 0..3 {
+                let mut vm = RegoVM::new();
+                vm.set_execution_mode(mode);
+                vm.set_strict_builtin_errors(strict);
+                vm.load_program(program.clone());
+                vm.set_input(Value::new_object());
+                vm.set_builtin_policy(policy.clone())
+                    .expect("policy can be set before execution");
+
+                let result = match entry_point {
+                    0 => vm.execute(),
+                    1 => vm.execute_entry_point_by_name("data.test.p"),
+                    _ => vm.execute_entry_point_by_index(0),
+                };
+                let error = result.expect_err("disabled calls must fail in every execution mode");
+                assert!(
+                    matches!(
+                        &error,
+                        VmError::BuiltinDisabled { name, .. } if name == "count"
+                    ),
+                    "unexpected runtime error: {error}"
+                );
+                assert!(matches!(
+                    vm.execution_state(),
+                    ExecutionState::Error {
+                        error: VmError::BuiltinDisabled { name, .. }
+                    } if name == "count"
+                ));
+            }
+        }
+    }
+}
+
+#[test]
+fn runtime_dynamic_host_identifier_is_checked_before_response_or_suspension() {
+    let program = compile_rule(
+        r#"
+        package test
+        p := __builtin_host_await(input.argument, input.identifier)
+    "#,
+    );
+    let policy =
+        BuiltinPolicy::from_disabled_names(&["count"]).expect("count is a registered builtin");
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(mode);
+        vm.load_program(program.clone());
+        vm.set_input(Value::from_json_str(r#"{"identifier":"count"}"#).expect("valid JSON input"));
+        vm.set_host_await_responses([(Value::from("count"), [Value::from(42)])]);
+        vm.set_builtin_policy(policy.clone())
+            .expect("policy can be set before execution");
+
+        let error = vm
+            .execute()
+            .expect_err("a disabled dynamic host identifier must fail before host handling");
+        assert!(
+            matches!(
+                &error,
+                VmError::BuiltinDisabled { name, .. } if name == "count"
+            ),
+            "unexpected runtime error: {error}"
+        );
+        assert!(matches!(
+            vm.execution_state(),
+            ExecutionState::Error {
+                error: VmError::BuiltinDisabled { name, .. }
+            } if name == "count"
+        ));
+    }
+}
+
+#[test]
+fn runtime_registered_host_builtin_is_guarded_on_precompiled_programs() {
+    let options = CompilerOptions {
+        host_await_builtins: vec![("count".to_string(), 1)],
+        builtin_policy: BuiltinPolicy::default(),
+    };
+    let program = compile_rule_with_options("package test\np := count(input.argument)", &options);
+    let policy =
+        BuiltinPolicy::from_disabled_names(&["count"]).expect("count is a registered builtin");
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(mode);
+        vm.load_program(program.clone());
+        vm.set_input(Value::from_json_str(r#"{"argument":1}"#).unwrap());
+        vm.set_host_await_responses([(Value::from("count"), [Value::from(42)])]);
+        vm.set_builtin_policy(policy.clone())
+            .expect("policy can be set before execution");
+
+        let error = vm
+            .execute()
+            .expect_err("disabled registered host calls must not yield or use responses");
+        assert!(matches!(
+            &error,
+            VmError::BuiltinDisabled { name, .. } if name == "count"
+        ));
+    }
+}
+
+#[test]
+fn builtin_policy_is_per_vm_survives_load_and_can_be_replaced_after_error() {
+    let program = compile_rule(
+        r#"
+        package test
+        p := count(input.missing)
+    "#,
+    );
+    let policy =
+        BuiltinPolicy::from_disabled_names(&["count"]).expect("count is a registered builtin");
+
+    let mut denied_vm = RegoVM::new();
+    denied_vm.set_builtin_policy(policy.clone()).unwrap();
+    denied_vm.load_program(program.clone());
+    denied_vm.set_input(Value::new_object());
+    let error = denied_vm
+        .execute_entry_point_by_name("data.test.p")
+        .unwrap_err();
+    assert!(matches!(
+        &error,
+        VmError::BuiltinDisabled { name, .. } if name == "count"
+    ));
+
+    let mut allowed_vm = RegoVM::new();
+    allowed_vm.load_program(program);
+    allowed_vm.set_input(Value::new_object());
+    assert_eq!(
+        allowed_vm
+            .execute_entry_point_by_name("data.test.p")
+            .unwrap(),
+        Value::Undefined
+    );
+
+    denied_vm
+        .set_builtin_policy(BuiltinPolicy::default())
+        .expect("terminal VM can change policy");
+    assert!(matches!(denied_vm.execution_state(), ExecutionState::Ready));
+    assert_eq!(
+        denied_vm
+            .execute_entry_point_by_name("data.test.p")
+            .unwrap(),
+        Value::Undefined
+    );
+}
+
+#[test]
+fn serialized_program_enforces_policy_independently_per_vm() {
+    let program = compile_rule("package test\np := count([])");
+    let serialized = program
+        .serialize_binary()
+        .expect("serialize compiled program");
+    let deserialized = match regorus::rvm::program::Program::deserialize_binary(&serialized)
+        .expect("deserialize compiled program")
+    {
+        regorus::rvm::program::DeserializationResult::Complete(program) => {
+            std::sync::Arc::new(program)
+        }
+        regorus::rvm::program::DeserializationResult::Partial(_) => {
+            panic!("compiled program should deserialize completely")
+        }
+    };
+
+    let policy =
+        BuiltinPolicy::from_disabled_names(&["count"]).expect("count is a registered builtin");
+    let mut denied_vm = RegoVM::new();
+    denied_vm.load_program(deserialized.clone());
+    denied_vm
+        .set_builtin_policy(policy)
+        .expect("policy can be set for deserialized program");
+    assert!(matches!(
+        denied_vm.execute_entry_point_by_name("data.test.p"),
+        Err(VmError::BuiltinDisabled { name, .. }) if name == "count"
+    ));
+
+    let mut allowed_vm = RegoVM::new();
+    allowed_vm.load_program(deserialized);
+    assert_eq!(
+        allowed_vm
+            .execute_entry_point_by_name("data.test.p")
+            .expect("the same deserialized program remains allowed in another VM"),
+        Value::from(0)
+    );
+}
+
+#[test]
+fn builtin_policy_change_is_rejected_atomically_while_suspended() {
+    let program = compile_rule(
+        r#"
+        package test
+        p := __builtin_host_await(input.argument, "other")
+    "#,
+    );
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(program);
+    vm.set_input(Value::from_json_str(r#"{"argument":1}"#).unwrap());
+    assert_eq!(vm.execute().unwrap(), Value::Undefined);
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+
+    let error = vm
+        .set_builtin_policy(
+            BuiltinPolicy::from_disabled_names(&["count"]).expect("count is a registered builtin"),
+        )
+        .expect_err("policy changes must be rejected while suspended");
+    assert!(matches!(
+        error,
+        VmError::BuiltinPolicyChangeWhileExecuting { .. }
+    ));
+    assert!(vm.get_builtin_policy().disabled_names().is_empty());
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+    assert_eq!(vm.resume(Some(Value::from(7))).unwrap(), Value::from(7));
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn default_http_send_remains_undefined_in_interpreter_and_rvm() {
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "test.rego".to_string(),
+            "package test\np := http.send({})".to_string(),
+        )
+        .expect("add policy");
+
+    assert_eq!(
+        engine
+            .eval_rule("data.test.p".to_string())
+            .expect("evaluate in interpreter"),
+        Value::Undefined
+    );
+
+    let entry_point = "data.test.p";
+    let compiled = engine
+        .compile_with_entrypoint(&Rc::from(entry_point))
+        .expect("compile policy");
+    let program = Compiler::compile_from_policy(&compiled, &[entry_point]).expect("compile to RVM");
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert_eq!(
+        vm.execute_entry_point_by_name(entry_point)
+            .expect("evaluate in RVM"),
+        Value::Undefined
+    );
+}
+
+#[test]
+fn disabled_native_error_during_resume_leaves_vm_in_error_state() {
+    let program = compile_rule(
+        r#"
+        package test
+        p := __builtin_host_await(input.argument, "other") + count(input.missing)
+    "#,
+    );
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(program);
+    vm.set_input(Value::new_object());
+    vm.set_builtin_policy(
+        BuiltinPolicy::from_disabled_names(&["count"]).expect("count is a registered builtin"),
+    )
+    .unwrap();
+
+    vm.execute().expect("first host await is permitted");
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended {
+            reason: regorus::rvm::vm::SuspendReason::HostAwait { .. },
+            ..
+        }
+    ));
+
+    let error = vm
+        .resume(Some(Value::from(1)))
+        .expect_err("disabled native call must fail during resume");
+    assert!(matches!(
+        &error,
+        VmError::BuiltinDisabled { name, .. } if name == "count"
+    ));
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Error {
+            error: VmError::BuiltinDisabled { name, .. }
+        } if name == "count"
+    ));
+}
+
+#[test]
+fn rgp_05_parent_default_ignores_ordinary_child_on_reused_vm() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := [input.x | true]
+f.child(_) := true
+p := f(0)
+"#;
+    let modules = [("test.rego", source)];
+    let inputs = [
+        Value::from_json_str(r#"{"x":7}"#)?,
+        Value::from_json_str(r#"{"x":9}"#)?,
+    ];
+    let expected = vec![
+        Ok(Value::from_json_str("[7]")?),
+        Ok(Value::from_json_str("[9]")?),
+    ];
+
+    let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "a child function must not turn the parent default into an ordinary wrapper"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_dynamic_default_wrapper_compiles_only_exact_parent_functions() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := [input.x | true]
+f(x) := "parent" if x == 1
+f.child(x) := "child" if x == 1
+p := {
+    "parent_hit": f(1),
+    "parent_miss": f(2),
+    "child_hit": f.child(1)
+}
+child_miss if { f.child(2) }
+"#;
+    let modules = [("test.rego", source)];
+    let inputs = [Value::from_json_str(r#"{"x":7}"#)?];
+    let expected =
+        Value::from_json_str(r#"{"parent_hit":"parent","parent_miss":[7],"child_hit":"child"}"#)?;
+
+    let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+    let expected = vec![Ok(expected)];
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "the private ordinary-result helper must exclude descendant functions"
+    );
+    let child_miss = observe_rgp_input_cases(&modules, "data.test.child_miss", &inputs)?;
+    let expected_miss = vec![Ok(Value::Undefined)];
+    assert_eq!(
+        (
+            child_miss.interpreter,
+            child_miss.run_to_completion,
+            child_miss.suspendable
+        ),
+        (expected_miss.clone(), expected_miss.clone(), expected_miss),
+        "a missed child function must not become a parent definition"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_constant_default_keeps_exact_parent_and_child_functions() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := "fallback"
+f(x) := "parent" if x == 1
+f.child(x) := "child" if x == 1
+p := {
+    "parent_hit": f(1),
+    "parent_miss": f(2),
+    "child_hit": f.child(1)
+}
+child_miss if { f.child(2) }
+"#;
+    let modules = [("test.rego", source)];
+    let inputs = [Value::new_object()];
+    let expected = Value::from_json_str(
+        r#"{"parent_hit":"parent","parent_miss":"fallback","child_hit":"child"}"#,
+    )?;
+
+    let observations = observe_rgp_input_cases(&modules, "data.test.p", &inputs)?;
+    let expected = vec![Ok(expected)];
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "a constant parent default must not absorb child definitions"
+    );
+    let child_miss =
+        observe_rgp_input_cases(&modules, "data.test.child_miss", &[Value::new_object()])?;
+    let expected_miss = vec![Ok(Value::Undefined)];
+    assert_eq!(
+        (
+            child_miss.interpreter,
+            child_miss.run_to_completion,
+            child_miss.suspendable
+        ),
+        (expected_miss.clone(), expected_miss.clone(), expected_miss),
+        "a missed child function must remain undefined"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_output_argument_literals_match_and_mismatch() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := true
+matched if { f(0, true) }
+mismatched if { f(0, false) }
+"#;
+    let modules = [("test.rego", source)];
+
+    for (entry_point, expected) in [
+        ("data.test.matched", Value::Bool(true)),
+        ("data.test.mismatched", Value::Undefined),
+    ] {
+        let observations = observe_rgp_input_cases(&modules, entry_point, &[Value::new_object()])?;
+        let expected = vec![Ok(expected)];
+        assert_eq!(
+            (
+                observations.interpreter,
+                observations.run_to_completion,
+                observations.suspendable
+            ),
+            (expected.clone(), expected.clone(), expected),
+            "default-only output literal at {entry_point}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_output_binding_and_v6_round_trip() -> anyhow::Result<()> {
+    use regorus::rvm::program::{DeserializationResult, Program};
+
+    let source = r#"package test
+import rego.v1
+default f(_) := true
+p := result if { f(0, result) }
+"#;
+    let modules = [("test.rego", source)];
+    let entry_point = "data.test.p";
+    let expected = Value::Bool(true);
+    let observations = observe_rgp_input_cases(&modules, entry_point, &[Value::new_object()])?;
+    let expected_observations = vec![Ok(expected.clone())];
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (
+            expected_observations.clone(),
+            expected_observations.clone(),
+            expected_observations
+        ),
+        "an unbound output variable must be assigned by a default-only function"
+    );
+
+    let program = compile_modules_with_options(&modules, entry_point, &CompilerOptions::default())?;
+    let binary = program.serialize_binary().map_err(anyhow::Error::msg)?;
+    assert_eq!(
+        u16::from_le_bytes([binary[4], binary[5]]),
+        6,
+        "default-only output calls must keep the existing Program v6 format"
+    );
+    let program = match Program::deserialize_binary(&binary).map_err(anyhow::Error::msg)? {
+        DeserializationResult::Complete(program) => std::sync::Arc::new(program),
+        DeserializationResult::Partial(_) => {
+            anyhow::bail!("default-only output-call v6 program unexpectedly needs recompilation")
+        }
+    };
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_input(Value::new_object());
+        assert_eq!(
+            vm.execute_entry_point_by_name(entry_point)?,
+            expected,
+            "{mode:?} result after the existing-v6 round trip"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_output_literals_resolve_qualified_and_aliased_calls() -> anyhow::Result<()> {
+    let helper = r#"package helpers
+import rego.v1
+default f(_) := true
+"#;
+    let main = r#"package main
+import rego.v1
+import data.helpers as helper
+qualified_match if { data.helpers.f(0, true) }
+qualified_mismatch if { data.helpers.f(0, false) }
+aliased_match if { helper.f(0, true) }
+aliased_mismatch if { helper.f(0, false) }
+"#;
+    let modules = [("helper.rego", helper), ("main.rego", main)];
+
+    for (entry_point, expected) in [
+        ("data.main.qualified_match", Value::Bool(true)),
+        ("data.main.qualified_mismatch", Value::Undefined),
+        ("data.main.aliased_match", Value::Bool(true)),
+        ("data.main.aliased_mismatch", Value::Undefined),
+    ] {
+        let observations = observe_rgp_input_cases(&modules, entry_point, &[Value::new_object()])?;
+        let expected = vec![Ok(expected)];
+        assert_eq!(
+            (
+                observations.interpreter,
+                observations.run_to_completion,
+                observations.suspendable
+            ),
+            (expected.clone(), expected.clone(), expected),
+            "default-only output literal at {entry_point}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_output_binding_resolves_fully_qualified_call() -> anyhow::Result<()> {
+    let helper = r#"package helpers
+import rego.v1
+default f(_) := true
+"#;
+    let main = r#"package main
+import rego.v1
+p := result if { data.helpers.f(0, result) }
+"#;
+    let modules = [("helper.rego", helper), ("main.rego", main)];
+    let observations = observe_rgp_input_cases(&modules, "data.main.p", &[Value::new_object()])?;
+    let expected = vec![Ok(Value::Bool(true))];
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "fully qualified default-only calls must bind their output argument"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_output_binding_resolves_import_alias() -> anyhow::Result<()> {
+    let helper = r#"package helpers
+import rego.v1
+default f(_) := true
+"#;
+    let main = r#"package main
+import rego.v1
+import data.helpers as helper
+p := result if { helper.f(0, result) }
+"#;
+    let modules = [("helper.rego", helper), ("main.rego", main)];
+    let observations = observe_rgp_input_cases(&modules, "data.main.p", &[Value::new_object()])?;
+    let expected = vec![Ok(Value::Bool(true))];
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "import-aliased default-only calls must bind their output argument"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_function_rejects_wrong_arity_before_undefined() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default f(_) := true
+p := f(input.missing, 0, 0)
+"#;
+    let entry_point = "data.test.p";
+    let mut engine = Engine::new();
+    engine.add_policy("test.rego".to_string(), source.to_string())?;
+    engine.set_input(Value::new_object());
+    let interpreter = engine
+        .eval_rule(entry_point.to_string())
+        .map_err(|error| error.to_string());
+    assert!(
+        interpreter
+            .as_ref()
+            .expect_err("wrong arity must be an interpreter error")
+            .contains("mismatch in number of arguments"),
+        "wrong arity must be checked before Undefined propagation: {interpreter:?}"
+    );
+
+    let modules = [("test.rego", source)];
+    let program = compile_modules_with_options(&modules, entry_point, &CompilerOptions::default())?;
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_input(Value::new_object());
+        assert!(
+            matches!(
+                vm.execute_entry_point_by_name(entry_point),
+                Err(VmError::FunctionArgumentMismatch {
+                    expected: 1,
+                    actual: 3,
+                    ..
+                })
+            ),
+            "{mode:?} must check wrong arity before Undefined propagation"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_builtin_name_shadow_uses_user_function_arity() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default count(_, _) := true
+p if { count(0, 0, true) }
+"#;
+    let modules = [("test.rego", source)];
+    let observations = observe_rgp_input_cases(&modules, "data.test.p", &[Value::new_object()])?;
+    let expected = vec![Ok(Value::Bool(true))];
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "the user default must shadow native count arity when resolving its output argument"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_local_namespace_default_materializes_from_dotted_rule() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default config.timeout := 30
+p := config
+"#;
+    let modules = [("test.rego", source)];
+    let observations = observe_rgp_data_case(
+        &modules,
+        "data.test.p",
+        &Value::new_object(),
+        &Value::new_object(),
+    )?;
+    let expected = Ok(Value::from_json_str(r#"{"timeout":30}"#)?);
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "a local namespace prefix must materialize its dotted value default"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_local_namespace_document_merges_rules_and_data_without_callables() -> anyhow::Result<()> {
+    let source = r#"package test
+import rego.v1
+default config.timeout := 30
+default config.retries := 5
+config.timeout := 42
+config.mode := "strict"
+default config.render(_) := input.render
+p := config
+callable := config.render(0)
+"#;
+    let modules = [("test.rego", source)];
+    let data = Value::from_json_str(r#"{"test":{"config":{"base":"data"}}}"#)?;
+    let input = Value::from_json_str(r#"{"render":"called"}"#)?;
+    let expected = Ok(Value::from_json_str(
+        r#"{"base":"data","retries":5,"timeout":42,"mode":"strict"}"#,
+    )?);
+
+    let observations = observe_rgp_data_case(&modules, "data.test.p", &data, &input)?;
+    assert_eq!(
+        (
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable
+        ),
+        (expected.clone(), expected.clone(), expected),
+        "namespace materialization must merge value rules and base data, but omit callable descendants"
+    );
+
+    let callable = observe_rgp_data_case(&modules, "data.test.callable", &data, &input)?;
+    let expected_callable = Ok(Value::from_json_str(r#""called""#)?);
+    assert_eq!(
+        (
+            callable.interpreter,
+            callable.run_to_completion,
+            callable.suspendable
+        ),
+        (
+            expected_callable.clone(),
+            expected_callable.clone(),
+            expected_callable
+        ),
+        "the callable descendant remains available as a function"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_only_parent_and_child_use_exact_arities_in_module_orders() -> anyhow::Result<()> {
+    let parent = r#"package test
+import rego.v1
+default f(_) := true
+"#;
+    let child = r#"package test
+import rego.v1
+default f.child(_, _) := true
+"#;
+    let main = r#"package main
+import rego.v1
+p := {
+    "parent": data.test.f(0),
+    "child": data.test.f.child(0, 0)
+}
+"#;
+    let expected = Value::from_json_str(r#"{"parent":true,"child":true}"#)?;
+
+    for modules in [
+        [
+            ("parent.rego", parent),
+            ("child.rego", child),
+            ("main.rego", main),
+        ],
+        [
+            ("child.rego", child),
+            ("parent.rego", parent),
+            ("main.rego", main),
+        ],
+    ] {
+        let observations =
+            observe_rgp_input_cases(&modules, "data.main.p", &[Value::new_object()])?;
+        let expected = vec![Ok(expected.clone())];
+        assert_eq!(
+            (
+                observations.interpreter,
+                observations.run_to_completion,
+                observations.suspendable
+            ),
+            (expected.clone(), expected.clone(), expected),
+            "default-only parent and child arities must remain exact across module order"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rgp_06_interpreter_function_arity_is_lossless_at_u8_boundaries() -> anyhow::Result<()> {
+    let arguments = |values: &[String]| {
+        values
+            .chunks(16)
+            .map(|chunk| format!("    {}", chunk.join(", ")))
+            .collect::<Vec<_>>()
+            .join(",\n")
+    };
+    let mut results = Vec::new();
+
+    for arity in [255, 256, 257] {
+        let params = (1..=arity)
+            .map(|index| format!("a{index}"))
+            .collect::<Vec<_>>();
+        let values = (1..=arity)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let source = format!(
+            "package test\n\
+             import rego.v1\n\
+             ordinary(\n{params}\n) := true\n\
+             default default_only(\n{params}\n) := true\n\
+             p := ordinary(\n{values}\n)\n\
+             q := default_only(\n{values}\n)\n",
+            params = arguments(&params),
+            values = arguments(&values),
+        );
+        let mut engine = Engine::new();
+        engine.add_policy("test.rego".to_string(), source)?;
+        let ordinary = engine
+            .eval_rule("data.test.p".to_string())
+            .map_err(|error| error.to_string());
+        let default_only = engine
+            .eval_rule("data.test.q".to_string())
+            .map_err(|error| error.to_string());
+        results.push((arity, ordinary, default_only));
+    }
+
+    assert_eq!(
+        results,
+        vec![
+            (255, Ok(Value::Bool(true)), Ok(Value::Bool(true)),),
+            (256, Ok(Value::Bool(true)), Ok(Value::Bool(true)),),
+            (257, Ok(Value::Bool(true)), Ok(Value::Bool(true)),),
+        ],
+        "valid ordinary and default-only calls must preserve AST arity beyond u8"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_06_explicit_data_target_uses_its_arity_for_input_and_output_calls() -> anyhow::Result<()> {
+    let helper_two_args = r#"package helpers
+import rego.v1
+default f(_, _) := true
+"#;
+    let helper_one_arg = r#"package helpers
+import rego.v1
+default f(_) := true
+"#;
+    let shadow_one_arg = r#"package main.data.helpers
+import rego.v1
+default f(_) := false
+"#;
+    let shadow_two_args = r#"package main.data.helpers
+import rego.v1
+default f(_, _) := false
+"#;
+    let direct_input = r#"package main
+import rego.v1
+p if { data.helpers.f(0, 0) }
+"#;
+
+    let mut direct_observations = Vec::new();
+    for (module_order, modules) in [
+        [
+            ("helper.rego", helper_two_args),
+            ("shadow.rego", shadow_one_arg),
+            ("main.rego", direct_input),
+        ],
+        [
+            ("shadow.rego", shadow_one_arg),
+            ("helper.rego", helper_two_args),
+            ("main.rego", direct_input),
+        ],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let observations =
+            observe_rgp_input_cases(&modules, "data.main.p", &[Value::new_object()])?;
+        direct_observations.push((
+            module_order,
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable,
+        ));
+    }
+    let expected_direct = vec![Ok(Value::Bool(true))];
+    let expected_direct_observations = vec![
+        (
+            0,
+            expected_direct.clone(),
+            expected_direct.clone(),
+            expected_direct.clone(),
+        ),
+        (
+            1,
+            expected_direct.clone(),
+            expected_direct.clone(),
+            expected_direct,
+        ),
+    ];
+
+    let outputs = r#"package main
+import rego.v1
+matched if { data.helpers.f(0, true) }
+mismatched if { data.helpers.f(0, false) }
+bound := result if { data.helpers.f(0, result) }
+"#;
+    let mut output_observations = Vec::new();
+    for (module_order, modules) in [
+        [
+            ("helper.rego", helper_one_arg),
+            ("shadow.rego", shadow_two_args),
+            ("main.rego", outputs),
+        ],
+        [
+            ("shadow.rego", shadow_two_args),
+            ("helper.rego", helper_one_arg),
+            ("main.rego", outputs),
+        ],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for (entry_point, expected) in [
+            ("data.main.matched", Value::Bool(true)),
+            ("data.main.mismatched", Value::Undefined),
+            ("data.main.bound", Value::Bool(true)),
+        ] {
+            let observations =
+                observe_rgp_input_cases(&modules, entry_point, &[Value::new_object()])?;
+            output_observations.push((
+                module_order,
+                entry_point,
+                expected,
+                observations.interpreter,
+                observations.run_to_completion,
+                observations.suspendable,
+            ));
+        }
+    }
+    let expected_output_observations = vec![
+        (
+            0,
+            "data.main.matched",
+            Value::Bool(true),
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+        ),
+        (
+            0,
+            "data.main.mismatched",
+            Value::Undefined,
+            vec![Ok(Value::Undefined)],
+            vec![Ok(Value::Undefined)],
+            vec![Ok(Value::Undefined)],
+        ),
+        (
+            0,
+            "data.main.bound",
+            Value::Bool(true),
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+        ),
+        (
+            1,
+            "data.main.matched",
+            Value::Bool(true),
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+        ),
+        (
+            1,
+            "data.main.mismatched",
+            Value::Undefined,
+            vec![Ok(Value::Undefined)],
+            vec![Ok(Value::Undefined)],
+            vec![Ok(Value::Undefined)],
+        ),
+        (
+            1,
+            "data.main.bound",
+            Value::Bool(true),
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+            vec![Ok(Value::Bool(true))],
+        ),
+    ];
+    assert_eq!(
+        (direct_observations, output_observations),
+        (expected_direct_observations, expected_output_observations),
+        "the explicit target's arity must preserve direct inputs and output arguments in both module orders and VM modes"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_06_callable_default_fallback_uses_exact_parent_and_child_paths() -> anyhow::Result<()> {
+    let parent = r#"package test
+import rego.v1
+default f(_) := false
+"#;
+    let child = r#"package test
+import rego.v1
+default f.child(_, _) := true
+"#;
+    let main = r#"package main
+import rego.v1
+p := {
+    "parent": data.test.f(0),
+    "child": data.test.f.child(0, 0)
+}
+"#;
+    let expected_value = Value::from_json_str(r#"{"parent":false,"child":true}"#)?;
+
+    let mut observations_by_order = Vec::new();
+    for (module_order, modules) in [
+        [
+            ("parent.rego", parent),
+            ("child.rego", child),
+            ("main.rego", main),
+        ],
+        [
+            ("child.rego", child),
+            ("parent.rego", parent),
+            ("main.rego", main),
+        ],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let observations =
+            observe_rgp_input_cases(&modules, "data.main.p", &[Value::new_object()])?;
+        observations_by_order.push((
+            module_order,
+            observations.interpreter,
+            observations.run_to_completion,
+            observations.suspendable,
+        ));
+    }
+    let expected = vec![Ok(expected_value)];
+    assert_eq!(
+        observations_by_order,
+        vec![
+            (0, expected.clone(), expected.clone(), expected.clone(),),
+            (1, expected.clone(), expected.clone(), expected),
+        ],
+        "parent and child callable defaults must keep distinct exact values in both orders"
+    );
+    Ok(())
+}
+
+#[test]
+fn rgp_05_default_metadata_does_not_replace_ordinary_function_module() -> anyhow::Result<()> {
+    let defaults = r#"package helpers
+import rego.v1
+default f(_) := "fallback"
+"#;
+    let ordinary = r#"package helpers
+import rego.v1
+f({"kind": "ordinary"}) := "ordinary"
+"#;
+    let main = r#"package main
+import rego.v1
+import data.helpers as helper
+p := {
+    "hit": helper.f({"kind": "ordinary"}),
+    "miss": helper.f({"kind": "miss"})
+}
+"#;
+    let expected = Value::from_json_str(r#"{"hit":"ordinary","miss":"fallback"}"#)?;
+
+    for modules in [
+        [
+            ("defaults.rego", defaults),
+            ("ordinary.rego", ordinary),
+            ("main.rego", main),
+        ],
+        [
+            ("ordinary.rego", ordinary),
+            ("defaults.rego", defaults),
+            ("main.rego", main),
+        ],
+    ] {
+        let observations =
+            observe_rgp_input_cases(&modules, "data.main.p", &[Value::new_object()])?;
+        let expected = vec![Ok(expected.clone())];
+        assert_eq!(
+            (
+                observations.interpreter,
+                observations.run_to_completion,
+                observations.suspendable
+            ),
+            (expected.clone(), expected.clone(), expected),
+            "ordinary function definitions must retain their owning module"
+        );
+    }
+    Ok(())
 }

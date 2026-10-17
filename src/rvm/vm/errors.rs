@@ -156,8 +156,21 @@ pub enum VmError {
         pc: usize,
     },
 
+    #[error("Function expects exactly {expected} arguments, got {actual} (pc={pc})")]
+    FunctionArgumentMismatch {
+        expected: u32,
+        actual: usize,
+        pc: usize,
+    },
+
     #[error("Builtin function not resolved: {name} (pc={pc})")]
     BuiltinNotResolved { name: String, pc: usize },
+
+    #[error("Builtin function is disabled: {name} (pc={pc})")]
+    BuiltinDisabled { name: String, pc: usize },
+
+    #[error("Cannot change builtin policy while the VM is running or suspended (pc={pc})")]
+    BuiltinPolicyChangeWhileExecuting { pc: usize },
 
     #[error("Cannot add {left:?} and {right:?} (pc={pc})")]
     InvalidAddition {

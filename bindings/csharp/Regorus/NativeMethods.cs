@@ -99,6 +99,12 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_engine_compile_program_with_entrypoints(RegorusEngine* engine, byte** entryPoints, UIntPtr entryPointsLen);
 
         /// <summary>
+        /// Compile an RVM program from the engine state with compiler options.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_compile_program_with_options", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_compile_program_with_options(RegorusEngine* engine, byte** entryPoints, UIntPtr entryPointsLen, RegorusCompilerOptions* options);
+
+        /// <summary>
         /// Drop a RegorusEngine.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_engine_drop", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -111,6 +117,12 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_program_compile_from_modules", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_program_compile_from_modules(byte* data_json, RegorusPolicyModule* modules, UIntPtr modules_len, byte** entry_points, UIntPtr entry_points_len);
+
+        /// <summary>
+        /// Compile an RVM program from modules using compiler options.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_program_compile_from_modules_with_options", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_program_compile_from_modules_with_options(byte* data_json, RegorusPolicyModule* modules, UIntPtr modules_len, byte** entry_points, UIntPtr entry_points_len, RegorusCompilerOptions* options);
 
         /// <summary>
         /// Construct a new empty program.
@@ -233,6 +245,18 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_execution_mode", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_rvm_set_execution_mode(RegorusRvm* vm, byte mode);
+
+        /// <summary>
+        /// Replace the VM's disabled native builtin policy.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_builtin_policy", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_rvm_set_builtin_policy(RegorusRvm* vm, byte** disabledNames, UIntPtr disabledNamesLen);
+
+        /// <summary>
+        /// Get the VM's disabled native builtin names as a JSON array.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_rvm_get_builtin_policy", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_rvm_get_builtin_policy(RegorusRvm* vm);
 
         /// <summary>
         /// Set step mode for suspendable execution.
@@ -1041,6 +1065,28 @@ namespace Regorus.Internal
     internal unsafe partial struct RegorusHostAwaitBuiltin
     {
         public byte* name;
+    }
+
+    /// <summary>
+    /// FFI wrapper for an exact disabled-builtin name list.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct RegorusBuiltinPolicyOptions
+    {
+        public byte** disabled_names;
+        public UIntPtr disabled_names_len;
+    }
+
+    /// <summary>
+    /// FFI wrapper for RVM compiler options.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct RegorusCompilerOptions
+    {
+        public RegorusHostAwaitBuiltin* host_await_builtins;
+        public UIntPtr host_await_builtins_len;
+        public UIntPtr host_await_builtin_size;
+        public RegorusBuiltinPolicyOptions builtin_policy;
     }
 
     /// <summary>

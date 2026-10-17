@@ -51,6 +51,9 @@ pub enum CompilerError {
     #[error("Unknown function: '{name}'")]
     UnknownFunction { name: String },
 
+    #[error("Builtin '{name}' is disabled by the builtin policy")]
+    BuiltinDisabled { name: String },
+
     #[error("Undefined variable: '{name}'")]
     UndefinedVariable { name: String },
 

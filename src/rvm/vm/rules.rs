@@ -6,7 +6,6 @@ use crate::rvm::program::{RuleInfo, RuleType};
 use crate::value::Value;
 use alloc::format;
 use alloc::vec::Vec;
-use core::convert::TryFrom as _;
 use core::mem;
 
 use super::context::CallRuleContext;
@@ -27,6 +26,8 @@ impl RegoVM {
                 | VmError::MemoryBudgetExceeded { .. }
                 | VmError::RegexSizeLimitExceeded { .. }
                 | VmError::InstructionLimitExceeded { .. }
+                | VmError::BuiltinDisabled { .. }
+                | VmError::FunctionArgumentMismatch { .. }
         )
     }
 

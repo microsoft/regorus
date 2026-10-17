@@ -4,6 +4,7 @@
 use crate::rvm::instructions::{GuardMode, Instruction, LiteralOrRegister};
 use crate::rvm::program::Program;
 use crate::value::Value;
+use alloc::string::ToString as _;
 use alloc::vec::Vec;
 use core::mem;
 
@@ -394,6 +395,14 @@ impl RegoVM {
                     .get(usize::from(id))
                     .cloned()
                     .unwrap_or(Value::Undefined);
+                if let Value::String(ref name) = identifier {
+                    if self.builtin_policy.is_disabled(name) {
+                        return Err(VmError::BuiltinDisabled {
+                            name: name.to_string(),
+                            pc: self.pc,
+                        });
+                    }
+                }
                 match self.execution_mode {
                     ExecutionMode::RunToCompletion => {
                         let response = self.next_host_await_response(&identifier, dest)?;

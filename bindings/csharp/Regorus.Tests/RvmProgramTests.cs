@@ -70,6 +70,151 @@ result := __builtin_host_await(
 """;
 
     [TestMethod]
+    public void BuiltinPolicy_compilation_and_vm_enforcement_are_opt_in_and_instance_scoped()
+    {
+        var policy = new BuiltinPolicy(new[] { "count", "count" });
+        Assert.AreEqual(1, policy.DisabledNames.Count, "duplicate names should be normalized");
+        Assert.AreEqual("count", policy.DisabledNames[0]);
+
+        var modules = new[] { new PolicyModule("demo.rego", Policy) };
+        var entryPoints = new[] { "data.demo.allow" };
+        Assert.ThrowsException<InvalidOperationException>(
+            () => Program.CompileFromModulesWithOptions(
+                Data,
+                modules,
+                entryPoints,
+                new CompilerOptions(policy)),
+            "compilation options should reject disabled calls");
+
+        using var program = Program.CompileFromModules(Data, modules, entryPoints);
+        using var restrictedVm = new Rvm();
+        restrictedVm.SetBuiltinPolicy(policy);
+        Assert.AreEqual("count", restrictedVm.GetBuiltinPolicy().DisabledNames[0]);
+        restrictedVm.LoadProgram(program);
+        restrictedVm.SetDataJson(Data);
+        restrictedVm.SetInputJson(Input);
+        Assert.ThrowsException<InvalidOperationException>(() => restrictedVm.Execute());
+
+        using var independentVm = new Rvm();
+        independentVm.LoadProgram(program);
+        independentVm.SetDataJson(Data);
+        independentVm.SetInputJson(Input);
+        Assert.AreEqual("true", independentVm.Execute(), "the policy must not be shared through Program");
+
+        restrictedVm.SetBuiltinPolicy(BuiltinPolicy.AllowAll);
+        Assert.AreEqual("true", restrictedVm.Execute(), "replacing a terminal policy should reset the VM");
+    }
+
+    [TestMethod]
+    public void BuiltinPolicy_r3_rejects_local_builtin_collision_with_default_child_function()
+    {
+        const string source = """
+package main
+import rego.v1
+http.send := true
+default http.send.child(_) := "fallback"
+p := true
+unused := http.send({})
+""";
+        var modules = new[] { new PolicyModule("main.rego", source) };
+        var options = new CompilerOptions(new BuiltinPolicy(new[] { "http.send" }));
+        var error = Assert.ThrowsException<InvalidOperationException>(
+            () => Program.CompileFromModulesWithOptions(
+                "{}",
+                modules,
+                new[] { "data.main.p" },
+                options));
+
+        StringAssert.Contains(error.Message, "Builtin 'http.send' is disabled");
+    }
+
+    [TestMethod]
+    public void BuiltinPolicy_r3_rejects_imported_builtin_collision_with_default_child_function()
+    {
+        const string helper = """
+package helpers
+import rego.v1
+send := true
+default send.child(_) := "fallback"
+""";
+        const string main = """
+package main
+import rego.v1
+import data.helpers as http
+p := true
+unused := http.send({})
+""";
+        var modules = new[]
+        {
+            new PolicyModule("helper.rego", helper),
+            new PolicyModule("main.rego", main),
+        };
+        var options = new CompilerOptions(new BuiltinPolicy(new[] { "http.send" }));
+        var error = Assert.ThrowsException<InvalidOperationException>(
+            () => Program.CompileFromModulesWithOptions(
+                "{}",
+                modules,
+                new[] { "data.main.p" },
+                options));
+
+        StringAssert.Contains(error.Message, "Builtin 'http.send' is disabled");
+    }
+
+    [TestMethod]
+    public void BuiltinPolicy_replacement_is_rejected_while_host_await_is_suspended()
+    {
+        var modules = new[] { new PolicyModule("host_await.rego", HostAwaitPolicy) };
+        using var program = Program.CompileFromModules("{}", modules, new[] { "data.demo.allow" });
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.LoadProgram(program);
+        vm.SetInputJson(HostAwaitInput);
+        _ = vm.Execute();
+        StringAssert.Contains(vm.GetExecutionState()!, "HostAwait");
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => vm.SetBuiltinPolicy(new BuiltinPolicy(new[] { "count" })));
+        Assert.IsTrue(vm.GetBuiltinPolicy().DisabledNames.Count == 0, "rejected replacement must be atomic");
+        Assert.IsTrue(vm.GetExecutionState()!.Contains("HostAwait", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void BuiltinPolicy_engine_compilation_and_invalid_vm_replacement_are_reported()
+    {
+        var policy = new BuiltinPolicy(new[] { "count" });
+        using var engine = new Engine();
+        engine.AddPolicy("demo.rego", Policy);
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => Program.CompileFromEngineWithOptions(
+                engine,
+                new[] { "data.demo.allow" },
+                new CompilerOptions(policy)),
+            "engine compilation options should enforce builtin restrictions");
+
+        using var vm = new Rvm();
+        vm.SetBuiltinPolicy(policy);
+        Assert.ThrowsException<InvalidOperationException>(
+            () => vm.SetBuiltinPolicy(new BuiltinPolicy(new[] { "not_registered" })),
+            "unknown native builtin names should be rejected by the native registry");
+        Assert.AreEqual("count", vm.GetBuiltinPolicy().DisabledNames[0]);
+    }
+
+    [TestMethod]
+    public void BuiltinPolicy_options_copy_and_validate_names()
+    {
+        var names = new List<string> { "count" };
+        var policy = new BuiltinPolicy(names);
+        var options = new CompilerOptions(policy);
+        names[0] = "split";
+
+        Assert.AreEqual("count", policy.DisabledNames[0]);
+        Assert.AreEqual("count", options.BuiltinPolicy.DisabledNames[0]);
+        Assert.ThrowsException<ArgumentException>(() => new BuiltinPolicy(new[] { " count " }));
+        Assert.ThrowsException<ArgumentException>(() => new BuiltinPolicy(new[] { string.Empty }));
+    }
+
+    [TestMethod]
     public void Program_compile_and_execute_succeeds()
     {
         var modules = new[] { new PolicyModule("demo.rego", Policy) };

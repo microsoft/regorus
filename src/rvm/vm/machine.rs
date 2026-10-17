@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::rvm::program::Program;
+use crate::rvm::BuiltinPolicy;
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 use crate::utils::limits;
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
@@ -126,6 +127,9 @@ pub struct RegoVM {
     /// Whether builtins should raise errors strictly or return undefined on failure
     pub(super) strict_builtin_errors: bool,
 
+    /// Instance-scoped builtin restrictions, independent of the shared Program.
+    pub(super) builtin_policy: BuiltinPolicy,
+
     /// Cache for builtin calls that must stay deterministic across a single evaluation.
     ///
     /// Two-level structure: outer BTreeMap keyed by builtin name, inner Vec of
@@ -240,6 +244,7 @@ impl RegoVM {
             execution_mode: ExecutionMode::RunToCompletion,
             frame_pc_overridden: false,
             strict_builtin_errors: false,
+            builtin_policy: BuiltinPolicy::default(),
             builtins_cache: BTreeMap::new(),
             execution_timer_config: None,
             execution_timer: ExecutionTimer::new(fallback_timer),
@@ -290,6 +295,29 @@ impl RegoVM {
 
         // Cache the metadata as a Value for LoadMetadata instructions
         self.metadata_value = program.metadata.to_value();
+    }
+
+    /// Atomically replace the instance-scoped builtin policy.
+    ///
+    /// Running and suspended VMs cannot change policy. A valid replacement in
+    /// any other state clears the prior evaluation state and returns the VM to
+    /// `Ready`.
+    pub fn set_builtin_policy(&mut self, policy: BuiltinPolicy) -> Result<()> {
+        if matches!(
+            self.execution_state,
+            ExecutionState::Running | ExecutionState::Suspended { .. }
+        ) {
+            return Err(VmError::BuiltinPolicyChangeWhileExecuting { pc: self.pc });
+        }
+
+        self.builtin_policy = policy;
+        self.reset_execution_state();
+        Ok(())
+    }
+
+    /// Return this VM's builtin policy.
+    pub const fn get_builtin_policy(&self) -> &BuiltinPolicy {
+        &self.builtin_policy
     }
 
     /// Set the compiled policy for default rule evaluation

@@ -21,9 +21,10 @@ use crate::utils::limits::{monotonic_now, ExecutionTimer, ExecutionTimerConfig};
 use crate::utils::*;
 #[cfg(not(feature = "std"))]
 use crate::utils::{
-    append_path_component, append_path_value_component, format_path_components, format_string_path,
-    get_extra_arg, get_path_string, get_root_var, get_rule_path_components,
-    split_canonical_path_root, FunctionTable, PathComponent,
+    append_path_component, append_path_value_component, canonical_function_path,
+    format_path_components, format_string_path, get_extra_arg_with_imports, get_path_string,
+    get_root_var, get_rule_path_components, split_canonical_path_root, FunctionTable,
+    PathComponent,
 };
 use crate::value::*;
 use crate::*;
@@ -127,6 +128,135 @@ pub struct Interpreter {
 impl Default for Interpreter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod exact_default_timer_tests {
+    #![allow(clippy::expect_used, clippy::panic_in_result_fn)]
+
+    use super::*;
+    use crate::tests::interpreter::timer_test_support::{
+        configure_time_source, configure_time_source_steps,
+    };
+    use crate::utils::limits::acquire_limits_test_lock;
+    use crate::utils::limits::LimitError;
+    use core::num::NonZeroU32;
+    use core::time::Duration;
+
+    struct TimeSourceResetGuard;
+
+    impl Drop for TimeSourceResetGuard {
+        fn drop(&mut self) {
+            configure_time_source(None);
+        }
+    }
+
+    fn dense_default_interpreter() -> anyhow::Result<Interpreter> {
+        let mut policy = String::from(
+            "package test\nimport rego.v1\nf(_) := true\ntarget(_) := false\np if { target(0) with target as f }\nplain := target(0)\n",
+        );
+        for index in 0..64 {
+            policy.push_str(&format!("default f.child_{index}(_) := true\n"));
+        }
+
+        let mut engine = Engine::new();
+        engine.add_policy("test.rego".to_string(), policy)?;
+        let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+        let mut interpreter = Interpreter::new_from_compiled_policy(compiled.inner.clone());
+        interpreter.clean_internal_evaluation_state();
+        Ok(interpreter)
+    }
+
+    fn arm_expired_timer(interpreter: &mut Interpreter) -> anyhow::Result<()> {
+        interpreter.set_execution_timer_config(Some(ExecutionTimerConfig {
+            limit: Duration::from_millis(1),
+            check_interval: NonZeroU32::new(2).unwrap_or(NonZeroU32::MIN),
+        }));
+        interpreter.execution_timer_tick(1)?;
+        Ok(())
+    }
+
+    fn assert_time_limit(error: anyhow::Error) {
+        assert!(
+            matches!(
+                error.downcast_ref::<LimitError>(),
+                Some(LimitError::TimeLimitExceeded { .. })
+            ),
+            "expected execution-time-limit error, got {error:#}"
+        );
+    }
+
+    #[test]
+    fn exact_default_candidates_check_expired_execution_timer() -> anyhow::Result<()> {
+        let _limits_lock = acquire_limits_test_lock();
+        let _time_source_reset = TimeSourceResetGuard;
+        let mut interpreter = dense_default_interpreter()?;
+        configure_time_source_steps(&[0], 2);
+        let candidates = interpreter
+            .compiled_policy
+            .default_rules
+            .get("data.test.f")
+            .ok_or_else(|| anyhow!("missing dense default prefix bucket"))?;
+        assert_eq!(candidates.len(), 64);
+
+        arm_expired_timer(&mut interpreter)?;
+        assert_time_limit(
+            interpreter
+                .exact_default_rules_for_path("data.test.f")
+                .expect_err("expired selector traversal must return a timeout"),
+        );
+        interpreter.set_execution_timer_config(None);
+        interpreter.clean_internal_evaluation_state();
+        configure_time_source(None);
+        assert_eq!(
+            interpreter.eval_rule_in_path("data.test.plain".to_string())?,
+            Value::Bool(false),
+            "the interpreter must remain reusable after selector timeout"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_function_hit_skips_descendant_default_scan() -> anyhow::Result<()> {
+        let _limits_lock = acquire_limits_test_lock();
+        let _time_source_reset = TimeSourceResetGuard;
+        let mut interpreter = dense_default_interpreter()?;
+        configure_time_source_steps(&[0, 2], 0);
+        interpreter.set_execution_timer_config(Some(ExecutionTimerConfig {
+            limit: Duration::from_millis(1),
+            check_interval: NonZeroU32::new(128).unwrap_or(NonZeroU32::MIN),
+        }));
+
+        assert_eq!(
+            interpreter.eval_rule_in_path("data.test.p".to_string())?,
+            Value::Bool(true),
+            "an ordinary hit must not scan unrelated descendant defaults"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn default_rule_owner_scan_checks_expired_execution_timer() -> anyhow::Result<()> {
+        let _limits_lock = acquire_limits_test_lock();
+        let _time_source_reset = TimeSourceResetGuard;
+        let mut interpreter = dense_default_interpreter()?;
+        configure_time_source_steps(&[0], 2);
+        let rule = interpreter
+            .compiled_policy
+            .default_rules
+            .get("data.test.f")
+            .and_then(|candidates| candidates.first())
+            .map(|candidate| candidate.0.clone())
+            .ok_or_else(|| anyhow!("missing dense default candidate"))?;
+
+        arm_expired_timer(&mut interpreter)?;
+        assert_time_limit(
+            interpreter
+                .get_rule_module(&rule)
+                .expect_err("expired owner traversal must return a timeout"),
+        );
+        Ok(())
     }
 }
 
@@ -1179,10 +1309,11 @@ impl Interpreter {
                         expr,
                         fcn,
                         params,
-                        get_extra_arg(
+                        get_extra_arg_with_imports(
                             expr,
                             Some(self.current_module_path.as_str()),
                             &self.compiled_policy.functions,
+                            &self.compiled_policy.imports,
                         ),
                         true,
                     )?,
@@ -1224,10 +1355,11 @@ impl Interpreter {
                         expr,
                         fcn,
                         params,
-                        get_extra_arg(
+                        get_extra_arg_with_imports(
                             expr,
                             Some(self.current_module_path.as_str()),
                             &self.compiled_policy.functions,
+                            &self.compiled_policy.imports,
                         ),
                         false,
                     )?,
@@ -1464,27 +1596,27 @@ impl Interpreter {
                                     .insert(target, FunctionModifier::Value(v));
                             }
                             _ => {
-                                // Function replaced by another function.
-                                // Lookup by with current module path prefixed.
-                                let mut function_path =
-                                    get_path_string(&wm.r#as, Some(&self.current_module_path))?;
+                                // Prefer a known imported function over a package-prefixed
+                                // default that merely shares its alias path.
+                                let unqualified_path = get_path_string(&wm.r#as, None)?;
+                                let imported_path = self
+                                    .resolve_fcn_path_through_imports(&unqualified_path)?
+                                    .filter(|candidate_path| {
+                                        self.compiled_policy.functions.contains_key(candidate_path)
+                                    });
+                                let mut function_path = match imported_path {
+                                    Some(import_path) => import_path,
+                                    None => canonical_function_path(
+                                        &unqualified_path,
+                                        Some(&self.current_module_path),
+                                    ),
+                                };
                                 if self.lookup_function_by_name(&function_path).is_none() {
-                                    // Lookup without current module path prefixed.
-                                    function_path = get_path_string(&wm.r#as, None)?;
-                                    if self.lookup_function_by_name(&function_path).is_none() {
-                                        // Resolve an aliased replacement before builtins.
-                                        let resolved = self
-                                            .resolve_fcn_path_through_imports(&function_path)
-                                            .filter(|r| {
-                                                self.compiled_policy.functions.contains_key(r)
-                                            });
-                                        if let Some(resolved) = resolved {
-                                            function_path = resolved;
-                                        } else if !Self::is_builtin(wm.r#as.span(), &function_path)
-                                        {
-                                            // bail!(wm.r#as.span().error("could not evaluate expression"));
-                                            skip_exec = true;
-                                        }
+                                    function_path = unqualified_path;
+                                    if self.lookup_function_by_name(&function_path).is_none()
+                                        && !Self::is_builtin(wm.r#as.span(), &function_path)
+                                    {
+                                        skip_exec = true;
                                     }
                                 }
                                 self.with_functions
@@ -1620,33 +1752,37 @@ impl Interpreter {
             let (saved_state, _) = self.apply_with_modifiers(first_stmt)?;
 
             let collection_expr = Self::loop_collection_expr(loop_info).clone();
-            let loop_value = if let Expr::Call {
-                span, fcn, params, ..
-            } = collection_expr.as_ref()
-            {
-                // Handle walk(obj, output_param)
-                let extra_arg = get_extra_arg(
-                    &collection_expr,
-                    Some(self.current_module_path.as_str()),
-                    &self.compiled_policy.functions,
-                );
-                // If there is an extra arg, ignore it while computing the loop value.
-                let params_slice: &[ExprRef] = if extra_arg.is_some() {
-                    let (_, prefix) = params
-                        .split_last()
-                        .ok_or_else(|| anyhow!("internal error: expected params"))?;
-                    prefix
+            let loop_value_result = (|| -> Result<Value> {
+                if let Expr::Call {
+                    span, fcn, params, ..
+                } = collection_expr.as_ref()
+                {
+                    // Handle walk(obj, output_param)
+                    let extra_arg = get_extra_arg_with_imports(
+                        &collection_expr,
+                        Some(self.current_module_path.as_str()),
+                        &self.compiled_policy.functions,
+                        &self.compiled_policy.imports,
+                    );
+                    // If there is an extra arg, ignore it while computing the loop value.
+                    let params_slice: &[ExprRef] = if extra_arg.is_some() {
+                        let (_, prefix) = params
+                            .split_last()
+                            .ok_or_else(|| anyhow!("internal error: expected params"))?;
+                        prefix
+                    } else {
+                        params.as_slice()
+                    };
+                    self.eval_call_impl(span, &collection_expr, fcn, params_slice)
                 } else {
-                    params.as_slice()
-                };
-                self.eval_call_impl(span, &collection_expr, fcn, params_slice)?
-            } else {
-                self.eval_expr(&collection_expr)?
-            };
+                    self.eval_expr(&collection_expr)
+                }
+            })();
 
             // Restore with modifiers.
             // TODO: Delay this restore so that the stmt doesn't have to apply with modifiers again.
             self.restore_state(saved_state)?;
+            let loop_value = loop_value_result?;
 
             // If the loop's index variable h<as already been assigned a value
             // (this can happen if the same index is used for two different collections),
@@ -2551,12 +2687,7 @@ impl Interpreter {
     }
 
     fn lookup_function_by_name(&self, path: &str) -> Option<(&Vec<Ref<Rule>>, &Ref<Module>)> {
-        let mut path = path.to_owned();
-        if !path.starts_with("data.") {
-            // `path` is already a canonical Rego path; its first component is an
-            // identifier, so the separator here cannot flatten a string key.
-            path = format!("{}.{}", self.current_module_path, path);
-        }
+        let path = canonical_function_path(path, Some(&self.current_module_path));
 
         match self.compiled_policy.functions.get(&path) {
             Some((f, _, m)) => Some((f, m)),
@@ -2598,28 +2729,67 @@ impl Interpreter {
     /// spellings keep their prior meaning (e.g. a builtin call). OPA instead
     /// rewrites aliases unconditionally and rejects calls to a missing target
     /// at compile time.
-    fn resolve_fcn_path_through_imports(&self, path: &str) -> Option<String> {
-        let candidate = self.rewrite_path_through_imports(path)?;
-        (self.compiled_policy.functions.contains_key(&candidate)
-            || self.is_default_function(&candidate))
-        .then_some(candidate)
+    fn resolve_fcn_path_through_imports(&mut self, path: &str) -> Result<Option<String>> {
+        let Some(candidate) = self.rewrite_path_through_imports(path) else {
+            return Ok(None);
+        };
+        let is_known_function = self.compiled_policy.functions.contains_key(&candidate)
+            || self.is_default_function(&candidate)?;
+        Ok(is_known_function.then_some(candidate))
+    }
+
+    fn exact_default_rules_for_path(&mut self, path: &str) -> Result<Vec<Ref<Rule>>> {
+        let mut exact_rules = Vec::new();
+        let compiled_policy = self.compiled_policy.clone();
+        if let Some(candidates) = compiled_policy.default_rules.get(path) {
+            for (rule, _) in candidates {
+                self.execution_timer_tick(1)?;
+                let Rule::Default { refr, .. } = rule.as_ref() else {
+                    continue;
+                };
+                let module = self.get_rule_module(rule)?;
+                let module_path = get_path_string(&module.package.refr, Some("data"))?;
+                if get_path_string(refr, Some(&module_path))? == path {
+                    exact_rules.push(rule.clone());
+                }
+            }
+        }
+        Ok(exact_rules)
     }
 
     /// True if `path` is the exact path of a `default` function rule.
-    /// `default_rules` also indexes every prefix of a rule path, so it cannot
-    /// be consulted alone: `rule_paths` holds only exact rule paths, and the
-    /// non-empty argument list distinguishes functions from value rules.
-    fn is_default_function(&self, path: &str) -> bool {
-        self.compiled_policy.rule_paths.contains(path)
-            && self
-                .compiled_policy
-                .default_rules
-                .get(path)
-                .is_some_and(|rules| {
-                    rules.iter().any(|(rule, _)| {
-                        matches!(rule.as_ref(), Rule::Default { args, .. } if !args.is_empty())
-                    })
-                })
+    /// `default_rules` also indexes every prefix of a rule path, so candidates
+    /// must be checked against their module-qualified defining path.
+    fn is_default_function(&mut self, path: &str) -> Result<bool> {
+        let path = canonical_function_path(path, Some(&self.current_module_path));
+        Ok(self
+            .exact_default_rules_for_path(&path)?
+            .iter()
+            .any(|rule| matches!(rule.as_ref(), Rule::Default { args, .. } if !args.is_empty())))
+    }
+
+    fn callable_arity(
+        path: &str,
+        function_rules: &[Ref<Rule>],
+        default_rules: &[Ref<Rule>],
+    ) -> Result<usize> {
+        if let Some(rule) = function_rules.first() {
+            return match rule.as_ref() {
+                Rule::Spec {
+                    head: RuleHead::Func { args, .. },
+                    ..
+                } => Ok(args.len()),
+                _ => bail!("internal error: function table contains a non-function rule"),
+            };
+        }
+
+        default_rules
+            .iter()
+            .find_map(|rule| match rule.as_ref() {
+                Rule::Default { args, .. } if !args.is_empty() => Some(args.len()),
+                _ => None,
+            })
+            .ok_or_else(|| anyhow!("internal error: missing exact callable default for {path}"))
     }
 
     fn eval_builtin_call(
@@ -2797,7 +2967,7 @@ impl Interpreter {
         // lookups, so an override keyed by the full path reaches aliased calls
         // and the alias shadows a like-named builtin namespace (matching OPA).
         let fcn_path = self
-            .resolve_fcn_path_through_imports(&fcn_path)
+            .resolve_fcn_path_through_imports(&fcn_path)?
             .unwrap_or(fcn_path);
 
         let orig_fcn_path = fcn_path.clone();
@@ -2822,50 +2992,81 @@ impl Interpreter {
             _ => orig_fcn_path.clone(),
         };
 
-        let mut extension = None;
-        let empty: Vec<Ref<Rule>> = vec![];
-        let (fcns_rules, fcn_module) = match self.lookup_function_by_name(&selected_fcn_path) {
-            Some((fcns, m)) => (fcns, Some(m.clone())),
-            _ => {
-                if self
-                    .compiled_policy
-                    .default_rules
-                    .contains_key(&selected_fcn_path)
-                    || self
-                        .compiled_policy
-                        .default_rules
-                        .contains_key(&get_path_string(fcn, Some(&self.current_module_path))?)
-                {
-                    // process default functions later.
-                    (&empty, self.module.clone())
-                }
-                // Look up extension.
-                else if let Some(ext) = self.extensions.get_mut(&selected_fcn_path) {
-                    extension = Some(ext);
-                    (&empty, None)
-                } else if selected_fcn_path == "print" {
-                    return self.eval_print(span, params, param_values);
-                }
-                // Look up builtin function.
-                else if let Some(builtin) = Self::lookup_builtin(span, &selected_fcn_path)? {
-                    let r = self.eval_builtin_call(
-                        span,
-                        &selected_fcn_path.clone(),
-                        *builtin,
-                        params,
-                        param_values,
-                    );
-                    if let Some(with_functions) = with_functions_saved {
+        let callable_path =
+            canonical_function_path(&selected_fcn_path, Some(&self.current_module_path));
+        let has_ordinary_function = self
+            .lookup_function_by_name(&selected_fcn_path)
+            .is_some_and(|(rules, _)| !rules.is_empty());
+        let mut exact_default_rules = if has_ordinary_function {
+            Vec::new()
+        } else {
+            match self.exact_default_rules_for_path(&callable_path) {
+                Ok(rules) => rules,
+                Err(error) => {
+                    if let Some(with_functions) = with_functions_saved.take() {
                         self.with_functions = with_functions;
                     }
-                    return r;
-                } else {
-                    bail!(
-                        span.error(format!("could not find function {selected_fcn_path}").as_str())
-                    );
+                    return Err(error);
                 }
             }
         };
+        let mut extension = None;
+        let empty: Vec<Ref<Rule>> = vec![];
+        let (fcns_rules, expected_args, fcn_module) =
+            match self.lookup_function_by_name(&selected_fcn_path) {
+                Some((fcns, module)) => (
+                    fcns,
+                    Some(Self::callable_arity(
+                        &callable_path,
+                        fcns,
+                        &exact_default_rules,
+                    )?),
+                    Some(module.clone()),
+                ),
+                _ => {
+                    if !exact_default_rules.is_empty() {
+                        (&empty, None, self.module.clone())
+                    } else if let Some(ext) = self.extensions.get_mut(&selected_fcn_path) {
+                        extension = Some(ext);
+                        (&empty, None, None)
+                    } else if selected_fcn_path == "print" {
+                        return self.eval_print(span, params, param_values);
+                    } else if let Some(builtin) = Self::lookup_builtin(span, &selected_fcn_path)? {
+                        let r = self.eval_builtin_call(
+                            span,
+                            &selected_fcn_path.clone(),
+                            *builtin,
+                            params,
+                            param_values,
+                        );
+                        if let Some(with_functions) = with_functions_saved {
+                            self.with_functions = with_functions;
+                        }
+                        return r;
+                    } else {
+                        bail!(span.error(
+                            format!("could not find function {selected_fcn_path}").as_str()
+                        ));
+                    }
+                }
+            };
+        if let Some(expected_args) = expected_args {
+            if param_values.len() != expected_args {
+                if let Some(with_functions) = with_functions_saved.take() {
+                    self.with_functions = with_functions;
+                }
+                return Err(span.source.error(
+                    span.line,
+                    span.col,
+                    format!(
+                        "mismatch in number of arguments. supplied {}, expected {}",
+                        param_values.len(),
+                        expected_args
+                    )
+                    .as_str(),
+                ));
+            }
+        }
         if param_values.iter().any(|v| v == &Value::Undefined) {
             if let Some(with_functions) = with_functions_saved {
                 self.with_functions = with_functions;
@@ -3030,36 +3231,42 @@ impl Interpreter {
                 .unwrap_or_else(|| anyhow!("internal error: missing error entry")));
         }
 
+        if results.is_empty() && errors.is_empty() && has_ordinary_function {
+            exact_default_rules = match self.exact_default_rules_for_path(&callable_path) {
+                Ok(rules) => rules,
+                Err(error) => {
+                    if let Some(with_functions) = with_functions_saved.take() {
+                        self.with_functions = with_functions;
+                    }
+                    return Err(error);
+                }
+            };
+        }
+
         if results.is_empty() {
             // Back up local variables of current function and empty
             // the local variables of callee function.
             let scopes = core::mem::take(&mut self.scopes);
             if errors.is_empty() {
-                // Check if any default rules can be evaluated.
-                // TODO: with mod
-                let rules = match self
-                    .compiled_policy
-                    .default_rules
-                    .get(&selected_fcn_path)
-                    .cloned()
-                {
-                    Some(rules) => Some(rules),
-                    None => {
-                        let alt_fcn_path = get_path_string(fcn, Some(&self.current_module_path))?;
-                        self.compiled_policy
-                            .default_rules
-                            .get(&alt_fcn_path)
-                            .cloned()
-                    }
-                };
-
-                if let Some(rules) = rules {
-                    for (rule, _) in rules.iter() {
-                        if let Rule::Default { value, .. } = rule.as_ref() {
-                            match self.eval_expr(value) {
-                                Ok(v) => results.push(v),
-                                Err(e) => errors.push(e),
-                            }
+                for rule in &exact_default_rules {
+                    if let Rule::Default { value, .. } = rule.as_ref() {
+                        let previous_module = self.module.clone();
+                        let previous_module_path = self.current_module_path.clone();
+                        let previous_module_index = self.current_module_index;
+                        let previous_scopes =
+                            core::mem::replace(&mut self.scopes, vec![Scope::new()]);
+                        let evaluated = (|| {
+                            let owning_module = self.get_rule_module(rule)?;
+                            self.set_current_module(Some(owning_module))?;
+                            self.eval_expr(value)
+                        })();
+                        self.module = previous_module;
+                        self.current_module_path = previous_module_path;
+                        self.current_module_index = previous_module_index;
+                        self.scopes = previous_scopes;
+                        match evaluated {
+                            Ok(v) => results.push(v),
+                            Err(e) => errors.push(e),
                         }
                     }
                 }
@@ -3634,10 +3841,14 @@ impl Interpreter {
         }
     }
 
-    fn get_rule_module(&self, rule: &Ref<Rule>) -> Result<Ref<Module>> {
-        for m in self.compiled_policy.modules.iter() {
-            if m.policy.iter().any(|r| r == rule) {
-                return Ok(m.clone());
+    fn get_rule_module(&mut self, rule: &Ref<Rule>) -> Result<Ref<Module>> {
+        let modules = self.compiled_policy.modules.clone();
+        for module in modules.iter() {
+            for candidate in module.policy.iter() {
+                self.execution_timer_tick(1)?;
+                if candidate == rule {
+                    return Ok(module.clone());
+                }
             }
         }
         bail!("internal error: could not find module for rule");

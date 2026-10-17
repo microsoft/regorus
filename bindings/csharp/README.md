@@ -105,6 +105,52 @@ var result = vm.Execute();
 Console.WriteLine($"allow: {result}");
 ```
 
+### RVM builtin policy
+
+RVM builtin restrictions are opt-in. `BuiltinPolicy` stores exact native
+builtin names and `CompilerOptions` applies them when compiling from modules or
+an engine. The VM also enforces its own policy for existing, deserialized, and
+shared programs:
+
+```csharp
+var builtinPolicy = new BuiltinPolicy(new[] { "http.send" });
+var options = new CompilerOptions(builtinPolicy);
+
+using var program = Program.CompileFromModulesWithOptions(
+    Data,
+    modules,
+    entryPoints,
+    options);
+
+using var vm = new Rvm();
+vm.SetBuiltinPolicy(builtinPolicy);
+vm.LoadProgram(program);
+vm.SetDataJson(Data);
+vm.SetInputJson(Input);
+```
+
+Only names registered in the loaded native library's feature configuration are
+accepted. Empty, padded, malformed, or unknown names are rejected; duplicate
+names are normalized. The default `BuiltinPolicy.AllowAll` preserves existing
+behavior. Policy replacement is atomic and rejected while the VM is running or
+suspended; a valid replacement in another state clears prior execution state
+and returns the VM to ready. VM settings are not stored in or shared through a
+serialized `Program`. Disabling a builtin name also rejects a same-name
+registered host-await implementation, but this is not a sandbox for unrelated
+host capabilities.
+
+`Program.CompileFromModulesWithOptions` and
+`Program.CompileFromEngineWithOptions` are additive. Empty restrictions route
+through existing native compiler symbols, so existing managed/native pairings
+remain compatible. Non-empty restrictions require native library support;
+missing symbols raise `NotSupportedException` rather than silently ignoring
+the policy. `Rvm.SetBuiltinPolicy` and `Rvm.GetBuiltinPolicy` use the new native
+policy API. Rust RVM and the C ABI also expose these controls; Python, WASM,
+Java, Go, and Ruby retain their existing allow-all behavior and do not yet
+expose policy APIs. C and C++ consumers can call the new functions in the
+generated C/C++ FFI headers; their separate convenience and C no_std wrappers
+remain unchanged. Interpreter APIs are unchanged.
+
 ### RVM instruction budget
 
 Use `SetMaxInstructions` to configure the maximum number of dispatched RVM

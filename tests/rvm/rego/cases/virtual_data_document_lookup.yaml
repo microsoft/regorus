@@ -394,3 +394,66 @@ cases:
       application_info: {"name": "TestApp", "version": "1.0.0"}
       app_status: "running"
       # Note: format_version should NOT appear here since it's a function rule
+
+  - note: dynamic_default_only_function_excluded_from_virtual_lookup
+    data:
+      test:
+        f: 7
+      config:
+        value: "default"
+    modules:
+      - |
+        package test
+        import rego.v1
+        default f(_) := [data.config.value | true]
+        p := f(0)
+      - |
+        package main
+        import rego.v1
+        p := data.test
+    query: data.main.p
+    want_result:
+      f: 7
+      p:
+        - "default"
+
+  - note: dynamic_default_with_ordinary_function_excluded_from_virtual_lookup
+    data:
+      test:
+        f: 7
+      config:
+        value: "default"
+    modules:
+      - |
+        package test
+        import rego.v1
+        default f(_) := [data.config.value | true]
+        f(x) := "ordinary" if x == 1
+        p := f(1)
+      - |
+        package main
+        import rego.v1
+        p := data.test
+    query: data.main.p
+    want_result:
+      f: 7
+      p: "ordinary"
+
+  - note: constant_default_only_function_excluded_from_virtual_lookup
+    data:
+      test:
+        f: 7
+    modules:
+      - |
+        package test
+        import rego.v1
+        default f(_) := "constant"
+        p := f(0)
+      - |
+        package main
+        import rego.v1
+        p := data.test
+    query: data.main.p
+    want_result:
+      f: 7
+      p: "constant"

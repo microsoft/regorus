@@ -301,7 +301,12 @@ impl RegoVM {
         self.restore_execution_timer_after_resume();
 
         let program = self.program.clone();
-        self.run_stackless_loop(&program, &mut last_result)?;
+        if let Err(error) = self.run_stackless_loop(&program, &mut last_result) {
+            self.execution_state = ExecutionState::Error {
+                error: error.clone(),
+            };
+            return Err(error);
+        }
 
         if matches!(self.execution_state, ExecutionState::Suspended { .. }) {
             Ok(last_result)
