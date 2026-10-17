@@ -266,7 +266,13 @@ fn print_package_listing(packages: &[PathBuf]) -> Result<()> {
             let file = archive.by_index(index).with_context(|| {
                 format!("failed to access entry {index} in {}", package.display())
             })?;
-            entries.push(file.name().to_string());
+            entries.push(
+                file.name()
+                    .with_context(|| {
+                        format!("failed to read entry {index} name in {}", package.display())
+                    })?
+                    .into_owned(),
+            );
         }
 
         entries.sort();
