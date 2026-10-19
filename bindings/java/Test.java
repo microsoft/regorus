@@ -83,6 +83,20 @@ public class Test {
                         throw new IllegalStateException("Deserialized program marked partial");
                     }
 
+                    byte[] corrupt = binary.clone();
+                    corrupt[0] = 'X';
+                    boolean corruptRejected = false;
+                    try {
+                        Program invalid = Program.deserializeBinary(corrupt, new boolean[1]);
+                        invalid.close();
+                    } catch (RuntimeException expected) {
+                        corruptRejected = true;
+                        System.out.println("Corrupt RVM blob rejected: " + expected.getMessage());
+                    }
+                    if (!corruptRejected) {
+                        throw new IllegalStateException("Corrupt program blob was accepted");
+                    }
+
                     try (Rvm vm = new Rvm()) {
                         vm.loadProgram(rehydrated);
                         vm.setInputJson(regularInput);

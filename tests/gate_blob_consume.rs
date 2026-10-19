@@ -1,38 +1,7 @@
-// Lane 9 acceptance gate: consuming a compiled-policy blob must be fail-closed. A blob is untrusted
-// input (it crosses the FFI/Python/Java boundary - bindings/ffi/src/rvm.rs:293,
-// bindings/python/src/lib.rs:515, bindings/java/src/lib.rs:573), so corruption must be an error,
-// never a silent fallback.
-//
-// MEASURED TODAY (src/rvm/program/serialization/binary.rs:134-250, HEAD 8d2c774):
-//   * magic and a *future* version are rejected; truncation is rejected;
-//   * `validate_limits()` is called only by serialize_binary (binary.rs:74) - never on this path;
-//   * for a CURRENT-version (6) blob, a section that fails to decode is swallowed:
-//         literals   -> needs_recompilation = true; literals = Vec::new()
-//         rule_tree  -> needs_recompilation = true; rule_tree = Value::new_object()
-//         program    -> needs_recompilation = true; Program::new()   (zero instructions)
-//     and the call still returns Ok(Partial(..)). A caller that ignores `needs_recompilation`
-//     executes a program with the wrong literals/rule tree.
-//
-// CONTRACT DECISION (supervisor, recorded here because it is a behaviour change on a rarely used
-// API): for a blob whose version equals `Program::SERIALIZATION_VERSION`, every section it declares
-// must decode - a same-version blob has no legitimate reason to contain undecodable sections. So a
-// decode failure at the current version is Err, not Partial. The legacy path is unchanged and is
-// pinned below: versions 1..=5 still return Ok(Partial) with needs_recompilation = true.
-//
-// NOT EXPRESSIBLE THROUGH THE PUBLIC BOUNDARY - the lane must add these as in-crate tests
-// (src/rvm/tests/ or src/rvm/program/) and report them:
-//   1. validate_limits() (or an equivalent streaming bound) applied on CONSUME: build a blob whose
-//      instruction/literal counts exceed MAX_INSTRUCTIONS / MAX_LITERALS by encoding the sections
-//      with postcard directly (serialize_binary refuses to produce such a blob - that is the whole
-//      point of the gap), then assert Program::deserialize_binary rejects it.
-//   2. A corrupted *literals* section (needs a hand-built BinaryValue encoding, which the public
-//      surface does not expose) must be Err at the current version.
-//   3. Declared counts inside a section must not pre-allocate: no Vec::with_capacity from an
-//      attacker-controlled length. Report the mechanism you verified (e.g. a crafted section whose
-//      varint count is 4_000_000_000 with no following bytes, plus peak RSS of that child).
-//   4. The bindings must surface the new errors instead of silently recompiling (ffi/python/java
-//       deserialize entry points above). Java cannot be executed on this box (no java/javac):
-//       state that as a residual rather than claiming it works.
+// Acceptance gate: consuming an untrusted compiled-policy blob must fail closed. Corrupt
+// current-version sections, truncation, trailing data, and forged lengths are errors rather than
+// silent fallbacks to an empty or partial program. Legacy versions retain their documented
+// recompilation path.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
 
 use regorus::rvm::program::DeserializationResult;
@@ -155,6 +124,17 @@ fn truncated_blob_is_rejected() {
             consume(&blob[..blob.len() - cut]).expect_err("truncation at -{cut} must be rejected");
         assert!(!err.is_empty(), "empty error for truncation at -{cut}");
     }
+}
+
+#[test]
+fn trailing_data_is_rejected() {
+    let mut blob = sample();
+    blob.extend_from_slice(b"trailing");
+    let err = consume(&blob).expect_err("trailing data must be rejected");
+    assert!(
+        err.to_lowercase().contains("trailing"),
+        "unexpected message: {err}"
+    );
 }
 
 #[test]
