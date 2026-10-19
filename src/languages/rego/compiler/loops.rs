@@ -82,7 +82,7 @@ impl<'a> Compiler<'a> {
                 self.compile_single_statement(stmts[0])?;
                 return self.hoist_loops_and_compile_statements(&stmts[1..]);
             } else {
-                self.hoist_loops_and_emit_context_yield()?;
+                return self.hoist_loops_and_emit_context_yield();
             }
         }
 
