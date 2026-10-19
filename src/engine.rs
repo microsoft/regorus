@@ -1403,7 +1403,6 @@ impl Engine {
 
         // Populate loop hoisting for the query snippet
         // Query snippets are treated as if they're in a module appended at the end (same as analyzer)
-        // The loop hoisting table already has capacity for this (ensured in prepare_for_eval)
         let module_idx = u32::try_from(self.modules.len())
             .map_err(|_| anyhow!("module count exceeds u32::MAX"))?;
 
@@ -1436,33 +1435,7 @@ impl Engine {
             }
         }
 
-        // Get the existing table, merge in the query loops, and set it back
-        let mut existing_table = self.interpreter.take_loop_hoisting_table();
-        existing_table.truncate_modules(self.modules.len());
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(
-                existing_table.module_len() <= self.modules.len(),
-                "loop hoisting table should not retain extra modules before merge"
-            );
-        }
-        existing_table.merge_query_loops(query_lookup, self.modules.len());
-        #[cfg(debug_assertions)]
-        {
-            for stmt in &query_node.stmts {
-                debug_assert!(
-                    existing_table
-                        .get_statement_loops(module_idx, stmt.sidx)
-                        .ok()
-                        .and_then(|entry| entry)
-                        .is_some(),
-                    "missing hoisted loop entry after merge for module {} stmt {}",
-                    module_idx,
-                    stmt.sidx
-                );
-            }
-        }
-        self.interpreter.set_loop_hoisting_table(existing_table);
+        self.interpreter.set_query_loop_hoisting(query_lookup);
 
         Ok((Ref::new(query_module), query_node, query_schedule))
     }
@@ -1513,7 +1486,6 @@ impl Engine {
             self.interpreter.process_imports()?;
 
             // Populate loop hoisting table for efficient evaluation
-            // Reserve capacity for 1 extra module (for query modules)
             use crate::compiler::hoist::LoopHoister;
 
             // Run loop hoisting pass first
@@ -2003,5 +1975,95 @@ impl Engine {
         };
         engine.apply_effective_execution_timer_config();
         engine
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::indexing_slicing, clippy::panic_in_result_fn)]
+mod query_sharing_tests {
+    use super::*;
+
+    #[test]
+    fn prepared_clones_share_policy_across_evaluations() -> Result<()> {
+        let mut base = Engine::new();
+        base.add_policy(
+            "catalog.rego".into(),
+            r#"package catalog
+grants := {"a": ["reader", "writer"], "b": ["writer"]}
+can_access(resource, roles) if {
+    some grant in grants[resource]
+    some role in roles
+    role == grant
+}
+"#
+            .into(),
+        )?;
+        base.add_policy(
+            "access.rego".into(),
+            r#"package access
+import data.catalog
+allowed := [r | some r in input.resources; catalog.can_access(r, input.roles)]
+summary := {"allowed": allowed, "count": count(allowed)}
+"#
+            .into(),
+        )?;
+        base.set_input(Value::from_json_str(
+            r#"{"resources": ["a", "b", "missing"], "roles": ["reader"]}"#,
+        )?);
+        let expected = Value::from_json_str(r#"{"allowed": ["a"], "count": 1}"#)?;
+        let warm = base.eval_query("data.access.summary".into(), false)?;
+        assert_eq!(warm.result[0].expressions[0].value, expected);
+        assert_eq!(Rc::strong_count(base.interpreter.get_compiled_policy()), 1);
+
+        let mut cloned = base.clone();
+        assert!(Rc::ptr_eq(
+            base.interpreter.get_compiled_policy(),
+            cloned.interpreter.get_compiled_policy()
+        ));
+        assert_eq!(Rc::strong_count(base.interpreter.get_compiled_policy()), 2);
+
+        for query in [
+            "data.access.summary",
+            r#"{"allowed": [r | some r in data.access.allowed; data.catalog.can_access(r, input.roles)], "count": count(data.access.allowed)}"#,
+            r#"some r in input.resources; data.catalog.can_access(r, input.roles); data.access.summary"#,
+        ] {
+            let result = cloned.eval_query(query.into(), false)?;
+            assert_eq!(result.result.len(), 1);
+            assert_eq!(
+                result.result[0]
+                    .expressions
+                    .last()
+                    .ok_or_else(|| anyhow!("query produced no expressions"))?
+                    .value,
+                expected
+            );
+            assert!(Rc::ptr_eq(
+                base.interpreter.get_compiled_policy(),
+                cloned.interpreter.get_compiled_policy()
+            ));
+            assert_eq!(Rc::strong_count(base.interpreter.get_compiled_policy()), 2);
+        }
+
+        let err = cloned
+            .eval_query(r#"to_number("invalid")"#.into(), false)
+            .err()
+            .ok_or_else(|| anyhow!("invalid number conversion succeeded"))?;
+        assert!(err.to_string().contains("to_number"));
+        assert_eq!(cloned.eval_rule("data.access.summary".into())?, expected);
+        assert_eq!(cloned.eval_modules(false)?["access"]["summary"], expected);
+        let all = cloned.eval_query_and_all_rules("data.access.summary".into(), false)?;
+        assert_eq!(all.result[0].expressions[0].value, expected);
+        let data = cloned.eval_query("data".into(), false)?;
+        assert_eq!(
+            data.result[0].expressions[0].value["access"]["summary"],
+            expected
+        );
+        assert!(Rc::ptr_eq(
+            base.interpreter.get_compiled_policy(),
+            cloned.interpreter.get_compiled_policy()
+        ));
+        assert_eq!(Rc::strong_count(base.interpreter.get_compiled_policy()), 2);
+        assert_eq!(base.eval_rule("data.access.summary".into())?, expected);
+        Ok(())
     }
 }
