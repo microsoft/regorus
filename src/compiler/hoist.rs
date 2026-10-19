@@ -484,7 +484,15 @@ impl LoopHoister {
                     }
                     RuleHead::Set { refr, key, .. } => {
                         let key_expr = match refr.as_ref() {
-                            Expr::RefBrack { index, .. } => Some(index.clone()),
+                            Expr::RefBrack { index, .. }
+                                if key.is_some()
+                                    && !matches!(
+                                        index.as_ref(),
+                                        Expr::String { .. } | Expr::RawString { .. }
+                                    ) =>
+                            {
+                                Some(index.clone())
+                            }
                             _ => None,
                         };
                         (key_expr, key.clone())

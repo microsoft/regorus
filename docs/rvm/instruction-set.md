@@ -85,6 +85,11 @@ comprehension contexts. Outside loops it aborts the current rule.
 
 Parameter structures:
 
+- `ObjectSetAdd` uses three register operands without a parameter table. It
+  accumulates `rule[key] contains value` into an object of sets, preserving
+  existing members and omitting undefined keys and values. The target must be
+  an object, and an existing leaf must be a set. Static string prefixes remain
+  part of the rule path; multiple dynamic key levels remain unsupported.
 - `ObjectCreateParams` reuses arrays of literal key/value pairs and register
   pairs. Literal keys must be sorted to match template order.
 - `ArrayCreateParams` and `SetCreateParams` store register lists. The VM checks
