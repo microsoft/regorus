@@ -10,7 +10,7 @@ use crate::compiled_policy::TargetInfo;
 use crate::compiler::destructuring_planner::{
     AssignmentPlan, BindingPlan, DestructuringPlan, WildcardSide,
 };
-use crate::compiler::hoist::{HoistedLoop, LoopType};
+use crate::compiler::hoist::{HoistedLoop, HoistedLoopsLookup, LoopType};
 use crate::lexer::*;
 use crate::lookup::Lookup;
 use crate::parser::Parser;
@@ -104,6 +104,7 @@ pub struct Interpreter {
     current_module_path: String,
     current_module_index: u32,
     query_schedule: Option<Schedule>,
+    query_loop_hoisting: HoistedLoopsLookup,
     query_module: Option<NodeRef<Module>>,
     input: Value,
 
@@ -166,6 +167,7 @@ impl Clone for Interpreter {
             current_module_path: String::default(),
             current_module_index: 0,
             query_schedule: None,
+            query_loop_hoisting: HoistedLoopsLookup::new(),
             query_module: None,
             module: None,
             no_rules_lookup: false,
@@ -224,6 +226,7 @@ impl Interpreter {
             current_module_path: String::default(),
             current_module_index: 0,
             query_schedule: None,
+            query_loop_hoisting: HoistedLoopsLookup::new(),
             query_module: None,
             input: Value::Undefined,
 
@@ -264,6 +267,7 @@ impl Interpreter {
             current_module_index: 0,
             query_module: None,
             query_schedule: None,
+            query_loop_hoisting: HoistedLoopsLookup::new(),
             input: Value::Undefined,
 
             with_document: Value::new_object(),
@@ -352,11 +356,17 @@ impl Interpreter {
         self.compiled_policy_mut().loop_hoisting_table = table;
     }
 
-    pub fn take_loop_hoisting_table(&mut self) -> crate::compiler::hoist::HoistedLoopsLookup {
-        core::mem::replace(
-            &mut self.compiled_policy_mut().loop_hoisting_table,
-            crate::compiler::hoist::HoistedLoopsLookup::new(),
-        )
+    pub fn set_query_loop_hoisting(&mut self, table: HoistedLoopsLookup) {
+        self.query_loop_hoisting = table;
+    }
+
+    /// The query snippet is module `modules.len()`; its loops stay out of the shared policy.
+    fn loop_hoisting_table(&self, module_idx: u32) -> &HoistedLoopsLookup {
+        if usize::try_from(module_idx).ok() == Some(self.compiled_policy.modules.len()) {
+            &self.query_loop_hoisting
+        } else {
+            &self.compiled_policy.loop_hoisting_table
+        }
     }
 
     pub const fn get_data_mut(&mut self) -> &mut Value {
@@ -493,8 +503,7 @@ impl Interpreter {
                 let module_idx = self.current_module_index;
                 let expr_idx = last_param.as_ref().eidx();
                 let binding_plan = self
-                    .compiled_policy
-                    .loop_hoisting_table
+                    .loop_hoisting_table(module_idx)
                     .get_expr_binding_plan(module_idx, expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
 
@@ -1016,8 +1025,7 @@ impl Interpreter {
         let expr_idx = collection.as_ref().eidx();
 
         let binding_plan = self
-            .compiled_policy
-            .loop_hoisting_table
+            .loop_hoisting_table(module_idx)
             .get_expr_binding_plan(module_idx, expr_idx)
             .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
 
@@ -1713,8 +1721,7 @@ impl Interpreter {
                 let module_idx = self.current_module_index;
                 let expr_idx = index.as_ref().eidx();
                 let plan = self
-                    .compiled_policy
-                    .loop_hoisting_table
+                    .loop_hoisting_table(module_idx)
                     .get_expr_binding_plan(module_idx, expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
 
@@ -2187,8 +2194,7 @@ impl Interpreter {
         // Get pre-computed loops for key expression
         if let Some(ke) = &key_expr {
             match self
-                .compiled_policy
-                .loop_hoisting_table
+                .loop_hoisting_table(self.current_module_index)
                 .get_expr_loops(self.current_module_index, ke.as_ref().eidx())
                 .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
@@ -2204,8 +2210,7 @@ impl Interpreter {
         // Get pre-computed loops for output expression
         if let Some(oe) = &output_expr {
             match self
-                .compiled_policy
-                .loop_hoisting_table
+                .loop_hoisting_table(self.current_module_index)
                 .get_expr_loops(self.current_module_index, oe.as_ref().eidx())
                 .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
@@ -2238,8 +2243,7 @@ impl Interpreter {
 
             // Get pre-computed hoisted loops from compilation phase
             let loop_exprs: Vec<HoistedLoop> = match self
-                .compiled_policy
-                .loop_hoisting_table
+                .loop_hoisting_table(self.current_module_index)
                 .get_statement_loops(self.current_module_index, stmt.sidx)
                 .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
@@ -2943,8 +2947,7 @@ impl Interpreter {
                     destructuring_plan,
                     ..
                 }) = self
-                    .compiled_policy
-                    .loop_hoisting_table
+                    .loop_hoisting_table(module_idx)
                     .get_expr_binding_plan(module_idx, expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
@@ -3120,8 +3123,7 @@ impl Interpreter {
                 if let Some(BindingPlan::Parameter {
                     destructuring_plan, ..
                 }) = self
-                    .compiled_policy
-                    .loop_hoisting_table
+                    .loop_hoisting_table(module_idx)
                     .get_expr_binding_plan(module_idx, expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
@@ -3519,8 +3521,7 @@ impl Interpreter {
                 let expr_idx = expr.as_ref().eidx();
                 let expr_text = expr.span().text().to_string();
                 let binding_plan = self
-                    .compiled_policy
-                    .loop_hoisting_table
+                    .loop_hoisting_table(module_idx)
                     .get_expr_binding_plan(module_idx, expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
