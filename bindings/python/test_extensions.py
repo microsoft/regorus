@@ -18,6 +18,22 @@ def engine_fixture():
     yield engine
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_native_input_rejects_non_finite_numbers(value):
+    engine = regorus.Engine()
+
+    with pytest.raises(ValueError, match="not valid Rego numbers"):
+        engine.set_input({"value": value})
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_native_data_rejects_non_finite_numbers(value):
+    engine = regorus.Engine()
+
+    with pytest.raises(ValueError, match="not valid Rego numbers"):
+        engine.add_data({"value": value})
+
+
 @pytest.fixture(name="input_data")
 def input_data_fixture():
     """
