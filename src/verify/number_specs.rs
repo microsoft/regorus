@@ -181,6 +181,45 @@ impl NumberView {
         }
     }
 
+    // The float-promoting paths of add/sub/mul/divide report an error instead of returning
+    // the +/-Inf or NaN that an f64 promotion can produce, since Rego has no non-finite
+    // numbers. These describe when such an error is allowed.
+    pub open spec fn add_overflows(self: Self, rhs: Self) -> bool
+    {
+        exists|a: f64, b: f64| {
+            &&& self.to_f64_lossy_ensures(a)
+            &&& rhs.to_f64_lossy_ensures(b)
+            &&& !(a + b).is_finite_spec()
+        }
+    }
+
+    pub open spec fn sub_overflows(self: Self, rhs: Self) -> bool
+    {
+        exists|a: f64, b: f64| {
+            &&& self.to_f64_lossy_ensures(a)
+            &&& rhs.to_f64_lossy_ensures(b)
+            &&& !(a - b).is_finite_spec()
+        }
+    }
+
+    pub open spec fn mul_overflows(self: Self, rhs: Self) -> bool
+    {
+        exists|a: f64, b: f64| {
+            &&& self.to_f64_lossy_ensures(a)
+            &&& rhs.to_f64_lossy_ensures(b)
+            &&& !(a * b).is_finite_spec()
+        }
+    }
+
+    pub open spec fn div_overflows(self: Self, rhs: Self) -> bool
+    {
+        exists|a: f64, b: f64| {
+            &&& self.to_f64_lossy_ensures(a)
+            &&& rhs.to_f64_lossy_ensures(b)
+            &&& !(a / b).is_finite_spec()
+        }
+    }
+
 }
 
 } // end verus!

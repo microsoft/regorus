@@ -153,6 +153,16 @@ impl View for Number
 
 /// Helpful lemmas
 
+// `spec_bigint_to_f64` deliberately leaves conversions outside the exactly represented range
+// uninterpreted. This captures the narrower fact required by negative powers: converting a
+// positive integer divisor and taking `1.0 / divisor` cannot produce NaN or infinity.
+pub axiom fn axiom_positive_integer_reciprocal_is_finite(divisor: int)
+    requires
+        divisor > 0,
+    ensures
+        !NumberView::Integer(1).div_overflows(NumberView::Integer(divisor)),
+;
+
 pub proof fn lemma_div_ensures_cases(lhs: NumberView, rhs: NumberView)
     ensures
         match (lhs, rhs) {
