@@ -50,16 +50,18 @@ impl<'a> Compiler<'a> {
             .into());
         };
 
+        let mut has_keyed_set = false;
+        let mut has_single_value = false;
         let rule_types: BTreeSet<RuleType> = definitions
             .iter()
             .map(|def| {
-                if let Rule::Spec { head, .. } = def.as_ref() {
+                Ok(if let Rule::Spec { head, .. } = def.as_ref() {
+                    has_single_value |= !matches!(head, RuleHead::Set { .. });
                     match head {
                         RuleHead::Set {
                             refr, key: Some(_), ..
-                        } if matches!(refr.as_ref(), Expr::RefBrack { index, .. }
-                                if !Self::is_string_literal(index)) =>
-                        {
+                        } if self.keyed_set_key(rule_path, def, refr)?.is_some() => {
+                            has_keyed_set = true;
                             RuleType::PartialObject
                         }
                         RuleHead::Set { .. } => RuleType::PartialSet,
@@ -74,9 +76,18 @@ impl<'a> Compiler<'a> {
                     }
                 } else {
                     RuleType::Complete
-                }
+                })
             })
-            .collect();
+            .collect::<Result<_>>()?;
+
+        if has_keyed_set && has_single_value {
+            return Err(CompilerError::General {
+                message: format!(
+                    "conflicting rule kinds for '{rule_path}': contains and single-valued heads"
+                ),
+            }
+            .into());
+        }
 
         if rule_types.len() > 1 {
             return Err(CompilerError::General {
@@ -94,6 +105,43 @@ impl<'a> Compiler<'a> {
             }
             .into()
         })
+    }
+
+    fn keyed_set_key(
+        &self,
+        rule_path: &str,
+        rule: &crate::ast::NodeRef<Rule>,
+        refr: &ExprRef,
+    ) -> Result<Option<ExprRef>> {
+        let (prefix, key) = match refr.as_ref() {
+            Expr::RefBrack { refr, index, .. } => (refr, index.clone()),
+            Expr::RefDot {
+                refr, field, eidx, ..
+            } => (
+                refr,
+                ExprRef::new(Expr::String {
+                    span: field.0.clone(),
+                    value: field.1.clone(),
+                    eidx: *eidx,
+                }),
+            ),
+            _ => return Ok(None),
+        };
+        if !Self::is_string_literal(&key) {
+            return Ok(Some(key));
+        }
+
+        let module_index = self.find_module_index_for_rule(rule)?;
+        let module = &self.policy.get_modules()[module_index as usize];
+        let package =
+            get_path_string(&module.package.refr, Some("data")).map_err(CompilerError::from)?;
+        if get_path_string(refr, Some(&package)).map_err(CompilerError::from)? == rule_path {
+            return Ok(None);
+        }
+        if get_path_string(prefix, Some(&package)).map_err(CompilerError::from)? != rule_path {
+            return Err(CompilerError::PartialObjectNestedKeyUnsupported.at(refr.span()));
+        }
+        Ok(Some(key))
     }
 
     fn validate_partial_object_shape(&self, refr: &ExprRef) -> Result<()> {
@@ -131,7 +179,7 @@ impl<'a> Compiler<'a> {
         matches!(expr.as_ref(), Expr::String { .. } | Expr::RawString { .. })
     }
 
-    fn is_simple_literal(expr: &ExprRef) -> bool {
+    pub(super) fn is_simple_literal(expr: &ExprRef) -> bool {
         match expr.as_ref() {
             Expr::String { .. }
             | Expr::RawString { .. }
@@ -482,19 +530,18 @@ impl<'a> Compiler<'a> {
                             self.rule_definition_destructuring_patterns[rule_index as usize]
                                 .push(None);
 
-                            let key_expr = match refr.as_ref() {
-                                Expr::RefBrack { refr, index, .. }
-                                    if rule_type == RuleType::PartialObject =>
-                                {
+                            let key_expr = if rule_type == RuleType::PartialObject {
+                                if let Expr::RefBrack { refr, .. } = refr.as_ref() {
                                     if Self::has_unsupported_bracket_prefix(refr) {
                                         return Err(
                                             CompilerError::PartialObjectNestedKeyUnsupported
                                                 .at(refr.span()),
                                         );
                                     }
-                                    Some(index.clone())
                                 }
-                                _ => None,
+                                self.keyed_set_key(rule_path, rule_ref, refr)?
+                            } else {
+                                None
                             };
                             (key_expr, key.clone())
                         }
@@ -619,7 +666,7 @@ impl<'a> Compiler<'a> {
                                 value_expr.span(),
                             );
 
-                            self.emit_context_yield()?;
+                            self.hoist_loops_and_emit_context_yield()?;
 
                             self.emit_instruction(Instruction::RuleReturn {}, value_expr.span());
                             self.pop_scope();
@@ -665,15 +712,8 @@ impl<'a> Compiler<'a> {
 
                             if !body.query.stmts.is_empty() {
                                 self.compile_query(&body.query)?;
-                            } else if let Some(value_expr) = body_value_expr.clone() {
-                                let value_reg = self.compile_rego_expr(&value_expr)?;
-                                self.emit_instruction(
-                                    Instruction::Move {
-                                        dest: result_register,
-                                        src: value_reg,
-                                    },
-                                    value_expr.span(),
-                                );
+                            } else {
+                                self.hoist_loops_and_emit_context_yield()?;
                             }
 
                             self.emit_instruction(Instruction::RuleReturn {}, &body.span);

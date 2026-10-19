@@ -89,7 +89,11 @@ Parameter structures:
   accumulates `rule[key] contains value` into an object of sets, preserving
   existing members and omitting undefined keys and values. The target must be
   an object, and an existing leaf must be a set. Static string prefixes remain
-  part of the rule path; multiple dynamic key levels remain unsupported.
+  part of the rule path; when a parent rule also has dynamic keys, its literal
+  final keys accumulate into the same object. Head-key loops are hoisted even
+  for bodyless rules, and undefined collections contribute nothing. The compiler
+  rejects conflicting `contains` and single-valued rule kinds. Multiple dynamic
+  key levels remain unsupported.
 - `ObjectCreateParams` reuses arrays of literal key/value pairs and register
   pairs. Literal keys must be sorted to match template order.
 - `ArrayCreateParams` and `SetCreateParams` store register lists. The VM checks

@@ -2,6 +2,164 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: review_missing_head_key_collection
+    input: {}
+    modules:
+      - |
+        package test
+        values[input.keys[_]] contains 1 if { true }
+    query: data.test.values
+    want_result: {}
+
+  - note: review_missing_head_key_collection_suspendable
+    execution_mode: suspendable
+    input: {}
+    modules:
+      - |
+        package test
+        values[input.keys[_]] contains 1 if { true }
+    query: data.test.values
+    want_result: {}
+
+  - note: review_mixed_keyed_rule_kinds
+    modules:
+      - |
+        package test
+        values[k] contains 1 if { k := "a" }
+        values[k] := 2 if { k := "a" }
+    query: data.test.values
+    want_error: "conflicting rule kinds"
+
+  - note: review_mixed_keyed_rule_kinds_reverse
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values[k] := 2 if { k := "a" }
+        values[k] contains 1 if { k := "a" }
+    query: data.test.values
+    want_error: "conflicting rule kinds"
+
+  - note: review_mixed_keyed_rule_kinds_equal_set
+    modules:
+      - |
+        package test
+        values[k] contains 1 if { k := "a" }
+        values[k] := {1} if { k := "a" }
+    query: data.test.values
+    want_error: "conflicting rule kinds"
+    allow_interpreter_success: true
+
+  - note: review_mixed_literal_dynamic_keys
+    modules:
+      - |
+        package test
+        values["a"] contains 1
+        values[k] contains 2 if { k := "a" }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [1, 2]
+
+  - note: review_mixed_literal_dynamic_keys_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values[k] contains 2 if { k := "a" }
+        values["a"] contains 1
+    query: data.test.values
+    want_result:
+      a:
+        set!: [1, 2]
+
+  - note: review_bodyless_head_key_loop
+    input:
+      keys: ["a", "b"]
+    modules:
+      - |
+        package test
+        values[input.keys[_]] contains 1
+    query: data.test.values
+    want_result:
+      a:
+        set!: [1]
+      b:
+        set!: [1]
+
+  - note: review_mixed_dot_dynamic_keys
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { k := "a" }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [1, 2]
+
+  - note: review_mixed_literal_dynamic_keys_across_modules
+    execution_mode: suspendable
+    modules:
+      - |
+        package test.nested
+        values["a"] contains 1 if { true }
+      - |
+        package test.nested
+        values[k] contains 2 if { k := "a" }
+    query: data.test.nested.values
+    want_result:
+      a:
+        set!: [1, 2]
+
+  - note: review_bodyless_missing_head_key_collection
+    input: {}
+    modules:
+      - |
+        package test
+        values[input.keys[_]] contains 1
+    query: data.test.values
+    want_result: {}
+
+  - note: review_mixed_literal_dynamic_child_entrypoint
+    modules:
+      - |
+        package test
+        values["a"] contains 1
+        values[k] contains 2 if { k := "b" }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: review_empty_query_head_key_loop
+    input:
+      keys: ["a", "b"]
+    modules:
+      - |
+        package test
+        values[input.keys[_]] contains 1 if {}
+    query: data.test.values
+    want_result:
+      a:
+        set!: [1]
+      b:
+        set!: [1]
+
+  - note: review_bodyless_head_key_loop_suspendable
+    execution_mode: suspendable
+    input:
+      keys: ["a", "b"]
+    modules:
+      - |
+        package test
+        values[input.keys[_]] contains 1
+    query: data.test.values
+    want_result:
+      a:
+        set!: [1]
+      b:
+        set!: [1]
+
   - note: keyed_partial_set_accumulates_per_key
     modules:
       - |

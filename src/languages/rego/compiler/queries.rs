@@ -128,7 +128,9 @@ impl<'a> Compiler<'a> {
         let mut key_value_loops = Vec::new();
 
         if let Some(expr) = key_expr.as_ref() {
-            key_value_loops.extend(self.get_expr_loops(expr)?);
+            if !Self::is_simple_literal(expr) {
+                key_value_loops.extend(self.get_expr_loops(expr)?);
+            }
         }
 
         if let Some(expr) = value_expr.as_ref() {

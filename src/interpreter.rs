@@ -2149,6 +2149,7 @@ impl Interpreter {
                     result = self.eval_output_expr_in_loop(loop_tail)? || result;
                 }
             }
+            Value::Undefined => {}
             _ => {
                 let span = Self::loop_span(loop_info);
                 return Err(span
