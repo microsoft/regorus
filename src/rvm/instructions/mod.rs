@@ -416,6 +416,14 @@ pub enum Instruction {
         /// Register that accumulates the result.
         result: u8,
     },
+
+    /// Add a defined value to the set at `obj[key]`, creating the set if absent.
+    /// Used by keyed partial-set rules (`rule[key] contains value`).
+    ObjectSetAdd {
+        obj: u8,
+        key: u8,
+        value: u8,
+    },
 }
 
 impl Instruction {

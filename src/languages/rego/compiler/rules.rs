@@ -55,6 +55,13 @@ impl<'a> Compiler<'a> {
             .map(|def| {
                 if let Rule::Spec { head, .. } = def.as_ref() {
                     match head {
+                        RuleHead::Set {
+                            refr, key: Some(_), ..
+                        } if matches!(refr.as_ref(), Expr::RefBrack { index, .. }
+                                if !Self::is_string_literal(index)) =>
+                        {
+                            RuleType::PartialObject
+                        }
                         RuleHead::Set { .. } => RuleType::PartialSet,
                         RuleHead::Compr { refr, assign, .. } => match refr.as_ref() {
                             crate::ast::Expr::RefBrack { .. } if assign.is_some() => {
@@ -470,12 +477,26 @@ impl<'a> Compiler<'a> {
                             };
                             (key_expr, output_expr)
                         }
-                        RuleHead::Set { key, .. } => {
+                        RuleHead::Set { refr, key, .. } => {
                             self.rule_definition_function_params[rule_index as usize].push(None);
                             self.rule_definition_destructuring_patterns[rule_index as usize]
                                 .push(None);
 
-                            (None, key.clone())
+                            let key_expr = match refr.as_ref() {
+                                Expr::RefBrack { refr, index, .. }
+                                    if rule_type == RuleType::PartialObject =>
+                                {
+                                    if Self::has_unsupported_bracket_prefix(refr) {
+                                        return Err(
+                                            CompilerError::PartialObjectNestedKeyUnsupported
+                                                .at(refr.span()),
+                                        );
+                                    }
+                                    Some(index.clone())
+                                }
+                                _ => None,
+                            };
+                            (key_expr, key.clone())
                         }
                         RuleHead::Func { assign, args, .. } => {
                             let mut param_names = Vec::new();
@@ -572,6 +593,7 @@ impl<'a> Compiler<'a> {
                         dest_register: result_register,
                         context_type: ContextType::Rule(rule_type.clone()),
                         key_expr,
+                        multi_value: matches!(head, RuleHead::Set { .. }),
                         value_expr,
                         span,
                         key_value_loops_hoisted: false,

@@ -482,9 +482,12 @@ impl LoopHoister {
                         };
                         (key_expr, output_expr)
                     }
-                    RuleHead::Set { key, .. } => {
-                        // For set rules, no separate key_expr, output_expr is the key
-                        (None, key.clone())
+                    RuleHead::Set { refr, key, .. } => {
+                        let key_expr = match refr.as_ref() {
+                            Expr::RefBrack { index, .. } => Some(index.clone()),
+                            _ => None,
+                        };
+                        (key_expr, key.clone())
                     }
                     RuleHead::Func { assign, .. } => {
                         // Function rules return the assignment value (if any)

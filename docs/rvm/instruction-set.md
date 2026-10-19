@@ -68,6 +68,7 @@ comprehension contexts. Outside loops it aborts the current rule.
 | Mnemonic                   | Operands / Params             | Behaviour                                                   |
 | :------------------------- | :---------------------------- | :---------------------------------------------------------- |
 | `ObjectSet`                | `obj, key, value`             | Mutates object in `obj` with key/value from registers.      |
+| `ObjectSetAdd`             | `obj, key, value`             | Adds a defined value to the set at `obj[key]`, creating it if absent. Undefined keys and values are omitted. |
 | `ObjectCreate`             | `params_index=pN`             | Builds object from literal template and register entries.   |
 | `ArrayNew`                 | `dest`                        | Creates empty array.                                        |
 | `ArrayPush`                | `arr, value`                  | Appends to array.                                           |
@@ -304,4 +305,3 @@ artifacts. Some contain `Vec` fields; the compiler is responsible for ensuring
 indices remain valid and stable across serialization boundaries.
 
 ---
-

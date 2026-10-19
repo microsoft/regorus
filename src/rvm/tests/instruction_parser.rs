@@ -53,6 +53,14 @@ pub fn parse_instruction(text: &str) -> Result<Instruction> {
             "RuleReturn" => parse_rule_return(params_text),
             "DestructuringSuccess" => parse_destructuring_success(params_text),
             "ObjectSet" => parse_object_set(params_text),
+            "ObjectSetAdd" => {
+                let params = parse_params(params_text)?;
+                Ok(Instruction::ObjectSetAdd {
+                    obj: get_param_u16(&params, "obj")?.try_into()?,
+                    key: get_param_u16(&params, "key")?.try_into()?,
+                    value: get_param_u16(&params, "value")?.try_into()?,
+                })
+            }
             "ObjectCreate" => parse_object_create(params_text),
             "Index" => parse_index(params_text),
             "IndexLiteral" => parse_index_literal(params_text),

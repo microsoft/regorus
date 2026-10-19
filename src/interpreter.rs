@@ -2005,7 +2005,9 @@ impl Interpreter {
                 }
 
                 if output == Value::Undefined || !comps_defined {
-                    ctx_mut.rule_value = Value::Undefined;
+                    if !is_set || key_expr.is_none() {
+                        ctx_mut.rule_value = Value::Undefined;
+                    }
                     return Ok(false);
                 }
 
@@ -3618,11 +3620,24 @@ impl Interpreter {
             RuleHead::Set { refr, key, .. } => {
                 Parser::get_path_ref_components_into(refr, &mut path)?;
                 let is_old_style_set = key.is_none();
+                let (rule_ref, key_expr) = match refr.as_ref() {
+                    Expr::RefBrack { refr, index, .. }
+                        if !is_old_style_set
+                            && !matches!(
+                                index.as_ref(),
+                                Expr::String { .. } | Expr::RawString { .. }
+                            ) =>
+                    {
+                        (refr.clone(), Some(index.clone()))
+                    }
+                    _ => (refr.clone(), None),
+                };
                 Ok((
                     Context {
+                        key_expr,
                         output_expr: key.clone(),
                         value: Value::new_set(),
-                        rule_ref: Some(refr.clone()),
+                        rule_ref: Some(rule_ref),
                         is_set: true,
                         is_old_style_set,
                         ..Context::default()
@@ -4136,8 +4151,17 @@ impl Interpreter {
                         let is_set = ctx.is_set;
                         let is_object = ctx.key_expr.is_some() && !is_set;
 
-                        let value = self.eval_rule_bodies(ctx, span, rule_body)?;
                         let package_components = self.eval_rule_ref(&module.package.refr)?;
+                        if is_set && ctx.key_expr.is_some() {
+                            let mut prefix = package_components.clone();
+                            prefix.extend(
+                                Self::get_rule_path_components(refr)?
+                                    .into_iter()
+                                    .map(Value::String),
+                            );
+                            self.update_rule_value(span, prefix, Value::Undefined, false)?;
+                        }
+                        let value = self.eval_rule_bodies(ctx, span, rule_body)?;
 
                         if value != Value::Undefined {
                             for (path, value_in_map) in value.as_object()? {

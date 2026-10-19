@@ -1,0 +1,73 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: keyed_set_accumulates_and_deduplicates
+    literals:
+      - {}
+      - "key"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "LoadFalse { dest: 2 }"
+      - "ObjectSetAdd { obj: 0, key: 1, value: 2 }"
+      - "ObjectSetAdd { obj: 0, key: 1, value: 2 }"
+      - "LoadNull { dest: 2 }"
+      - "ObjectSetAdd { obj: 0, key: 1, value: 2 }"
+      - "Return { value: 0 }"
+    want_result:
+      key:
+        set!: [false, null]
+
+  - note: keyed_set_skips_undefined_key_and_value
+    literals:
+      - {}
+      - "key"
+      - "#undefined"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 2 }"
+      - "ObjectSetAdd { obj: 0, key: 1, value: 2 }"
+      - "ObjectSetAdd { obj: 0, key: 2, value: 1 }"
+      - "Return { value: 0 }"
+    want_result: {}
+
+  - note: keyed_set_preserves_shared_object_and_set
+    literals:
+      - {}
+      - "key"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "LoadFalse { dest: 2 }"
+      - "ObjectSetAdd { obj: 0, key: 1, value: 2 }"
+      - "Move { dest: 3, src: 0 }"
+      - "LoadNull { dest: 2 }"
+      - "ObjectSetAdd { obj: 0, key: 1, value: 2 }"
+      - "Return { value: 3 }"
+    want_result:
+      key:
+        set!: [false]
+
+  - note: keyed_set_rejects_non_object_even_for_undefined
+    literals:
+      - "#undefined"
+    instructions:
+      - "LoadNull { dest: 0 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "ObjectSetAdd { obj: 0, key: 1, value: 1 }"
+      - "Return { value: 0 }"
+    want_error: "Register 0 does not contain an object"
+
+  - note: keyed_set_rejects_non_set_leaf
+    literals:
+      - {"key": 1}
+      - "key"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "LoadNull { dest: 2 }"
+      - "ObjectSetAdd { obj: 0, key: 1, value: 2 }"
+      - "Return { value: 0 }"
+    want_error: "Register 0 does not contain a set"

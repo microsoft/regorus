@@ -208,10 +208,18 @@ impl<'a> Compiler<'a> {
                 }
                 ContextType::Rule(RuleType::PartialObject) => {
                     self.emit_instruction(
-                        Instruction::ObjectSet {
-                            obj: dest_register,
-                            key: key_register,
-                            value: value_register,
+                        if context.multi_value {
+                            Instruction::ObjectSetAdd {
+                                obj: dest_register,
+                                key: key_register,
+                                value: value_register,
+                            }
+                        } else {
+                            Instruction::ObjectSet {
+                                obj: dest_register,
+                                key: key_register,
+                                value: value_register,
+                            }
                         },
                         span,
                     );

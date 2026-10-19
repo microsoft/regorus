@@ -61,6 +61,7 @@ pub struct CompilationContext {
     pub(super) context_type: ContextType,
     pub(super) dest_register: Register,
     pub(super) key_expr: Option<ExprRef>,
+    pub(super) multi_value: bool,
     pub(super) value_expr: Option<ExprRef>,
     pub(super) span: Span,
     pub(super) key_value_loops_hoisted: bool,
