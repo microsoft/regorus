@@ -71,3 +71,34 @@ cases:
       - "ObjectSetAdd { obj: 0, key: 1, value: 2 }"
       - "Return { value: 0 }"
     want_error: "Register 0 does not contain a set"
+
+  - note: keyed_set_rejects_non_set_leaf_even_for_undefined_value
+    literals:
+      - {"key": 1}
+      - "key"
+      - "#undefined"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 2 }"
+      - "ObjectSetAdd { obj: 0, key: 1, value: 2 }"
+      - "Return { value: 0 }"
+    want_error: "Register 0 does not contain a set"
+
+  - note: keyed_set_undefined_value_preserves_existing_set
+    literals:
+      - {}
+      - "key"
+      - "#undefined"
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "LoadNull { dest: 2 }"
+      - "ObjectSetAdd { obj: 0, key: 1, value: 2 }"
+      - "Move { dest: 3, src: 0 }"
+      - "Load { dest: 2, literal_idx: 2 }"
+      - "ObjectSetAdd { obj: 0, key: 1, value: 2 }"
+      - "Return { value: 0 }"
+    want_result:
+      key:
+        set!: [null]

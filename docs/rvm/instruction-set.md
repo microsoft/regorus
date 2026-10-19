@@ -88,10 +88,12 @@ Parameter structures:
 - `ObjectSetAdd` uses three register operands without a parameter table. It
   accumulates `rule[key] contains value` into an object of sets, preserving
   existing members and omitting undefined keys and values. The target must be
-  an object, and an existing leaf must be a set. Static string prefixes remain
-  part of the rule path; when a parent rule also has dynamic keys, its literal
+  an object, and an existing leaf must be a set even when the incoming value is
+  undefined. An undefined contribution does not create a missing leaf. Static
+  string prefixes remain part of the rule path; when a parent rule also has dynamic keys, its literal
   final keys accumulate into the same object. Head-key loops are hoisted even
-  for bodyless rules, and undefined collections contribute nothing. The compiler
+  for bodyless rules, and undefined collections contribute nothing. Failed keyed
+  rule bodies do not create empty leaf sets. The compiler
   rejects conflicting `contains` and single-valued rule kinds. Multiple dynamic
   key levels remain unsupported.
 - `ObjectCreateParams` reuses arrays of literal key/value pairs and register

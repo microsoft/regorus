@@ -4150,10 +4150,11 @@ impl Interpreter {
                     RuleHead::Compr { refr, .. } | RuleHead::Set { refr, .. } => {
                         let (ctx, _) = self.make_rule_context(rule_head)?;
                         let is_set = ctx.is_set;
+                        let is_keyed_set = is_set && ctx.key_expr.is_some();
                         let is_object = ctx.key_expr.is_some() && !is_set;
 
                         let package_components = self.eval_rule_ref(&module.package.refr)?;
-                        if is_set && ctx.key_expr.is_some() {
+                        if is_keyed_set {
                             let mut prefix = package_components.clone();
                             prefix.extend(
                                 Self::get_rule_path_components(refr)?
@@ -4176,7 +4177,7 @@ impl Interpreter {
                                     is_set,
                                 )?;
                             }
-                        } else if is_set {
+                        } else if is_set && !is_keyed_set {
                             if let Ok(mut comps) = self.eval_rule_ref(refr) {
                                 let mut full_path = package_components;
                                 full_path.append(&mut comps);

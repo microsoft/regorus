@@ -2,6 +2,46 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: keyed_partial_set_resolvable_key_failing_body
+    input: {key: "a", enabled: false}
+    modules:
+      - |
+        package test
+        values[input.key] contains 1 if { input.enabled }
+    query: data.test.values
+    want_result: {}
+
+  - note: keyed_partial_set_resolvable_key_failing_body_suspendable
+    execution_mode: suspendable
+    input: {key: "a", enabled: false}
+    modules:
+      - |
+        package test
+        values[input.key] contains 1 if { input.enabled }
+    query: data.test.values
+    want_result: {}
+
+  - note: keyed_partial_set_failing_body_preserves_other_keys
+    input: {key: "a", enabled: false}
+    modules:
+      - |
+        package test
+        values[input.key] contains 1 if { input.enabled }
+        values[k] contains 2 if { k := "b" }
+    query: data.test.values
+    want_result:
+      b:
+        set!: [2]
+
+  - note: keyed_partial_set_resolvable_key_undefined_body
+    input: {key: "a"}
+    modules:
+      - |
+        package test
+        values[input.key] contains 1 if { input.enabled }
+    query: data.test.values
+    want_result: {}
+
   - note: review_missing_head_key_collection
     input: {}
     modules:

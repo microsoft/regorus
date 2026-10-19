@@ -456,6 +456,17 @@ impl RegoVM {
                             pc: self.pc,
                         });
                     };
+                    if key_value != Value::Undefined && value_value == Value::Undefined {
+                        if let Some(set) = fields.get(&key_value) {
+                            if !matches!(set, Value::Set(_)) {
+                                return Err(VmError::RegisterNotSet {
+                                    register: obj,
+                                    value: set.clone(),
+                                    pc: self.pc,
+                                });
+                            }
+                        }
+                    }
                     if key_value != Value::Undefined && value_value != Value::Undefined {
                         let set = crate::Rc::make_mut(fields)
                             .get_or_insert_with(key_value, Value::new_set);
