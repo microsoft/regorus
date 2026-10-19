@@ -38,7 +38,7 @@ jobs:
           node-version: 22
 
       - name: Install wasmlpack
-        run: cargo install wasm-pack
+        run: cargo install wasm-pack --locked
 
       - name: Test wasm binding via xtask
         run: cargo xtask test-wasm --release --frozen --node node
