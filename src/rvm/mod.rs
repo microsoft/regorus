@@ -9,6 +9,9 @@ pub mod program;
 pub mod tests;
 pub mod vm;
 
+mod builtin_policy;
+
+pub use builtin_policy::{BuiltinPolicy, BuiltinPolicyError};
 pub use instructions::Instruction;
 pub use program::{
     generate_assembly_listing, generate_tabular_assembly_listing, AssemblyListingConfig, Program,

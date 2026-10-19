@@ -2,10 +2,11 @@
 // Licensed under the MIT License.
 #![cfg(feature = "rvm")]
 
-use regorus::languages::rego::compiler::Compiler;
+use regorus::languages::rego::compiler::{Compiler, CompilerOptions};
 use regorus::rvm::instructions::GuardMode;
-use regorus::rvm::vm::{RegoVM, VmError};
+use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, SuspendReason, VmError};
 use regorus::rvm::Instruction;
+use regorus::rvm::{BuiltinPolicy, Program};
 use regorus::{Engine, Rc, Value};
 use std::collections::BTreeSet;
 
@@ -460,5 +461,545 @@ fn early_exit_set_for_implicit_true_function() {
     assert!(
         ri.early_exit_on_first_success,
         "implicit-true function with 2 defs should set early_exit_on_first_success"
+    );
+}
+
+fn compile_modules_with_options(
+    modules: &[(&str, &str)],
+    entry_point: &str,
+    options: &CompilerOptions,
+) -> anyhow::Result<std::sync::Arc<Program>> {
+    let mut engine = Engine::new();
+    for (id, content) in modules {
+        engine.add_policy((*id).to_string(), (*content).to_string())?;
+    }
+    let compiled = engine.compile_with_entrypoint(&Rc::from(entry_point))?;
+    Ok(Compiler::compile_from_policy_with_options(
+        &compiled,
+        &[entry_point],
+        options,
+    )?)
+}
+
+fn compile_rule_with_options(
+    module: &str,
+    options: &CompilerOptions,
+) -> anyhow::Result<std::sync::Arc<Program>> {
+    compile_modules_with_options(&[("test.rego", module)], "data.test.p", options)
+}
+
+fn assert_disabled_builtin_fails_compilation(builtin: &str, expression: &str) {
+    let options = CompilerOptions {
+        builtin_policy: builtin_policy(&[builtin]),
+        ..CompilerOptions::default()
+    };
+    let module = format!("package test\np := {expression}");
+    let error = compile_rule_with_options(&module, &options)
+        .expect_err("a disabled emitted native builtin must fail compilation");
+    assert!(
+        error.to_string().contains(builtin),
+        "expected {builtin} in the error, got: {error}"
+    );
+}
+
+fn builtin_policy(names: &[&str]) -> BuiltinPolicy {
+    BuiltinPolicy::from_disabled_names(names).expect("builtin names are registered")
+}
+
+#[test]
+fn builtin_policy_validates_exact_registered_names_and_normalizes_duplicates() {
+    let policy = builtin_policy(&["count", "count"]);
+    assert_eq!(policy.disabled_names(), ["count"]);
+    assert!(BuiltinPolicy::default().disabled_names().is_empty());
+    assert!(BuiltinPolicy::from_disabled_names(&["not_a_registered_builtin"]).is_err());
+    assert!(BuiltinPolicy::from_disabled_names(&["count..nested"]).is_err());
+    assert!(BuiltinPolicy::from_disabled_names(&[" count"]).is_err());
+}
+
+#[test]
+fn compiler_policy_rejects_emitted_native_builtin_calls() {
+    assert_disabled_builtin_fails_compilation("count", "count([])");
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn compiler_policy_rejects_emitted_http_send() {
+    assert_disabled_builtin_fails_compilation("http.send", "http.send({})");
+}
+
+#[cfg(feature = "uuid")]
+#[test]
+fn compiler_policy_rejects_emitted_uuid_rfc4122() {
+    assert_disabled_builtin_fails_compilation("uuid.rfc4122", "uuid.rfc4122(\"v4\")");
+}
+
+#[cfg(feature = "rand")]
+#[test]
+fn compiler_policy_rejects_emitted_rand_intn() {
+    assert_disabled_builtin_fails_compilation("rand.intn", "rand.intn(1, 2)");
+}
+
+#[cfg(feature = "time")]
+#[test]
+fn compiler_policy_rejects_emitted_time_now_ns() {
+    assert_disabled_builtin_fails_compilation("time.now_ns", "time.now_ns()");
+}
+
+#[test]
+fn compiler_policy_rejects_emitted_set_operators_in_rules_and_comprehensions() {
+    let cases = [
+        ("package test\np := {1} | {2}", "__builtin_sets.union"),
+        (
+            "package test\np := {1} & {2}",
+            "__builtin_sets.intersection",
+        ),
+        (
+            "package test\np := [result | result := ({1} | {2})]",
+            "__builtin_sets.union",
+        ),
+        (
+            "package test\np := [result | result := ({1} & {2})]",
+            "__builtin_sets.intersection",
+        ),
+    ];
+
+    for (module, builtin) in cases {
+        let options = CompilerOptions {
+            builtin_policy: builtin_policy(&[builtin]),
+            ..CompilerOptions::default()
+        };
+        let error = compile_rule_with_options(module, &options)
+            .expect_err("a disabled emitted set operator must fail compilation");
+        assert!(
+            error.to_string().contains(builtin),
+            "expected {builtin} in the error, got: {error}"
+        );
+    }
+}
+
+#[test]
+fn compiler_policy_allows_unemitted_uses_in_unused_rules_and_defaults() {
+    let options = CompilerOptions {
+        builtin_policy: builtin_policy(&["count"]),
+        ..CompilerOptions::default()
+    };
+    let program = compile_rule_with_options(
+        r#"
+package test
+default p := count([])
+p := true
+unused := count([])
+"#,
+        &options,
+    )
+    .expect("unemitted default and unused-rule builtins are outside the emitted table");
+
+    assert!(
+        program.builtin_info_table.is_empty(),
+        "unemitted source calls must not appear in Program builtin metadata"
+    );
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.test.p")
+            .expect("the selected rule has no disabled builtin"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn compiler_policy_default_allows_emitted_set_operators() {
+    let program = compile_rule(
+        r#"
+package test
+p := ({1} | {2}) == (({2, 3} & {4, 2}) | {1, 2})
+"#,
+    );
+    let names = program
+        .builtin_info_table
+        .iter()
+        .map(|info| info.name.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(names.contains("__builtin_sets.union"));
+    assert!(names.contains("__builtin_sets.intersection"));
+
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.test.p")
+            .expect("default policy allows set operators"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn compiler_policy_does_not_mistake_user_defined_or_imported_names_for_builtins() {
+    let options = CompilerOptions {
+        builtin_policy: builtin_policy(&["count"]),
+        ..CompilerOptions::default()
+    };
+    let program = compile_modules_with_options(
+        &[
+            ("helpers.rego", "package helpers\ncount(_) := \"helper\""),
+            (
+                "test.rego",
+                "package test\nimport data.helpers as h\ncount(_) := \"local\"\np := count([]) == h.count([])",
+            ),
+        ],
+        "data.test.p",
+        &options,
+    )
+    .expect("user-defined functions are not native builtin calls");
+    assert!(
+        program.builtin_info_table.is_empty(),
+        "user-defined functions must not create native builtin metadata"
+    );
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.test.p")
+            .expect("local user function remains allowed"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn compiler_policy_rejects_same_native_name_host_await_but_allows_host_only_names() {
+    let native_name_options = CompilerOptions {
+        host_await_builtins: vec![("count".to_string(), 1)],
+        builtin_policy: builtin_policy(&["count"]),
+    };
+    let error = compile_rule_with_options("package test\np := count([])", &native_name_options)
+        .expect_err("a registered native-name HostAwait cannot bypass the compiler policy");
+    assert!(error.to_string().contains("count"));
+
+    let host_only_options = CompilerOptions {
+        host_await_builtins: vec![("lookup".to_string(), 1)],
+        builtin_policy: builtin_policy(&["count"]),
+    };
+    compile_rule_with_options("package test\np := lookup(input.value)", &host_only_options)
+        .expect("a host-only identifier is not a native builtin");
+}
+
+#[test]
+fn runtime_disabled_builtin_is_fatal_before_undefined_arguments() {
+    let program = compile_rule("package test\np := count(input.missing)");
+    let policy = builtin_policy(&["count"]);
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        for strict in [false, true] {
+            let mut vm = RegoVM::new();
+            vm.set_execution_mode(mode);
+            vm.set_strict_builtin_errors(strict);
+            vm.load_program(program.clone());
+            vm.set_input(Value::new_object());
+            vm.set_builtin_policy(policy.clone())
+                .expect("policy can be applied before execution");
+
+            let error = vm
+                .execute_entry_point_by_name("data.test.p")
+                .expect_err("disabled builtin calls must fail even with undefined arguments");
+            assert!(
+                matches!(
+                    error,
+                    VmError::BuiltinDisabled { ref name, .. } if name == "count"
+                ),
+                "disabled builtin must remain a fatal policy error, got: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn runtime_dynamic_host_identifier_is_checked_before_response_or_suspension() {
+    let program =
+        compile_rule("package test\np := __builtin_host_await(input.argument, input.identifier)");
+    let policy = builtin_policy(&["count"]);
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(mode);
+        vm.load_program(program.clone());
+        vm.set_input(Value::from_json_str(r#"{"identifier":"count"}"#).unwrap());
+        vm.set_host_await_responses([(Value::from("count"), [Value::from(42)])]);
+        vm.set_builtin_policy(policy.clone())
+            .expect("policy can be applied before execution");
+
+        let error = vm
+            .execute_entry_point_by_name("data.test.p")
+            .expect_err("disabled identifiers must fail before host handling");
+        assert!(matches!(
+            error,
+            VmError::BuiltinDisabled { ref name, .. } if name == "count"
+        ));
+        assert!(matches!(
+            vm.execution_state(),
+            ExecutionState::Error {
+                error: VmError::BuiltinDisabled { name, .. }
+            } if name == "count"
+        ));
+    }
+}
+
+#[test]
+fn runtime_disabled_native_builtin_after_resume_is_terminal_and_reusable() {
+    let program = compile_rule(
+        r#"package test
+p := count(__builtin_host_await([], "lookup"))"#,
+    );
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(program);
+    vm.set_builtin_policy(builtin_policy(&["count"]))
+        .expect("policy can be applied before execution");
+
+    vm.execute_entry_point_by_name("data.test.p")
+        .expect("the initial host await should suspend");
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended {
+            reason: SuspendReason::HostAwait { identifier, .. },
+            ..
+        } if identifier == &Value::from("lookup")
+    ));
+
+    let error = vm.resume(Some(Value::new_array()));
+    assert!(matches!(
+        error,
+        Err(VmError::BuiltinDisabled { ref name, .. }) if name == "count"
+    ));
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Error {
+            error: VmError::BuiltinDisabled { name, .. }
+        } if name == "count"
+    ));
+    assert!(vm.suspend_reason().is_none());
+    assert!(matches!(
+        vm.resume(Some(Value::new_array())),
+        Err(VmError::InvalidResumeState { .. })
+    ));
+
+    vm.set_builtin_policy(BuiltinPolicy::default())
+        .expect("an empty policy should reset a terminal VM");
+    assert!(matches!(vm.execution_state(), ExecutionState::Ready));
+
+    vm.execute_entry_point_by_name("data.test.p")
+        .expect("the reused VM should suspend on the host await");
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended {
+            reason: SuspendReason::HostAwait { identifier, .. },
+            ..
+        } if identifier == &Value::from("lookup")
+    ));
+    assert_eq!(
+        vm.resume(Some(Value::new_array()))
+            .expect("the unrestricted builtin should run after reset"),
+        Value::from(0)
+    );
+}
+
+#[test]
+fn runtime_disabled_dynamic_host_identifier_after_resume_is_terminal_and_reusable() {
+    let program = compile_rule(
+        r#"package test
+p := __builtin_host_await([], __builtin_host_await([], "lookup"))"#,
+    );
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(program);
+    vm.set_host_await_responses([(Value::from("count"), [Value::from(42)])]);
+    vm.set_builtin_policy(builtin_policy(&["count"]))
+        .expect("policy can be applied before execution");
+
+    vm.execute_entry_point_by_name("data.test.p")
+        .expect("the inner host await should suspend");
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended {
+            reason: SuspendReason::HostAwait { identifier, .. },
+            ..
+        } if identifier == &Value::from("lookup")
+    ));
+
+    let error = vm.resume(Some(Value::from("count")));
+    assert!(matches!(
+        error,
+        Err(VmError::BuiltinDisabled { ref name, .. }) if name == "count"
+    ));
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Error {
+            error: VmError::BuiltinDisabled { name, .. }
+        } if name == "count"
+    ));
+    assert!(vm.suspend_reason().is_none());
+    assert!(matches!(
+        vm.resume(Some(Value::from(42))),
+        Err(VmError::InvalidResumeState { .. })
+    ));
+
+    vm.set_builtin_policy(BuiltinPolicy::default())
+        .expect("an empty policy should reset a terminal VM");
+    assert!(matches!(vm.execution_state(), ExecutionState::Ready));
+
+    vm.execute_entry_point_by_name("data.test.p")
+        .expect("the reused VM should suspend on the inner host await");
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended {
+            reason: SuspendReason::HostAwait { identifier, .. },
+            ..
+        } if identifier == &Value::from("lookup")
+    ));
+    vm.resume(Some(Value::from("count")))
+        .expect("the unrestricted outer host await should suspend");
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended {
+            reason: SuspendReason::HostAwait { identifier, .. },
+            ..
+        } if identifier == &Value::from("count")
+    ));
+    assert_eq!(
+        vm.resume(Some(Value::from(42)))
+            .expect("the reused VM should complete after the second host await"),
+        Value::from(42)
+    );
+}
+
+#[test]
+fn missing_host_await_resume_value_preserves_suspension() {
+    let program = compile_rule("package test\np := __builtin_host_await([], \"lookup\")");
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(program);
+
+    vm.execute_entry_point_by_name("data.test.p")
+        .expect("the host await should suspend");
+    let error = vm
+        .resume(None)
+        .expect_err("a host await requires a resume value");
+    assert!(matches!(error, VmError::MissingResumeValue { .. }));
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended {
+            reason: SuspendReason::HostAwait { identifier, .. },
+            ..
+        } if identifier == &Value::from("lookup")
+    ));
+    assert_eq!(
+        vm.resume(Some(Value::from(7)))
+            .expect("the suspended VM should remain retryable"),
+        Value::from(7)
+    );
+}
+
+#[test]
+fn runtime_host_only_identifier_is_not_restricted_as_a_native_builtin() {
+    let options = CompilerOptions {
+        host_await_builtins: vec![("lookup".to_string(), 1)],
+        builtin_policy: builtin_policy(&["count"]),
+    };
+    let program = compile_rule_with_options("package test\np := lookup(input.value)", &options)
+        .expect("host-only identifiers are not native builtins");
+
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(program);
+    vm.set_input(Value::from_json_str(r#"{"value":1}"#).unwrap());
+    vm.set_builtin_policy(builtin_policy(&["count"]))
+        .expect("policy can be applied before execution");
+    vm.execute_entry_point_by_name("data.test.p")
+        .expect("host-only HostAwait is not blocked");
+    assert!(matches!(
+        vm.suspend_reason(),
+        Some(SuspendReason::HostAwait {
+            identifier: Value::String(name),
+            ..
+        }) if name.as_ref() == "lookup"
+    ));
+}
+
+#[test]
+fn serialized_program_uses_independent_vm_builtin_policies() {
+    let program = compile_rule("package test\np := count([])");
+    let serialized = program
+        .serialize_binary()
+        .expect("serialize compiled program");
+    let deserialized =
+        match Program::deserialize_binary(&serialized).expect("deserialize compiled program") {
+            regorus::rvm::program::DeserializationResult::Complete(program) => {
+                std::sync::Arc::new(program)
+            }
+            regorus::rvm::program::DeserializationResult::Partial(_) => {
+                panic!("compiled program should deserialize completely")
+            }
+        };
+
+    let mut restricted = RegoVM::new();
+    restricted.load_program(deserialized.clone());
+    restricted
+        .set_builtin_policy(builtin_policy(&["count"]))
+        .expect("policy applies to one VM");
+    assert!(matches!(
+        restricted.execute_entry_point_by_name("data.test.p"),
+        Err(VmError::BuiltinDisabled { name, .. }) if name == "count"
+    ));
+
+    let mut unrestricted = RegoVM::new();
+    unrestricted.load_program(deserialized);
+    assert_eq!(
+        unrestricted
+            .execute_entry_point_by_name("data.test.p")
+            .expect("the shared serialized program is unrestricted in another VM"),
+        Value::from(0)
+    );
+}
+
+#[test]
+fn builtin_policy_replacement_is_atomic_while_suspended_and_resets_after_error() {
+    let host_program =
+        compile_rule("package test\np := __builtin_host_await(input.argument, \"host\")");
+    let mut suspended = RegoVM::new();
+    suspended.set_execution_mode(ExecutionMode::Suspendable);
+    suspended.load_program(host_program);
+    suspended.set_input(Value::from_json_str(r#"{"argument":1}"#).unwrap());
+    suspended
+        .execute_entry_point_by_name("data.test.p")
+        .expect("host call suspends");
+    let error = suspended
+        .set_builtin_policy(builtin_policy(&["count"]))
+        .expect_err("policy changes are rejected while suspended");
+    assert!(matches!(
+        error,
+        VmError::BuiltinPolicyChangeWhileExecuting { .. }
+    ));
+    assert!(suspended.get_builtin_policy().disabled_names().is_empty());
+    assert!(matches!(
+        suspended.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+    assert_eq!(
+        suspended.resume(Some(Value::from(7))).unwrap(),
+        Value::from(7)
+    );
+
+    let program = compile_rule("package test\np := count([])");
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    vm.set_builtin_policy(builtin_policy(&["count"]))
+        .expect("policy applies before execution");
+    assert!(matches!(
+        vm.execute_entry_point_by_name("data.test.p"),
+        Err(VmError::BuiltinDisabled { name, .. }) if name == "count"
+    ));
+    vm.set_builtin_policy(BuiltinPolicy::default())
+        .expect("terminal error state allows policy replacement");
+    assert!(matches!(vm.execution_state(), ExecutionState::Ready));
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.test.p").unwrap(),
+        Value::from(0)
     );
 }

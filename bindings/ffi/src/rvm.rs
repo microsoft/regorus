@@ -18,12 +18,13 @@ use alloc::vec::Vec;
 use anyhow::{anyhow, Result};
 use core::ffi::{c_char, c_void};
 use core::ptr;
-use regorus::languages::rego::compiler::Compiler;
+use regorus::languages::rego::compiler::{Compiler, CompilerOptions};
 use regorus::rvm::program::{
     generate_assembly_listing, generate_tabular_assembly_listing, AssemblyListingConfig,
     DeserializationResult, Program,
 };
 use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, VmError};
+use regorus::rvm::{BuiltinPolicy, BuiltinPolicyError};
 use regorus::utils::limits::check_memory_limit_if_needed;
 use regorus::PolicyModule;
 use regorus::Value;
@@ -71,6 +72,11 @@ fn to_rvm_error_result(err: anyhow::Error) -> RegorusResult {
             RegorusStatus::MemoryBudgetUnsupportedInSuspendableExecution
         }
         _ => RegorusStatus::Error,
+    };
+    let status = if err.downcast_ref::<BuiltinPolicyError>().is_some() {
+        RegorusStatus::InvalidArgument
+    } else {
+        status
     };
     RegorusResult::err_with_message(status, err.to_string())
 }
@@ -183,6 +189,7 @@ fn compile_from_modules_inner(
     host_await_builtins: *const RegorusHostAwaitBuiltin,
     host_await_builtins_len: usize,
     host_await_builtin_size: usize,
+    disabled_builtin_names_json: *const c_char,
 ) -> Result<*mut RegorusProgram> {
     if entry_points_len == 0 {
         return Err(anyhow!("entry_points must contain at least one entry"));
@@ -198,35 +205,61 @@ fn compile_from_modules_inner(
     // convert_c_entry_points preserves length, so the slice is non-empty.
     let entry_rule = entry_points_ref[0];
 
-    let compiled_policy =
-        regorus::compile_policy_with_entrypoint(data, &policy_modules, entry_rule.into())?;
-
-    // `Compiler::compile_from_policy_with_host_await` with an empty builtins
-    // slice is equivalent to `compile_from_policy`, so both FFI entry points
-    // route through this single path. A null `host_await_builtins` pointer
-    // with `len == 0` is the canonical "no builtins" shape.
     let ha_builtins = convert_c_host_await_builtins(
         host_await_builtins,
         host_await_builtins_len,
         host_await_builtin_size,
     )?;
-    let ha_ref: Vec<(&str, usize)> = ha_builtins.iter().map(|(n, a)| (n.as_str(), *a)).collect();
+    let builtin_policy = parse_builtin_policy_json(disabled_builtin_names_json)?;
+    let compiled_policy =
+        regorus::compile_policy_with_entrypoint(data, &policy_modules, entry_rule.into())?;
 
-    let program = Compiler::compile_from_policy_with_host_await(
-        &compiled_policy,
-        &entry_points_ref,
-        &ha_ref,
-    )?;
+    let options = CompilerOptions {
+        host_await_builtins: ha_builtins,
+        builtin_policy,
+    };
+    let program =
+        Compiler::compile_from_policy_with_options(&compiled_policy, &entry_points_ref, &options)?;
     Ok(Box::into_raw(Box::new(RegorusProgram { program })))
+}
+
+pub(crate) fn parse_builtin_policy_json(
+    disabled_builtin_names_json: *const c_char,
+) -> Result<BuiltinPolicy> {
+    if disabled_builtin_names_json.is_null() {
+        return Ok(BuiltinPolicy::default());
+    }
+
+    let json = from_c_str(disabled_builtin_names_json)?;
+    let value = Value::from_json_str(&json)?;
+    let names = value
+        .as_array()
+        .map_err(|_| anyhow!("disabled builtin names must be a JSON array of strings"))?;
+    let mut name_refs = Vec::new();
+    name_refs
+        .try_reserve(names.len())
+        .map_err(|_| anyhow!("failed to reserve capacity for disabled builtin names"))?;
+    for (index, name) in names.iter().enumerate() {
+        let name = name
+            .as_string()
+            .map_err(|_| anyhow!("disabled builtin name at index {index} must be a string"))?;
+        name_refs.push(name.as_ref());
+    }
+
+    BuiltinPolicy::from_disabled_names(&name_refs).map_err(anyhow::Error::new)
 }
 
 fn compile_from_modules_result(output: Result<*mut RegorusProgram>) -> RegorusResult {
     match output {
         Ok(program) => RegorusResult::ok_pointer(program as *mut c_void),
-        Err(err) => RegorusResult::err_with_message(
-            RegorusStatus::CompilationFailed,
-            format!("RVM compilation failed: {err}"),
-        ),
+        Err(err) => {
+            let status = if err.downcast_ref::<BuiltinPolicyError>().is_some() {
+                RegorusStatus::InvalidArgument
+            } else {
+                RegorusStatus::CompilationFailed
+            };
+            RegorusResult::err_with_message(status, format!("RVM compilation failed: {err}"))
+        }
     }
 }
 
@@ -255,6 +288,7 @@ pub extern "C" fn regorus_program_compile_from_modules(
             core::ptr::null(),
             0,
             core::mem::size_of::<RegorusHostAwaitBuiltin>(),
+            core::ptr::null(),
         ))
     })
 }
@@ -417,6 +451,49 @@ pub extern "C" fn regorus_rvm_load_program(
             guard.load_program(program);
             Ok(())
         }())
+    })
+}
+
+/// Replace the VM's native builtin restrictions from a JSON array of names.
+///
+/// Passing null or an empty JSON array restores the default allow-all policy.
+/// The VM policy is copied and is independent of loaded/shared programs.
+#[no_mangle]
+pub extern "C" fn regorus_rvm_set_builtin_policy(
+    vm: *mut RegorusRvm,
+    disabled_builtin_names_json: *const c_char,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        let output = || -> Result<()> {
+            let policy = parse_builtin_policy_json(disabled_builtin_names_json)?;
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
+            let mut guard = vm.try_write()?;
+            guard.set_builtin_policy(policy)?;
+            Ok(())
+        }();
+
+        match output {
+            Ok(()) => RegorusResult::ok_void(),
+            Err(err) => to_rvm_error_result(err),
+        }
+    })
+}
+
+/// Get the VM's native builtin restrictions as a JSON array of names.
+#[no_mangle]
+pub extern "C" fn regorus_rvm_get_builtin_policy(vm: *mut RegorusRvm) -> RegorusResult {
+    with_unwind_guard(|| {
+        let output = || -> Result<String> {
+            let vm = to_shared_ref(vm as *const RegorusRvm)?;
+            let guard = vm.try_read()?;
+            let mut names = Value::new_array();
+            for name in guard.get_builtin_policy().disabled_names() {
+                names.as_array_mut()?.push(Value::from(name.as_str()));
+            }
+            names.to_json_str()
+        }();
+
+        to_rvm_string_result(output)
     })
 }
 
@@ -959,6 +1036,304 @@ mod unsupported_memory_budget_tests {
     }
 }
 
+#[cfg(all(test, feature = "std", feature = "rvm"))]
+mod builtin_policy_ffi_tests {
+    use super::{
+        regorus_program_compile_from_modules_with_options, regorus_program_drop, regorus_rvm_drop,
+        regorus_rvm_execute_entry_point_by_name, regorus_rvm_get_builtin_policy,
+        regorus_rvm_get_execution_state, regorus_rvm_get_host_await_identifier,
+        regorus_rvm_load_program, regorus_rvm_new, regorus_rvm_resume,
+        regorus_rvm_set_builtin_policy, regorus_rvm_set_execution_mode, RegorusHostAwaitBuiltin,
+        RegorusProgram,
+    };
+    use crate::common::{regorus_result_drop, RegorusResult, RegorusStatus};
+    use crate::compile::RegorusPolicyModule;
+    use alloc::boxed::Box;
+    use alloc::ffi::CString;
+    use alloc::string::ToString;
+    use core::ffi::CStr;
+    use core::mem::size_of;
+    use core::ptr;
+    use regorus::languages::rego::compiler::Compiler;
+    use regorus::{Engine, Rc};
+    use serde_json::from_str;
+
+    fn compile_program(module_content: &str) -> *mut RegorusProgram {
+        let mut engine = Engine::new();
+        engine
+            .add_policy("test.rego".into(), module_content.into())
+            .expect("add Rego module");
+        let entry_point = Rc::from("data.test.p");
+        let compiled = engine
+            .compile_with_entrypoint(&entry_point)
+            .expect("compile Rego module");
+        let program = Compiler::compile_from_policy(&compiled, &[entry_point.as_ref()])
+            .expect("compile RVM program");
+        Box::into_raw(Box::new(RegorusProgram { program }))
+    }
+
+    fn result_string(result: RegorusResult) -> String {
+        assert!(matches!(result.status, RegorusStatus::Ok));
+        assert!(!result.output.is_null());
+        let output = unsafe { CStr::from_ptr(result.output) }
+            .to_str()
+            .expect("FFI string must be UTF-8")
+            .to_string();
+        regorus_result_drop(result);
+        output
+    }
+
+    fn result_builtin_names(result: RegorusResult) -> Vec<String> {
+        from_str(&result_string(result)).expect("builtin policy output must be a JSON string array")
+    }
+
+    fn assert_error(result: RegorusResult, expected_status: RegorusStatus, expected_message: &str) {
+        assert_eq!(result.status, expected_status);
+        assert!(!result.error_message.is_null());
+        let message = unsafe { CStr::from_ptr(result.error_message) }
+            .to_str()
+            .expect("FFI error must be UTF-8")
+            .to_string();
+        assert!(
+            message.contains(expected_message),
+            "error did not contain {expected_message:?}: {message}"
+        );
+        regorus_result_drop(result);
+    }
+
+    fn assert_ok(result: RegorusResult) {
+        assert!(matches!(result.status, RegorusStatus::Ok));
+        regorus_result_drop(result);
+    }
+
+    fn execution_state(vm: *mut super::RegorusRvm) -> String {
+        result_string(regorus_rvm_get_execution_state(vm))
+    }
+
+    fn assert_no_host_await_identifier(vm: *mut super::RegorusRvm) {
+        let result = regorus_rvm_get_host_await_identifier(vm);
+        assert!(matches!(result.status, RegorusStatus::Ok));
+        assert!(result.output.is_null());
+        regorus_result_drop(result);
+    }
+
+    fn assert_suspended_on(vm: *mut super::RegorusRvm, expected: &str) {
+        assert_eq!(
+            result_string(regorus_rvm_get_host_await_identifier(vm)),
+            expected
+        );
+    }
+
+    #[test]
+    fn ffi_builtin_policy_get_set_validates_and_preserves_state_on_error() {
+        let vm = regorus_rvm_new();
+        assert!(!vm.is_null());
+        assert!(result_builtin_names(regorus_rvm_get_builtin_policy(vm)).is_empty());
+
+        let count = CString::new(r#"["count"]"#).expect("valid policy JSON");
+        let result = regorus_rvm_set_builtin_policy(vm, count.as_ptr());
+        assert!(matches!(result.status, RegorusStatus::Ok));
+        regorus_result_drop(result);
+        assert_eq!(
+            result_builtin_names(regorus_rvm_get_builtin_policy(vm)),
+            vec!["count"]
+        );
+
+        let unknown = CString::new(r#"["not.a.registered.builtin"]"#).expect("valid JSON");
+        assert_error(
+            regorus_rvm_set_builtin_policy(vm, unknown.as_ptr()),
+            RegorusStatus::InvalidArgument,
+            "unknown builtin name",
+        );
+        assert_eq!(
+            result_builtin_names(regorus_rvm_get_builtin_policy(vm)),
+            vec!["count"]
+        );
+
+        let result = regorus_rvm_set_builtin_policy(vm, ptr::null());
+        assert!(matches!(result.status, RegorusStatus::Ok));
+        regorus_result_drop(result);
+        assert!(result_builtin_names(regorus_rvm_get_builtin_policy(vm)).is_empty());
+        regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn ffi_compile_options_report_invalid_names_and_disabled_emitted_builtins() {
+        let data = CString::new("{}").expect("valid data JSON");
+        let module_id = CString::new("demo.rego").expect("valid module ID");
+        let module_content = CString::new("package demo\nallow := count(input.actions) > 0\n")
+            .expect("valid Rego source");
+        let modules = [RegorusPolicyModule {
+            id: module_id.as_ptr(),
+            content: module_content.as_ptr(),
+        }];
+        let entry_point = CString::new("data.demo.allow").expect("valid entry point");
+        let entry_points = [entry_point.as_ptr()];
+
+        let unknown = CString::new(r#"["not.a.registered.builtin"]"#).expect("valid JSON");
+        let result = regorus_program_compile_from_modules_with_options(
+            data.as_ptr(),
+            modules.as_ptr(),
+            modules.len(),
+            entry_points.as_ptr(),
+            entry_points.len(),
+            ptr::null(),
+            0,
+            size_of::<RegorusHostAwaitBuiltin>(),
+            unknown.as_ptr(),
+        );
+        assert_error(
+            result,
+            RegorusStatus::InvalidArgument,
+            "unknown builtin name",
+        );
+
+        let disabled = CString::new(r#"["count"]"#).expect("valid JSON");
+        let result = regorus_program_compile_from_modules_with_options(
+            data.as_ptr(),
+            modules.as_ptr(),
+            modules.len(),
+            entry_points.as_ptr(),
+            entry_points.len(),
+            ptr::null(),
+            0,
+            size_of::<RegorusHostAwaitBuiltin>(),
+            disabled.as_ptr(),
+        );
+        assert_error(
+            result,
+            RegorusStatus::CompilationFailed,
+            "Builtin 'count' is disabled",
+        );
+    }
+
+    #[test]
+    fn ffi_native_builtin_denial_after_resume_publishes_error_and_reuses_vm() {
+        let program =
+            compile_program("package test\np := count(__builtin_host_await([], \"lookup\"))");
+        let vm = regorus_rvm_new();
+        assert!(!vm.is_null());
+
+        assert_ok(regorus_rvm_set_execution_mode(vm, 1));
+        assert_ok(regorus_rvm_load_program(vm, program));
+        let disabled = CString::new(r#"["count"]"#).expect("policy JSON");
+        assert_ok(regorus_rvm_set_builtin_policy(vm, disabled.as_ptr()));
+
+        let entry_point = CString::new("data.test.p").expect("entry point");
+        assert_ok(regorus_rvm_execute_entry_point_by_name(
+            vm,
+            entry_point.as_ptr(),
+        ));
+        assert_suspended_on(vm, "lookup");
+
+        let array = CString::new("[]").expect("resume array JSON");
+        assert_error(
+            regorus_rvm_resume(vm, array.as_ptr(), true),
+            RegorusStatus::Error,
+            "count",
+        );
+        let state = execution_state(vm);
+        assert!(
+            state.contains("BuiltinDisabled"),
+            "unexpected state: {state}"
+        );
+        assert!(state.contains("count"), "unexpected state: {state}");
+        assert_eq!(
+            result_builtin_names(regorus_rvm_get_builtin_policy(vm)),
+            vec!["count"]
+        );
+        assert_no_host_await_identifier(vm);
+        assert_error(
+            regorus_rvm_resume(vm, array.as_ptr(), true),
+            RegorusStatus::Error,
+            "resume",
+        );
+
+        let empty = CString::new("[]").expect("empty policy JSON");
+        assert_ok(regorus_rvm_set_builtin_policy(vm, empty.as_ptr()));
+        assert!(execution_state(vm).starts_with("Ready"));
+        assert!(result_builtin_names(regorus_rvm_get_builtin_policy(vm)).is_empty());
+
+        assert_ok(regorus_rvm_execute_entry_point_by_name(
+            vm,
+            entry_point.as_ptr(),
+        ));
+        assert_suspended_on(vm, "lookup");
+        assert_eq!(
+            result_string(regorus_rvm_resume(vm, array.as_ptr(), true)),
+            "0"
+        );
+
+        regorus_rvm_drop(vm);
+        regorus_program_drop(program);
+    }
+
+    #[test]
+    fn ffi_dynamic_host_denial_after_resume_publishes_error_and_reuses_vm() {
+        let program = compile_program(
+            "package test\np := __builtin_host_await([], __builtin_host_await([], \"lookup\"))",
+        );
+        let vm = regorus_rvm_new();
+        assert!(!vm.is_null());
+
+        assert_ok(regorus_rvm_set_execution_mode(vm, 1));
+        assert_ok(regorus_rvm_load_program(vm, program));
+        let disabled = CString::new(r#"["count"]"#).expect("policy JSON");
+        assert_ok(regorus_rvm_set_builtin_policy(vm, disabled.as_ptr()));
+
+        let entry_point = CString::new("data.test.p").expect("entry point");
+        assert_ok(regorus_rvm_execute_entry_point_by_name(
+            vm,
+            entry_point.as_ptr(),
+        ));
+        assert_suspended_on(vm, "lookup");
+
+        let count = CString::new(r#""count""#).expect("resume identifier JSON");
+        assert_error(
+            regorus_rvm_resume(vm, count.as_ptr(), true),
+            RegorusStatus::Error,
+            "count",
+        );
+        let state = execution_state(vm);
+        assert!(
+            state.contains("BuiltinDisabled"),
+            "unexpected state: {state}"
+        );
+        assert!(state.contains("count"), "unexpected state: {state}");
+        assert_eq!(
+            result_builtin_names(regorus_rvm_get_builtin_policy(vm)),
+            vec!["count"]
+        );
+        assert_no_host_await_identifier(vm);
+
+        let response = CString::new("42").expect("resume response JSON");
+        assert_error(
+            regorus_rvm_resume(vm, response.as_ptr(), true),
+            RegorusStatus::Error,
+            "resume",
+        );
+        let empty = CString::new("[]").expect("empty policy JSON");
+        assert_ok(regorus_rvm_set_builtin_policy(vm, empty.as_ptr()));
+        assert!(execution_state(vm).starts_with("Ready"));
+        assert!(result_builtin_names(regorus_rvm_get_builtin_policy(vm)).is_empty());
+
+        assert_ok(regorus_rvm_execute_entry_point_by_name(
+            vm,
+            entry_point.as_ptr(),
+        ));
+        assert_suspended_on(vm, "lookup");
+        assert_ok(regorus_rvm_resume(vm, count.as_ptr(), true));
+        assert_suspended_on(vm, "count");
+        assert_eq!(
+            result_string(regorus_rvm_resume(vm, response.as_ptr(), true)),
+            "42"
+        );
+
+        regorus_rvm_drop(vm);
+        regorus_program_drop(program);
+    }
+}
+
 fn convert_c_entry_points(
     entry_points: *const *const c_char,
     entry_points_len: usize,
@@ -1061,6 +1436,39 @@ pub extern "C" fn regorus_program_compile_from_modules_with_host_await(
             host_await_builtins,
             host_await_builtins_len,
             host_await_builtin_size,
+            core::ptr::null(),
+        ))
+    })
+}
+
+/// Compile an RVM program from data/modules/entry-points with compiler options.
+///
+/// `disabled_builtin_names_json` must be a JSON array of exact registered builtin
+/// names. Passing null is equivalent to an empty list.
+#[allow(clippy::too_many_arguments)]
+#[no_mangle]
+pub extern "C" fn regorus_program_compile_from_modules_with_options(
+    data_json: *const c_char,
+    modules: *const RegorusPolicyModule,
+    modules_len: usize,
+    entry_points: *const *const c_char,
+    entry_points_len: usize,
+    host_await_builtins: *const RegorusHostAwaitBuiltin,
+    host_await_builtins_len: usize,
+    host_await_builtin_size: usize,
+    disabled_builtin_names_json: *const c_char,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        compile_from_modules_result(compile_from_modules_inner(
+            data_json,
+            modules,
+            modules_len,
+            entry_points,
+            entry_points_len,
+            host_await_builtins,
+            host_await_builtins_len,
+            host_await_builtin_size,
+            disabled_builtin_names_json,
         ))
     })
 }

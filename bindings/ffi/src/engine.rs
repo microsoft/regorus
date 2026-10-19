@@ -20,9 +20,11 @@ use anyhow::{anyhow, Result};
 use core::ffi::{c_char, c_void};
 use core::ptr;
 #[cfg(feature = "rvm")]
-use regorus::languages::rego::compiler::Compiler;
+use regorus::languages::rego::compiler::{Compiler, CompilerOptions};
 #[cfg(feature = "rvm")]
 use regorus::rvm::program::Program;
+#[cfg(feature = "rvm")]
+use regorus::rvm::BuiltinPolicyError;
 
 /// Wrapper for `regorus::Engine`.
 pub struct RegorusEngine {
@@ -1260,6 +1262,75 @@ pub extern "C" fn regorus_engine_compile_program_with_entrypoints(
                 RegorusStatus::CompilationFailed,
                 format!("Failed to compile RVM program: {e}"),
             ),
+        }
+    })
+}
+
+/// Compile an RVM program from engine state with native builtin restrictions.
+///
+/// `disabled_builtin_names_json` must be a JSON array of exact registered
+/// builtin names. Passing null is equivalent to an empty list.
+#[cfg(feature = "rvm")]
+#[no_mangle]
+pub extern "C" fn regorus_engine_compile_program_with_options(
+    engine: *mut RegorusEngine,
+    entry_points: *const *const c_char,
+    entry_points_len: usize,
+    disabled_builtin_names_json: *const c_char,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        let result = || -> Result<Arc<Program>> {
+            if entry_points_len == 0 {
+                return Err(anyhow!("entry_points must contain at least one entry"));
+            }
+            if entry_points.is_null() {
+                return Err(anyhow!("null entry_points pointer"));
+            }
+
+            let mut entry_points_vec = Vec::with_capacity(entry_points_len);
+            for index in 0..entry_points_len {
+                let entry_ptr = unsafe { *entry_points.add(index) };
+                entry_points_vec.push(from_c_str(entry_ptr)?);
+            }
+            let entry_points_ref: Vec<&str> = entry_points_vec.iter().map(String::as_str).collect();
+            let rule = entry_points_ref
+                .first()
+                .ok_or_else(|| anyhow!("entry_points must contain at least one entry"))?;
+            let rule_rc: regorus::Rc<str> = (*rule).into();
+
+            let builtin_policy =
+                crate::rvm::parse_builtin_policy_json(disabled_builtin_names_json)?;
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
+            let mut guard = engine.try_write()?;
+            let compiled_policy = guard.compile_with_entrypoint(&rule_rc)?;
+            let options = CompilerOptions {
+                builtin_policy,
+                ..CompilerOptions::default()
+            };
+            Compiler::compile_from_policy_with_options(
+                &compiled_policy,
+                &entry_points_ref,
+                &options,
+            )
+            .map_err(Into::into)
+        }();
+
+        match result {
+            Ok(program) => {
+                let boxed = Box::new(crate::rvm::RegorusProgram { program });
+                RegorusResult::ok_pointer(Box::into_raw(boxed) as *mut c_void)
+            }
+            Err(error) => {
+                let status = if error.downcast_ref::<BuiltinPolicyError>().is_some() {
+                    RegorusStatus::InvalidArgument
+                } else {
+                    RegorusStatus::CompilationFailed
+                };
+                RegorusResult::err_with_message(
+                    status,
+                    format!("Failed to compile RVM program: {error}"),
+                )
+            }
         }
     })
 }

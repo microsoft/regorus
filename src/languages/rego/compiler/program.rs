@@ -178,6 +178,15 @@ impl<'a> Compiler<'a> {
         self.program.instruction_spans = self.spans.into_iter().map(Some).collect();
         self.program.entry_points = self.entry_points;
 
+        for builtin_info in &self.program.builtin_info_table {
+            if self.builtin_policy.is_disabled(&builtin_info.name) {
+                return Err(CompilerError::BuiltinDisabled {
+                    name: builtin_info.name.clone(),
+                }
+                .into());
+            }
+        }
+
         if !self.program.builtin_info_table.is_empty() {
             self.program
                 .initialize_resolved_builtins()

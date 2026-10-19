@@ -105,6 +105,49 @@ var result = vm.Execute();
 Console.WriteLine($"allow: {result}");
 ```
 
+### Native builtin restrictions
+
+RVM compilation defaults to allowing every native builtin. Pass exact
+registered names in `RvmCompilerOptions` to reject a program if its final
+emitted builtin table uses one of them:
+
+```csharp
+var disabled = new RvmCompilerOptions(new[] { "count" });
+using var restrictedProgram = Program.CompileFromModulesWithOptions(
+    Data, modules, entryPoints, disabled);
+```
+
+The same options are available through `CompileFromEngineWithOptions`. Only
+calls represented in the emitted program are checked, including builtins
+introduced by set-operator lowering; unused or otherwise un-emitted source
+calls do not cause a rejection.
+
+Runtime restrictions are copied onto each VM, independently of the shared
+program. This is useful for programs prepared or deserialized elsewhere:
+
+```csharp
+using var program = Program.CompileFromModules("{}", modules, entryPoints);
+using var vm = new Rvm();
+vm.LoadProgram(program);
+vm.SetBuiltinPolicy(disabled);
+var activeRestrictions = vm.GetBuiltinPolicy();
+```
+
+A disabled builtin that executes raises `InvalidOperationException`; it does
+not become `false` or `undefined`. Replacing the policy is atomic, is rejected
+while execution is running or suspended, and a successful replacement resets
+stale execution results and rule caches. Empty compiler options retain
+allow-all behavior and use legacy compiler entry points; an older native
+library treats an empty runtime policy as its implicit allow-all default.
+Non-empty restrictions require a native library that supports builtin
+policies and otherwise raise `NotSupportedException`.
+These restrictions are not a compilation sandbox or an all-source use filter.
+Compiler-side interpreter evaluation of defaults or comprehensions may fold
+builtin results into the emitted program without retaining a native call in
+the program's builtin metadata; those evaluations are outside this policy.
+A fatal denial while resuming suspendable execution leaves the VM in its
+terminal error state, which a valid policy replacement resets for reuse.
+
 ### RVM instruction budget
 
 Use `SetMaxInstructions` to configure the maximum number of dispatched RVM

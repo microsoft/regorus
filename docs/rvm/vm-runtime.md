@@ -50,6 +50,9 @@ fields to responsibilities.
   the current execution's counter.
 - `set_host_await_responses`: pre-loads responses per identifier, consumed in
   FIFO order when `HostAwait` executes in run-to-completion mode.
+- `set_builtin_policy`: atomically replaces the exact native builtin names
+  disabled for this VM. The policy is instance-local and is not stored on the
+  shared `Arc<Program>`.
 - `set_strict_builtin_errors`: toggles builtin failure semantics between
   `VmError::ArithmeticError` and returning `Value::Undefined`.
 - Accessors (`get_pc`, `get_registers`, `get_loop_stack`, etc.) aid debugging
@@ -64,6 +67,31 @@ fields to responsibilities.
   builtin it is the registered name, and for the raw `__builtin_host_await(arg, id)`
   form it is whatever the second argument evaluates to. The current FFI exposes
   string identifiers only.
+
+### Native builtin policies
+
+`CompilerOptions::builtin_policy` is checked against the finalized
+`Program::builtin_info_table`, after compiler lowering has emitted the
+program. This includes native calls introduced by set operators. Source calls
+that do not appear in the emitted table are not compile-time rejections; for
+example, an unused rule does not restrict compilation. Registered HostAwait
+substitutions and runtime-derived HostAwait identifiers are guarded at their
+actual emitted/runtime call sites as well.
+
+The default policy allows all native builtins. A policy belongs to the
+compiler invocation or individual `RegoVM`, never to a shared program, so
+different VMs can load the same prepared program with different restrictions.
+Changing policy while the VM is Running or Suspended fails without mutation.
+A successful replacement clears prior execution results and caches. Executing
+a disabled native builtin is a fatal `BuiltinDisabled` error rather than a
+generic builtin error that could be converted to `Undefined`. If the denial
+occurs while resuming suspendable execution, the VM retains the terminal
+`Error` state; a later valid policy replacement resets the VM for reuse.
+
+These restrictions are not a compilation sandbox or an all-source use filter.
+Compiler-side interpreter evaluation of defaults or comprehensions may fold
+builtin results into the emitted program without retaining a native call in
+`Program::builtin_info_table`; those evaluations are outside this policy.
 
 ---
 
@@ -277,4 +305,3 @@ internal runtime field and is not a public C# getter.
   combines nested loops, comprehensions, function calls, and host awaits.
 
 ---
-

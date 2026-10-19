@@ -16,6 +16,9 @@ pub enum CompilerError {
     #[error("Unknown builtin function: {name}")]
     UnknownBuiltinFunction { name: String },
 
+    #[error("Builtin '{name}' is disabled")]
+    BuiltinDisabled { name: String },
+
     #[error("the `with` keyword is not supported by the compiler yet")]
     WithKeywordUnsupported,
 

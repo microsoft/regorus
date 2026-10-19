@@ -159,6 +159,12 @@ pub enum VmError {
     #[error("Builtin function not resolved: {name} (pc={pc})")]
     BuiltinNotResolved { name: String, pc: usize },
 
+    #[error("Builtin '{name}' is disabled (pc={pc})")]
+    BuiltinDisabled { name: String, pc: usize },
+
+    #[error("Cannot change builtin policy while the VM is running or suspended (pc={pc})")]
+    BuiltinPolicyChangeWhileExecuting { pc: usize },
+
     #[error("Cannot add {left:?} and {right:?} (pc={pc})")]
     InvalidAddition {
         left: Value,

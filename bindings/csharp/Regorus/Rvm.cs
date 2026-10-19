@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using Regorus.Internal;
 
 #nullable enable
@@ -74,6 +75,78 @@ namespace Regorus
                     return 0;
                 });
                 return 0;
+            });
+        }
+
+        /// <summary>
+        /// Atomically replace the disabled native builtin names for this VM.
+        /// </summary>
+        /// <param name="options">The exact registered native builtin names to disable.</param>
+        /// <exception cref="NotSupportedException">
+        /// Thrown when a non-empty policy is requested from an older native library.
+        /// </exception>
+        public void SetBuiltinPolicy(RvmCompilerOptions options)
+        {
+            if (options is null)
+            {
+                throw new ArgumentNullException(nameof(options));
+            }
+
+            var disabledBuiltins = options.DisabledBuiltins;
+            var json = JsonSerializer.Serialize(disabledBuiltins);
+            using var pinnedNames = Utf8Marshaller.Pin(json);
+            try
+            {
+                UseHandle(vmPtr =>
+                {
+                    CheckAndDropResult(API.regorus_rvm_set_builtin_policy((RegorusRvm*)vmPtr, pinnedNames.Pointer));
+                    return 0;
+                });
+            }
+            catch (EntryPointNotFoundException) when (disabledBuiltins.Count == 0)
+            {
+                // Older native libraries have no policy state, so the empty policy is the default.
+            }
+            catch (EntryPointNotFoundException error)
+            {
+                throw new NotSupportedException(
+                    "The native library does not support RVM builtin restrictions. Update the native library together with the managed binding.",
+                    error);
+            }
+        }
+
+        /// <summary>
+        /// Get this VM's disabled native builtin names.
+        /// </summary>
+        /// <exception cref="NotSupportedException">
+        /// Thrown when the native library does not expose builtin policy state.
+        /// </exception>
+        public IReadOnlyList<string> GetBuiltinPolicy()
+        {
+            return UseHandle(vmPtr =>
+            {
+                try
+                {
+                    var json = CheckAndDropResult(API.regorus_rvm_get_builtin_policy((RegorusRvm*)vmPtr));
+                    if (json is null)
+                    {
+                        throw new InvalidOperationException("The native builtin policy response must not be null.");
+                    }
+
+                    var names = JsonSerializer.Deserialize<string[]>(json);
+                    if (names is null)
+                    {
+                        throw new InvalidOperationException("The native builtin policy response must be a JSON array.");
+                    }
+
+                    return Array.AsReadOnly(names);
+                }
+                catch (EntryPointNotFoundException error)
+                {
+                    throw new NotSupportedException(
+                        "The native library does not expose RVM builtin policy state. Update the native library together with the managed binding.",
+                        error);
+                }
             });
         }
 

@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -37,6 +38,11 @@ allow if {
 }
 """;
 
+    private const string NativeBuiltinPolicy = """
+package demo
+allow := count(input.actions) > 0
+""";
+
     private const string HostAwaitPolicy = """
 package demo
 import rego.v1
@@ -69,6 +75,24 @@ result := __builtin_host_await(
 )
 """;
 
+    private const string ResumedNativeBuiltinPolicy = """
+package demo
+p := count(__builtin_host_await([], "lookup"))
+""";
+
+    private const string ResumedDynamicHostAwaitPolicy = """
+package demo
+p := __builtin_host_await([], __builtin_host_await([], "lookup"))
+""";
+
+    private const string LegacyNativePolicy = """
+package demo
+p := count([])
+""";
+
+    private static bool ExpectLegacyNative =>
+        Environment.GetEnvironmentVariable("REGORUS_EXPECT_LEGACY_NATIVE") == "1";
+
     [TestMethod]
     public void Program_compile_and_execute_succeeds()
     {
@@ -90,6 +114,266 @@ result := __builtin_host_await(
 
         var result = vm.Execute();
         Assert.AreEqual("true", result, "expected allow=true");
+    }
+
+    [TestMethod]
+    public void CompileFromModulesWithOptions_rejects_disabled_emitted_builtin()
+    {
+        var modules = new[] { new PolicyModule("demo.rego", NativeBuiltinPolicy) };
+        var entryPoints = new[] { "data.demo.allow" };
+        var options = new RvmCompilerOptions(new[] { "count" });
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => Program.CompileFromModulesWithOptions("{}", modules, entryPoints, options));
+    }
+
+    [TestMethod]
+    public void CompileFromEngineWithOptions_rejects_disabled_emitted_builtin()
+    {
+        using var engine = new Engine();
+        engine.AddPolicy("demo.rego", NativeBuiltinPolicy);
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => Program.CompileFromEngineWithOptions(
+                engine,
+                new[] { "data.demo.allow" },
+                new RvmCompilerOptions(new[] { "count" })));
+    }
+
+    [TestMethod]
+    public void CompileFromModulesWithEmptyOptions_allows_native_builtin_use()
+    {
+        var modules = new[] { new PolicyModule("demo.rego", NativeBuiltinPolicy) };
+        using var program = Program.CompileFromModulesWithOptions(
+            "{}", modules, new[] { "data.demo.allow" }, new RvmCompilerOptions());
+        using var vm = new Rvm();
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"actions\":[]}");
+
+        Assert.AreEqual("false", vm.Execute());
+    }
+
+    [TestMethod]
+    public void CompileFromModulesWithOptions_preserves_host_await_registrations()
+    {
+        var modules = new[] { new PolicyModule("account.rego", GetAccountPolicy) };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("get_account") };
+        using var program = Program.CompileFromModulesWithOptions(
+            "{}", modules, new[] { "data.demo.allow" }, hostAwaitBuiltins,
+            new RvmCompilerOptions(new[] { "count" }));
+
+        StringAssert.Contains(GetListing(program), "HostAwait");
+    }
+
+    [TestMethod]
+    public void RvmCompilerOptions_copies_disabled_builtin_names()
+    {
+        var names = new List<string> { "count" };
+        var options = new RvmCompilerOptions(names);
+        names[0] = "http.send";
+
+        CollectionAssert.AreEqual(new[] { "count" }, options.DisabledBuiltins.ToArray());
+    }
+
+    [TestMethod]
+    public void Rvm_builtin_policy_is_per_vm_and_can_be_cleared()
+    {
+        var modules = new[] { new PolicyModule("demo.rego", NativeBuiltinPolicy) };
+        using var program = Program.CompileFromModules("{}", modules, new[] { "data.demo.allow" });
+        using var restrictedVm = new Rvm();
+        using var unrestrictedVm = new Rvm();
+
+        restrictedVm.LoadProgram(program);
+        unrestrictedVm.LoadProgram(program);
+        restrictedVm.SetInputJson("{\"actions\":[]}");
+        unrestrictedVm.SetInputJson("{\"actions\":[]}");
+        restrictedVm.SetBuiltinPolicy(new RvmCompilerOptions(new[] { "count" }));
+
+        CollectionAssert.AreEqual(new[] { "count" }, restrictedVm.GetBuiltinPolicy().ToArray());
+        CollectionAssert.AreEqual(Array.Empty<string>(), unrestrictedVm.GetBuiltinPolicy().ToArray());
+        Assert.ThrowsException<InvalidOperationException>(() => restrictedVm.Execute());
+        Assert.AreEqual("false", unrestrictedVm.Execute());
+
+        restrictedVm.SetBuiltinPolicy(new RvmCompilerOptions());
+        Assert.AreEqual("false", restrictedVm.Execute(), "clearing a runtime restriction should allow a fresh run");
+    }
+
+    [TestMethod]
+    public void Rvm_builtin_policy_rejects_unknown_names_without_replacing_current_policy()
+    {
+        using var vm = new Rvm();
+        vm.SetBuiltinPolicy(new RvmCompilerOptions(new[] { "count" }));
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => vm.SetBuiltinPolicy(new RvmCompilerOptions(new[] { "not.a.registered.builtin" })));
+        CollectionAssert.AreEqual(new[] { "count" }, vm.GetBuiltinPolicy().ToArray());
+    }
+
+    [TestMethod]
+    public void Rvm_disabled_native_builtin_after_resume_publishes_error_and_reuses_vm()
+    {
+        var modules = new[] { new PolicyModule("resume.rego", ResumedNativeBuiltinPolicy) };
+        using var program = Program.CompileFromModules("{}", modules, new[] { "data.demo.p" });
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.LoadProgram(program);
+        vm.SetBuiltinPolicy(new RvmCompilerOptions(new[] { "count" }));
+
+        vm.ExecuteEntryPoint("data.demo.p");
+        Assert.AreEqual("lookup", vm.GetHostAwaitIdentifier());
+
+        Assert.ThrowsException<InvalidOperationException>(() => vm.Resume("[]"));
+        var failedState = vm.GetExecutionState();
+        StringAssert.Contains(failedState!, "BuiltinDisabled");
+        StringAssert.Contains(failedState!, "count");
+        CollectionAssert.AreEqual(new[] { "count" }, vm.GetBuiltinPolicy().ToArray());
+        Assert.IsNull(vm.GetHostAwaitIdentifier());
+        Assert.ThrowsException<InvalidOperationException>(() => vm.Resume("[]"));
+
+        vm.SetBuiltinPolicy(new RvmCompilerOptions());
+        StringAssert.Contains(vm.GetExecutionState()!, "Ready");
+        CollectionAssert.AreEqual(Array.Empty<string>(), vm.GetBuiltinPolicy().ToArray());
+
+        vm.ExecuteEntryPoint("data.demo.p");
+        Assert.AreEqual("lookup", vm.GetHostAwaitIdentifier());
+        Assert.AreEqual("0", vm.Resume("[]"));
+        StringAssert.Contains(vm.GetExecutionState()!, "Completed");
+    }
+
+    [TestMethod]
+    public void Rvm_disabled_dynamic_host_await_after_resume_publishes_error_and_reuses_vm()
+    {
+        var modules = new[] { new PolicyModule("resume.rego", ResumedDynamicHostAwaitPolicy) };
+        using var program = Program.CompileFromModules("{}", modules, new[] { "data.demo.p" });
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.LoadProgram(program);
+        vm.SetBuiltinPolicy(new RvmCompilerOptions(new[] { "count" }));
+
+        vm.ExecuteEntryPoint("data.demo.p");
+        Assert.AreEqual("lookup", vm.GetHostAwaitIdentifier());
+
+        Assert.ThrowsException<InvalidOperationException>(() => vm.Resume("\"count\""));
+        var failedState = vm.GetExecutionState();
+        StringAssert.Contains(failedState!, "BuiltinDisabled");
+        StringAssert.Contains(failedState!, "count");
+        CollectionAssert.AreEqual(new[] { "count" }, vm.GetBuiltinPolicy().ToArray());
+        Assert.IsNull(vm.GetHostAwaitIdentifier());
+        Assert.ThrowsException<InvalidOperationException>(() => vm.Resume("42"));
+
+        vm.SetBuiltinPolicy(new RvmCompilerOptions());
+        StringAssert.Contains(vm.GetExecutionState()!, "Ready");
+        CollectionAssert.AreEqual(Array.Empty<string>(), vm.GetBuiltinPolicy().ToArray());
+
+        vm.ExecuteEntryPoint("data.demo.p");
+        Assert.AreEqual("lookup", vm.GetHostAwaitIdentifier());
+        vm.Resume("\"count\"");
+        Assert.AreEqual("count", vm.GetHostAwaitIdentifier());
+        Assert.AreEqual("42", vm.Resume("42"));
+        StringAssert.Contains(vm.GetExecutionState()!, "Completed");
+    }
+
+    [TestMethod]
+    public void LegacyNativeCompatibility_empty_options_and_runtime_policy_preserve_allow_all()
+    {
+        var modules = new[] { new PolicyModule("legacy.rego", LegacyNativePolicy) };
+        using var program = Program.CompileFromModulesWithOptions(
+            "{}",
+            modules,
+            new[] { "data.demo.p" },
+            new RvmCompilerOptions());
+        using var vm = new Rvm();
+        vm.LoadProgram(program);
+        vm.SetBuiltinPolicy(new RvmCompilerOptions());
+
+        Assert.AreEqual("0", vm.ExecuteEntryPoint("data.demo.p"));
+
+        using var engine = new Engine();
+        engine.AddPolicy("legacy.rego", LegacyNativePolicy);
+        using var engineProgram = Program.CompileFromEngineWithOptions(
+            engine,
+            new[] { "data.demo.p" },
+            new RvmCompilerOptions());
+        using var engineVm = new Rvm();
+        engineVm.LoadProgram(engineProgram);
+        Assert.AreEqual("0", engineVm.ExecuteEntryPoint("data.demo.p"));
+
+        if (ExpectLegacyNative)
+        {
+            Assert.ThrowsException<NotSupportedException>(() => vm.GetBuiltinPolicy());
+        }
+        else
+        {
+            CollectionAssert.AreEqual(Array.Empty<string>(), vm.GetBuiltinPolicy().ToArray());
+        }
+    }
+
+    [TestMethod]
+    public void LegacyNativeCompatibility_nonempty_compile_options_are_unsupported()
+    {
+        var modules = new[] { new PolicyModule("legacy.rego", LegacyNativePolicy) };
+        var options = new RvmCompilerOptions(new[] { "count" });
+
+        if (ExpectLegacyNative)
+        {
+            Assert.ThrowsException<NotSupportedException>(
+                () => Program.CompileFromModulesWithOptions(
+                    "{}", modules, new[] { "data.demo.p" }, options));
+        }
+        else
+        {
+            Assert.ThrowsException<InvalidOperationException>(
+                () => Program.CompileFromModulesWithOptions(
+                    "{}", modules, new[] { "data.demo.p" }, options));
+        }
+
+        using var engine = new Engine();
+        engine.AddPolicy("legacy.rego", LegacyNativePolicy);
+        if (ExpectLegacyNative)
+        {
+            Assert.ThrowsException<NotSupportedException>(
+                () => Program.CompileFromEngineWithOptions(
+                    engine, new[] { "data.demo.p" }, options));
+        }
+        else
+        {
+            var error = Assert.ThrowsException<InvalidOperationException>(
+                () => Program.CompileFromEngineWithOptions(
+                    engine, new[] { "data.demo.p" }, options));
+            StringAssert.Contains(error.Message, "Builtin 'count' is disabled");
+        }
+    }
+
+    [TestMethod]
+    public void LegacyNativeCompatibility_nonempty_runtime_policy_is_unsupported()
+    {
+        using var vm = new Rvm();
+        var options = new RvmCompilerOptions(new[] { "count" });
+
+        if (ExpectLegacyNative)
+        {
+            Assert.ThrowsException<NotSupportedException>(() => vm.SetBuiltinPolicy(options));
+        }
+        else
+        {
+            vm.SetBuiltinPolicy(options);
+            CollectionAssert.AreEqual(new[] { "count" }, vm.GetBuiltinPolicy().ToArray());
+        }
+    }
+
+    [TestMethod]
+    public void LegacyNativeCompatibility_policy_getter_is_unsupported()
+    {
+        using var vm = new Rvm();
+
+        if (ExpectLegacyNative)
+        {
+            Assert.ThrowsException<NotSupportedException>(() => vm.GetBuiltinPolicy());
+        }
+        else
+        {
+            CollectionAssert.AreEqual(Array.Empty<string>(), vm.GetBuiltinPolicy().ToArray());
+        }
     }
 
     [TestMethod]
