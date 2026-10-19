@@ -99,6 +99,10 @@ Parameter structures:
   key levels remain unsupported. Dynamic prefixes followed by dotted keys and
   ancestor evaluation requiring intervening static prefixes are also explicitly
   rejected; a static prefix is supported when it is the compiled rule path.
+  Static string leaf declarations are seeded as empty sets once before body
+  evaluation, without overwriting accumulated members. Key and value output
+  expressions share index bindings; named indices pair entries, while independent
+  wildcards retain Cartesian-product semantics.
 - `ObjectCreateParams` reuses arrays of literal key/value pairs and register
   pairs. Literal keys must be sorted to match template order.
 - `ArrayCreateParams` and `SetCreateParams` store register lists. The VM checks

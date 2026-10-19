@@ -497,6 +497,41 @@ impl<'a> Compiler<'a> {
                 self.rule_definition_static_values.push(Vec::new());
             }
 
+            // Seed all static leaves once, before any body can fail or accumulate members.
+            let mut initial_object = Value::new_object();
+            if rule_type == RuleType::PartialObject {
+                for rule in rule_definitions {
+                    if let Rule::Spec {
+                        head:
+                            RuleHead::Set {
+                                refr, key: Some(_), ..
+                            },
+                        ..
+                    } = rule.as_ref()
+                    {
+                        if let Some(key) = self.keyed_set_key(rule_path, rule, refr)? {
+                            if let Expr::String { value, .. } | Expr::RawString { value, .. } =
+                                key.as_ref()
+                            {
+                                initial_object
+                                    .as_object_mut()
+                                    .map_err(CompilerError::from)?
+                                    .insert(value.clone(), Value::new_set());
+                            }
+                        }
+                    }
+                }
+            }
+            let initial_literal = if initial_object
+                .as_object()
+                .map_err(CompilerError::from)?
+                .is_empty()
+            {
+                None
+            } else {
+                Some(self.add_literal(initial_object))
+            };
+
             let mut num_registers_used = 0;
             let mut rule_param_count: Option<usize> = None;
 
@@ -659,6 +694,17 @@ impl<'a> Compiler<'a> {
                                 },
                                 value_expr.span(),
                             );
+                            if def_idx == 0 {
+                                if let Some(literal_idx) = initial_literal {
+                                    self.emit_instruction(
+                                        Instruction::Load {
+                                            dest: result_register,
+                                            literal_idx,
+                                        },
+                                        value_expr.span(),
+                                    );
+                                }
+                            }
 
                             self.hoist_loops_and_emit_context_yield()?;
 
@@ -704,6 +750,17 @@ impl<'a> Compiler<'a> {
                                 },
                                 &body.span,
                             );
+                            if def_idx == 0 && body_idx == 0 {
+                                if let Some(literal_idx) = initial_literal {
+                                    self.emit_instruction(
+                                        Instruction::Load {
+                                            dest: result_register,
+                                            literal_idx,
+                                        },
+                                        &body.span,
+                                    );
+                                }
+                            }
 
                             if !body.query.stmts.is_empty() {
                                 self.compile_query(&body.query)?;

@@ -1709,29 +1709,7 @@ impl Interpreter {
                 }
             }
 
-            let index_plan = if let Some(index) = index_expr {
-                let module_idx = self.current_module_index;
-                let expr_idx = index.as_ref().eidx();
-                let plan = self
-                    .compiled_policy
-                    .loop_hoisting_table
-                    .get_expr_binding_plan(module_idx, expr_idx)
-                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
-
-                match plan.cloned() {
-                    Some(BindingPlan::LoopIndex {
-                        destructuring_plan, ..
-                    }) => destructuring_plan,
-                    Some(other_plan) => {
-                        bail!("internal error: expected LoopIndex for loop index expression, got {:?}", other_plan);
-                    }
-                    None => {
-                        bail!("internal error: no binding plan found for loop index expression");
-                    }
-                }
-            } else {
-                bail!("internal error: no binding plan found for loop index expression");
-            };
+            let index_plan = self.get_loop_index_plan(loop_info)?;
 
             // Create a new scope.
             self.scopes.push(Scope::default());
@@ -1950,6 +1928,47 @@ impl Interpreter {
         Ok(is_const && Self::is_simple_literal(output_expr)?)
     }
 
+    fn get_loop_index_plan(&self, loop_info: &HoistedLoop) -> Result<DestructuringPlan> {
+        let index = Self::loop_index_expr(loop_info)
+            .ok_or_else(|| anyhow!("internal error: no loop index expression"))?;
+        let plan = self
+            .compiled_policy
+            .loop_hoisting_table
+            .get_expr_binding_plan(self.current_module_index, index.as_ref().eidx())
+            .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
+        match plan {
+            Some(BindingPlan::LoopIndex {
+                destructuring_plan, ..
+            }) => Ok(destructuring_plan.clone()),
+            Some(other_plan) => {
+                bail!(
+                    "internal error: expected LoopIndex for loop index expression, got {:?}",
+                    other_plan
+                )
+            }
+            None => bail!("internal error: no binding plan found for loop index expression"),
+        }
+    }
+
+    fn eval_output_loop_iteration(
+        &mut self,
+        loop_info: &HoistedLoop,
+        index_plan: &DestructuringPlan,
+        index: &Value,
+        value: &Value,
+        loops: &[HoistedLoop],
+    ) -> Result<bool> {
+        self.memory_check()?;
+        self.set_loop_var_value(Self::loop_assignment_expr(loop_info), value.clone())?;
+        let result = if self.execute_destructuring_plan(index_plan, index)? == Value::Bool(true) {
+            self.eval_output_expr_in_loop(loops)
+        } else {
+            Ok(false)
+        };
+        Self::clear_scope(self.current_scope_mut()?);
+        result
+    }
+
     fn eval_output_expr_in_loop(&mut self, loops: &[HoistedLoop]) -> Result<bool> {
         self.check_execution_time()?;
         if loops.is_empty() {
@@ -2128,31 +2147,57 @@ impl Interpreter {
         let (loop_info, loop_tail) = loops
             .split_first()
             .ok_or_else(|| anyhow!("internal error: expected loop info"))?;
-        let mut result = false;
         let loop_target_expr = Self::loop_assignment_expr(loop_info);
-        match self.eval_expr(Self::loop_collection_expr(loop_info))? {
-            Value::Array(items) => {
-                for v in items.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone())?;
-                    result = self.eval_output_expr_in_loop(loop_tail)? || result;
+        let collection = self.eval_expr(Self::loop_collection_expr(loop_info))?;
+        let index_plan = if Self::loop_index_expr(loop_info).is_some() {
+            self.get_loop_index_plan(loop_info)?
+        } else {
+            DestructuringPlan::Ignore
+        };
+        self.scopes.push(Scope::default());
+        let result = (|| {
+            let mut result = false;
+            match collection {
+                Value::Array(items) => {
+                    for (idx, value) in items.iter().enumerate() {
+                        result = self.eval_output_loop_iteration(
+                            loop_info,
+                            &index_plan,
+                            &Value::from(idx),
+                            value,
+                            loop_tail,
+                        )? || result;
+                    }
                 }
-            }
-            Value::Set(items) => {
-                for v in items.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone())?;
-                    result = self.eval_output_expr_in_loop(loop_tail)? || result;
+                Value::Set(items) => {
+                    for value in items.iter() {
+                        result = self.eval_output_loop_iteration(
+                            loop_info,
+                            &index_plan,
+                            value,
+                            value,
+                            loop_tail,
+                        )? || result;
+                    }
                 }
-            }
-            Value::Object(obj) => {
-                for (_, v) in obj.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone())?;
-                    result = self.eval_output_expr_in_loop(loop_tail)? || result;
+                Value::Object(obj) => {
+                    for (key, value) in obj.iter() {
+                        result = self.eval_output_loop_iteration(
+                            loop_info,
+                            &index_plan,
+                            key,
+                            value,
+                            loop_tail,
+                        )? || result;
+                    }
                 }
+                _ => {}
             }
-            _ => {}
-        }
+            Ok(result)
+        })();
+        self.scopes.pop();
         self.remove_loop_var_value(loop_target_expr);
-        Ok(result)
+        result
     }
 
     fn get_current_context(&self) -> Result<&Context> {

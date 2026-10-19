@@ -515,7 +515,7 @@ impl LoopHoister {
                         context.current_scope_bound_vars.clone();
 
                     // Store the context for this query
-                    let populated_body_context =
+                    let mut populated_body_context =
                         self.populate_query(module_idx, &body.query, &body_context)?;
                     self.lookup
                         .ensure_query_capacity(module_idx, body.query.qidx);
@@ -527,21 +527,17 @@ impl LoopHoister {
 
                     // Process the key expression if present
                     if let Some(ref key) = key_expr {
-                        self.populate_output_expr(module_idx, key, &populated_body_context)?;
+                        self.populate_output_expr(module_idx, key, &mut populated_body_context)?;
                     }
 
                     // Process the head value expression (if present)
-                    if let Some(ref head_value) = value_expr {
-                        self.populate_output_expr(module_idx, head_value, &populated_body_context)?;
-                    }
-
-                    // Process the value expression if present in the assign
-                    if let Some(ref assign) = body.assign {
-                        self.populate_output_expr(
-                            module_idx,
-                            &assign.value,
-                            &populated_body_context,
-                        )?;
+                    if let Some(output) = body
+                        .assign
+                        .as_ref()
+                        .map(|assign| &assign.value)
+                        .or(value_expr.as_ref())
+                    {
+                        self.populate_output_expr(module_idx, output, &mut populated_body_context)?;
                     }
                 }
 
@@ -556,18 +552,18 @@ impl LoopHoister {
                         context.current_scope_bound_vars.clone();
 
                     if let Some(ref key) = key_expr {
-                        self.populate_output_expr(module_idx, key, &body_context)?;
+                        self.populate_output_expr(module_idx, key, &mut body_context)?;
                     }
 
                     if let Some(ref value) = value_expr {
-                        self.populate_output_expr(module_idx, value, &body_context)?;
+                        self.populate_output_expr(module_idx, value, &mut body_context)?;
                     }
                 }
             }
             Rule::Default { value, .. } => {
                 // For default rules, just process the value expression
-                let context = self.create_scope_context(module_idx)?;
-                self.populate_output_expr(module_idx, value, &context)?;
+                let mut context = self.create_scope_context(module_idx)?;
+                self.populate_output_expr(module_idx, value, &mut context)?;
             }
         }
 
@@ -733,12 +729,12 @@ impl LoopHoister {
                     None,
                     Some(term.clone()),
                 );
-                let populated_context =
+                let mut populated_context =
                     self.populate_query(module_idx, query.as_ref(), &compr_context)?;
                 self.lookup.ensure_query_capacity(module_idx, query.qidx);
                 self.lookup
                     .set_query_context(module_idx, query.qidx, populated_context.clone())?;
-                self.populate_output_expr_with_context(module_idx, term, &populated_context)?;
+                self.populate_output_expr(module_idx, term, &mut populated_context)?;
             }
             E::ObjectCompr {
                 key, value, query, ..
@@ -748,13 +744,13 @@ impl LoopHoister {
                     Some(key.clone()),
                     Some(value.clone()),
                 );
-                let populated_context =
+                let mut populated_context =
                     self.populate_query(module_idx, query.as_ref(), &compr_context)?;
                 self.lookup.ensure_query_capacity(module_idx, query.qidx);
                 self.lookup
                     .set_query_context(module_idx, query.qidx, populated_context.clone())?;
-                self.populate_output_expr_with_context(module_idx, key, &populated_context)?;
-                self.populate_output_expr_with_context(module_idx, value, &populated_context)?;
+                self.populate_output_expr(module_idx, key, &mut populated_context)?;
+                self.populate_output_expr(module_idx, value, &mut populated_context)?;
             }
             E::Call { fcn, params, .. } => {
                 self.analyze_expr(module_idx, fcn, context, loops)?;
@@ -920,20 +916,10 @@ impl LoopHoister {
         &mut self,
         module_idx: u32,
         expr: &ExprRef,
-        context: &ScopeContext,
-    ) -> Result<()> {
-        self.populate_output_expr_with_context(module_idx, expr, context)
-    }
-
-    fn populate_output_expr_with_context(
-        &mut self,
-        module_idx: u32,
-        expr: &ExprRef,
-        context: &ScopeContext,
+        context: &mut ScopeContext,
     ) -> Result<()> {
         let mut loops = Vec::new();
-        let mut expr_context = context.clone();
-        self.analyze_expr(module_idx, expr, &mut expr_context, &mut loops)?;
+        self.analyze_expr(module_idx, expr, context, &mut loops)?;
 
         let expr_idx = expr.as_ref().eidx();
         self.lookup.ensure_expr_capacity(module_idx, expr_idx);

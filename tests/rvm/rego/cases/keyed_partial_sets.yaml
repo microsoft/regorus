@@ -2,6 +2,240 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: keyed_partial_set_shared_head_index
+    input: {keys: ["a", "b"], vals: [10, 20]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] contains input.vals[i] if { true }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [10]
+      b:
+        set!: [20]
+
+  - note: keyed_partial_set_shared_head_index_bodyless
+    execution_mode: suspendable
+    input: {keys: ["a", "b"], vals: [10, 20]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] contains input.vals[i]
+    query: data.test.values
+    want_result:
+      a:
+        set!: [10]
+      b:
+        set!: [20]
+
+  - note: keyed_partial_set_shared_head_index_suspendable
+    execution_mode: suspendable
+    input: {keys: ["a", "b"], vals: [10, 20]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] contains input.vals[i] if { true }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [10]
+      b:
+        set!: [20]
+
+  - note: keyed_partial_set_shared_head_index_bodyless_completion
+    input: {keys: ["a", "b"], vals: [10, 20]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] contains input.vals[i]
+    query: data.test.values
+    want_result:
+      a:
+        set!: [10]
+      b:
+        set!: [20]
+
+  - note: keyed_partial_set_shared_index_with_nested_value_loop
+    execution_mode: suspendable
+    input: {keys: ["a", "b"], vals: [[10, 11], [20, 21]]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] contains input.vals[i][j] if { true }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [10, 11]
+      b:
+        set!: [20, 21]
+
+  - note: keyed_partial_set_body_bound_head_index
+    input: {keys: ["a", "b"], vals: [10, 20]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] contains input.vals[i] if { i := 1 }
+    query: data.test.values
+    want_result:
+      b:
+        set!: [20]
+
+  - note: keyed_partial_set_shared_comprehension_head_index
+    execution_mode: suspendable
+    input: {keys: ["a", "b"], vals: [10, 20]}
+    modules:
+      - |
+        package test
+        main := {input.keys[i]: input.vals[i] | true}
+    query: data.test.main
+    want_result: {a: 10, b: 20}
+
+  - note: keyed_partial_set_head_index_value
+    input: {keys: ["a", "b"]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] contains i if { true }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [0]
+      b:
+        set!: [1]
+
+  - note: keyed_partial_set_shared_object_head_index
+    execution_mode: suspendable
+    input: {keys: {x: "a", y: "b"}, vals: {x: 10, y: 20}}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] contains input.vals[i] if { true }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [10]
+      b:
+        set!: [20]
+
+  - note: keyed_partial_set_shared_set_head_index
+    modules:
+      - |
+        package test
+        values[keys[i]] contains i if { keys := {"a", "b"} }
+    query: data.test.values
+    want_result:
+      a:
+        set!: ["a"]
+      b:
+        set!: ["b"]
+
+  - note: keyed_partial_set_short_shared_value_collection
+    execution_mode: suspendable
+    input: {keys: ["a", "b", "c"], vals: [10, 20]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] contains input.vals[i] if { true }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [10]
+      b:
+        set!: [20]
+
+  - note: keyed_partial_set_independent_head_wildcards
+    input: {keys: ["a", "b"], vals: [10, 20]}
+    modules:
+      - |
+        package test
+        values[input.keys[_]] contains input.vals[_] if { true }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [10, 20]
+      b:
+        set!: [10, 20]
+
+  - note: keyed_partial_set_static_empty_leaf
+    modules:
+      - |
+        package test
+        values.a contains 1 if { false }
+        main := values
+    query: data.test.main
+    want_result:
+      a:
+        set!: []
+
+  - note: keyed_partial_set_static_empty_leaf_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values["a"] contains 1 if { false }
+        main := values
+    query: data.test.main
+    want_result:
+      a:
+        set!: []
+
+  - note: keyed_partial_set_static_empty_with_dynamic
+    modules:
+      - |
+        package test
+        values.a contains 1 if { false }
+        values[k] contains 2 if { k := "b" }
+        values[k] contains 3 if { k := "c"; false }
+    query: data.test.values
+    want_result:
+      a:
+        set!: []
+      b:
+        set!: [2]
+
+  - note: keyed_partial_set_static_empty_after_dynamic
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values[k] contains 2 if { k := "a" }
+        values.a contains 1 if { false }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [2]
+
+  - note: keyed_partial_set_static_empty_with_bodyless_first
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.b contains 2
+        values.a contains 1 if { false }
+        values.c contains 3 if { false }
+        main := values
+    query: data.test.main
+    want_result:
+      a:
+        set!: []
+      b:
+        set!: [2]
+      c:
+        set!: []
+
+  - note: keyed_partial_set_static_empty_before_dynamic
+    modules:
+      - |
+        package test
+        values.a contains 1 if { false }
+        values[k] contains 2 if { k := "a" }
+        values.a contains 3 if { false }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [2]
+
   - note: keyed_partial_set_rejects_dynamic_dotted_prefix
     modules:
       - |
