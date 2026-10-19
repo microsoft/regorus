@@ -2149,13 +2149,7 @@ impl Interpreter {
                     result = self.eval_output_expr_in_loop(loop_tail)? || result;
                 }
             }
-            Value::Undefined => {}
-            _ => {
-                let span = Self::loop_span(loop_info);
-                return Err(span
-                    .source
-                    .error(span.line, span.col, "item cannot be indexed"));
-            }
+            _ => {}
         }
         self.remove_loop_var_value(loop_target_expr);
         Ok(result)

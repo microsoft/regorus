@@ -127,15 +127,17 @@ impl<'a> Compiler<'a> {
             ),
             _ => return Ok(None),
         };
-        if !Self::is_string_literal(&key) {
-            return Ok(Some(key));
+        if Self::has_unsupported_bracket_prefix(prefix) {
+            return Err(CompilerError::PartialObjectNestedKeyUnsupported.at(refr.span()));
         }
 
         let module_index = self.find_module_index_for_rule(rule)?;
         let module = &self.policy.get_modules()[module_index as usize];
         let package =
             get_path_string(&module.package.refr, Some("data")).map_err(CompilerError::from)?;
-        if get_path_string(refr, Some(&package)).map_err(CompilerError::from)? == rule_path {
+        if Self::is_string_literal(&key)
+            && get_path_string(refr, Some(&package)).map_err(CompilerError::from)? == rule_path
+        {
             return Ok(None);
         }
         if get_path_string(prefix, Some(&package)).map_err(CompilerError::from)? != rule_path {
@@ -531,14 +533,6 @@ impl<'a> Compiler<'a> {
                                 .push(None);
 
                             let key_expr = if rule_type == RuleType::PartialObject {
-                                if let Expr::RefBrack { refr, .. } = refr.as_ref() {
-                                    if Self::has_unsupported_bracket_prefix(refr) {
-                                        return Err(
-                                            CompilerError::PartialObjectNestedKeyUnsupported
-                                                .at(refr.span()),
-                                        );
-                                    }
-                                }
                                 self.keyed_set_key(rule_path, rule_ref, refr)?
                             } else {
                                 None
@@ -700,6 +694,7 @@ impl<'a> Compiler<'a> {
 
                             if let Some(context) = self.context_stack.last_mut() {
                                 context.value_expr = body_value_expr.clone();
+                                context.key_value_loops_hoisted = false;
                             }
 
                             self.emit_instruction(

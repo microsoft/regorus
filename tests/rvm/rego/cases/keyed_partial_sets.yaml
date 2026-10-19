@@ -2,6 +2,94 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: keyed_partial_set_rejects_dynamic_dotted_prefix
+    modules:
+      - |
+        package test
+        values[group].fixed contains 1 if { group := "g" }
+        main := values
+    query: data.test.main
+    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
+    allow_interpreter_success: true
+
+  - note: keyed_partial_set_rejects_dynamic_dotted_prefix_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values[group].fixed contains 1 if { group := "g" }
+        main := data.test.values
+    query: data.test.main
+    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
+    allow_interpreter_success: true
+
+  - note: keyed_partial_set_rejects_flattened_static_prefix
+    modules:
+      - |
+        package test
+        values.fixed[k] contains 1 if { k := "a" }
+        main := values
+    query: data.test.main
+    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
+    allow_interpreter_success: true
+
+  - note: keyed_partial_set_rejects_flattened_static_prefix_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.fixed[k] contains 1 if { k := "a" }
+        main := data.test.values
+    query: data.test.main
+    want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
+    allow_interpreter_success: true
+
+  - note: keyed_partial_set_multiple_body_head_loops
+    input: {keys: ["a", "b"]}
+    modules:
+      - |
+        package test
+        values[input.keys[_]] := 1 if { false } { true }
+    query: data.test.values
+    want_result:
+      a: 1
+      b: 1
+
+  - note: keyed_partial_set_multiple_body_head_loops_suspendable
+    execution_mode: suspendable
+    input: {keys: ["a", "b"]}
+    modules:
+      - |
+        package test
+        values[input.keys[_]] := 1 if { false } { true }
+    query: data.test.values
+    want_result:
+      a: 1
+      b: 1
+
+  - note: keyed_partial_set_scalar_head_collections
+    input: {collections: [null, false, true, 42, "abc"]}
+    modules:
+      - |
+        package test
+        values[collection[_]] contains 1 if {
+          some collection in input.collections
+        }
+    query: data.test.values
+    want_result: {}
+
+  - note: keyed_partial_set_scalar_head_collections_suspendable
+    execution_mode: suspendable
+    input: {collections: [null, false, true, 42, "abc"]}
+    modules:
+      - |
+        package test
+        values[collection[_]] contains 1 if {
+          some collection in input.collections
+        }
+    query: data.test.values
+    want_result: {}
+
   - note: keyed_partial_set_resolvable_key_failing_body
     input: {key: "a", enabled: false}
     modules:

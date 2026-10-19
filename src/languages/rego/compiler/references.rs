@@ -169,7 +169,14 @@ impl<'a> Compiler<'a> {
             let rule_candidate =
                 format_string_path(&static_prefix[0..=i]).map_err(CompilerError::from)?;
 
-            if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
+            if self.policy.inner.rules.contains_key(&rule_candidate)
+                || self
+                    .policy
+                    .inner
+                    .default_rules
+                    .contains_key(&rule_candidate)
+            {
+                let rule_index = self.get_or_assign_rule_index(&rule_candidate)?;
                 // Found a rule match! Call the rule
                 let rule_result_reg = self.alloc_register();
                 self.emit_instruction(
@@ -309,7 +316,14 @@ impl<'a> Compiler<'a> {
                     append_path_component(&rule_candidate, field).map_err(CompilerError::from)?;
             }
 
-            if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
+            if self.policy.inner.rules.contains_key(&rule_candidate)
+                || self
+                    .policy
+                    .inner
+                    .default_rules
+                    .contains_key(&rule_candidate)
+            {
+                let rule_index = self.get_or_assign_rule_index(&rule_candidate)?;
                 let rule_result_reg = self.alloc_register();
                 self.emit_instruction(
                     Instruction::CallRule {

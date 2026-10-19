@@ -92,10 +92,13 @@ Parameter structures:
   undefined. An undefined contribution does not create a missing leaf. Static
   string prefixes remain part of the rule path; when a parent rule also has dynamic keys, its literal
   final keys accumulate into the same object. Head-key loops are hoisted even
-  for bodyless rules, and undefined collections contribute nothing. Failed keyed
+  for bodyless rules and independently for each body. Undefined and scalar
+  collections contribute nothing. Failed keyed
   rule bodies do not create empty leaf sets. The compiler
   rejects conflicting `contains` and single-valued rule kinds. Multiple dynamic
-  key levels remain unsupported.
+  key levels remain unsupported. Dynamic prefixes followed by dotted keys and
+  ancestor evaluation requiring intervening static prefixes are also explicitly
+  rejected; a static prefix is supported when it is the compiled rule path.
 - `ObjectCreateParams` reuses arrays of literal key/value pairs and register
   pairs. Literal keys must be sorted to match template order.
 - `ArrayCreateParams` and `SetCreateParams` store register lists. The VM checks
