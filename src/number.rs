@@ -434,34 +434,189 @@ impl FromStr for Number {
 }
 
 #[verus_verify]
-impl PartialEq for Number {
+impl Number {
+    #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
-            match (self@.to_int(), other@.to_int()) {
-                (Some(n1), Some(n2)) => result == (n1 == n2),
-                _ => exists|f1: f64, f2: f64| #![trigger self@.to_f64_lossy_ensures(f1), other@.to_f64_lossy_ensures(f2)] {
-                    &&& self@.to_f64_lossy_ensures(f1)
-                    &&& other@.to_f64_lossy_ensures(f2)
-                    &&& result == (!f1.is_nan_spec() && !f2.is_nan_spec() && f1.eq_spec(&f2))
-                },
+            NumberView::Float(f).cmp_ensures(NumberView::Integer(n as int), result),
+    )]
+    fn cmp_float_uint(f: f64, n: u64) -> Ordering {
+        if !f.is_finite() {
+            return if f.is_sign_negative() {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            };
+        }
+        if f < 0.0 {
+            return Ordering::Less;
+        }
+        // `u64::MAX as f64` rounds up to 2^64, strictly above every u64.
+        if f >= u64::MAX as f64 {
+            return Ordering::Greater;
+        }
+
+        let truncated = f as u64;
+        match truncated.cmp(&n) {
+            Ordering::Equal if f < truncated as f64 => Ordering::Less,
+            Ordering::Equal if f > truncated as f64 => Ordering::Greater,
+            ordering => ordering,
+        }
+    }
+
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            NumberView::Float(f).cmp_ensures(NumberView::Integer(n as int), result),
+    )]
+    fn cmp_float_sint(f: f64, n: i64) -> Ordering {
+        if !f.is_finite() {
+            return if f.is_sign_negative() {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            };
+        }
+        if f < i64::MIN as f64 {
+            return Ordering::Less;
+        }
+        // `i64::MAX as f64` rounds up to 2^63, strictly above every i64.
+        if f >= i64::MAX as f64 {
+            return Ordering::Greater;
+        }
+
+        let truncated = f as i64;
+        match truncated.cmp(&n) {
+            Ordering::Equal if f < truncated as f64 => Ordering::Less,
+            Ordering::Equal if f > truncated as f64 => Ordering::Greater,
+            ordering => ordering,
+        }
+    }
+
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            NumberView::Integer(n@).cmp_ensures(NumberView::Integer(value as int), result),
+    )]
+    fn cmp_bigint_uint(n: &BigInt, value: u64) -> Ordering {
+        if n.is_negative() {
+            Ordering::Less
+        } else {
+            n.to_u64().map_or(Ordering::Greater, |n| n.cmp(&value))
+        }
+    }
+
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            NumberView::Integer(n@).cmp_ensures(NumberView::Integer(value as int), result),
+    )]
+    fn cmp_bigint_sint(n: &BigInt, value: i64) -> Ordering {
+        n.to_i64().map_or_else(
+            || {
+                if n.is_negative() {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }
             },
+            |n| n.cmp(&value),
+        )
+    }
+
+    // Exact comparison of a finite float against an exact integer. `FloatCore::integer_decode`
+    // splits a finite float into `sign * mantissa * 2^exp`. Integral values scale the bounded
+    // mantissa and compare it with the borrowed BigInt; fractional values compare their bounded
+    // integer part first and use the fraction only as a tie-break. Neither operand is rounded
+    // through f64, and the stored BigInt is never cloned or shifted. The previous
+    // `to_f64_lossy()` path merged distinct values (`2^63 == 2^63 + 1`) and mapped every
+    // out-of-range BigInt to +/-Inf.
+    //
+    // Verus cannot translate `FloatCore::integer_decode`, BigInt shifts, or
+    // `f64::is_sign_negative`, so this exact comparison is the narrow trusted boundary.
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            NumberView::Float(f).cmp_ensures(NumberView::Integer(n@), result),
+    )]
+    fn cmp_float_int(f: f64, n: &BigInt) -> Ordering {
+        if !f.is_finite() {
+            // The tail ranks -NaN/-Inf below every exact integer and +Inf/+NaN above every one,
+            // consistent with the `total_cmp` ranking in `cmp_float` below.
+            return if f.is_sign_negative() {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            };
+        }
+
+        let (mantissa, exp, _) = f.integer_decode();
+
+        if exp < 0 {
+            // A negative decoded exponent bounds the magnitude below 2^53. Compare the truncated
+            // integer parts without allocating, then use the fractional remainder as the tie-break.
+            let truncated = f as i64;
+            match Self::cmp_bigint_sint(n, truncated).reverse() {
+                Ordering::Equal if f < truncated as f64 => Ordering::Less,
+                Ordering::Equal if f > truncated as f64 => Ordering::Greater,
+                ordering => ordering,
+            }
+        } else {
+            // The temporary is bounded by binary64 itself (at most 1024 bits); the potentially
+            // arbitrarily large stored BigInt is only borrowed, never cloned or shifted.
+            let mantissa = if f.is_sign_negative() {
+                -BigInt::from(mantissa)
+            } else {
+                BigInt::from(mantissa)
+            };
+            (mantissa << (exp as usize)).cmp(n)
+        }
+    }
+
+    // A total order over `f64` values.
+    //
+    // Finite floats use exact numeric comparison, with `-0.0 == 0.0`. The complete order is:
+    //
+    // negative NaNs < -Inf < negative finite numbers
+    //     < (-0.0 == +0.0 == integer 0)
+    //     < positive finite numbers < +Inf < positive NaNs
+    //
+    // NaNs of the same sign follow `f64::total_cmp`'s bit-pattern order. No pair is treated as
+    // Equal merely because `partial_cmp` returned None.
+    //
+    // Verus cannot translate `f64::total_cmp`; the contract exactly models both the finite
+    // comparison and non-finite total-order branches.
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            NumberView::Float(a).cmp_ensures(NumberView::Float(b), result),
+    )]
+    fn cmp_float(a: f64, b: f64) -> Ordering {
+        if a.is_finite() && b.is_finite() {
+            if a < b {
+                Ordering::Less
+            } else if a > b {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        } else {
+            a.total_cmp(&b)
+        }
+    }
+}
+
+#[verus_verify]
+impl PartialEq for Number {
+    // `Ordering`'s standard-library `PartialEq` implementation has no Verus specification.
+    // The contract pins equality to the exact comparison model used by `Ord`.
+    #[verus_verify(external_body)]
+    #[verus_spec(result =>
+        ensures
+            self@.eq_ensures(other@, result),
     )]
     fn eq(&self, other: &Self) -> bool {
-        proof! {
-            axiom_bigint_obeys_eq_spec();
-            axiom_f64_obeys_eq_spec();
-        }
-
-        if let (Some(a), Some(b)) = (self.to_bigint_owned(), other.to_bigint_owned()) {
-            return a == b;
-        }
-
-        let a = self.to_f64_lossy();
-        let b = other.to_f64_lossy();
-        if a.is_nan() || b.is_nan() {
-            return false;
-        }
-        a == b
+        self.cmp(other) == Ordering::Equal
     }
 }
 
@@ -469,34 +624,49 @@ impl Eq for Number {}
 
 #[verus_verify]
 impl Ord for Number {
+    // Verus cannot currently translate the float decoding, standard ordering, and BigInt
+    // operations used by the helpers, or prove the mixed-direction reversal through `Ordering`.
+    // Keep the executable boundary external with an exact public contract.
+    #[verus_verify(external_body)]
     #[verus_spec(result =>
-         ensures
-             match (self@.to_int(), other@.to_int()) {
-                 (Some(n1), Some(n2)) =>
-                     match result {
-                         Ordering::Less => n1 < n2,
-                         Ordering::Greater => n1 > n2,
-                         Ordering::Equal => n1 == n2,
-                     },
-                 _ => exists|f1: f64, f2: f64| #![trigger self@.to_f64_lossy_ensures(f1), other@.to_f64_lossy_ensures(f2)] {
-                     &&& self@.to_f64_lossy_ensures(f1)
-                     &&& other@.to_f64_lossy_ensures(f2)
-                     &&& result == f1.partial_cmp_spec(&f2).unwrap_or(Ordering::Equal)
-                },
-            },
+        ensures
+            self@.cmp_ensures(other@, result),
     )]
     fn cmp(&self, other: &Self) -> Ordering {
         proof! {
             axiom_f64_obeys_partial_cmp_spec();
             axiom_bigint_obeys_cmp_spec();
         }
-        if let (Some(a), Some(b)) = (self.to_bigint_owned(), other.to_bigint_owned()) {
-            return a.cmp(&b);
+        match (self, other) {
+            (Number::Float(a), Number::Float(b)) => Self::cmp_float(*a, *b),
+            (Number::Float(a), Number::UInt(b)) => Self::cmp_float_uint(*a, *b),
+            (Number::Float(a), Number::Int(b)) => Self::cmp_float_sint(*a, *b),
+            (Number::Float(a), Number::BigInt(b)) => Self::cmp_float_int(*a, b),
+            (Number::UInt(a), Number::Float(b)) => Self::cmp_float_uint(*b, *a).reverse(),
+            (Number::Int(a), Number::Float(b)) => Self::cmp_float_sint(*b, *a).reverse(),
+            (Number::BigInt(a), Number::Float(b)) => Self::cmp_float_int(*b, a).reverse(),
+            (Number::UInt(a), Number::UInt(b)) => a.cmp(b),
+            (Number::Int(a), Number::Int(b)) => a.cmp(b),
+            (Number::UInt(a), Number::Int(b)) => {
+                if *b < 0 {
+                    Ordering::Greater
+                } else {
+                    a.cmp(&(*b as u64))
+                }
+            }
+            (Number::Int(a), Number::UInt(b)) => {
+                if *a < 0 {
+                    Ordering::Less
+                } else {
+                    (*a as u64).cmp(b)
+                }
+            }
+            (Number::BigInt(a), Number::BigInt(b)) => a.cmp(b),
+            (Number::BigInt(a), Number::UInt(b)) => Self::cmp_bigint_uint(a, *b),
+            (Number::UInt(a), Number::BigInt(b)) => Self::cmp_bigint_uint(b, *a).reverse(),
+            (Number::BigInt(a), Number::Int(b)) => Self::cmp_bigint_sint(a, *b),
+            (Number::Int(a), Number::BigInt(b)) => Self::cmp_bigint_sint(b, *a).reverse(),
         }
-
-        self.to_f64_lossy()
-            .partial_cmp(&other.to_f64_lossy())
-            .unwrap_or(Ordering::Equal)
     }
 }
 
@@ -1742,6 +1912,262 @@ mod tests {
 
     use super::*;
     use alloc::string::ToString;
+
+    /// `Ord` and `Eq` must agree, and must form a total order over every `Number` the engine can
+    /// hold: integers of any width (`UInt`, `Int`, `BigInt`), floats inside the exact integer
+    /// range, and `Float`s above 2^53 - an integer division with a remainder produces one, e.g.
+    /// `(2*2^63+1)/2` is a `Float` holding exactly 2^63. The non-finite tail is included because
+    /// `cmp`/`eq` must remain total even if a non-finite value reaches this internal type.
+    ///
+    /// Converting mixed operands through `f64` makes `Float(2^63)` and `BigInt(2^63 + 1)` compare
+    /// Equal even though the integers differ. Mapping an out-of-range `BigInt` to infinity creates
+    /// the same collision with `Float(INFINITY)`.
+    #[test]
+    fn ordering_is_total_and_agrees_with_equality() {
+        let big_int = |digits: &[u8]| Number::from(BigInt::parse_bytes(digits, 10).unwrap());
+        let beyond_f64 = BigInt::from(1u8) << 2048usize;
+        let universe: Vec<Number> = vec![
+            Number::UInt(0),
+            Number::UInt(1),
+            Number::UInt(2),
+            Number::UInt(u64::MAX),
+            Number::Int(-1),
+            Number::Int(i64::MIN),
+            Number::Float(0.0),
+            Number::Float(-0.0),
+            Number::Float(1.0),
+            Number::Float(2.5),
+            Number::Float(-1.5),
+            Number::Float(9_007_199_254_740_992.0), // 2^53
+            Number::Float(-9_007_199_254_740_992.0),
+            Number::Float(1e-300),
+            Number::Float(f64::MIN),
+            Number::Float(f64::MAX),
+            Number::from(BigInt::from(9_007_199_254_740_993i64)), // 2^53 + 1
+            // A `Float` holding exactly 2^63 next to its exact neighbours: the lossy comparison
+            // flattened all three onto one f64.
+            Number::Float(9_223_372_036_854_775_808.0),
+            Number::Float(-9_223_372_036_854_775_808.0),
+            big_int(b"9223372036854775808"), // 2^63
+            big_int(b"9223372036854775809"), // 2^63 + 1
+            Number::from(BigInt::parse_bytes(b"18446744073709551616", 10).unwrap()),
+            Number::from(BigInt::parse_bytes(b"18446744073709551617", 10).unwrap()),
+            Number::from(BigInt::parse_bytes(b"-18446744073709551617", 10).unwrap()),
+            Number::from(beyond_f64.clone()),
+            Number::from(-beyond_f64),
+            Number::from(
+                BigInt::parse_bytes(
+                    b"100000000000000000000000000000000000000000000000000000000000000000000000\
+                      0000000000000000000000000000000000000000000000000000000000000000000000000\
+                      00000000000000000000000000000000000000000000000000000000000000000000000000\
+                      000000000000000000000000000000",
+                    10,
+                )
+                .unwrap(),
+            ),
+            // Non-finite tail: ranked below/above every finite value, and `NaN` Equal only to
+            // itself. `Ord`-backed containers must not collapse one into a finite number.
+            Number::Float(f64::NEG_INFINITY),
+            Number::Float(f64::INFINITY),
+            Number::Float(f64::NAN),
+            Number::Float(-f64::NAN),
+        ];
+        let name = |n: &Number| format!("{n:?}");
+        let mut failures: Vec<String> = vec![];
+
+        for a in &universe {
+            if a.cmp(a) != Ordering::Equal || !a.eq(a) {
+                failures.push(format!("reflexivity: {}", name(a)));
+            }
+            for b in &universe {
+                if a.cmp(b) != b.cmp(a).reverse() {
+                    failures.push(format!("antisymmetry: {} {:?}", name(a), a.cmp(b)));
+                }
+                if a.eq(b) != b.eq(a) || (a.cmp(b) == Ordering::Equal) != a.eq(b) {
+                    failures.push(format!("cmp/eq disagree: {} {}", name(a), name(b)));
+                }
+            }
+        }
+        for a in &universe {
+            for b in &universe {
+                for c in &universe {
+                    if a.cmp(b) != Ordering::Greater
+                        && b.cmp(c) != Ordering::Greater
+                        && a.cmp(c) == Ordering::Greater
+                    {
+                        failures.push(format!("ordering: {} {} {}", name(a), name(b), name(c)));
+                    }
+                    if a.eq(b) && b.eq(c) && !a.eq(c) {
+                        failures.push(format!("equality: {} {} {}", name(a), name(b), name(c)));
+                    }
+                }
+            }
+        }
+
+        assert!(failures.is_empty(), "{:#?}", failures);
+    }
+
+    /// The `Float(2^63)` that integer division produces must stay distinct from the exact
+    /// integers either side of it. This directly covers the private `Number` representation while
+    /// `tests/gate_cmp_exactness.rs` covers the public evaluation boundary.
+    ///
+    /// With the old `to_f64_lossy()` comparison all four assertions below were `true`.
+    #[test]
+    fn float_holding_two_pow_63_is_exact_against_its_neighbours() {
+        let two_pow_63 = Number::Float(9_223_372_036_854_775_808.0);
+        let exact = |digits: &[u8]| Number::from(BigInt::parse_bytes(digits, 10).unwrap());
+        let lower = exact(b"9223372036854775807");
+        let same = exact(b"9223372036854775808");
+        let upper = exact(b"9223372036854775809");
+
+        assert_eq!(
+            two_pow_63, same,
+            "the Float is exactly 2^63, so it must be equal"
+        );
+        assert_ne!(two_pow_63, upper, "2^63 must not be equal to 2^63 + 1");
+        assert_eq!(two_pow_63.cmp(&upper), Ordering::Less);
+        assert_eq!(two_pow_63.cmp(&lower), Ordering::Greater);
+
+        // A `BigInt` outside f64 range used to be mapped to +Inf, so it compared Equal to
+        // `Float(INFINITY)`.
+        let huge = Number::from(BigInt::from(1u8) << 2048usize);
+        let negative_huge = Number::from(-(BigInt::from(1u8) << 2048usize));
+        assert_ne!(Number::Float(f64::INFINITY), huge);
+        assert_eq!(Number::Float(f64::INFINITY).cmp(&huge), Ordering::Greater);
+        assert_ne!(Number::Float(f64::NEG_INFINITY), negative_huge);
+        assert_eq!(
+            Number::Float(f64::NEG_INFINITY).cmp(&negative_huge),
+            Ordering::Less,
+            "-Inf must rank below every exact integer, however large"
+        );
+    }
+
+    #[test]
+    fn primitive_mixed_comparison_boundaries_are_exact() {
+        let two_pow_64 = u64::MAX as f64;
+        let below_two_pow_64 = f64::from_bits(two_pow_64.to_bits() - 1);
+        assert_eq!(
+            Number::Float(two_pow_64).cmp(&Number::UInt(u64::MAX)),
+            Ordering::Greater
+        );
+        assert_eq!(
+            Number::Float(below_two_pow_64).cmp(&Number::UInt(u64::MAX)),
+            Ordering::Less
+        );
+
+        let two_pow_63 = i64::MAX as f64;
+        assert_eq!(
+            Number::Float(two_pow_63).cmp(&Number::Int(i64::MAX)),
+            Ordering::Greater
+        );
+        assert_eq!(
+            Number::Float(i64::MIN as f64).cmp(&Number::Int(i64::MIN)),
+            Ordering::Equal
+        );
+
+        assert_eq!(Number::Float(-0.0).cmp(&Number::UInt(0)), Ordering::Equal);
+        assert_eq!(Number::Float(0.5).cmp(&Number::UInt(0)), Ordering::Greater);
+        assert_eq!(Number::Float(-0.5).cmp(&Number::Int(0)), Ordering::Less);
+        assert_eq!(
+            Number::Float(9_007_199_254_740_992.0).cmp(&Number::UInt(9_007_199_254_740_993)),
+            Ordering::Less
+        );
+    }
+
+    /// Non-finite numbers use `f64::total_cmp` rather than
+    /// `partial_cmp(..).unwrap_or(Ordering::Equal)`, which reported every unordered pair as Equal.
+    ///
+    /// Returning the `unwrap_or(Ordering::Equal)` fallback makes the `+NaN`/`+Inf`,
+    /// `-NaN`/`-Inf` and `NaN`/finite assertions below fail.
+    #[test]
+    fn non_finite_numbers_are_ranked_by_a_total_order() {
+        let nan = Number::Float(f64::NAN);
+        let neg_nan = Number::Float(-f64::NAN);
+        let inf = Number::Float(f64::INFINITY);
+        let neg_inf = Number::Float(f64::NEG_INFINITY);
+
+        assert_eq!(inf.cmp(&Number::Float(f64::MAX)), Ordering::Greater);
+        assert_eq!(neg_inf.cmp(&Number::Float(f64::MIN)), Ordering::Less);
+        assert_eq!(nan.cmp(&inf), Ordering::Greater, "+NaN ranks above +Inf");
+        assert_eq!(
+            neg_nan.cmp(&neg_inf),
+            Ordering::Less,
+            "-NaN ranks below -Inf"
+        );
+        assert_eq!(neg_inf.cmp(&Number::Int(i64::MIN)), Ordering::Less);
+        assert_eq!(inf.cmp(&Number::UInt(u64::MAX)), Ordering::Greater);
+
+        // A NaN is Equal only to itself, and never Equal to a finite value or an infinity.
+        assert_eq!(nan.cmp(&nan), Ordering::Equal);
+        assert!(nan.eq(&nan), "a NaN is equal only to itself");
+        assert_eq!(nan.cmp(&neg_nan), Ordering::Greater);
+        assert!(!nan.eq(&neg_nan));
+        assert!(!nan.eq(&inf));
+        for finite in [
+            Number::UInt(0),
+            Number::Int(-1),
+            Number::Float(0.0),
+            Number::Float(-0.0),
+            Number::Float(f64::MAX),
+            Number::Float(f64::MIN),
+            Number::Float(1e-300),
+        ] {
+            assert_eq!(nan.cmp(&finite), Ordering::Greater);
+            assert_eq!(neg_nan.cmp(&finite), Ordering::Less);
+            assert!(!nan.eq(&finite), "NaN compared Equal to {finite:?}");
+        }
+
+        assert_eq!(neg_nan.cmp(&inf), Ordering::Less);
+        assert_eq!(Number::Float(-2.5).cmp(&neg_inf), Ordering::Greater);
+    }
+
+    /// `Ord`-backed containers must keep every one of those values apart. `Number::eq` is defined
+    /// as `cmp == Equal`, so a `BTreeSet` (and the `Object` keys behind a Rego object) can no
+    /// longer merge a `Float` with a distinct exact integer.
+    ///
+    /// With the lossy comparison the set collapsed `Float(2^63)`, `2^63`, `2^63 + 1`,
+    /// `Float(INFINITY)` and the out-of-range `BigInt` into fewer elements, and `NaN`/`-NaN`
+    /// together.
+    #[test]
+    fn non_finite_and_large_numbers_stay_distinct_in_ord_backed_containers() {
+        use crate::value::Object;
+        // Pairwise unequal on purpose; signed zero is covered separately below.
+        let pool: Vec<Number> = vec![
+            Number::Float(0.0),
+            Number::Float(2.5),
+            Number::Float(9_007_199_254_740_992.0),
+            Number::from(BigInt::from(9_007_199_254_740_993i64)),
+            Number::Float(9_223_372_036_854_775_808.0),
+            Number::from(BigInt::parse_bytes(b"9223372036854775809", 10).unwrap()),
+            Number::from(
+                BigInt::parse_bytes(b"100000000000000000000000000000000000000000", 10).unwrap(),
+            ),
+            Number::Float(f64::NEG_INFINITY),
+            Number::Float(f64::INFINITY),
+            Number::Float(f64::NAN),
+            Number::Float(-f64::NAN),
+        ];
+
+        let set: alloc::collections::BTreeSet<Number> = pool.iter().cloned().collect();
+        assert_eq!(
+            set.len(),
+            pool.len(),
+            "a set merged values that are not equal"
+        );
+
+        let mut object = Object::new();
+        for n in &pool {
+            object.insert(Value::Number(n.clone()), Value::from(1u64));
+        }
+        assert_eq!(object.len(), pool.len(), "object keys were merged");
+
+        // Signed zero stays one value with integer zero.
+        let mut zeros = alloc::collections::BTreeSet::new();
+        zeros.insert(Number::Float(-0.0));
+        zeros.insert(Number::Float(0.0));
+        zeros.insert(Number::UInt(0));
+        assert_eq!(zeros.len(), 1, "-0.0 must stay equal to 0");
+    }
 
     /// Regression test: `i64::MIN / -1` overflows `i64` and panics in Rust's
     /// native integer division/remainder. `divide` must promote the result

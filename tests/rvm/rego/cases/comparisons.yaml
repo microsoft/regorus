@@ -60,3 +60,69 @@ cases:
         }
     query: data.test.x
     want_result: "#undefined"
+
+  - note: exact_mixed_number_comparisons
+    data: {}
+    modules:
+      - |
+        package test
+
+        main := result if {
+          a := ((2 * 9223372036854775808 + 1) / 2)
+          result := [
+            a == 9223372036854775808,
+            a == 9223372036854775809,
+            a < 9223372036854775809,
+            a > 9223372036854775807,
+          ]
+        }
+    query: data.test.main
+    want_result: [true, false, true, true]
+
+  - note: exact_mixed_number_set_members
+    data: {}
+    modules:
+      - |
+        package test
+
+        main := result if {
+          a := ((2 * 9223372036854775808 + 1) / 2)
+          result := count({a, 9223372036854775808, 9223372036854775809})
+        }
+    query: data.test.main
+    want_result: 2
+
+  - note: exact_mixed_number_object_keys
+    data: {}
+    modules:
+      - |
+        package test
+
+        main := result if {
+          a := ((2 * 9223372036854775808 + 1) / 2)
+          x := {a: 1, 9223372036854775809: 2}
+          result := [count(x), x[9223372036854775808], x[9223372036854775809]]
+        }
+    query: data.test.main
+    want_result: [2, 1, 2]
+
+  - note: exact_mixed_number_sort_min_max
+    data: {}
+    modules:
+      - |
+        package test
+
+        main := result if {
+          a := ((2 * 9223372036854775808 + 1) / 2)
+          values := [9223372036854775809, a, 9223372036854775807]
+          sorted := sort(values)
+          result := [
+            sorted[0] == 9223372036854775807,
+            sorted[1] == a,
+            sorted[2] == 9223372036854775809,
+            min(values) == 9223372036854775807,
+            max(values) == 9223372036854775809,
+          ]
+        }
+    query: data.test.main
+    want_result: [true, true, true, true, true]
