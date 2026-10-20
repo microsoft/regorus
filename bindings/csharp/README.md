@@ -107,40 +107,42 @@ Console.WriteLine($"allow: {result}");
 
 ### Native builtin restrictions
 
-RVM compilation defaults to allowing every native builtin. Pass exact
-registered names in `RvmCompilerOptions` to reject a program if its final
-emitted builtin table uses one of them:
+Compile the program normally, then validate the native builtins emitted into
+its finalized builtin table before accepting or sharing it. The validation
+includes native builtins introduced by set-operator lowering; unused or
+otherwise un-emitted source calls do not cause rejection.
 
 ```csharp
-var disabled = new RvmCompilerOptions(new[] { "count" });
-using var restrictedProgram = Program.CompileFromModulesWithOptions(
-    Data, modules, entryPoints, disabled);
-```
+var disabled = new RvmBuiltinPolicy(new[] { "count" });
+using var program = Program.CompileFromModules(Data, modules, entryPoints);
+program.ValidateBuiltinPolicy(disabled);
 
-The same options are available through `CompileFromEngineWithOptions`. Only
-calls represented in the emitted program are checked, including builtins
-introduced by set-operator lowering; unused or otherwise un-emitted source
-calls do not cause a rejection.
-
-Runtime restrictions are copied onto each VM, independently of the shared
-program. This is useful for programs prepared or deserialized elsewhere:
-
-```csharp
-using var program = Program.CompileFromModules("{}", modules, entryPoints);
 using var vm = new Rvm();
 vm.LoadProgram(program);
 vm.SetBuiltinPolicy(disabled);
-var activeRestrictions = vm.GetBuiltinPolicy();
 ```
+
+`ValidateBuiltinPolicy` is read-only. A shared or deserialized program can be
+validated against different policies, while each VM gets an independent copy
+through `SetBuiltinPolicy`. Registered or dynamic `HostAwait` identifiers are
+not certified by the native builtin table; a forbidden host identifier fails
+only if reached at runtime. This is not a pre-execution sandbox.
+
+For migration from earlier #842 additions, `RvmCompilerOptions` has been
+renamed to `RvmBuiltinPolicy`, and `CompileFromModulesWithOptions` and
+`CompileFromEngineWithOptions` have been removed. Compile first, then call
+`Program.ValidateBuiltinPolicy`. The Rust `BuiltinPolicyError` enum also has a
+new `BuiltinDisabled` variant, which requires updates to exhaustive matches.
+With an older native library, empty-policy validation remains allow-all;
+non-empty program validation or runtime restrictions are unsupported.
 
 A disabled builtin that executes raises `InvalidOperationException`; it does
 not become `false` or `undefined`. Replacing the policy is atomic, is rejected
 while execution is running or suspended, and a successful replacement resets
-stale execution results and rule caches. Empty compiler options retain
-allow-all behavior and use legacy compiler entry points; an older native
-library treats an empty runtime policy as its implicit allow-all default.
-Non-empty restrictions require a native library that supports builtin
-policies and otherwise raise `NotSupportedException`.
+stale execution results and rule caches. An older native library treats an
+empty runtime policy as its implicit allow-all default. Non-empty restrictions
+require a native library that supports builtin policies and otherwise raise
+`NotSupportedException`.
 These restrictions are not a compilation sandbox or an all-source use filter.
 Compiler-side interpreter evaluation of defaults or comprehensions may fold
 builtin results into the emitted program without retaining a native call in

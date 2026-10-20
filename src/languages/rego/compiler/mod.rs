@@ -23,7 +23,6 @@ pub use error::{CompilerError, Result, SpannedCompilerError};
 use crate::ast::ExprRef;
 use crate::lexer::Span;
 use crate::rvm::program::{Program, RuleType, SpanInfo};
-use crate::rvm::BuiltinPolicy;
 use crate::CompiledPolicy;
 use crate::Value;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -35,16 +34,6 @@ use alloc::vec::Vec;
 use indexmap::IndexMap;
 
 pub type Register = u8;
-
-/// Configuration applied while compiling a policy into an RVM program.
-#[derive(Debug, Clone, Default)]
-#[cfg_attr(docsrs, doc(cfg(feature = "rvm")))]
-pub struct CompilerOptions {
-    /// Registered host-awaitable builtin names and their one-argument arity.
-    pub host_await_builtins: Vec<(String, usize)>,
-    /// Native builtin names disabled for this compilation.
-    pub builtin_policy: BuiltinPolicy,
-}
 
 #[derive(Debug, Clone, Default)]
 struct Scope {
@@ -158,7 +147,6 @@ pub struct Compiler<'a> {
     /// When the compiler encounters a call to one of these names, it emits a
     /// `HostAwait` instruction instead of a regular function or builtin call.
     host_await_builtins: BTreeMap<String, usize>,
-    builtin_policy: BuiltinPolicy,
 }
 
 impl<'a> Compiler<'a> {
@@ -195,7 +183,6 @@ impl<'a> Compiler<'a> {
             entry_points: IndexMap::new(),
             soft_assert_mode: false,
             host_await_builtins: BTreeMap::new(),
-            builtin_policy: BuiltinPolicy::default(),
         }
     }
 

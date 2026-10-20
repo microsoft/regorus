@@ -99,12 +99,6 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_engine_compile_program_with_entrypoints(RegorusEngine* engine, byte** entryPoints, UIntPtr entryPointsLen);
 
         /// <summary>
-        /// Compile an RVM program from engine state with native builtin restrictions.
-        /// </summary>
-        [DllImport(LibraryName, EntryPoint = "regorus_engine_compile_program_with_options", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern RegorusResult regorus_engine_compile_program_with_options(RegorusEngine* engine, byte** entryPoints, UIntPtr entryPointsLen, byte* disabledBuiltinNamesJson);
-
-        /// <summary>
         /// Drop a RegorusEngine.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_engine_drop", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -295,10 +289,10 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_program_compile_from_modules_with_host_await(byte* data_json, RegorusPolicyModule* modules, UIntPtr modules_len, byte** entry_points, UIntPtr entry_points_len, RegorusHostAwaitBuiltin* host_await_builtins, UIntPtr host_await_builtins_len, UIntPtr host_await_builtin_size);
 
         /// <summary>
-        /// Compile an RVM program from modules with host-await and builtin-policy options.
+        /// Validate an RVM program against its disabled native builtin policy.
         /// </summary>
-        [DllImport(LibraryName, EntryPoint = "regorus_program_compile_from_modules_with_options", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern RegorusResult regorus_program_compile_from_modules_with_options(byte* data_json, RegorusPolicyModule* modules, UIntPtr modules_len, byte** entry_points, UIntPtr entry_points_len, RegorusHostAwaitBuiltin* host_await_builtins, UIntPtr host_await_builtins_len, UIntPtr host_await_builtin_size, byte* disabledBuiltinNamesJson);
+        [DllImport(LibraryName, EntryPoint = "regorus_program_validate_builtin_policy", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_program_validate_builtin_policy(RegorusProgram* program, byte* disabledBuiltinNamesJson);
 
         /// <summary>
         /// Add a policy.

@@ -52,7 +52,7 @@ namespace Regorus
         /// </summary>
         public static Program CompileFromModules(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints)
         {
-            return CompileFromModulesInner(dataJson, modules, entryPoints, hostAwaitBuiltins: null, compilerOptions: null);
+            return CompileFromModulesInner(dataJson, modules, entryPoints, hostAwaitBuiltins: null);
         }
 
         /// <summary>
@@ -109,6 +109,44 @@ namespace Regorus
         }
 
         /// <summary>
+        /// Validate that the native builtins emitted in this program are allowed by the policy.
+        /// </summary>
+        /// <param name="policy">The exact registered native builtin names to disable.</param>
+        /// <exception cref="ArgumentNullException">Thrown when <paramref name="policy"/> is null.</exception>
+        /// <exception cref="InvalidOperationException">Thrown when the program emits a disabled builtin.</exception>
+        /// <exception cref="NotSupportedException">Thrown when a non-empty policy is requested from an older native library.</exception>
+        public void ValidateBuiltinPolicy(RvmBuiltinPolicy policy)
+        {
+            if (policy is null)
+            {
+                throw new ArgumentNullException(nameof(policy));
+            }
+
+            var disabledBuiltins = policy.DisabledBuiltins;
+            using var pinnedDisabledBuiltins = Utf8Marshaller.Pin(JsonSerializer.Serialize(disabledBuiltins));
+            try
+            {
+                UseHandle(programPtr =>
+                {
+                    CheckAndDropResult(API.regorus_program_validate_builtin_policy(
+                        (RegorusProgram*)programPtr,
+                        pinnedDisabledBuiltins.Pointer));
+                    return 0;
+                });
+            }
+            catch (EntryPointNotFoundException) when (disabledBuiltins.Count == 0)
+            {
+                // An empty policy is allow-all, which is also the legacy native behavior.
+            }
+            catch (EntryPointNotFoundException error)
+            {
+                throw new NotSupportedException(
+                    "The native library does not support RVM program builtin validation. Update the native library together with the managed binding.",
+                    error);
+            }
+        }
+
+        /// <summary>
         /// Compile an RVM program from modules, entry points, and registered host-awaitable builtins.
         /// </summary>
         public static Program CompileFromModules(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints, IReadOnlyList<HostAwaitBuiltin> hostAwaitBuiltins)
@@ -118,40 +156,10 @@ namespace Regorus
                 throw new ArgumentNullException(nameof(hostAwaitBuiltins));
             }
 
-            return CompileFromModulesInner(dataJson, modules, entryPoints, hostAwaitBuiltins, compilerOptions: null);
+            return CompileFromModulesInner(dataJson, modules, entryPoints, hostAwaitBuiltins);
         }
 
-        /// <summary>
-        /// Compile modules with native builtin restrictions.
-        /// </summary>
-        public static Program CompileFromModulesWithOptions(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints, RvmCompilerOptions compilerOptions)
-        {
-            if (compilerOptions is null)
-            {
-                throw new ArgumentNullException(nameof(compilerOptions));
-            }
-
-            return CompileFromModulesInner(dataJson, modules, entryPoints, hostAwaitBuiltins: null, compilerOptions);
-        }
-
-        /// <summary>
-        /// Compile modules with host-await registrations and native builtin restrictions.
-        /// </summary>
-        public static Program CompileFromModulesWithOptions(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints, IReadOnlyList<HostAwaitBuiltin> hostAwaitBuiltins, RvmCompilerOptions compilerOptions)
-        {
-            if (hostAwaitBuiltins is null)
-            {
-                throw new ArgumentNullException(nameof(hostAwaitBuiltins));
-            }
-            if (compilerOptions is null)
-            {
-                throw new ArgumentNullException(nameof(compilerOptions));
-            }
-
-            return CompileFromModulesInner(dataJson, modules, entryPoints, hostAwaitBuiltins, compilerOptions);
-        }
-
-        private static Program CompileFromModulesInner(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints, IReadOnlyList<HostAwaitBuiltin>? hostAwaitBuiltins, RvmCompilerOptions? compilerOptions)
+        private static Program CompileFromModulesInner(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints, IReadOnlyList<HostAwaitBuiltin>? hostAwaitBuiltins)
         {
             if (modules is null)
             {
@@ -172,41 +180,13 @@ namespace Regorus
             using var pinnedEntryPoints = ModuleMarshalling.PinUtf8Strings(entryPoints);
 
             var hostAwaitBuiltinsOrEmpty = hostAwaitBuiltins ?? Array.Empty<HostAwaitBuiltin>();
-            var disabledBuiltins = compilerOptions?.DisabledBuiltins ?? Array.Empty<string>();
             return Utf8Marshaller.WithUtf8(dataJson, dataPtr =>
             {
                 fixed (RegorusPolicyModule* modulesPtr = pinnedModules.Buffer)
                 fixed (IntPtr* entryPtr = pinnedEntryPoints.Buffer)
                 {
                     RegorusResult result;
-                    if (disabledBuiltins.Count > 0)
-                    {
-                        using var pinnedDisabledBuiltins = Utf8Marshaller.Pin(JsonSerializer.Serialize(disabledBuiltins));
-                        using var pinnedBuiltins = ModuleMarshalling.PinHostAwaitBuiltins(hostAwaitBuiltinsOrEmpty);
-                        fixed (RegorusHostAwaitBuiltin* builtinsPtr = pinnedBuiltins.Buffer)
-                        {
-                            try
-                            {
-                                result = API.regorus_program_compile_from_modules_with_options(
-                                    (byte*)dataPtr,
-                                    modulesPtr,
-                                    (UIntPtr)pinnedModules.Length,
-                                    (byte**)entryPtr,
-                                    (UIntPtr)pinnedEntryPoints.Length,
-                                    builtinsPtr,
-                                    (UIntPtr)pinnedBuiltins.Length,
-                                    (UIntPtr)sizeof(RegorusHostAwaitBuiltin),
-                                    pinnedDisabledBuiltins.Pointer);
-                            }
-                            catch (EntryPointNotFoundException error)
-                            {
-                                throw new NotSupportedException(
-                                    "The native library does not support RVM builtin restrictions. Update the native library together with the managed binding.",
-                                    error);
-                            }
-                        }
-                    }
-                    else if (hostAwaitBuiltinsOrEmpty.Count == 0)
+                    if (hostAwaitBuiltinsOrEmpty.Count == 0)
                     {
                         // No host-await builtins: use the original FFI entry point so an
                         // app updating only the managed package against an older native
@@ -237,58 +217,6 @@ namespace Regorus
                     }
 
                     return GetProgramResult(result);
-                }
-            });
-        }
-
-        /// <summary>
-        /// Compile an RVM program from an engine with native builtin restrictions.
-        /// </summary>
-        public static Program CompileFromEngineWithOptions(Engine engine, IReadOnlyList<string> entryPoints, RvmCompilerOptions compilerOptions)
-        {
-            if (engine is null)
-            {
-                throw new ArgumentNullException(nameof(engine));
-            }
-            if (entryPoints is null)
-            {
-                throw new ArgumentNullException(nameof(entryPoints));
-            }
-            if (compilerOptions is null)
-            {
-                throw new ArgumentNullException(nameof(compilerOptions));
-            }
-            if (entryPoints.Count == 0)
-            {
-                throw new ArgumentException("At least one entry point is required.", nameof(entryPoints));
-            }
-
-            if (compilerOptions.DisabledBuiltins.Count == 0)
-            {
-                return CompileFromEngine(engine, entryPoints);
-            }
-
-            using var pinnedEntryPoints = ModuleMarshalling.PinUtf8Strings(entryPoints);
-            using var pinnedDisabledBuiltins = Utf8Marshaller.Pin(JsonSerializer.Serialize(compilerOptions.DisabledBuiltins));
-            return engine.UseHandleForInterop(enginePtr =>
-            {
-                fixed (IntPtr* entryPtr = pinnedEntryPoints.Buffer)
-                {
-                    try
-                    {
-                        var result = API.regorus_engine_compile_program_with_options(
-                            (RegorusEngine*)enginePtr,
-                            (byte**)entryPtr,
-                            (UIntPtr)pinnedEntryPoints.Length,
-                            pinnedDisabledBuiltins.Pointer);
-                        return GetProgramResult(result);
-                    }
-                    catch (EntryPointNotFoundException error)
-                    {
-                        throw new NotSupportedException(
-                            "The native library does not support RVM builtin restrictions. Update the native library together with the managed binding.",
-                            error);
-                    }
                 }
             });
         }

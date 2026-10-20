@@ -81,18 +81,18 @@ namespace Regorus
         /// <summary>
         /// Atomically replace the disabled native builtin names for this VM.
         /// </summary>
-        /// <param name="options">The exact registered native builtin names to disable.</param>
+        /// <param name="policy">The exact registered native builtin names to disable.</param>
         /// <exception cref="NotSupportedException">
         /// Thrown when a non-empty policy is requested from an older native library.
         /// </exception>
-        public void SetBuiltinPolicy(RvmCompilerOptions options)
+        public void SetBuiltinPolicy(RvmBuiltinPolicy policy)
         {
-            if (options is null)
+            if (policy is null)
             {
-                throw new ArgumentNullException(nameof(options));
+                throw new ArgumentNullException(nameof(policy));
             }
 
-            var disabledBuiltins = options.DisabledBuiltins;
+            var disabledBuiltins = policy.DisabledBuiltins;
             var json = JsonSerializer.Serialize(disabledBuiltins);
             using var pinnedNames = Utf8Marshaller.Pin(json);
             try

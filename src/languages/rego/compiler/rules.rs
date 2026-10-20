@@ -10,10 +10,7 @@
     clippy::pattern_type_mismatch
 )]
 
-use super::{
-    CompilationContext, Compiler, CompilerError, CompilerOptions, ContextType, Result,
-    WorklistEntry,
-};
+use super::{CompilationContext, Compiler, CompilerError, ContextType, Result, WorklistEntry};
 use crate::ast::{Expr, ExprRef, Rule, RuleHead};
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
@@ -266,27 +263,10 @@ impl<'a> Compiler<'a> {
         entry_points: &[&str],
         host_await_builtins: &[(&str, usize)],
     ) -> Result<Arc<Program>> {
-        let options = CompilerOptions {
-            host_await_builtins: host_await_builtins
-                .iter()
-                .map(|(name, arg_count)| ((*name).to_string(), *arg_count))
-                .collect(),
-            ..CompilerOptions::default()
-        };
-        Self::compile_from_policy_with_options(policy, entry_points, &options)
-    }
-
-    /// Compile from a CompiledPolicy with host-await registrations and a builtin policy.
-    pub fn compile_from_policy_with_options(
-        policy: &CompiledPolicy,
-        entry_points: &[&str],
-        options: &CompilerOptions,
-    ) -> Result<Arc<Program>> {
         let mut compiler = Compiler::with_policy(policy);
-        for (name, arg_count) in &options.host_await_builtins {
-            compiler.register_host_await_builtin(name, *arg_count)?;
+        for &(name, arg_count) in host_await_builtins {
+            compiler.register_host_await_builtin(name, arg_count)?;
         }
-        compiler.builtin_policy = options.builtin_policy.clone();
         compiler.current_rule_path = "".to_string();
         let rules = policy.get_rules();
         let max_components = policy

@@ -6,7 +6,7 @@ use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 use thiserror::Error;
 
-/// An immutable set of native builtin names disabled for one compiler or VM.
+/// An immutable set of native builtin names used to validate a program or configure one VM.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(docsrs, doc(cfg(feature = "rvm")))]
 pub struct BuiltinPolicy {
@@ -51,7 +51,7 @@ impl BuiltinPolicy {
     }
 }
 
-/// Validation failures when constructing a [`BuiltinPolicy`].
+/// Errors when constructing a [`BuiltinPolicy`] or validating a [`Program`](crate::rvm::Program).
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[cfg_attr(docsrs, doc(cfg(feature = "rvm")))]
 pub enum BuiltinPolicyError {
@@ -62,6 +62,10 @@ pub enum BuiltinPolicyError {
     /// The supplied name is valid but is not registered in this build.
     #[error("unknown builtin name: {name}")]
     UnknownBuiltin { name: String },
+
+    /// The program contains an emitted native builtin disabled by this policy.
+    #[error("builtin '{name}' is disabled")]
+    BuiltinDisabled { name: String },
 }
 
 fn is_valid_builtin_name(name: &str) -> bool {

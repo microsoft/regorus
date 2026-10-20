@@ -171,10 +171,6 @@ impl<'a> Compiler<'a> {
                 );
             }
             CallTarget::RegisteredHostAwait { identifier } => {
-                if self.builtin_policy.is_disabled(&identifier) {
-                    return Err(CompilerError::BuiltinDisabled { name: identifier }.at(&span));
-                }
-
                 // Registered host-awaitable builtin — the identifier is the
                 // registered name and is baked into the bytecode as a literal.
                 if arg_regs.len() != 1 {
