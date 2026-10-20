@@ -52,7 +52,13 @@ impl<'a> Compiler<'a> {
             .policy
             .inner
             .loop_hoisting_table
-            .get_expr_loops(module_idx, expr_idx)
+            .get_output_loops(
+                module_idx,
+                self.context_stack
+                    .last()
+                    .and_then(|context| context.output_query),
+                expr_idx,
+            )
             .map_err(|err| {
                 CompilerError::General {
                     message: format!("loop hoisting table out of bounds: {err}"),
@@ -160,6 +166,7 @@ impl<'a> Compiler<'a> {
             value_expr: None,
             span: span.clone(),
             key_value_loops_hoisted: false,
+            output_query: Some(query.qidx),
         };
         self.push_context(every_context);
 

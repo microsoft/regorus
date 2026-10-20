@@ -2,6 +2,92 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: output_head_body_specific_unbound_then_bound
+    input: {keys: ["a", "b"]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] := i if { true } { i := 1 }
+    query: data.test.values
+    want_result: {a: 0, b: 1}
+
+  - note: output_head_body_specific_unbound_then_bound_suspendable
+    execution_mode: suspendable
+    input: {keys: ["a", "b"]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] := i if { true } { i := 1 }
+    query: data.test.values
+    want_result: {a: 0, b: 1}
+
+  - note: output_head_body_specific_bound_then_unbound
+    input: {keys: ["a", "b"]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] := i if { i := 0 } { true }
+    query: data.test.values
+    want_result: {a: 0, b: 1}
+
+  - note: output_head_body_specific_bound_then_unbound_suspendable
+    execution_mode: suspendable
+    input: {keys: ["a", "b"]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] := i if { i := 0 } { true }
+    query: data.test.values
+    want_result: {a: 0, b: 1}
+
+  - note: output_head_body_specific_bound_then_failed
+    input: {keys: ["a", "b"]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] := i if { i := 0 } { false }
+    query: data.test.values
+    want_result: {a: 0}
+
+  - note: output_head_body_specific_bound_then_failed_suspendable
+    execution_mode: suspendable
+    input: {keys: ["a", "b"]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] := i if { i := 0 } { false }
+    query: data.test.values
+    want_result: {a: 0}
+
+  - note: output_head_body_specific_paired_values
+    input: {keys: ["a", "b"], vals: [10, 20]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] := input.vals[i] if { true } { i := 1 }
+    query: data.test.values
+    want_result: {a: 10, b: 20}
+
+  - note: output_head_body_specific_paired_values_suspendable
+    execution_mode: suspendable
+    input: {keys: ["a", "b"], vals: [10, 20]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] := input.vals[i] if { i := 0 } { true }
+    query: data.test.values
+    want_result: {a: 10, b: 20}
+
+  - note: output_head_body_specific_builtin_values
+    execution_mode: suspendable
+    input: {keys: ["a", "b"], vals: ["A", "B"]}
+    modules:
+      - |
+        package test
+        values[input.keys[i]] := lower(input.vals[i]) if { true } { i := 1 }
+    query: data.test.values
+    want_result: {a: "a", b: "b"}
+
   - note: keyed_partial_set_shared_head_index
     input: {keys: ["a", "b"], vals: [10, 20]}
     modules:

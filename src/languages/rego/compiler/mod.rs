@@ -65,6 +65,7 @@ pub struct CompilationContext {
     pub(super) value_expr: Option<ExprRef>,
     pub(super) span: Span,
     pub(super) key_value_loops_hoisted: bool,
+    pub(super) output_query: Option<u32>,
 }
 
 /// Entry in the rule compilation worklist that tracks both rule path and full call stack for recursion detection

@@ -46,6 +46,7 @@ impl<'a> Compiler<'a> {
             value_expr: value_expr.cloned(),
             span: span.clone(),
             key_value_loops_hoisted: false,
+            output_query: Some(query.qidx),
         };
         self.push_context(context);
         self.compile_query(query)?;

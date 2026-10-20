@@ -102,7 +102,11 @@ Parameter structures:
   Static string leaf declarations are seeded as empty sets once before body
   evaluation, without overwriting accumulated members. Key and value output
   expressions share index bindings; named indices pair entries, while independent
-  wildcards retain Cartesian-product semantics.
+  wildcards retain Cartesian-product semantics. Output-loop and binding metadata
+  is selected by body query as well as module and expression, so differing body
+  bindings cannot overwrite each other's head plans. Both execution modes
+  accumulate all independent partial-rule bodies, while `else` bodies retain
+  first-success semantics.
 - `ObjectCreateParams` reuses arrays of literal key/value pairs and register
   pairs. Literal keys must be sorted to match template order.
 - `ArrayCreateParams` and `SetCreateParams` store register lists. The VM checks

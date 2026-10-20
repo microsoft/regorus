@@ -190,6 +190,7 @@ struct Context {
     is_old_style_set: bool,
     output_constness_determined: bool,
     early_return: bool,
+    output_query: Option<u32>,
 }
 
 impl Default for Context {
@@ -207,6 +208,7 @@ impl Default for Context {
             is_old_style_set: false,
             output_constness_determined: false,
             early_return: false,
+            output_query: None,
         }
     }
 }
@@ -369,6 +371,20 @@ impl Interpreter {
         }
     }
 
+    fn expression_binding_plan(
+        &self,
+        expr_idx: u32,
+    ) -> crate::lookup::LookupResult<Option<&BindingPlan>> {
+        self.loop_hoisting_table(self.current_module_index)
+            .get_output_binding_plan(
+                self.current_module_index,
+                self.contexts
+                    .last()
+                    .and_then(|context| context.output_query),
+                expr_idx,
+            )
+    }
+
     pub const fn get_data_mut(&mut self) -> &mut Value {
         &mut self.data
     }
@@ -500,11 +516,9 @@ impl Interpreter {
 
         if let Expr::Call { params, .. } = Self::loop_assignment_expr(loop_info).as_ref() {
             if let Some(last_param) = params.last() {
-                let module_idx = self.current_module_index;
                 let expr_idx = last_param.as_ref().eidx();
                 let binding_plan = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .expression_binding_plan(expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
 
                 return match binding_plan.cloned() {
@@ -1021,12 +1035,10 @@ impl Interpreter {
         let mut count: usize = 0;
 
         // Fetch the binding plan for this some..in expression
-        let module_idx = self.current_module_index;
         let expr_idx = collection.as_ref().eidx();
 
         let binding_plan = self
-            .loop_hoisting_table(module_idx)
-            .get_expr_binding_plan(module_idx, expr_idx)
+            .expression_binding_plan(expr_idx)
             .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
 
         let Some(BindingPlan::SomeIn {
@@ -1940,8 +1952,7 @@ impl Interpreter {
         let index = Self::loop_index_expr(loop_info)
             .ok_or_else(|| anyhow!("internal error: no loop index expression"))?;
         let plan = self
-            .loop_hoisting_table(self.current_module_index)
-            .get_expr_binding_plan(self.current_module_index, index.as_ref().eidx())
+            .expression_binding_plan(index.as_ref().eidx())
             .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
         match plan {
             Some(BindingPlan::LoopIndex {
@@ -2237,7 +2248,13 @@ impl Interpreter {
         if let Some(ke) = &key_expr {
             match self
                 .loop_hoisting_table(self.current_module_index)
-                .get_expr_loops(self.current_module_index, ke.as_ref().eidx())
+                .get_output_loops(
+                    self.current_module_index,
+                    self.contexts
+                        .last()
+                        .and_then(|context| context.output_query),
+                    ke.as_ref().eidx(),
+                )
                 .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
                 Some(hoisted_loops) => {
@@ -2253,7 +2270,13 @@ impl Interpreter {
         if let Some(oe) = &output_expr {
             match self
                 .loop_hoisting_table(self.current_module_index)
-                .get_expr_loops(self.current_module_index, oe.as_ref().eidx())
+                .get_output_loops(
+                    self.current_module_index,
+                    self.contexts
+                        .last()
+                        .and_then(|context| context.output_query),
+                    oe.as_ref().eidx(),
+                )
                 .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
                 Some(hoisted_loops) => {
@@ -2356,6 +2379,7 @@ impl Interpreter {
 
     fn eval_query(&mut self, query: &Ref<Query>) -> Result<bool> {
         self.check_execution_time()?;
+        self.get_current_context_mut()?.output_query = Some(query.qidx);
         // Execute the query in a new scope
         self.scopes.push(Scope::new());
         let order_indices = {
@@ -3160,13 +3184,11 @@ impl Interpreter {
 
             let value = self.eval_call_impl(span, expr, fcn, arg_prefix)?;
             if allow_return_arg {
-                let module_idx = self.current_module_index;
                 let expr_idx = last_param.as_ref().eidx();
                 if let Some(BindingPlan::Parameter {
                     destructuring_plan, ..
                 }) = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .expression_binding_plan(expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
                 {
@@ -3563,8 +3585,7 @@ impl Interpreter {
                 let expr_idx = expr.as_ref().eidx();
                 let expr_text = expr.span().text().to_string();
                 let binding_plan = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .expression_binding_plan(expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
                     .ok_or_else(|| {

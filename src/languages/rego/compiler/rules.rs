@@ -673,6 +673,7 @@ impl<'a> Compiler<'a> {
                         value_expr,
                         span,
                         key_value_loops_hoisted: false,
+                        output_query: None,
                     };
                     self.push_context(context);
                     let mut body_entry_points = Vec::new();
@@ -741,6 +742,7 @@ impl<'a> Compiler<'a> {
                             if let Some(context) = self.context_stack.last_mut() {
                                 context.value_expr = body_value_expr.clone();
                                 context.key_value_loops_hoisted = false;
+                                context.output_query = Some(body.query.qidx);
                             }
 
                             self.emit_instruction(

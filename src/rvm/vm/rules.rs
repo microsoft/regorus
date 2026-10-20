@@ -708,11 +708,30 @@ impl RegoVM {
             }
         }
 
-        if let Some(definition_bodies) = rule_info
-            .definitions
+        let next_is_else = rule_info
+            .else_bodies
             .get(frame_data.current_definition_index)
+            .and_then(|bodies| {
+                frame_data
+                    .current_body_index
+                    .checked_add(1)
+                    .and_then(|next| bodies.get(next))
+            })
+            .copied()
+            .unwrap_or(false);
+        if !matches!(
+            frame_data.rule_type,
+            RuleType::PartialSet | RuleType::PartialObject
+        ) || next_is_else
         {
-            frame_data.current_body_index = definition_bodies.len();
+            if let Some(definition_bodies) = rule_info
+                .definitions
+                .get(frame_data.current_definition_index)
+            {
+                frame_data.current_body_index = definition_bodies.len();
+            } else {
+                self.increment_counter(&mut frame_data.current_body_index, "rule body index")?;
+            }
         } else {
             self.increment_counter(&mut frame_data.current_body_index, "rule body index")?;
         }
