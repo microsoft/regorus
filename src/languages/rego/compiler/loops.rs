@@ -86,6 +86,7 @@ impl<'a> Compiler<'a> {
         if loops.is_empty() {
             if !stmts.is_empty() {
                 self.compile_single_statement(stmts[0])?;
+                self.emit_key_filter_guard(&stmts[0].span)?;
                 return self.hoist_loops_and_compile_statements(&stmts[1..]);
             } else {
                 return self.hoist_loops_and_emit_context_yield();

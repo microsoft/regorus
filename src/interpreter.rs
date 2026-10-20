@@ -119,7 +119,8 @@ pub struct Interpreter {
     processed: BTreeSet<Ref<Rule>>,
     processed_paths: Value,
     rule_values: RuleValues,
-    active_rules: Vec<Ref<Rule>>,
+    // A parent invocation and its filtered child projections have distinct identities.
+    active_rules: Vec<(Ref<Rule>, Option<Value>)>,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
     execution_timer: ExecutionTimer,
@@ -1630,9 +1631,14 @@ impl Interpreter {
         self.memory_check()?;
         self.check_execution_time()?;
         if loops.is_empty() {
+            if self.reject_nonmatching_child_key()? {
+                return Ok(false);
+            }
             if let Some((first_stmt, tail_stmts)) = stmts.split_first() {
                 // Evaluate the current statement whose loop expressions have been hoisted.
-                if self.eval_stmt(first_stmt, tail_stmts)? {
+                if self.eval_stmt(first_stmt, tail_stmts)?
+                    && !self.reject_nonmatching_child_key()?
+                {
                     if !matches!(&first_stmt.literal, Literal::SomeIn { .. }) {
                         self.eval_stmts(tail_stmts)
                     } else {
@@ -2409,10 +2415,10 @@ impl Interpreter {
         let Expr::Var { span, .. } = key_expr.as_ref() else {
             return Ok(false);
         };
-        if self.lookup_local_var(&span.source_str()).is_none() {
+        let Some(key) = self.lookup_local_var(&span.source_str()) else {
             return Ok(false);
-        }
-        Ok(self.eval_expr(&key_expr)? != filter)
+        };
+        Ok(key != Value::Undefined && key != filter)
     }
 
     fn eval_query(&mut self, query: &Ref<Query>) -> Result<bool> {
@@ -4391,10 +4397,17 @@ impl Interpreter {
             return Ok(());
         }
 
-        self.active_rules.push(rule.clone());
-        if self.active_rules.iter().filter(|&r| r == rule).count() == 2 {
+        let invocation = (rule.clone(), key_filter.clone());
+        self.active_rules.push(invocation.clone());
+        if self
+            .active_rules
+            .iter()
+            .filter(|&r| r == &invocation)
+            .count()
+            == 2
+        {
             let mut msg = String::default();
-            for r in &self.active_rules {
+            for (r, _) in &self.active_rules {
                 let refr = Self::get_rule_refr(r);
                 let span = refr.span();
                 msg.push_str(
@@ -4424,7 +4437,7 @@ impl Interpreter {
         self.set_current_module(prev_module)?;
         self.scopes = scopes;
         match self.active_rules.pop() {
-            Some(ref r) if r == rule => res,
+            Some(ref r) if r == &invocation => res,
             _ => bail!("internal error: current rule not active"),
         }
     }

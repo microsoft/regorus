@@ -87,6 +87,9 @@ pub enum VmError {
         available: usize,
     },
 
+    #[error("Runtime recursion detected in rule {rule_index} (pc={pc})")]
+    RuleRecursionDetected { rule_index: u16, pc: usize },
+
     #[error("Invalid object create params index: {index} (pc={pc}, available={available})")]
     InvalidObjectCreateParams {
         index: u16,

@@ -17,7 +17,7 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
-    /// Returns true if the error represents a resource-limit violation that
+    /// Returns true if the error represents a fatal evaluation failure that
     /// must never be silently absorbed by rule evaluation.
     pub(super) const fn is_fatal_vm_error(err: &VmError) -> bool {
         matches!(
@@ -27,7 +27,23 @@ impl RegoVM {
                 | VmError::MemoryBudgetExceeded { .. }
                 | VmError::RegexSizeLimitExceeded { .. }
                 | VmError::InstructionLimitExceeded { .. }
+                | VmError::RuleRecursionDetected { .. }
         )
+    }
+
+    fn check_rule_recursion(&self, rule_index: u16) -> Result<()> {
+        if self.program.needs_runtime_recursion_check
+            && self
+                .call_rule_stack
+                .iter()
+                .any(|context| context.rule_index == rule_index)
+        {
+            return Err(VmError::RuleRecursionDetected {
+                rule_index,
+                pc: self.pc,
+            });
+        }
+        Ok(())
     }
 
     /// Restore VM state that was swapped out for rule execution.
@@ -249,6 +265,8 @@ impl RegoVM {
             }
         }
 
+        self.check_rule_recursion(rule_index)?;
+
         let rule_type = rule_info.rule_type.clone();
         let rule_definitions = rule_info.definitions.clone();
 
@@ -415,6 +433,8 @@ impl RegoVM {
                 return Ok(());
             }
         }
+
+        self.check_rule_recursion(rule_index)?;
 
         if rule_info.definitions.is_empty() {
             // No compiled definitions — check for a default value before returning Undefined.

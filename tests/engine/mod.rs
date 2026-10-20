@@ -6,6 +6,64 @@ use regorus::*;
 use std::collections::BTreeSet;
 
 #[test]
+fn keyed_set_projection_preserves_cycle_detection() -> Result<()> {
+    for (policy, entrypoint) in [
+        (
+            r#"package test
+               values.a contains 1
+               values[k] contains n if { k := "a"; n := count(values.a) }"#,
+            "data.test.values.a",
+        ),
+        (
+            r#"package test
+               values.a contains 1
+               values[k] contains n if { k := "a"; n := count(values.a) }"#,
+            "data.test.values",
+        ),
+        (
+            r#"package test
+               values.a contains 1
+               values.b contains 2
+               values[k] contains n if { k := "a"; n := count(values.b) }
+               values[k] contains n if { k := "b"; n := count(values.a) }"#,
+            "data.test.values.a",
+        ),
+    ] {
+        let mut engine = Engine::new();
+        engine.add_policy("test.rego".into(), policy.into())?;
+        let error = engine
+            .eval_rule(entrypoint.into())
+            .expect_err("a genuine keyed-set cycle must be rejected");
+        assert!(
+            error.to_string().contains("recursion detected"),
+            "{entrypoint}: {error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn keyed_set_multiple_bodies_remain_rejected() {
+    let mut engine = Engine::new();
+    let error = engine
+        .add_policy(
+            "test.rego".into(),
+            r#"package test
+               values.a contains 1
+               values[k] contains n if { k := "b"; n := 2 }
+                   { k := "b"; n := count(values.a) }"#
+                .into(),
+        )
+        .expect_err("multiple set bodies are unsupported");
+    assert!(
+        error
+            .to_string()
+            .contains("else cannot be used with set rules"),
+        "{error}"
+    );
+}
+
+#[test]
 fn keyed_set_child_override_preserves_dynamic_sibling_contributions() -> Result<()> {
     let mut engine = Engine::new();
     engine.add_policy(

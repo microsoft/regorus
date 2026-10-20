@@ -599,6 +599,9 @@ impl<'a> Compiler<'a> {
                                 let (key_expr, filter) =
                                     self.keyed_set_key(rule_path, rule_ref, refr)?;
                                 key_filter = filter;
+                                if key_filter.is_some() {
+                                    self.program.needs_runtime_recursion_check = true;
+                                }
                                 key_expr
                             } else {
                                 None
@@ -775,6 +778,7 @@ impl<'a> Compiler<'a> {
                             if let Some(context) = self.context_stack.last_mut() {
                                 context.value_expr = body_value_expr.clone();
                                 context.key_value_loops_hoisted = false;
+                                context.key_filter_guarded = false;
                                 context.output_query = Some(body.query.qidx);
                             }
 

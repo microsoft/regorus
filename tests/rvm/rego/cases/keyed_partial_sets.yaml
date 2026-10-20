@@ -2,6 +2,217 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: overlapping_keyed_set_matching_cycle
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { k := "a"; n := count(values.a) }
+    query: data.test.values.a
+    want_error: "Runtime recursion detected"
+
+  - note: overlapping_keyed_set_matching_cycle_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { k := "a"; n := count(values.a) }
+    query: data.test.values.a
+    want_error: "Runtime recursion detected"
+
+  - note: overlapping_keyed_set_sibling_cycle
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values.b contains 2
+        values[k] contains n if { k := "a"; n := count(values.b) }
+        values[k] contains n if { k := "b"; n := count(values.a) }
+    query: data.test.values.a
+    want_error: "Runtime recursion detected"
+
+  - note: overlapping_keyed_set_sibling_cycle_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values.b contains 2
+        values[k] contains n if { k := "a"; n := count(values.b) }
+        values[k] contains n if { k := "b"; n := count(values.a) }
+    query: data.test.values.a
+    want_error: "Runtime recursion detected"
+
+  - note: overlapping_keyed_set_index_bound_before_dependency
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { n := {"b": 2}[k] + count(values.a) }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_index_bound_before_dependency_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { n := {"b": 2}[k] + count(values.a) }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_dependent_lookup_order
+    modules:
+      - |
+        package test
+        values.a contains 0
+        values.b contains 4
+        values[k] contains n if { k := "a"; n := count(values.b) }
+        main := [values.a, values, values.b]
+    query: data.test.main
+    want_result:
+      - set!: [0, 1]
+      - a:
+          set!: [0, 1]
+        b:
+          set!: [4]
+      - set!: [4]
+
+  - note: overlapping_keyed_set_dependent_lookup_order_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 0
+        values.b contains 4
+        values[k] contains n if { k := "a"; n := count(values.b) }
+        main := [values, values.b, values.a]
+    query: data.test.main
+    want_result:
+      - a:
+          set!: [0, 1]
+        b:
+          set!: [4]
+      - set!: [4]
+      - set!: [0, 1]
+
+  - note: overlapping_keyed_set_declared_key_unification
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { some k; k = "a" }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_declared_key_unification_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { some k; k = "a" }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_parent_dependent_child
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { k := "b"; n := count(values.a) }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [1]
+      b:
+        set!: [1]
+
+  - note: overlapping_keyed_set_parent_dependent_child_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { k := "b"; n := count(values.a) }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [1]
+      b:
+        set!: [1]
+
+  - note: overlapping_keyed_set_sibling_projection
+    modules:
+      - |
+        package test
+        values.a contains 0
+        values.b contains 4
+        values[k] contains n if { k := "a"; n := count(values.b) }
+    query: data.test.values.a
+    want_result:
+      set!: [0, 1]
+
+  - note: overlapping_keyed_set_sibling_projection_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 0
+        values.b contains 4
+        values[k] contains n if { k := "a"; n := count(values.b) }
+    query: data.test.values.a
+    want_result:
+      set!: [0, 1]
+
+  - note: overlapping_keyed_set_indexed_assignment
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { k := ["b"][_]; n := count(values.a) }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_indexed_assignment_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { k := ["b"][_]; n := count(values.a) }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_indexed_matching_assignment
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { k := ["b", "a"][_]; n := 2 }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_indexed_matching_assignment_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { k := ["b", "a"][_]; n := 2 }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
   - note: overlapping_keyed_set_nonmatching_dependent_child
     modules:
       - |

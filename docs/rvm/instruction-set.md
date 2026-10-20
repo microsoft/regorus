@@ -113,6 +113,13 @@ Parameter structures:
   dynamic definitions. The compiler also filters those definitions by the
   requested key before set insertion, rather than calling the entire parent
   and introducing cycles through sibling rules.
+  Early filters defer declared-but-undefined keys until binding and run after
+  hoisted assignments as well as ordinary statements. Interpreter recursion
+  tracking distinguishes parent and child projections of the same definition,
+  while repeated evaluation of the same projection remains a cycle.
+  Programs containing child projections enable runtime recursion checking in
+  both VM modes; genuine cycles propagate an error rather than becoming
+  undefined results.
 - `ObjectCreateParams` reuses arrays of literal key/value pairs and register
   pairs. Literal keys must be sorted to match template order.
 - `ArrayCreateParams` and `SetCreateParams` store register lists. The VM checks
