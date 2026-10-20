@@ -15,6 +15,8 @@
 use std::env;
 
 use crate::test_utils::{check_output, ValueOrVec};
+#[cfg(feature = "std")]
+use crate::utils::limits::LimitError;
 #[cfg(feature = "azure_policy")]
 use crate::utils::limits::PolicyLengthConfig;
 use crate::utils::limits::{
@@ -28,6 +30,8 @@ use core::time::Duration;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use test_generator::test_resources;
+#[cfg(feature = "std")]
+use timer_test_support::configure_time_source_steps;
 use timer_test_support::{
     apply_engine_timer, configure_time_source, reset_time_source, GlobalTimerGuard,
 };
@@ -211,6 +215,150 @@ fn rule_conflict_percent_encodes_percent_sequences_in_previous_file_label() {
     assert!(message.contains("| p := 2"));
 }
 
+#[test]
+fn imported_callable_replacement_prefers_import_over_prefixed_default() -> Result<()> {
+    let helpers = r#"package helpers
+import rego.v1
+replacement(_) := true
+"#;
+    let main = r#"package main
+import rego.v1
+import data.helpers as h
+
+default h.replacement(_) := false
+target(_) := false
+p_imported := h.replacement(0)
+p_replaced if { target(0) with target as h.replacement }
+p_target := target(0)
+"#;
+
+    for modules in [
+        [("main.rego", main), ("helpers.rego", helpers)],
+        [("helpers.rego", helpers), ("main.rego", main)],
+    ] {
+        let mut engine = Engine::new();
+        for (module_id, content) in modules {
+            engine.add_policy(module_id.to_string(), content.to_string())?;
+        }
+        assert_eq!(
+            engine.eval_rule("data.main.p_imported".to_string())?,
+            Value::Bool(true)
+        );
+        assert_eq!(
+            engine.eval_rule("data.main.p_replaced".to_string())?,
+            Value::Bool(true)
+        );
+        assert_eq!(
+            engine.eval_rule("data.main.p_target".to_string())?,
+            Value::Bool(false),
+            "the function replacement must not leak into the next evaluation"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn explicit_data_callable_replacement_prefers_exact_target_over_prefixed_default() -> Result<()> {
+    let helpers = r#"package helpers
+import rego.v1
+replacement(_) := true
+"#;
+    let shadow = r#"package main.data.helpers
+import rego.v1
+default replacement(_) := false
+"#;
+    let main = r#"package main
+import rego.v1
+target(_) := false
+p_direct := data.helpers.replacement(0)
+p_replaced if { target(0) with target as data.helpers.replacement }
+p_target := target(0)
+"#;
+    let mut observed = Vec::new();
+
+    for modules in [
+        [
+            ("main.rego", main),
+            ("shadow.rego", shadow),
+            ("helpers.rego", helpers),
+        ],
+        [
+            ("helpers.rego", helpers),
+            ("shadow.rego", shadow),
+            ("main.rego", main),
+        ],
+    ] {
+        let mut engine = Engine::new();
+        for (module_id, content) in modules {
+            engine.add_policy(module_id.to_string(), content.to_string())?;
+        }
+        let direct = engine.eval_rule("data.main.p_direct".to_string())?;
+        let replaced = engine.eval_rule("data.main.p_replaced".to_string())?;
+        let target_after_replacement = engine.eval_rule("data.main.p_target".to_string())?;
+        observed.push((direct, replaced, target_after_replacement));
+    }
+
+    assert_eq!(
+        observed,
+        vec![
+            (Value::Bool(true), Value::Bool(true), Value::Bool(false)),
+            (Value::Bool(true), Value::Bool(true), Value::Bool(false)),
+        ]
+    );
+    Ok(())
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn hoisted_loop_timeout_restores_with_override_before_engine_reuse() -> Result<()> {
+    let _limits_lock = acquire_limits_test_lock();
+    let _global_timer_guard = GlobalTimerGuard::apply(Some(&ExecutionTimerTestConfig {
+        disable: Some(true),
+        ..ExecutionTimerTestConfig::default()
+    }))?;
+    configure_time_source(None);
+
+    let mut policy = String::from(
+        "package main\nimport rego.v1\ndefault f(_) := [1]\ntarget(_) := false\np if { walk(f(0), [_, _]) with target as true }\nq := target(0)\n",
+    );
+    for index in 0..256 {
+        policy.push_str(&format!("default f.child_{index}(_) := true\n"));
+    }
+
+    let mut engine = Engine::new();
+    engine.add_policy("loop-timeout.rego".to_string(), policy)?;
+    assert_eq!(
+        engine.eval_rule("data.main.q".to_string())?,
+        Value::Bool(false)
+    );
+
+    configure_time_source_steps(&[0], 2);
+    engine.set_execution_timer_config(ExecutionTimerConfig {
+        limit: Duration::from_millis(1),
+        check_interval: NonZeroU32::new(128).unwrap_or(NonZeroU32::MIN),
+    });
+    let loop_result = engine.eval_rule("data.main.p".to_string());
+
+    engine.clear_execution_timer_config();
+    configure_time_source(None);
+    let target_after_timeout = engine.eval_rule("data.main.q".to_string());
+
+    let timeout_error = loop_result.expect_err("dense default selection must hit the timer");
+    assert!(
+        matches!(
+            timeout_error.downcast_ref::<LimitError>(),
+            Some(LimitError::TimeLimitExceeded { .. })
+        ),
+        "expected execution-time-limit error, got {timeout_error:#}"
+    );
+    assert_eq!(
+        target_after_timeout?,
+        Value::Bool(false),
+        "with override must be restored after a hoisted collection timeout"
+    );
+    Ok(())
+}
+
 mod timer_test_support {
     use super::{ExecutionTimerTestConfig, TimeSourceTestConfig};
     #[cfg(any(test, not(feature = "std")))]
@@ -284,6 +432,14 @@ mod timer_test_support {
         }
 
         state.reset_from_template();
+    }
+
+    #[cfg(feature = "std")]
+    pub fn configure_time_source_steps(increments_ms: &[u64], default_increment_ms: u64) {
+        configure_time_source(Some(&TimeSourceTestConfig {
+            increments_ms: increments_ms.to_vec(),
+            default_increment_ms: Some(default_increment_ms),
+        }));
     }
 
     pub fn reset_time_source() {

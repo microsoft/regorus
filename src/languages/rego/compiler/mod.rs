@@ -75,6 +75,12 @@ pub struct WorklistEntry {
     pub call_stack: Vec<u16>,
 }
 
+#[derive(Clone)]
+enum PrivateRuleKind {
+    OrdinaryResult { source_path: String },
+    DefaultSelector { source_path: String },
+}
+
 impl WorklistEntry {
     pub fn new(rule_path: String, call_stack: Vec<u16>) -> Self {
         Self {
@@ -119,6 +125,8 @@ pub struct Compiler<'a> {
     current_package: String,
     current_module_index: u32,
     rule_index_map: BTreeMap<String, u16>,
+    next_rule_index: usize,
+    private_rule_kinds: BTreeMap<String, PrivateRuleKind>,
     rule_worklist: Vec<WorklistEntry>,
     rule_definitions: Vec<Vec<Vec<u32>>>,
     rule_definition_function_params: Vec<Vec<Option<Vec<String>>>>,
@@ -133,6 +141,7 @@ pub struct Compiler<'a> {
     rule_function_param_count: Vec<Option<usize>>,
     rule_result_registers: Vec<u8>,
     rule_num_registers: Vec<u8>,
+    rule_default_literal_indices: Vec<Option<u16>>,
     context_stack: Vec<CompilationContext>,
     loop_expr_register_map: BTreeMap<ExprRef, Register>,
     source_to_index: BTreeMap<String, usize>,
@@ -147,6 +156,7 @@ pub struct Compiler<'a> {
     /// When the compiler encounters a call to one of these names, it emits a
     /// `HostAwait` instruction instead of a regular function or builtin call.
     host_await_builtins: BTreeMap<String, usize>,
+    default_function_paths: BTreeSet<String>,
 }
 
 impl<'a> Compiler<'a> {
@@ -162,6 +172,8 @@ impl<'a> Compiler<'a> {
             current_package: String::new(),
             current_module_index: 0,
             rule_index_map: BTreeMap::new(),
+            next_rule_index: 0,
+            private_rule_kinds: BTreeMap::new(),
             rule_worklist: Vec::new(),
             rule_definitions: Vec::new(),
             rule_definition_function_params: Vec::new(),
@@ -172,6 +184,7 @@ impl<'a> Compiler<'a> {
             rule_function_param_count: Vec::new(),
             rule_result_registers: Vec::new(),
             rule_num_registers: Vec::new(),
+            rule_default_literal_indices: Vec::new(),
             context_stack: vec![],
             loop_expr_register_map: BTreeMap::new(),
             source_to_index: BTreeMap::new(),
@@ -183,6 +196,7 @@ impl<'a> Compiler<'a> {
             entry_points: IndexMap::new(),
             soft_assert_mode: false,
             host_await_builtins: BTreeMap::new(),
+            default_function_paths: BTreeSet::new(),
         }
     }
 
