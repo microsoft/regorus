@@ -70,6 +70,14 @@ pub open spec fn normalize_float(value: f64) -> NumberView
 }
 
 impl NumberView {
+    pub open spec fn is_finite(self: Self) -> bool
+    {
+        match self {
+            Self::Integer(_) => true,
+            Self::Float(f) => f.is_finite_spec(),
+        }
+    }
+
     pub open spec fn is_zero(&self) -> bool
     {
         match *self {
@@ -107,7 +115,8 @@ impl NumberView {
 
     pub open spec fn add_ensures(self: Self, rhs: Self, result: Self) -> bool
     {
-        match (self, rhs) {
+        &&& result.is_finite()
+        &&& match (self, rhs) {
             (NumberView::Integer(lhs), NumberView::Integer(rhs)) =>
                 result matches NumberView::Integer(sum) && sum == lhs + rhs,
             _ => exists|a: f64, b: f64| {
@@ -123,7 +132,8 @@ impl NumberView {
 
     pub open spec fn sub_ensures(self: Self, rhs: Self, result: Self) -> bool
     {
-        match (self, rhs) {
+        &&& result.is_finite()
+        &&& match (self, rhs) {
             (NumberView::Integer(lhs), NumberView::Integer(rhs)) =>
                 result matches NumberView::Integer(diff) && diff == lhs - rhs,
             _ => exists|a: f64, b: f64| {
@@ -139,7 +149,8 @@ impl NumberView {
 
     pub open spec fn mul_ensures(self: Self, rhs: Self, result: Self) -> bool
     {
-        match (self, rhs) {
+        &&& result.is_finite()
+        &&& match (self, rhs) {
             (NumberView::Integer(lhs), NumberView::Integer(rhs)) =>
                 result matches NumberView::Integer(product) && product == lhs * rhs,
             _ => exists|a: f64, b: f64| {
@@ -155,7 +166,8 @@ impl NumberView {
 
     pub open spec fn div_ensures(self: Self, rhs: Self, result: Self) -> bool
     {
-        match (self, rhs) {
+        &&& result.is_finite()
+        &&& match (self, rhs) {
             (NumberView::Integer(lhs), NumberView::Integer(divisor)) => {
                 &&& divisor != 0
                 &&& if vstd::arithmetic::div_mod::rust_rem(lhs, divisor) == 0 {
@@ -221,5 +233,15 @@ impl NumberView {
     }
 
 }
+
+// `spec_bigint_to_f64` deliberately leaves conversions outside the exactly represented range
+// uninterpreted. This captures the narrower fact required by negative powers: converting a
+// positive integer divisor and taking `1.0 / divisor` cannot produce NaN or infinity.
+pub axiom fn axiom_positive_integer_reciprocal_is_finite(divisor: int)
+    requires
+        divisor > 0,
+    ensures
+        !NumberView::Integer(1).div_overflows(NumberView::Integer(divisor)),
+;
 
 } // end verus!

@@ -153,16 +153,6 @@ impl View for Number
 
 /// Helpful lemmas
 
-// `spec_bigint_to_f64` deliberately leaves conversions outside the exactly represented range
-// uninterpreted. This captures the narrower fact required by negative powers: converting a
-// positive integer divisor and taking `1.0 / divisor` cannot produce NaN or infinity.
-pub axiom fn axiom_positive_integer_reciprocal_is_finite(divisor: int)
-    requires
-        divisor > 0,
-    ensures
-        !NumberView::Integer(1).div_overflows(NumberView::Integer(divisor)),
-;
-
 pub proof fn lemma_div_ensures_cases(lhs: NumberView, rhs: NumberView)
     ensures
         match (lhs, rhs) {
@@ -180,12 +170,14 @@ pub proof fn lemma_div_ensures_cases(lhs: NumberView, rhs: NumberView)
                 lhs->Integer_0,
                 rhs->Integer_0,
             ) != 0 && lhs.to_f64_lossy_ensures(lhs_float) && rhs.to_f64_lossy_ensures(rhs_float)
+                && (lhs_float / rhs_float).is_finite_spec()
             ==> #[trigger] lhs.div_ensures(rhs, NumberView::Float(lhs_float / rhs_float)),
         forall|lhs_float: f64, rhs_float: f64|
             (lhs is Float || rhs is Float) && !rhs.is_zero() && lhs.to_f64_lossy_ensures(lhs_float)
-                && rhs.to_f64_lossy_ensures(rhs_float)
+                && rhs.to_f64_lossy_ensures(rhs_float) && (lhs_float / rhs_float).is_finite_spec()
             ==> #[trigger] lhs.div_ensures(rhs, NumberView::Float(lhs_float / rhs_float)),
 {
+    reveal(NumberView::is_finite);
     reveal(NumberView::is_zero);
     reveal(NumberView::div_ensures);
 }
