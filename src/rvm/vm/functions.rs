@@ -6,6 +6,7 @@ use crate::value::Value;
 use super::errors::{Result, VmError};
 use super::execution_model::ExecutionMode;
 use super::machine::RegoVM;
+use core::convert::TryFrom as _;
 
 impl RegoVM {
     pub(super) fn execute_function_call(&mut self, params_index: u16) -> Result<()> {
@@ -19,6 +20,31 @@ impl RegoVM {
                 pc: self.pc,
                 available: self.program.instruction_data.function_call_params.len(),
             })?;
+        let expected_params = self
+            .program
+            .rule_infos
+            .get(usize::from(params.func_rule_index))
+            .and_then(|rule_info| rule_info.function_info.as_ref())
+            .map(|function_info| function_info.num_params);
+        if let Some(expected) = expected_params {
+            let actual = params.arg_count();
+            if actual != usize::try_from(expected).unwrap_or(usize::MAX) {
+                return Err(VmError::FunctionArgumentMismatch {
+                    expected,
+                    actual,
+                    pc: self.pc,
+                });
+            }
+
+            for &argument_register in params.arg_registers() {
+                if self.get_register(argument_register)? == &Value::Undefined {
+                    self.set_register(params.dest, Value::Undefined)?;
+                    self.memory_check()?;
+                    return Ok(());
+                }
+            }
+        }
+
         let call_result = match self.execution_mode {
             ExecutionMode::RunToCompletion => {
                 self.execute_call_rule_common(params.dest, params.func_rule_index, Some(&params))
@@ -135,7 +161,13 @@ impl RegoVM {
             Err(err) => {
                 self.dummy_exprs = dummy_exprs;
                 self.cached_builtin_args = args;
-                return Err(err.into());
+                if err.downcast_ref::<crate::LimitError>().is_some() {
+                    return Err(err.into());
+                }
+                return Err(VmError::StrictBuiltinError {
+                    message: alloc::format!("{err}"),
+                    pc: self.pc,
+                });
             }
         };
 

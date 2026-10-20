@@ -237,6 +237,7 @@ pub struct Analyzer {
     scopes: Vec<Scope>,
     schedule_table: Lookup<QuerySchedule>,
     functions: FunctionTable,
+    imports: BTreeMap<String, Ref<Expr>>,
     current_module_path: String,
     current_module_index: u32,
 }
@@ -259,6 +260,7 @@ impl Analyzer {
             schedule_table: Lookup::new(),
             scopes: vec![],
             functions: FunctionTable::new(),
+            imports: BTreeMap::new(),
             current_module_path: String::default(),
             current_module_index: 0,
         }
@@ -321,7 +323,7 @@ impl Analyzer {
     fn add_rules_and_aliases(&mut self, modules: &[Ref<Module>]) -> Result<()> {
         for m in modules {
             let path = get_path_string(&m.package.refr, Some("data"))?;
-            let scope: &mut Scope = self.packages.entry(path).or_default();
+            let scope: &mut Scope = self.packages.entry(path.clone()).or_default();
             for r in &m.policy {
                 let var = match r.as_ref() {
                     Rule::Default { refr, .. }
@@ -340,6 +342,9 @@ impl Analyzer {
                 // Ensure default alias imports (e.g. import data.pkg.mod) are visible to this scope.
                 if let Some(alias_span) = import_alias_span(import) {
                     scope.unscoped.insert(alias_span.source_str());
+                    let alias = alias_span.text().to_string();
+                    let import_key = append_path_component(&path, &alias)?;
+                    self.imports.insert(import_key, import.refr.clone());
                 }
             }
         }
@@ -530,10 +535,11 @@ impl Analyzer {
                         gather_input_vars(expr, &self.scopes, scope)?;
                         gather_loop_vars(expr, &self.scopes, scope)?;
 
-                        let extra_arg = get_extra_arg(
+                        let extra_arg = get_extra_arg_with_imports(
                             expr,
                             Some(self.current_module_path.as_str()),
                             &self.functions,
+                            &self.imports,
                         );
                         if let Some(ea) = extra_arg {
                             gather_vars(&ea, false, &self.scopes, scope)?;
@@ -1037,10 +1043,11 @@ impl Analyzer {
                     // TODO: vars in compr
                 }
                 Literal::Expr { expr, .. } => {
-                    let extra_arg = get_extra_arg(
+                    let extra_arg = get_extra_arg_with_imports(
                         expr,
                         Some(self.current_module_path.as_str()),
                         &self.functions,
+                        &self.imports,
                     );
                     if let Some(ref ea) = extra_arg {
                         // Gather vars that are being bound

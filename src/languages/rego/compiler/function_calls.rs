@@ -14,9 +14,11 @@ use crate::ast::ExprRef;
 use crate::builtins;
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
-use crate::rvm::instructions::{BuiltinCallParams, FunctionCallParams};
+use crate::rvm::instructions::BuiltinCallParams;
 use crate::rvm::Instruction;
-use crate::utils::{append_path_component, get_path_string, split_canonical_path_root};
+use crate::utils::{
+    append_path_component, canonical_function_path, get_path_string, split_canonical_path_root,
+};
 use crate::value::Value;
 use alloc::{
     format,
@@ -67,8 +69,7 @@ impl<'a> Compiler<'a> {
             // Resolve a leading import alias before module-prefixing and builtins.
             resolved
         } else {
-            get_path_string(fcn, Some(&self.current_package))
-                .map_err(|_| CompilerError::InvalidFunctionExpressionWithPackage.at(&span))?
+            canonical_function_path(&fcn_path, Some(&self.current_package))
         };
 
         let mut out_param_plan: Option<(BindingPlan, Span)> = None;
@@ -121,19 +122,7 @@ impl<'a> Compiler<'a> {
 
         match call_target {
             CallTarget::User { rule_index, .. } => {
-                let mut args_array = [0u8; 8];
-                let num_args = arg_regs.len().min(8) as u8;
-                for (i, &reg) in arg_regs.iter().take(8).enumerate() {
-                    args_array[i] = reg;
-                }
-
-                let params_index = self.program.add_function_call_params(FunctionCallParams {
-                    func_rule_index: rule_index,
-                    dest,
-                    num_args,
-                    args: args_array,
-                });
-                self.emit_instruction(Instruction::FunctionCall { params_index }, &span);
+                self.emit_function_call(dest, rule_index, &arg_regs, &span)?;
             }
             CallTarget::Builtin { builtin_index, .. } => {
                 let mut args_array = [0u8; 8];
@@ -244,11 +233,9 @@ impl<'a> Compiler<'a> {
         let import_expr = self.policy.inner.imports.get(&import_key)?;
         let mut candidate = get_path_string(import_expr.as_ref(), None).ok()?;
         candidate.push_str(suffix);
-        self.policy
-            .inner
-            .functions
-            .contains_key(&candidate)
-            .then_some(candidate)
+        (self.policy.inner.functions.contains_key(&candidate)
+            || self.default_function_paths.contains(&candidate))
+        .then_some(candidate)
     }
 
     fn lookup_builtin_arity(&self, name: &str) -> Option<usize> {

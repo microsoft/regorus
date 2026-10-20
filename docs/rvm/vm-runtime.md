@@ -50,8 +50,10 @@ fields to responsibilities.
   the current execution's counter.
 - `set_host_await_responses`: pre-loads responses per identifier, consumed in
   FIFO order when `HostAwait` executes in run-to-completion mode.
-- `set_strict_builtin_errors`: toggles builtin failure semantics between
-  `VmError::ArithmeticError` and returning `Value::Undefined`.
+- `set_strict_builtin_errors`: reports native builtin failures as
+  `VmError::StrictBuiltinError` when enabled; when disabled, those failures
+  produce `Value::Undefined`. Strict arithmetic and comparison type mismatches
+  continue to use `VmError::ArithmeticError`.
 - Accessors (`get_pc`, `get_registers`, `get_loop_stack`, etc.) aid debugging
   and visualisation tooling.
 - `get_host_await_argument`: when the VM is suspended on a `HostAwait`, returns
@@ -218,6 +220,7 @@ of the global `data` namespace.
 - `RegisterNotArray` / `RegisterNotObject`
 - `InvalidEntryPointIndex` / `EntryPointNotFound`
 - `ArithmeticError`
+- `StrictBuiltinError`
 - `RuleDataConflict`
 - `HostAwaitResponseMissing`
 - `Internal(String)` for invariant violations
@@ -266,9 +269,10 @@ internal runtime field and is not a public C# getter.
   identifier, and a missing response is a `VmError::HostAwaitResponseMissing`.
   In suspendable mode, expect `ExecutionState::Suspended { reason: HostAwait
   { .. } }`, read the identifier and argument, and resume with the chosen value.
-- **Builtin strictness**: `set_strict_builtin_errors(true)` reports type
-  mismatches as `VmError::ArithmeticError`; leave it `false` to coerce results
-  to `Value::Undefined`.
+- **Builtin strictness**: `set_strict_builtin_errors(true)` reports native
+  builtin failures as `VmError::StrictBuiltinError` and strict arithmetic or
+  comparison type mismatches as `VmError::ArithmeticError`; leave it `false`
+  to let those failures produce `Value::Undefined`.
 - **State inspection**: use getters (`get_registers`, `get_call_stack`,
   `get_loop_stack`, `get_cache_hits`) to instrument evaluation or build
   debugging UIs. `get_debug_state()` provides a concise snapshot for logs.
@@ -277,4 +281,3 @@ internal runtime field and is not a public C# getter.
   combines nested loops, comprehensions, function calls, and host awaits.
 
 ---
-

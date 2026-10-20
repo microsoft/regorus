@@ -10,11 +10,15 @@
     clippy::pattern_type_mismatch
 )]
 
-use super::{CompilationContext, Compiler, CompilerError, ContextType, Result, WorklistEntry};
+use super::{
+    CompilationContext, Compiler, CompilerError, ContextType, PrivateRuleKind, Result, Scope,
+    WorklistEntry,
+};
 use crate::ast::{Expr, ExprRef, Rule, RuleHead};
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
 use crate::parser::Parser;
+use crate::rvm::instructions::{ArrayCreateParams, FunctionCallParams, GuardMode};
 use crate::rvm::program::{Program, RuleType};
 use crate::rvm::Instruction;
 use crate::utils::{format_string_path, get_path_string};
@@ -24,7 +28,54 @@ use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
+use alloc::vec;
 use alloc::vec::Vec;
+use core::convert::TryFrom as _;
+
+type CallableDefaultFunction = (crate::ast::NodeRef<Rule>, Vec<ExprRef>, ExprRef);
+
+fn collect_callable_default_function_paths(policy: &CompiledPolicy) -> Result<BTreeSet<String>> {
+    let mut paths = BTreeSet::new();
+    if policy.inner.default_rules.is_empty() {
+        return Ok(paths);
+    }
+
+    for module in policy.get_modules() {
+        let mut module_path = None;
+        for rule in &module.policy {
+            if let Rule::Default { refr, args, .. } = rule.as_ref() {
+                if args.is_empty() {
+                    continue;
+                }
+
+                if module_path.is_none() {
+                    module_path = Some(
+                        get_path_string(&module.package.refr, Some("data")).map_err(|error| {
+                            CompilerError::General {
+                                message: format!("Failed to get package path for module: {error}"),
+                            }
+                            .at(module.package.refr.span())
+                        })?,
+                    );
+                }
+                let Some(module_path) = module_path.as_deref() else {
+                    return Err(CompilerError::General {
+                        message: "Failed to prepare module path for default function".to_string(),
+                    }
+                    .at(refr.span()));
+                };
+                let path = get_path_string(refr, Some(module_path)).map_err(|error| {
+                    CompilerError::General {
+                        message: format!("Failed to get default function path: {error}"),
+                    }
+                    .at(refr.span())
+                })?;
+                paths.insert(path);
+            }
+        }
+    }
+    Ok(paths)
+}
 
 impl<'a> Compiler<'a> {
     /// Extract a compile-time constant `Value` from an optional expression.
@@ -37,7 +88,95 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    pub(super) fn callable_default_function(
+        &self,
+        rule_path: &str,
+    ) -> Result<Option<CallableDefaultFunction>> {
+        for (rule, _) in self.exact_default_rules(rule_path)? {
+            if let Rule::Default { args, value, .. } = rule.as_ref() {
+                if !args.is_empty() {
+                    return Ok(Some((rule.clone(), args.clone(), value.clone())));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub(super) fn exact_default_rules(
+        &self,
+        rule_path: &str,
+    ) -> Result<Vec<(crate::ast::NodeRef<Rule>, Option<String>)>> {
+        let Some(default_rules) = self.policy.inner.default_rules.get(rule_path) else {
+            return Ok(Vec::new());
+        };
+        let mut exact_rules = Vec::new();
+
+        for (rule, index) in default_rules {
+            if let Rule::Default { refr, args, .. } = rule.as_ref() {
+                let (module_package, _) = self.find_module_package_for_rule_ref(rule)?;
+                let registration_refr = if args.is_empty() {
+                    match (index, refr.as_ref()) {
+                        (Some(_), Expr::RefBrack { refr, .. }) => refr,
+                        (Some(_), _) => {
+                            return Err(CompilerError::General {
+                                message: "indexed default rule has no bracket reference"
+                                    .to_string(),
+                            }
+                            .at(refr.span()));
+                        }
+                        (None, _) => refr,
+                    }
+                } else {
+                    refr
+                };
+                let default_path = get_path_string(registration_refr, Some(&module_package))
+                    .map_err(|error| {
+                        CompilerError::General {
+                            message: format!("Failed to get default rule path: {error}"),
+                        }
+                        .at(registration_refr.span())
+                    })?;
+                if default_path == rule_path {
+                    exact_rules.push((rule.clone(), index.clone()));
+                }
+            }
+        }
+
+        Ok(exact_rules)
+    }
+
+    fn find_module_package_for_rule_ref(
+        &self,
+        rule_ref: &crate::ast::NodeRef<Rule>,
+    ) -> Result<(String, u32)> {
+        let module_index = self.find_module_index_for_rule(rule_ref)?;
+        let module = self
+            .policy
+            .get_modules()
+            .get(usize::try_from(module_index).unwrap_or(usize::MAX))
+            .ok_or_else(|| CompilerError::General {
+                message: "default function rule has no owning module".to_string(),
+            })?;
+        let package = get_path_string(&module.package.refr, Some("data")).map_err(|error| {
+            CompilerError::General {
+                message: format!("Failed to get package path for default function: {error}"),
+            }
+        })?;
+        Ok((package, module_index))
+    }
+
     pub(super) fn compute_rule_type(&self, rule_path: &str) -> Result<RuleType> {
+        let has_ordinary_function = self
+            .policy
+            .inner
+            .functions
+            .get(rule_path)
+            .is_some_and(|(definitions, _, _)| !definitions.is_empty());
+        if !has_ordinary_function && self.callable_default_function(rule_path)?.is_some() {
+            return Ok(RuleType::Complete);
+        }
+
         let Some(definitions) = self.policy.inner.rules.get(rule_path) else {
             // Default-only rules (e.g., `default deny := true`) have no regular definitions
             // in the `rules` map — they only exist in `default_rules`. Treat them as Complete.
@@ -137,41 +276,509 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn ensure_rule_slot(&mut self, index: u16) {
+        let index = usize::from(index);
+        while self.rule_definitions.len() <= index {
+            self.rule_definitions.push(Vec::new());
+        }
+        while self.rule_definition_function_params.len() <= index {
+            self.rule_definition_function_params.push(Vec::new());
+        }
+        while self.rule_definition_destructuring_patterns.len() <= index {
+            self.rule_definition_destructuring_patterns.push(Vec::new());
+        }
+        while self.rule_definition_else_bodies.len() <= index {
+            self.rule_definition_else_bodies.push(Vec::new());
+        }
+        while self.rule_definition_static_values.len() <= index {
+            self.rule_definition_static_values.push(Vec::new());
+        }
+        while self.rule_types.len() <= index {
+            self.rule_types.push(RuleType::Complete);
+        }
+        while self.rule_function_param_count.len() <= index {
+            self.rule_function_param_count.push(None);
+        }
+        while self.rule_result_registers.len() <= index {
+            self.rule_result_registers.push(0);
+        }
+        while self.rule_num_registers.len() <= index {
+            self.rule_num_registers.push(0);
+        }
+        while self.rule_default_literal_indices.len() <= index {
+            self.rule_default_literal_indices.push(None);
+        }
+    }
+
+    fn allocate_rule_index(&mut self) -> Result<u16> {
+        let index = u16::try_from(self.next_rule_index).map_err(|_| CompilerError::General {
+            message: "RVM program contains too many rules".to_string(),
+        })?;
+        self.next_rule_index =
+            self.next_rule_index
+                .checked_add(1)
+                .ok_or_else(|| CompilerError::General {
+                    message: "RVM rule index allocation overflow".to_string(),
+                })?;
+        self.ensure_rule_slot(index);
+        Ok(index)
+    }
+
+    fn allocate_private_rule(
+        &mut self,
+        role: &str,
+        kind: PrivateRuleKind,
+        param_count: usize,
+    ) -> Result<(String, u16)> {
+        let mut suffix = self.next_rule_index;
+        let path = loop {
+            let candidate = format!("__regorus_internal_default_{role}_{suffix}");
+            if !self.rule_index_map.contains_key(&candidate)
+                && !self.policy.inner.rules.contains_key(&candidate)
+                && !self.policy.inner.default_rules.contains_key(&candidate)
+                && !self.policy.inner.functions.contains_key(&candidate)
+            {
+                break candidate;
+            }
+            suffix = suffix
+                .checked_add(1)
+                .ok_or_else(|| CompilerError::General {
+                    message: "private RVM rule name allocation overflow".to_string(),
+                })?;
+        };
+        let index = self.allocate_rule_index()?;
+        self.rule_index_map.insert(path.clone(), index);
+        self.private_rule_kinds.insert(path.clone(), kind);
+        self.rule_function_param_count[usize::from(index)] = Some(param_count);
+        self.rule_worklist.push(WorklistEntry::new(
+            path.clone(),
+            self.current_call_stack.clone(),
+        ));
+        Ok((path, index))
+    }
+
+    fn set_single_function_definition(
+        &mut self,
+        rule_index: u16,
+        param_names: Vec<String>,
+        body_entry_points: Vec<u32>,
+        else_bodies: Vec<bool>,
+        num_registers: u8,
+    ) {
+        let index = usize::from(rule_index);
+        self.ensure_rule_slot(rule_index);
+        self.rule_types[index] = RuleType::Complete;
+        self.rule_function_param_count[index] = Some(param_names.len());
+        self.rule_result_registers[index] = 0;
+        self.rule_num_registers[index] = num_registers;
+        self.rule_definitions[index].push(body_entry_points);
+        self.rule_definition_function_params[index].push(Some(param_names));
+        self.rule_definition_destructuring_patterns[index].push(None);
+        self.rule_definition_else_bodies[index].push(else_bodies);
+        self.rule_definition_static_values[index].push(None);
+    }
+
+    fn compile_runtime_default_body<F>(
+        &mut self,
+        rule_index: u16,
+        default_rule: &crate::ast::NodeRef<Rule>,
+        param_count: usize,
+        before_value: F,
+    ) -> Result<(u32, u8)>
+    where
+        F: FnOnce(&mut Self) -> Result<()>,
+    {
+        if param_count > 8 {
+            return Err(CompilerError::General {
+                message: format!(
+                    "RVM function calls support at most 8 parameters, got {param_count}"
+                ),
+            }
+            .into());
+        }
+        let Rule::Default { value, .. } = default_rule.as_ref() else {
+            return Err(CompilerError::General {
+                message: "callable default metadata does not refer to a default rule".to_string(),
+            }
+            .into());
+        };
+        let value = value.clone();
+        let span = value.span().clone();
+        let (module_package, module_index) = self.find_module_package_for_rule_ref(default_rule)?;
+
+        let saved_package = core::mem::replace(&mut self.current_package, module_package);
+        let saved_module_index = core::mem::replace(&mut self.current_module_index, module_index);
+        let saved_register_counter = core::mem::replace(&mut self.register_counter, 0);
+        let saved_scopes = core::mem::replace(&mut self.scopes, vec![Scope::default()]);
+        let saved_context_stack = core::mem::take(&mut self.context_stack);
+        let saved_loop_expr_register_map = core::mem::take(&mut self.loop_expr_register_map);
+        let saved_input_register = self.current_input_register.take();
+        let saved_data_register = self.current_data_register.take();
+
+        let result = (|| {
+            let parameter_registers =
+                u8::try_from(param_count).map_err(|_| CompilerError::General {
+                    message: format!(
+                        "callable default has too many parameters to compile: {param_count}"
+                    ),
+                })?;
+            self.register_counter =
+                1_u8.checked_add(parameter_registers)
+                    .ok_or_else(|| CompilerError::General {
+                        message: "callable default parameter register overflow".to_string(),
+                    })?;
+
+            let body_entry_point =
+                u32::try_from(self.program.instructions.len()).map_err(|_| {
+                    CompilerError::General {
+                        message: "RVM program contains too many instructions".to_string(),
+                    }
+                })?;
+            self.reset_rule_definition_registers();
+            self.push_context(CompilationContext {
+                dest_register: 0,
+                context_type: ContextType::Rule(RuleType::Complete),
+                key_expr: None,
+                value_expr: Some(value.clone()),
+                span: span.clone(),
+                key_value_loops_hoisted: false,
+            });
+            self.emit_instruction(
+                Instruction::RuleInit {
+                    result_reg: 0,
+                    rule_index,
+                },
+                &span,
+            );
+            before_value(self)?;
+            let value_register = self.compile_rego_expr(&value)?;
+            self.emit_instruction(
+                Instruction::Move {
+                    dest: 0,
+                    src: value_register,
+                },
+                &span,
+            );
+            self.emit_instruction(Instruction::RuleReturn {}, &span);
+            Ok((body_entry_point, self.register_counter))
+        })();
+
+        self.current_package = saved_package;
+        self.current_module_index = saved_module_index;
+        self.register_counter = saved_register_counter;
+        self.scopes = saved_scopes;
+        self.context_stack = saved_context_stack;
+        self.loop_expr_register_map = saved_loop_expr_register_map;
+        self.current_input_register = saved_input_register;
+        self.current_data_register = saved_data_register;
+
+        result
+    }
+
+    fn compile_dynamic_default_function(
+        &mut self,
+        rule_path: &str,
+        default_rule: crate::ast::NodeRef<Rule>,
+        args: Vec<ExprRef>,
+    ) -> Result<()> {
+        let Some(&rule_index) = self.rule_index_map.get(rule_path) else {
+            return Err(CompilerError::General {
+                message: format!("Rule index not found for '{rule_path}'"),
+            }
+            .into());
+        };
+        let body_entry_points =
+            self.compile_runtime_default_body(rule_index, &default_rule, args.len(), |_| Ok(()))?;
+        let param_names = (0..args.len())
+            .map(|index| format!("param_{index}"))
+            .collect();
+        self.set_single_function_definition(
+            rule_index,
+            param_names,
+            vec![body_entry_points.0],
+            vec![false],
+            body_entry_points.1,
+        );
+        Ok(())
+    }
+
+    pub(super) fn emit_function_call(
+        &mut self,
+        dest: u8,
+        rule_index: u16,
+        argument_registers: &[u8],
+        span: &Span,
+    ) -> Result<()> {
+        if argument_registers.len() > 8 {
+            return Err(CompilerError::General {
+                message: format!(
+                    "RVM function call supports at most 8 arguments, got {}",
+                    argument_registers.len()
+                ),
+            }
+            .at(span));
+        }
+        let num_args = u8::try_from(argument_registers.len()).map_err(|_| {
+            CompilerError::General {
+                message: "RVM function argument count overflow".to_string(),
+            }
+            .at(span)
+        })?;
+        let mut args = [0_u8; 8];
+        for (index, &register) in argument_registers.iter().enumerate() {
+            args[index] = register;
+        }
+        let params_index = self.program.add_function_call_params(FunctionCallParams {
+            func_rule_index: rule_index,
+            dest,
+            num_args,
+            args,
+        });
+        self.emit_instruction(Instruction::FunctionCall { params_index }, span);
+        Ok(())
+    }
+
+    fn wrap_private_ordinary_result(&mut self, rule_path: &str, result_register: u8, span: &Span) {
+        if !matches!(
+            self.private_rule_kinds.get(rule_path),
+            Some(PrivateRuleKind::OrdinaryResult { .. })
+        ) {
+            return;
+        }
+        let params_index =
+            self.program
+                .instruction_data
+                .add_array_create_params(ArrayCreateParams {
+                    dest: result_register,
+                    elements: vec![result_register],
+                });
+        self.emit_instruction(Instruction::ArrayCreate { params_index }, span);
+    }
+
+    fn compile_dynamic_default_wrapper(
+        &mut self,
+        rule_path: &str,
+        default_rule: crate::ast::NodeRef<Rule>,
+        default_args: Vec<ExprRef>,
+    ) -> Result<()> {
+        let Some(&rule_index) = self.rule_index_map.get(rule_path) else {
+            return Err(CompilerError::General {
+                message: format!("Rule index not found for '{rule_path}'"),
+            }
+            .into());
+        };
+        let param_count = self
+            .policy
+            .inner
+            .functions
+            .get(rule_path)
+            .map(|(_, arity, _)| *arity as usize)
+            .unwrap_or(default_args.len());
+        if default_args.len() != param_count {
+            return Err(CompilerError::General {
+                message: format!(
+                    "default function '{rule_path}' has {} parameters but the ordinary function has {param_count}",
+                    default_args.len()
+                ),
+            }
+            .into());
+        }
+
+        let saved_register_counter = core::mem::replace(&mut self.register_counter, 0);
+        let result = (|| {
+            let (_, helper_index) = self.allocate_private_rule(
+                "ordinary_result",
+                PrivateRuleKind::OrdinaryResult {
+                    source_path: rule_path.to_string(),
+                },
+                param_count,
+            )?;
+            let (_, selector_index) = self.allocate_private_rule(
+                "selector",
+                PrivateRuleKind::DefaultSelector {
+                    source_path: rule_path.to_string(),
+                },
+                1,
+            )?;
+
+            let empty_literal_index = self.add_literal(Value::new_array());
+            self.rule_default_literal_indices[usize::from(helper_index)] =
+                Some(empty_literal_index);
+
+            let param_names: Vec<String> = (0..param_count)
+                .map(|index| format!("param_{index}"))
+                .collect();
+            let body_entry_point =
+                u32::try_from(self.program.instructions.len()).map_err(|_| {
+                    CompilerError::General {
+                        message: "RVM program contains too many instructions".to_string(),
+                    }
+                })?;
+            let parameter_registers =
+                u8::try_from(param_count).map_err(|_| CompilerError::General {
+                    message: format!("function '{rule_path}' has too many parameters"),
+                })?;
+            self.register_counter =
+                1_u8.checked_add(parameter_registers)
+                    .ok_or_else(|| CompilerError::General {
+                        message: "function parameter register overflow".to_string(),
+                    })?;
+            let ordinary_result_register = self.alloc_register();
+            let call_arguments: Vec<u8> = (0..param_count)
+                .map(|index| {
+                    u8::try_from(index + 1).map_err(|_| CompilerError::General {
+                        message: "function argument register overflow".to_string(),
+                    })
+                })
+                .collect::<core::result::Result<_, _>>()?;
+            self.emit_instruction(
+                Instruction::RuleInit {
+                    result_reg: 0,
+                    rule_index,
+                },
+                default_rule.span(),
+            );
+            self.emit_function_call(
+                ordinary_result_register,
+                helper_index,
+                &call_arguments,
+                default_rule.span(),
+            )?;
+            self.emit_function_call(
+                0,
+                selector_index,
+                &[ordinary_result_register],
+                default_rule.span(),
+            )?;
+            self.emit_instruction(Instruction::RuleReturn {}, default_rule.span());
+            let num_registers = self.register_counter;
+            self.set_single_function_definition(
+                rule_index,
+                param_names,
+                vec![body_entry_point],
+                vec![false],
+                num_registers,
+            );
+            Ok(())
+        })();
+        self.register_counter = saved_register_counter;
+        result
+    }
+
+    fn compile_default_selector(&mut self, rule_path: &str, source_path: &str) -> Result<()> {
+        let Some((default_rule, _args, _value)) = self.callable_default_function(source_path)?
+        else {
+            return Err(CompilerError::General {
+                message: format!("missing callable default for '{source_path}'"),
+            }
+            .into());
+        };
+        let Some(&rule_index) = self.rule_index_map.get(rule_path) else {
+            return Err(CompilerError::General {
+                message: format!("Rule index not found for '{rule_path}'"),
+            }
+            .into());
+        };
+
+        let saved_register_counter = core::mem::replace(&mut self.register_counter, 0);
+        let result =
+            (|| {
+                let first_body_entry_point = u32::try_from(self.program.instructions.len())
+                    .map_err(|_| CompilerError::General {
+                        message: "RVM program contains too many instructions".to_string(),
+                    })?;
+                self.register_counter = 2;
+                let index_register = self.alloc_register();
+                let zero_literal_index = self.add_literal(Value::from(0));
+                self.emit_instruction(
+                    Instruction::RuleInit {
+                        result_reg: 0,
+                        rule_index,
+                    },
+                    default_rule.span(),
+                );
+                self.emit_instruction(
+                    Instruction::IndexLiteral {
+                        dest: index_register,
+                        container: 1,
+                        literal_idx: zero_literal_index,
+                    },
+                    default_rule.span(),
+                );
+                self.emit_instruction(
+                    Instruction::Guard {
+                        register: index_register,
+                        mode: GuardMode::NotUndefined,
+                    },
+                    default_rule.span(),
+                );
+                self.emit_instruction(
+                    Instruction::Move {
+                        dest: 0,
+                        src: index_register,
+                    },
+                    default_rule.span(),
+                );
+                self.emit_instruction(Instruction::RuleReturn {}, default_rule.span());
+                let first_body_registers = self.register_counter;
+
+                let empty_literal_index = self.add_literal(Value::new_array());
+                let second_body =
+                    self.compile_runtime_default_body(rule_index, &default_rule, 1, |compiler| {
+                        let empty_register = compiler.alloc_register();
+                        compiler.emit_instruction(
+                            Instruction::Load {
+                                dest: empty_register,
+                                literal_idx: empty_literal_index,
+                            },
+                            default_rule.span(),
+                        );
+                        compiler.emit_instruction(
+                            Instruction::AssertEq {
+                                left: 1,
+                                right: empty_register,
+                            },
+                            default_rule.span(),
+                        );
+                        Ok(())
+                    })?;
+                let num_registers = core::cmp::max(first_body_registers, second_body.1);
+                self.set_single_function_definition(
+                    rule_index,
+                    vec!["result".to_string()],
+                    vec![first_body_entry_point, second_body.0],
+                    vec![false, true],
+                    num_registers,
+                );
+                Ok(())
+            })();
+        self.register_counter = saved_register_counter;
+        result
+    }
+
     pub(super) fn get_or_assign_rule_index(&mut self, rule_path: &str) -> Result<u16> {
         if let Some(&index) = self.rule_index_map.get(rule_path) {
             return Ok(index);
         }
 
         let rule_type = self.compute_rule_type(rule_path)?;
-        let index = self.rule_index_map.len() as u16;
+        let index = self.allocate_rule_index()?;
 
         self.rule_index_map.insert(rule_path.to_string(), index);
+        self.rule_types[usize::from(index)] = rule_type;
         let entry = WorklistEntry::new(rule_path.to_string(), self.current_call_stack.clone());
         self.rule_worklist.push(entry);
 
-        while self.rule_definitions.len() <= index as usize {
-            self.rule_definitions.push(Vec::new());
-        }
-
-        while self.rule_types.len() <= index as usize {
-            self.rule_types.push(RuleType::Complete);
-        }
-        self.rule_types[index as usize] = rule_type;
-
-        while self.rule_definition_function_params.len() <= index as usize {
-            self.rule_definition_function_params.push(Vec::new());
-        }
-
-        while self.rule_definition_destructuring_patterns.len() <= index as usize {
-            self.rule_definition_destructuring_patterns.push(Vec::new());
-        }
-
-        while self.rule_function_param_count.len() <= index as usize {
-            self.rule_function_param_count.push(None);
-        }
-
-        while self.rule_result_registers.len() <= index as usize {
-            self.rule_result_registers.push(0);
+        let has_ordinary_function = self
+            .policy
+            .inner
+            .functions
+            .get(rule_path)
+            .is_some_and(|(definitions, _, _)| !definitions.is_empty());
+        if !has_ordinary_function {
+            if let Some((_, args, _)) = self.callable_default_function(rule_path)? {
+                self.rule_function_param_count[usize::from(index)] = Some(args.len());
+            }
         }
 
         Ok(index)
@@ -196,6 +803,15 @@ impl<'a> Compiler<'a> {
         rule_path: &str,
         rules: &Map<String, Vec<crate::ast::NodeRef<Rule>>>,
     ) -> Result<(String, u32)> {
+        if let Some((function_definitions, _, _)) = self.policy.inner.functions.get(rule_path) {
+            if let Some(first_definition) = function_definitions.first() {
+                return self.find_module_package_for_rule_ref(first_definition);
+            }
+            if let Some((default_rule, _, _)) = self.callable_default_function(rule_path)? {
+                return self.find_module_package_for_rule_ref(&default_rule);
+            }
+        }
+
         if let Some(rule_definitions) = rules.get(rule_path) {
             if let Some(first_rule_ref) = rule_definitions.first() {
                 let rule = first_rule_ref.as_ref();
@@ -264,6 +880,7 @@ impl<'a> Compiler<'a> {
         host_await_builtins: &[(&str, usize)],
     ) -> Result<Arc<Program>> {
         let mut compiler = Compiler::with_policy(policy);
+        compiler.default_function_paths = collect_callable_default_function_paths(policy)?;
         for &(name, arg_count) in host_await_builtins {
             compiler.register_host_await_builtin(name, arg_count)?;
         }
@@ -392,8 +1009,38 @@ impl<'a> Compiler<'a> {
         rule_path: &str,
         rules: &Map<String, Vec<crate::ast::NodeRef<Rule>>>,
     ) -> Result<()> {
+        if let Some(PrivateRuleKind::DefaultSelector { source_path }) =
+            self.private_rule_kinds.get(rule_path).cloned()
+        {
+            return self.compile_default_selector(rule_path, &source_path);
+        }
+
+        let source_rule_path = match self.private_rule_kinds.get(rule_path) {
+            Some(PrivateRuleKind::OrdinaryResult { source_path }) => source_path.as_str(),
+            _ => rule_path,
+        };
+        let is_private_result_helper = matches!(
+            self.private_rule_kinds.get(rule_path),
+            Some(PrivateRuleKind::OrdinaryResult { .. })
+        );
+
+        if let Some((default_rule, args, value)) = self.callable_default_function(rule_path)? {
+            if super::expressions::try_eval_const(value.as_ref()).is_none() {
+                let has_ordinary_function = self
+                    .policy
+                    .inner
+                    .functions
+                    .get(rule_path)
+                    .is_some_and(|(definitions, _, _)| !definitions.is_empty());
+                if has_ordinary_function {
+                    return self.compile_dynamic_default_wrapper(rule_path, default_rule, args);
+                }
+                return self.compile_dynamic_default_function(rule_path, default_rule, args);
+            }
+        }
+
         let (module_package, module_index) =
-            self.find_module_package_and_index_for_rule(rule_path, rules)?;
+            self.find_module_package_and_index_for_rule(source_rule_path, rules)?;
 
         let saved_package = self.current_package.clone();
         let saved_module_index = self.current_module_index;
@@ -401,7 +1048,12 @@ impl<'a> Compiler<'a> {
         self.current_module_index = module_index;
 
         let saved_register_counter = self.register_counter;
-        if let Some(rule_definitions) = rules.get(rule_path) {
+        let function_definitions = self.policy.inner.functions.get(source_rule_path);
+        let rule_definitions = match function_definitions {
+            Some((definitions, _, _)) => (!definitions.is_empty()).then_some(definitions),
+            None => rules.get(source_rule_path),
+        };
+        if let Some(rule_definitions) = rule_definitions {
             let Some(rule_index) = self.rule_index_map.get(rule_path).copied() else {
                 return Err(CompilerError::General {
                     message: format!(
@@ -599,6 +1251,11 @@ impl<'a> Compiler<'a> {
 
                             self.emit_context_yield()?;
 
+                            self.wrap_private_ordinary_result(
+                                rule_path,
+                                result_register,
+                                value_expr.span(),
+                            );
                             self.emit_instruction(Instruction::RuleReturn {}, value_expr.span());
                             self.pop_scope();
                         }
@@ -654,6 +1311,11 @@ impl<'a> Compiler<'a> {
                                 );
                             }
 
+                            self.wrap_private_ordinary_result(
+                                rule_path,
+                                result_register,
+                                &body.span,
+                            );
                             self.emit_instruction(Instruction::RuleReturn {}, &body.span);
 
                             if let Some(context) = self.context_stack.last_mut() {
@@ -715,6 +1377,11 @@ impl<'a> Compiler<'a> {
                         } else {
                             None
                         }
+                    };
+                    let def_static_value = if is_private_result_helper {
+                        def_static_value.map(|value| Value::from_array(vec![value]))
+                    } else {
+                        def_static_value
                     };
                     self.rule_definition_static_values[rule_index as usize].push(def_static_value);
 

@@ -159,6 +159,13 @@ pub enum VmError {
     #[error("Builtin function not resolved: {name} (pc={pc})")]
     BuiltinNotResolved { name: String, pc: usize },
 
+    #[error("Function expects exactly {expected} arguments, got {actual} (pc={pc})")]
+    FunctionArgumentMismatch {
+        expected: u32,
+        actual: usize,
+        pc: usize,
+    },
+
     #[error("Cannot add {left:?} and {right:?} (pc={pc})")]
     InvalidAddition {
         left: Value,
@@ -219,6 +226,9 @@ pub enum VmError {
 
     #[error("Arithmetic error: {message} (pc={pc})")]
     ArithmeticError { message: String, pc: usize },
+
+    #[error("Strict builtin error: {message} (pc={pc})")]
+    StrictBuiltinError { message: String, pc: usize },
 
     #[error("Entry point index {index} out of bounds (max: {max_index}, pc={pc})")]
     InvalidEntryPointIndex {
