@@ -67,6 +67,10 @@ impl<'a> Compiler<'a> {
         &mut self,
         stmts: &[&LiteralStmt],
     ) -> Result<()> {
+        if let Some(context) = self.context_stack.last() {
+            let span = context.span.clone();
+            self.emit_key_filter_guard(&span)?;
+        }
         for (idx, stmt) in stmts.iter().enumerate() {
             if !stmt.with_mods.is_empty() {
                 return Err(CompilerError::WithKeywordUnsupported.at(&stmt.span));
@@ -125,7 +129,7 @@ impl<'a> Compiler<'a> {
     }
 
     pub(super) fn emit_key_filter_guard(&mut self, span: &crate::lexer::Span) -> Result<()> {
-        let Some((var_name, filter)) = self.context_stack.last().and_then(|context| {
+        let Some((expr, filter)) = self.context_stack.last().and_then(|context| {
             if context.key_filter_guarded {
                 return None;
             }
@@ -136,19 +140,33 @@ impl<'a> Compiler<'a> {
             ) else {
                 return None;
             };
-            let crate::ast::Expr::Var { span: key_span, .. } = expr.as_ref() else {
-                return None;
-            };
-            Some((key_span.text().to_string(), filter.clone()))
+            Some((expr.clone(), filter.clone()))
         }) else {
             return Ok(());
         };
-        if !self.is_var_bound_in_current_scope(&var_name) {
+        if !crate::compiler::hoist::key_expr_is_ready(
+            &expr,
+            |node| Ok(self.loop_expr_register_map.contains_key(node)),
+            |key_span| self.lookup_variable(key_span.text()).is_some(),
+        )
+        .map_err(CompilerError::from)?
+        {
             return Ok(());
         }
-        let Some(key_register) = self.lookup_variable(&var_name) else {
-            return Ok(());
-        };
+        let key_register = self.compile_rego_expr(&expr)?;
+        self.emit_key_match_guard(key_register, filter, span);
+        if let Some(context) = self.context_stack.last_mut() {
+            context.key_filter_guarded = true;
+        }
+        Ok(())
+    }
+
+    fn emit_key_match_guard(
+        &mut self,
+        key_register: super::Register,
+        filter: crate::Value,
+        span: &crate::lexer::Span,
+    ) {
         let literal_idx = self.add_literal(filter);
         let expected = self.alloc_register();
         self.emit_instruction(
@@ -174,13 +192,13 @@ impl<'a> Compiler<'a> {
             },
             span,
         );
-        if let Some(context) = self.context_stack.last_mut() {
-            context.key_filter_guarded = true;
-        }
-        Ok(())
     }
 
     pub(super) fn hoist_loops_and_emit_context_yield(&mut self) -> Result<()> {
+        if let Some(context) = self.context_stack.last() {
+            let span = context.span.clone();
+            self.emit_key_filter_guard(&span)?;
+        }
         if let Some(context) = self.context_stack.last() {
             match &context.context_type {
                 ContextType::Every => {
@@ -226,6 +244,20 @@ impl<'a> Compiler<'a> {
         if let Some(context) = self.context_stack.last().cloned() {
             let dest_register = context.dest_register;
             let span = &context.span;
+            let projected_key_register = if context.key_filter.is_some() {
+                context
+                    .key_expr
+                    .as_ref()
+                    .map(|expr| self.compile_rego_expr(expr))
+                    .transpose()?
+            } else {
+                None
+            };
+            if let (Some(key_register), Some(key)) =
+                (projected_key_register, context.key_filter.clone())
+            {
+                self.emit_key_match_guard(key_register, key, span);
+            }
             let value_register = match context.value_expr {
                 Some(expr) => self.compile_rego_expr(&expr)?,
                 None => {
@@ -241,38 +273,13 @@ impl<'a> Compiler<'a> {
                 }
             };
 
-            let key_register = context
-                .key_expr
-                .map(|key_expr| self.compile_rego_expr(&key_expr))
-                .unwrap_or(Ok(value_register))?;
-
-            if let Some(key) = context.key_filter {
-                let literal_idx = self.add_literal(key);
-                let expected = self.alloc_register();
-                self.emit_instruction(
-                    Instruction::Load {
-                        dest: expected,
-                        literal_idx,
-                    },
-                    span,
-                );
-                let matches = self.alloc_register();
-                self.emit_instruction(
-                    Instruction::Eq {
-                        dest: matches,
-                        left: key_register,
-                        right: expected,
-                    },
-                    span,
-                );
-                self.emit_instruction(
-                    Instruction::Guard {
-                        register: matches,
-                        mode: GuardMode::Condition,
-                    },
-                    span,
-                );
-            }
+            let key_register = match projected_key_register {
+                Some(register) => register,
+                None => context
+                    .key_expr
+                    .map(|key_expr| self.compile_rego_expr(&key_expr))
+                    .unwrap_or(Ok(value_register))?,
+            };
 
             match context.context_type {
                 ContextType::Comprehension(ComprehensionType::Array) => {

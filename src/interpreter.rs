@@ -2012,6 +2012,9 @@ impl Interpreter {
 
     fn eval_output_expr_in_loop(&mut self, loops: &[HoistedLoop]) -> Result<bool> {
         self.check_execution_time()?;
+        if self.reject_nonmatching_child_key()? {
+            return Ok(false);
+        }
         if loops.is_empty() {
             let (key_expr, output_expr) = self.get_exprs_from_context()?;
 
@@ -2035,7 +2038,16 @@ impl Interpreter {
                 let mut comps = self.eval_rule_ref(&rule_ref)?;
                 if let Some(ke) = &key_expr {
                     is_const_rule = is_const_rule && Self::is_simple_literal(ke)?;
-                    comps.push(self.eval_expr(ke)?);
+                    let key = self.eval_expr(ke)?;
+                    if self
+                        .get_current_context()?
+                        .key_filter
+                        .as_ref()
+                        .is_some_and(|filter| filter != &key)
+                    {
+                        return Ok(false);
+                    }
+                    comps.push(key);
                 }
                 let output = if let Some(oe) = &output_expr {
                     // Rule is constant only if its ref, key and output are constant.
@@ -2262,6 +2274,9 @@ impl Interpreter {
 
     fn eval_output_expr(&mut self) -> Result<bool> {
         self.check_execution_time()?;
+        if self.reject_nonmatching_child_key()? {
+            return Ok(false);
+        }
         // Evaluate output expression after all the statements have been executed.
 
         let (key_expr, output_expr) = self.get_exprs_from_context()?;
@@ -2320,6 +2335,9 @@ impl Interpreter {
     }
 
     fn eval_stmts(&mut self, stmts: &[&LiteralStmt]) -> Result<bool> {
+        if self.reject_nonmatching_child_key()? {
+            return Ok(false);
+        }
         let mut eval_success = true;
 
         for (idx, stmt) in stmts.iter().enumerate() {
@@ -2412,13 +2430,17 @@ impl Interpreter {
         }) else {
             return Ok(false);
         };
-        let Expr::Var { span, .. } = key_expr.as_ref() else {
+        if !crate::compiler::hoist::key_expr_is_ready(
+            &key_expr,
+            |expr| self.get_loop_var_value(expr).map(|value| value.is_some()),
+            |span| {
+                self.lookup_local_var(&span.source_str())
+                    .is_some_and(|value| value != Value::Undefined)
+            },
+        )? {
             return Ok(false);
-        };
-        let Some(key) = self.lookup_local_var(&span.source_str()) else {
-            return Ok(false);
-        };
-        Ok(key != Value::Undefined && key != filter)
+        }
+        Ok(self.eval_expr(&key_expr)? != filter)
     }
 
     fn eval_query(&mut self, query: &Ref<Query>) -> Result<bool> {

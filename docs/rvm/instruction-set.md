@@ -113,8 +113,15 @@ Parameter structures:
   dynamic definitions. The compiler also filters those definitions by the
   requested key before set insertion, rather than calling the entire parent
   and introducing cycles through sibling rules.
-  Early filters defer declared-but-undefined keys until binding and run after
-  hoisted assignments as well as ordinary statements. Interpreter recursion
+  Both evaluators check ready input/reference keys before body evaluation,
+  between hoisted loops, and before output evaluation. Early filters defer
+  declared-but-undefined locals until binding and run after hoisted assignments
+  as well as ordinary statements. Scalar key bindings using `:=` or `=` (in
+  either operand order for `=`) can precede unrelated dependent statements.
+  Calls, comprehensions, and unresolved references conservatively defer early
+  filtering. Both evaluators always check the actual output key before
+  evaluating its value or accumulating a projected contribution, preventing
+  sibling writes even when early filtering is deferred. Interpreter recursion
   tracking distinguishes parent and child projections of the same definition,
   while repeated evaluation of the same projection remains a cycle.
   Programs containing child projections enable runtime recursion checking in

@@ -2,6 +2,209 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: overlapping_keyed_set_head_value_loop_dependency
+    input: {keys: [b, c]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[_]] contains [count(values.a)][_]
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_head_value_loop_dependency_suspendable
+    execution_mode: suspendable
+    input: {keys: [b, c]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[_]] contains [count(values.a)][_]
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_input_key_dependency
+    input: {key: b}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.key] contains n if { n := count(values.a) }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_input_key_dependency_suspendable
+    execution_mode: suspendable
+    input: {key: b}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.key] contains n if { n := count(values.a) }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_bodyless_input_key_dependency
+    input: {key: b}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.key] contains count(values.a)
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_bodyless_input_key_dependency_suspendable
+    execution_mode: suspendable
+    input: {key: b}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.key] contains count(values.a)
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_missing_input_key_dependency
+    input: {}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.key] contains count(values.a)
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_missing_input_key_dependency_suspendable
+    execution_mode: suspendable
+    input: {}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.key] contains count(values.a)
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_unification_before_dependency
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); z = "b" }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_unification_before_dependency_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); z = "b" }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_reversed_unification_before_dependency
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); "b" = z }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_reversed_unification_before_dependency_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); "b" = z }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_input_head_loop_dependency
+    input: {keys: [b, c]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[_]] contains count(values.a)
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_input_head_loop_dependency_suspendable
+    execution_mode: suspendable
+    input: {keys: [b, c]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[_]] contains count(values.a)
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_matching_input_key
+    input: {key: a}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.key] contains 2
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_matching_input_key_suspendable
+    execution_mode: suspendable
+    input: {key: a}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.key] contains 2
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_later_bound_expression_key
+    input: {keys: {chosen: a}}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[k]] contains 2 if { k := "chosen" }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_later_bound_expression_key_suspendable
+    execution_mode: suspendable
+    input: {keys: {chosen: a}}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[k]] contains 2 if { k := "chosen" }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
   - note: overlapping_keyed_set_matching_cycle
     modules:
       - |

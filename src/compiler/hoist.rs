@@ -29,6 +29,35 @@ use anyhow::{anyhow, Result};
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
+pub fn key_expr_is_ready(
+    expr: &ExprRef,
+    mut is_bound: impl FnMut(&ExprRef) -> Result<bool>,
+    mut is_var_bound: impl FnMut(&crate::lexer::Span) -> bool,
+) -> Result<bool> {
+    let mut ready = true;
+    crate::query::traversal::traverse(expr, &mut |node| {
+        if is_bound(node)? {
+            return Ok(false);
+        }
+        match node.as_ref() {
+            Expr::Var { span, .. } => {
+                ready &= span.text() == "input" || is_var_bound(span);
+                Ok(false)
+            }
+            Expr::ArrayCompr { .. }
+            | Expr::SetCompr { .. }
+            | Expr::ObjectCompr { .. }
+            | Expr::Call { .. }
+            | Expr::AssignExpr { .. } => {
+                ready = false;
+                Ok(false)
+            }
+            _ => Ok(true),
+        }
+    })?;
+    Ok(ready)
+}
+
 pub fn prioritize_key_binding(
     statements: &mut Vec<&LiteralStmt>,
     key_expr: Option<&ExprRef>,
@@ -49,7 +78,7 @@ pub fn prioritize_key_binding(
             return false;
         };
         let Expr::AssignExpr {
-            op: AssignOp::ColEq,
+            op,
             lhs,
             rhs,
             ..
@@ -57,10 +86,11 @@ pub fn prioritize_key_binding(
         else {
             return false;
         };
-        let Expr::Var { span: lhs_span, .. } = lhs.as_ref() else {
-            return false;
-        };
-        lhs_span.text() == key_name && is_scalar_literal(rhs.as_ref())
+        matches!(lhs.as_ref(), Expr::Var { span: lhs_span, .. } if lhs_span.text() == key_name)
+            && is_scalar_literal(rhs.as_ref())
+            || *op == AssignOp::Eq
+                && matches!(rhs.as_ref(), Expr::Var { span: rhs_span, .. } if rhs_span.text() == key_name)
+                && is_scalar_literal(lhs.as_ref())
     });
     if let Some(idx) = binding_idx {
         if idx != 0 {

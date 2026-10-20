@@ -6,6 +6,37 @@ use regorus::*;
 use std::collections::BTreeSet;
 
 #[test]
+fn keyed_set_expression_projection_preserves_sibling_override() -> Result<()> {
+    for head in [
+        "values[input.key] contains 2",
+        "values[input.keys[_]] contains 2",
+        "values[input.keys[_]] contains 2 if { true }",
+    ] {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "test.rego".into(),
+            format!("package test\nvalues.a contains 1\n{head}"),
+        )?;
+        engine.set_input(Value::from_json_str(r#"{"key":"b","keys":["a","b"]}"#)?);
+        let result = engine.eval_query(
+            "[data.test.values.a, data.test.values.b] with data.test.values.b as {9}".into(),
+            false,
+        )?;
+        let first = if head.contains("keys") {
+            vec![1, 2]
+        } else {
+            vec![1]
+        };
+        let expected = Value::from(vec![
+            Value::from(first.into_iter().map(Value::from).collect::<BTreeSet<_>>()),
+            Value::from(BTreeSet::from([Value::from(9)])),
+        ]);
+        assert_eq!(result.result[0].expressions[0].value, expected, "{head}");
+    }
+    Ok(())
+}
+
+#[test]
 fn keyed_set_projection_preserves_cycle_detection() -> Result<()> {
     for (policy, entrypoint) in [
         (
