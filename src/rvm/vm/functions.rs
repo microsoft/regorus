@@ -55,6 +55,13 @@ impl RegoVM {
             },
         )?;
 
+        if self.builtin_policy.is_disabled(&builtin_info.name) {
+            return Err(VmError::BuiltinDisabled {
+                name: builtin_info.name.clone(),
+                pc: self.pc,
+            });
+        }
+
         let mut args = core::mem::take(&mut self.cached_builtin_args);
         args.clear();
         for &arg_reg in params.arg_registers().iter() {
@@ -162,5 +169,129 @@ impl RegoVM {
         self.memory_check()?;
 
         Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "rand"))]
+mod tests {
+    use super::super::errors::VmError;
+    use super::super::execution_model::ExecutionState;
+    use super::super::machine::RegoVM;
+    use crate::rvm::instructions::BuiltinCallParams;
+    use crate::rvm::program::{BuiltinInfo, Program};
+    use crate::rvm::{BuiltinPolicy, Instruction};
+    use crate::value::Value;
+    use alloc::sync::Arc;
+    use alloc::vec;
+
+    fn vm_with_restricted_rand_call(args: [u8; 8]) -> RegoVM {
+        let mut program = Program::new();
+        program.dispatch_window_size = 3;
+        let builtin_index = program.add_builtin_info(BuiltinInfo {
+            name: "rand.intn".into(),
+            num_args: 2,
+        });
+        let params_index = program.add_builtin_call_params(BuiltinCallParams {
+            dest: 2,
+            builtin_index,
+            num_args: 2,
+            args,
+        });
+        program
+            .instructions
+            .push(Instruction::BuiltinCall { params_index });
+        assert!(
+            program.initialize_resolved_builtins().is_ok(),
+            "rand.intn resolves in this feature configuration"
+        );
+
+        let mut vm = RegoVM::new();
+        vm.load_program(Arc::new(program));
+        let policy = BuiltinPolicy::from_disabled_names(&["rand.intn"]);
+        assert!(policy.is_ok(), "rand.intn is a registered builtin");
+        if let Ok(policy) = policy {
+            vm.builtin_policy = policy;
+        }
+        vm
+    }
+
+    #[test]
+    fn disabled_native_guard_precedes_argument_reads_and_cached_results() {
+        let mut invalid_register_vm = vm_with_restricted_rand_call([u8::MAX; 8]);
+        invalid_register_vm.cached_builtin_args.push(Value::from(9));
+        let result = invalid_register_vm.execute_builtin_call(0);
+        assert!(matches!(
+            result,
+            Err(VmError::BuiltinDisabled { name, .. }) if name == "rand.intn"
+        ));
+        assert_eq!(invalid_register_vm.cached_builtin_args, [Value::from(9)]);
+
+        let mut cached_vm = vm_with_restricted_rand_call([0, 1, 0, 0, 0, 0, 0, 0]);
+        assert!(cached_vm.registers.len() > 1);
+        let Some(first_register) = cached_vm.registers.get_mut(0) else {
+            return;
+        };
+        *first_register = Value::from(1);
+        let Some(second_register) = cached_vm.registers.get_mut(1) else {
+            return;
+        };
+        *second_register = Value::from(2);
+        cached_vm.builtins_cache.insert(
+            "rand.intn",
+            vec![(vec![Value::from(1), Value::from(2)], Value::from(42))],
+        );
+        let cached_result = cached_vm.execute_builtin_call(0);
+        assert!(matches!(
+            cached_result,
+            Err(VmError::BuiltinDisabled { name, .. }) if name == "rand.intn"
+        ));
+        assert_eq!(
+            cached_vm.builtins_cache.get("rand.intn"),
+            Some(&vec![(
+                vec![Value::from(1), Value::from(2)],
+                Value::from(42)
+            )])
+        );
+    }
+
+    #[test]
+    fn busy_policy_replacement_preserves_vm_state_and_accepted_replacement_clears_it() {
+        let mut vm = vm_with_restricted_rand_call([0; 8]);
+        let original_policy = vm.get_builtin_policy().clone();
+        vm.execution_state = ExecutionState::Running;
+        vm.evaluated = Value::from("stale result");
+        vm.cached_builtin_args.push(Value::from(9));
+        vm.builtins_cache.insert(
+            "rand.intn",
+            vec![(vec![Value::from(1), Value::from(2)], Value::from(42))],
+        );
+
+        let result = vm.set_builtin_policy(BuiltinPolicy::default());
+        assert!(matches!(
+            result,
+            Err(VmError::BuiltinPolicyChangeWhileExecuting { .. })
+        ));
+        assert_eq!(vm.get_builtin_policy(), &original_policy);
+        assert!(matches!(vm.execution_state(), ExecutionState::Running));
+        assert_eq!(vm.evaluated, Value::from("stale result"));
+        assert_eq!(vm.cached_builtin_args, [Value::from(9)]);
+        assert_eq!(
+            vm.builtins_cache.get("rand.intn"),
+            Some(&vec![(
+                vec![Value::from(1), Value::from(2)],
+                Value::from(42)
+            )])
+        );
+
+        vm.execution_state = ExecutionState::Completed {
+            result: Value::from(42),
+        };
+        assert!(
+            vm.set_builtin_policy(BuiltinPolicy::default()).is_ok(),
+            "completed VM can accept a new policy"
+        );
+        assert!(matches!(vm.execution_state(), ExecutionState::Ready));
+        assert!(vm.builtins_cache.is_empty());
+        assert!(vm.cached_builtin_args.is_empty());
     }
 }

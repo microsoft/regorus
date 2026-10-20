@@ -105,6 +105,51 @@ var result = vm.Execute();
 Console.WriteLine($"allow: {result}");
 ```
 
+### Native builtin restrictions
+
+Compile the program normally, then validate the native builtins emitted into
+its finalized builtin table before accepting or sharing it. The validation
+includes native builtins introduced by set-operator lowering; unused or
+otherwise un-emitted source calls do not cause rejection.
+
+```csharp
+var disabled = new RvmBuiltinPolicy(new[] { "count" });
+using var program = Program.CompileFromModules(Data, modules, entryPoints);
+program.ValidateBuiltinPolicy(disabled);
+
+using var vm = new Rvm();
+vm.LoadProgram(program);
+vm.SetBuiltinPolicy(disabled);
+```
+
+`ValidateBuiltinPolicy` is read-only. A shared or deserialized program can be
+validated against different policies, while each VM gets an independent copy
+through `SetBuiltinPolicy`. Registered or dynamic `HostAwait` identifiers are
+not certified by the native builtin table; a forbidden host identifier fails
+only if reached at runtime. This is not a pre-execution sandbox.
+
+For migration from earlier #842 additions, `RvmCompilerOptions` has been
+renamed to `RvmBuiltinPolicy`, and `CompileFromModulesWithOptions` and
+`CompileFromEngineWithOptions` have been removed. Compile first, then call
+`Program.ValidateBuiltinPolicy`. The Rust `BuiltinPolicyError` enum also has a
+new `BuiltinDisabled` variant, which requires updates to exhaustive matches.
+With an older native library, empty-policy validation remains allow-all;
+non-empty program validation or runtime restrictions are unsupported.
+
+A disabled builtin that executes raises `InvalidOperationException`; it does
+not become `false` or `undefined`. Replacing the policy is atomic, is rejected
+while execution is running or suspended, and a successful replacement resets
+stale execution results and rule caches. An older native library treats an
+empty runtime policy as its implicit allow-all default. Non-empty restrictions
+require a native library that supports builtin policies and otherwise raise
+`NotSupportedException`.
+These restrictions are not a compilation sandbox or an all-source use filter.
+Compiler-side interpreter evaluation of defaults or comprehensions may fold
+builtin results into the emitted program without retaining a native call in
+the program's builtin metadata; those evaluations are outside this policy.
+A fatal denial while resuming suspendable execution leaves the VM in its
+terminal error state, which a valid policy replacement resets for reuse.
+
 ### RVM instruction budget
 
 Use `SetMaxInstructions` to configure the maximum number of dispatched RVM

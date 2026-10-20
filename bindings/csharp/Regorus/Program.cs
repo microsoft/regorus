@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using Regorus.Internal;
 
 #nullable enable
@@ -108,6 +109,44 @@ namespace Regorus
         }
 
         /// <summary>
+        /// Validate that the native builtins emitted in this program are allowed by the policy.
+        /// </summary>
+        /// <param name="policy">The exact registered native builtin names to disable.</param>
+        /// <exception cref="ArgumentNullException">Thrown when <paramref name="policy"/> is null.</exception>
+        /// <exception cref="InvalidOperationException">Thrown when the program emits a disabled builtin.</exception>
+        /// <exception cref="NotSupportedException">Thrown when a non-empty policy is requested from an older native library.</exception>
+        public void ValidateBuiltinPolicy(RvmBuiltinPolicy policy)
+        {
+            if (policy is null)
+            {
+                throw new ArgumentNullException(nameof(policy));
+            }
+
+            var disabledBuiltins = policy.DisabledBuiltins;
+            using var pinnedDisabledBuiltins = Utf8Marshaller.Pin(JsonSerializer.Serialize(disabledBuiltins));
+            try
+            {
+                UseHandle(programPtr =>
+                {
+                    CheckAndDropResult(API.regorus_program_validate_builtin_policy(
+                        (RegorusProgram*)programPtr,
+                        pinnedDisabledBuiltins.Pointer));
+                    return 0;
+                });
+            }
+            catch (EntryPointNotFoundException) when (disabledBuiltins.Count == 0)
+            {
+                // An empty policy is allow-all, which is also the legacy native behavior.
+            }
+            catch (EntryPointNotFoundException error)
+            {
+                throw new NotSupportedException(
+                    "The native library does not support RVM program builtin validation. Update the native library together with the managed binding.",
+                    error);
+            }
+        }
+
+        /// <summary>
         /// Compile an RVM program from modules, entry points, and registered host-awaitable builtins.
         /// </summary>
         public static Program CompileFromModules(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints, IReadOnlyList<HostAwaitBuiltin> hostAwaitBuiltins)
@@ -141,7 +180,6 @@ namespace Regorus
             using var pinnedEntryPoints = ModuleMarshalling.PinUtf8Strings(entryPoints);
 
             var hostAwaitBuiltinsOrEmpty = hostAwaitBuiltins ?? Array.Empty<HostAwaitBuiltin>();
-
             return Utf8Marshaller.WithUtf8(dataJson, dataPtr =>
             {
                 fixed (RegorusPolicyModule* modulesPtr = pinnedModules.Buffer)

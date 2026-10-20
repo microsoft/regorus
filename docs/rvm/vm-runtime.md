@@ -50,6 +50,9 @@ fields to responsibilities.
   the current execution's counter.
 - `set_host_await_responses`: pre-loads responses per identifier, consumed in
   FIFO order when `HostAwait` executes in run-to-completion mode.
+- `set_builtin_policy`: atomically replaces the exact native builtin names
+  disabled for this VM. The policy is instance-local and is not stored on the
+  shared `Arc<Program>`.
 - `set_strict_builtin_errors`: toggles builtin failure semantics between
   `VmError::ArithmeticError` and returning `Value::Undefined`.
 - Accessors (`get_pc`, `get_registers`, `get_loop_stack`, etc.) aid debugging
@@ -64,6 +67,43 @@ fields to responsibilities.
   builtin it is the registered name, and for the raw `__builtin_host_await(arg, id)`
   form it is whatever the second argument evaluates to. The current FFI exposes
   string identifiers only.
+
+### Native builtin policies
+
+Compile the program normally, then call
+`Program::validate_builtin_policy(&BuiltinPolicy)` before accepting or sharing
+it. Validation checks only the finalized `Program::builtin_info_table`, after
+compiler lowering has emitted the program. This includes native calls
+introduced by set operators. It is read-only: it does not attach policy state
+to the program, so the same shared or deserialized program can be validated
+against different policies.
+
+Source calls that do not appear in the emitted table are not rejected; for
+example, an unused rule or an overridden default does not restrict compilation.
+Registered HostAwait substitutions and runtime-derived HostAwait identifiers
+are not certified by the native builtin table. They remain guarded at their
+runtime call sites. A forbidden host identifier passes program validation and
+fails only if reached, so earlier policy work or an allowed host suspension
+may occur. This is not a pre-execution sandbox or an all-source use filter.
+
+The default policy allows all native builtins. Each `RegoVM` receives its own
+policy through `set_builtin_policy`; policies are copied and never stored on a
+shared program. Changing policy while the VM is Running or Suspended fails
+without mutation. A successful replacement clears prior execution results and
+caches. Executing a disabled native builtin is a fatal `BuiltinDisabled` error
+rather than a generic builtin error that could be converted to `Undefined`. If
+the denial occurs while resuming suspendable execution, the VM retains the
+terminal `Error` state; a later valid policy replacement resets the VM for
+reuse.
+
+Earlier #842 compiler options and compile-with-options entry points have been
+removed. Use the existing `Compiler::compile_from_policy` or
+`Compiler::compile_from_policy_with_host_await` route, then validate the
+resulting `Program`. `BuiltinPolicyError` now includes `BuiltinDisabled`; Rust
+callers with exhaustive matches must handle this new variant. Compiler-side
+interpreter evaluation of defaults or comprehensions may fold builtin results
+into the emitted program without retaining a native call in
+`Program::builtin_info_table`; those evaluations are outside this policy.
 
 ---
 
@@ -277,4 +317,3 @@ internal runtime field and is not a public C# getter.
   combines nested loops, comprehensions, function calls, and host awaits.
 
 ---
-

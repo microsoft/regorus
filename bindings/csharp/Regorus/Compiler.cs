@@ -70,6 +70,38 @@ namespace Regorus
     }
 
     /// <summary>
+    /// A native builtin policy for validating compiled RVM programs and configuring VMs.
+    /// </summary>
+    public sealed class RvmBuiltinPolicy
+    {
+        /// <summary>
+        /// Gets the exact registered native builtin names disabled by program validation or VM execution.
+        /// </summary>
+        public IReadOnlyList<string> DisabledBuiltins { get; }
+
+        /// <summary>
+        /// Initializes a policy with native builtins to disable.
+        /// Exact registration is validated by the native Regorus build.
+        /// </summary>
+        /// <param name="disabledBuiltins">Native builtin names to disable, or null for allow-all.</param>
+        public RvmBuiltinPolicy(IEnumerable<string>? disabledBuiltins = null)
+        {
+            var names = (disabledBuiltins ?? Array.Empty<string>()).ToArray();
+            for (var index = 0; index < names.Length; index++)
+            {
+                if (names[index] is null)
+                {
+                    throw new ArgumentException($"Disabled builtin name at index {index} is null.", nameof(disabledBuiltins));
+                }
+
+                Utf8Marshaller.ThrowIfContainsNul(names[index], nameof(disabledBuiltins));
+            }
+
+            DisabledBuiltins = Array.AsReadOnly(names);
+        }
+    }
+
+    /// <summary>
     /// Provides static methods for compiling policies into efficient compiled representations.
     /// These are convenience methods that create an engine internally and perform compilation.
     /// </summary>

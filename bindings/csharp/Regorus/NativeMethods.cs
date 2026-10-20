@@ -167,6 +167,18 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_rvm_load_program(RegorusRvm* vm, RegorusProgram* program);
 
         /// <summary>
+        /// Replace the VM's disabled native builtin names from a JSON array.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_builtin_policy", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_rvm_set_builtin_policy(RegorusRvm* vm, byte* disabledBuiltinNamesJson);
+
+        /// <summary>
+        /// Get the VM's disabled native builtin names as a JSON array.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_rvm_get_builtin_policy", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_rvm_get_builtin_policy(RegorusRvm* vm);
+
+        /// <summary>
         /// Set the data document for the RVM.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_rvm_set_data", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -275,6 +287,12 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_program_compile_from_modules_with_host_await", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_program_compile_from_modules_with_host_await(byte* data_json, RegorusPolicyModule* modules, UIntPtr modules_len, byte** entry_points, UIntPtr entry_points_len, RegorusHostAwaitBuiltin* host_await_builtins, UIntPtr host_await_builtins_len, UIntPtr host_await_builtin_size);
+
+        /// <summary>
+        /// Validate an RVM program against its disabled native builtin policy.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_program_validate_builtin_policy", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_program_validate_builtin_policy(RegorusProgram* program, byte* disabledBuiltinNamesJson);
 
         /// <summary>
         /// Add a policy.

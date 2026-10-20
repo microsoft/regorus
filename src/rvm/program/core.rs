@@ -13,6 +13,7 @@ use super::types::{BuiltinInfo, RuleInfo, SourceFile, SpanInfo};
 use crate::builtins::BuiltinFcn;
 use crate::rvm::instructions::InstructionData;
 use crate::rvm::Instruction;
+use crate::rvm::{BuiltinPolicy, BuiltinPolicyError};
 use crate::value::Value;
 
 /// Complete compiled program containing all execution artifacts
@@ -108,6 +109,24 @@ impl Program {
     pub const MAX_BUILTINS: usize = 512;
     /// Maximum path depth for rule paths (e.g., data.a.b.c.d.rule)
     pub const MAX_PATH_DEPTH: usize = 32;
+
+    /// Validate that the emitted native builtins in this program are allowed by `policy`.
+    ///
+    /// This checks only [`Program::builtin_info_table`]. It does not inspect source,
+    /// interpret dynamic host-await identifiers, or store policy state on the program.
+    pub fn validate_builtin_policy(
+        &self,
+        policy: &BuiltinPolicy,
+    ) -> Result<(), BuiltinPolicyError> {
+        for builtin_info in &self.builtin_info_table {
+            if policy.is_disabled(&builtin_info.name) {
+                return Err(BuiltinPolicyError::BuiltinDisabled {
+                    name: builtin_info.name.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
 
     /// Create a new empty program
     pub fn new() -> Self {
