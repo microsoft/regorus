@@ -237,56 +237,6 @@ impl HoistedLoopsLookup {
     ) -> LookupResult<Option<&BindingPlan>> {
         self.expr_binding_plans.get_checked(module_idx, expr_idx)
     }
-
-    /// Merge another loop hoisting table into this one
-    /// This is used to add query module loops to the existing table
-    pub fn merge_query_loops(&mut self, mut other: HoistedLoopsLookup, module_idx: usize) {
-        while self.statement_loops.module_len() < module_idx {
-            self.statement_loops.push_module(Vec::new());
-        }
-
-        while self.expr_loops.module_len() < module_idx {
-            self.expr_loops.push_module(Vec::new());
-        }
-
-        while self.expr_binding_plans.module_len() < module_idx {
-            self.expr_binding_plans.push_module(Vec::new());
-        }
-
-        while self.query_contexts.module_len() < module_idx {
-            self.query_contexts.push_module(Vec::new());
-        }
-
-        let query_module_idx = other.statement_loops.module_len().saturating_sub(1);
-
-        if let Some(module) = other.statement_loops.remove_module(query_module_idx) {
-            self.statement_loops.push_module(module);
-        }
-
-        if let Some(module) = other.expr_loops.remove_module(query_module_idx) {
-            self.expr_loops.push_module(module);
-        }
-
-        if let Some(module) = other.expr_binding_plans.remove_module(query_module_idx) {
-            self.expr_binding_plans.push_module(module);
-        }
-
-        if let Some(module) = other.query_contexts.remove_module(query_module_idx) {
-            self.query_contexts.push_module(module);
-        }
-    }
-
-    pub fn truncate_modules(&mut self, module_count: usize) {
-        self.statement_loops.truncate_modules(module_count);
-        self.expr_loops.truncate_modules(module_count);
-        self.expr_binding_plans.truncate_modules(module_count);
-        self.query_contexts.truncate_modules(module_count);
-    }
-
-    #[cfg(debug_assertions)]
-    pub const fn module_len(&self) -> usize {
-        self.statement_loops.module_len()
-    }
 }
 
 // Note: ScopeContext is now defined in src/compiler/context.rs

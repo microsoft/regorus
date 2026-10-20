@@ -15,7 +15,7 @@
 use alloc::format;
 use alloc::string::{String, ToString};
 use core::cmp::Ordering;
-use core::fmt::{Debug, Formatter};
+use core::fmt::{Debug, Display, Formatter};
 use core::str::FromStr;
 
 use anyhow::{anyhow, bail, Result};
@@ -51,6 +51,26 @@ use vstd::std_specs::convert::*;
 use crate::*;
 
 pub type BigInt = NumBigInt;
+
+#[derive(Debug)]
+pub struct NumericOverflowError {
+    operation: &'static str,
+}
+
+impl NumericOverflowError {
+    #[cfg(feature = "rvm")]
+    pub const fn operation(&self) -> &'static str {
+        self.operation
+    }
+}
+
+impl Display for NumericOverflowError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(formatter, "numeric overflow in {}", self.operation)
+    }
+}
+
+impl core::error::Error for NumericOverflowError {}
 
 #[verus_verify]
 const F64_SAFE_INTEGER: f64 = 9_007_199_254_740_992.0; // 2^53
@@ -748,10 +768,62 @@ impl Number {
             .ok_or_else(|| anyhow!("Number::to_big failed"))
     }
 
+    // The float paths below promote their operands to f64, which can overflow when an
+    // operand is a BigInt outside f64 range. Rego's number domain excludes Inf and NaN,
+    // so report an error instead of returning a fabricated non-finite value.
+    // Verus cannot translate construction of the external anyhow payload; keep that
+    // unsupported detail behind a helper while verifying the branch that returns it.
+    #[verus_verify(external_body)]
+    fn numeric_overflow_error(operation: &'static str) -> anyhow::Error {
+        NumericOverflowError { operation }.into()
+    }
+
     #[verus_spec(result =>
         ensures
-            result is Ok,
-            old(self)@.add_ensures(rhs@, final(self)@),
+            match result {
+                Ok(result) => result == value && value.is_finite_spec(),
+                Err(_) => !value.is_finite_spec(),
+            },
+    )]
+    fn checked_float(value: f64, operation: &'static str) -> Result<f64> {
+        if value.is_finite() {
+            Ok(value)
+        } else {
+            Err(Self::numeric_overflow_error(operation))
+        }
+    }
+
+    // Non-exact division promotes to f64 like add/sub/mul, but the quotient is not
+    // normalized back to an integer.
+    #[verus_spec(result =>
+        requires
+            !rhs@.is_zero(),
+            match (self@, rhs@) {
+                (NumberView::Integer(lhs), NumberView::Integer(rhs)) =>
+                    vstd::arithmetic::div_mod::rust_rem(lhs, rhs) != 0,
+                _ => true,
+            },
+        ensures
+            match result {
+                Ok(value) => self@.div_ensures(rhs@, value@),
+                Err(_) => self@.div_overflows(rhs@),
+            },
+    )]
+    fn float_quotient(&self, rhs: &Self) -> Result<Number> {
+        proof! {
+            axiom_f64_ops_deterministic();
+            lemma_div_ensures_cases(self@, rhs@);
+        }
+        let quotient = Self::checked_float(self.to_f64_lossy() / rhs.to_f64_lossy(), "division")?;
+        Ok(Number::Float(quotient))
+    }
+
+    #[verus_spec(result =>
+        ensures
+            match result {
+                Ok(()) => old(self)@.add_ensures(rhs@, final(self)@),
+                Err(_) => old(self)@.add_overflows(rhs@),
+            },
     )]
     pub fn add_assign(&mut self, rhs: &Self) -> Result<()> {
         *self = self.add(rhs)?;
@@ -760,7 +832,10 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            result matches Ok(value) && self@.add_ensures(rhs@, value@),
+            match result {
+                Ok(value) => self@.add_ensures(rhs@, value@),
+                Err(_) => self@.add_overflows(rhs@),
+            },
     )]
     pub fn add(&self, rhs: &Self) -> Result<Number> {
         proof! {
@@ -770,9 +845,11 @@ impl Number {
         }
 
         match (self, rhs) {
-            (Number::Float(_), _) | (_, Number::Float(_)) => Ok(Number::normalize_float(
-                self.to_f64_lossy() + rhs.to_f64_lossy(),
-            )),
+            (Number::Float(_), _) | (_, Number::Float(_)) => {
+                let sum =
+                    Self::checked_float(self.to_f64_lossy() + rhs.to_f64_lossy(), "addition")?;
+                Ok(Number::normalize_float(sum))
+            }
             (Number::UInt(a), Number::UInt(b)) => {
                 if let Some(sum) = a.checked_add(*b) {
                     Ok(Number::UInt(sum))
@@ -807,8 +884,10 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            result is Ok,
-            old(self)@.sub_ensures(rhs@, final(self)@),
+            match result {
+                Ok(()) => old(self)@.sub_ensures(rhs@, final(self)@),
+                Err(_) => old(self)@.sub_overflows(rhs@),
+            },
     )]
     pub fn sub_assign(&mut self, rhs: &Self) -> Result<()> {
         *self = self.sub(rhs)?;
@@ -817,7 +896,10 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            result matches Ok(value) && self@.sub_ensures(rhs@, value@),
+            match result {
+                Ok(value) => self@.sub_ensures(rhs@, value@),
+                Err(_) => self@.sub_overflows(rhs@),
+            },
     )]
     pub fn sub(&self, rhs: &Self) -> Result<Number> {
         proof! {
@@ -827,9 +909,11 @@ impl Number {
         }
 
         match (self, rhs) {
-            (Number::Float(_), _) | (_, Number::Float(_)) => Ok(Number::normalize_float(
-                self.to_f64_lossy() - rhs.to_f64_lossy(),
-            )),
+            (Number::Float(_), _) | (_, Number::Float(_)) => {
+                let diff =
+                    Self::checked_float(self.to_f64_lossy() - rhs.to_f64_lossy(), "subtraction")?;
+                Ok(Number::normalize_float(diff))
+            }
             (Number::UInt(a), Number::UInt(b)) => {
                 if a >= b {
                     Ok(Number::UInt(a - b))
@@ -866,8 +950,10 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            result is Ok,
-            old(self)@.mul_ensures(rhs@, final(self)@),
+            match result {
+                Ok(()) => old(self)@.mul_ensures(rhs@, final(self)@),
+                Err(_) => old(self)@.mul_overflows(rhs@),
+            },
     )]
     pub fn mul_assign(&mut self, rhs: &Self) -> Result<()> {
         *self = self.mul(rhs)?;
@@ -876,7 +962,10 @@ impl Number {
 
     #[verus_spec(result =>
         ensures
-            result matches Ok(value) && self@.mul_ensures(rhs@, value@),
+            match result {
+                Ok(value) => self@.mul_ensures(rhs@, value@),
+                Err(_) => self@.mul_overflows(rhs@),
+            },
     )]
     pub fn mul(&self, rhs: &Self) -> Result<Number> {
         proof! {
@@ -895,9 +984,13 @@ impl Number {
         }
 
         match (self, rhs) {
-            (Number::Float(_), _) | (_, Number::Float(_)) => Ok(Number::normalize_float(
-                self.to_f64_lossy() * rhs.to_f64_lossy(),
-            )),
+            (Number::Float(_), _) | (_, Number::Float(_)) => {
+                let product = Self::checked_float(
+                    self.to_f64_lossy() * rhs.to_f64_lossy(),
+                    "multiplication",
+                )?;
+                Ok(Number::normalize_float(product))
+            }
             (Number::UInt(a), Number::UInt(b)) => {
                 let product = (*a as u128) * (*b as u128);
                 if let Ok(v) = u64::try_from(product) {
@@ -940,7 +1033,7 @@ impl Number {
         ensures
             match result {
                 Ok(value) => self@.div_ensures(rhs@, value@),
-                Err(_) => rhs@.is_zero(),
+                Err(_) => rhs@.is_zero() || self@.div_overflows(rhs@),
             },
     )]
     pub fn divide(self, rhs: &Self) -> Result<Number> {
@@ -956,7 +1049,7 @@ impl Number {
         }
 
         if matches!(self, Number::Float(_)) || matches!(rhs, Number::Float(_)) {
-            return Ok(Number::Float(self.to_f64_lossy() / rhs.to_f64_lossy()));
+            return self.float_quotient(rhs);
         }
 
         match (&self, rhs) {
@@ -964,7 +1057,7 @@ impl Number {
                 if *a % *b == 0 {
                     Ok(Number::UInt(*a / *b))
                 } else {
-                    Ok(Number::Float(self.to_f64_lossy() / rhs.to_f64_lossy()))
+                    self.float_quotient(rhs)
                 }
             }
             (Number::Int(a), Number::Int(b)) => {
@@ -983,7 +1076,7 @@ impl Number {
                         Ok(Number::from_bigint_owned(quotient))
                     }
                 } else {
-                    Ok(Number::Float(self.to_f64_lossy() / rhs.to_f64_lossy()))
+                    self.float_quotient(rhs)
                 }
             }
             (Number::Int(a), Number::UInt(b)) => {
@@ -992,7 +1085,7 @@ impl Number {
                 if lhs % rhs_i == 0 {
                     Ok(Number::from_i128(lhs / rhs_i))
                 } else {
-                    Ok(Number::Float(self.to_f64_lossy() / rhs.to_f64_lossy()))
+                    self.float_quotient(rhs)
                 }
             }
             (Number::UInt(a), Number::Int(b)) => {
@@ -1001,7 +1094,7 @@ impl Number {
                 if lhs % rhs_i == 0 {
                     Ok(Number::from_i128(lhs / rhs_i))
                 } else {
-                    Ok(Number::Float(self.to_f64_lossy() / rhs.to_f64_lossy()))
+                    self.float_quotient(rhs)
                 }
             }
             (Number::BigInt(a), Number::BigInt(b)) => {
@@ -1010,7 +1103,7 @@ impl Number {
                     let quotient = (&**a) / (&**b);
                     Ok(Number::from_bigint_owned(quotient))
                 } else {
-                    Ok(Number::Float(self.to_f64_lossy() / rhs.to_f64_lossy()))
+                    self.float_quotient(rhs)
                 }
             }
             (Number::BigInt(a), _) => {
@@ -1020,10 +1113,10 @@ impl Number {
                         let quotient = (&**a) / &b_big;
                         Ok(Number::from_bigint_owned(quotient))
                     } else {
-                        Ok(Number::Float(self.to_f64_lossy() / rhs.to_f64_lossy()))
+                        self.float_quotient(rhs)
                     }
                 } else {
-                    Ok(Number::Float(self.to_f64_lossy() / rhs.to_f64_lossy()))
+                    self.float_quotient(rhs)
                 }
             }
             (_, Number::BigInt(b)) => {
@@ -1033,13 +1126,13 @@ impl Number {
                         let quotient = (&a_big) / (&**b);
                         Ok(Number::from_bigint_owned(quotient))
                     } else {
-                        Ok(Number::Float(self.to_f64_lossy() / rhs.to_f64_lossy()))
+                        self.float_quotient(rhs)
                     }
                 } else {
-                    Ok(Number::Float(self.to_f64_lossy() / rhs.to_f64_lossy()))
+                    self.float_quotient(rhs)
                 }
             }
-            _ => Ok(Number::Float(self.to_f64_lossy() / rhs.to_f64_lossy())),
+            _ => self.float_quotient(rhs),
         }
     }
 
@@ -1339,6 +1432,7 @@ impl Number {
                 assert(1 < pow2(exp as nat));
                 vstd::arithmetic::div_mod::lemma_small_mod(1, pow2(exp as nat));
                 assert(vstd::arithmetic::div_mod::rust_rem(1, pow2(exp as nat) as int) == 1);
+                axiom_positive_integer_reciprocal_is_finite(pow2(exp as nat) as int);
             }
         }
         if e >= 0 {
@@ -1375,6 +1469,9 @@ impl Number {
                 vstd::arithmetic::div_mod::lemma_small_mod(
                     1,
                     vstd::arithmetic::power::pow(10, exp as nat) as nat,
+                );
+                axiom_positive_integer_reciprocal_is_finite(
+                    vstd::arithmetic::power::pow(10, exp as nat) as int,
                 );
             } else {
                 assert((e as u32) as nat == e as nat);
@@ -1716,5 +1813,84 @@ mod tests {
             Number::Int(i64::MIN).divide(&Number::Int(-1)),
             Ok(Number::UInt(value)) if value == 1u64 << 63
         ));
+    }
+    /// Mixed BigInt/Float operands and non-exact division promote to `f64`. Results outside
+    /// the finite `f64` range report an error, while exact integer paths keep every digit.
+    ///
+    /// OPA uses `big.Int` for integer-valued operands and a wide-exponent `big.Float` for
+    /// fractional arithmetic. Rejecting these finite OPA results is an intentional,
+    /// fail-closed compatibility break until Regorus has an equivalent representation.
+    #[test]
+    fn arithmetic_rejects_overflowing_promotion() {
+        let big = Number::from_str("1e300")
+            .unwrap()
+            .mul(&Number::from_str("1e300").unwrap())
+            .unwrap();
+        let negative_big = Number::from_str("-1e300")
+            .unwrap()
+            .mul(&Number::from_str("1e300").unwrap())
+            .unwrap();
+        assert_eq!(big.format_decimal().len(), 601);
+
+        for (result, expected) in [
+            (
+                big.clone().divide(&Number::from(7u64)),
+                "numeric overflow in division",
+            ),
+            (
+                big.clone().add(&Number::from(0.5f64)),
+                "numeric overflow in addition",
+            ),
+            (
+                big.clone().sub(&Number::from(0.5f64)),
+                "numeric overflow in subtraction",
+            ),
+            (
+                big.clone().mul(&Number::from(1.5f64)),
+                "numeric overflow in multiplication",
+            ),
+            (
+                big.clone().mul(&Number::from(0.0f64)),
+                "numeric overflow in multiplication",
+            ),
+            (
+                negative_big.mul(&Number::from(1.0f64)),
+                "numeric overflow in multiplication",
+            ),
+            (
+                Number::from(1.5f64).divide(&Number::from_str("1e-320").unwrap()),
+                "numeric overflow in division",
+            ),
+        ] {
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                expected,
+                "unexpected overflow diagnostic"
+            );
+        }
+
+        // Binary64 underflow remains finite and therefore is not rejected.
+        assert_eq!(
+            Number::from_str("1e-320")
+                .unwrap()
+                .mul(&Number::from_str("1e-320").unwrap())
+                .unwrap()
+                .format_decimal(),
+            "0"
+        );
+
+        // Controls: the promoted result is finite, so these keep their old answers.
+        assert!(matches!(
+            Number::from(7u64).divide(&Number::from(2u64)),
+            Ok(Number::Float(value)) if value == 3.5
+        ));
+        assert_eq!(
+            Number::from_str("1e400")
+                .unwrap()
+                .divide(&Number::from_str("1e400").unwrap())
+                .unwrap()
+                .format_decimal(),
+            "1"
+        );
     }
 }

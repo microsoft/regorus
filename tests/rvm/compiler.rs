@@ -1260,3 +1260,44 @@ fn builtin_policy_replacement_is_atomic_while_suspended_and_resets_after_error()
         Value::from(0)
     );
 }
+
+#[test]
+fn numeric_overflow_is_fatal_in_all_vm_modes_and_strictness_settings() {
+    let program = compile_rule(
+        r#"package test
+p contains "survives_only_if_overflow_is_absorbed" if { true }
+p contains ((1e300 * 1e300) + 0.5) if { true }
+"#,
+    );
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        for strict in [false, true] {
+            let mut vm = RegoVM::new();
+            vm.set_execution_mode(mode);
+            vm.set_strict_builtin_errors(strict);
+            vm.load_program(program.clone());
+
+            let result = vm.execute_entry_point_by_name("data.test.p");
+            assert!(
+                matches!(
+                    result,
+                    Err(VmError::NumericOverflow {
+                        operation: "addition",
+                        ..
+                    })
+                ),
+                "numeric overflow must remain fatal for {mode:?}, strict={strict}; got {result:?}"
+            );
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Error {
+                    error: VmError::NumericOverflow {
+                        operation: "addition",
+                        ..
+                    }
+                }
+            ));
+            assert!(vm.suspend_reason().is_none());
+        }
+    }
+}
