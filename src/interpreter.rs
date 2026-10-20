@@ -556,15 +556,6 @@ impl Interpreter {
         }
     }
 
-    fn ensure_loop_var_values_capacity_for_module(
-        &mut self,
-        module_idx: u32,
-        num_expressions: u32,
-    ) {
-        self.loop_var_values
-            .ensure_capacity(module_idx, num_expressions);
-    }
-
     fn current_module(&self) -> Result<Ref<Module>> {
         self.module
             .clone()
@@ -4648,10 +4639,7 @@ impl Interpreter {
         let scopes = core::mem::take(&mut self.scopes);
         let prev_module = self.set_current_module(Some(module.clone()))?;
         let loop_var_values = core::mem::take(&mut self.loop_var_values);
-        self.ensure_loop_var_values_capacity_for_module(
-            self.current_module_index,
-            module.num_expressions,
-        );
+        self.ensure_loop_var_values_capacity();
 
         let res = self.eval_rule_impl(module, rule, key_filter);
 
