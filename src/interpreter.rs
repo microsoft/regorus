@@ -191,6 +191,7 @@ struct Context {
     output_constness_determined: bool,
     early_return: bool,
     output_query: Option<u32>,
+    key_filter: Option<Value>,
 }
 
 impl Default for Context {
@@ -209,6 +210,7 @@ impl Default for Context {
             output_constness_determined: false,
             early_return: false,
             output_query: None,
+            key_filter: None,
         }
     }
 }
@@ -1072,6 +1074,11 @@ impl Interpreter {
                         continue;
                     }
 
+                    if self.reject_nonmatching_child_key()? {
+                        *self.current_scope_mut()? = scope_saved.clone();
+                        continue;
+                    }
+
                     let mut should_break = false;
                     if self.eval_stmts(stmts)? {
                         count = count.saturating_add(1);
@@ -1104,6 +1111,11 @@ impl Interpreter {
                             == Value::from(true);
 
                     if !success {
+                        *self.current_scope_mut()? = scope_saved.clone();
+                        continue;
+                    }
+
+                    if self.reject_nonmatching_child_key()? {
                         *self.current_scope_mut()? = scope_saved.clone();
                         continue;
                     }
@@ -1141,6 +1153,11 @@ impl Interpreter {
                             == Value::from(true);
 
                     if !success {
+                        *self.current_scope_mut()? = scope_saved.clone();
+                        continue;
+                    }
+
+                    if self.reject_nonmatching_child_key()? {
                         *self.current_scope_mut()? = scope_saved.clone();
                         continue;
                     }
@@ -2336,6 +2353,9 @@ impl Interpreter {
                 .unwrap_or(&[]);
 
             eval_success = self.eval_stmt(stmt, tail)?;
+            if eval_success && self.reject_nonmatching_child_key()? {
+                eval_success = false;
+            }
 
             if matches!(&stmt.literal, Literal::SomeIn { .. }) {
                 return Ok(eval_success);
@@ -2375,6 +2395,24 @@ impl Interpreter {
         }
 
         Ok(eval_success)
+    }
+
+    fn reject_nonmatching_child_key(&mut self) -> Result<bool> {
+        let Some((key_expr, filter)) = self.contexts.last().and_then(|ctx| {
+            ctx.key_filter
+                .as_ref()
+                .zip(ctx.key_expr.as_ref())
+                .map(|(filter, expr)| (expr.clone(), filter.clone()))
+        }) else {
+            return Ok(false);
+        };
+        let Expr::Var { span, .. } = key_expr.as_ref() else {
+            return Ok(false);
+        };
+        if self.lookup_local_var(&span.source_str()).is_none() {
+            return Ok(false);
+        }
+        Ok(self.eval_expr(&key_expr)? != filter)
     }
 
     fn eval_query(&mut self, query: &Ref<Query>) -> Result<bool> {
@@ -2429,7 +2467,7 @@ impl Interpreter {
             }
         };
 
-        let ordered_stmts: Vec<&LiteralStmt> = match order_indices {
+        let mut ordered_stmts: Vec<&LiteralStmt> = match order_indices {
             Some(order) => {
                 let stmts_len = query.stmts.len();
                 if order.len() != stmts_len {
@@ -2456,6 +2494,13 @@ impl Interpreter {
             }
             None => query.stmts.iter().collect(),
         };
+        if let Some(context) = self.contexts.last() {
+            crate::compiler::hoist::prioritize_key_binding(
+                &mut ordered_stmts,
+                context.key_expr.as_ref(),
+                context.key_filter.as_ref(),
+            )?;
+        }
 
         let r = self.eval_stmts(&ordered_stmts);
         self.scopes.pop();
@@ -3303,12 +3348,20 @@ impl Interpreter {
     fn ensure_rule_evaluated(&mut self, path: String) -> Result<()> {
         self.check_execution_time()?;
         let mut matched = false;
-        if let Some(rules) = self.compiled_policy.rules_for_lookup(&path) {
+        let lookup_rules = self
+            .compiled_policy
+            .rules_for_lookup(&path)
+            .map(|rules| rules.into_owned());
+        if let Some(rules) = lookup_rules {
             matched = true;
-            for r in rules.clone() {
+            for r in rules {
                 if !self.processed.contains(&r) {
                     let module = self.get_rule_module(&r)?;
-                    self.eval_rule(&module, &r)?;
+                    let key_filter = self.compiled_policy.keyed_set_child_filter(&path, &r);
+                    self.eval_rule_with_key_filter(&module, &r, key_filter)?;
+                    if self.compiled_policy.is_projected_keyed_set_rule(&path, &r) {
+                        self.processed.remove(&r);
+                    }
                 }
             }
         }
@@ -4199,7 +4252,12 @@ impl Interpreter {
         Ok(())
     }
 
-    fn eval_rule_impl(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
+    fn eval_rule_impl(
+        &mut self,
+        module: &Ref<Module>,
+        rule: &Ref<Rule>,
+        key_filter: Option<Value>,
+    ) -> Result<()> {
         self.check_execution_time()?;
         match rule.as_ref() {
             Rule::Spec {
@@ -4209,7 +4267,8 @@ impl Interpreter {
             } => {
                 match rule_head {
                     RuleHead::Compr { refr, .. } | RuleHead::Set { refr, .. } => {
-                        let (ctx, _) = self.make_rule_context(rule_head)?;
+                        let (mut ctx, _) = self.make_rule_context(rule_head)?;
+                        ctx.key_filter = key_filter;
                         let is_set = ctx.is_set;
                         let is_keyed_set = is_set && ctx.key_expr.is_some();
                         let is_object = ctx.key_expr.is_some() && !is_set;
@@ -4309,6 +4368,15 @@ impl Interpreter {
     }
 
     pub fn eval_rule(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
+        self.eval_rule_with_key_filter(module, rule, None)
+    }
+
+    fn eval_rule_with_key_filter(
+        &mut self,
+        module: &Ref<Module>,
+        rule: &Ref<Rule>,
+        key_filter: Option<Value>,
+    ) -> Result<()> {
         self.check_execution_time()?;
         // Set current module index
         self.current_module_index = self.find_module_index(module);
@@ -4351,7 +4419,7 @@ impl Interpreter {
         let scopes = core::mem::take(&mut self.scopes);
         let prev_module = self.set_current_module(Some(module.clone()))?;
 
-        let res = self.eval_rule_impl(module, rule);
+        let res = self.eval_rule_impl(module, rule, key_filter);
 
         self.set_current_module(prev_module)?;
         self.scopes = scopes;
@@ -4642,7 +4710,8 @@ impl Interpreter {
     fn clear_rule_registrations(&mut self) {
         let compiled_policy = self.compiled_policy_mut();
         compiled_policy.rules.clear();
-        compiled_policy.keyed_set_child_rules.clear();
+        compiled_policy.keyed_set_parent_rules.clear();
+        compiled_policy.keyed_set_child_parents.clear();
         compiled_policy.default_rules.clear();
         compiled_policy.rule_paths.clear();
         compiled_policy.rule_path_components.clear();
@@ -4753,7 +4822,7 @@ impl Interpreter {
 
     // Include dynamic contributions in child lookups without evaluating unrelated siblings.
     fn record_keyed_set_children(&mut self) -> Result<()> {
-        let mut dynamic_sets = Map::<String, Vec<Ref<Rule>>>::new();
+        let mut dynamic_sets = Map::<String, crate::compiled_policy::KeyedSetParentRules>::new();
         for module in self.compiled_policy.modules.clone().iter() {
             let package = get_path_string(&module.package.refr, Some("data"))?;
             for rule in &module.policy {
@@ -4785,7 +4854,7 @@ impl Interpreter {
                     continue;
                 }
                 let parent = get_path_string(prefix, Some(&package))?;
-                dynamic_sets.entry(parent).or_default().push(rule.clone());
+                dynamic_sets.entry(parent).or_default().insert(rule.clone());
                 self.memory_check()?;
             }
         }
@@ -4793,25 +4862,26 @@ impl Interpreter {
             return Ok(());
         }
 
-        let mut child_rules = Map::new();
+        let mut child_parents = Map::new();
         let policy = self.compiled_policy.clone();
-        for (path, definitions) in &policy.rules {
+        for path in policy.rules.keys() {
             let components = policy
                 .rule_path_components
                 .get(path)
                 .ok_or_else(|| anyhow!("missing components for registered rule path {path}"))?;
             if let Some((_, parent)) = components.split_last() {
                 let parent: Vec<&str> = parent.iter().map(String::as_str).collect();
-                if let Some(rules) = dynamic_sets.get(&format_string_path(&parent)?) {
-                    let mut definitions = definitions.clone();
-                    definitions.extend(rules.iter().cloned());
-                    child_rules.insert(path.clone(), definitions);
+                let parent = format_string_path(&parent)?;
+                if dynamic_sets.contains_key(&parent) {
+                    child_parents.insert(path.clone(), parent);
                     self.memory_check()?;
                 }
             }
         }
         drop(policy);
-        self.compiled_policy_mut().keyed_set_child_rules = child_rules;
+        let compiled_policy = self.compiled_policy_mut();
+        compiled_policy.keyed_set_parent_rules = dynamic_sets;
+        compiled_policy.keyed_set_child_parents = child_parents;
         Ok(())
     }
 

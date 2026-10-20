@@ -8,10 +8,12 @@
 
 use super::{Compiler, CompilerError, ComprehensionType, ContextType, Result};
 use crate::ast::{self, LiteralStmt, Query};
+use crate::compiler::hoist::prioritize_key_binding;
 use crate::rvm::instructions::GuardMode;
 use crate::rvm::program::RuleType;
 use crate::rvm::Instruction;
 use alloc::format;
+use alloc::string::ToString as _;
 use alloc::vec::Vec;
 
 impl<'a> Compiler<'a> {
@@ -32,7 +34,7 @@ impl<'a> Compiler<'a> {
                 None => None,
             };
 
-            let ordered_stmts: Vec<&LiteralStmt> = match schedule {
+            let mut ordered_stmts: Vec<&LiteralStmt> = match schedule {
                 Some(schedule) => schedule
                     .order
                     .iter()
@@ -40,6 +42,19 @@ impl<'a> Compiler<'a> {
                     .collect(),
                 None => query.stmts.iter().collect(),
             };
+            if let Some(context) = self.context_stack.last() {
+                prioritize_key_binding(
+                    &mut ordered_stmts,
+                    context.key_expr.as_ref(),
+                    context.key_filter.as_ref(),
+                )
+                .map_err(|err| {
+                    CompilerError::General {
+                        message: err.to_string(),
+                    }
+                    .at(&query.span)
+                })?;
+            }
             self.hoist_loops_and_compile_statements(&ordered_stmts)
         };
 
@@ -59,7 +74,9 @@ impl<'a> Compiler<'a> {
             let loop_exprs = self.get_statement_loops(stmt)?;
 
             if !loop_exprs.is_empty() {
-                return self.compile_hoisted_loops(&stmts[idx..], &loop_exprs);
+                self.compile_hoisted_loops(&stmts[idx..], &loop_exprs)?;
+                self.emit_key_filter_guard(&stmt.span)?;
+                return Ok(());
             }
 
             if matches!(&stmt.literal, ast::Literal::SomeIn { .. }) {
@@ -95,14 +112,72 @@ impl<'a> Compiler<'a> {
                             &stmt.span,
                         );
                     }
+                    self.emit_key_filter_guard(&stmt.span)?;
                     return Ok(());
                 }
             }
 
             self.compile_single_statement(stmt)?;
+            self.emit_key_filter_guard(&stmt.span)?;
         }
 
         self.hoist_loops_and_emit_context_yield()
+    }
+
+    pub(super) fn emit_key_filter_guard(&mut self, span: &crate::lexer::Span) -> Result<()> {
+        let Some((var_name, filter)) = self.context_stack.last().and_then(|context| {
+            if context.key_filter_guarded {
+                return None;
+            }
+            let (ContextType::Rule(_), Some(filter), Some(expr)) = (
+                &context.context_type,
+                context.key_filter.as_ref(),
+                context.key_expr.as_ref(),
+            ) else {
+                return None;
+            };
+            let crate::ast::Expr::Var { span: key_span, .. } = expr.as_ref() else {
+                return None;
+            };
+            Some((key_span.text().to_string(), filter.clone()))
+        }) else {
+            return Ok(());
+        };
+        if !self.is_var_bound_in_current_scope(&var_name) {
+            return Ok(());
+        }
+        let Some(key_register) = self.lookup_variable(&var_name) else {
+            return Ok(());
+        };
+        let literal_idx = self.add_literal(filter);
+        let expected = self.alloc_register();
+        self.emit_instruction(
+            Instruction::Load {
+                dest: expected,
+                literal_idx,
+            },
+            span,
+        );
+        let matches = self.alloc_register();
+        self.emit_instruction(
+            Instruction::Eq {
+                dest: matches,
+                left: key_register,
+                right: expected,
+            },
+            span,
+        );
+        self.emit_instruction(
+            Instruction::Guard {
+                register: matches,
+                mode: GuardMode::Condition,
+            },
+            span,
+        );
+        if let Some(context) = self.context_stack.last_mut() {
+            context.key_filter_guarded = true;
+        }
+        Ok(())
     }
 
     pub(super) fn hoist_loops_and_emit_context_yield(&mut self) -> Result<()> {

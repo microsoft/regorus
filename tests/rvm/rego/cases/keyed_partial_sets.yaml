@@ -2,6 +2,87 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: overlapping_keyed_set_nonmatching_dependent_child
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if {
+          k := "b"
+          n := count(values.a)
+        }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_nonmatching_dependent_child_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if {
+          k := "b"
+          n := count(values.a)
+        }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_nonmatching_dependency_before_key
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if {
+          n := count(values.a)
+          k := "b"
+        }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_nonmatching_dependency_before_key_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if {
+          n := count(values.a)
+          k := "b"
+        }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_nonmatching_some_in_dependency
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if {
+          some k in ["b"]
+          n := count(values.a)
+        }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: overlapping_keyed_set_nonmatching_some_in_dependency_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if {
+          some k in ["b"]
+          n := count(values.a)
+        }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
   - note: overlapping_keyed_set_local_child
     modules:
       - |

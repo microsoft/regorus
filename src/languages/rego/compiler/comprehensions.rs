@@ -43,6 +43,7 @@ impl<'a> Compiler<'a> {
             dest_register: result_reg,
             key_expr: key_expr.cloned(),
             key_filter: None,
+            key_filter_guarded: false,
             multi_value: false,
             value_expr: value_expr.cloned(),
             span: span.clone(),

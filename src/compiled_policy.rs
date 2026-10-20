@@ -15,7 +15,8 @@ use crate::scheduler::*;
 use crate::utils::*;
 use crate::*;
 
-use alloc::collections::BTreeMap;
+use alloc::borrow::Cow;
+use alloc::collections::{BTreeMap, BTreeSet};
 use anyhow::Result;
 
 #[cfg(feature = "azure_policy")]
@@ -216,8 +217,9 @@ pub(crate) struct CompiledPolicyData {
     pub(crate) parser_contexts: Rc<Vec<ParserContext>>,
     pub(crate) schedule: Option<Rc<Schedule>>,
     pub(crate) rules: Map<String, Vec<Ref<Rule>>>,
-    // Lookup-only expansions must not suppress dynamic siblings under a `with` override.
-    pub(crate) keyed_set_child_rules: Map<String, Vec<Ref<Rule>>>,
+    // Dynamic keyed-set definitions are indexed once per parent for child lookups.
+    pub(crate) keyed_set_parent_rules: Map<String, KeyedSetParentRules>,
+    pub(crate) keyed_set_child_parents: Map<String, String>,
     pub(crate) default_rules: Map<String, Vec<DefaultRuleInfo>>,
     pub(crate) rule_path_components: Map<String, Vec<String>>,
     pub(crate) imports: BTreeMap<String, Ref<Expr>>,
@@ -244,10 +246,56 @@ pub(crate) struct CompiledPolicyData {
     pub(crate) loop_hoisting_table: HoistedLoopsLookup,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct KeyedSetParentRules {
+    pub(crate) definitions: Vec<Ref<Rule>>,
+    rule_set: BTreeSet<Ref<Rule>>,
+}
+
+impl KeyedSetParentRules {
+    pub(crate) fn insert(&mut self, rule: Ref<Rule>) {
+        if self.rule_set.insert(rule.clone()) {
+            self.definitions.push(rule);
+        }
+    }
+
+    pub(crate) fn contains(&self, rule: &Ref<Rule>) -> bool {
+        self.rule_set.contains(rule)
+    }
+}
+
 impl CompiledPolicyData {
-    pub(crate) fn rules_for_lookup(&self, path: &str) -> Option<&Vec<Ref<Rule>>> {
-        self.keyed_set_child_rules
-            .get(path)
-            .or_else(|| self.rules.get(path))
+    pub(crate) fn rules_for_lookup(&self, path: &str) -> Option<Cow<'_, [Ref<Rule>]>> {
+        let static_rules = self.rules.get(path)?;
+        let Some(parent) = self.keyed_set_child_parents.get(path) else {
+            return Some(Cow::Borrowed(static_rules));
+        };
+        let Some(dynamic_rules) = self.keyed_set_parent_rules.get(parent) else {
+            return Some(Cow::Borrowed(static_rules));
+        };
+
+        let mut rules = static_rules.clone();
+        rules.extend(dynamic_rules.definitions.iter().cloned());
+        Some(Cow::Owned(rules))
+    }
+
+    pub(crate) fn keyed_set_child_filter(&self, path: &str, rule: &Ref<Rule>) -> Option<Value> {
+        let parent = self.keyed_set_child_parents.get(path)?;
+        if !self.keyed_set_parent_rules.get(parent)?.contains(rule) {
+            return None;
+        }
+        self.rule_path_components
+            .get(path)?
+            .last()
+            .map(|key| Value::from(key.clone()))
+    }
+
+    pub(crate) fn is_projected_keyed_set_rule(&self, path: &str, rule: &Ref<Rule>) -> bool {
+        let Some(parent) = self.keyed_set_child_parents.get(path) else {
+            return false;
+        };
+        self.keyed_set_parent_rules
+            .get(parent)
+            .is_some_and(|rules| rules.contains(rule))
     }
 }

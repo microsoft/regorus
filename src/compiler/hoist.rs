@@ -16,7 +16,9 @@
 use super::destructuring_planner::{
     map_binding_error, BindingPlan, ScopingMode, VariableBindingContext,
 };
-use crate::ast::{Expr, ExprRef, Literal, LiteralStmt, Module, Query, Ref, Rule, RuleHead};
+use crate::ast::{
+    AssignOp, Expr, ExprRef, Literal, LiteralStmt, Module, Query, Ref, Rule, RuleHead,
+};
 use crate::compiler::context::{ContextType, ScopeContext};
 use crate::lookup::Lookup;
 use crate::lookup::LookupResult;
@@ -26,6 +28,101 @@ use anyhow::{anyhow, Result};
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
+
+pub fn prioritize_key_binding(
+    statements: &mut Vec<&LiteralStmt>,
+    key_expr: Option<&ExprRef>,
+    key_filter: Option<&Value>,
+) -> Result<()> {
+    if key_filter.is_none() {
+        return Ok(());
+    }
+    let Some(Expr::Var { span, .. }) = key_expr.map(|expr| expr.as_ref()) else {
+        return Ok(());
+    };
+    let key_name = span.text();
+    let binding_idx = statements.iter().position(|stmt| {
+        if !stmt.with_mods.is_empty() {
+            return false;
+        }
+        let Literal::Expr { expr, .. } = &stmt.literal else {
+            return false;
+        };
+        let Expr::AssignExpr {
+            op: AssignOp::ColEq,
+            lhs,
+            rhs,
+            ..
+        } = expr.as_ref()
+        else {
+            return false;
+        };
+        let Expr::Var { span: lhs_span, .. } = lhs.as_ref() else {
+            return false;
+        };
+        lhs_span.text() == key_name && is_scalar_literal(rhs.as_ref())
+    });
+    if let Some(idx) = binding_idx {
+        if idx != 0 {
+            for stmt in statements.iter().take(idx) {
+                if stmt_references_var(stmt, key_name)? {
+                    return Ok(());
+                }
+            }
+            if let Some(stmt) = statements.get(idx).copied() {
+                statements.remove(idx);
+                statements.insert(0, stmt);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn stmt_references_var(stmt: &LiteralStmt, name: &str) -> Result<bool> {
+    let mut found = false;
+    let mut check_expr = |expr: &ExprRef| -> Result<bool> {
+        if matches!(expr.as_ref(), Expr::Var { span, .. } if span.text() == name) {
+            found = true;
+            Ok(false)
+        } else {
+            Ok(true)
+        }
+    };
+    match &stmt.literal {
+        Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => {
+            crate::query::traversal::traverse(expr, &mut check_expr)?;
+        }
+        Literal::SomeIn {
+            key,
+            value,
+            collection,
+            ..
+        } => {
+            if let Some(key) = key {
+                crate::query::traversal::traverse(key, &mut check_expr)?;
+            }
+            crate::query::traversal::traverse(value, &mut check_expr)?;
+            crate::query::traversal::traverse(collection, &mut check_expr)?;
+        }
+        Literal::SomeVars { vars, .. } => {
+            found = vars.iter().any(|var| var.text() == name);
+        }
+        Literal::Every { .. } => return Ok(true),
+    }
+    Ok(found)
+}
+
+fn is_scalar_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::String { .. }
+        | Expr::RawString { .. }
+        | Expr::Number { .. }
+        | Expr::Bool { .. }
+        | Expr::Null { .. } => true,
+        Expr::UnaryExpr { expr, .. } => matches!(expr.as_ref(), Expr::Number { .. }),
+        _ => false,
+    }
+}
 
 /// Implementation of VariableBindingContext for ScopeContext
 impl VariableBindingContext for ScopeContext {

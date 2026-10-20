@@ -163,6 +163,7 @@ impl<'a> Compiler<'a> {
             dest_register: result_reg,
             key_expr: None,
             key_filter: None,
+            key_filter_guarded: false,
             multi_value: false,
             value_expr: None,
             span: span.clone(),
@@ -305,6 +306,7 @@ impl<'a> Compiler<'a> {
                 .apply_binding_plan(binding_plan, key_reg, plan_span)
                 .map_err(|e| CompilerError::from(e).at(plan_span))?;
         }
+        self.emit_key_filter_guard(collection.span())?;
 
         let body_stmts = &remaining_stmts[0..];
         self.compile_hoisted_loops(body_stmts, remaining_loops)?;
@@ -475,6 +477,7 @@ impl<'a> Compiler<'a> {
             }
         }
 
+        self.emit_key_filter_guard(collection.span())?;
         self.hoist_loops_and_compile_statements(loop_body_stmts)?;
 
         self.emit_instruction(

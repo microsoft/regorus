@@ -520,7 +520,7 @@ impl<'a> Compiler<'a> {
             // Seed all static leaves once, before any body can fail or accumulate members.
             let mut initial_object = Value::new_object();
             if rule_type == RuleType::PartialObject {
-                for rule in rule_definitions {
+                for rule in rule_definitions.iter() {
                     if let Rule::Spec {
                         head:
                             RuleHead::Set {
@@ -701,6 +701,7 @@ impl<'a> Compiler<'a> {
                         context_type: ContextType::Rule(rule_type.clone()),
                         key_expr,
                         key_filter,
+                        key_filter_guarded: false,
                         multi_value: matches!(head, RuleHead::Set { .. }),
                         value_expr,
                         span,
