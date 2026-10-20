@@ -22,6 +22,16 @@ allow if {
 }
 """;
 
+    private const string BuiltinNamesPolicy = """
+package demo
+import rego.v1
+
+allow if {
+  count(input.actions) > 0
+  contains(input.user, "ali")
+}
+""";
+
     private const string Data = """
 {
   "roles": {
@@ -90,6 +100,80 @@ result := __builtin_host_await(
 
         var result = vm.Execute();
         Assert.AreEqual("true", result, "expected allow=true");
+    }
+
+    [TestMethod]
+    public void Program_get_builtin_names_for_empty_program_returns_empty_read_only_list()
+    {
+        using var program = Program.CreateEmpty();
+
+        var names = program.GetBuiltinNames();
+        Assert.AreEqual(0, names.Count);
+
+        var mutableNames = names as IList<string>;
+        Assert.IsNotNull(mutableNames);
+        Assert.ThrowsException<NotSupportedException>(() => mutableNames!.Add("count"));
+    }
+
+    [TestMethod]
+    public void Program_get_builtin_names_returns_compiled_names_in_table_order()
+    {
+        var modules = new[] { new PolicyModule("builtin_names.rego", BuiltinNamesPolicy) };
+        using var program = Program.CompileFromModules("{}", modules, new[] { "data.demo.allow" });
+
+        Assert.AreEqual("count,contains", string.Join(",", program.GetBuiltinNames()));
+        Assert.AreEqual("count,contains", string.Join(",", program.GetBuiltinNames()));
+    }
+
+    [TestMethod]
+    public void Program_get_builtin_names_is_read_only_without_mutating_the_program()
+    {
+        var modules = new[] { new PolicyModule("builtin_names.rego", BuiltinNamesPolicy) };
+        using var program = Program.CompileFromModules("{}", modules, new[] { "data.demo.allow" });
+        var names = program.GetBuiltinNames();
+
+        var mutableNames = names as IList<string>;
+        Assert.IsNotNull(mutableNames);
+        Assert.ThrowsException<NotSupportedException>(() => mutableNames![0] = "changed");
+        Assert.AreEqual("count,contains", string.Join(",", program.GetBuiltinNames()));
+    }
+
+    [TestMethod]
+    public void Program_get_builtin_names_snapshot_survives_disposal_and_disposed_access_fails()
+    {
+        var modules = new[] { new PolicyModule("builtin_names.rego", BuiltinNamesPolicy) };
+        var program = Program.CompileFromModules("{}", modules, new[] { "data.demo.allow" });
+        var names = program.GetBuiltinNames();
+
+        program.Dispose();
+
+        Assert.AreEqual("count,contains", string.Join(",", names));
+        Assert.ThrowsException<ObjectDisposedException>(() => program.GetBuiltinNames());
+    }
+
+    [TestMethod]
+    public void Program_get_builtin_names_survives_binary_round_trip()
+    {
+        var modules = new[] { new PolicyModule("builtin_names.rego", BuiltinNamesPolicy) };
+        using var program = Program.CompileFromModules("{}", modules, new[] { "data.demo.allow" });
+        using var restored = Program.DeserializeBinary(program.SerializeBinary(), out var isPartial);
+
+        Assert.IsFalse(isPartial);
+        Assert.AreEqual("count,contains", string.Join(",", restored.GetBuiltinNames()));
+    }
+
+    [TestMethod]
+    public void Program_get_builtin_names_excludes_registered_host_await_builtin_named_count()
+    {
+        var modules = new[] { new PolicyModule("builtin_names.rego", BuiltinNamesPolicy) };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("count") };
+        using var program = Program.CompileFromModules(
+            "{}",
+            modules,
+            new[] { "data.demo.allow" },
+            hostAwaitBuiltins);
+
+        Assert.AreEqual("contains", string.Join(",", program.GetBuiltinNames()));
     }
 
     [TestMethod]

@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Expose compiled RVM builtin names through the C FFI and `Program.GetBuiltinNames()` in C#.
+
 ### Changed
 
 - [**breaking**] Float-promoting arithmetic now raises `numeric overflow in <operation>` instead of producing NaN or infinity, regardless of strict-builtin-error mode. Unlike OPA's wide-exponent arithmetic, finite results outside the binary64 range are rejected.

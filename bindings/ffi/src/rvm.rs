@@ -268,6 +268,26 @@ pub extern "C" fn regorus_program_new() -> *mut RegorusProgram {
     }))
 }
 
+/// Get the names recorded in an RVM program's builtin info table as a JSON array.
+#[no_mangle]
+pub extern "C" fn regorus_program_get_builtin_names(
+    program: *const RegorusProgram,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        let output = || -> Result<String> {
+            let program = &to_shared_ref(program)?.program;
+            let names: Vec<&str> = program
+                .builtin_info_table
+                .iter()
+                .map(|builtin| builtin.name.as_str())
+                .collect();
+            Ok(serde_json::to_string(&names)?)
+        }();
+
+        to_rvm_string_result(output)
+    })
+}
+
 /// Serialize a program to the binary RVM format.
 #[no_mangle]
 pub extern "C" fn regorus_program_serialize_binary(program: *mut RegorusProgram) -> RegorusResult {

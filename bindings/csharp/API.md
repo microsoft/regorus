@@ -476,9 +476,17 @@ public sealed class Program : IDisposable
     // Debug listing
     public string GenerateListing();
 
+    // Builtin metadata
+    public IReadOnlyList<string> GetBuiltinNames();
+
     public void Dispose();
 }
 ```
+
+`GetBuiltinNames` returns the names in the compiled program's builtin-info table,
+preserving table order. Registered host-await builtins are excluded. This is
+metadata inspection only; it is not complete policy-ingestion validation or
+proof of dynamic execution.
 
 ### Rvm
 
