@@ -61,6 +61,8 @@ pub struct CompilationContext {
     pub(super) context_type: ContextType,
     pub(super) dest_register: Register,
     pub(super) key_expr: Option<ExprRef>,
+    /// Requested static child when projecting a dynamic keyed-set definition.
+    pub(super) key_filter: Option<Value>,
     pub(super) multi_value: bool,
     pub(super) value_expr: Option<ExprRef>,
     pub(super) span: Span,

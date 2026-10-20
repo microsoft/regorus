@@ -3,6 +3,32 @@
 
 use anyhow::{bail, Result};
 use regorus::*;
+use std::collections::BTreeSet;
+
+#[test]
+fn keyed_set_child_override_preserves_dynamic_sibling_contributions() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".into(),
+        r#"package test
+           values.a contains 1
+           values[k] contains 2 if { k := "b" }
+           main := result if {
+               result := values.b with data.test.values.a as {9}
+           }"#
+        .into(),
+    )?;
+
+    assert_eq!(
+        engine.eval_rule("data.test.main".into())?,
+        Value::from(BTreeSet::from([Value::from(2)]))
+    );
+    assert_eq!(
+        engine.eval_rule("data.test.values.a".into())?,
+        Value::from(BTreeSet::from([Value::from(1)]))
+    );
+    Ok(())
+}
 
 #[test]
 fn package_components_distinguish_literal_dots_from_nested_namespaces() -> Result<()> {

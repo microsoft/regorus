@@ -162,6 +162,7 @@ impl<'a> Compiler<'a> {
             context_type: ContextType::Every,
             dest_register: result_reg,
             key_expr: None,
+            key_filter: None,
             multi_value: false,
             value_expr: None,
             span: span.clone(),

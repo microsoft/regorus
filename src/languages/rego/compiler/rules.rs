@@ -38,7 +38,7 @@ impl<'a> Compiler<'a> {
     }
 
     pub(super) fn compute_rule_type(&self, rule_path: &str) -> Result<RuleType> {
-        let Some(definitions) = self.policy.inner.rules.get(rule_path) else {
+        let Some(definitions) = self.policy.inner.rules_for_lookup(rule_path) else {
             // Default-only rules (e.g., `default deny := true`) have no regular definitions
             // in the `rules` map — they only exist in `default_rules`. Treat them as Complete.
             if self.policy.inner.default_rules.contains_key(rule_path) {
@@ -60,9 +60,14 @@ impl<'a> Compiler<'a> {
                     match head {
                         RuleHead::Set {
                             refr, key: Some(_), ..
-                        } if self.keyed_set_key(rule_path, def, refr)?.is_some() => {
-                            has_keyed_set = true;
-                            RuleType::PartialObject
+                        } => {
+                            let (key, filter) = self.keyed_set_key(rule_path, def, refr)?;
+                            has_keyed_set |= key.is_some();
+                            if key.is_some() && filter.is_none() {
+                                RuleType::PartialObject
+                            } else {
+                                RuleType::PartialSet
+                            }
                         }
                         RuleHead::Set { .. } => RuleType::PartialSet,
                         RuleHead::Compr { refr, assign, .. } => match refr.as_ref() {
@@ -112,7 +117,7 @@ impl<'a> Compiler<'a> {
         rule_path: &str,
         rule: &crate::ast::NodeRef<Rule>,
         refr: &ExprRef,
-    ) -> Result<Option<ExprRef>> {
+    ) -> Result<(Option<ExprRef>, Option<Value>)> {
         let (prefix, key) = match refr.as_ref() {
             Expr::RefBrack { refr, index, .. } => (refr, index.clone()),
             Expr::RefDot {
@@ -125,7 +130,7 @@ impl<'a> Compiler<'a> {
                     eidx: *eidx,
                 }),
             ),
-            _ => return Ok(None),
+            _ => return Ok((None, None)),
         };
         if Self::has_unsupported_bracket_prefix(prefix) {
             return Err(CompilerError::PartialObjectNestedKeyUnsupported.at(refr.span()));
@@ -138,12 +143,27 @@ impl<'a> Compiler<'a> {
         if Self::is_string_literal(&key)
             && get_path_string(refr, Some(&package)).map_err(CompilerError::from)? == rule_path
         {
-            return Ok(None);
+            return Ok((None, None));
         }
-        if get_path_string(prefix, Some(&package)).map_err(CompilerError::from)? != rule_path {
+        let prefix_path = get_path_string(prefix, Some(&package)).map_err(CompilerError::from)?;
+        if prefix_path != rule_path {
+            if !Self::is_string_literal(&key) {
+                if let Some((leaf, parent)) = self
+                    .policy
+                    .inner
+                    .rule_path_components
+                    .get(rule_path)
+                    .and_then(|components| components.split_last())
+                {
+                    let parent: Vec<&str> = parent.iter().map(String::as_str).collect();
+                    if format_string_path(&parent).map_err(CompilerError::from)? == prefix_path {
+                        return Ok((Some(key), Some(Value::from(leaf.clone()))));
+                    }
+                }
+            }
             return Err(CompilerError::PartialObjectNestedKeyUnsupported.at(refr.span()));
         }
-        Ok(Some(key))
+        Ok((Some(key), None))
     }
 
     fn validate_partial_object_shape(&self, refr: &ExprRef) -> Result<()> {
@@ -458,7 +478,7 @@ impl<'a> Compiler<'a> {
         self.current_module_index = module_index;
 
         let saved_register_counter = self.register_counter;
-        if let Some(rule_definitions) = rules.get(rule_path) {
+        if let Some(rule_definitions) = self.policy.inner.rules_for_lookup(rule_path) {
             let Some(rule_index) = self.rule_index_map.get(rule_path).copied() else {
                 return Err(CompilerError::General {
                     message: format!(
@@ -509,7 +529,7 @@ impl<'a> Compiler<'a> {
                         ..
                     } = rule.as_ref()
                     {
-                        if let Some(key) = self.keyed_set_key(rule_path, rule, refr)? {
+                        if let (Some(key), _) = self.keyed_set_key(rule_path, rule, refr)? {
                             if let Expr::String { value, .. } | Expr::RawString { value, .. } =
                                 key.as_ref()
                             {
@@ -544,7 +564,15 @@ impl<'a> Compiler<'a> {
                     let result_register = self.alloc_register();
 
                     self.current_module_index = self.find_module_index_for_rule(rule_ref)?;
+                    self.current_package = get_path_string(
+                        &self.policy.get_modules()[self.current_module_index as usize]
+                            .package
+                            .refr,
+                        Some("data"),
+                    )
+                    .map_err(CompilerError::from)?;
 
+                    let mut key_filter = None;
                     let (key_expr, value_expr) = match head {
                         RuleHead::Compr { refr, assign, .. } => {
                             if rule_type == RuleType::PartialObject {
@@ -567,8 +595,11 @@ impl<'a> Compiler<'a> {
                             self.rule_definition_destructuring_patterns[rule_index as usize]
                                 .push(None);
 
-                            let key_expr = if rule_type == RuleType::PartialObject {
-                                self.keyed_set_key(rule_path, rule_ref, refr)?
+                            let key_expr = if key.is_some() {
+                                let (key_expr, filter) =
+                                    self.keyed_set_key(rule_path, rule_ref, refr)?;
+                                key_filter = filter;
+                                key_expr
                             } else {
                                 None
                             };
@@ -669,6 +700,7 @@ impl<'a> Compiler<'a> {
                         dest_register: result_register,
                         context_type: ContextType::Rule(rule_type.clone()),
                         key_expr,
+                        key_filter,
                         multi_value: matches!(head, RuleHead::Set { .. }),
                         value_expr,
                         span,

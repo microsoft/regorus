@@ -2,6 +2,189 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: overlapping_keyed_set_local_child
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { k := "a" }
+        main := values.a
+    query: data.test.main
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_local_child_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { k := "a" }
+        main := values.a
+    query: data.test.main
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_child_entrypoint
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { k := "a" }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_child_entrypoint_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values[k] contains 2 if { k := "a" }
+        values["a"] contains 1
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_external_child
+    modules:
+      - |
+        package test
+        main := data.other.values.a
+      - |
+        package other
+        values.a contains 1
+        values[k] contains 2 if { k := "a" }
+    query: data.test.main
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_imported_child_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        import data.other.values.a as child
+        main := child
+      - |
+        package other
+        values.a contains 1
+      - |
+        package other
+        values[k] contains 2 if { k := "a" }
+    query: data.test.main
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_parent_then_child
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { k := "a" }
+        main := [values, values.a]
+    query: data.test.main
+    want_result:
+      - a:
+          set!: [1, 2]
+      - set!: [1, 2]
+
+  - note: overlapping_keyed_set_child_nested_package_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        extra := 2
+        values[k] contains extra if { k := "a" }
+      - |
+        package test.values
+        a contains 1
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_child_then_parent_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { k := "a" }
+        main := [values.a, values]
+    query: data.test.main
+    want_result:
+      - set!: [1, 2]
+      - a:
+          set!: [1, 2]
+
+  - note: overlapping_keyed_set_child_head_loop
+    input: {keys: ["a", "b", "a"], vals: [2, 99, 3]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[i]] contains input.vals[i]
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2, 3]
+
+  - note: overlapping_keyed_set_child_failed_dynamic_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1 if { false }
+        values[k] contains 2 if { k := "a"; false }
+    query: data.test.values.a
+    want_result:
+      set!: []
+
+  - note: overlapping_keyed_set_child_head_loop_suspendable
+    execution_mode: suspendable
+    input: {keys: ["a", "b", "a"], vals: [false, 99, null]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[i]] contains input.vals[i] if { true }
+    query: data.test.values.a
+    want_result:
+      set!: [1, false, null]
+
+  - note: overlapping_keyed_set_child_sibling_dependency
+    modules:
+      - |
+        package test
+        values.a contains count(values.b)
+        values.b contains 4
+        values[k] contains 2 if { k := "a" }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_child_sibling_dependency_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains count(values.b)
+        values.b contains 4
+        values[k] contains 2 if { k := "a" }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: overlapping_keyed_set_escaped_child_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values["a.b"] contains 1
+        values[k] contains 2 if { k := "a.b" }
+    query: data.test.values["a.b"]
+    want_result:
+      set!: [1, 2]
+
   - note: output_head_body_specific_unbound_then_bound
     input: {keys: ["a", "b"]}
     modules:

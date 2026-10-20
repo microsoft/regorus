@@ -216,6 +216,8 @@ pub(crate) struct CompiledPolicyData {
     pub(crate) parser_contexts: Rc<Vec<ParserContext>>,
     pub(crate) schedule: Option<Rc<Schedule>>,
     pub(crate) rules: Map<String, Vec<Ref<Rule>>>,
+    // Lookup-only expansions must not suppress dynamic siblings under a `with` override.
+    pub(crate) keyed_set_child_rules: Map<String, Vec<Ref<Rule>>>,
     pub(crate) default_rules: Map<String, Vec<DefaultRuleInfo>>,
     pub(crate) rule_path_components: Map<String, Vec<String>>,
     pub(crate) imports: BTreeMap<String, Ref<Expr>>,
@@ -240,4 +242,12 @@ pub(crate) struct CompiledPolicyData {
 
     // Pre-computed loop hoisting information
     pub(crate) loop_hoisting_table: HoistedLoopsLookup,
+}
+
+impl CompiledPolicyData {
+    pub(crate) fn rules_for_lookup(&self, path: &str) -> Option<&Vec<Ref<Rule>>> {
+        self.keyed_set_child_rules
+            .get(path)
+            .or_else(|| self.rules.get(path))
+    }
 }

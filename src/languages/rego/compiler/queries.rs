@@ -171,6 +171,34 @@ impl<'a> Compiler<'a> {
                 .map(|key_expr| self.compile_rego_expr(&key_expr))
                 .unwrap_or(Ok(value_register))?;
 
+            if let Some(key) = context.key_filter {
+                let literal_idx = self.add_literal(key);
+                let expected = self.alloc_register();
+                self.emit_instruction(
+                    Instruction::Load {
+                        dest: expected,
+                        literal_idx,
+                    },
+                    span,
+                );
+                let matches = self.alloc_register();
+                self.emit_instruction(
+                    Instruction::Eq {
+                        dest: matches,
+                        left: key_register,
+                        right: expected,
+                    },
+                    span,
+                );
+                self.emit_instruction(
+                    Instruction::Guard {
+                        register: matches,
+                        mode: GuardMode::Condition,
+                    },
+                    span,
+                );
+            }
+
             match context.context_type {
                 ContextType::Comprehension(ComprehensionType::Array) => {
                     self.emit_instruction(

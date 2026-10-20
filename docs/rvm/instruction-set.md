@@ -106,7 +106,10 @@ Parameter structures:
   is selected by body query as well as module and expression, so differing body
   bindings cannot overwrite each other's head plans. Both execution modes
   accumulate all independent partial-rule bodies, while `else` bodies retain
-  first-success semantics.
+  first-success semantics. Static child references and entrypoints include
+  dynamic keyed-set definitions from their immediate parent. The compiler
+  filters those definitions by the requested key before set insertion, rather
+  than calling the entire parent and introducing cycles through sibling rules.
 - `ObjectCreateParams` reuses arrays of literal key/value pairs and register
   pairs. Literal keys must be sorted to match template order.
 - `ArrayCreateParams` and `SetCreateParams` store register lists. The VM checks

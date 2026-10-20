@@ -3303,7 +3303,7 @@ impl Interpreter {
     fn ensure_rule_evaluated(&mut self, path: String) -> Result<()> {
         self.check_execution_time()?;
         let mut matched = false;
-        if let Some(rules) = self.compiled_policy.rules.get(&path) {
+        if let Some(rules) = self.compiled_policy.rules_for_lookup(&path) {
             matched = true;
             for r in rules.clone() {
                 if !self.processed.contains(&r) {
@@ -4642,6 +4642,7 @@ impl Interpreter {
     fn clear_rule_registrations(&mut self) {
         let compiled_policy = self.compiled_policy_mut();
         compiled_policy.rules.clear();
+        compiled_policy.keyed_set_child_rules.clear();
         compiled_policy.default_rules.clear();
         compiled_policy.rule_paths.clear();
         compiled_policy.rule_path_components.clear();
@@ -4742,12 +4743,76 @@ impl Interpreter {
                 self.set_current_module(prev_module)?;
                 registration_result?;
             }
-            Ok(())
+            self.record_keyed_set_children()
         })();
         if result.is_err() {
             self.clear_rule_registrations();
         }
         result
+    }
+
+    // Include dynamic contributions in child lookups without evaluating unrelated siblings.
+    fn record_keyed_set_children(&mut self) -> Result<()> {
+        let mut dynamic_sets = Map::<String, Vec<Ref<Rule>>>::new();
+        for module in self.compiled_policy.modules.clone().iter() {
+            let package = get_path_string(&module.package.refr, Some("data"))?;
+            for rule in &module.policy {
+                let Rule::Spec {
+                    head:
+                        RuleHead::Set {
+                            refr, key: Some(_), ..
+                        },
+                    ..
+                } = rule.as_ref()
+                else {
+                    continue;
+                };
+                let Expr::RefBrack {
+                    refr: prefix,
+                    index,
+                    ..
+                } = refr.as_ref()
+                else {
+                    continue;
+                };
+                if matches!(index.as_ref(), Expr::String { .. } | Expr::RawString { .. }) {
+                    continue;
+                }
+                if get_rule_path_components(prefix)?
+                    .iter()
+                    .any(|component| !matches!(component, PathComponent::String(_)))
+                {
+                    continue;
+                }
+                let parent = get_path_string(prefix, Some(&package))?;
+                dynamic_sets.entry(parent).or_default().push(rule.clone());
+                self.memory_check()?;
+            }
+        }
+        if dynamic_sets.is_empty() {
+            return Ok(());
+        }
+
+        let mut child_rules = Map::new();
+        let policy = self.compiled_policy.clone();
+        for (path, definitions) in &policy.rules {
+            let components = policy
+                .rule_path_components
+                .get(path)
+                .ok_or_else(|| anyhow!("missing components for registered rule path {path}"))?;
+            if let Some((_, parent)) = components.split_last() {
+                let parent: Vec<&str> = parent.iter().map(String::as_str).collect();
+                if let Some(rules) = dynamic_sets.get(&format_string_path(&parent)?) {
+                    let mut definitions = definitions.clone();
+                    definitions.extend(rules.iter().cloned());
+                    child_rules.insert(path.clone(), definitions);
+                    self.memory_check()?;
+                }
+            }
+        }
+        drop(policy);
+        self.compiled_policy_mut().keyed_set_child_rules = child_rules;
+        Ok(())
     }
 
     pub fn add_extension(
