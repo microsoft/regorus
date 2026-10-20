@@ -22,7 +22,7 @@ use crate::number::*;
 use core::cmp::Ordering;
 use super::bigint_assumptions::*;
 use super::f64_assumptions::*;
-use vstd::arithmetic::power2::pow2;
+use vstd::arithmetic::power2::{lemma2_to64, pow2};
 use vstd::float::*;
 use vstd::std_specs::cmp::PartialEqSpec;
 
@@ -81,7 +81,8 @@ pub open spec fn normalize_float(value: f64) -> NumberView
 // pattern, so every `NumberView` has a scaled-integer form and the comparison never leaves the
 // integers.
 
-// Exponent field of an f64 magnitude (bits 52..=62).
+// Exponent field of an f64 magnitude (bits 52..=62). `to_bits_abs_spec` has already cleared
+// the sign bit.
 pub open spec fn f64_biased_exponent(f: f64) -> int
 {
     (f.to_bits_abs_spec() >> 52) as int
@@ -93,52 +94,59 @@ pub open spec fn f64_fraction(f: f64) -> int
     (f.to_bits_abs_spec() & 0x000f_ffff_ffff_ffff) as int
 }
 
-// binary64 significand: the implicit leading 1 is present only for normal values.
-pub open spec fn f64_significand(f: f64) -> int
+// Integer significand scaled by 2^52. Normal values include the implicit leading 1;
+// subnormal and special values use only their fraction/payload bits.
+pub open spec fn f64_scaled_significand(f: f64) -> int
 {
-    if f64_biased_exponent(f) == 0 {
+    if f64_biased_exponent(f) == 0 || f64_biased_exponent(f) == 2047 {
         f64_fraction(f)
     } else {
         f64_fraction(f) + pow2(52)
     }
 }
 
-// binary64 exponent, i.e. `|f| == f64_significand(f) * pow2(f64_exponent(f))` for a finite `f`.
-pub open spec fn f64_exponent(f: f64) -> int
+// Exponent paired with `f64_scaled_significand`. For a finite value,
+// `|f| == f64_scaled_significand(f) * 2^f64_scaled_exponent(f)`. The normal-value
+// offset is 1023 + 52 = 1075 because the significand is scaled by 2^52.
+// Special values use exponent zero because only their payload bits are compared within a rank.
+pub open spec fn f64_scaled_exponent(f: f64) -> int
 {
     if f64_biased_exponent(f) == 0 {
         -1074
+    } else if f64_biased_exponent(f) == 2047 {
+        0
     } else {
         f64_biased_exponent(f) - 1075
     }
 }
 
 // Compare `l_sign * l_magnitude * 2^l_exponent` with `r_sign * r_magnitude * 2^r_exponent`.
-// Scaling both sides up to the larger exponent keeps the comparison integral and exact.
+// Scaling both sides to the smaller common exponent keeps the comparison integral and exact.
 pub open spec fn cmp_scaled_values(
     l_sign: bool, l_magnitude: int, l_exponent: int,
     r_sign: bool, r_magnitude: int, r_exponent: int) -> Ordering
 {
-    if l_magnitude == 0 && r_magnitude == 0 {
-        // Numeric equality treats -0.0, 0.0 and integer zero as one value.
+    let common_exponent = if l_exponent < r_exponent { l_exponent } else { r_exponent };
+    let l_unsigned = l_magnitude * pow2((l_exponent - common_exponent) as nat);
+    let r_unsigned = r_magnitude * pow2((r_exponent - common_exponent) as nat);
+    let l_value = if l_sign { -l_unsigned } else { l_unsigned };
+    let r_value = if r_sign { -r_unsigned } else { r_unsigned };
+    if l_value < r_value {
+        Ordering::Less
+    } else if l_value > r_value {
+        Ordering::Greater
+    } else {
+        // This also merges -0.0, +0.0, and integer zero.
         Ordering::Equal
     }
-    else {
-        let l_value = if l_exponent >= r_exponent { l_magnitude * pow2((l_exponent - r_exponent) as nat) } else { l_magnitude };
-        let r_value = if r_exponent >= l_exponent { r_magnitude * pow2((r_exponent - l_exponent) as nat) } else { r_magnitude };
-        if l_sign != r_sign {
-            // Both magnitudes are non-zero, so the signs decide.
-            if l_sign { Ordering::Less } else { Ordering::Greater }
-        }
-        else if l_value < r_value {
-            if l_sign { Ordering::Greater } else { Ordering::Less }
-        }
-        else if l_value > r_value {
-            if l_sign { Ordering::Less } else { Ordering::Greater }
-        }
-        else {
-            Ordering::Equal
-        }
+}
+
+pub open spec fn reverse_ordering(ordering: Ordering) -> Ordering
+{
+    match ordering {
+        Ordering::Less => Ordering::Greater,
+        Ordering::Equal => Ordering::Equal,
+        Ordering::Greater => Ordering::Less,
     }
 }
 
@@ -173,8 +181,10 @@ impl NumberView {
     //     < (-0.0 == +0.0 == integer 0)
     //     < positive finite numbers < +Inf < positive NaNs
     //
-    // Finite comparison merges signed zero with integer zero. The scaled fields below distinguish
-    // NaN payloads within each sign consistently with `f64::total_cmp`.
+    // Finite comparison merges signed zero with integer zero. Although ingress and arithmetic
+    // reject non-finite values, the internal type still needs coherent defensive `Eq`/`Ord`
+    // semantics. Keeping each NaN bit pattern distinct prevents ordered containers from merging
+    // it with another NaN or infinity.
     pub open spec fn cmp_rank(self) -> int
     {
         match self {
@@ -188,8 +198,8 @@ impl NumberView {
         }
     }
 
-    // Exact scaled form of a ranked (finite, or non-finite-but-never-compared) value:
-    // `value == (if scaled_sign then -1 else 1) * scaled_magnitude * pow2(scaled_exponent)`.
+    // Finite values use their exact scaled-integer form. Special values use their payload bits,
+    // which order NaNs of the same sign consistently with `f64::total_cmp`.
     pub open spec fn scaled_sign(self) -> bool
     {
         match self {
@@ -202,7 +212,7 @@ impl NumberView {
     {
         match self {
             Self::Integer(n) => if n < 0 { -n } else { n },
-            Self::Float(f) => f64_significand(f),
+            Self::Float(f) => f64_scaled_significand(f),
         }
     }
 
@@ -210,7 +220,7 @@ impl NumberView {
     {
         match self {
             Self::Integer(_) => 0,
-            Self::Float(f) => f64_exponent(f),
+            Self::Float(f) => f64_scaled_exponent(f),
         }
     }
 
@@ -228,6 +238,7 @@ impl NumberView {
         }
     }
 
+    // Named contracts keep every trusted comparison boundary tied to the same exact model.
     pub open spec fn cmp_ensures(self: Self, other: Self, result: Ordering) -> bool
     {
         result == self.cmp_values(other)
@@ -378,6 +389,34 @@ impl NumberView {
         }
     }
 
+}
+
+pub proof fn lemma_integer_cmp_values(lhs: int, rhs: int)
+    ensures
+        NumberView::Integer(lhs).cmp_values(NumberView::Integer(rhs)) ==
+            if lhs < rhs {
+                Ordering::Less
+            } else if lhs > rhs {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            },
+{
+    lemma2_to64();
+    if lhs < rhs {
+        assert(NumberView::Integer(lhs).cmp_values(NumberView::Integer(rhs)) == Ordering::Less);
+    } else if lhs > rhs {
+        assert(NumberView::Integer(lhs).cmp_values(NumberView::Integer(rhs)) == Ordering::Greater);
+    } else {
+        assert(NumberView::Integer(lhs).cmp_values(NumberView::Integer(rhs)) == Ordering::Equal);
+    }
+}
+
+pub proof fn lemma_cmp_values_reverse(lhs: NumberView, rhs: NumberView)
+    ensures
+        reverse_ordering(lhs.cmp_values(rhs)) == rhs.cmp_values(lhs),
+{
+    reveal(pow2);
 }
 
 // `spec_bigint_to_f64` deliberately leaves conversions outside the exactly represented range
