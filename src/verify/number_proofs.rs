@@ -170,12 +170,14 @@ pub proof fn lemma_div_ensures_cases(lhs: NumberView, rhs: NumberView)
                 lhs->Integer_0,
                 rhs->Integer_0,
             ) != 0 && lhs.to_f64_lossy_ensures(lhs_float) && rhs.to_f64_lossy_ensures(rhs_float)
+                && (lhs_float / rhs_float).is_finite_spec()
             ==> #[trigger] lhs.div_ensures(rhs, NumberView::Float(lhs_float / rhs_float)),
         forall|lhs_float: f64, rhs_float: f64|
             (lhs is Float || rhs is Float) && !rhs.is_zero() && lhs.to_f64_lossy_ensures(lhs_float)
-                && rhs.to_f64_lossy_ensures(rhs_float)
+                && rhs.to_f64_lossy_ensures(rhs_float) && (lhs_float / rhs_float).is_finite_spec()
             ==> #[trigger] lhs.div_ensures(rhs, NumberView::Float(lhs_float / rhs_float)),
 {
+    reveal(NumberView::is_finite);
     reveal(NumberView::is_zero);
     reveal(NumberView::div_ensures);
 }
