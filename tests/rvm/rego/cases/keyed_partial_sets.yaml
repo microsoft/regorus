@@ -2,6 +2,243 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: keyed_set_compound_key_binding_before_dependency
+    input: {keys: {chosen: b}}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[z]] contains n if { n := count(values.a); z := "chosen" }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_compound_key_binding_before_dependency_suspendable
+    execution_mode: suspendable
+    input: {keys: {chosen: b}}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[z]] contains n if { n := count(values.a); z := "chosen" }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_multiple_compound_key_bindings_before_dependency
+    input: {map: {foo: {bar: b}}}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.map[x][y]] contains n if {
+          n := count(values.a)
+          x := "foo"
+          y := "bar"
+        }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_call_key_body_dependency
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { n := count(values.a); k := lower("B") }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_call_key_body_dependency_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { n := count(values.a); k := lower("B") }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_call_key_body_matching_cycle
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { n := count(values.a); k := lower("A") }
+    query: data.test.values.a
+    want_error: "Runtime recursion detected"
+
+  - note: keyed_set_call_key_body_matching_cycle_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains n if { n := count(values.a); k := lower("A") }
+    query: data.test.values.a
+    want_error: "Runtime recursion detected"
+
+  - note: keyed_set_call_key_value_loop
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains [count(data.test.values.a)][_] if { k := concat("", ["b"]) }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_call_key_value_loop_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains [count(data.test.values.a)][_] if { k := concat("", ["b"]) }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_call_key_value_loop_matching_cycle
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains [count(data.test.values.a)][_] if { k := concat("", ["a"]) }
+    query: data.test.values.a
+    want_error: "Runtime recursion detected"
+
+  - note: keyed_set_call_key_value_loop_matching_cycle_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains [count(data.test.values.a)][_] if { k := concat("", ["a"]) }
+    query: data.test.values.a
+    want_error: "Runtime recursion detected"
+
+  - note: keyed_set_head_loop_before_dependent_body
+    input: {keys: [b]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[_]] contains count(data.test.values.a)
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_head_loop_before_dependent_body_suspendable
+    execution_mode: suspendable
+    input: {keys: [b]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[_]] contains count(data.test.values.a)
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_head_loop_matching_cycle
+    input: {keys: [a]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[_]] contains count(data.test.values.a)
+    query: data.test.values.a
+    want_error: "Runtime recursion detected"
+
+  - note: keyed_set_head_loop_matching_cycle_suspendable
+    execution_mode: suspendable
+    input: {keys: [a]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.keys[_]] contains count(data.test.values.a)
+    query: data.test.values.a
+    want_error: "Runtime recursion detected"
+
+  - note: keyed_set_guarded_arithmetic_invalid
+    input: {port: "invalid"}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { is_number(input.port); k := input.port + 1 }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_guarded_arithmetic_invalid_suspendable
+    execution_mode: suspendable
+    input: {port: "invalid"}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { is_number(input.port); k := input.port + 1 }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_guarded_arithmetic_missing_input
+    input: {}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { is_number(input.port); k := input.port + 1 }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_guarded_arithmetic_missing_input_suspendable
+    execution_mode: suspendable
+    input: {}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { is_number(input.port); k := input.port + 1 }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_guarded_arithmetic_valid
+    input: {port: 80}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { is_number(input.port); k := input.port + 1 }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [1]
+      81:
+        set!: [2]
+
+  - note: keyed_set_guarded_arithmetic_valid_suspendable
+    execution_mode: suspendable
+    input: {port: 80}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[k] contains 2 if { is_number(input.port); k := input.port + 1 }
+    query: data.test.values
+    want_result:
+      a:
+        set!: [1]
+      81:
+        set!: [2]
+
   - note: overlapping_keyed_set_head_value_loop_dependency
     input: {keys: [b, c]}
     modules:
@@ -833,6 +1070,20 @@ cases:
         set!: [10, 11]
       b:
         set!: [20, 21]
+
+  - note: keyed_partial_set_nested_head_key_loops
+    input:
+      groups:
+        - keys: ["a", "b"]
+          vals: [10, 20]
+    modules:
+      - |
+        package test
+        values.b contains 99
+        values[input.groups[i].keys[j]] contains input.groups[i].vals[j] if { true }
+    query: data.test.values.b
+    want_result:
+      set!: [20, 99]
 
   - note: keyed_partial_set_body_bound_head_index
     input: {keys: ["a", "b"], vals: [10, 20]}

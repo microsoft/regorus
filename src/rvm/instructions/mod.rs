@@ -17,6 +17,7 @@ pub use types::{
 use serde::{Deserialize, Serialize};
 
 /// RVM Instructions - simplified enum-based design
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Instruction {
     /// Load literal value from literal table into register

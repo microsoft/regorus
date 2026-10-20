@@ -556,6 +556,15 @@ impl Interpreter {
         }
     }
 
+    fn ensure_loop_var_values_capacity_for_module(
+        &mut self,
+        module_idx: u32,
+        num_expressions: u32,
+    ) {
+        self.loop_var_values
+            .ensure_capacity(module_idx, num_expressions);
+    }
+
     fn current_module(&self) -> Result<Ref<Module>> {
         self.module
             .clone()
@@ -2421,6 +2430,25 @@ impl Interpreter {
         Ok(eval_success)
     }
 
+    fn is_safe_projected_key_call(&self, expr: &ExprRef) -> Result<bool> {
+        let Expr::Call { fcn, params, .. } = expr.as_ref() else {
+            return Ok(false);
+        };
+        if !crate::compiler::hoist::is_safe_literal_key_call(fcn, params)? {
+            return Ok(false);
+        }
+        let original_path = crate::utils::get_path_string(fcn, None)?;
+        let full_path = self
+            .resolve_fcn_path_through_imports(&original_path)
+            .unwrap_or_else(|| format!("{}.{}", self.current_module_path, original_path));
+        Ok(!self.extensions.contains_key(&original_path)
+            && !self.with_functions.contains_key(&original_path)
+            && !self.with_functions.contains_key(&full_path)
+            && self.lookup_function_by_name(&original_path).is_none()
+            && self.lookup_function_by_name(&full_path).is_none()
+            && Self::is_builtin(fcn.span(), &original_path))
+    }
+
     fn reject_nonmatching_child_key(&mut self) -> Result<bool> {
         let Some((key_expr, filter)) = self.contexts.last().and_then(|ctx| {
             ctx.key_filter
@@ -2437,10 +2465,168 @@ impl Interpreter {
                 self.lookup_local_var(&span.source_str())
                     .is_some_and(|value| value != Value::Undefined)
             },
+            |call| self.is_safe_projected_key_call(call),
         )? {
             return Ok(false);
         }
         Ok(self.eval_expr(&key_expr)? != filter)
+    }
+
+    fn projected_head_key_loops_match(&mut self) -> Result<Option<bool>> {
+        let Some((key_expr, filter, query_idx)) = self.contexts.last().and_then(|context| {
+            context
+                .key_filter
+                .as_ref()
+                .zip(context.key_expr.as_ref())
+                .zip(context.output_query)
+                .map(|((filter, expr), query_idx)| (expr.clone(), filter.clone(), query_idx))
+        }) else {
+            return Ok(None);
+        };
+        let loops = self
+            .loop_hoisting_table(self.current_module_index)
+            .get_output_loops(self.current_module_index, Some(query_idx), key_expr.eidx())
+            .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
+            .cloned()
+            .unwrap_or_default();
+        if loops.is_empty()
+            || loops
+                .iter()
+                .any(|loop_info| loop_info.loop_type != LoopType::IndexIteration)
+        {
+            return Ok(None);
+        }
+        self.scopes.push(Scope::default());
+        let result = self.key_matches_in_hoisted_loops(&loops, &key_expr, &filter);
+        self.scopes.pop();
+        result
+    }
+
+    fn key_matches_in_hoisted_loops(
+        &mut self,
+        loops: &[HoistedLoop],
+        key_expr: &ExprRef,
+        filter: &Value,
+    ) -> Result<Option<bool>> {
+        let Some((loop_info, remaining)) = loops.split_first() else {
+            if !crate::compiler::hoist::key_expr_is_ready(
+                key_expr,
+                |expr| self.get_loop_var_value(expr).map(|value| value.is_some()),
+                |span| {
+                    self.lookup_local_var(&span.source_str())
+                        .is_some_and(|value| value != Value::Undefined)
+                },
+                |call| self.is_safe_projected_key_call(call),
+            )? {
+                return Ok(None);
+            }
+            return Ok(Some(self.eval_expr(key_expr)? == *filter));
+        };
+        if !crate::compiler::hoist::key_expr_is_ready(
+            &loop_info.collection,
+            |expr| self.get_loop_var_value(expr).map(|value| value.is_some()),
+            |span| {
+                self.lookup_local_var(&span.source_str())
+                    .is_some_and(|value| value != Value::Undefined)
+            },
+            |call| self.is_safe_projected_key_call(call),
+        )? {
+            return Ok(None);
+        }
+        let collection = self.eval_expr(Self::loop_collection_expr(loop_info))?;
+        let index_plan = if Self::loop_index_expr(loop_info).is_some() {
+            self.get_loop_index_plan(loop_info)?
+        } else {
+            DestructuringPlan::Ignore
+        };
+        let loop_target = Self::loop_assignment_expr(loop_info).clone();
+        self.scopes.push(Scope::default());
+        let result = (|| {
+            let mut unresolved = false;
+            match collection {
+                Value::Array(values) => {
+                    for (index, value) in values.iter().enumerate() {
+                        self.memory_check()?;
+                        match self.key_matches_for_hoisted_loop_item(
+                            &loop_target,
+                            &index_plan,
+                            &Value::from(index),
+                            value,
+                            remaining,
+                            key_expr,
+                            filter,
+                        )? {
+                            Some(true) => return Ok(Some(true)),
+                            Some(false) => {}
+                            None => unresolved = true,
+                        }
+                    }
+                }
+                Value::Set(values) => {
+                    for value in values.iter() {
+                        self.memory_check()?;
+                        match self.key_matches_for_hoisted_loop_item(
+                            &loop_target,
+                            &index_plan,
+                            value,
+                            value,
+                            remaining,
+                            key_expr,
+                            filter,
+                        )? {
+                            Some(true) => return Ok(Some(true)),
+                            Some(false) => {}
+                            None => unresolved = true,
+                        }
+                    }
+                }
+                Value::Object(values) => {
+                    for (key, value) in values.iter() {
+                        self.memory_check()?;
+                        match self.key_matches_for_hoisted_loop_item(
+                            &loop_target,
+                            &index_plan,
+                            key,
+                            value,
+                            remaining,
+                            key_expr,
+                            filter,
+                        )? {
+                            Some(true) => return Ok(Some(true)),
+                            Some(false) => {}
+                            None => unresolved = true,
+                        }
+                    }
+                }
+                Value::Undefined => {}
+                _ => {}
+            }
+            Ok(if unresolved { None } else { Some(false) })
+        })();
+        self.scopes.pop();
+        self.remove_loop_var_value(&loop_target);
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn key_matches_for_hoisted_loop_item(
+        &mut self,
+        loop_target: &ExprRef,
+        index_plan: &DestructuringPlan,
+        index: &Value,
+        value: &Value,
+        remaining: &[HoistedLoop],
+        key_expr: &ExprRef,
+        filter: &Value,
+    ) -> Result<Option<bool>> {
+        self.set_loop_var_value(loop_target, value.clone())?;
+        let matches = if self.execute_destructuring_plan(index_plan, index)? == Value::Bool(true) {
+            self.key_matches_in_hoisted_loops(remaining, key_expr, filter)?
+        } else {
+            Some(false)
+        };
+        Self::clear_scope(self.current_scope_mut()?);
+        Ok(matches)
     }
 
     fn eval_query(&mut self, query: &Ref<Query>) -> Result<bool> {
@@ -2527,6 +2713,7 @@ impl Interpreter {
                 &mut ordered_stmts,
                 context.key_expr.as_ref(),
                 context.key_filter.as_ref(),
+                |call| self.is_safe_projected_key_call(call),
             )?;
         }
 
@@ -3854,7 +4041,14 @@ impl Interpreter {
                     }
                     self.contexts.push(next_ctx);
                 }
-                result = self.eval_query(&body.query);
+                if let Some(context) = self.contexts.last_mut() {
+                    context.output_query = Some(body.query.qidx);
+                }
+                result = match self.projected_head_key_loops_match() {
+                    Ok(Some(false)) => Ok(false),
+                    Ok(_) => self.eval_query(&body.query),
+                    Err(error) => Err(error),
+                };
                 match &result {
                     Ok(true) => {
                         any_success = true;
@@ -4453,11 +4647,18 @@ impl Interpreter {
         // the local variables of callee function.
         let scopes = core::mem::take(&mut self.scopes);
         let prev_module = self.set_current_module(Some(module.clone()))?;
+        let loop_var_values = core::mem::take(&mut self.loop_var_values);
+        self.ensure_loop_var_values_capacity_for_module(
+            self.current_module_index,
+            module.num_expressions,
+        );
 
         let res = self.eval_rule_impl(module, rule, key_filter);
 
-        self.set_current_module(prev_module)?;
+        let restore_module = self.set_current_module(prev_module);
         self.scopes = scopes;
+        self.loop_var_values = loop_var_values;
+        restore_module?;
         match self.active_rules.pop() {
             Some(ref r) if r == &invocation => res,
             _ => bail!("internal error: current rule not active"),

@@ -33,6 +33,7 @@ pub fn key_expr_is_ready(
     expr: &ExprRef,
     mut is_bound: impl FnMut(&ExprRef) -> Result<bool>,
     mut is_var_bound: impl FnMut(&crate::lexer::Span) -> bool,
+    mut is_safe_call: impl FnMut(&ExprRef) -> Result<bool>,
 ) -> Result<bool> {
     let mut ready = true;
     crate::query::traversal::traverse(expr, &mut |node| {
@@ -47,9 +48,15 @@ pub fn key_expr_is_ready(
             Expr::ArrayCompr { .. }
             | Expr::SetCompr { .. }
             | Expr::ObjectCompr { .. }
-            | Expr::Call { .. }
+            | Expr::BinExpr { .. }
+            | Expr::UnaryExpr { .. }
+            | Expr::ArithExpr { .. }
             | Expr::AssignExpr { .. } => {
                 ready = false;
+                Ok(false)
+            }
+            Expr::Call { fcn, params, .. } => {
+                ready &= is_safe_literal_key_call(fcn, params)? && is_safe_call(node)?;
                 Ok(false)
             }
             _ => Ok(true),
@@ -58,50 +65,91 @@ pub fn key_expr_is_ready(
     Ok(ready)
 }
 
+pub fn is_safe_literal_key_call(fcn: &ExprRef, params: &[ExprRef]) -> Result<bool> {
+    let name = crate::utils::get_path_string(fcn, None)?;
+    let is_string =
+        |expr: &ExprRef| matches!(expr.as_ref(), Expr::String { .. } | Expr::RawString { .. });
+    Ok(match (name.as_str(), params) {
+        ("lower", [value]) => is_string(value),
+        ("concat", [separator, values]) => {
+            is_string(separator)
+                && matches!(
+                    values.as_ref(),
+                    Expr::Array { items, .. } if items.iter().all(is_string)
+                )
+        }
+        _ => false,
+    })
+}
+
+fn is_safe_key_binding_value(
+    expr: &ExprRef,
+    is_safe_call: &mut impl FnMut(&ExprRef) -> Result<bool>,
+) -> Result<bool> {
+    match expr.as_ref() {
+        Expr::Call { fcn, params, .. } => {
+            Ok(is_safe_literal_key_call(fcn, params)? && is_safe_call(expr)?)
+        }
+        other => Ok(is_scalar_literal(other)),
+    }
+}
+
 pub fn prioritize_key_binding(
     statements: &mut Vec<&LiteralStmt>,
     key_expr: Option<&ExprRef>,
     key_filter: Option<&Value>,
+    mut is_safe_call: impl FnMut(&ExprRef) -> Result<bool>,
 ) -> Result<()> {
     if key_filter.is_none() {
         return Ok(());
     }
-    let Some(Expr::Var { span, .. }) = key_expr.map(|expr| expr.as_ref()) else {
+    let Some(key_expr) = key_expr else {
         return Ok(());
     };
-    let key_name = span.text();
-    let binding_idx = statements.iter().position(|stmt| {
-        if !stmt.with_mods.is_empty() {
-            return false;
+    let mut key_names = BTreeSet::new();
+    crate::query::traversal::traverse(key_expr, &mut |node| {
+        if let Expr::Var { span, .. } = node.as_ref() {
+            let name = span.text();
+            if name != "_" && name != "input" {
+                key_names.insert(name.to_string());
+            }
         }
-        let Literal::Expr { expr, .. } = &stmt.literal else {
-            return false;
-        };
-        let Expr::AssignExpr {
-            op,
-            lhs,
-            rhs,
-            ..
-        } = expr.as_ref()
-        else {
-            return false;
-        };
-        matches!(lhs.as_ref(), Expr::Var { span: lhs_span, .. } if lhs_span.text() == key_name)
-            && is_scalar_literal(rhs.as_ref())
-            || *op == AssignOp::Eq
-                && matches!(rhs.as_ref(), Expr::Var { span: rhs_span, .. } if rhs_span.text() == key_name)
-                && is_scalar_literal(lhs.as_ref())
-    });
-    if let Some(idx) = binding_idx {
-        if idx != 0 {
+        Ok(true)
+    })?;
+    for key_name in key_names {
+        let mut binding_idx = None;
+        for (idx, stmt) in statements.iter().enumerate() {
+            if !stmt.with_mods.is_empty() {
+                continue;
+            }
+            let Literal::Expr { expr, .. } = &stmt.literal else {
+                continue;
+            };
+            let Expr::AssignExpr { op, lhs, rhs, .. } = expr.as_ref() else {
+                continue;
+            };
+            if matches!(lhs.as_ref(), Expr::Var { span, .. } if span.text() == key_name)
+                && is_safe_key_binding_value(rhs, &mut is_safe_call)?
+                || *op == AssignOp::Eq
+                    && matches!(rhs.as_ref(), Expr::Var { span, .. } if span.text() == key_name)
+                    && is_safe_key_binding_value(lhs, &mut is_safe_call)?
+            {
+                binding_idx = Some(idx);
+            }
+        }
+        if let Some(idx) = binding_idx {
+            let mut referenced_earlier = false;
             for stmt in statements.iter().take(idx) {
-                if stmt_references_var(stmt, key_name)? {
-                    return Ok(());
+                if stmt_references_var(stmt, &key_name)? {
+                    referenced_earlier = true;
+                    break;
                 }
             }
-            if let Some(stmt) = statements.get(idx).copied() {
-                statements.remove(idx);
-                statements.insert(0, stmt);
+            if idx != 0 && !referenced_earlier {
+                if let Some(stmt) = statements.get(idx).copied() {
+                    statements.remove(idx);
+                    statements.insert(0, stmt);
+                }
             }
         }
     }

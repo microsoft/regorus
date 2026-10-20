@@ -168,6 +168,7 @@ impl<'a> Compiler<'a> {
             multi_value: false,
             value_expr: None,
             span: span.clone(),
+            key_loops_hoisted: false,
             key_value_loops_hoisted: false,
             output_query: Some(query.qidx),
         };

@@ -9,6 +9,7 @@ use core::time::Duration;
 use thiserror::Error;
 
 /// VM execution errors
+#[non_exhaustive]
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum VmError {
     #[error("Execution stopped: exceeded maximum instruction limit of {limit} after {executed} instructions (pc={pc})")]

@@ -74,6 +74,119 @@ fn keyed_set_projection_preserves_cycle_detection() -> Result<()> {
 }
 
 #[test]
+fn keyed_set_parent_loop_projection_state_is_invocation_local() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".into(),
+        r#"package test
+           values.a contains 1
+           values[input.keys[_]] contains count(data.test.values.a)"#
+            .into(),
+    )?;
+
+    for keys in [r#"["b","a"]"#, r#"["a","b"]"#] {
+        engine.set_input(Value::from_json_str(&format!(r#"{{"keys":{keys}}}"#))?);
+        for path in ["data.test.values", "data.test.values.a"] {
+            let error = engine
+                .eval_rule(path.into())
+                .expect_err("matching projected recursion must be rejected");
+            assert!(
+                error.to_string().contains("recursion detected"),
+                "{path}: {error}"
+            );
+        }
+
+        engine.set_input(Value::from_json_str(r#"{"keys":["b"]}"#)?);
+        assert_eq!(
+            engine.eval_rule("data.test.values.a".into())?,
+            Value::from(BTreeSet::from([Value::from(1)]))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn keyed_set_guarded_head_arithmetic_runs_after_body_success() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".into(),
+        r#"package test
+           values.a contains 1
+           values[k] contains 2 if { is_number(input.port); k := input.port + 1 }"#
+            .into(),
+    )?;
+
+    engine.set_input(Value::from_json_str(r#"{"port":"invalid"}"#)?);
+    assert_eq!(
+        engine.eval_rule("data.test.values.a".into())?,
+        Value::from(BTreeSet::from([Value::from(1)]))
+    );
+
+    engine.set_input(Value::from_json_str(r#"{"port":80}"#)?);
+    let result = engine.eval_rule("data.test.values".into())?;
+    assert_eq!(
+        result,
+        Value::from(std::collections::BTreeMap::from([
+            (
+                Value::from("a"),
+                Value::from(BTreeSet::from([Value::from(1)])),
+            ),
+            (
+                Value::from(81),
+                Value::from(BTreeSet::from([Value::from(2)])),
+            ),
+        ]))
+    );
+
+    let mut guarded_engine = Engine::new();
+    guarded_engine.add_policy(
+        "guard.rego".into(),
+        r#"package guard
+           values[k] contains 2 if { input.enabled; k := input.port + 1 }"#
+            .into(),
+    )?;
+    guarded_engine.set_input(Value::from_json_str(
+        r#"{"port":"invalid","enabled":true}"#,
+    )?);
+    let error = guarded_engine
+        .eval_rule("data.guard.values".into())
+        .expect_err("a successful body must still report a failing head expression");
+    assert!(!error.to_string().contains("recursion detected"), "{error}");
+    guarded_engine.set_input(Value::from_json_str(r#"{"port":80,"enabled":true}"#)?);
+    assert_eq!(
+        guarded_engine.eval_rule("data.guard.values".into())?,
+        Value::from(std::collections::BTreeMap::from([(
+            Value::from(81),
+            Value::from(BTreeSet::from([Value::from(2)])),
+        )]))
+    );
+    Ok(())
+}
+
+#[test]
+fn keyed_set_does_not_speculate_overridden_builtin_key_calls() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_extension(
+        "lower".to_string(),
+        1,
+        Box::new(|_| Err(anyhow::anyhow!("overridden lower must not run"))),
+    )?;
+    engine.add_policy(
+        "test.rego".into(),
+        r#"package test
+           values.a contains 1
+           values[k] contains 2 if { false; k := lower("B") }"#
+            .into(),
+    )?;
+
+    assert_eq!(
+        engine.eval_rule("data.test.values.a".into())?,
+        Value::from(BTreeSet::from([Value::from(1)]))
+    );
+    Ok(())
+}
+
+#[test]
 fn keyed_set_multiple_bodies_remain_rejected() {
     let mut engine = Engine::new();
     let error = engine

@@ -67,6 +67,7 @@ pub struct CompilationContext {
     pub(super) multi_value: bool,
     pub(super) value_expr: Option<ExprRef>,
     pub(super) span: Span,
+    pub(super) key_loops_hoisted: bool,
     pub(super) key_value_loops_hoisted: bool,
     pub(super) output_query: Option<u32>,
 }

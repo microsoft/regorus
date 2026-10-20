@@ -708,6 +708,7 @@ impl<'a> Compiler<'a> {
                         multi_value: matches!(head, RuleHead::Set { .. }),
                         value_expr,
                         span,
+                        key_loops_hoisted: false,
                         key_value_loops_hoisted: false,
                         output_query: None,
                     };
@@ -777,6 +778,7 @@ impl<'a> Compiler<'a> {
 
                             if let Some(context) = self.context_stack.last_mut() {
                                 context.value_expr = body_value_expr.clone();
+                                context.key_loops_hoisted = false;
                                 context.key_value_loops_hoisted = false;
                                 context.key_filter_guarded = false;
                                 context.output_query = Some(body.query.qidx);
