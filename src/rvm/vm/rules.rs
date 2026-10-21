@@ -28,6 +28,7 @@ impl RegoVM {
                 | VmError::RegexSizeLimitExceeded { .. }
                 | VmError::InstructionLimitExceeded { .. }
                 | VmError::RuleRecursionDetected { .. }
+                | VmError::NumericOverflow { .. }
         )
     }
 
