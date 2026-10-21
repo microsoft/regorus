@@ -626,7 +626,9 @@ impl RegoVM {
 
         match result {
             Ok(value) => value,
-            Err(payload) => std::panic::resume_unwind(payload),
+            Err(payload) => crate::utils::limits::without_memory_budget_scope(|| {
+                std::panic::resume_unwind(payload)
+            }),
         }
     }
 
@@ -1157,6 +1159,7 @@ mod memory_budget_tests {
     };
     use crate::MemoryBudgetConfig;
     use crate::{Engine, Rc, Value};
+    use alloc::boxed::Box;
     use alloc::ffi::CString;
     use alloc::string::String;
     use alloc::sync::Arc;
@@ -1165,6 +1168,9 @@ mod memory_budget_tests {
 
     const NATIVE_RESUME_OUTPUT_BYTES: usize = 128 * 1024;
     const NATIVE_OUTPUT_TEST_CAP_BYTES: u64 = 1024 * 1024;
+    #[derive(Debug, PartialEq, Eq)]
+    struct NativeResumePanicPayload(u64);
+
     const NATIVE_RESUME_OUTPUT_POLICY: &str = r#"
 package limit
 import rego.v1
@@ -1394,7 +1400,8 @@ result := sprintf("%s%s", [
     fn native_resume_parse_unwind_preserves_debt_and_parent_scope() -> anyhow::Result<()> {
         const PARSE_ALLOCATION_BYTES: usize = 2 * 1024 * 1024;
         const PARENT_ALLOCATION_BYTES: usize = 23;
-        let expected_parent_usage = u64::try_from(PARENT_ALLOCATION_BYTES)?
+        let expected_parent_before_child = u64::try_from(PARENT_ALLOCATION_BYTES)?;
+        let expected_parent_usage = expected_parent_before_child
             .checked_add(7)
             .ok_or_else(|| anyhow::anyhow!("parent usage expectation overflowed"))?;
 
@@ -1415,16 +1422,21 @@ result := sprintf("%s%s", [
             let before_child = current_memory_budget_usage()
                 .expect("parent usage is selected")
                 .requested_bytes();
+            assert_eq!(before_child, expected_parent_before_child);
 
             let panic = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
                 let _ = vm.resume_to_c_string_for_ffi(|| {
                     let parse_churn = vec![0_u8; PARSE_ALLOCATION_BYTES];
                     core::hint::black_box(&parse_churn);
                     drop(parse_churn);
-                    panic!("resume parser panic");
+                    std::panic::panic_any(NativeResumePanicPayload(830));
                 });
             }));
-            assert!(panic.is_err());
+            let panic_payload = panic.expect_err("native resume should preserve its panic");
+            assert_eq!(
+                panic_payload.downcast_ref::<NativeResumePanicPayload>(),
+                Some(&NativeResumePanicPayload(830))
+            );
             assert_eq!(
                 current_memory_budget_usage()
                     .expect("parent selector is restored")
@@ -1439,7 +1451,7 @@ result := sprintf("%s%s", [
                 current_memory_budget_usage()
                     .expect("parent selector remains active")
                     .requested_bytes(),
-                before_child + 7
+                expected_parent_usage
             );
         });
         anyhow::ensure!(
@@ -1464,6 +1476,69 @@ result := sprintf("%s%s", [
                 error: VmError::MemoryBudgetExceeded { .. }
             }
         ));
+        Ok(())
+    }
+
+    #[allow(clippy::expect_used, clippy::panic, clippy::panic_in_result_fn)]
+    #[test]
+    fn native_resume_parse_unwind_without_child_budget_preserves_parent_scope() -> anyhow::Result<()>
+    {
+        const PARENT_ALLOCATION_BYTES: usize = 23;
+        let expected_parent_before_child = u64::try_from(PARENT_ALLOCATION_BYTES)?;
+        let expected_parent_usage = expected_parent_before_child
+            .checked_add(7)
+            .ok_or_else(|| anyhow::anyhow!("parent usage expectation overflowed"))?;
+
+        let mut vm = RegoVM::new();
+        let mut panic_payload: Option<Box<dyn core::any::Any + Send>> =
+            Some(Box::new(NativeResumePanicPayload(830)));
+        let mut parent_usage = Some(MemoryBudgetUsage::default());
+        with_memory_budget_usage_scope(parent_usage, &mut parent_usage, || {
+            let parent_probe = vec![0_u8; PARENT_ALLOCATION_BYTES];
+            core::hint::black_box(&parent_probe);
+            drop(parent_probe);
+            let before_child = current_memory_budget_usage()
+                .expect("parent usage is selected")
+                .requested_bytes();
+            assert_eq!(before_child, expected_parent_before_child);
+            assert!(vm.suspendable_memory_budget.is_none());
+
+            let panic = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
+                vm.with_suspendable_memory_budget_scope(|_| {
+                    std::panic::resume_unwind(
+                        panic_payload
+                            .take()
+                            .expect("preconstructed panic payload is available"),
+                    )
+                });
+            }));
+            let recovered_payload = panic.expect_err("unbudgeted scope should preserve its panic");
+            assert_eq!(
+                recovered_payload.downcast_ref::<NativeResumePanicPayload>(),
+                Some(&NativeResumePanicPayload(830))
+            );
+            assert_eq!(
+                current_memory_budget_usage()
+                    .expect("parent selector is restored")
+                    .requested_bytes(),
+                before_child
+            );
+            assert!(vm.suspendable_memory_budget.is_none());
+
+            let parent_after_child = vec![0_u8; 7];
+            core::hint::black_box(&parent_after_child);
+            drop(parent_after_child);
+            assert_eq!(
+                current_memory_budget_usage()
+                    .expect("parent selector remains active")
+                    .requested_bytes(),
+                expected_parent_usage
+            );
+        });
+        anyhow::ensure!(
+            parent_usage.is_some_and(|usage| usage.requested_bytes() == expected_parent_usage)
+        );
+        anyhow::ensure!(vm.suspendable_memory_budget.is_none());
         Ok(())
     }
 
