@@ -554,7 +554,7 @@ pub extern "C" fn regorus_rvm_set_execution_timer_config(
     })
 }
 
-/// Configure the per-VM memory budget for run-to-completion execution.
+/// Configure the per-VM memory budget for run-to-completion or suspendable execution.
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 #[no_mangle]
 pub extern "C" fn regorus_rvm_set_memory_budget_config(
@@ -604,7 +604,9 @@ pub extern "C" fn regorus_rvm_set_memory_budget_config(
 /// Execute the program's main entry point.
 #[no_mangle]
 pub extern "C" fn regorus_rvm_execute(vm: *mut RegorusRvm) -> RegorusResult {
-    with_unwind_guard(|| execute_to_rvm_result(vm, RvmExecution::Main))
+    with_unowned_memory_budget_scope_for_ffi(|| {
+        with_unwind_guard(|| execute_to_rvm_result(vm, RvmExecution::Main))
+    })
 }
 
 /// Execute a named entry point.
@@ -613,12 +615,14 @@ pub extern "C" fn regorus_rvm_execute_entry_point_by_name(
     vm: *mut RegorusRvm,
     entry_point: *const c_char,
 ) -> RegorusResult {
-    with_unwind_guard(|| {
-        let entry_point = match from_c_str(entry_point) {
-            Ok(entry_point) => entry_point,
-            Err(err) => return to_rvm_error_result(err),
-        };
-        execute_to_rvm_result(vm, RvmExecution::Named(entry_point))
+    with_unowned_memory_budget_scope_for_ffi(|| {
+        with_unwind_guard(|| {
+            let entry_point = match from_c_str(entry_point) {
+                Ok(entry_point) => entry_point,
+                Err(err) => return to_rvm_error_result(err),
+            };
+            execute_to_rvm_result(vm, RvmExecution::Named(entry_point))
+        })
     })
 }
 
@@ -628,7 +632,9 @@ pub extern "C" fn regorus_rvm_execute_entry_point_by_index(
     vm: *mut RegorusRvm,
     index: usize,
 ) -> RegorusResult {
-    with_unwind_guard(|| execute_to_rvm_result(vm, RvmExecution::Indexed(index)))
+    with_unowned_memory_budget_scope_for_ffi(|| {
+        with_unwind_guard(|| execute_to_rvm_result(vm, RvmExecution::Indexed(index)))
+    })
 }
 
 /// Resume execution for suspendable runs.
@@ -638,25 +644,27 @@ pub extern "C" fn regorus_rvm_resume(
     resume_value_json: *const c_char,
     has_value: bool,
 ) -> RegorusResult {
-    with_unwind_guard(|| {
-        let output = || -> Result<RegorusResult> {
-            let vm = to_shared_ref(vm as *const RegorusRvm)?;
-            let mut guard = vm.try_write()?;
-            let output = guard.resume_to_c_string_for_ffi(|| {
-                if has_value {
-                    let resume_json = from_c_str(resume_value_json).map_err(VmError::from)?;
-                    Ok(Some(resume_json))
-                } else {
-                    Ok(None)
-                }
-            })?;
-            Ok(RegorusResult::ok_c_string(output))
-        }();
+    with_unowned_memory_budget_scope_for_ffi(|| {
+        with_unwind_guard(|| {
+            let output = || -> Result<RegorusResult> {
+                let vm = to_shared_ref(vm as *const RegorusRvm)?;
+                let mut guard = vm.try_write()?;
+                let output = guard.resume_to_c_string_for_ffi(|| {
+                    if has_value {
+                        let resume_json = from_c_str(resume_value_json).map_err(VmError::from)?;
+                        Ok(Some(resume_json))
+                    } else {
+                        Ok(None)
+                    }
+                })?;
+                Ok(RegorusResult::ok_c_string(output))
+            }();
 
-        match output {
-            Ok(result) => result,
-            Err(err) => to_rvm_error_result(err),
-        }
+            match output {
+                Ok(result) => result,
+                Err(err) => to_rvm_error_result(err),
+            }
+        })
     })
 }
 
@@ -733,6 +741,8 @@ result := [value, value, value, value, value, value, value, value]
     const TIGHT_MEMORY_BUDGET_BYTES: u64 = 64 * 1024;
     const NESTED_GETTER_MEMORY_BUDGET_BYTES: u64 = 8 * 1024;
     const NESTED_GETTER_REPETITIONS: usize = 2048;
+    const MALFORMED_RESUME_BYTES: usize = 16 * 1024;
+    const MALFORMED_RESUME_ATTEMPTS: usize = 4;
 
     fn memory_budget(limit: u64) -> MemoryBudgetConfig {
         MemoryBudgetConfig {
@@ -996,7 +1006,7 @@ result := [value, value, value, value, value, value, value, value]
         vm.set_execution_mode(ExecutionMode::Suspendable);
         vm.load_program(compiled_suspendable_host_await_program());
         vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
-        vm.set_memory_budget_config(Some(memory_budget(768 * 1024)));
+        vm.set_memory_budget_config(Some(memory_budget(2 * 1024 * 1024)));
         let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
 
         let mode = regorus_rvm_set_execution_mode(vm, 1);
@@ -1020,8 +1030,17 @@ result := [value, value, value, value, value, value, value, value]
         let first_resume =
             CString::new(format!("\"{}\"", "x".repeat(450 * 1024))).expect("first resume JSON");
         let first = regorus_rvm_resume(vm, first_resume.as_ptr(), true);
-        assert!(matches!(first.status, RegorusStatus::Ok));
+        let first_succeeded = matches!(first.status, RegorusStatus::Ok);
+        let first_error = (!first.error_message.is_null()).then(|| {
+            unsafe { CStr::from_ptr(first.error_message) }
+                .to_string_lossy()
+                .into_owned()
+        });
         regorus_result_drop(first);
+        assert!(
+            first_succeeded,
+            "first resume should fit the cumulative budget: {first_error:?}"
+        );
 
         let second_resume =
             CString::new(format!("\"{}\"", "y".repeat(450 * 1024))).expect("second resume JSON");
@@ -1030,6 +1049,51 @@ result := [value, value, value, value, value, value, value, value]
             regorus_rvm_resume(vm, second_resume.as_ptr(), true),
         );
         regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn ffi_malformed_resume_json_bytes_accumulate_without_losing_retryability() {
+        let program = compiled_suspendable_host_await_program();
+        let vm = suspendable_host_await_vm(&program, Some(TIGHT_MEMORY_BUDGET_BYTES));
+        let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
+
+        let initial = regorus_rvm_execute(vm);
+        assert!(matches!(initial.status, RegorusStatus::Ok));
+        regorus_result_drop(initial);
+        assert_execution_state(vm, "Suspended {");
+
+        let malformed = CString::new(format!("\"{}", "x".repeat(MALFORMED_RESUME_BYTES)))
+            .expect("unterminated JSON string");
+        for _ in 0..MALFORMED_RESUME_ATTEMPTS {
+            let result = regorus_rvm_resume(vm, malformed.as_ptr(), true);
+            let is_retryable_error = matches!(result.status, RegorusStatus::Error);
+            regorus_result_drop(result);
+            assert!(is_retryable_error, "malformed JSON must remain retryable");
+            assert_execution_state(vm, "Suspended {");
+        }
+
+        let valid = CString::new("\"response\"").expect("valid resume JSON");
+        let result = regorus_rvm_resume(vm, valid.as_ptr(), true);
+        let typed_budget_error = matches!(result.status, RegorusStatus::MemoryBudgetExceeded);
+        let output_is_null = result.output.is_null();
+        regorus_result_drop(result);
+
+        let state = regorus_rvm_get_execution_state(vm);
+        let state_text = unsafe { CStr::from_ptr(state.output) }
+            .to_str()
+            .expect("execution state UTF-8")
+            .to_string();
+        regorus_result_drop(state);
+        regorus_rvm_drop(vm);
+
+        assert!(
+            typed_budget_error && output_is_null,
+            "a valid resume must observe bytes consumed by malformed attempts"
+        );
+        assert!(
+            state_text.starts_with("Error { error: MemoryBudgetExceeded"),
+            "unexpected terminal state after cumulative exhaustion: {state_text}"
+        );
     }
 
     #[test]
@@ -1070,6 +1134,191 @@ result := [value, value, value, value, value, value, value, value]
         assert_execution_state(vm, "Completed {");
 
         regorus_rvm_drop(vm);
+    }
+
+    #[test]
+    fn ffi_unbudgeted_child_resume_error_does_not_charge_parent_budget() {
+        const CHILD_ARGUMENT_BYTES: usize = 128 * 1024;
+
+        let program = compiled_suspendable_host_await_program();
+        let mut child_vm = suspendable_host_await_vm(&program, None);
+        let child_input = alloc::format!(r#"{{"value":"{}"}}"#, "x".repeat(CHILD_ARGUMENT_BYTES));
+        child_vm.set_input(Value::from_json_str(&child_input).expect("large child input JSON"));
+        child_vm
+            .execute()
+            .expect("child VM should suspend at HostAwait");
+        let child_vm = Box::into_raw(Box::new(RegorusRvm::new(child_vm)));
+
+        let mut outer_vm =
+            suspendable_host_await_vm(&program, Some(NESTED_GETTER_MEMORY_BUDGET_BYTES));
+        outer_vm
+            .execute()
+            .expect("outer VM should suspend at HostAwait within its budget");
+
+        let mut child_error = None;
+        let resumed = outer_vm.resume_to_c_string_for_ffi(|| {
+            child_error = Some(regorus_rvm_resume(child_vm, core::ptr::null(), false));
+            Ok(Some(String::from("\"response\"")))
+        });
+        let parent_resume_succeeded = match resumed {
+            Ok(output) => !output.as_bytes().is_empty(),
+            Err(_) => false,
+        };
+
+        let child_error = child_error.expect("child resume error");
+        let child_error_is_reported = matches!(child_error.status, RegorusStatus::Error)
+            && child_error.output.is_null()
+            && !child_error.error_message.is_null();
+        let child_error_length = if child_error.error_message.is_null() {
+            0
+        } else {
+            unsafe { CStr::from_ptr(child_error.error_message) }
+                .to_bytes()
+                .len()
+        };
+        assert_execution_state(child_vm, "Suspended {");
+
+        regorus_result_drop(child_error);
+        regorus_rvm_drop(child_vm);
+        assert!(
+            parent_resume_succeeded,
+            "unbudgeted child error formatting should not consume the outer budget"
+        );
+        assert!(child_error_is_reported);
+        assert!(child_error_length > NESTED_GETTER_MEMORY_BUDGET_BYTES as usize);
+    }
+
+    #[test]
+    fn ffi_repeated_child_malformed_resume_errors_preserve_retryability() {
+        let program = compiled_suspendable_host_await_program();
+        let mut child_vm = suspendable_host_await_vm(&program, None);
+        child_vm
+            .execute()
+            .expect("child VM should suspend at HostAwait");
+        let child_vm = Box::into_raw(Box::new(RegorusRvm::new(child_vm)));
+
+        let mut outer_vm =
+            suspendable_host_await_vm(&program, Some(NESTED_GETTER_MEMORY_BUDGET_BYTES));
+        outer_vm
+            .execute()
+            .expect("outer VM should suspend at HostAwait within its budget");
+
+        let malformed_json = CString::new("{").expect("malformed JSON CString");
+        let mut retained_errors = Vec::with_capacity(NESTED_GETTER_REPETITIONS);
+        let resumed = outer_vm.resume_to_c_string_for_ffi(|| {
+            for _ in 0..NESTED_GETTER_REPETITIONS {
+                retained_errors.push(regorus_rvm_resume(child_vm, malformed_json.as_ptr(), true));
+            }
+            Ok(Some(String::from("\"response\"")))
+        });
+        let parent_resume_succeeded = match resumed {
+            Ok(output) => !output.as_bytes().is_empty(),
+            Err(_) => false,
+        };
+        let all_errors_reported = retained_errors.iter().all(|error| {
+            matches!(error.status, RegorusStatus::Error)
+                && error.output.is_null()
+                && !error.error_message.is_null()
+        });
+        let retained_error_bytes = retained_errors.iter().try_fold(0usize, |total, error| {
+            if error.error_message.is_null() {
+                return None;
+            }
+            let bytes = unsafe { CStr::from_ptr(error.error_message) }
+                .to_bytes_with_nul()
+                .len();
+            total.checked_add(bytes)
+        });
+        assert_execution_state(child_vm, "Suspended {");
+
+        for error in retained_errors.drain(..) {
+            regorus_result_drop(error);
+        }
+
+        let first_resume = CString::new("\"first\"").expect("first resume JSON");
+        let first = regorus_rvm_resume(child_vm, first_resume.as_ptr(), true);
+        assert!(matches!(first.status, RegorusStatus::Ok));
+        regorus_result_drop(first);
+        assert_execution_state(child_vm, "Suspended {");
+
+        let second_resume = CString::new("\"second\"").expect("second resume JSON");
+        let second = regorus_rvm_resume(child_vm, second_resume.as_ptr(), true);
+        assert!(matches!(second.status, RegorusStatus::Ok));
+        regorus_result_drop(second);
+        assert_execution_state(child_vm, "Completed {");
+
+        regorus_rvm_drop(child_vm);
+        assert!(
+            parent_resume_succeeded,
+            "retained child validation errors should not consume the outer budget"
+        );
+        assert_eq!(retained_errors.len(), 0);
+        assert!(all_errors_reported);
+        assert!(retained_error_bytes
+            .is_some_and(|bytes| { bytes > NESTED_GETTER_MEMORY_BUDGET_BYTES as usize }));
+    }
+
+    #[test]
+    fn ffi_unowned_child_failure_cleanup_preserves_parent_budget_accounting() {
+        const MISSING_ENTRY_POINT_BYTES: usize = 128 * 1024;
+
+        let program = compiled_suspendable_host_await_program();
+        let mut child_vm = RegoVM::new();
+        child_vm.load_program(Arc::clone(&program));
+        let missing_entry_point = String::from("x").repeat(MISSING_ENTRY_POINT_BYTES);
+
+        let mut outer_vm =
+            suspendable_host_await_vm(&program, Some(NESTED_GETTER_MEMORY_BUDGET_BYTES));
+        outer_vm
+            .execute()
+            .expect("outer VM should suspend at HostAwait within its budget");
+
+        let resumed = outer_vm.resume_to_c_string_for_ffi(|| {
+            let child_error =
+                child_vm.execute_entry_point_by_name_to_c_string_for_ffi(&missing_entry_point);
+            assert!(child_error.is_err());
+            drop(child_error);
+            Ok(Some(String::from("\"response\"")))
+        });
+        assert!(
+            resumed.is_ok(),
+            "retained child error state should not consume the outer budget: {resumed:?}"
+        );
+
+        let child_vm = Box::into_raw(Box::new(RegorusRvm::new(child_vm)));
+        assert_execution_state(child_vm, "Error { error: EntryPointNotFound");
+        regorus_rvm_drop(child_vm);
+
+        let mut parent_probe_child = RegoVM::new();
+        parent_probe_child.load_program(Arc::clone(&program));
+        let missing_entry_point = String::from("missing");
+
+        let mut parent_probe_vm =
+            suspendable_host_await_vm(&program, Some(NESTED_GETTER_MEMORY_BUDGET_BYTES));
+        parent_probe_vm
+            .execute()
+            .expect("parent probe should suspend within its budget");
+        let mut parent_allocation = None;
+        let parent_probe = parent_probe_vm.resume_to_c_string_for_ffi(|| {
+            let child_error = parent_probe_child
+                .execute_entry_point_by_name_to_c_string_for_ffi(&missing_entry_point);
+            assert!(child_error.is_err());
+            drop(child_error);
+            parent_allocation = Some(vec![
+                0u8;
+                (NESTED_GETTER_MEMORY_BUDGET_BYTES as usize)
+                    .saturating_mul(2)
+            ]);
+            core::hint::black_box(parent_allocation.as_ref());
+            Ok(Some(String::from("\"response\"")))
+        });
+        assert!(matches!(
+            parent_probe,
+            Err(VmError::MemoryBudgetExceeded { .. })
+        ));
+        let parent_probe_child = Box::into_raw(Box::new(RegorusRvm::new(parent_probe_child)));
+        assert_execution_state(parent_probe_child, "Error { error: EntryPointNotFound");
+        regorus_rvm_drop(parent_probe_child);
     }
 
     #[test]

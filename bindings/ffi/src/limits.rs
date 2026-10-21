@@ -151,7 +151,9 @@ pub struct RegorusExecutionTimerConfig {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct RegorusMemoryBudgetConfig {
-    /// Maximum additional live bytes allowed during one execution.
+    /// Maximum additional bytes charged during one execution. Suspendable runs
+    /// accumulate successful requested allocation sizes; run-to-completion runs
+    /// retain live-byte accounting.
     pub limit_bytes: u64,
 }
 

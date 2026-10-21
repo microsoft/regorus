@@ -7,12 +7,8 @@
 //! Otherwise the functions become no-ops so the rest of the crate can call
 //! them unconditionally.
 
-use core::alloc::Layout;
 use core::cell::Cell;
-use core::ffi::c_void;
-use core::marker::PhantomData;
-use core::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
-use mimalloc_sys::{mi_free, mi_malloc_aligned};
+use core::sync::atomic::{AtomicI64, Ordering};
 use std::thread_local;
 
 // Total memory allocated through the global allocator.
@@ -25,9 +21,9 @@ const DEFAULT_THREAD_FLUSH_THRESHOLD: i64 = 1024 * 1024;
 static THREAD_FLUSH_THRESHOLD: AtomicI64 = AtomicI64::new(DEFAULT_THREAD_FLUSH_THRESHOLD);
 
 thread_local! {
-    // The account is selected only for the current synchronous execution segment.
-    static CURRENT_MEMORY_BUDGET_ACCOUNT: Cell<*mut MemoryBudgetAccountState> =
-        const { Cell::new(core::ptr::null_mut()) };
+    // Suspendable execution usage is copied into and out of this cell at segment boundaries.
+    static CURRENT_MEMORY_BUDGET_USAGE: Cell<Option<MemoryBudgetUsage>> =
+        const { Cell::new(None) };
     // Each thread tracks its own allocations and deallocations. Periodically the thread's
     // stats are flushed into the global counters. Such a design minimizes contention on the
     // global atomic variables on each allocation/free operation.
@@ -36,187 +32,90 @@ thread_local! {
     static THREAD_FLUSHED_SINCE_CHECK: Cell<bool> = const { Cell::new(false) };
 }
 
-#[derive(Debug)]
-struct MemoryBudgetAccountState {
-    references: AtomicUsize,
-    live_requested_bytes: AtomicU64,
-}
-
-/// Thread-safe requested-byte accounting for one suspendable execution.
-///
-/// The account state is allocated directly from mimalloc so creating an account cannot recurse
-/// through the Rust global allocator whose blocks it tracks.
-#[derive(Debug)]
-pub struct MemoryBudgetAccount {
-    state: core::ptr::NonNull<MemoryBudgetAccountState>,
-}
-
-// SAFETY: the shared state contains only atomics and is kept alive by the intrusive reference
-// count held by this handle and by every allocation header that records it.
-unsafe impl Send for MemoryBudgetAccount {}
-unsafe impl Sync for MemoryBudgetAccount {}
-
-impl MemoryBudgetAccount {
-    /// Create an empty account backed by non-recursive mimalloc storage.
-    pub fn new() -> Self {
-        let layout = Layout::new::<MemoryBudgetAccountState>();
-        let pointer = unsafe {
-            mi_malloc_aligned(layout.size(), layout.align()).cast::<MemoryBudgetAccountState>()
-        };
-        if pointer.is_null() {
-            std::alloc::handle_alloc_error(layout);
-        }
-
-        unsafe {
-            pointer.write(MemoryBudgetAccountState {
-                references: AtomicUsize::new(1),
-                live_requested_bytes: AtomicU64::new(0),
-            });
-        }
-
-        Self {
-            state: unsafe { core::ptr::NonNull::new_unchecked(pointer) },
-        }
-    }
-
-    /// Return the current live requested bytes attributed to this execution.
-    pub fn live_bytes(&self) -> u64 {
-        unsafe {
-            self.state
-                .as_ref()
-                .live_requested_bytes
-                .load(Ordering::Relaxed)
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn reference_count_for_test(&self) -> usize {
-        unsafe { self.state.as_ref().references.load(Ordering::Relaxed) }
-    }
-
-    /// Select this account for the duration of a synchronous execution segment.
-    pub fn with_scope<R>(&self, operation: impl FnOnce() -> R) -> R {
-        let previous =
-            CURRENT_MEMORY_BUDGET_ACCOUNT.with(|selected| selected.replace(self.state.as_ptr()));
-        let _scope = MemoryBudgetAccountScope {
-            previous,
-            _account: PhantomData,
-        };
-        operation()
-    }
-}
-
-impl Default for MemoryBudgetAccount {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Select no execution account for the duration of an independent synchronous operation.
+/// Gross requested bytes retained by a suspendable VM between execution segments.
 #[doc(hidden)]
-pub fn with_unowned_memory_budget_scope<R>(operation: impl FnOnce() -> R) -> R {
-    let previous =
-        CURRENT_MEMORY_BUDGET_ACCOUNT.with(|selected| selected.replace(core::ptr::null_mut()));
-    let _scope = UnownedMemoryBudgetAccountScope { previous };
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MemoryBudgetUsage {
+    requested_bytes: u64,
+    overflowed: bool,
+}
+
+impl MemoryBudgetUsage {
+    /// Return the gross requested bytes charged to this execution.
+    pub const fn requested_bytes(self) -> u64 {
+        self.requested_bytes
+    }
+
+    /// Return whether this usage exceeds the configured limit, including arithmetic overflow.
+    pub const fn exceeds_limit(self, limit: u64) -> bool {
+        self.overflowed || self.requested_bytes > limit
+    }
+
+    fn record_allocation(&mut self, size: usize) {
+        let Ok(size) = u64::try_from(size) else {
+            self.requested_bytes = u64::MAX;
+            self.overflowed = true;
+            return;
+        };
+
+        match self.requested_bytes.checked_add(size) {
+            Some(requested_bytes) => self.requested_bytes = requested_bytes,
+            None => {
+                self.requested_bytes = u64::MAX;
+                self.overflowed = true;
+            }
+        }
+    }
+}
+
+/// Select a suspendable execution's usage while one synchronous segment runs.
+///
+/// The guard captures the segment's final usage on both return and unwind, then restores the
+/// previously-selected execution. Callers own the captured scalar and persist it with their VM.
+#[doc(hidden)]
+pub fn with_memory_budget_usage_scope<R>(
+    initial: Option<MemoryBudgetUsage>,
+    updated: &mut Option<MemoryBudgetUsage>,
+    operation: impl FnOnce() -> R,
+) -> R {
+    let previous = CURRENT_MEMORY_BUDGET_USAGE.with(|selected| selected.replace(initial));
+    let _scope = MemoryBudgetUsageScope { previous, updated };
     operation()
 }
 
-impl Clone for MemoryBudgetAccount {
-    fn clone(&self) -> Self {
-        unsafe { retain_memory_budget_account(self.state.as_ptr().cast()) };
-        Self { state: self.state }
-    }
+struct MemoryBudgetUsageScope<'a> {
+    previous: Option<MemoryBudgetUsage>,
+    updated: &'a mut Option<MemoryBudgetUsage>,
 }
 
-impl Drop for MemoryBudgetAccount {
+impl Drop for MemoryBudgetUsageScope<'_> {
     fn drop(&mut self) {
-        unsafe { release_memory_budget_account(self.state.as_ptr().cast()) };
+        *self.updated = CURRENT_MEMORY_BUDGET_USAGE.with(Cell::get);
+        CURRENT_MEMORY_BUDGET_USAGE.with(|selected| selected.set(self.previous));
     }
 }
 
-/// Restores the previously selected account when an execution segment ends or unwinds.
-struct MemoryBudgetAccountScope<'a> {
-    previous: *mut MemoryBudgetAccountState,
-    _account: PhantomData<&'a MemoryBudgetAccount>,
+/// Select no execution budget for the duration of an independent synchronous operation.
+#[doc(hidden)]
+pub fn with_unowned_memory_budget_scope<R>(operation: impl FnOnce() -> R) -> R {
+    let mut ignored = None;
+    with_memory_budget_usage_scope(None, &mut ignored, operation)
 }
 
-impl Drop for MemoryBudgetAccountScope<'_> {
-    fn drop(&mut self) {
-        CURRENT_MEMORY_BUDGET_ACCOUNT.with(|selected| selected.set(self.previous));
-    }
+/// Return the usage of the currently-selected suspendable execution segment.
+#[doc(hidden)]
+pub fn current_memory_budget_usage() -> Option<MemoryBudgetUsage> {
+    CURRENT_MEMORY_BUDGET_USAGE.with(Cell::get)
 }
 
-struct UnownedMemoryBudgetAccountScope {
-    previous: *mut MemoryBudgetAccountState,
-}
-
-impl Drop for UnownedMemoryBudgetAccountScope {
-    fn drop(&mut self) {
-        CURRENT_MEMORY_BUDGET_ACCOUNT.with(|selected| selected.set(self.previous));
-    }
-}
-
-/// Return the account selected for allocations on this thread.
-pub(crate) fn current_memory_budget_account() -> *mut c_void {
-    CURRENT_MEMORY_BUDGET_ACCOUNT
-        .with(Cell::get)
-        .cast::<c_void>()
-}
-
-/// Retain the account reference stored in an allocation header.
-pub(crate) unsafe fn retain_memory_budget_account(account: *mut c_void) {
-    if !account.is_null() {
-        let _ = (*account.cast::<MemoryBudgetAccountState>())
-            .references
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |references| {
-                Some(references.saturating_add(1))
-            });
-    }
-}
-
-/// Release the account reference stored in an allocation header.
-pub(crate) unsafe fn release_memory_budget_account(account: *mut c_void) {
-    if account.is_null() {
-        return;
-    }
-
-    let state = account.cast::<MemoryBudgetAccountState>();
-    let Ok(references) =
-        (*state)
-            .references
-            .fetch_update(Ordering::Release, Ordering::Relaxed, |references| {
-                references.checked_sub(1)
-            })
-    else {
-        return;
-    };
-    if references == 1 {
-        core::sync::atomic::fence(Ordering::Acquire);
-        core::ptr::drop_in_place(state);
-        mi_free(state.cast::<c_void>());
-    }
-}
-
-/// Add requested bytes to the account stored in an allocation header.
-pub(crate) unsafe fn record_memory_budget_alloc(account: *mut c_void, size: usize) {
-    if !account.is_null() {
-        let _ = (*account.cast::<MemoryBudgetAccountState>())
-            .live_requested_bytes
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |live_bytes| {
-                Some(live_bytes.saturating_add(u64::try_from(size).unwrap_or(u64::MAX)))
-            });
-    }
-}
-
-/// Subtract requested bytes from the account stored in an allocation header.
-pub(crate) unsafe fn record_memory_budget_free(account: *mut c_void, size: usize) {
-    if !account.is_null() {
-        let _ = (*account.cast::<MemoryBudgetAccountState>())
-            .live_requested_bytes
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |live_bytes| {
-                Some(live_bytes.saturating_sub(u64::try_from(size).unwrap_or(u64::MAX)))
-            });
-    }
+/// Add the successful allocation's requested size to the active TLS usage scalar.
+pub(crate) fn record_memory_budget_alloc(size: usize) {
+    CURRENT_MEMORY_BUDGET_USAGE.with(|selected| {
+        if let Some(mut usage) = selected.get() {
+            usage.record_allocation(size);
+            selected.set(Some(usage));
+        }
+    });
 }
 
 /// Process-wide view of allocator usage at the moment of sampling.
@@ -463,7 +362,10 @@ pub fn thread_flush_threshold() -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{current_thread_live_bytes, record_alloc, record_free};
+    use super::{
+        current_memory_budget_usage, current_thread_live_bytes, record_alloc, record_free,
+        record_memory_budget_alloc, with_memory_budget_usage_scope, MemoryBudgetUsage,
+    };
 
     #[test]
     fn current_thread_live_bytes_tracks_usage_without_a_snapshot() {
@@ -478,5 +380,28 @@ mod tests {
 
         record_free(SIZE);
         assert_eq!(current_thread_live_bytes(), before);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn requested_byte_overflow_exceeds_even_the_maximum_budget_stickily() {
+        let mut exact = Some(MemoryBudgetUsage::default());
+        with_memory_budget_usage_scope(exact, &mut exact, || {
+            record_memory_budget_alloc(usize::MAX);
+        });
+        let exact = exact.expect("budgeted usage");
+        assert_eq!(exact.requested_bytes(), u64::MAX);
+        assert!(!exact.exceeds_limit(u64::MAX));
+        assert_eq!(current_memory_budget_usage(), None);
+
+        let mut overflowed = Some(MemoryBudgetUsage::default());
+        with_memory_budget_usage_scope(overflowed, &mut overflowed, || {
+            record_memory_budget_alloc(usize::MAX);
+            record_memory_budget_alloc(1);
+        });
+        let overflowed = overflowed.expect("budgeted usage");
+        assert_eq!(overflowed.requested_bytes(), u64::MAX);
+        assert!(overflowed.exceeds_limit(u64::MAX));
+        assert!(overflowed.exceeds_limit(0));
     }
 }

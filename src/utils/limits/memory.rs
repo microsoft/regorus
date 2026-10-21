@@ -8,7 +8,9 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use std::thread_local;
 
 #[cfg(feature = "rvm")]
-pub use mimalloc::limits::MemoryBudgetAccount;
+pub use mimalloc::limits::{
+    current_memory_budget_usage, with_memory_budget_usage_scope, MemoryBudgetUsage,
+};
 
 static GLOBAL_MEMORY_LIMIT: AtomicU64 = AtomicU64::new(u64::MAX);
 
@@ -22,7 +24,9 @@ const MEMORY_CHECK_DELTA_BYTES: u64 = 32 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(docsrs, doc(cfg(feature = "allocator-memory-limits")))]
 pub struct MemoryBudgetConfig {
-    /// Maximum additional live bytes allowed during one execution.
+    /// Maximum additional bytes charged during one execution. Suspendable
+    /// executions accumulate successful requested allocation sizes; run-to-
+    /// completion executions retain thread-baseline live-byte accounting.
     pub limit: NonZeroU64,
 }
 

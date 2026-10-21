@@ -81,7 +81,7 @@ The Regorus C# bindings provide a modern, thread-safe API for compiling and eval
 - **Thread Safety**: All operations are thread-safe without external synchronization
 - **Registry Management**: Centralized management of targets and schemas
 - **Policy Introspection**: Rich metadata about compiled policies
-- **RVM Memory Budgets**: Optional per-execution live-memory limits for run-to-completion evaluation
+- **RVM Memory Budgets**: Optional per-execution memory limits for run-to-completion and suspendable evaluation
 
 ## RVM Memory Budgets
 
@@ -101,7 +101,7 @@ public sealed class Rvm : IDisposable
 }
 ```
 
-`Execute` and `ExecuteEntryPoint` start a fresh budget for each accepted initial execution. A suspendable execution retains the same budget across `Resume` calls, including resumes on another thread. Program compilation, program loading, and prior `SetDataJson`, `SetInputJson`, and `SetContextJson` calls occur before and outside the budget; use this path for static or preloaded data.
+`Execute` and `ExecuteEntryPoint` start a fresh budget for each accepted initial execution. A suspendable execution retains the same budget across `Resume` calls, including resumes on another thread. Suspendable usage is the cumulative total of successful requested allocation sizes; frees do not refund it. Program compilation, program loading, and prior `SetDataJson`, `SetInputJson`, and `SetContextJson` calls occur before and outside the budget; use this path for static or preloaded data.
 
 ```csharp
 using var vm = new Rvm();
@@ -121,11 +121,13 @@ Native resume C-string copying and JSON parsing, VM resume work, result JSON ser
 
 Memory budgets require a native library built with allocator memory tracking. Changing or clearing the configuration while a suspendable execution is active affects only the next initial execution. `RegorusMemoryBudgetExceededException` is thrown when a budget is exceeded. Native status 11 and `RegorusMemoryBudgetUnsupportedException` remain reserved for compatibility and are not used to reject suspendable execution.
 
-Enforcement samples currently live requested bytes at checkpoints; it is not an allocation-time peak-memory cap. An instruction, builtin, native input parse, serialization, or `CString` allocation can overshoot before it is rejected. Cross-thread frees debit the allocation's originating execution. Synchronous host work on the execution thread is included; managed allocations, host I/O, getter serialization, and other allocators are excluded.
+Enforcement is cooperative and not an allocation-time peak-memory cap. Run-to-completion usage retains its thread-baseline live-byte accounting; suspendable usage accumulates successful requested allocation sizes across execution segments. An instruction, builtin, native input parse, serialization, or `CString` allocation can overshoot before it is rejected. Synchronous host work on the execution thread is included; managed allocations, host I/O, getter serialization, and other allocators are excluded.
 
-The following warm-VM baseline note applies to run-to-completion accounting. Suspendable budgets instead charge allocations by their originating execution, so retained pre-execution capacity is not charged unless it is reallocated during the run.
+The following warm-VM baseline note applies to run-to-completion accounting. Suspendable budgets do not charge allocations made before execution unless they are reallocated during the run; a successful reallocation charges its full new requested size.
 
-A reused VM gets a fresh baseline, but capacities and pools retained before that baseline can make a warm execution allocate differently from a fresh one. Failed terminal execution clears retained state. Public multi-call begin/end scopes are intentionally absent because allocator counters are thread-local and abandoned or cross-thread scopes would be unsafe. The [detailed RVM memory budget documentation](../../docs/limits/memory_budget.md) is authoritative for accounting behavior.
+Suspendable accounting does not track per-block allocation origins. Frees never refund accumulated usage; successful reallocation charges the full new requested size to the currently selected execution, and failed reallocation charges nothing. Run-to-completion accounting keeps its existing execution-thread baseline and downward ratchet. See the [RVM memory budget documentation](../../docs/limits/memory_budget.md) for the detailed accounting model.
+
+A reused VM gets a fresh baseline, but capacities and pools retained before that baseline can make a warm execution allocate differently from a fresh one. Failed terminal execution clears retained state. Public multi-call begin/end scopes are intentionally absent; the RVM owns the cumulative usage scalar and selects it only during synchronous execution segments. The [detailed RVM memory budget documentation](../../docs/limits/memory_budget.md) is authoritative for accounting behavior.
 
 ## Core Classes
 

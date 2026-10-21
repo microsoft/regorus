@@ -99,6 +99,17 @@ result := __builtin_host_await(input.value, "first")
 "#;
 
 #[cfg(feature = "rvm")]
+const SUSPENDABLE_CHAINED_HOST_AWAIT_MODULE: &str = r#"
+package limit
+import rego.v1
+
+result := __builtin_host_await(
+    __builtin_host_await(input.value, "first"),
+    "second"
+)
+"#;
+
+#[cfg(feature = "rvm")]
 const SUSPENDABLE_RESUME_BUDGET_MODULE: &str = r#"
 package limit
 import rego.v1
@@ -820,42 +831,103 @@ fn vm_memory_budget_accepts_compiled_suspendable_host_await() {
 
 #[cfg(feature = "rvm")]
 #[test]
+fn suspendable_native_resumes_accumulate_freed_requested_bytes() {
+    let _guard = LimitGuard::lock();
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(compile_memory_budget_module(
+        SUSPENDABLE_CHAINED_HOST_AWAIT_MODULE,
+        "data.limit.result",
+    ));
+    vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
+    vm.set_memory_budget_config(Some(memory_budget(512 * 1024)));
+
+    assert_eq!(
+        vm.execute().expect("initial execution suspends"),
+        Value::Undefined
+    );
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+
+    let resume_with_churn = || {
+        let churn = vec![0_u8; 256 * 1024];
+        core::hint::black_box(&churn);
+        drop(churn);
+        Ok(Some(String::from("\"response\"")))
+    };
+    vm.resume_to_c_string_for_ffi(resume_with_churn)
+        .expect("first native resume remains within budget");
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+
+    assert!(matches!(
+        vm.resume_to_c_string_for_ffi(resume_with_churn),
+        Err(VmError::MemoryBudgetExceeded { .. })
+    ));
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Error {
+            error: VmError::MemoryBudgetExceeded { .. }
+        }
+    ));
+}
+
+#[cfg(feature = "rvm")]
+#[test]
 fn correction_unbudgeted_vm_entries_do_not_inherit_parent_account() {
     let _guard = LimitGuard::lock();
     let program = compile_memory_budget_module(SPRINTF_QUOTE_MODULE, "data.limit.quoted");
-    let outer = mimalloc::limits::MemoryBudgetAccount::new();
 
     for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
         for entry_point in ["default", "name", "index"] {
+            let mut outer = Some(mimalloc::limits::MemoryBudgetUsage::default());
             let mut vm = RegoVM::new();
             vm.set_execution_mode(mode);
             vm.load_program(program.clone());
             vm.set_input(Value::from("x".repeat(512)));
 
-            let result = outer.with_scope(|| {
-                let result = match entry_point {
-                    "default" => vm.execute(),
-                    "name" => vm.execute_entry_point_by_name("data.limit.quoted"),
-                    _ => vm.execute_entry_point_by_index(0),
-                }
-                .expect("unbudgeted child execution succeeds");
-                assert!(matches!(
-                    &result,
-                    Value::String(value) if value.len() > 512
-                ));
-                assert_eq!(
-                    outer.live_bytes(),
-                    0,
-                    "{mode:?} {entry_point} child allocations must remain unowned"
-                );
+            let result =
+                mimalloc::limits::with_memory_budget_usage_scope(outer, &mut outer, || {
+                    let result = match entry_point {
+                        "default" => vm.execute(),
+                        "name" => vm.execute_entry_point_by_name("data.limit.quoted"),
+                        _ => vm.execute_entry_point_by_index(0),
+                    }
+                    .expect("unbudgeted child execution succeeds");
+                    assert!(matches!(
+                        &result,
+                        Value::String(value) if value.len() > 512
+                    ));
+                    assert_eq!(
+                        mimalloc::limits::current_memory_budget_usage()
+                            .expect("parent usage selected")
+                            .requested_bytes(),
+                        0,
+                        "{mode:?} {entry_point} child allocations must remain unowned"
+                    );
 
-                let parent_probe = vec![0_u8; 64];
-                core::hint::black_box(&parent_probe);
-                assert_eq!(outer.live_bytes(), 64);
-                drop(parent_probe);
-                assert_eq!(outer.live_bytes(), 0);
-                result
-            });
+                    let parent_probe = vec![0_u8; 64];
+                    core::hint::black_box(&parent_probe);
+                    assert_eq!(
+                        mimalloc::limits::current_memory_budget_usage()
+                            .expect("parent usage restored")
+                            .requested_bytes(),
+                        64
+                    );
+                    drop(parent_probe);
+                    assert_eq!(
+                        mimalloc::limits::current_memory_budget_usage()
+                            .expect("parent usage remains selected")
+                            .requested_bytes(),
+                        64
+                    );
+                    result
+                });
+            assert_eq!(outer.expect("parent usage captured").requested_bytes(), 64);
 
             assert!(matches!(&result, Value::String(value) if value.len() > 512));
         }
@@ -873,31 +945,53 @@ fn correction_unbudgeted_native_host_await_conversion_restores_parent_account() 
         "data.limit.result",
     ));
     vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
-    let outer = mimalloc::limits::MemoryBudgetAccount::new();
+    let mut outer = Some(mimalloc::limits::MemoryBudgetUsage::default());
 
-    let (initial, resumed) = outer.with_scope(|| {
-        let initial = vm
-            .execute_to_c_string_for_ffi()
-            .expect("native execution suspends");
-        assert!(matches!(
-            vm.execution_state(),
-            ExecutionState::Suspended { .. }
-        ));
-        assert_eq!(outer.live_bytes(), 0);
+    let (initial, resumed) =
+        mimalloc::limits::with_memory_budget_usage_scope(outer, &mut outer, || {
+            let initial = vm
+                .execute_to_c_string_for_ffi()
+                .expect("native execution suspends");
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Suspended { .. }
+            ));
+            assert_eq!(
+                mimalloc::limits::current_memory_budget_usage()
+                    .expect("parent usage selected")
+                    .requested_bytes(),
+                0
+            );
 
-        let resumed = vm
-            .resume_to_c_string_for_ffi(|| Ok(Some("\"response\"".into())))
-            .expect("native resume and conversion succeed");
-        assert_eq!(resumed.as_bytes(), b"\"response\"");
-        assert_eq!(outer.live_bytes(), 0);
+            let resumed = vm
+                .resume_to_c_string_for_ffi(|| Ok(Some("\"response\"".into())))
+                .expect("native resume and conversion succeed");
+            assert_eq!(resumed.as_bytes(), b"\"response\"");
+            assert_eq!(
+                mimalloc::limits::current_memory_budget_usage()
+                    .expect("parent usage restored")
+                    .requested_bytes(),
+                0
+            );
 
-        let parent_probe = vec![0_u8; 64];
-        core::hint::black_box(&parent_probe);
-        assert_eq!(outer.live_bytes(), 64);
-        drop(parent_probe);
-        assert_eq!(outer.live_bytes(), 0);
-        (initial, resumed)
-    });
+            let parent_probe = vec![0_u8; 64];
+            core::hint::black_box(&parent_probe);
+            assert_eq!(
+                mimalloc::limits::current_memory_budget_usage()
+                    .expect("parent usage remains selected")
+                    .requested_bytes(),
+                64
+            );
+            drop(parent_probe);
+            assert_eq!(
+                mimalloc::limits::current_memory_budget_usage()
+                    .expect("parent usage remains selected")
+                    .requested_bytes(),
+                64
+            );
+            (initial, resumed)
+        });
+    assert_eq!(outer.expect("parent usage captured").requested_bytes(), 64);
 
     assert!(!initial.as_bytes().is_empty());
     assert_eq!(resumed.as_bytes(), b"\"response\"");
@@ -941,12 +1035,16 @@ fn correction_malformed_native_resume_preserves_over_budget_continuation() {
     ));
 
     drop(retained_probe);
-    assert_eq!(
-        vm.resume_to_c_string_for_ffi(|| Ok(Some("\"response\"".into())))
-            .expect("valid resume after malformed input")
-            .as_bytes(),
-        b"\"response\""
-    );
+    assert!(matches!(
+        vm.resume_to_c_string_for_ffi(|| Ok(Some("\"response\"".into()))),
+        Err(VmError::MemoryBudgetExceeded { .. })
+    ));
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Error {
+            error: VmError::MemoryBudgetExceeded { .. }
+        }
+    ));
 }
 
 #[cfg(feature = "rvm")]

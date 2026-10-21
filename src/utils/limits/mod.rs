@@ -23,7 +23,10 @@ pub use memory::{
     thread_memory_flush_threshold, MemoryBudgetConfig,
 };
 #[cfg(all(feature = "rvm", feature = "allocator-memory-limits", not(miri)))]
-pub(crate) use memory::{current_thread_live_bytes, MemoryBudgetAccount};
+pub(crate) use memory::{
+    current_memory_budget_usage, current_thread_live_bytes, with_memory_budget_usage_scope,
+    MemoryBudgetUsage,
+};
 
 #[allow(unused_imports)]
 pub use time::{

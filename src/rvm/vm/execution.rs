@@ -229,101 +229,104 @@ impl RegoVM {
         self.release_previous_execution_state();
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
         self.begin_suspendable_memory_budget_execution();
-        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-        let allocation_scope = self.suspendable_memory_budget.clone();
-        let mut run = || {
-            self.initialize_execution_state();
+        let run = |vm: &mut Self| {
+            vm.initialize_execution_state();
             #[cfg(debug_assertions)]
-            self.debug_assert_state_is_clean();
-            self.execution_state = ExecutionState::Running;
-            self.reset_execution_timer_state();
+            vm.debug_assert_state_is_clean();
+            vm.execution_state = ExecutionState::Running;
+            vm.reset_execution_timer_state();
 
-            self.pc = start_pc;
+            vm.pc = start_pc;
             let result = (|| {
                 if validate_vm_state {
-                    self.validate_vm_state()?;
+                    vm.validate_vm_state()?;
                 }
-                self.check_initial_memory_limit()
+                vm.check_initial_memory_limit()
             })()
-            .and_then(|()| self.run_stackless_from(start_pc))
+            .and_then(|()| vm.run_stackless_from(start_pc))
             .and_then(|value| {
-                self.check_memory_budget()?;
+                vm.check_memory_budget()?;
                 Ok(value)
             });
             match result {
                 Ok(value) => {
                     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-                    if !self.ffi_memory_budget_scope_active
-                        && !matches!(self.execution_state, ExecutionState::Suspended { .. })
+                    if !vm.ffi_memory_budget_scope_active
+                        && !matches!(vm.execution_state, ExecutionState::Suspended { .. })
                     {
-                        self.finish_active_memory_budget_execution();
+                        vm.finish_active_memory_budget_execution();
                     }
                     Ok(value)
                 }
                 Err(err) => {
-                    let err = self.apply_memory_budget_precedence(err);
-                    Err(self.fail_initial_suspendable_execution(err))
+                    let err = vm.apply_memory_budget_precedence(err);
+                    Err(vm.fail_initial_suspendable_execution(err))
                 }
             }
         };
 
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-        if let Some(allocation_scope) = allocation_scope.as_ref() {
-            allocation_scope.with_scope(run)
-        } else {
-            run()
+        {
+            self.with_suspendable_memory_budget_scope(run)
         }
         #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
-        run()
+        {
+            run(self)
+        }
     }
 
     pub fn resume(&mut self, resume_value: Option<Value>) -> Result<Value> {
         Self::ensure_memory_budget_resume_supported()?;
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-        let allocation_scope = self.suspendable_memory_budget.clone();
-
-        let resume = || {
-            let result = self
-                .resume_suspendable_segment(resume_value)
-                .and_then(|value| {
-                    self.check_memory_budget()?;
-                    Ok(value)
-                });
-            match result {
-                Ok(value) => {
-                    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-                    if !self.ffi_memory_budget_scope_active
-                        && !matches!(self.execution_state, ExecutionState::Suspended { .. })
-                    {
-                        self.finish_active_memory_budget_execution();
-                    }
-                    Ok(value)
-                }
-                Err(err)
-                    if matches!(
-                        err,
-                        VmError::MissingResumeValue { .. }
-                            | VmError::UnexpectedResumeValue { .. }
-                            | VmError::InvalidResumeState { .. }
-                    ) =>
-                {
-                    Err(err)
-                }
-                Err(err) => {
-                    let err = self.apply_memory_budget_precedence(err);
-                    Err(self.fail_suspendable_execution(err))
-                }
+        {
+            if self.ffi_memory_budget_scope_active {
+                self.resume_in_memory_budget_scope(resume_value)
+            } else {
+                self.with_suspendable_memory_budget_scope(|vm| {
+                    vm.resume_in_memory_budget_scope(resume_value)
+                })
             }
-        };
-
-        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-        if let Some(allocation_scope) = allocation_scope.as_ref() {
-            allocation_scope.with_scope(resume)
-        } else {
-            crate::utils::limits::without_memory_budget_scope(resume)
         }
         #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
-        crate::utils::limits::without_memory_budget_scope(resume)
+        {
+            crate::utils::limits::without_memory_budget_scope(|| {
+                self.resume_in_memory_budget_scope(resume_value)
+            })
+        }
+    }
+
+    fn resume_in_memory_budget_scope(&mut self, resume_value: Option<Value>) -> Result<Value> {
+        let result = self
+            .resume_suspendable_segment(resume_value)
+            .and_then(|value| {
+                self.check_memory_budget()?;
+                Ok(value)
+            });
+        match result {
+            Ok(value) => {
+                #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+                if !self.ffi_memory_budget_scope_active
+                    && !matches!(self.execution_state, ExecutionState::Suspended { .. })
+                {
+                    self.finish_active_memory_budget_execution();
+                }
+                Ok(value)
+            }
+            Err(err)
+                if matches!(
+                    err,
+                    VmError::MissingResumeValue { .. }
+                        | VmError::UnexpectedResumeValue { .. }
+                        | VmError::InvalidResumeState { .. }
+                ) =>
+            {
+                Err(err)
+            }
+            Err(err) => {
+                let err = self.apply_memory_budget_precedence(err);
+                Err(self.fail_suspendable_execution(err))
+            }
+        }
     }
 
     fn resume_suspendable_segment(&mut self, resume_value: Option<Value>) -> Result<Value> {

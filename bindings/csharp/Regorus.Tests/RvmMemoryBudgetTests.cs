@@ -47,7 +47,7 @@ result := count(__builtin_host_await(
 """;
 
     private const string SuspendableHostAwaitEntryPoint = "data.limits.memory.result";
-    private const ulong SuspendableMemoryBudgetBytes = 768 * 1024;
+    private const ulong SuspendableMemoryBudgetBytes = 2 * 1024 * 1024;
 
     private const string NativeModulePolicy = """
 package limits.native
